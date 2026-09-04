@@ -2398,9 +2398,10 @@ export function ForwardGroupsContent({
                   <div className="space-y-3 rounded-md border border-border/60 p-3">
                     <label className="flex items-center justify-between gap-3">
                       <span className="space-y-1">
-                        <span className="block text-sm font-medium">多前置带宽叠加聚合</span>
+                        <span className="block text-sm font-medium">多入口带宽加权分流</span>
                         <span className="block text-xs text-muted-foreground">
-                          按每台前置 VPS 的上行带宽分配入口解析份额，使整组可用带宽接近各前置之和，而不是受限于最小的一台。
+                          按每台入口 VPS 的上行带宽分配解析份额，带宽大的入口承接更多客户端，整组总吞吐接近各入口之和。
+                          单条连接仍然只走一台入口；要把一条连接拆开并行传输，请用隧道的「中转带宽叠加」。
                         </span>
                       </span>
                       <Switch
