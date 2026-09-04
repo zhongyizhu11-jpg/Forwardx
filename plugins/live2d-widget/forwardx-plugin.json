@@ -12,7 +12,7 @@
   "tags": ["live2d", "widget", "ui", "waifu"],
   "license": "AGPL-3.0-only + GPL-3.0-or-later",
   "homepage": "https://github.com/stevenjoezhang/live2d-widget",
-  "repository": "https://github.com/poouo/Forwardx",
+  "repository": "https://github.com/zhongyizhu11-jpg/Forwardx",
   "permissions": ["ui:widget", "ui:settings"],
   "extensionPoints": ["ui.widget", "settings.panel"],
   "settingsSchema": [

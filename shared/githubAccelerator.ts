@@ -16,8 +16,8 @@ export type PanelInstallerDeployment = "local" | "docker";
 export type PanelInstallerAction = "install" | "upgrade" | "uninstall";
 
 export const PANEL_INSTALLER_RAW_URLS: Record<PanelInstallerDeployment, string> = {
-  local: "https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-panel-local.sh",
-  docker: "https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-panel-docker.sh",
+  local: "https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-panel-local.sh",
+  docker: "https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-panel-docker.sh",
 };
 
 export function normalizeGithubAcceleratorUrl(value: unknown) {

@@ -4,9 +4,9 @@ import { LocalNotifications } from "@capacitor/local-notifications";
 import { mobileAuth } from "@/lib/mobileAuth";
 
 const SETTINGS_KEY = "forwardx.mobile.notificationSettings";
-const RELEASES_URL = "https://github.com/poouo/Forwardx/releases";
-const LATEST_RELEASE_URL = "https://github.com/poouo/Forwardx/releases/latest";
-const RELEASES_API_URL = "https://api.github.com/repos/poouo/Forwardx/releases?per_page=20";
+const RELEASES_URL = "https://github.com/zhongyizhu11-jpg/Forwardx/releases";
+const LATEST_RELEASE_URL = "https://github.com/zhongyizhu11-jpg/Forwardx/releases/latest";
+const RELEASES_API_URL = "https://api.github.com/repos/zhongyizhu11-jpg/Forwardx/releases?per_page=20";
 
 export type MobileNotificationSettings = {
   trafficEnabled: boolean;

@@ -193,7 +193,10 @@ function formatDatabaseSwitchDuration(milliseconds: number) {
   return remainingMinutes > 0 ? `${hours} 小时 ${remainingMinutes} 分` : `${hours} 小时`;
 }
 
-const defaultGithubAcceleratorUrl = "https://git.poouo.com";
+// No GitHub mirror ships with this build, so acceleration stays off until an
+// administrator supplies one.
+const defaultGithubAcceleratorUrl = "";
+const githubAcceleratorUrlPlaceholder = "https://mirror.example.com";
 type AiProvider = "deepseek" | "siliconflow" | "custom";
 const aiProviderOptions: Array<{ value: AiProvider; label: string }> = [
   { value: "deepseek", label: "DeepSeek" },
@@ -266,7 +269,7 @@ function toLocalAiProviderConfig(provider: AiProvider, source?: AiProviderServer
 }
 type DdnsProvider = "disabled" | "cloudflare" | "webhook" | "huaweicloud" | "aliyun" | "tencentcloud";
 const ddnsProviders: DdnsProvider[] = ["disabled", "cloudflare", "webhook", "huaweicloud", "aliyun", "tencentcloud"];
-const docsBaseUrl = "https://poouo.github.io/Forwardx";
+const docsBaseUrl = "https://zhongyizhu11-jpg.github.io/Forwardx";
 const ddnsProviderGuideAnchors: Record<DdnsProvider, string> = {
   disabled: "quick-setup",
   cloudflare: "cloudflare",
@@ -4887,18 +4890,12 @@ function SystemInfoSection() {
       icon: Github,
       iconClassName: "",
     },
-    {
+    ...(settings?.telegramBotUrl ? [{
       label: "Telegram 双向消息机器人",
-      url: settings?.telegramBotUrl || "#",
+      url: settings.telegramBotUrl,
       icon: Send,
       iconClassName: "text-primary",
-    },
-    {
-      label: "Telegram 群组",
-      url: "https://t.me/ForwardX_panel",
-      icon: UserPlus,
-      iconClassName: "text-primary",
-    },
+    }] : []),
     ...(androidApkDownloadUrl ? [{
       label: "Android APK 下载",
       url: androidApkDownloadUrl,
@@ -6113,7 +6110,7 @@ function SystemInfoSection() {
             <Input
               value={githubAcceleratorUrlInput}
               onChange={(e) => setGithubAcceleratorUrlInput(e.target.value)}
-              placeholder={defaultGithubAcceleratorUrl}
+              placeholder={githubAcceleratorUrlPlaceholder}
               className="font-mono"
             />
             <p className="text-xs text-muted-foreground">

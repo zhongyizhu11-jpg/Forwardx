@@ -12,8 +12,8 @@
   "changelog": "修复 nftables DNAT/FORWARD 端口匹配失败、应用错误吞掉及服务状态误报。",
   "tags": ["whitelist", "china-region", "firewall", "agent"],
   "license": "AGPL-3.0-only",
-  "homepage": "https://github.com/poouo/Forwardx",
-  "repository": "https://github.com/poouo/Forwardx",
+  "homepage": "https://github.com/zhongyizhu11-jpg/Forwardx",
+  "repository": "https://github.com/zhongyizhu11-jpg/Forwardx",
   "features": [
     {
       "title": "区域白名单",
@@ -349,7 +349,7 @@
   ],
   "data": {
     "type": "generic",
-    "repository": "https://github.com/poouo/Forwardx",
+    "repository": "https://github.com/zhongyizhu11-jpg/Forwardx",
     "branch": "main",
     "files": [
       "data/asn/AS16509.txt",

@@ -115,14 +115,17 @@ export {
  *   - settings：登录后只读访问/管理员可写的系统设置
  */
 
-export const REPO_URL = "https://github.com/poouo/Forwardx";
-/** Telegram 双向消息机器人：用户可通过此反馈问题、接收补充信息 */
-export const TELEGRAM_BOT_URL = "https://t.me/miyin_private_bot";
+export const REPO_URL = "https://github.com/zhongyizhu11-jpg/Forwardx";
+/**
+ * Telegram 双向消息机器人：用户可通过此反馈问题、接收补充信息。
+ * 本构建不自带机器人，配置后面板才会展示入口。
+ */
+export const TELEGRAM_BOT_URL = "";
 const ANDROID_APK_DOWNLOAD_URL =
   `${REPO_URL}/releases/download/v${ANDROID_APK_RELEASE_VERSION}/forwardx-android-v${ANDROID_APP_VERSION}.apk`;
 const UPDATE_CHECK_COOLDOWN_MS = 60 * 1000;
 const UPGRADE_ASSETS_PENDING_EXIT_CODE = 12;
-const DEFAULT_DOCKER_IMAGE = "ghcr.io/poouo/forwardx:latest";
+const DEFAULT_DOCKER_IMAGE = "ghcr.io/zhongyizhu11-jpg/forwardx:latest";
 const forwardProtocolSettingsSchema = z.object(
   Object.fromEntries(
     [...FORWARD_TYPES, ...TUNNEL_PROTOCOLS].map((key) => [key, z.boolean().optional()])

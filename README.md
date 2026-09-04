@@ -3,16 +3,15 @@
 ForwardX 通过轻量 Agent 统一管理多台 Linux 服务器上的端口转发、加密隧道、转发链、故障转移、用户权限、套餐和流量统计。面板不保存主机 SSH 密钥。
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Latest Release](https://img.shields.io/github/v/release/poouo/Forwardx?display_name=tag&sort=semver)](https://github.com/poouo/Forwardx/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/zhongyizhu11-jpg/Forwardx?display_name=tag&sort=semver)](https://github.com/zhongyizhu11-jpg/Forwardx/releases/latest)
 [![Node.js](https://img.shields.io/badge/Node.js-22+-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
 ## 链接
 
-- [使用文档](https://poouo.github.io/Forwardx/)
-- [GitHub Releases](https://github.com/poouo/Forwardx/releases/latest)
-- [Telegram 群组](https://t.me/ForwardX_panel)
-- [Android APK](https://github.com/poouo/Forwardx/releases/latest)
+- [使用文档](https://zhongyizhu11-jpg.github.io/Forwardx/)
+- [GitHub Releases](https://github.com/zhongyizhu11-jpg/Forwardx/releases/latest)
+- [Android APK](https://github.com/zhongyizhu11-jpg/Forwardx/releases/latest)
 
 ## 主要功能
 
@@ -48,41 +47,41 @@ ForwardX 通过轻量 Agent 统一管理多台 Linux 服务器上的端口转发
 安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-panel-docker.sh | bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-panel-docker.sh | bash -s -- install
 ```
 
 升级：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-panel-docker.sh | bash -s -- upgrade
+curl -fsSL https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-panel-docker.sh | bash -s -- upgrade
 ```
 
 卸载：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-panel-docker.sh | bash -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-panel-docker.sh | bash -s -- uninstall
 ```
 
-Docker 默认拉取 `ghcr.io/poouo/forwardx:latest`，数据库配置和 SQLite 数据保存在数据卷中。升级会保留 `.env`、数据卷和部署目录中的 `data/`；卸载脚本仅在用户确认后删除这些数据。
+Docker 默认拉取 `ghcr.io/zhongyizhu11-jpg/forwardx:latest`，数据库配置和 SQLite 数据保存在数据卷中。升级会保留 `.env`、数据卷和部署目录中的 `data/`；卸载脚本仅在用户确认后删除这些数据。
 
 ### 本地 systemd
 
 安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-panel-local.sh | bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-panel-local.sh | bash -s -- install
 ```
 
 升级：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-panel-local.sh | bash -s -- upgrade
+curl -fsSL https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-panel-local.sh | bash -s -- upgrade
 ```
 
 卸载：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-panel-local.sh | bash -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-panel-local.sh | bash -s -- uninstall
 ```
 
 默认安装目录为 `/opt/forwardx-panel`，服务名为 `forwardx-panel.service`，数据位于 `/opt/forwardx-panel/data`。
@@ -109,17 +108,17 @@ GitHub 访问不稳定时，可为 Docker 或本地安装脚本指定加速站�
 
 ```bash
 # Docker 安装
-curl -fsSL "https://mirror.example.com/https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-panel-docker.sh" \
+curl -fsSL "https://mirror.example.com/https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-panel-docker.sh" \
   | bash -s -- install --github-accelerator "https://mirror.example.com"
 
 # 本地 systemd 安装
-curl -fsSL "https://mirror.example.com/https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-panel-local.sh" \
+curl -fsSL "https://mirror.example.com/https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-panel-local.sh" \
   | bash -s -- install --github-accelerator "https://mirror.example.com"
 ```
 
 安装器会把地址保存到部署 `.env`，后续升级可继续使用；加速请求失败时会自动回退直连 GitHub。也可在「系统设置 -> 系统信息 -> GitHub 下载加速」开启「面板更新使用加速站」，让版本检查、Release 信息、安装包检测、回退及升级命令使用该地址。
 
-该参数不代理 `ghcr.io` 镜像拉取。Docker 镜像源需要通过 `FORWARDX_IMAGE` 或 `FORWARDX_IMAGE_REPO` 单独配置。详细用法见[部署面板](https://poouo.github.io/Forwardx/guide/deploy-panel)和[升级与备份](https://poouo.github.io/Forwardx/guide/upgrade-backup)。
+该参数不代理 `ghcr.io` 镜像拉取。Docker 镜像源需要通过 `FORWARDX_IMAGE` 或 `FORWARDX_IMAGE_REPO` 单独配置。详细用法见[部署面板](https://zhongyizhu11-jpg.github.io/Forwardx/guide/deploy-panel)和[升级与备份](https://zhongyizhu11-jpg.github.io/Forwardx/guide/upgrade-backup)。
 
 ## 首次使用
 
@@ -164,7 +163,7 @@ mimic 仅在用户为 ForwardX 隧道启用混淆时使用。V1 处理 FXP UDP�
 Agent 安装脚本会询问是否安装 mimic，默认选择 `n`。也可以手动执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/poouo/Forwardx/main/scripts/install-mimic.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-mimic.sh | sudo bash
 ```
 
 安装器默认使用 `wg-mimic-fabric v1.4.9` 安装或升级到 `mimic v0.7.1`；已满足目标版本时不会重复安装。可通过 `FORWARDX_MIMIC_VERSION` 和 `WMF_REF` 显式覆盖目标版本与安装器版本。
@@ -182,7 +181,7 @@ ForwardX 支持 SQLite、MySQL 和 PostgreSQL：
 - 原地升级会保留数据库配置和业务数据。
 - 请按所选数据库定期备份 SQLite 文件或数据库实例。
 
-数据库地址、反向代理和升级相关变量见[环境变量文档](https://poouo.github.io/Forwardx/guide/env-vars)。MySQL/PostgreSQL 连接池由面板根据主机数量自动管理。常用变量如下：
+数据库地址、反向代理和升级相关变量见[环境变量文档](https://zhongyizhu11-jpg.github.io/Forwardx/guide/env-vars)。MySQL/PostgreSQL 连接池由面板根据主机数量自动管理。常用变量如下：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -192,7 +191,7 @@ ForwardX 支持 SQLite、MySQL 和 PostgreSQL：
 | `DATABASE_TYPE` / `DB_TYPE` | 空 | 强制指定 `sqlite`、`mysql` 或 `postgresql` |
 | `JWT_SECRET` | 自动生成 | 登录签名密钥；生产环境应固定配置 |
 | `TELEGRAM_BOT_TOKEN` | 空 | Telegram 机器人 Token |
-| `FORWARDX_IMAGE` | `ghcr.io/poouo/forwardx:latest` | Docker 镜像 |
+| `FORWARDX_IMAGE` | `ghcr.io/zhongyizhu11-jpg/forwardx:latest` | Docker 镜像 |
 
 ## 本地开发
 
@@ -239,4 +238,4 @@ under the MIT License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Star 趋势
 
-[![Stargazers over time](https://starchart.cc/poouo/Forwardx.svg)](https://starchart.cc/poouo/Forwardx)
+[![Stargazers over time](https://starchart.cc/zhongyizhu11-jpg/Forwardx.svg)](https://starchart.cc/zhongyizhu11-jpg/Forwardx)

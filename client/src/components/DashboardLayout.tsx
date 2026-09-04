@@ -1627,7 +1627,7 @@ function DashboardLayoutContent({
         <footer className="pb-4 text-center text-xs text-muted-foreground">
           <div className="inline-flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
             <a
-              href={publicInfo?.repoUrl || "https://github.com/poouo/Forwardx"}
+              href={publicInfo?.repoUrl || "https://github.com/zhongyizhu11-jpg/Forwardx"}
               target="_blank"
               rel="noopener noreferrer"
               className="transition-colors hover:text-foreground"
@@ -1636,31 +1636,26 @@ function DashboardLayoutContent({
             </a>
             <span className="text-muted-foreground/45">|</span>
             <a
-              href="https://poouo.github.io/Forwardx/"
+              href="https://zhongyizhu11-jpg.github.io/Forwardx/"
               target="_blank"
               rel="noopener noreferrer"
               className="transition-colors hover:text-foreground"
             >
               使用教程
             </a>
-            <span className="text-muted-foreground/45">|</span>
-            <a
-              href={publicInfo?.telegramBotUrl || "https://t.me/miyin_private_bot"}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="transition-colors hover:text-foreground"
-            >
-              联系TG
-            </a>
-            <span className="text-muted-foreground/45">|</span>
-            <a
-              href="https://t.me/ForwardX_panel"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="transition-colors hover:text-foreground"
-            >
-              TG群组
-            </a>
+            {publicInfo?.telegramBotUrl ? (
+              <>
+                <span className="text-muted-foreground/45">|</span>
+                <a
+                  href={publicInfo.telegramBotUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="transition-colors hover:text-foreground"
+                >
+                  联系TG
+                </a>
+              </>
+            ) : null}
           </div>
         </footer>
       </SidebarInset>

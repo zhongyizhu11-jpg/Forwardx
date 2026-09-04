@@ -4,7 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { AGENT_VERSION, APP_VERSION } from "../shared/versions";
 
-const REPO_URL = "https://github.com/poouo/Forwardx";
+const REPO_URL = "https://github.com/zhongyizhu11-jpg/Forwardx";
 const MAX_AGENT_ASSET_BYTES = 80 * 1024 * 1024;
 const fetchLocks = new Map<string, Promise<string | null>>();
 
