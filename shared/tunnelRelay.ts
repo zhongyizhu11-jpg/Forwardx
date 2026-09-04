@@ -76,3 +76,44 @@ export function isTunnelRelayAggregate(tunnel: any, hops: any[]) {
 export function tunnelRelayUsesParallelRelays(tunnel: any, hops: any[]) {
   return isTunnelRelayFailover(tunnel, hops) || isTunnelRelayAggregate(tunnel, hops);
 }
+
+/** Minimum relays before a side-by-side relay mode has anything to work with. */
+export const TUNNEL_RELAY_PARALLEL_MIN_RELAYS = 2;
+
+export type TunnelRelayModeAvailability = {
+  available: boolean;
+  /** Empty when available; otherwise why the mode cannot be picked. */
+  reason: string;
+};
+
+/**
+ * Why each side-by-side relay mode is or is not selectable for a hop list.
+ *
+ * The panel keeps unavailable modes visible and disabled rather than hiding
+ * them, so the reason is part of the result: a hidden control gives no way to
+ * discover the mode exists or what it needs.
+ */
+export function tunnelRelayModeAvailability(options: {
+  relayCount: number;
+  aggregateSupported: boolean;
+}): { failover: TunnelRelayModeAvailability; aggregate: TunnelRelayModeAvailability } {
+  const relayCount = Math.max(0, Math.floor(Number(options.relayCount) || 0));
+  const hasEnoughRelays = relayCount >= TUNNEL_RELAY_PARALLEL_MIN_RELAYS;
+  const relayCountReason = `需要至少 ${TUNNEL_RELAY_PARALLEL_MIN_RELAYS} 台中转，当前 ${relayCount} 台`;
+  return {
+    failover: {
+      available: hasEnoughRelays,
+      reason: hasEnoughRelays ? "" : relayCountReason,
+    },
+    aggregate: {
+      // The protocol check comes first: telling an operator to add relays would
+      // be wrong when the transport cannot stripe a connection at all.
+      available: hasEnoughRelays && !!options.aggregateSupported,
+      reason: !options.aggregateSupported
+        ? "仅 ForwardX 隧道支持中转带宽叠加"
+        : hasEnoughRelays
+          ? ""
+          : relayCountReason,
+    },
+  };
+}

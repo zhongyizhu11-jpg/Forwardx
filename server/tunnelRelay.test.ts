@@ -7,6 +7,7 @@ import {
   tunnelRelayAggregateSupported,
   tunnelRelayCandidates,
   tunnelRelayFailoverSupported,
+  tunnelRelayModeAvailability,
   tunnelRelayUsesParallelRelays,
 } from "../shared/tunnelRelay";
 
@@ -60,4 +61,45 @@ test("aggregate and failover stay distinct so the entry knows which to run", () 
   const failover = { relayMode: "failover", mode: "forwardx" };
   assert.equal(isTunnelRelayFailover(failover, hops), true);
   assert.equal(isTunnelRelayAggregate(failover, hops), false);
+});
+
+test("relay mode availability explains why a mode cannot be picked", () => {
+  const none = tunnelRelayModeAvailability({ relayCount: 0, aggregateSupported: true });
+  assert.equal(none.failover.available, false);
+  assert.match(none.failover.reason, /当前 0 台/);
+  assert.equal(none.aggregate.available, false);
+  assert.match(none.aggregate.reason, /当前 0 台/);
+
+  const one = tunnelRelayModeAvailability({ relayCount: 1, aggregateSupported: true });
+  assert.equal(one.aggregate.available, false);
+  assert.match(one.aggregate.reason, /当前 1 台/);
+
+  const two = tunnelRelayModeAvailability({ relayCount: 2, aggregateSupported: true });
+  assert.equal(two.failover.available, true);
+  assert.equal(two.failover.reason, "");
+  assert.equal(two.aggregate.available, true);
+  assert.equal(two.aggregate.reason, "");
+});
+
+test("an unsupported protocol is reported instead of a misleading relay count", () => {
+  // Telling the operator to add relays would be wrong when the transport cannot
+  // stripe a connection at all, so the protocol reason wins.
+  const gost = tunnelRelayModeAvailability({ relayCount: 0, aggregateSupported: false });
+  assert.equal(gost.aggregate.available, false);
+  assert.match(gost.aggregate.reason, /仅 ForwardX/);
+  // Failover still works on those transports, so it keeps the relay-count reason.
+  assert.match(gost.failover.reason, /当前 0 台/);
+
+  const gostWithRelays = tunnelRelayModeAvailability({ relayCount: 3, aggregateSupported: false });
+  assert.equal(gostWithRelays.failover.available, true);
+  assert.equal(gostWithRelays.aggregate.available, false);
+  assert.match(gostWithRelays.aggregate.reason, /仅 ForwardX/);
+});
+
+test("a malformed relay count is treated as zero rather than throwing", () => {
+  const bad = tunnelRelayModeAvailability({ relayCount: Number.NaN, aggregateSupported: true });
+  assert.equal(bad.failover.available, false);
+  assert.match(bad.failover.reason, /当前 0 台/);
+  const negative = tunnelRelayModeAvailability({ relayCount: -3, aggregateSupported: true });
+  assert.match(negative.aggregate.reason, /当前 0 台/);
 });
