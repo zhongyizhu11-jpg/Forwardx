@@ -1,5 +1,10 @@
 /**
- * 多前置 VPS 带宽叠加聚合 (multi-front-VPS bandwidth aggregation).
+ * 多入口带宽加权分流 (bandwidth-weighted entry distribution).
+ *
+ * Not to be confused with the tunnel's relay bandwidth aggregation, which
+ * splits a single connection across several relays. This module distributes
+ * *different* clients across entry hosts by capacity; one connection still
+ * rides one entry.
  *
  * An entry group gathers several front VPS hosts behind one entry domain. By
  * default every healthy member is published, so client connections land on an
@@ -26,16 +31,16 @@ export type BandwidthAggregationStrategy = (typeof BANDWIDTH_AGGREGATION_STRATEG
 
 export const BANDWIDTH_AGGREGATION_STRATEGY_LABELS: Record<BandwidthAggregationStrategy, string> = {
   weighted: "手动权重 - 按成员权重分配",
-  equal: "均分模式 - 每个前置等量分配",
+  equal: "均分模式 - 每个入口等量分配",
   capacity: "带宽比例 - 按上行带宽分配",
-  adaptive: "动态叠加 - 按剩余带宽自动调节",
+  adaptive: "动态调节 - 按剩余带宽分配",
 };
 
 export const BANDWIDTH_AGGREGATION_STRATEGY_HINTS: Record<BandwidthAggregationStrategy, string> = {
-  weighted: "完全按照每个前置手动设置的权重分配入口解析份额。",
-  equal: "忽略带宽差异，所有健康前置获得相同份额，适合同规格机器。",
-  capacity: "按每个前置声明的上行带宽比例分配份额，带宽越大份额越高。",
-  adaptive: "在带宽比例的基础上，扣除实时已用带宽，把新连接导向剩余带宽更多的前置。",
+  weighted: "完全按照每个入口手动设置的权重分配解析份额。",
+  equal: "忽略带宽差异，所有健康入口获得相同份额，适合同规格机器。",
+  capacity: "按每个入口声明的上行带宽比例分配份额，带宽越大份额越高。",
+  adaptive: "在带宽比例的基础上，扣除实时已用带宽，把新连接导向剩余带宽更多的入口。",
 };
 
 /** Largest weight a single member may carry. Keeps record expansion bounded. */
