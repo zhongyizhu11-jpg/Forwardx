@@ -8,6 +8,10 @@ import { normalizeTrafficMultiplier } from "../../shared/trafficMultiplier";
 import { normalizeForwardRuleProtocol, type ForwardRuleProtocol } from "../../shared/forwardTypes";
 import { normalizeExitGroupStrategy, type ExitGroupStrategy } from "../../shared/exitStrategy";
 import {
+  normalizeForwardGroupHealthCheckMethod,
+  type ForwardGroupHealthCheckMethod,
+} from "../../shared/forwardGroupHealthCheck";
+import {
   normalizeAggregationMinMembers,
   normalizeAggregationRecordSlots,
   normalizeBandwidthAggregationStrategy,
@@ -61,6 +65,8 @@ export type ForwardGroupInput = {
   trafficMultiplier?: number;
   chinaHealthCheckEnabled?: boolean;
   chinaHealthCheckTarget?: string | null;
+  /** "tcp" connects to a port on the target; "ping" measures ICMP latency. */
+  chinaHealthCheckMethod?: ForwardGroupHealthCheckMethod;
   telegramSwitchNotifyEnabled?: boolean;
   ddnsAutoResolveEnabled?: boolean;
   /** Multi-front-VPS bandwidth aggregation. Entry groups only. */
@@ -194,9 +200,10 @@ async function normalizeForwardGroupInput(input: ForwardGroupInput, userId?: num
     throw new Error("Enabled exit group must contain at least one enabled host");
   }
   const chinaHealthCheckEnabled = (groupMode === "failover" || groupMode === "entry") && !!input.chinaHealthCheckEnabled;
+  const chinaHealthCheckMethod = normalizeForwardGroupHealthCheckMethod(input.chinaHealthCheckMethod);
   const rawChinaHealthTarget = chinaHealthCheckEnabled ? String(input.chinaHealthCheckTarget || "").trim() : "";
   const chinaHealthCheckTarget = chinaHealthCheckEnabled && rawChinaHealthTarget
-    ? db.normalizeChinaHealthTarget(rawChinaHealthTarget).text
+    ? db.normalizeChinaHealthTarget(rawChinaHealthTarget, chinaHealthCheckMethod).text
     : null;
   const telegramSwitchNotifyEnabled = (groupMode === "failover" || groupMode === "entry") && !!input.telegramSwitchNotifyEnabled;
   await assertTelegramSwitchNotifyReady(telegramSwitchNotifyEnabled);
@@ -242,6 +249,7 @@ async function normalizeForwardGroupInput(input: ForwardGroupInput, userId?: num
     recoverSeconds: input.recoverSeconds,
     chinaHealthCheckEnabled,
     chinaHealthCheckTarget,
+    chinaHealthCheckMethod,
     telegramSwitchNotifyEnabled,
     ddnsAutoResolveEnabled,
     bandwidthAggregationEnabled,
@@ -304,7 +312,9 @@ export async function updateForwardGroupFromInput(id: number, input: ForwardGrou
     && normalizeExitGroupStrategy(existing?.exitStrategy) !== normalizeExitGroupStrategy(normalized.data.exitStrategy);
   const shouldResetChinaHealth = !normalized.data.chinaHealthCheckEnabled
     || !!existing?.chinaHealthCheckEnabled !== !!normalized.data.chinaHealthCheckEnabled
-    || String(existing?.chinaHealthCheckTarget || "") !== String(normalized.data.chinaHealthCheckTarget || "");
+    || String(existing?.chinaHealthCheckTarget || "") !== String(normalized.data.chinaHealthCheckTarget || "")
+    || normalizeForwardGroupHealthCheckMethod(existing?.chinaHealthCheckMethod)
+      !== normalizeForwardGroupHealthCheckMethod(normalized.data.chinaHealthCheckMethod);
   const persistConfiguration = async (options: { deferRefresh?: boolean; skipMemberSync?: boolean } = {}) => {
     await db.updateForwardGroup(id, {
       ...normalized.data,

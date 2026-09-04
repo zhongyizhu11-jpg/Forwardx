@@ -282,6 +282,9 @@ const tables: TableDef[] = [
       c("failoverStrategy", "varchar", { length: 32, notNull: true, default: "fallback" }),
       c("failoverSeconds", "int", { notNull: true, default: 60 }),
       c("recoverSeconds", "int", { notNull: true, default: 120 }), c("chinaHealthCheckEnabled", "bool", { notNull: true, default: false }), c("chinaHealthCheckTarget", "text"),
+      // Probe method for member health: "tcp" connects to a port, "ping" only
+      // measures ICMP latency and needs no port.
+      c("chinaHealthCheckMethod", "varchar", { length: 16, notNull: true, default: "tcp" }),
       c("telegramSwitchNotifyEnabled", "bool", { notNull: true, default: false }),
       c("ddnsAutoResolveEnabled", "bool", { notNull: true, default: true }), c("autoFailback", "bool", { notNull: true, default: true }),
       // Multi-front-VPS bandwidth aggregation. Off by default so existing entry

@@ -1,0 +1,93 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  defaultHealthCheckTarget,
+  healthCheckTargetNeedsPort,
+  healthCheckTargetPlaceholder,
+  normalizeForwardGroupHealthCheckMethod,
+} from "../shared/forwardGroupHealthCheck";
+import { normalizeChinaHealthTarget } from "./repositories/forwardGroupRepository";
+
+test("health check method defaults to TCPing and only accepts a known value", () => {
+  assert.equal(normalizeForwardGroupHealthCheckMethod("ping"), "ping");
+  assert.equal(normalizeForwardGroupHealthCheckMethod("  PING "), "ping");
+  assert.equal(normalizeForwardGroupHealthCheckMethod("tcp"), "tcp");
+  assert.equal(normalizeForwardGroupHealthCheckMethod("icmp"), "tcp");
+  assert.equal(normalizeForwardGroupHealthCheckMethod(null), "tcp");
+  assert.equal(normalizeForwardGroupHealthCheckMethod(undefined), "tcp");
+});
+
+test("only TCPing needs a port on the target", () => {
+  assert.equal(healthCheckTargetNeedsPort("tcp"), true);
+  assert.equal(healthCheckTargetNeedsPort("ping"), false);
+  assert.equal(defaultHealthCheckTarget("tcp"), "www.189.cn:80");
+  assert.equal(defaultHealthCheckTarget("ping"), "www.189.cn");
+  assert.match(healthCheckTargetPlaceholder("tcp"), /端口/);
+  assert.doesNotMatch(healthCheckTargetPlaceholder("ping"), /:80/);
+});
+
+test("TCPing targets keep their host and port", () => {
+  const parsed = normalizeChinaHealthTarget("www.189.cn:443", "tcp");
+  assert.equal(parsed.host, "www.189.cn");
+  assert.equal(parsed.port, 443);
+  assert.equal(parsed.text, "www.189.cn:443");
+  assert.equal(parsed.method, "tcp");
+});
+
+test("TCPing falls back to port 80 and to the default target", () => {
+  assert.equal(normalizeChinaHealthTarget("www.189.cn", "tcp").port, 80);
+  assert.equal(normalizeChinaHealthTarget("", "tcp").text, "www.189.cn:80");
+});
+
+test("ping targets drop the port so a bare host is the stored form", () => {
+  const bare = normalizeChinaHealthTarget("1.1.1.1", "ping");
+  assert.equal(bare.host, "1.1.1.1");
+  assert.equal(bare.port, 0);
+  assert.equal(bare.text, "1.1.1.1");
+  assert.equal(bare.method, "ping");
+
+  // A port the operator typed is meaningless for ICMP, so it is dropped rather
+  // than rejected.
+  const withPort = normalizeChinaHealthTarget("1.1.1.1:80", "ping");
+  assert.equal(withPort.host, "1.1.1.1");
+  assert.equal(withPort.port, 0);
+  assert.equal(withPort.text, "1.1.1.1");
+});
+
+test("ping uses its own default target", () => {
+  assert.equal(normalizeChinaHealthTarget("", "ping").text, "www.189.cn");
+});
+
+test("IPv6 targets keep bracket form for TCPing and drop it for ping", () => {
+  const tcp = normalizeChinaHealthTarget("[2606:4700:4700::1111]:443", "tcp");
+  assert.equal(tcp.host, "2606:4700:4700::1111");
+  assert.equal(tcp.port, 443);
+  assert.equal(tcp.text, "[2606:4700:4700::1111]:443");
+
+  const ping = normalizeChinaHealthTarget("2606:4700:4700::1111", "ping");
+  assert.equal(ping.host, "2606:4700:4700::1111");
+  assert.equal(ping.port, 0);
+  assert.equal(ping.text, "[2606:4700:4700::1111]");
+});
+
+test("an omitted method keeps the previous TCPing behaviour", () => {
+  // Existing callers pass no method; their targets must parse exactly as before.
+  const parsed = normalizeChinaHealthTarget("www.189.cn:80");
+  assert.equal(parsed.port, 80);
+  assert.equal(parsed.text, "www.189.cn:80");
+  assert.equal(parsed.method, "tcp");
+});
+
+test("malformed targets are rejected for both methods", () => {
+  assert.throws(() => normalizeChinaHealthTarget("bad host", "tcp"));
+  assert.throws(() => normalizeChinaHealthTarget("bad host", "ping"));
+  assert.throws(() => normalizeChinaHealthTarget("has/slash", "ping"));
+});
+
+test("an out-of-range port fails TCPing but is ignored by ping", () => {
+  // 99999 is not a valid port, so it is not consumed as one and stays part of
+  // the host, which then fails the host check for TCPing.
+  assert.throws(() => normalizeChinaHealthTarget("[2606:4700::1111]:99999", "tcp"));
+  // Ping never looks at a port at all.
+  assert.equal(normalizeChinaHealthTarget("1.1.1.1:99999", "ping").host, "1.1.1.1");
+});

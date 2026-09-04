@@ -106,6 +106,15 @@ import {
   type ExitGroupStrategy,
 } from "@shared/exitStrategy";
 import {
+  FORWARD_GROUP_HEALTH_CHECK_METHODS,
+  FORWARD_GROUP_HEALTH_CHECK_METHOD_HINTS,
+  FORWARD_GROUP_HEALTH_CHECK_METHOD_LABELS,
+  healthCheckTargetNeedsPort,
+  healthCheckTargetPlaceholder,
+  normalizeForwardGroupHealthCheckMethod,
+  type ForwardGroupHealthCheckMethod,
+} from "@shared/forwardGroupHealthCheck";
+import {
   BANDWIDTH_AGGREGATION_STRATEGIES,
   BANDWIDTH_AGGREGATION_STRATEGY_HINTS,
   BANDWIDTH_AGGREGATION_STRATEGY_LABELS,
@@ -164,6 +173,7 @@ type GroupForm = {
   trafficMultiplier: string;
   chinaHealthCheckEnabled: boolean;
   chinaHealthCheckTarget: string;
+  chinaHealthCheckMethod: ForwardGroupHealthCheckMethod;
   telegramSwitchNotifyEnabled: boolean;
   ddnsAutoResolveEnabled: boolean;
   bandwidthAggregationEnabled: boolean;
@@ -201,6 +211,7 @@ const makeDefaultForm = (): GroupForm => ({
   trafficMultiplier: "1",
   chinaHealthCheckEnabled: false,
   chinaHealthCheckTarget: "",
+  chinaHealthCheckMethod: "tcp",
   telegramSwitchNotifyEnabled: false,
   ddnsAutoResolveEnabled: true,
   bandwidthAggregationEnabled: false,
@@ -234,8 +245,9 @@ function isCollectionMode(mode: GroupMode) {
   return mode === "entry" || mode === "exit";
 }
 
-function normalizeChinaHealthTargetInput(value: string) {
-  const target = value.trim().replace(/^tcp:\/\//i, "").replace(/\uFF1A/g, ":");
+function normalizeChinaHealthTargetInput(value: string, method: ForwardGroupHealthCheckMethod = "tcp") {
+  const needsPort = healthCheckTargetNeedsPort(method);
+  const target = value.trim().replace(/^(?:tcp|icmp|ping):\/\//i, "").replace(/\uFF1A/g, ":");
   if (!target) return "";
   if (target.length > 253 || /[\s'"<>/]/.test(target)) return undefined;
   let host = target;
@@ -259,9 +271,19 @@ function normalizeChinaHealthTargetInput(value: string) {
     }
   }
   host = unwrapBracketedHost(host).trim();
+  // Ping ignores ports entirely, so a port left over from TCPing is stripped
+  // rather than rejected as a malformed IPv6 address.
+  if (!needsPort && host.includes(":") && !isValidIpv6Address(host)) {
+    const trailingPort = host.match(/^(.*?):(\d+)$/);
+    if (trailingPort && !isValidIpv6Address(trailingPort[1])) host = trailingPort[1].trim();
+  }
   if (host.includes(":") && !isValidIpv6Address(host)) return undefined;
-  if (!host || host.length > 253 || /[\s'"<>/]/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) return undefined;
-  return isValidIpv6Address(host) ? `[${host}]:${port}` : `${host}:${port}`;
+  if (!host || host.length > 253 || /[\s'"<>/]/.test(host)) return undefined;
+  const bracketed = isValidIpv6Address(host) ? `[${host}]` : host;
+  // Ping carries no port, so the stored target is the bare host.
+  if (!needsPort) return bracketed;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+  return `${bracketed}:${port}`;
 }
 function unwrapBracketedHost(value: unknown) {
   const text = String(value || "").trim();
@@ -1195,6 +1217,7 @@ export function ForwardGroupsContent({
       trafficMultiplier: String(trafficMultiplierToInputValue(group.trafficMultiplier)).replace(/\.?0+$/, ""),
       chinaHealthCheckEnabled: !!group.chinaHealthCheckEnabled,
       chinaHealthCheckTarget: group.chinaHealthCheckTarget || "",
+      chinaHealthCheckMethod: normalizeForwardGroupHealthCheckMethod(group.chinaHealthCheckMethod),
       telegramSwitchNotifyEnabled: !!group.telegramSwitchNotifyEnabled,
       ddnsAutoResolveEnabled: group.ddnsAutoResolveEnabled !== false,
       bandwidthAggregationEnabled: !!group.bandwidthAggregationEnabled,
@@ -1582,7 +1605,7 @@ export function ForwardGroupsContent({
     const trafficMultiplier = trafficMultiplierFromInput(trafficMultiplierValue);
     const runtimeConfigSupported = isPortMode || isChainGroup || isFailoverMode;
     const runtimeTcpOptionsSupported = runtimeConfigSupported && form.protocol !== "udp";
-    const chinaHealthTarget = normalizeChinaHealthTargetInput(form.chinaHealthCheckTarget);
+    const chinaHealthTarget = normalizeChinaHealthTargetInput(form.chinaHealthCheckTarget, form.chinaHealthCheckMethod);
     if (supportsChinaHealth && form.chinaHealthCheckEnabled && chinaHealthTarget === undefined) {
       return toast.error("入口健康度检测目标格式不正确");
     }
@@ -1618,6 +1641,7 @@ export function ForwardGroupsContent({
       failoverTargets: [],
       chinaHealthCheckEnabled: supportsChinaHealth && form.chinaHealthCheckEnabled,
       chinaHealthCheckTarget: supportsChinaHealth && form.chinaHealthCheckEnabled ? chinaHealthTarget || null : null,
+      chinaHealthCheckMethod: form.chinaHealthCheckMethod,
       telegramSwitchNotifyEnabled: supportsSwitchNotify && form.telegramSwitchNotifyEnabled,
       ddnsAutoResolveEnabled: isEntryGroup ? form.ddnsAutoResolveEnabled : true,
       bandwidthAggregationEnabled: isEntryGroup && form.bandwidthAggregationEnabled,
@@ -2494,13 +2518,30 @@ export function ForwardGroupsContent({
                 <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,200px)]">
                   <div className="space-y-1.5">
                     <Input
-                      aria-label="入口健康度 TCPing 目标，留空默认 www.189.cn:80"
+                      aria-label="入口健康度检测目标"
                       disabled={!form.chinaHealthCheckEnabled}
                       value={form.chinaHealthCheckTarget}
                       onChange={(e) => setForm({ ...form, chinaHealthCheckTarget: e.target.value })}
-                      placeholder="留空默认 www.189.cn:80，IPv6 用 [地址]:端口"
+                      placeholder={healthCheckTargetPlaceholder(form.chinaHealthCheckMethod)}
                     />
-                    <p className="text-xs text-muted-foreground">使用 TCPing 检查成员。IPv6 格式：[地址]:端口。</p>
+                    <Select
+                      value={form.chinaHealthCheckMethod}
+                      onValueChange={(value) => setForm({ ...form, chinaHealthCheckMethod: normalizeForwardGroupHealthCheckMethod(value) })}
+                      disabled={!form.chinaHealthCheckEnabled}
+                    >
+                      <SelectTrigger aria-label="健康度检测方式"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {FORWARD_GROUP_HEALTH_CHECK_METHODS.map((method) => (
+                          <SelectItem key={method} value={method}>
+                            {FORWARD_GROUP_HEALTH_CHECK_METHOD_LABELS[method]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {FORWARD_GROUP_HEALTH_CHECK_METHOD_HINTS[form.chinaHealthCheckMethod]}
+                      {healthCheckTargetNeedsPort(form.chinaHealthCheckMethod) ? " IPv6 格式：[地址]:端口。" : " IPv6 直接填地址。"}
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <label className="flex h-10 items-center justify-between rounded-md border border-border/60 px-3">
@@ -2883,13 +2924,30 @@ export function ForwardGroupsContent({
                 <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,200px)]">
                   <div className="space-y-1.5">
                     <Input
-                      aria-label="入口健康度 TCPing 目标，留空默认 www.189.cn:80"
+                      aria-label="入口健康度检测目标"
                       disabled={!form.chinaHealthCheckEnabled}
                       value={form.chinaHealthCheckTarget}
                       onChange={(e) => setForm({ ...form, chinaHealthCheckTarget: e.target.value })}
-                      placeholder="留空默认 www.189.cn:80，IPv6 请写 [地址]:端口"
+                      placeholder={healthCheckTargetPlaceholder(form.chinaHealthCheckMethod)}
                     />
-                    <p className="text-xs text-muted-foreground">使用 TCPing 检查成员。IPv6 格式：[地址]:端口。</p>
+                    <Select
+                      value={form.chinaHealthCheckMethod}
+                      onValueChange={(value) => setForm({ ...form, chinaHealthCheckMethod: normalizeForwardGroupHealthCheckMethod(value) })}
+                      disabled={!form.chinaHealthCheckEnabled}
+                    >
+                      <SelectTrigger aria-label="健康度检测方式"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {FORWARD_GROUP_HEALTH_CHECK_METHODS.map((method) => (
+                          <SelectItem key={method} value={method}>
+                            {FORWARD_GROUP_HEALTH_CHECK_METHOD_LABELS[method]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {FORWARD_GROUP_HEALTH_CHECK_METHOD_HINTS[form.chinaHealthCheckMethod]}
+                      {healthCheckTargetNeedsPort(form.chinaHealthCheckMethod) ? " IPv6 格式：[地址]:端口。" : " IPv6 直接填地址。"}
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <label className="flex h-10 items-center justify-between rounded-md border border-border/60 px-3">

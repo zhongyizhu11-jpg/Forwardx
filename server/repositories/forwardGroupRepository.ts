@@ -18,6 +18,12 @@ import { afterDatabaseCommit, afterDatabaseTransactionSettled, executeRaw, getDb
 import { boolValue, countAll, inList, quoteIdentifier } from "../dbCompat";
 import { pageResult, pageWindowForTotal, type PageRequest } from "../../shared/pagination";
 import {
+  defaultHealthCheckTarget,
+  healthCheckTargetNeedsPort,
+  normalizeForwardGroupHealthCheckMethod,
+  type ForwardGroupHealthCheckMethod,
+} from "../../shared/forwardGroupHealthCheck";
+import {
   createForwardRule,
   getForwardGroupChildRules,
   getForwardGroupChildRulesForMember,
@@ -271,9 +277,11 @@ const DEFAULT_CHINA_HEALTH_TARGET = "www.189.cn:80";
 const lastDdnsEventByKey = new Map<string, string>();
 const exactDdnsReconciledGroups = new Map<number, string>();
 
-export function normalizeChinaHealthTarget(raw: unknown) {
-  const source = String(raw || "").trim() || DEFAULT_CHINA_HEALTH_TARGET;
-  const withoutScheme = source.replace(/^tcp:\/\//i, "").replace(/：/g, ":").trim();
+export function normalizeChinaHealthTarget(raw: unknown, method?: unknown) {
+  const probeMethod = normalizeForwardGroupHealthCheckMethod(method);
+  const needsPort = healthCheckTargetNeedsPort(probeMethod);
+  const source = String(raw || "").trim() || defaultHealthCheckTarget(probeMethod);
+  const withoutScheme = source.replace(/^(?:tcp|icmp|ping):\/\//i, "").replace(/：/g, ":").trim();
   let host = withoutScheme;
   let port = 80;
 
@@ -297,17 +305,26 @@ export function normalizeChinaHealthTarget(raw: unknown) {
   }
 
   host = normalizeIpCandidate(host).trim();
+  // Ping ignores ports entirely, so a port left over from TCPing is stripped
+  // rather than reported as a malformed IPv6 address.
+  if (!needsPort && host.includes(":") && isIP(host) !== 6) {
+    const trailingPort = host.match(/^(.*?):(\d+)$/);
+    if (trailingPort && isIP(trailingPort[1]) !== 6) host = trailingPort[1].trim();
+  }
   if (host.includes(":") && isIP(host) !== 6) {
     throw new Error("China health IPv6 target format is invalid");
   }
   if (!host || host.length > 253 || /[\s'"<>/]/.test(host)) {
     throw new Error("China health target format is invalid");
   }
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  if (needsPort && (!Number.isInteger(port) || port < 1 || port > 65535)) {
     throw new Error("China health target port must be 1-65535");
   }
   const textHost = isIP(host) === 6 ? `[${host}]` : host;
-  return { host, port, text: `${textHost}:${port}` };
+  // Ping carries no port, so the stored text is the bare host and the probe is
+  // emitted with port 0.
+  if (!needsPort) return { host, port: 0, text: textHost, method: probeMethod };
+  return { host, port, text: `${textHost}:${port}`, method: probeMethod };
 }
 function toDate(value: unknown): Date | null {
   if (!value) return null;
@@ -1269,7 +1286,7 @@ export type ForwardGroupChinaHealthProbe = {
   fromHostId: number;
   targetIp: string;
   targetPort: number;
-  method: "tcp";
+  method: ForwardGroupHealthCheckMethod;
   probeType: "china";
   failoverSeconds: number;
   recoverSeconds: number;
@@ -1550,9 +1567,10 @@ export async function getForwardGroupProbeTopologyForHost(hostId: number): Promi
       continue;
     }
     if (!supportsChinaHealthMode(groupModeOf(group)) || !dbBool(group.chinaHealthCheckEnabled)) continue;
+    const healthMethod = normalizeForwardGroupHealthCheckMethod(group.chinaHealthCheckMethod);
     let target;
     try {
-      target = normalizeChinaHealthTarget(group.chinaHealthCheckTarget);
+      target = normalizeChinaHealthTarget(group.chinaHealthCheckTarget, healthMethod);
     } catch (error) {
       appendPanelLog("warn", `[ForwardGroup] china health target invalid group=${group.id} target=${String(group.chinaHealthCheckTarget || "-")}: ${error instanceof Error ? error.message : String(error)}`);
       continue;
@@ -1568,7 +1586,7 @@ export async function getForwardGroupProbeTopologyForHost(hostId: number): Promi
         fromHostId: entryHostId,
         targetIp: target.host,
         targetPort: target.port,
-        method: "tcp",
+        method: healthMethod,
         probeType: "china",
         failoverSeconds: Math.max(10, Number(group.failoverSeconds || 60)),
         recoverSeconds: Math.max(10, Number(group.recoverSeconds || 120)),
@@ -1599,9 +1617,10 @@ export async function getForwardGroupChinaHealthProbesForHost(hostId: number) {
   const probes: ForwardGroupChinaHealthProbe[] = [];
   for (const group of groups) {
     if (!dbBool(group?.isEnabled) || !supportsChinaHealthMode(groupModeOf(group)) || !dbBool(group?.chinaHealthCheckEnabled)) continue;
+    const healthMethod = normalizeForwardGroupHealthCheckMethod(group.chinaHealthCheckMethod);
     let target;
     try {
-      target = normalizeChinaHealthTarget(group.chinaHealthCheckTarget);
+      target = normalizeChinaHealthTarget(group.chinaHealthCheckTarget, healthMethod);
     } catch (error) {
       appendPanelLog("warn", `[ForwardGroup] china health target invalid group=${group.id} target=${String(group.chinaHealthCheckTarget || "-")}: ${error instanceof Error ? error.message : String(error)}`);
       continue;
@@ -1615,7 +1634,7 @@ export async function getForwardGroupChinaHealthProbesForHost(hostId: number) {
         fromHostId: Number(entryHostId),
         targetIp: target.host,
         targetPort: target.port,
-        method: "tcp",
+        method: healthMethod,
         probeType: "china",
         failoverSeconds: Math.max(10, Number(group.failoverSeconds || 60)),
         recoverSeconds: Math.max(10, Number(group.recoverSeconds || 120)),
