@@ -563,7 +563,9 @@ latest_release_version() {
   tag="$(release_tag_from_url "$api_url")"
 
   if [ -z "$tag" ]; then
-    echo "[ERROR] Failed to resolve latest release version from GitHub API: $api_url"
+    echo "[ERROR] Failed to resolve latest release version from GitHub API: $api_url" >&2
+    echo "[INFO] A 404 here usually means the repository has no published release yet." >&2
+    echo "[INFO] Push a version tag to build one, or pin a version with FORWARDX_TARGET_VERSION=x.y.z." >&2
     return 1
   fi
   printf "%s\n" "$tag"
@@ -580,7 +582,7 @@ resolve_release_version() {
   fi
 
   if [[ ! "$normalized" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "[ERROR] Invalid release version: ${normalized:-<empty>}"
+    echo "[ERROR] Invalid release version: ${normalized:-<empty>}" >&2
     return 1
   fi
   printf "%s\n" "$normalized"
