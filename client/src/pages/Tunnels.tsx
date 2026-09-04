@@ -106,6 +106,7 @@ import {
 } from "@shared/trafficMultiplier";
 import {
   normalizeTunnelRelayMode,
+  tunnelRelayAggregateSupported,
   tunnelRelayFailoverSupported,
   type TunnelRelayMode,
 } from "@shared/tunnelRelay";
@@ -763,6 +764,15 @@ function isTunnelProxyProtocolSupported(mode: unknown) {
 
 function isTunnelTransportTuningSupported(mode: unknown) {
   return normalizeTunnelModeForForm(mode) === "forwardx";
+}
+
+// relayModeForSubmit drops a relay mode the selected protocol or hop count
+// cannot support, so the panel never sends a combination the server rejects.
+function relayModeForSubmit(mode: unknown, relayMode: TunnelRelayMode, hopCount: number): TunnelRelayMode {
+  if (hopCount < 4) return "chain";
+  if (relayMode === "aggregate") return tunnelRelayAggregateSupported(mode) ? "aggregate" : "chain";
+  if (relayMode === "failover") return tunnelRelayFailoverSupported(mode) ? "failover" : "chain";
+  return "chain";
 }
 
 function normalizeTunnelModeForForm(mode: unknown): TunnelForm["mode"] {
@@ -3084,9 +3094,7 @@ function TunnelsContent() {
     const payload: any = {
       name: submitForm.name,
       mode: normalizeTunnelModeForForm(submitForm.mode),
-      relayMode: orderedHopHostIds.length >= 4 && tunnelRelayFailoverSupported(submitForm.mode)
-        ? submitForm.relayMode
-        : "chain",
+      relayMode: relayModeForSubmit(submitForm.mode, submitForm.relayMode, orderedHopHostIds.length),
       forwardxVersion,
       certDomain: isNginxTunnelModeValue(submitForm.mode) ? certDomain || null : null,
       certPem: isNginxTunnelModeValue(submitForm.mode) ? certPem || null : null,
@@ -4529,6 +4537,7 @@ function TunnelsContent() {
                         externalExit={!!form.exitGroupId}
                         relayMode={form.relayMode}
                         relayModeSupported={tunnelRelayFailoverSupported(form.mode)}
+                        relayAggregateSupported={tunnelRelayAggregateSupported(form.mode)}
                         onRelayModeChange={(relayMode) => setForm((prev) => ({ ...prev, relayMode }))}
                         fixedExitHostIds={form.exitGroupId ? exitMembersForGroup(form.exitGroupId).map((member: any) => Number(member.hostId || 0)).filter((id: number) => id > 0) : []}
                         excludedHostIds={externalTunnelHostIds(form.entryGroupId, form.exitGroupId)}
@@ -4837,6 +4846,7 @@ function TunnelsContent() {
                 externalExit={!!form.exitGroupId}
                 relayMode={form.relayMode}
                 relayModeSupported={tunnelRelayFailoverSupported(form.mode)}
+                relayAggregateSupported={tunnelRelayAggregateSupported(form.mode)}
                 onRelayModeChange={(relayMode) => setForm((prev) => ({ ...prev, relayMode }))}
                 fixedExitHostIds={form.exitGroupId ? exitMembersForGroup(form.exitGroupId).map((member: any) => Number(member.hostId || 0)).filter((id: number) => id > 0) : []}
                 excludedHostIds={externalTunnelHostIds(form.entryGroupId, form.exitGroupId)}

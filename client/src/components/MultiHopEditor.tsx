@@ -18,7 +18,7 @@ import {
   multiHopAddressSelection,
   selectedMultiHopConnectHost,
 } from "@/lib/multiHopAddress";
-import type { TunnelRelayMode } from "@shared/tunnelRelay";
+import { TUNNEL_RELAY_MODE_HINTS, type TunnelRelayMode } from "@shared/tunnelRelay";
 
 interface Host {
   id: number;
@@ -55,6 +55,8 @@ interface MultiHopEditorProps {
   externalExit?: boolean;
   relayMode?: TunnelRelayMode;
   relayModeSupported?: boolean;
+  /** Bandwidth aggregation is a ForwardX-only protocol feature. */
+  relayAggregateSupported?: boolean;
   onRelayModeChange?: (mode: TunnelRelayMode) => void;
 }
 
@@ -96,6 +98,7 @@ export default function MultiHopEditor({
   externalExit = false,
   relayMode = "chain",
   relayModeSupported = false,
+  relayAggregateSupported = false,
   onRelayModeChange,
 }: MultiHopEditorProps) {
   const hostById = useMemo(() => new Map(hosts.map((host) => [host.id, host])), [hosts]);
@@ -216,9 +219,14 @@ export default function MultiHopEditor({
   const relayCount = Math.max(0, hops.length - (externalEntry ? 0 : 1) - (externalExit ? 0 : 1));
   const showRelayMode = relayModeSupported && relayCount >= 2;
 
+  const showAggregate = showRelayMode && relayAggregateSupported;
+
   useEffect(() => {
     if (!showRelayMode && relayMode === "failover") onRelayModeChange?.("chain");
-  }, [onRelayModeChange, relayMode, showRelayMode]);
+    // Aggregation cannot survive a switch to a protocol that does not implement
+    // it, or a hop list that no longer has two relays to combine.
+    if (!showAggregate && relayMode === "aggregate") onRelayModeChange?.("chain");
+  }, [onRelayModeChange, relayMode, showAggregate, showRelayMode]);
 
   useEffect(() => {
     if (excludedIds.size === 0) return;
@@ -302,7 +310,7 @@ export default function MultiHopEditor({
         {showRelayMode && (
           <div className="flex min-w-0 items-center gap-2 sm:ml-auto">
             <span className="shrink-0 text-xs text-muted-foreground">中转模式</span>
-            <div className={`${segmentedControlClassName} grid min-w-0 flex-1 grid-cols-2 gap-1 sm:w-52 sm:flex-none`}>
+            <div className={`${segmentedControlClassName} grid min-w-0 flex-1 gap-1 sm:flex-none ${showAggregate ? "grid-cols-3 sm:w-72" : "grid-cols-2 sm:w-52"}`}>
               <button
                 type="button"
                 aria-pressed={relayMode === "chain"}
@@ -319,10 +327,26 @@ export default function MultiHopEditor({
               >
                 故障转移
               </button>
+              {showAggregate && (
+                <button
+                  type="button"
+                  aria-pressed={relayMode === "aggregate"}
+                  className={segmentedOptionClassName(relayMode === "aggregate", false, "h-7 px-2 text-xs")}
+                  onClick={() => onRelayModeChange?.("aggregate")}
+                  title="单条连接拆分到全部中转并行传输，由出口重组"
+                >
+                  带宽叠加
+                </button>
+              )}
             </div>
           </div>
         )}
       </div>
+      {showRelayMode && (
+        <p className="text-xs text-muted-foreground">
+          {TUNNEL_RELAY_MODE_HINTS[relayMode]}
+        </p>
+      )}
 
       {hops.length === 0 ? (
         <div className="flex items-center justify-center rounded-md border border-dashed border-border py-5 text-sm text-muted-foreground">
@@ -337,7 +361,7 @@ export default function MultiHopEditor({
             <span>两者互斥，未配置时不可开启</span>
           </div>
           <div className="hidden grid-cols-[auto_auto_minmax(8rem,1fr)_56px_56px_52px_84px] items-center gap-1.5 px-2.5 text-[11px] text-muted-foreground sm:grid">
-            <span className="col-span-2">{relayMode === "failover" ? "优先级" : "顺序"}</span>
+            <span className="col-span-2">{relayMode === "chain" ? "顺序" : "优先级"}</span>
             <span>主机</span>
             <span className="text-center">内网</span>
             <span className="text-center">IPv6</span>

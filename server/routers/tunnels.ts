@@ -25,8 +25,10 @@ import { normalizeForwardXVersion } from "../../shared/forwardTypes";
 import { AGENT_FORWARDX_WIREGUARD_VERSION, isForwardXWireGuardV2 } from "../forwardXWireGuard";
 import { isAgentVersionAtLeast } from "../agentRouteUtils";
 import {
+  AGENT_FORWARDX_RELAY_AGGREGATE_VERSION,
   AGENT_FORWARDX_RELAY_FAILOVER_VERSION,
   normalizeTunnelRelayMode,
+  tunnelRelayAggregateSupported,
   tunnelRelayFailoverSupported,
 } from "../../shared/tunnelRelay";
 import { normalizeExitGroupStrategy } from "../../shared/exitStrategy";
@@ -55,7 +57,7 @@ const tunnelModeSchema = z.enum(["forwardx", "tls", "wss", "tcp", "mtls", "mwss"
 const forwardXVersionSchema = z.enum(["v1", "v2"]);
 const proxyProtocolVersionSchema = z.union([z.literal(1), z.literal(2)]);
 const tunnelLoadBalanceStrategySchema = z.enum(["none", "round_robin", "random", "least_conn", "ip_hash", "fallback"]);
-const tunnelRelayModeSchema = z.enum(["chain", "failover"]);
+const tunnelRelayModeSchema = z.enum(["chain", "failover", "aggregate"]);
 const MAX_TUNNEL_HOPS = 10;
 const MAX_EXTRA_TUNNEL_EXITS = 4;
 const MAX_NGINX_CERT_BYTES = 64 * 1024;
@@ -93,6 +95,17 @@ async function requireForwardXRelayFailoverAgentVersions(hostIds: number[]) {
   if (unsupported.length === 0) return;
   const labels = unsupported.map(({ id, host }) => host?.name || host?.ip || `主机 ${id}`).slice(0, 5);
   throw new Error(`ForwardX 中转故障转移需要入口 Agent 升级到 v${AGENT_FORWARDX_RELAY_FAILOVER_VERSION} 或更高版本：${labels.join("、")}`);
+}
+
+async function requireForwardXRelayAggregateAgentVersions(hostIds: number[]) {
+  const ids = Array.from(new Set(hostIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  const hosts = await Promise.all(ids.map(async (id) => ({ id, host: await db.getHostById(id) as any })));
+  const unsupported = hosts.filter(({ host }) => (
+    !host || !isAgentVersionAtLeast(String(host.agentVersion || ""), AGENT_FORWARDX_RELAY_AGGREGATE_VERSION)
+  ));
+  if (unsupported.length === 0) return;
+  const labels = unsupported.map(({ id, host }) => host?.name || host?.ip || `主机 ${id}`).slice(0, 5);
+  throw new Error(`ForwardX 中转带宽叠加需要入口、中转和出口 Agent 升级到 v${AGENT_FORWARDX_RELAY_AGGREGATE_VERSION} 或更高版本：${labels.join("、")}`);
 }
 
 function isTunnelProxyProtocolSupported(mode: unknown) {
@@ -840,6 +853,10 @@ export const tunnelsRouter = router({
           if (!hopHostIds || hopHostIds.length < 4) throw new Error("故障转移至少需要配置两个中转主机");
           if (!tunnelRelayFailoverSupported(normalizedMode)) throw new Error("当前隧道工具不支持中转故障转移");
         }
+        if (relayMode === "aggregate") {
+          if (!hopHostIds || hopHostIds.length < 4) throw new Error("带宽叠加至少需要配置两个中转主机");
+          if (!tunnelRelayAggregateSupported(normalizedMode)) throw new Error("仅 ForwardX 隧道支持中转带宽叠加");
+        }
         await requireTunnelProtocolEnabled({ ...input, mode: normalizedMode });
         await requireEntryGroupAccess(ctx, input.entryGroupId, true);
         const exitGroup = await requireExitGroupAccess(ctx, input.exitGroupId, true);
@@ -913,6 +930,17 @@ export const tunnelsRouter = router({
             entryHostId,
           });
           await requireForwardXRelayFailoverAgentVersions(entryHostIds);
+        }
+        if (relayMode === "aggregate") {
+          const entryHostIds = await getTunnelEntryTestHostIds({
+            entryGroupId: input.entryGroupId ?? null,
+            entryHostId,
+          });
+          await requireForwardXRelayAggregateAgentVersions([
+            ...entryHostIds,
+            ...(hopHostIds || []),
+            exitHostId,
+          ]);
         }
         const runtimeOptions = normalizeTunnelRuntimeOptions(input, normalizedMode);
         if (runtimeOptions.udpOverTcp) {
@@ -1114,7 +1142,13 @@ export const tunnelsRouter = router({
           if (!hopIdsForConnect || hopIdsForConnect.length < 4) throw new Error("故障转移至少需要配置两个中转主机");
           if (!tunnelRelayFailoverSupported(nextModeForRuntime)) throw new Error("当前隧道工具不支持中转故障转移");
         }
-        const nextRelayMode = requestedRelayMode === "failover" ? "failover" : "chain";
+        if (requestedRelayMode === "aggregate") {
+          if (!hopIdsForConnect || hopIdsForConnect.length < 4) throw new Error("带宽叠加至少需要配置两个中转主机");
+          if (!tunnelRelayAggregateSupported(nextModeForRuntime)) throw new Error("仅 ForwardX 隧道支持中转带宽叠加");
+        }
+        const nextRelayMode = requestedRelayMode === "failover" || requestedRelayMode === "aggregate"
+          ? requestedRelayMode
+          : "chain";
         const entryHostId = hopHostIds ? hopHostIds[0] : (input.entryHostId ?? tunnel.entryHostId);
         const exitHostId = hopHostIds ? hopHostIds[hopHostIds.length - 1] : (input.exitHostId ?? tunnel.exitHostId);
         if (entryHostId === exitHostId) throw new Error("入口 Agent 和出口 Agent 不能相同");

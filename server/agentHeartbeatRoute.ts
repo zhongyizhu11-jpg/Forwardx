@@ -89,7 +89,7 @@ import {
 import { agentStatusOrderGuard, agentStatusOrderingKey } from "./agentStatusOrdering";
 import { forwardGroupProbeTopologyKey, tunnelProbeTopologyKey } from "./probeTopology";
 import { resolveLocalForwardXTransportVersion, resolveRuleTrafficPortForHost } from "./agentRuntimeRuleState";
-import { isTunnelRelayFailover, tunnelRelayCandidates } from "@shared/tunnelRelay";
+import { isTunnelRelayAggregate, isTunnelRelayFailover, tunnelRelayCandidates, tunnelRelayUsesParallelRelays } from "@shared/tunnelRelay";
 import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
 import { forwardXExitStrategy, gostExitSelector, shouldUseFastTunnelFailover } from "./tunnelExitStrategy";
 import {
@@ -2775,7 +2775,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
             .filter((node: any) => node?.isEnabled !== false && Number(node?.hostId || 0) > 0);
         if (Array.isArray(hops) && hops.length >= 2) {
           hops.forEach((hop: any, index: number) => addNode(hop?.hostId, index > 0 ? hop?.mimicPort : 0));
-          const relayFailover = isTunnelRelayFailover(tunnel, hops);
+          const relayFailover = tunnelRelayUsesParallelRelays(tunnel, hops);
           const finalExit = hops[hops.length - 1] as any;
           const relayHops = relayFailover ? tunnelRelayCandidates(hops) : [hops[1]];
           for (const relayHop of relayHops as any[]) {
@@ -2998,7 +2998,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       };
       if (udpListenPort > 0) fxpSpec.udpListenPort = udpListenPort;
       if (!isLast) {
-        const nextHop = isTunnelRelayFailover(tunnel, hops)
+        const nextHop = tunnelRelayUsesParallelRelays(tunnel, hops)
           ? hops[hops.length - 1] as any
           : hops[hopIdx + 1] as any;
         const nextIp = await getHopDialAddress(nextHop, tunnel);
@@ -3076,7 +3076,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     const forwardXEntryRoutes = async (rule: any, tunnel: any) => {
       const routes: Array<{ hostId: number; host: string; port: number; udpPort: number; key: string }> = [];
       const hops = tunnelHopsByTunnelId.get(Number(tunnel.id));
-      if (Array.isArray(hops) && isTunnelRelayFailover(tunnel, hops)) {
+      if (Array.isArray(hops) && tunnelRelayUsesParallelRelays(tunnel, hops)) {
         for (const relayHop of tunnelRelayCandidates(hops) as any[]) {
           const relayHost = String(await getHopDialAddress(relayHop, tunnel)).trim();
           const relayPort = Number(relayHop?.listenPort) || 0;
@@ -3203,7 +3203,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           const currentHostIsEntry = isCurrentHostTunnelEntry(tunnel);
           if (!currentHostIsEntry && (hostIdx < 0 || hostIdx >= hops.length - 1)) return null;
           const routeHostIdx = currentHostIsEntry ? 0 : hostIdx;
-          const relayFailover = isTunnelRelayFailover(tunnel, hops);
+          const relayFailover = tunnelRelayUsesParallelRelays(tunnel, hops);
           const probeTargets = relayFailover && currentHostIsEntry
             ? tunnelRelayCandidates(hops).map((hop: any, index: number) => ({ hop, index: index + 1 }))
             : [{ hop: relayFailover ? hops[hops.length - 1] : hops[routeHostIdx + 1], index: routeHostIdx + 1 }];
@@ -3447,7 +3447,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           const useMultiHopEntry =
             isMultiHopTunnel
             && isCurrentHostTunnelEntry(tunnel);
-          const relayFailover = useMultiHopEntry && isTunnelRelayFailover(tunnel, tunnelHops);
+          const relayFailover = useMultiHopEntry && tunnelRelayUsesParallelRelays(tunnel, tunnelHops);
           const exitCandidateCount = tunnel ? tunnelExitEndpointsForRule(r, tunnel).length : 0;
           const routeRetries = Math.max(
             relayFailover ? tunnelRelayCandidates(tunnelHops as any[]).length - 1 : 0,
@@ -5377,6 +5377,20 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
                 { resourceType: "tunnel", resourceId: Number(tunnel.id) },
               ]);
             }
+            // Aggregate mode turns the relay set into parallel legs: the entry
+            // stripes each client connection over all of them and the exit
+            // reassembles it, so one connection can use their combined egress.
+            const relayAggregate = isTunnelRelayAggregate(tunnel, tunnelHopsByTunnelId.get(Number(tunnel.id)) || []);
+            const multipathLegs = relayAggregate
+              ? entryRoutes
+                .filter((route) => route.host && Number(route.port) > 0 && route.key)
+                .map((route) => ({
+                  host: route.host,
+                  port: Number(route.port),
+                  key: route.key,
+                  via: `relay#${Number((route as any).hostId || 0)}`,
+                }))
+              : [];
             const fxpSpec = await applyForwardXTransport({
               role: "entry",
               tunnelId: tunnel.id,
@@ -5385,7 +5399,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
               protocol: rule.protocol,
               exitHost: entryRoute.host,
               exitPort: entryRoute.port,
-              exitStrategy: isTunnelRelayFailover(tunnel, tunnelHopsByTunnelId.get(Number(tunnel.id)) || [])
+              ...(multipathLegs.length >= 2 ? { multipathEnabled: true, multipathLegs } : {}),
+              exitStrategy: tunnelRelayUsesParallelRelays(tunnel, tunnelHopsByTunnelId.get(Number(tunnel.id)) || [])
                 ? "fallback"
                 : forwardXExitStrategy((tunnel as any).loadBalanceStrategy),
               exitPeerId: wireGuardV2 ? String(Number((entryRoute as any).hostId || 0)) : undefined,
@@ -5707,7 +5722,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         const hostIdx = hops.findIndex((hop: any) => Number(hop.hostId) === Number(host.id));
         if (hostIdx <= 0 || hostIdx >= hops.length - 1) return null;
         const currentHop = hops[hostIdx] as any;
-        const nextHop = isTunnelRelayFailover(tunnel, hops) ? hops[hops.length - 1] : hops[hostIdx + 1] as any;
+        const nextHop = tunnelRelayUsesParallelRelays(tunnel, hops) ? hops[hops.length - 1] : hops[hostIdx + 1] as any;
         const nextHost = await getHopDialAddress(nextHop, tunnel);
         const sourcePort = Number(currentHop.listenPort) || 0;
         const targetPort = Number(nextHop.listenPort) || 0;

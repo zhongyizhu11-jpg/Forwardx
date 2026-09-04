@@ -16,6 +16,16 @@ type udpTarget struct {
 	TargetPort int    `json:"targetPort"`
 }
 
+// multipathLeg is one parallel path from the entry to the exit: either a direct
+// dial to the exit, or a dial to a relay front that forwards on to it.
+type multipathLeg struct {
+	Host string `json:"host"`
+	Port int    `json:"port"`
+	Key  string `json:"key,omitempty"`
+	// Via labels the leg for logs, e.g. "direct" or a relay host name.
+	Via string `json:"via,omitempty"`
+}
+
 type config struct {
 	Role                     string         `json:"role"`
 	Entries                  []config       `json:"entries,omitempty"`
@@ -55,4 +65,9 @@ type config struct {
 	UDPRelayExitPort         int            `json:"udpRelayExitPort,omitempty"`
 	RelayKey                 string         `json:"relayKey,omitempty"`
 	DNSGeneration            int            `json:"dnsGeneration,omitempty"`
+	// Single-connection multipath aggregation. When enabled the entry stripes
+	// one client connection over every leg and the exit reassembles it.
+	MultipathEnabled    bool           `json:"multipathEnabled,omitempty"`
+	MultipathLegs       []multipathLeg `json:"multipathLegs,omitempty"`
+	MultipathMaxPending int            `json:"multipathMaxPending,omitempty"`
 }

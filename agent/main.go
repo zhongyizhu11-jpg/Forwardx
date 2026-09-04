@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.193"
+var Version = "2.2.194"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -2632,6 +2632,20 @@ type fxpSpec struct {
 	RelayPeerID              string            `json:"relayPeerId,omitempty"`
 	RelayKey                 string            `json:"relayKey,omitempty"`
 	DNSGeneration            int               `json:"dnsGeneration,omitempty"`
+	// Single-connection multipath aggregation: the entry stripes each client
+	// connection over every leg and the exit reassembles it.
+	MultipathEnabled    bool              `json:"multipathEnabled,omitempty"`
+	MultipathLegs       []fxpMultipathLeg `json:"multipathLegs,omitempty"`
+	MultipathMaxPending int               `json:"multipathMaxPending,omitempty"`
+}
+
+// fxpMultipathLeg is one parallel path from the entry to the exit, either a
+// direct dial or a dial to a relay front that forwards on to the exit.
+type fxpMultipathLeg struct {
+	Host string `json:"host"`
+	Port int    `json:"port"`
+	Key  string `json:"key,omitempty"`
+	Via  string `json:"via,omitempty"`
 }
 
 type fxpExitEndpoint struct {
@@ -9192,6 +9206,41 @@ func normalizeFXPSpec(spec fxpSpec) fxpSpec {
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].RuleID < targets[j].RuleID })
 	spec.UDPTargets = targets
+	spec = normalizeFXPMultipath(spec)
+	return spec
+}
+
+// normalizeFXPMultipath cleans the multipath leg list and only leaves striping
+// enabled when there are at least two usable legs, since one leg is just an
+// ordinary single-path session.
+func normalizeFXPMultipath(spec fxpSpec) fxpSpec {
+	legs := make([]fxpMultipathLeg, 0, len(spec.MultipathLegs))
+	seen := map[string]bool{}
+	for _, leg := range spec.MultipathLegs {
+		leg.Host = strings.TrimSpace(leg.Host)
+		leg.Via = strings.TrimSpace(leg.Via)
+		if leg.Host == "" || leg.Port <= 0 || leg.Port > 65535 {
+			continue
+		}
+		if strings.TrimSpace(leg.Key) == "" {
+			leg.Key = spec.Key
+		}
+		endpoint := net.JoinHostPort(leg.Host, strconv.Itoa(leg.Port))
+		if seen[endpoint] {
+			continue
+		}
+		seen[endpoint] = true
+		legs = append(legs, leg)
+	}
+	if len(legs) < 2 {
+		spec.MultipathEnabled = false
+		spec.MultipathLegs = nil
+		return spec
+	}
+	spec.MultipathLegs = legs
+	if spec.MultipathMaxPending < 0 {
+		spec.MultipathMaxPending = 0
+	}
 	return spec
 }
 
@@ -9241,6 +9290,14 @@ func fxpServerSignature(spec fxpSpec) string {
 		spec.RelayPeerID,
 		spec.RelayKey,
 		strconv.Itoa(spec.DNSGeneration),
+		// Multipath belongs in the signature: switching a tunnel between
+		// failover and aggregate changes only these fields, and the runtime
+		// must restart to pick the new mode up.
+		strconv.FormatBool(spec.MultipathEnabled),
+		strconv.Itoa(spec.MultipathMaxPending),
+	}
+	for _, leg := range spec.MultipathLegs {
+		parts = append(parts, strings.TrimSpace(leg.Host), strconv.Itoa(leg.Port), strings.TrimSpace(leg.Key))
 	}
 	for _, exit := range spec.Exits {
 		parts = append(parts, strings.TrimSpace(exit.Host), strconv.Itoa(exit.Port), strconv.Itoa(exit.UDPPort), strings.TrimSpace(exit.Key), strings.TrimSpace(exit.PeerID))

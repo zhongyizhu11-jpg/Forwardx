@@ -7,6 +7,14 @@ import { ENV } from "../env";
 import { normalizeTrafficMultiplier } from "../../shared/trafficMultiplier";
 import { normalizeForwardRuleProtocol, type ForwardRuleProtocol } from "../../shared/forwardTypes";
 import { normalizeExitGroupStrategy, type ExitGroupStrategy } from "../../shared/exitStrategy";
+import {
+  normalizeAggregationMinMembers,
+  normalizeAggregationRecordSlots,
+  normalizeBandwidthAggregationStrategy,
+  normalizeMemberBandwidthMbps,
+  normalizeMemberWeight,
+  type BandwidthAggregationStrategy,
+} from "../../shared/bandwidthAggregation";
 
 export type ForwardGroupMode = "port" | "failover" | "chain" | "entry" | "exit";
 export type ForwardGroupType = "host" | "tunnel";
@@ -18,6 +26,10 @@ export type ForwardGroupMemberRequest = {
   connectHost?: string | null;
   priority?: number;
   isEnabled?: boolean;
+  /** Declared uplink of this front VPS, in Mbps. Entry groups only. */
+  bandwidthMbps?: number | null;
+  /** Manual bandwidth aggregation weight. Entry groups only. */
+  aggregationWeight?: number | null;
 };
 
 export type ForwardGroupInput = {
@@ -51,6 +63,11 @@ export type ForwardGroupInput = {
   chinaHealthCheckTarget?: string | null;
   telegramSwitchNotifyEnabled?: boolean;
   ddnsAutoResolveEnabled?: boolean;
+  /** Multi-front-VPS bandwidth aggregation. Entry groups only. */
+  bandwidthAggregationEnabled?: boolean;
+  bandwidthAggregationStrategy?: BandwidthAggregationStrategy;
+  bandwidthAggregationSlots?: number;
+  bandwidthAggregationMinMembers?: number;
   autoFailback: boolean;
   isEnabled: boolean;
   members: ForwardGroupMemberRequest[];
@@ -92,6 +109,10 @@ export function normalizeForwardGroupMembers(
       connectHost: groupMode === "chain" || groupMode === "exit" ? String(member.connectHost || "").trim() || null : null,
       priority: member.priority ?? index,
       isEnabled: groupMode === "port" || groupMode === "chain" ? true : member.isEnabled ?? true,
+      // Bandwidth aggregation only applies to the front VPS hosts of an entry
+      // group, so other group modes store zeroes.
+      bandwidthMbps: groupMode === "entry" ? normalizeMemberBandwidthMbps(member.bandwidthMbps) : 0,
+      aggregationWeight: groupMode === "entry" ? normalizeMemberWeight(member.aggregationWeight) : 0,
     };
   });
 }
@@ -115,9 +136,13 @@ function memberRuntimeSignature(members: ForwardGroupMemberRequest[]) {
       enabled: member.isEnabled !== false && Number(member.isEnabled as any) !== 0,
       priority: Number(member.priority ?? index),
       connectHost: String(member.connectHost || "").trim(),
+      // Bandwidth and weight edits must reach the member rows, so they belong
+      // in the signature that decides whether members are rewritten.
+      bandwidthMbps: normalizeMemberBandwidthMbps(member.bandwidthMbps),
+      aggregationWeight: normalizeMemberWeight(member.aggregationWeight),
     }))
     .sort((a, b) => a.priority - b.priority)
-    .map((member) => `${member.key}:${member.enabled ? 1 : 0}:${member.connectHost}`)
+    .map((member) => `${member.key}:${member.enabled ? 1 : 0}:${member.connectHost}:${member.bandwidthMbps}:${member.aggregationWeight}`)
     .join("|");
 }
 
@@ -160,6 +185,7 @@ async function normalizeForwardGroupInput(input: ForwardGroupInput, userId?: num
   const domain = groupMode === "entry" || groupMode === "failover" ? input.domain?.trim() || null : null;
   if (groupMode === "entry" && !domain) throw new Error("入口组需要指定入口域名");
   const ddnsAutoResolveEnabled = groupMode === "entry" ? input.ddnsAutoResolveEnabled !== false : true;
+  const bandwidthAggregationEnabled = groupMode === "entry" && !!input.bandwidthAggregationEnabled;
   if (groupMode === "entry") await assertDdnsServiceConfiguredForEntryGroup(ddnsAutoResolveEnabled);
   const members = normalizeForwardGroupMembers(groupMode, groupType, input.members, {
     externalEntry: groupMode === "chain" && !!entryGroupId,
@@ -218,6 +244,10 @@ async function normalizeForwardGroupInput(input: ForwardGroupInput, userId?: num
     chinaHealthCheckTarget,
     telegramSwitchNotifyEnabled,
     ddnsAutoResolveEnabled,
+    bandwidthAggregationEnabled,
+    bandwidthAggregationStrategy: normalizeBandwidthAggregationStrategy(input.bandwidthAggregationStrategy),
+    bandwidthAggregationSlots: normalizeAggregationRecordSlots(input.bandwidthAggregationSlots),
+    bandwidthAggregationMinMembers: normalizeAggregationMinMembers(input.bandwidthAggregationMinMembers),
     autoFailback: input.autoFailback,
     isEnabled: input.isEnabled,
   };
@@ -262,6 +292,14 @@ export async function updateForwardGroupFromInput(id: number, input: ForwardGrou
     .filter((hostId) => Number.isFinite(hostId) && hostId > 0);
   const entryDomainChanged = normalized.data.groupMode === "entry"
     && String(existing?.domain || "").trim() !== String(normalized.data.domain || "").trim();
+  const aggregationSignature = (group: any) => [
+    !!group?.bandwidthAggregationEnabled,
+    normalizeBandwidthAggregationStrategy(group?.bandwidthAggregationStrategy),
+    normalizeAggregationRecordSlots(group?.bandwidthAggregationSlots),
+    normalizeAggregationMinMembers(group?.bandwidthAggregationMinMembers),
+  ].join("|");
+  const aggregationChanged = normalized.data.groupMode === "entry"
+    && aggregationSignature(existing) !== aggregationSignature(normalized.data);
   const exitStrategyChanged = normalized.data.groupMode === "exit"
     && normalizeExitGroupStrategy(existing?.exitStrategy) !== normalizeExitGroupStrategy(normalized.data.exitStrategy);
   const shouldResetChinaHealth = !normalized.data.chinaHealthCheckEnabled
@@ -304,7 +342,7 @@ export async function updateForwardGroupFromInput(id: number, input: ForwardGrou
   if (normalized.data.groupMode === "chain" || normalized.data.groupMode === "port") {
     if (!membersChanged) await db.syncForwardGroupRules(id, { preserveRuntime: true });
   } else if (normalized.data.groupMode === "entry" || normalized.data.groupMode === "exit") {
-    if (!membersChanged) await db.runForwardGroupFailover(id, { manual: true });
+    if (!membersChanged) await db.runForwardGroupFailover(id, { manual: true, forceSync: aggregationChanged });
     if (!membersChanged && entryDomainChanged) {
       await db.refreshForwardGroupReferences(id, { reason: "entry-group-domain-updated" });
     } else if (!membersChanged && exitStrategyChanged) {

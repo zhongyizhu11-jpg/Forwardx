@@ -284,6 +284,12 @@ const tables: TableDef[] = [
       c("recoverSeconds", "int", { notNull: true, default: 120 }), c("chinaHealthCheckEnabled", "bool", { notNull: true, default: false }), c("chinaHealthCheckTarget", "text"),
       c("telegramSwitchNotifyEnabled", "bool", { notNull: true, default: false }),
       c("ddnsAutoResolveEnabled", "bool", { notNull: true, default: true }), c("autoFailback", "bool", { notNull: true, default: true }),
+      // Multi-front-VPS bandwidth aggregation. Off by default so existing entry
+      // groups keep publishing one equal record per healthy member.
+      c("bandwidthAggregationEnabled", "bool", { notNull: true, default: false }),
+      c("bandwidthAggregationStrategy", "varchar", { length: 32, notNull: true, default: "capacity" }),
+      c("bandwidthAggregationSlots", "int", { notNull: true, default: 8 }),
+      c("bandwidthAggregationMinMembers", "int", { notNull: true, default: 1 }),
       c("isEnabled", "bool", { notNull: true, default: true }), c("activeMemberId", "int"), c("lastDdnsValue", "text"),
       c("lastDdnsAt", "epoch"), c("lastFailoverAt", "epoch"), c("lastStatus", "varchar", { length: 32, notNull: true, default: "unknown" }),
       c("lastMessage", "text"), c("sortOrder", "int", { notNull: true, default: 0 }), c("userId", "int", { notNull: true }), c("createdAt", "epoch", { notNull: true, default: "now" }),
@@ -296,6 +302,9 @@ const tables: TableDef[] = [
     columns: [
       c("id", "id"), c("groupId", "int", { notNull: true }), c("memberType", "varchar", { length: 32, notNull: true }),
       c("hostId", "int"), c("tunnelId", "int"), c("connectHost", "text"), c("priority", "int", { notNull: true, default: 0 }), c("ruleId", "int"),
+      // Declared uplink of this front VPS in Mbps (0 = unknown) and its manual
+      // aggregation weight (0 = derive the weight from the strategy).
+      c("bandwidthMbps", "int", { notNull: true, default: 0 }), c("aggregationWeight", "int", { notNull: true, default: 0 }),
       c("isEnabled", "bool", { notNull: true, default: true }), c("healthStatus", "varchar", { length: 32, notNull: true, default: "unknown" }),
       c("lastLatencyMs", "int"), c("chinaHealthStatus", "varchar", { length: 32, notNull: true, default: "unknown" }), c("chinaHealthLatencyMs", "int"), c("chinaHealthCheckedAt", "epoch"), c("failureSince", "epoch"), c("healthySince", "epoch"), c("lastCheckedAt", "epoch"),
       c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),

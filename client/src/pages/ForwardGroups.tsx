@@ -83,6 +83,7 @@ import {
   YAxis,
 } from "recharts";
 import { LinkTestProbeView, parseLinkTestMessage, type LinkTestPlannedSegment } from "@/components/LinkTestLatencySummary";
+import { BandwidthAggregationSummary } from "@/components/BandwidthAggregationSummary";
 import { addHostNodeMeta, addNodeMetaAliases, hostDisplayName } from "@/lib/linkTestNodeMeta";
 import {
   trafficMultiplierFromInput,
@@ -104,6 +105,22 @@ import {
   normalizeExitGroupStrategy,
   type ExitGroupStrategy,
 } from "@shared/exitStrategy";
+import {
+  BANDWIDTH_AGGREGATION_STRATEGIES,
+  BANDWIDTH_AGGREGATION_STRATEGY_HINTS,
+  BANDWIDTH_AGGREGATION_STRATEGY_LABELS,
+  MAX_AGGREGATION_RECORD_SLOTS,
+  MAX_MEMBER_BANDWIDTH_MBPS,
+  MAX_MEMBER_WEIGHT,
+  formatAggregationUtilization,
+  formatBandwidthMbps,
+  normalizeAggregationMinMembers,
+  normalizeAggregationRecordSlots,
+  normalizeBandwidthAggregationStrategy,
+  normalizeMemberBandwidthMbps,
+  normalizeMemberWeight,
+  type BandwidthAggregationStrategy,
+} from "@shared/bandwidthAggregation";
 
 type GroupType = "host" | "tunnel";
 type GroupMode = "port" | "failover" | "chain" | "entry" | "exit";
@@ -115,6 +132,10 @@ type MemberForm = {
   tunnelId: number | null;
   connectHost?: string | null;
   isEnabled: boolean;
+  /** Declared uplink of this front VPS in Mbps. Entry groups only. */
+  bandwidthMbps: string;
+  /** Manual bandwidth aggregation weight. Entry groups only. */
+  aggregationWeight: string;
 };
 
 type GroupForm = {
@@ -145,6 +166,10 @@ type GroupForm = {
   chinaHealthCheckTarget: string;
   telegramSwitchNotifyEnabled: boolean;
   ddnsAutoResolveEnabled: boolean;
+  bandwidthAggregationEnabled: boolean;
+  bandwidthAggregationStrategy: BandwidthAggregationStrategy;
+  bandwidthAggregationSlots: string;
+  bandwidthAggregationMinMembers: string;
   autoFailback: boolean;
   isEnabled: boolean;
   members: MemberForm[];
@@ -178,6 +203,10 @@ const makeDefaultForm = (): GroupForm => ({
   chinaHealthCheckTarget: "",
   telegramSwitchNotifyEnabled: false,
   ddnsAutoResolveEnabled: true,
+  bandwidthAggregationEnabled: false,
+  bandwidthAggregationStrategy: "capacity",
+  bandwidthAggregationSlots: "8",
+  bandwidthAggregationMinMembers: "1",
   autoFailback: true,
   isEnabled: true,
   members: [],
@@ -1114,6 +1143,8 @@ export function ForwardGroupsContent({
           tunnelId: null,
           connectHost: member.connectHost || null,
           isEnabled: !!member.isEnabled,
+          bandwidthMbps: String(Math.max(0, Number(member.bandwidthMbps) || 0)),
+          aggregationWeight: String(Math.max(0, Number(member.aggregationWeight) || 0)),
         });
         return acc;
       }
@@ -1130,6 +1161,8 @@ export function ForwardGroupsContent({
         tunnelId: null,
         connectHost: null,
         isEnabled: !!member.isEnabled,
+        bandwidthMbps: "0",
+        aggregationWeight: "0",
       });
       return acc;
     }, []);
@@ -1164,6 +1197,10 @@ export function ForwardGroupsContent({
       chinaHealthCheckTarget: group.chinaHealthCheckTarget || "",
       telegramSwitchNotifyEnabled: !!group.telegramSwitchNotifyEnabled,
       ddnsAutoResolveEnabled: group.ddnsAutoResolveEnabled !== false,
+      bandwidthAggregationEnabled: !!group.bandwidthAggregationEnabled,
+      bandwidthAggregationStrategy: normalizeBandwidthAggregationStrategy(group.bandwidthAggregationStrategy),
+      bandwidthAggregationSlots: String(normalizeAggregationRecordSlots(group.bandwidthAggregationSlots)),
+      bandwidthAggregationMinMembers: String(normalizeAggregationMinMembers(group.bandwidthAggregationMinMembers)),
       autoFailback: !!group.autoFailback,
       isEnabled: !!group.isEnabled,
       members: normalizedMembers,
@@ -1310,6 +1347,22 @@ export function ForwardGroupsContent({
       meta: getTunnelRouteText(t, hosts),
     }));
   const showExitAddressColumns = form.groupMode === "exit" && effectiveGroupType === "host";
+  // Entry groups running bandwidth aggregation get per-front-VPS uplink and
+  // weight columns, so the member table gains two fields.
+  const showAggregationColumns = form.groupMode === "entry"
+    && form.bandwidthAggregationEnabled
+    && effectiveGroupType === "host";
+  const memberRowGridClass = showExitAddressColumns
+    ? "sm:grid-cols-[auto_auto_minmax(8rem,1fr)_56px_56px_52px_36px]"
+    : showAggregationColumns
+      ? "sm:grid-cols-[auto_auto_minmax(8rem,1fr)_92px_72px_52px_36px]"
+      : "sm:grid-cols-[auto_auto_minmax(8rem,1fr)_52px_36px]";
+  const updateMemberField = (key: string, patch: Partial<MemberForm>) => {
+    setForm((prev) => ({
+      ...prev,
+      members: prev.members.map((member) => (member.key === key ? { ...member, ...patch } : member)),
+    }));
+  };
 
   const addMember = (id: number) => {
     if (!id) return;
@@ -1338,6 +1391,8 @@ export function ForwardGroupsContent({
           tunnelId: effectiveType === "tunnel" ? id : null,
           connectHost: null,
           isEnabled: true,
+          bandwidthMbps: "0",
+          aggregationWeight: "0",
         },
       ],
     });
@@ -1354,6 +1409,8 @@ export function ForwardGroupsContent({
         tunnelId: null,
         connectHost: null,
         isEnabled: true,
+        bandwidthMbps: "0",
+        aggregationWeight: "0",
       }],
     });
   };
@@ -1416,6 +1473,8 @@ export function ForwardGroupsContent({
             hostId: id,
             tunnelId: null,
             isEnabled: true,
+            bandwidthMbps: "0",
+            aggregationWeight: "0",
           }),
           key,
           memberType: "host" as GroupType,
@@ -1561,6 +1620,10 @@ export function ForwardGroupsContent({
       chinaHealthCheckTarget: supportsChinaHealth && form.chinaHealthCheckEnabled ? chinaHealthTarget || null : null,
       telegramSwitchNotifyEnabled: supportsSwitchNotify && form.telegramSwitchNotifyEnabled,
       ddnsAutoResolveEnabled: isEntryGroup ? form.ddnsAutoResolveEnabled : true,
+      bandwidthAggregationEnabled: isEntryGroup && form.bandwidthAggregationEnabled,
+      bandwidthAggregationStrategy: normalizeBandwidthAggregationStrategy(form.bandwidthAggregationStrategy),
+      bandwidthAggregationSlots: normalizeAggregationRecordSlots(form.bandwidthAggregationSlots),
+      bandwidthAggregationMinMembers: normalizeAggregationMinMembers(form.bandwidthAggregationMinMembers),
       members: form.members.map((member, index) => ({
         memberType: member.memberType,
         hostId: member.hostId,
@@ -1568,6 +1631,9 @@ export function ForwardGroupsContent({
         connectHost: isChainGroup || isExitGroup ? member.connectHost || null : null,
         isEnabled: isPortMode || isChainGroup ? true : member.isEnabled,
         priority: index,
+        // Bandwidth aggregation is an entry group concept; other modes send 0.
+        bandwidthMbps: isEntryGroup ? normalizeMemberBandwidthMbps(member.bandwidthMbps) : 0,
+        aggregationWeight: isEntryGroup ? normalizeMemberWeight(member.aggregationWeight) : 0,
       })),
     };
     if (editingId) updateMutation.mutate({ id: editingId, ...payload });
@@ -2328,6 +2394,75 @@ export function ForwardGroupsContent({
                   )}
                 </div>
 
+                {form.groupMode === "entry" && (
+                  <div className="space-y-3 rounded-md border border-border/60 p-3">
+                    <label className="flex items-center justify-between gap-3">
+                      <span className="space-y-1">
+                        <span className="block text-sm font-medium">多前置带宽叠加聚合</span>
+                        <span className="block text-xs text-muted-foreground">
+                          按每台前置 VPS 的上行带宽分配入口解析份额，使整组可用带宽接近各前置之和，而不是受限于最小的一台。
+                        </span>
+                      </span>
+                      <Switch
+                        checked={form.bandwidthAggregationEnabled}
+                        onCheckedChange={(bandwidthAggregationEnabled) => setForm({ ...form, bandwidthAggregationEnabled })}
+                      />
+                    </label>
+
+                    {form.bandwidthAggregationEnabled && (
+                      <div className="space-y-3 border-t border-border/60 pt-3">
+                        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px_140px]">
+                          <div className="space-y-2">
+                            <Label>聚合策略</Label>
+                            <Select
+                              value={form.bandwidthAggregationStrategy}
+                              onValueChange={(value) => setForm({ ...form, bandwidthAggregationStrategy: normalizeBandwidthAggregationStrategy(value) })}
+                            >
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {BANDWIDTH_AGGREGATION_STRATEGIES.map((strategy) => (
+                                  <SelectItem key={strategy} value={strategy}>
+                                    {BANDWIDTH_AGGREGATION_STRATEGY_LABELS[strategy]}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>解析条数</Label>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={MAX_AGGREGATION_RECORD_SLOTS}
+                              value={form.bandwidthAggregationSlots}
+                              onChange={(e) => setForm({ ...form, bandwidthAggregationSlots: e.target.value })}
+                              placeholder="8"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>最少健康前置</Label>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={5}
+                              value={form.bandwidthAggregationMinMembers}
+                              onChange={(e) => setForm({ ...form, bandwidthAggregationMinMembers: e.target.value })}
+                              placeholder="1"
+                            />
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {BANDWIDTH_AGGREGATION_STRATEGY_HINTS[form.bandwidthAggregationStrategy]}
+                          {" 健康前置少于下限时自动退回等量分配。"}
+                        </p>
+                        {editingId ? (
+                          <BandwidthAggregationSummary groupId={editingId} open={showDialog} />
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {false && form.groupMode === "failover" && (
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">单位：秒，范围 10-3600。</p>
@@ -2596,15 +2731,27 @@ export function ForwardGroupsContent({
                                 <span>两者互斥，未配置时不可开启</span>
                               </>
                             )}
+                            {showAggregationColumns && (
+                              <>
+                                <span>上行 Mbps：该前置的上行带宽，留空或 0 表示未知</span>
+                                <span>权重：手动份额，0 表示按所选聚合策略自动计算</span>
+                              </>
+                            )}
                             <span>启用：关闭后该成员不参与当前组</span>
                           </div>
-                          <div className={"hidden items-center gap-1.5 px-2.5 text-[11px] text-muted-foreground sm:grid " + (showExitAddressColumns ? "sm:grid-cols-[auto_auto_minmax(8rem,1fr)_56px_56px_52px_36px]" : "sm:grid-cols-[auto_auto_minmax(8rem,1fr)_52px_36px]")}>
+                          <div className={"hidden items-center gap-1.5 px-2.5 text-[11px] text-muted-foreground sm:grid " + memberRowGridClass}>
                             <span className="col-span-2">顺序</span>
                             <span>{effectiveGroupType === "host" ? "主机" : "隧道"}</span>
                             {showExitAddressColumns && (
                               <>
                                 <span className="text-center">内网</span>
                                 <span className="text-center">IPv6</span>
+                              </>
+                            )}
+                            {showAggregationColumns && (
+                              <>
+                                <span className="text-center">上行 Mbps</span>
+                                <span className="text-center">权重</span>
                               </>
                             )}
                             <span className="text-center">启用</span>
@@ -2622,7 +2769,7 @@ export function ForwardGroupsContent({
                             if (dragMemberKey) moveMember(dragMemberKey, member.key);
                             setDragMemberKey(null);
                           }}
-                          className={"flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-background/70 px-3 py-2 sm:grid sm:gap-1.5 " + (showExitAddressColumns ? "sm:grid-cols-[auto_auto_minmax(8rem,1fr)_56px_56px_52px_36px]" : "sm:grid-cols-[auto_auto_minmax(8rem,1fr)_52px_36px]")}
+                          className={"flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-background/70 px-3 py-2 sm:grid sm:gap-1.5 " + memberRowGridClass}
                         >
                           <GripVertical className="h-4 w-4 cursor-grab text-muted-foreground" />
                           <span className="flex h-6 w-6 items-center justify-center rounded bg-muted text-xs">{index + 1}</span>
@@ -2659,6 +2806,30 @@ export function ForwardGroupsContent({
                                   aria-label={"为" + memberLabel(member) + "使用IPv6转发"}
                                 />
                               </div>
+                            </>
+                          )}
+                          {showAggregationColumns && (
+                            <>
+                              <Input
+                                type="number"
+                                min={0}
+                                max={MAX_MEMBER_BANDWIDTH_MBPS}
+                                value={member.bandwidthMbps}
+                                onChange={(e) => updateMemberField(member.key, { bandwidthMbps: e.target.value })}
+                                className="h-7 w-[92px] text-center text-xs"
+                                placeholder="0"
+                                aria-label={memberLabel(member) + "的上行带宽 Mbps"}
+                              />
+                              <Input
+                                type="number"
+                                min={0}
+                                max={MAX_MEMBER_WEIGHT}
+                                value={member.aggregationWeight}
+                                onChange={(e) => updateMemberField(member.key, { aggregationWeight: e.target.value })}
+                                className="h-7 w-[72px] text-center text-xs"
+                                placeholder="0"
+                                aria-label={memberLabel(member) + "的聚合权重"}
+                              />
                             </>
                           )}
                           <div className="flex h-7 w-[52px] items-center justify-center">
