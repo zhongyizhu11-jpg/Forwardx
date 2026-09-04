@@ -416,6 +416,9 @@ export const forwardGroups = table("forward_groups", {
   recoverSeconds: int("recoverSeconds").notNull().default(120),
   chinaHealthCheckEnabled: boolean("chinaHealthCheckEnabled").notNull().default(false),
   chinaHealthCheckTarget: text("chinaHealthCheckTarget"),
+  // Probe method for member health: "tcp" connects to a port, "ping" only
+  // measures ICMP latency and needs no port.
+  chinaHealthCheckMethod: varchar("chinaHealthCheckMethod", { length: 16 }).notNull().default("tcp"),
   telegramSwitchNotifyEnabled: boolean("telegramSwitchNotifyEnabled").notNull().default(false),
   ddnsAutoResolveEnabled: boolean("ddnsAutoResolveEnabled").notNull().default(true),
   autoFailback: boolean("autoFailback").notNull().default(true),

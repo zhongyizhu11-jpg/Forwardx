@@ -11,6 +11,7 @@ import {
 } from "../services/forwardGroupService";
 import { withKeyedTaskLock } from "../keyedTaskLock";
 import { EXIT_GROUP_STRATEGIES } from "../../shared/exitStrategy";
+import { FORWARD_GROUP_HEALTH_CHECK_METHODS } from "../../shared/forwardGroupHealthCheck";
 import {
   BANDWIDTH_AGGREGATION_STRATEGIES,
   MAX_AGGREGATION_RECORD_SLOTS,
@@ -73,6 +74,7 @@ const baseSchema = z.object({
   trafficMultiplier: z.number().int().min(1).max(5000).optional().default(100),
   chinaHealthCheckEnabled: z.boolean().default(false),
   chinaHealthCheckTarget: z.string().max(253).nullable().optional(),
+  chinaHealthCheckMethod: z.enum(FORWARD_GROUP_HEALTH_CHECK_METHODS).optional().default("tcp"),
   telegramSwitchNotifyEnabled: z.boolean().default(false),
   ddnsAutoResolveEnabled: z.boolean().default(true),
   bandwidthAggregationEnabled: z.boolean().optional().default(false),
