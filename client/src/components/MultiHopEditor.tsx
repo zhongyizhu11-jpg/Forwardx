@@ -18,7 +18,11 @@ import {
   multiHopAddressSelection,
   selectedMultiHopConnectHost,
 } from "@/lib/multiHopAddress";
-import { TUNNEL_RELAY_MODE_HINTS, type TunnelRelayMode } from "@shared/tunnelRelay";
+import {
+  TUNNEL_RELAY_MODE_HINTS,
+  tunnelRelayModeAvailability,
+  type TunnelRelayMode,
+} from "@shared/tunnelRelay";
 
 interface Host {
   id: number;
@@ -217,16 +221,25 @@ export default function MultiHopEditor({
   const reachedMaxHops = hops.length >= maxHops;
   const availableHosts = reachedMaxHops ? [] : hosts.filter((host) => !selectedIds.has(host.id) && !excludedIds.has(host.id));
   const relayCount = Math.max(0, hops.length - (externalEntry ? 0 : 1) - (externalExit ? 0 : 1));
-  const showRelayMode = relayModeSupported && relayCount >= 2;
-
-  const showAggregate = showRelayMode && relayAggregateSupported;
+  // The control stays visible even when a mode cannot be picked yet: hiding it
+  // leaves no way to discover the mode exists or what it needs. Each option
+  // carries its own requirement instead.
+  const showRelayMode = relayModeSupported;
+  const relayAvailability = tunnelRelayModeAvailability({
+    relayCount,
+    aggregateSupported: relayAggregateSupported,
+  });
+  const failoverAvailable = relayAvailability.failover.available;
+  const aggregateAvailable = relayAvailability.aggregate.available;
+  const failoverDisabledReason = relayAvailability.failover.reason;
+  const aggregateDisabledReason = relayAvailability.aggregate.reason;
 
   useEffect(() => {
-    if (!showRelayMode && relayMode === "failover") onRelayModeChange?.("chain");
+    if (!failoverAvailable && relayMode === "failover") onRelayModeChange?.("chain");
     // Aggregation cannot survive a switch to a protocol that does not implement
     // it, or a hop list that no longer has two relays to combine.
-    if (!showAggregate && relayMode === "aggregate") onRelayModeChange?.("chain");
-  }, [onRelayModeChange, relayMode, showAggregate, showRelayMode]);
+    if (!aggregateAvailable && relayMode === "aggregate") onRelayModeChange?.("chain");
+  }, [aggregateAvailable, failoverAvailable, onRelayModeChange, relayMode]);
 
   useEffect(() => {
     if (excludedIds.size === 0) return;
@@ -310,34 +323,36 @@ export default function MultiHopEditor({
         {showRelayMode && (
           <div className="flex min-w-0 items-center gap-2 sm:ml-auto">
             <span className="shrink-0 text-xs text-muted-foreground">中转模式</span>
-            <div className={`${segmentedControlClassName} grid min-w-0 flex-1 gap-1 sm:flex-none ${showAggregate ? "grid-cols-3 sm:w-72" : "grid-cols-2 sm:w-52"}`}>
+            <div className={`${segmentedControlClassName} grid min-w-0 flex-1 grid-cols-3 gap-1 sm:w-72 sm:flex-none`}>
               <button
                 type="button"
                 aria-pressed={relayMode === "chain"}
                 className={segmentedOptionClassName(relayMode === "chain", false, "h-7 px-2 text-xs")}
                 onClick={() => onRelayModeChange?.("chain")}
+                title={TUNNEL_RELAY_MODE_HINTS.chain}
               >
                 链路中转
               </button>
               <button
                 type="button"
                 aria-pressed={relayMode === "failover"}
-                className={segmentedOptionClassName(relayMode === "failover", false, "h-7 px-2 text-xs")}
+                disabled={!failoverAvailable}
+                className={segmentedOptionClassName(relayMode === "failover", !failoverAvailable, "h-7 px-2 text-xs")}
                 onClick={() => onRelayModeChange?.("failover")}
+                title={failoverDisabledReason || TUNNEL_RELAY_MODE_HINTS.failover}
               >
                 故障转移
               </button>
-              {showAggregate && (
-                <button
-                  type="button"
-                  aria-pressed={relayMode === "aggregate"}
-                  className={segmentedOptionClassName(relayMode === "aggregate", false, "h-7 px-2 text-xs")}
-                  onClick={() => onRelayModeChange?.("aggregate")}
-                  title="单条连接拆分到全部中转并行传输，由出口重组"
-                >
-                  带宽叠加
-                </button>
-              )}
+              <button
+                type="button"
+                aria-pressed={relayMode === "aggregate"}
+                disabled={!aggregateAvailable}
+                className={segmentedOptionClassName(relayMode === "aggregate", !aggregateAvailable, "h-7 px-2 text-xs")}
+                onClick={() => onRelayModeChange?.("aggregate")}
+                title={aggregateDisabledReason || TUNNEL_RELAY_MODE_HINTS.aggregate}
+              >
+                带宽叠加
+              </button>
             </div>
           </div>
         )}
@@ -345,6 +360,8 @@ export default function MultiHopEditor({
       {showRelayMode && (
         <p className="text-xs text-muted-foreground">
           {TUNNEL_RELAY_MODE_HINTS[relayMode]}
+          {aggregateDisabledReason ? `　带宽叠加：${aggregateDisabledReason}。` : ""}
+          {!aggregateDisabledReason && failoverDisabledReason ? `　故障转移：${failoverDisabledReason}。` : ""}
         </p>
       )}
 
