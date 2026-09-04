@@ -28,6 +28,17 @@ import {
   updateForwardRule,
 } from "./forwardRuleRepository";
 import { getHostById, getHosts, HOST_ONLINE_TTL_MS, isFreshHostHeartbeat } from "./hostRepository";
+import { getLatestHostMetricSnapshots } from "./metricsRepository";
+import {
+  applyAggregationToDdnsValues,
+  buildEntryGroupAggregationPlan,
+  hostThroughputMbpsFromSnapshots,
+  isBandwidthAggregationGroup,
+  resolveAggregationSettings,
+  summarizeAggregationPlan,
+  type AggregationMemberRow,
+} from "../bandwidthAggregation";
+import { normalizeMemberBandwidthMbps, normalizeMemberWeight } from "../../shared/bandwidthAggregation";
 import {
   disableForwardRulesByTunnel,
   findAvailablePort,
@@ -103,6 +114,10 @@ export type ForwardGroupMemberInput = {
   connectHost?: string | null;
   priority?: number;
   isEnabled?: boolean;
+  /** Declared uplink of this front VPS, in Mbps. `0` means unknown. */
+  bandwidthMbps?: number | null;
+  /** Manual aggregation weight. `0` derives it from the group strategy. */
+  aggregationWeight?: number | null;
 };
 
 type ForwardGroupRuleConfig = {
@@ -3422,6 +3437,8 @@ export async function replaceForwardGroupMembers(
       priority: member.priority ?? index,
       isEnabled: member.isEnabled ?? true,
       connectHost: member.connectHost ?? null,
+      bandwidthMbps: normalizeMemberBandwidthMbps(member.bandwidthMbps),
+      aggregationWeight: normalizeMemberWeight(member.aggregationWeight),
       updatedAt: nowDate(),
     } as any;
     if (found) {
@@ -3435,6 +3452,8 @@ export async function replaceForwardGroupMembers(
         connectHost: member.connectHost ?? null,
         priority: member.priority ?? index,
         isEnabled: member.isEnabled ?? true,
+        bandwidthMbps: normalizeMemberBandwidthMbps(member.bandwidthMbps),
+        aggregationWeight: normalizeMemberWeight(member.aggregationWeight),
         createdAt: nowDate(),
         updatedAt: nowDate(),
       });
@@ -3474,6 +3493,61 @@ export async function deleteForwardGroup(id: number) {
   await db.delete(forwardGroupMembers).where(eq(forwardGroupMembers.groupId, id));
   await db.delete(userForwardGroupPermissions).where(eq(userForwardGroupPermissions.forwardGroupId, id));
   await db.delete(forwardGroups).where(eq(forwardGroups.id, id));
+}
+
+/**
+ * Read the bandwidth aggregation status of one entry group.
+ *
+ * Unlike the DDNS sync path this never mutates member health; it reports the
+ * health already stored on each member so the panel can show which front VPS
+ * hosts are carrying the aggregate and how much headroom is left.
+ */
+export async function getForwardGroupBandwidthAggregation(groupId: number) {
+  const group = await getForwardGroupById(Number(groupId)) as any;
+  if (!group) throw new Error("入口组不存在");
+  if (groupModeOf(group) !== "entry") throw new Error("仅入口组支持带宽聚合");
+
+  const recordType = normalizeForwardGroupRecordType(group.recordType);
+  const chinaHealthEnabled = dbBool(group.chinaHealthCheckEnabled);
+  const now = Date.now();
+  const members: AggregationMemberRow[] = [];
+  for (const member of sortedMembers(group) as any[]) {
+    if (member.memberType !== "host") continue;
+    const value = String(member.ddnsValue || "").trim()
+      || await memberDdnsValue(member, recordType).catch(() => "");
+    if (!value) continue;
+    const liveness = await resolveMemberAgentLiveness(member, now).catch(() => ({ available: false } as any));
+    const healthy = !!dbBool(member.isEnabled)
+      && !!liveness.available
+      && (chinaHealthEnabled
+        ? forwardGroupChinaHealthStateAt(member, now) === "healthy"
+        : forwardGroupAgentHealthStateAt(member, now) === "healthy");
+    const host = await getHostById(Number(member.hostId)).catch(() => null) as any;
+    members.push({
+      memberId: Number(member.id || 0),
+      hostId: Number(member.hostId || 0),
+      value,
+      healthy,
+      bandwidthMbps: Number(member.bandwidthMbps || 0),
+      aggregationWeight: Number(member.aggregationWeight || 0),
+      label: String(host?.name || "").trim() || value,
+    });
+  }
+
+  const plan = buildEntryGroupAggregationPlan({
+    group,
+    members,
+    throughputByHostId: await memberThroughputMbps(members),
+    singleValuePerMember: recordType === "CNAME",
+  });
+  return {
+    groupId: Number(group.id),
+    groupName: String(group.name || ""),
+    domain: String(group.domain || ""),
+    recordType,
+    rateLimitMbps: Number(group.rateLimitMbps || 0),
+    ...summarizeAggregationPlan(group, plan),
+  };
 }
 
 export async function reorderForwardGroupMembers(groupId: number, memberIds: number[]) {
@@ -3914,6 +3988,56 @@ async function preserveForwardGroupDdns(
   }
 }
 
+/**
+ * Order-insensitive signature of a DDNS value list, used to decide whether the
+ * provider record set actually changed.
+ */
+function ddnsValueSetSignature(value: string) {
+  return Array.from(new Set(String(value || "").split(",").map((entry) => entry.trim()).filter(Boolean)))
+    .sort()
+    .join(",");
+}
+
+/** Live uplink throughput, in Mbps, for the hosts behind a set of members. */
+async function memberThroughputMbps(members: AggregationMemberRow[]) {
+  const hostIds = Array.from(new Set(members
+    .map((member) => Number(member.hostId || 0))
+    .filter((hostId) => Number.isInteger(hostId) && hostId > 0)));
+  if (hostIds.length === 0) return new Map<number, number>();
+  const snapshots = await getLatestHostMetricSnapshots(hostIds).catch(() => []);
+  return hostThroughputMbpsFromSnapshots(snapshots as any[]);
+}
+
+/**
+ * Build the bandwidth aggregation plan for an entry group and apply it to the
+ * DDNS values about to be published.
+ *
+ * Returns `null` for groups that did not opt into aggregation so the caller
+ * keeps its existing behaviour untouched.
+ */
+async function resolveEntryGroupAggregation(
+  group: any,
+  members: AggregationMemberRow[],
+  values: string[],
+  recordType: ForwardGroupRecordType,
+) {
+  if (!isBandwidthAggregationGroup(group) || members.length === 0 || values.length === 0) return null;
+  // The adaptive strategy is the only one that needs live throughput, so the
+  // extra metric read is skipped for the static strategies.
+  const strategy = resolveAggregationSettings(group).strategy;
+  const throughputByHostId = strategy === "adaptive"
+    ? await memberThroughputMbps(members)
+    : new Map<number, number>();
+  const plan = buildEntryGroupAggregationPlan({
+    group,
+    members,
+    throughputByHostId,
+    singleValuePerMember: recordType === "CNAME",
+  });
+  const applied = applyAggregationToDdnsValues(plan, values);
+  return { ...applied, plan };
+}
+
 async function syncEntryGroupDdns(group: any, ddnsSettings: any, options: ForwardGroupFailoverOptions = {}) {
   const db = await getDb();
   const members = sortedMembers(group, true) as any[];
@@ -3935,10 +4059,23 @@ async function syncEntryGroupDdns(group: any, ddnsSettings: any, options: Forwar
   const failoverMs = forwardGroupFailoverDelayMs(group);
   const recoverMs = forwardGroupRecoverDelayMs(group);
   let pendingAgentHealth = false;
+  // Bandwidth aggregation needs the member behind every published value so it
+  // can weight the records by each front VPS's declared uplink.
+  const aggregationMembers: AggregationMemberRow[] = [];
   const includeMember = (member: any, value: string) => {
     if (!values.includes(value)) {
       values.push(value);
       if (!activeMemberId) activeMemberId = Number(member.id || 0) || null;
+    }
+    if (!aggregationMembers.some((entry) => entry.memberId === Number(member.id || 0))) {
+      aggregationMembers.push({
+        memberId: Number(member.id || 0),
+        hostId: Number(member.hostId || 0),
+        value,
+        healthy: true,
+        bandwidthMbps: Number(member.bandwidthMbps || 0),
+        aggregationWeight: Number(member.aggregationWeight || 0),
+      });
     }
   };
   for (const member of members) {
@@ -4099,16 +4236,24 @@ async function syncEntryGroupDdns(group: any, ddnsSettings: any, options: Forwar
   const retryChangedAgentSelection = () => {
     scheduleForwardGroupFailover([Number(group.id)]);
   };
-  const joined = values.join(",");
+  // Bandwidth aggregation reorders the healthy entries so the front VPS hosts
+  // with the most spare uplink are offered to clients first. It never adds or
+  // removes an entry, so the health decisions above still stand.
+  const aggregation = await resolveEntryGroupAggregation(group, aggregationMembers, values, recordType)
+    .catch(() => null);
+  const publishedValues = aggregation?.values ?? values;
+  const aggregationSuffix = aggregation?.applied ? `；${aggregation.note}` : "";
+
+  const joined = publishedValues.join(",");
   const excludedSuffix = excluded.length > 0 ? `；已临时剔除 ${excluded.length} 个不健康入口` : "";
-  const addedValues = values.filter((value) => !previousValues.has(value));
-  const nextValues = new Set(values);
+  const addedValues = publishedValues.filter((value) => !previousValues.has(value));
+  const nextValues = new Set(publishedValues);
   const removedValues = Array.from(previousValues).filter((value) => !nextValues.has(value));
 
   // A newly enabled health check starts with unknown member states.  Keep the
   // current provider record intact until at least one probe result arrives;
   // once results exist, only healthy members are emitted above.
-  if (pendingAgentHealth && (values.length === 0 || joined === previousValue)) {
+  if (pendingAgentHealth && (publishedValues.length === 0 || joined === previousValue)) {
     await updateForwardGroupRuntimeIfChanged(db, group, {
       lastStatus: "unknown",
       lastMessage: "等待 Agent 健康度检测结果；暂不变更现有 DDNS 解析",
@@ -4127,7 +4272,7 @@ async function syncEntryGroupDdns(group: any, ddnsSettings: any, options: Forwar
     retryChangedAgentSelection();
     return;
   }
-  if (values.length === 0) {
+  if (publishedValues.length === 0) {
     const requirement = recordTypeRequirementLabel(recordType);
     const reason = excluded.length > 0 ? `入口组没有健康的${requirement}` : `入口组没有可用${requirement}`;
     if (group.ddnsAutoResolveEnabled === false) {
@@ -4147,7 +4292,7 @@ async function syncEntryGroupDdns(group: any, ddnsSettings: any, options: Forwar
       activeMemberId,
       lastDdnsValue: joined,
       lastStatus: "healthy",
-      lastMessage: `自动解析已关闭；请手动将 ${String(group.domain || "-")} 解析到 ${values.join(", ")}${excludedSuffix}`,
+      lastMessage: `自动解析已关闭；请手动将 ${String(group.domain || "-")} 解析到 ${publishedValues.join(", ")}${excludedSuffix}${aggregationSuffix}`,
     });
     if (changed) await insertForwardGroupEvent(group.id, null, "ddns-skip", `入口组自动解析已关闭；domain=${String(group.domain || "-")} values=${joined}${excludedSuffix}`);
     return;
@@ -4157,16 +4302,19 @@ async function syncEntryGroupDdns(group: any, ddnsSettings: any, options: Forwar
       activeMemberId,
       lastDdnsValue: joined,
       lastStatus: "healthy",
-      lastMessage: `系统 DDNS 未启用；建议入口 ${values.join(", ")}${excludedSuffix}`,
+      lastMessage: `系统 DDNS 未启用；建议入口 ${publishedValues.join(", ")}${excludedSuffix}${aggregationSuffix}`,
     });
     if (changed) await insertForwardGroupEvent(group.id, null, "ddns-skip", `入口组 DDNS 未启用；domain=${String(group.domain || "-")} values=${joined}${excludedSuffix}`);
     return;
   }
 
-  if (!forceSync && String(group.lastDdnsValue || "") === joined && !exactDdnsReconciliationDue(group, joined)) {
+  // A DNS record set is unordered at the provider, so only a change in the set
+  // itself is worth a write. Comparing the sorted values keeps an aggregation
+  // reorder from re-pushing the same records on every sync.
+  if (!forceSync && ddnsValueSetSignature(previousValue) === ddnsValueSetSignature(joined) && !exactDdnsReconciliationDue(group, joined)) {
     await updateForwardGroupRuntimeIfChanged(db, group, {
       lastStatus: "healthy",
-      lastMessage: `入口组 DDNS 已是最新；${values.length} 个入口${excludedSuffix}`,
+      lastMessage: `入口组 DDNS 已是最新；${publishedValues.length} 个入口${excludedSuffix}${aggregationSuffix}`,
     });
     return;
   }
@@ -4180,7 +4328,7 @@ async function syncEntryGroupDdns(group: any, ddnsSettings: any, options: Forwar
       groupId: Number(group.id),
       domain: String(group.domain || ""),
       recordType,
-      values,
+      values: publishedValues,
       ttl: Number(ddnsSettings.ttl || 600),
     });
     if (!(await agentSelectionStillCurrent())) {
@@ -4194,7 +4342,7 @@ async function syncEntryGroupDdns(group: any, ddnsSettings: any, options: Forwar
       lastDdnsAt: nowDate(),
       lastFailoverAt: nowDate(),
       lastStatus: "healthy",
-      lastMessage: `入口组 DDNS 已同步 ${values.length} 个入口${excludedSuffix}`,
+      lastMessage: `入口组 DDNS 已同步 ${publishedValues.length} 个入口${excludedSuffix}${aggregationSuffix}`,
       updatedAt: nowDate(),
     }).where(eq(forwardGroups.id, group.id));
     await insertForwardGroupEvent(group.id, null, "ddns-update", `入口组 DDNS 已同步；domain=${String(group.domain || "-")} values=${joined}${excludedSuffix}${forceSync ? " force=true" : ""}`);

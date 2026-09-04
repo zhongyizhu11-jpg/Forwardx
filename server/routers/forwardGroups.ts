@@ -11,6 +11,12 @@ import {
 } from "../services/forwardGroupService";
 import { withKeyedTaskLock } from "../keyedTaskLock";
 import { EXIT_GROUP_STRATEGIES } from "../../shared/exitStrategy";
+import {
+  BANDWIDTH_AGGREGATION_STRATEGIES,
+  MAX_AGGREGATION_RECORD_SLOTS,
+  MAX_MEMBER_BANDWIDTH_MBPS,
+  MAX_MEMBER_WEIGHT,
+} from "../../shared/bandwidthAggregation";
 import { getLinkAccessScope, visibleForwardGroupMemberIds, type LinkAccessScope } from "../linkAccessView";
 import {
   buildForwardGroupAvailabilitySummaryIndex,
@@ -32,6 +38,8 @@ const memberSchema = z.object({
   connectHost: z.string().max(253).nullable().optional(),
   priority: z.number().int().min(0).optional(),
   isEnabled: z.boolean().optional(),
+  bandwidthMbps: z.number().int().min(0).max(MAX_MEMBER_BANDWIDTH_MBPS).nullable().optional(),
+  aggregationWeight: z.number().int().min(0).max(MAX_MEMBER_WEIGHT).nullable().optional(),
 });
 
 const forwardGroupQueryCache = createQueryCache(300);
@@ -67,6 +75,10 @@ const baseSchema = z.object({
   chinaHealthCheckTarget: z.string().max(253).nullable().optional(),
   telegramSwitchNotifyEnabled: z.boolean().default(false),
   ddnsAutoResolveEnabled: z.boolean().default(true),
+  bandwidthAggregationEnabled: z.boolean().optional().default(false),
+  bandwidthAggregationStrategy: z.enum(BANDWIDTH_AGGREGATION_STRATEGIES).optional().default("capacity"),
+  bandwidthAggregationSlots: z.number().int().min(1).max(MAX_AGGREGATION_RECORD_SLOTS).optional().default(8),
+  bandwidthAggregationMinMembers: z.number().int().min(1).max(5).optional().default(1),
   autoFailback: z.boolean().default(true),
   isEnabled: z.boolean().default(true),
   members: z.array(memberSchema).min(1),
@@ -228,6 +240,20 @@ export const forwardGroupsRouter = router({
         `latencySeries:${ctx.user.id}:${input.groupId}:${input.hours}`,
         { ttlMs: 5_000, staleMs: 0 },
         () => db.getForwardGroupLatencySeries(input.groupId, { since }),
+      );
+    }),
+
+  // Live status of an entry group's multi-front-VPS bandwidth aggregation:
+  // aggregate capacity, current throughput and the share each front VPS carries.
+  bandwidthAggregation: protectedProcedure
+    .input(z.object({ groupId: z.number() }))
+    .query(async ({ input, ctx }) => {
+      const group = await assertForwardGroupAccess(input.groupId, ctx.user, { allowNull: true, silentUnauthorized: true });
+      if (!group || String(group.groupMode || "") !== "entry") return null;
+      return forwardGroupQueryCache.get(
+        `bandwidthAggregation:${ctx.user.id}:${input.groupId}`,
+        { ttlMs: 10_000, staleMs: 0 },
+        () => db.getForwardGroupBandwidthAggregation(input.groupId),
       );
     }),
 
