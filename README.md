@@ -18,6 +18,7 @@ ForwardX 通过轻量 Agent 统一管理多台 Linux 服务器上的端口转发
 
 - 创建 TCP、UDP 或 TCP+UDP 规则，支持 `iptables`、`nftables`、`realm`、`socat`、`gost` 和 `nginx`。
 - 管理 GOST、ForwardX V1/V2 和 Nginx Stream 隧道，支持多跳、入口组、出口组和多出口。
+- ForwardX 隧道支持中转带宽叠加：单条连接拆分到多台中转并行传输，由出口按序重组。
 - 使用转发链组织固定的入口、中转和出口路径。
 - 使用转发组和 DDNS 实现多入口故障转移，支持 Cloudflare、华为云、阿里云、腾讯云 DNSPod 和 Webhook。
 - 查看主机状态、规则流量、累计流量、延迟趋势、链路图、自测结果和系统日志。

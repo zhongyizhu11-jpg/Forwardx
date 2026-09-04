@@ -53,6 +53,8 @@ docker/Forwardx/
 
 # Go agent local build/caches
 agent/agent/
+# `go build ./...` inside agent/ drops a binary named after the directory.
+agent/agent
 agent/forwardx-agent-*
 agent/*.exe
 forwardx-fxp/dist/

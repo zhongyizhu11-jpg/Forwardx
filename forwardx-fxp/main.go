@@ -44,6 +44,11 @@ type helloFrame struct {
 	ProxyProtocolExitReceive bool   `json:"proxyProtocolExitReceive,omitempty"`
 	ProxyProtocolExitSend    bool   `json:"proxyProtocolExitSend,omitempty"`
 	ProxyProtocolVersion     int    `json:"proxyProtocolVersion,omitempty"`
+	// Multipath legs that share a session id are reassembled into one stream
+	// at the exit. Empty on an ordinary single-path session.
+	MultipathSessionID string `json:"multipathSessionId,omitempty"`
+	MultipathLegIndex  int    `json:"multipathLegIndex,omitempty"`
+	MultipathLegCount  int    `json:"multipathLegCount,omitempty"`
 }
 
 type protocolPolicy struct {
@@ -135,7 +140,7 @@ const (
 	fxpUDPIdleTimeout    = 5 * time.Minute
 	fxpProtocolSampleMax = 512
 	fxpMasterContext     = "forwardx-fxp-v2 master"
-	fxpRuntimeVersion    = "2.2.117"
+	fxpRuntimeVersion    = "2.2.118"
 	fxpFallbackRetry     = 5 * time.Second
 	fxpFallbackDial      = 3 * time.Second
 	fxpShutdownDrain     = 5 * time.Second
@@ -966,12 +971,7 @@ func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector,
 		proxyInfo = proxyProtocolInfo{}
 	}
 	selectionKey := endpointSelectionSource(client.RemoteAddr().String())
-	exit, sec, endpoint, err := dialSelectedSecureTCP(selector, cfg, selectionKey)
-	if err != nil {
-		return fmt.Errorf("dial exit: %w", err)
-	}
-	defer exit.Close()
-	hello, _ := json.Marshal(helloFrame{
+	helloValues := helloFrame{
 		Network:                  "tcp",
 		TargetIP:                 cfg.TargetIP,
 		TargetPort:               cfg.TargetPort,
@@ -985,11 +985,30 @@ func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector,
 		ProxyProtocolExitReceive: cfg.ProxyProtocolExitReceive,
 		ProxyProtocolExitSend:    cfg.ProxyProtocolExitSend,
 		ProxyProtocolVersion:     normalizeProxyProtocolVersion(cfg.ProxyProtocolVersion),
-	})
-	if err := writeSecureHello(sec, hello); err != nil {
-		return err
 	}
-	fxpVerbosef("entry tcp routed tunnel=%d rule=%d client=%s exit=%s:%d target=%s:%d", cfg.TunnelID, cfg.RuleID, client.RemoteAddr(), endpoint.Host, endpoint.Port, cfg.TargetIP, cfg.TargetPort)
+	// A multipath entry spreads this one client connection over every leg, so
+	// the session is no longer capped by the slowest single path.
+	var transport frameConn
+	if multipathEnabled(cfg) {
+		session, err := dialEntryMultipath(cfg, helloValues, client)
+		if err != nil {
+			return fmt.Errorf("dial multipath exit: %w", err)
+		}
+		transport = session
+	} else {
+		exit, sec, endpoint, err := dialSelectedSecureTCP(selector, cfg, selectionKey)
+		if err != nil {
+			return fmt.Errorf("dial exit: %w", err)
+		}
+		defer exit.Close()
+		hello, _ := json.Marshal(helloValues)
+		if err := writeSecureHello(sec, hello); err != nil {
+			return err
+		}
+		fxpVerbosef("entry tcp routed tunnel=%d rule=%d client=%s exit=%s:%d target=%s:%d", cfg.TunnelID, cfg.RuleID, client.RemoteAddr(), endpoint.Host, endpoint.Port, cfg.TargetIP, cfg.TargetPort)
+		transport = sec
+	}
+	defer transport.closeTransport()
 	policy := protocolPolicy{BlockHTTP: cfg.BlockHTTP, BlockSocks: cfg.BlockSocks, BlockTLS: cfg.BlockTLS}
 	reportBlock := func(proto string) {
 		reportProtocolBlock(cfg, proto)
@@ -1000,7 +1019,7 @@ func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector,
 			return nil
 		}
 		inLimiter.wait(len(first))
-		if err := sec.writeFrame(first); err != nil {
+		if err := transport.writeFrame(first); err != nil {
 			return err
 		}
 	}
@@ -1010,7 +1029,7 @@ func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector,
 	counter.in.Add(uint64(len(first)))
 	stopReporting := startTrafficReporter(cfg, counter)
 	defer stopReporting()
-	return proxyPlainSecureWithPolicy(client, sec, inLimiter, outLimiter, counter, policy, reportBlock, first)
+	return proxyPlainSecureWithPolicy(client, transport, inLimiter, outLimiter, counter, policy, reportBlock, first)
 }
 
 func readInitialTCPPayload(conn net.Conn, timeout time.Duration) ([]byte, error) {
@@ -1776,11 +1795,23 @@ func handleExitSessionWithStartup(conn net.Conn, cfg config, startupComplete fun
 	case "udp":
 		return handleExitUDP(sec, hello)
 	default:
+		// Legs sharing a multipath session id are reassembled into one stream
+		// before the target is dialled, so only the leading leg connects out.
+		if strings.TrimSpace(hello.MultipathSessionID) != "" {
+			return handleExitMultipath(sec, hello, cfg)
+		}
 		return handleExitTCP(sec, hello)
 	}
 }
 
 func handleExitTCP(sec *secureConn, hello helloFrame) error {
+	return relayExitTCPToTarget(sec, hello)
+}
+
+// relayExitTCPToTarget connects to the target and relays one exit session over
+// the given transport, which is a single secure connection for an ordinary
+// session and a multipath session when the entry striped it over several legs.
+func relayExitTCPToTarget(sec frameConn, hello helloFrame) error {
 	target, err := dialTCP(hello.TargetIP, hello.TargetPort, 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("dial target: %w", err)
@@ -1804,7 +1835,7 @@ func handleExitTCP(sec *secureConn, hello helloFrame) error {
 	} else if hello.ProxyProtocolExitSend {
 		fxpVerbosef("exit proxy protocol skipped tunnel=%d rule=%d target=%s:%d missingSource=%v", hello.TunnelID, hello.RuleID, hello.TargetIP, hello.TargetPort, hello.ProxySourceIP == "" || hello.ProxySourcePort <= 0)
 	}
-	fxpVerbosef("exit tcp routed tunnel=%d rule=%d peer=%s target=%s:%d", hello.TunnelID, hello.RuleID, sec.conn.RemoteAddr(), hello.TargetIP, hello.TargetPort)
+	fxpVerbosef("exit tcp routed tunnel=%d rule=%d target=%s:%d", hello.TunnelID, hello.RuleID, hello.TargetIP, hello.TargetPort)
 	return proxyPlainSecure(target, sec, nil, nil, nil)
 }
 
@@ -2070,11 +2101,11 @@ func relayCopy(src, dst *secureConn) error {
 	}
 }
 
-func proxyPlainSecure(plain net.Conn, sec *secureConn, inLimiter, outLimiter *limiter, counter *trafficCounter) error {
+func proxyPlainSecure(plain net.Conn, sec frameConn, inLimiter, outLimiter *limiter, counter *trafficCounter) error {
 	return proxyPlainSecureWithPolicy(plain, sec, inLimiter, outLimiter, counter, protocolPolicy{}, nil, nil)
 }
 
-func proxyPlainSecureWithPolicy(plain net.Conn, sec *secureConn, inLimiter, outLimiter *limiter, counter *trafficCounter, policy protocolPolicy, onBlock func(string), initialSample []byte) error {
+func proxyPlainSecureWithPolicy(plain net.Conn, sec frameConn, inLimiter, outLimiter *limiter, counter *trafficCounter, policy protocolPolicy, onBlock func(string), initialSample []byte) error {
 	errCh := make(chan error, 2)
 	var inCounter, outCounter *atomic.Uint64
 	if counter != nil {
@@ -2087,7 +2118,7 @@ func proxyPlainSecureWithPolicy(plain net.Conn, sec *secureConn, inLimiter, outL
 	go func() { errCh <- copySecureToPlain(plain, sec, outLimiter, outCounter) }()
 	return waitBidirectional(errCh, func() {
 		_ = plain.Close()
-		_ = sec.conn.Close()
+		sec.closeTransport()
 	})
 }
 
@@ -2127,11 +2158,11 @@ func waitBidirectionalWithLinger(errCh <-chan error, closeAll func(), halfCloseL
 	}
 }
 
-func copyPlainToSecure(dst *secureConn, src net.Conn, limiter *limiter, counter *atomic.Uint64) error {
+func copyPlainToSecure(dst frameConn, src net.Conn, limiter *limiter, counter *atomic.Uint64) error {
 	return copyPlainToSecureWithPolicy(dst, src, limiter, counter, protocolPolicy{}, nil, nil)
 }
 
-func copyPlainToSecureWithPolicy(dst *secureConn, src net.Conn, limiter *limiter, counter *atomic.Uint64, policy protocolPolicy, onBlock func(string), initialSample []byte) error {
+func copyPlainToSecureWithPolicy(dst frameConn, src net.Conn, limiter *limiter, counter *atomic.Uint64, policy protocolPolicy, onBlock func(string), initialSample []byte) error {
 	buf := getFXPByteBuffer(32 * 1024)
 	defer putFXPByteBuffer(buf)
 	sample := make([]byte, 0, fxpProtocolSampleMax)
@@ -2182,7 +2213,7 @@ func copyPlainToSecureWithPolicy(dst *secureConn, src net.Conn, limiter *limiter
 	}
 }
 
-func copySecureToPlain(dst net.Conn, src *secureConn, limiter *limiter, counter *atomic.Uint64) error {
+func copySecureToPlain(dst net.Conn, src frameConn, limiter *limiter, counter *atomic.Uint64) error {
 	for {
 		frame, err := src.readFrame()
 		if err != nil {
