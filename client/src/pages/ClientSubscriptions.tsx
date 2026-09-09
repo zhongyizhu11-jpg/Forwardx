@@ -487,24 +487,6 @@ export default function ClientSubscriptionsPage() {
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Select
-                          value={normalizeProxyRulePreset(token.rulePreset)}
-                          onValueChange={(value) => updateToken.mutate({
-                            id: token.id,
-                            rulePreset: value as ProxyRulePreset,
-                          })}
-                        >
-                          <SelectTrigger className="w-28" title="规则订阅使用的分流预设">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {PROXY_RULE_PRESETS.filter((preset) => preset !== "off").map((preset) => (
-                              <SelectItem key={preset} value={preset}>
-                                {PROXY_RULE_PRESET_LABELS[preset]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
                         <Switch
                           checked={!!token.isEnabled}
                           onCheckedChange={(checked) => updateToken.mutate({ id: token.id, isEnabled: checked })}
@@ -545,12 +527,42 @@ export default function ClientSubscriptionsPage() {
                           .filter((format) => proxySubscriptionKindSupported(format, kind));
                         return (
                           <div key={kind} className="space-y-2">
-                            <div>
-                              <p className="text-xs font-medium">{PROXY_SUBSCRIPTION_KIND_LABELS[kind]}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {PROXY_SUBSCRIPTION_KIND_HINTS[kind]}
-                              </p>
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-medium">{PROXY_SUBSCRIPTION_KIND_LABELS[kind]}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {PROXY_SUBSCRIPTION_KIND_HINTS[kind]}
+                                </p>
+                              </div>
+                              {/* 预设只影响规则订阅，所以放在这一节里而不是卡片顶部：
+                                  控件挨着它作用的地址，改完立刻能看到影响的是哪几条。 */}
+                              {kind === "rules" && (
+                                <Select
+                                  value={normalizeProxyRulePreset(token.rulePreset)}
+                                  onValueChange={(value) => updateToken.mutate({
+                                    id: token.id,
+                                    rulePreset: value as ProxyRulePreset,
+                                  })}
+                                >
+                                  <SelectTrigger className="h-8 w-28 shrink-0 text-xs">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {PROXY_RULE_PRESETS.filter((preset) => preset !== "off").map((preset) => (
+                                      <SelectItem key={preset} value={preset}>
+                                        {PROXY_RULE_PRESET_LABELS[preset]}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
                             </div>
+                            {kind === "rules" && (
+                              <p className="text-xs text-muted-foreground">
+                                当前预设：{PROXY_RULE_PRESET_LABELS[normalizeProxyRulePreset(token.rulePreset)]}
+                                —— {PROXY_RULE_PRESET_HINTS[normalizeProxyRulePreset(token.rulePreset)]}
+                              </p>
+                            )}
                             {formats.map((format) => {
                               const url = subscriptionUrl(token.token, format, kind);
                               const targets = proxyClientTargetsForFormat(format);
