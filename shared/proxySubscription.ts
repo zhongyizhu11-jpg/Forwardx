@@ -11,6 +11,10 @@ import {
   formatProxyNodeLink,
   type ProxyNode,
 } from "./proxyNode";
+import type {
+  ProxySubscriptionDocument,
+  ProxySubscriptionGroup,
+} from "./proxySubscriptionPlan";
 
 export const PROXY_SUBSCRIPTION_FORMATS = ["base64", "clash", "singbox", "loon"] as const;
 
@@ -45,8 +49,21 @@ export function normalizeProxySubscriptionFormat(value: unknown): ProxySubscript
   return "base64";
 }
 
-/** 订阅里的分组名，各格式统一使用，方便用户在不同客户端之间对照。 */
+/** 订阅里的主选择器名，各格式统一使用，方便用户在不同客户端之间对照。 */
 export const PROXY_SUBSCRIPTION_GROUP_NAME = "ForwardX";
+
+/**
+ * 只有这两种格式能表达策略组。
+ *
+ * base64 是节点 URI 列表，格式本身没有分组概念；Loon 的节点订阅同样只接受节点
+ * 行，策略组要写在用户自己的配置文件里 —— 硬塞 [Proxy Group] 会让节点订阅解析
+ * 失败，所以这里宁可不出组，也不产出会坏掉的内容。
+ */
+export const PROXY_SUBSCRIPTION_FORMATS_WITH_GROUPS: readonly ProxySubscriptionFormat[] = ["clash", "singbox"];
+
+export function proxySubscriptionFormatSupportsGroups(format: ProxySubscriptionFormat): boolean {
+  return PROXY_SUBSCRIPTION_FORMATS_WITH_GROUPS.includes(format);
+}
 
 function yamlQuote(value: string): string {
   return `"${String(value ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -126,7 +143,12 @@ function clashProxyLines(node: ProxyNode): YamlLine[] {
   return lines;
 }
 
-function renderClash(nodes: readonly ProxyNode[]): string {
+/** 自动选路组的测速地址与节奏，Clash 与 sing-box 共用。 */
+const PROXY_AUTO_GROUP_TEST_URL = "http://www.gstatic.com/generate_204";
+const PROXY_AUTO_GROUP_INTERVAL_SECONDS = 300;
+const PROXY_AUTO_GROUP_TOLERANCE_MS = 50;
+
+function renderClash(nodes: readonly ProxyNode[], groups: readonly ProxySubscriptionGroup[]): string {
   const lines: string[] = [nodes.length === 0 ? "proxies: []" : "proxies:"];
   for (const node of nodes) {
     for (const line of clashProxyLines(node)) {
@@ -134,13 +156,26 @@ function renderClash(nodes: readonly ProxyNode[]): string {
     }
   }
 
-  const names = nodes.map((node) => yamlQuote(node.name));
-  lines.push("proxy-groups:");
-  lines.push(`  - name: ${yamlQuote(PROXY_SUBSCRIPTION_GROUP_NAME)}`);
-  lines.push("    type: select");
-  lines.push(`    proxies: [${names.join(", ")}]`);
+  if (groups.length === 0) {
+    lines.push("proxy-groups: []");
+  } else {
+    lines.push("proxy-groups:");
+    for (const group of groups) {
+      lines.push(`  - name: ${yamlQuote(group.name)}`);
+      lines.push(`    type: ${group.type}`);
+      lines.push(`    proxies: [${group.members.map((member) => yamlQuote(member)).join(", ")}]`);
+      if (group.type !== "select") {
+        lines.push(`    url: ${yamlQuote(PROXY_AUTO_GROUP_TEST_URL)}`);
+        lines.push(`    interval: ${PROXY_AUTO_GROUP_INTERVAL_SECONDS}`);
+        // 容差避免两条中转延迟接近时来回横跳，每次切换都会断开正在进行的连接。
+        if (group.type === "url-test") lines.push(`    tolerance: ${PROXY_AUTO_GROUP_TOLERANCE_MS}`);
+      }
+    }
+  }
+  // MATCH 必须指向真实存在的策略组，没有组时只能指 DIRECT，否则 Clash 会因为
+  // 引用了不存在的组而拒绝整份配置。
   lines.push("rules:");
-  lines.push(`  - MATCH,${PROXY_SUBSCRIPTION_GROUP_NAME}`);
+  lines.push(`  - MATCH,${groups[0]?.name || "DIRECT"}`);
   return `${lines.join("\n")}\n`;
 }
 
@@ -204,16 +239,27 @@ function singboxOutbound(node: ProxyNode): Record<string, unknown> {
   return outbound;
 }
 
-function renderSingbox(nodes: readonly ProxyNode[]): string {
-  const outbounds: Record<string, unknown>[] = nodes.map(singboxOutbound);
+function singboxGroupOutbound(group: ProxySubscriptionGroup): Record<string, unknown> {
+  if (group.type === "select") {
+    return { type: "selector", tag: group.name, outbounds: [...group.members] };
+  }
+  // sing-box 没有单独的 fallback 类型，两种模式都用 urltest 表达；它本身就带
+  // 故障切换，主备与择快的差别只在成员顺序。
+  return {
+    type: "urltest",
+    tag: group.name,
+    outbounds: [...group.members],
+    url: PROXY_AUTO_GROUP_TEST_URL,
+    interval: `${PROXY_AUTO_GROUP_INTERVAL_SECONDS}s`,
+    ...(group.type === "url-test" ? { tolerance: PROXY_AUTO_GROUP_TOLERANCE_MS } : {}),
+  };
+}
+
+function renderSingbox(nodes: readonly ProxyNode[], groups: readonly ProxySubscriptionGroup[]): string {
   const config = {
     outbounds: [
-      {
-        type: "selector",
-        tag: PROXY_SUBSCRIPTION_GROUP_NAME,
-        outbounds: nodes.map((node) => node.name),
-      },
-      ...outbounds,
+      ...groups.map(singboxGroupOutbound),
+      ...nodes.map(singboxOutbound),
       { type: "direct", tag: "direct" },
     ],
   };
@@ -269,12 +315,17 @@ function renderLoon(nodes: readonly ProxyNode[]): string {
   return `${nodes.map(loonNodeLine).join("\n")}\n`;
 }
 
+/**
+ * 渲染订阅。base64 与 Loon 只输出节点，分组会被忽略 —— 见
+ * PROXY_SUBSCRIPTION_FORMATS_WITH_GROUPS 的说明。
+ */
 export function renderProxySubscription(
-  nodes: readonly ProxyNode[],
+  document: ProxySubscriptionDocument,
   format: ProxySubscriptionFormat,
 ): string {
-  if (format === "clash") return renderClash(nodes);
-  if (format === "singbox") return renderSingbox(nodes);
+  const { nodes, groups } = document;
+  if (format === "clash") return renderClash(nodes, groups);
+  if (format === "singbox") return renderSingbox(nodes, groups);
   if (format === "loon") return renderLoon(nodes);
   return renderBase64(nodes);
 }

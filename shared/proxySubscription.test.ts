@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { parseProxyNodeLink, relayProxyNode, decodeBase64Utf8, type ProxyNode } from "./proxyNode";
+import { buildProxySubscriptionDocument } from "./proxySubscriptionPlan";
 import {
   formatProxySubscriptionUserInfo,
   normalizeProxySubscriptionFormat,
+  proxySubscriptionFormatSupportsGroups,
   renderProxySubscription,
   PROXY_SUBSCRIPTION_GROUP_NAME,
 } from "./proxySubscription";
@@ -102,7 +104,12 @@ test("Clash output is structurally valid YAML with the right per-protocol field 
     node(SS, { address: "5.6.7.8", port: 20003, name: "广州2 → SS" }),
   ];
 
-  const parsed = parseYamlSubset(renderProxySubscription(nodes, "clash"));
+  const document = buildProxySubscriptionDocument(
+    { entries: nodes.map((node, index) => ({ ruleId: index + 1, templateId: index + 1, node })), skipped: [] },
+    [],
+    { mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME },
+  );
+  const parsed = parseYamlSubset(renderProxySubscription(document, "clash"));
   const proxies = parsed.proxies as Record<string, unknown>[];
 
   assert.equal(proxies.length, 3);
@@ -149,7 +156,12 @@ test("sing-box output is valid JSON with a selector over every node", () => {
     node(SS, { address: "5.6.7.8", port: 20003, name: "广州2 → SS" }),
   ];
 
-  const parsed = JSON.parse(renderProxySubscription(nodes, "singbox"));
+  const document = buildProxySubscriptionDocument(
+    { entries: nodes.map((node, index) => ({ ruleId: index + 1, templateId: index + 1, node })), skipped: [] },
+    [],
+    { mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME },
+  );
+  const parsed = JSON.parse(renderProxySubscription(document, "singbox"));
   const outbounds = parsed.outbounds as Record<string, any>[];
 
   assert.equal(outbounds[0].type, "selector");
@@ -176,7 +188,7 @@ test("Loon lines follow the official example config layout", () => {
     node(SS, { address: "5.6.7.8", port: 20003, name: "广州2 → SS" }),
   ];
 
-  const lines = renderProxySubscription(nodes, "loon").trim().split("\n");
+  const lines = renderProxySubscription({ nodes: nodes, groups: [] }, "loon").trim().split("\n");
   assert.equal(lines.length, 3);
 
   const [vless, trojan, ss] = lines;
@@ -195,7 +207,7 @@ test("Loon lines follow the official example config layout", () => {
 test("Loon node names drop the characters that would split the line", () => {
   const nodes = [node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1, 500M = 主力" })];
 
-  const line = renderProxySubscription(nodes, "loon").trim();
+  const line = renderProxySubscription({ nodes: nodes, groups: [] }, "loon").trim();
   const name = line.slice(0, line.indexOf(" = "));
 
   assert.doesNotMatch(name, /[,=]/);
@@ -208,7 +220,7 @@ test("base64 output decodes back to one link per node", () => {
     node(TROJAN, { address: "5.6.7.8", port: 20002, name: "广州2 → HK" }),
   ];
 
-  const links = decodeBase64Utf8(renderProxySubscription(nodes, "base64")).split("\n");
+  const links = decodeBase64Utf8(renderProxySubscription({ nodes: nodes, groups: [] }, "base64")).split("\n");
 
   assert.equal(links.length, 2);
   assert.match(links[0], /^vless:\/\/abc-uuid@1\.2\.3\.4:20001\?/);
@@ -218,12 +230,15 @@ test("base64 output decodes back to one link per node", () => {
 
 test("every format renders an empty node list without crashing", () => {
   for (const format of ["base64", "clash", "singbox", "loon"] as const) {
-    const output = renderProxySubscription([], format);
+    const output = renderProxySubscription({ nodes: [], groups: [] }, format);
     assert.equal(typeof output, "string");
   }
   // 空列表的 Clash 输出仍要是合法 YAML，否则客户端会报解析错误而不是"无节点"。
-  const parsed = parseYamlSubset(renderProxySubscription([], "clash"));
+  const parsed = parseYamlSubset(renderProxySubscription({ nodes: [], groups: [] }, "clash"));
   assert.deepEqual(parsed.proxies, []);
+  assert.deepEqual(parsed["proxy-groups"], []);
+  // 没有策略组时 MATCH 不能指向不存在的组，否则 Clash 拒绝整份配置。
+  assert.deepEqual(parsed.rules, ["MATCH,DIRECT"]);
 });
 
 test("format aliases from client query strings resolve correctly", () => {
@@ -244,4 +259,104 @@ test("Subscription-Userinfo clamps missing and negative values", () => {
     formatProxySubscriptionUserInfo({ upload: -5, download: Number.NaN, total: 0, expire: 0 }),
     "upload=0; download=0; total=0; expire=0",
   );
+});
+
+test("Clash 的自动选路组带测速地址和容差", () => {
+  const document = {
+    nodes: [
+      node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" }),
+      node(VLESS_WS, { address: "5.6.7.8", port: 20002, name: "广州2 → HKT" }),
+    ],
+    groups: [
+      { name: "ForwardX", type: "select" as const, members: ["HKT 自动选路", "广州1 → HKT", "广州2 → HKT"] },
+      { name: "HKT 自动选路", type: "url-test" as const, members: ["广州1 → HKT", "广州2 → HKT"] },
+    ],
+  };
+
+  const parsed = parseYamlSubset(renderProxySubscription(document, "clash"));
+  const groups = parsed["proxy-groups"] as Record<string, any>[];
+
+  assert.equal(groups[0].type, "select");
+  assert.equal(groups[0].url, undefined, "选择器不该带测速地址");
+
+  assert.equal(groups[1].name, "HKT 自动选路");
+  assert.equal(groups[1].type, "url-test");
+  assert.deepEqual(groups[1].proxies, ["广州1 → HKT", "广州2 → HKT"]);
+  assert.equal(groups[1].url, "http://www.gstatic.com/generate_204");
+  assert.equal(groups[1].interval, 300);
+  // 容差避免两条中转延迟接近时反复横跳，每次切换都会断开已有连接。
+  assert.equal(groups[1].tolerance, 50);
+
+  // 流量入口指向主选择器。
+  assert.deepEqual(parsed.rules, ["MATCH,ForwardX"]);
+});
+
+test("Clash 的主备组不带容差", () => {
+  const document = {
+    nodes: [node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" })],
+    groups: [
+      { name: "ForwardX", type: "select" as const, members: ["HKT 自动选路"] },
+      { name: "HKT 自动选路", type: "fallback" as const, members: ["广州1 → HKT"] },
+    ],
+  };
+
+  const parsed = parseYamlSubset(renderProxySubscription(document, "clash"));
+  const groups = parsed["proxy-groups"] as Record<string, any>[];
+
+  assert.equal(groups[1].type, "fallback");
+  assert.equal(groups[1].url, "http://www.gstatic.com/generate_204");
+  // fallback 按顺序取第一个可用，容差没有意义。
+  assert.equal(groups[1].tolerance, undefined);
+});
+
+test("sing-box 的自动选路组渲染成 urltest", () => {
+  const document = {
+    nodes: [
+      node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" }),
+      node(VLESS_WS, { address: "5.6.7.8", port: 20002, name: "广州2 → HKT" }),
+    ],
+    groups: [
+      { name: "ForwardX", type: "select" as const, members: ["HKT 自动选路"] },
+      { name: "HKT 自动选路", type: "url-test" as const, members: ["广州1 → HKT", "广州2 → HKT"] },
+    ],
+  };
+
+  const parsed = JSON.parse(renderProxySubscription(document, "singbox"));
+  const outbounds = parsed.outbounds as Record<string, any>[];
+
+  assert.equal(outbounds[0].type, "selector");
+  assert.deepEqual(outbounds[0].outbounds, ["HKT 自动选路"]);
+
+  assert.equal(outbounds[1].type, "urltest");
+  assert.equal(outbounds[1].tag, "HKT 自动选路");
+  assert.deepEqual(outbounds[1].outbounds, ["广州1 → HKT", "广州2 → HKT"]);
+  // sing-box 的 interval 是带单位的字符串，写成数字会被拒绝。
+  assert.equal(outbounds[1].interval, "300s");
+
+  // 组之后才是真实节点。
+  assert.equal(outbounds[2].type, "vless");
+});
+
+test("base64 与 Loon 忽略策略组，只输出节点", () => {
+  const document = {
+    nodes: [node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" })],
+    groups: [
+      { name: "ForwardX", type: "select" as const, members: ["HKT 自动选路"] },
+      { name: "HKT 自动选路", type: "url-test" as const, members: ["广州1 → HKT"] },
+    ],
+  };
+
+  // base64 是 URI 列表，Loon 的节点订阅只收节点行；塞进策略组会让订阅解析失败。
+  const links = decodeBase64Utf8(renderProxySubscription(document, "base64")).split("\n").filter(Boolean);
+  assert.equal(links.length, 1);
+  assert.doesNotMatch(links[0], /自动选路/);
+
+  const loon = renderProxySubscription(document, "loon").trim().split("\n");
+  assert.equal(loon.length, 1);
+  assert.doesNotMatch(loon[0], /\[Proxy Group\]/);
+
+  assert.equal(proxySubscriptionFormatSupportsGroups("clash"), true);
+  assert.equal(proxySubscriptionFormatSupportsGroups("singbox"), true);
+  assert.equal(proxySubscriptionFormatSupportsGroups("base64"), false);
+  assert.equal(proxySubscriptionFormatSupportsGroups("loon"), false);
 });

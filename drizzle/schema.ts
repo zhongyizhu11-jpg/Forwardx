@@ -418,6 +418,8 @@ export const proxyNodes = table("proxy_nodes", {
   realityPublicKey: text("realityPublicKey"),
   realityShortId: text("realityShortId"),
   udp: boolean("udp").notNull().default(true),
+  // 多台中转指向同一落地节点时，订阅里额外生成的选路组类型：off | url-test | fallback
+  autoGroup: varchar("autoGroup", { length: 16 }).notNull().default("url-test"),
   isEnabled: boolean("isEnabled").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),

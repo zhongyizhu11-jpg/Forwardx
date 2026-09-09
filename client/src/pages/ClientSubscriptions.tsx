@@ -21,7 +21,14 @@ import {
   PROXY_SUBSCRIPTION_FORMAT_LABELS,
   type ProxySubscriptionFormat,
 } from "@shared/proxySubscription";
-import { Copy, Eye, EyeOff, Link2, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
+import {
+  PROXY_NODE_AUTO_GROUPS,
+  PROXY_NODE_AUTO_GROUP_HINTS,
+  PROXY_NODE_AUTO_GROUP_LABELS,
+  normalizeProxyNodeAutoGroup,
+  type ProxyNodeAutoGroup,
+} from "@shared/proxySubscriptionPlan";
+import { Copy, Eye, EyeOff, Link2, Plus, RefreshCw, Server, Trash2, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -52,6 +59,7 @@ export default function ClientSubscriptionsPage() {
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null);
   const [nodeName, setNodeName] = useState("");
   const [nodeLink, setNodeLink] = useState("");
+  const [nodeAutoGroup, setNodeAutoGroup] = useState<ProxyNodeAutoGroup>("url-test");
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [tokenName, setTokenName] = useState("");
   const [tokenFormat, setTokenFormat] = useState<ProxySubscriptionFormat>("base64");
@@ -151,6 +159,7 @@ export default function ClientSubscriptionsPage() {
     setEditingNodeId(null);
     setNodeName("");
     setNodeLink("");
+    setNodeAutoGroup("url-test");
     setNodeDialogOpen(true);
   };
 
@@ -158,6 +167,7 @@ export default function ClientSubscriptionsPage() {
     setEditingNodeId(node.id);
     setNodeName(String(node.name || ""));
     setNodeLink(String(node.sourceLink || ""));
+    setNodeAutoGroup(normalizeProxyNodeAutoGroup(node.autoGroup));
     setNodeDialogOpen(true);
   };
 
@@ -172,8 +182,8 @@ export default function ClientSubscriptionsPage() {
       toast.error("请粘贴落地机的节点链接");
       return;
     }
-    if (editingNodeId) updateNode.mutate({ id: editingNodeId, name, link });
-    else createNode.mutate({ name, link });
+    if (editingNodeId) updateNode.mutate({ id: editingNodeId, name, link, autoGroup: nodeAutoGroup });
+    else createNode.mutate({ name, link, autoGroup: nodeAutoGroup });
   };
 
   return (
@@ -195,7 +205,8 @@ export default function ClientSubscriptionsPage() {
                 落地节点
               </CardTitle>
               <CardDescription>
-                按落地机登记，不是按转发。多条转发指向同一台落地机时共用一个节点即可。
+                按落地机登记，不是按转发。多条转发指向同一台落地机时共用一个节点即可，
+                面板会为它们额外生成一个自动选路组。
               </CardDescription>
             </div>
             <Button size="sm" onClick={openCreateNode}>
@@ -231,6 +242,24 @@ export default function ClientSubscriptionsPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Select
+                        value={normalizeProxyNodeAutoGroup(node.autoGroup)}
+                        onValueChange={(value) => updateNode.mutate({
+                          id: node.id,
+                          autoGroup: value as ProxyNodeAutoGroup,
+                        })}
+                      >
+                        <SelectTrigger className="w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PROXY_NODE_AUTO_GROUPS.map((mode) => (
+                            <SelectItem key={mode} value={mode}>
+                              {PROXY_NODE_AUTO_GROUP_LABELS[mode]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <Switch
                         checked={!!node.isEnabled}
                         onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
@@ -321,6 +350,26 @@ export default function ClientSubscriptionsPage() {
                         />
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {(preview?.groups.length ?? 0) > 0 && (
+                  <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+                    <p className="flex items-center gap-1.5 text-xs font-medium">
+                      <Zap className="h-3.5 w-3.5" />
+                      自动选路组（Clash 与 sing-box 可用）
+                    </p>
+                    {preview!.groups.map((group) => (
+                      <div key={group.name} className="text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">{group.name}</span>
+                        {group.type === "url-test" ? " 自动选最快 · " : " 主备切换 · "}
+                        {group.members.join(" / ")}
+                      </div>
+                    ))}
+                    <p className="text-xs text-muted-foreground">
+                      在客户端里选这个组，它会自己挑最快的中转，那条挂了自动换下一条。
+                      通用 Base64 和 Loon 的节点订阅格式表达不了策略组，只会拿到裸节点。
+                    </p>
                   </div>
                 )}
 
@@ -503,6 +552,25 @@ export default function ClientSubscriptionsPage() {
                 onChange={(event) => setNodeName(event.target.value)}
                 placeholder="例如 HKT 落地"
               />
+            </div>
+            <div className="space-y-2">
+              <Label>多中转时的选路方式</Label>
+              <Select
+                value={nodeAutoGroup}
+                onValueChange={(value) => setNodeAutoGroup(value as ProxyNodeAutoGroup)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROXY_NODE_AUTO_GROUPS.map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {PROXY_NODE_AUTO_GROUP_LABELS[mode]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{PROXY_NODE_AUTO_GROUP_HINTS[nodeAutoGroup]}</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="proxy-node-link">节点链接</Label>

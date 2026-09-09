@@ -5,7 +5,10 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { parseProxyNodeLink, type ProxyNode } from "../../shared/proxyNode";
 import { PROXY_SUBSCRIPTION_FORMATS } from "../../shared/proxySubscription";
-import { PROXY_SUBSCRIPTION_SKIP_LABELS } from "../../shared/proxySubscriptionPlan";
+import {
+  PROXY_NODE_AUTO_GROUPS,
+  PROXY_SUBSCRIPTION_SKIP_LABELS,
+} from "../../shared/proxySubscriptionPlan";
 
 /**
  * 订阅令牌够长才安全：地址里带着全部节点凭据，一旦可猜就等于把节点送人。
@@ -79,6 +82,7 @@ export const proxySubscriptionsRouter = router({
       name: z.string().trim().min(1).max(64),
       remark: z.string().trim().max(200).optional(),
       link: z.string().min(1).max(8192),
+      autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const parsed = parseProxyNodeLink(input.link);
@@ -87,6 +91,7 @@ export const proxySubscriptionsRouter = router({
         userId: ctx.user.id,
         name: input.name,
         remark: input.remark || null,
+        ...(input.autoGroup ? { autoGroup: input.autoGroup } : {}),
         ...nodeToRow(parsed.node, input.link),
       } as any);
       return { id };
@@ -99,6 +104,7 @@ export const proxySubscriptionsRouter = router({
       remark: z.string().trim().max(200).nullable().optional(),
       link: z.string().min(1).max(8192).optional(),
       isEnabled: z.boolean().optional(),
+      autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertOwnedNode(input.id, ctx);
@@ -106,6 +112,7 @@ export const proxySubscriptionsRouter = router({
       if (input.name !== undefined) data.name = input.name;
       if (input.remark !== undefined) data.remark = input.remark || null;
       if (input.isEnabled !== undefined) data.isEnabled = input.isEnabled;
+      if (input.autoGroup !== undefined) data.autoGroup = input.autoGroup;
       if (input.link !== undefined) {
         const parsed = parseProxyNodeLink(input.link);
         if (!parsed.ok) throw new Error(parsed.error);
@@ -163,7 +170,11 @@ export const proxySubscriptionsRouter = router({
   /** 预览订阅内容：进订阅的节点，以及每条被排除的转发和原因。 */
   preview: protectedProcedure.query(async ({ ctx }) => {
     const plan = await db.buildProxySubscriptionPlanForUser(ctx.user.id);
+    const document = await db.getProxySubscriptionDocumentForUser(ctx.user.id);
     return {
+      groups: document.groups
+        .filter((group) => group.type !== "select")
+        .map((group) => ({ name: group.name, type: group.type, members: group.members })),
       nodes: plan.entries.map((entry) => ({
         ruleId: entry.ruleId,
         templateId: entry.templateId,

@@ -86,9 +86,16 @@ test("订阅地址按 token 返回节点，并按客户端 UA 选择格式", () 
     const clash = await get("/api/sub/token-live", { "user-agent": "clash-verge/1.5.0" });
     assert.ok(clash.body.startsWith("proxies:"), clash.body.slice(0, 60));
     assert.ok(clash.headers["content-type"].includes("yaml"));
+    // 两台中转指向同一落地节点，应额外生成自动选路组，且 MATCH 指向主选择器。
+    assert.ok(clash.body.includes("name: \"HKT 自动选路\""), clash.body);
+    assert.ok(clash.body.includes("type: url-test"), clash.body);
+    assert.ok(clash.body.includes("MATCH,ForwardX"), clash.body);
 
     const singbox = await get("/api/sub/token-live", { "user-agent": "sing-box 1.9.0" });
-    assert.equal(JSON.parse(singbox.body).outbounds[0].type, "selector");
+    const singboxOutbounds = JSON.parse(singbox.body).outbounds;
+    assert.equal(singboxOutbounds[0].type, "selector");
+    assert.equal(singboxOutbounds[1].type, "urltest");
+    assert.equal(singboxOutbounds[1].tag, "HKT 自动选路");
 
     const loon = await get("/api/sub/token-live", { "user-agent": "Loon/700" });
     assert.ok(loon.body.includes("= VLESS,1.2.3.4,20001,"), loon.body.slice(0, 120));

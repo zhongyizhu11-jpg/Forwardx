@@ -40,6 +40,7 @@ export type ProxyNodeTemplateRow = {
   realityShortId?: unknown;
   udp?: unknown;
   isEnabled?: unknown;
+  autoGroup?: unknown;
 };
 
 /** forward_rules 表里订阅需要用到的字段。 */
@@ -242,4 +243,112 @@ export function dedupeProxyNodeNames(nodes: readonly ProxyNode[]): ProxyNode[] {
     if (seen === 0) return node.name === base ? node : { ...node, name: base };
     return { ...node, name: `${base} #${seen + 1}` };
   });
+}
+
+
+// ==================== 中转自动选路分组 ====================
+
+/**
+ * 同一个落地节点被多台中转指向时，订阅里额外生成一个策略组让客户端自己选路。
+ *
+ * off       不生成，只留裸节点
+ * url-test  客户端定期测速，自动走最快的那条中转，挂掉自动切
+ * fallback  按顺序主备，前一条不通才切下一条
+ */
+export const PROXY_NODE_AUTO_GROUPS = ["off", "url-test", "fallback"] as const;
+
+export type ProxyNodeAutoGroup = (typeof PROXY_NODE_AUTO_GROUPS)[number];
+
+export const PROXY_NODE_AUTO_GROUP_LABELS: Record<ProxyNodeAutoGroup, string> = {
+  off: "不生成",
+  "url-test": "自动选最快",
+  fallback: "主备切换",
+};
+
+export const PROXY_NODE_AUTO_GROUP_HINTS: Record<ProxyNodeAutoGroup, string> = {
+  off: "订阅里只有裸节点，由你自己在客户端里选。",
+  "url-test": "客户端定期测速，自动走延迟最低的中转；该条中转故障时自动切换。",
+  fallback: "按列表顺序主备，前一条不通才切下一条，适合有明确主力线路时。",
+};
+
+export function normalizeProxyNodeAutoGroup(value: unknown): ProxyNodeAutoGroup {
+  const raw = String(value ?? "").trim().toLowerCase();
+  return (PROXY_NODE_AUTO_GROUPS as readonly string[]).includes(raw)
+    ? raw as ProxyNodeAutoGroup
+    : "url-test";
+}
+
+export type ProxySubscriptionGroupType = "select" | "url-test" | "fallback";
+
+export type ProxySubscriptionGroup = {
+  name: string;
+  type: ProxySubscriptionGroupType;
+  /** 组内成员，可能是节点名，也可能是另一个组名（主选择器会引用自动选路组）。 */
+  members: string[];
+};
+
+/** 订阅最终要渲染的内容：节点列表加策略组。 */
+export type ProxySubscriptionDocument = {
+  nodes: ProxyNode[];
+  groups: ProxySubscriptionGroup[];
+};
+
+/** 自动选路组的名字，和模板同名会让客户端里两个条目难以区分，所以加后缀。 */
+export function autoGroupNameForTemplate(templateName: string): string {
+  return `${text(templateName) || "节点"} 自动选路`;
+}
+
+/** 一台中转不构成选路，低于这个数量不生成自动组。 */
+export const PROXY_AUTO_GROUP_MIN_MEMBERS = 2;
+
+/**
+ * 组装订阅文档。
+ *
+ * 分组必须在节点重名处理之后生成：组是按名称引用成员的，用去重前的名字会让
+ * 客户端找不到节点。
+ */
+export function buildProxySubscriptionDocument(
+  plan: ProxySubscriptionPlan,
+  templates: readonly ProxyNodeTemplateRow[],
+  options: { mainGroupName: string },
+): ProxySubscriptionDocument {
+  const nodes = dedupeProxyNodeNames(plan.entries.map((entry) => entry.node));
+  const templatesById = new Map<number, ProxyNodeTemplateRow>();
+  for (const template of templates) templatesById.set(Number(template.id), template);
+
+  // 去重后的名字按顺序对回各自的模板。
+  const namesByTemplate = new Map<number, string[]>();
+  plan.entries.forEach((entry, index) => {
+    const name = nodes[index]?.name;
+    if (!name) return;
+    const list = namesByTemplate.get(entry.templateId) || [];
+    list.push(name);
+    namesByTemplate.set(entry.templateId, list);
+  });
+
+  const autoGroups: ProxySubscriptionGroup[] = [];
+  for (const [templateId, memberNames] of namesByTemplate) {
+    if (memberNames.length < PROXY_AUTO_GROUP_MIN_MEMBERS) continue;
+    const template = templatesById.get(templateId);
+    const mode = normalizeProxyNodeAutoGroup(template?.autoGroup);
+    if (mode === "off") continue;
+    autoGroups.push({
+      name: autoGroupNameForTemplate(text(template?.name)),
+      type: mode,
+      members: memberNames,
+    });
+  }
+
+  const groups: ProxySubscriptionGroup[] = [];
+  if (nodes.length > 0) {
+    // 自动选路组排在裸节点前面，用户打开客户端第一眼就是「自动」。
+    groups.push({
+      name: options.mainGroupName,
+      type: "select",
+      members: [...autoGroups.map((group) => group.name), ...nodes.map((node) => node.name)],
+    });
+    groups.push(...autoGroups);
+  }
+
+  return { nodes, groups };
 }

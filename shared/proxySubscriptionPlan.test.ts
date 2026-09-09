@@ -204,3 +204,129 @@ test("节点名在主机名或模板名缺失时仍有可用回退", () => {
   assert.equal(defaultProxySubscriptionNodeName({ hostName: "", templateName: "", ruleName: "转发" }), "转发");
   assert.equal(defaultProxySubscriptionNodeName({ hostName: "", templateName: "", ruleName: "" }), "节点");
 });
+
+// ==================== 中转自动选路分组 ====================
+
+import {
+  autoGroupNameForTemplate,
+  buildProxySubscriptionDocument,
+  normalizeProxyNodeAutoGroup,
+} from "./proxySubscriptionPlan";
+
+function planFor(rules: ProxySubscriptionRuleRow[], templates: ProxyNodeTemplateRow[]) {
+  return buildProxySubscriptionPlan({ rules, templates, hosts: HOSTS });
+}
+
+test("同一落地节点被两台中转指向时生成自动选路组", () => {
+  const templates = [HKT_TEMPLATE];
+  const plan = planFor(
+    [rule({ id: 1, hostId: 1, sourcePort: 20001 }), rule({ id: 2, hostId: 2, sourcePort: 20002 })],
+    templates,
+  );
+
+  const doc = buildProxySubscriptionDocument(plan, templates, { mainGroupName: "ForwardX" });
+
+  assert.equal(doc.groups.length, 2);
+  const [main, auto] = doc.groups;
+
+  assert.equal(main.name, "ForwardX");
+  assert.equal(main.type, "select");
+  // 自动选路组排在裸节点前面，用户第一眼就是「自动」。
+  assert.deepEqual(main.members, ["HKT 自动选路", "广州1 → HKT", "广州2 → HKT"]);
+
+  assert.equal(auto.name, "HKT 自动选路");
+  assert.equal(auto.type, "url-test");
+  assert.deepEqual(auto.members, ["广州1 → HKT", "广州2 → HKT"]);
+});
+
+test("只有一台中转时不生成自动选路组", () => {
+  const templates = [HKT_TEMPLATE];
+  const plan = planFor([rule({ id: 1, hostId: 1 })], templates);
+
+  const doc = buildProxySubscriptionDocument(plan, templates, { mainGroupName: "ForwardX" });
+
+  // 一条线路无从选路，多一个组只会让客户端界面变乱。
+  assert.equal(doc.groups.length, 1);
+  assert.equal(doc.groups[0].type, "select");
+  assert.deepEqual(doc.groups[0].members, ["广州1 → HKT"]);
+});
+
+test("模板可以关闭自动选路，或改成主备切换", () => {
+  const off = [{ ...HKT_TEMPLATE, autoGroup: "off" }];
+  const offDoc = buildProxySubscriptionDocument(
+    planFor([rule({ id: 1, hostId: 1 }), rule({ id: 2, hostId: 2, sourcePort: 20002 })], off),
+    off,
+    { mainGroupName: "ForwardX" },
+  );
+  assert.equal(offDoc.groups.length, 1);
+  assert.deepEqual(offDoc.groups[0].members, ["广州1 → HKT", "广州2 → HKT"]);
+
+  const fallback = [{ ...HKT_TEMPLATE, autoGroup: "fallback" }];
+  const fallbackDoc = buildProxySubscriptionDocument(
+    planFor([rule({ id: 1, hostId: 1 }), rule({ id: 2, hostId: 2, sourcePort: 20002 })], fallback),
+    fallback,
+    { mainGroupName: "ForwardX" },
+  );
+  assert.equal(fallbackDoc.groups[1].type, "fallback");
+});
+
+test("多个落地节点各自成组，互不混淆", () => {
+  const second: ProxyNodeTemplateRow = { ...HKT_TEMPLATE, id: 2, name: "日本" };
+  const templates = [HKT_TEMPLATE, second];
+  const plan = planFor(
+    [
+      rule({ id: 1, hostId: 1, sourcePort: 20001, proxyNodeId: 1 }),
+      rule({ id: 2, hostId: 2, sourcePort: 20002, proxyNodeId: 1 }),
+      rule({ id: 3, hostId: 1, sourcePort: 20003, proxyNodeId: 2 }),
+      rule({ id: 4, hostId: 2, sourcePort: 20004, proxyNodeId: 2 }),
+    ],
+    templates,
+  );
+
+  const doc = buildProxySubscriptionDocument(plan, templates, { mainGroupName: "ForwardX" });
+  const autoGroups = doc.groups.filter((group) => group.type !== "select");
+
+  assert.equal(autoGroups.length, 2);
+  assert.deepEqual(autoGroups[0].members, ["广州1 → HKT", "广州2 → HKT"]);
+  assert.deepEqual(autoGroups[1].members, ["广州1 → 日本", "广州2 → 日本"]);
+});
+
+test("分组引用的是去重后的节点名", () => {
+  // 组按名称引用成员，若用去重前的名字，客户端会找不到节点。
+  const templates = [HKT_TEMPLATE];
+  const plan = planFor(
+    [
+      rule({ id: 1, hostId: 1, sourcePort: 20001, proxyNodeName: "香港" }),
+      rule({ id: 2, hostId: 2, sourcePort: 20002, proxyNodeName: "香港" }),
+    ],
+    templates,
+  );
+
+  const doc = buildProxySubscriptionDocument(plan, templates, { mainGroupName: "ForwardX" });
+
+  assert.deepEqual(doc.nodes.map((node) => node.name), ["香港", "香港 #2"]);
+  assert.deepEqual(doc.groups[1].members, ["香港", "香港 #2"]);
+});
+
+test("没有节点时不产出任何策略组", () => {
+  const doc = buildProxySubscriptionDocument({ entries: [], skipped: [] }, [HKT_TEMPLATE], {
+    mainGroupName: "ForwardX",
+  });
+
+  assert.deepEqual(doc.nodes, []);
+  assert.deepEqual(doc.groups, []);
+});
+
+test("自动选路模式的取值收敛", () => {
+  assert.equal(normalizeProxyNodeAutoGroup("off"), "off");
+  assert.equal(normalizeProxyNodeAutoGroup("fallback"), "fallback");
+  assert.equal(normalizeProxyNodeAutoGroup("URL-TEST"), "url-test");
+  // 未设置时默认开启自动选路，这是多中转场景下最有用的行为。
+  assert.equal(normalizeProxyNodeAutoGroup(undefined), "url-test");
+  assert.equal(normalizeProxyNodeAutoGroup("乱填"), "url-test");
+});
+
+test("组名带后缀，避免和落地节点本身重名", () => {
+  assert.equal(autoGroupNameForTemplate("HKT"), "HKT 自动选路");
+  assert.equal(autoGroupNameForTemplate(""), "节点 自动选路");
+});

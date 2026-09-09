@@ -10,11 +10,12 @@ import {
 } from "../../drizzle/schema";
 import { getDb, insertAndGetId, nowDate } from "../dbRuntime";
 import {
+  buildProxySubscriptionDocument,
   buildProxySubscriptionPlan,
-  dedupeProxyNodeNames,
+  type ProxySubscriptionDocument,
   type ProxySubscriptionPlan,
 } from "../../shared/proxySubscriptionPlan";
-import type { ProxyNode } from "../../shared/proxyNode";
+import { PROXY_SUBSCRIPTION_GROUP_NAME } from "../../shared/proxySubscription";
 
 // ==================== 客户端订阅：节点模板 ====================
 
@@ -184,8 +185,11 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
   });
 }
 
-/** 订阅实际要渲染的节点列表，已处理重名。 */
-export async function getProxySubscriptionNodesForUser(userId: number): Promise<ProxyNode[]> {
+/** 订阅实际要渲染的内容：去重后的节点列表加策略组。 */
+export async function getProxySubscriptionDocumentForUser(userId: number): Promise<ProxySubscriptionDocument> {
   const plan = await buildProxySubscriptionPlanForUser(userId);
-  return dedupeProxyNodeNames(plan.entries.map((entry) => entry.node));
+  const templates = await getProxyNodesByUser(userId);
+  return buildProxySubscriptionDocument(plan, templates as any, {
+    mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
+  });
 }
