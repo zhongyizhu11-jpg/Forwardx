@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseProxyNodeLink, relayProxyNode, decodeBase64Utf8, type ProxyNode } from "./proxyNode";
+import { parseProxyNodeLink, relayProxyNode, decodeBase64Utf8, encodeBase64Utf8, type ProxyNode } from "./proxyNode";
 import { buildProxySubscriptionDocument } from "./proxySubscriptionPlan";
 import {
   formatProxySubscriptionUserInfo,
   normalizeProxySubscriptionFormat,
   proxySubscriptionFormatSupportsGroups,
   renderProxySubscription,
+  PROXY_SUBSCRIPTION_FORMATS,
   PROXY_SUBSCRIPTION_GROUP_NAME,
 } from "./proxySubscription";
 
@@ -229,7 +230,8 @@ test("base64 output decodes back to one link per node", () => {
 });
 
 test("every format renders an empty node list without crashing", () => {
-  for (const format of ["base64", "clash", "singbox", "loon"] as const) {
+  // 用常量而不是写死列表：新增格式会自动纳入这条冒烟测试。
+  for (const format of PROXY_SUBSCRIPTION_FORMATS) {
     const output = renderProxySubscription({ nodes: [], groups: [] }, format);
     assert.equal(typeof output, "string");
   }
@@ -359,4 +361,157 @@ test("base64 与 Loon 忽略策略组，只输出节点", () => {
   assert.equal(proxySubscriptionFormatSupportsGroups("singbox"), true);
   assert.equal(proxySubscriptionFormatSupportsGroups("base64"), false);
   assert.equal(proxySubscriptionFormatSupportsGroups("loon"), false);
+});
+
+// ==================== Surge / Quantumult X ====================
+
+const VMESS_WS = `vmess://${encodeBase64Utf8(JSON.stringify({
+  v: "2", ps: "VM", add: "hk.example.com", port: "443", id: "vmess-uuid", aid: "0",
+  net: "ws", path: "/vm", host: "cdn.example.com", tls: "tls", sni: "hk.example.com",
+}))}`;
+
+test("Surge 跳过 VLESS 并在文件里说明原因", () => {
+  const document = {
+    nodes: [
+      node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" }),
+      node(TROJAN, { address: "5.6.7.8", port: 20002, name: "广州2 → HK" }),
+    ],
+    groups: [],
+  };
+
+  const output = renderProxySubscription(document, "surge");
+  const lines = output.trim().split("\n");
+
+  // Surge 原生不支持 VLESS，编一行它读不懂的配置比跳过更糟。
+  assert.match(lines[0], /^# Surge 不支持 VLESS/);
+  assert.match(lines[0], /广州1 → HKT/);
+  assert.match(lines[1], /^#/);
+  assert.equal(lines.length, 3);
+  assert.match(lines[2], /^广州2 → HK = trojan, 5\.6\.7\.8, 20002, password=secret-pass/);
+});
+
+test("Surge 的 VMess 用 username 和 ws-headers", () => {
+  const document = {
+    nodes: [node(VMESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → VM" })],
+    groups: [],
+  };
+
+  const line = renderProxySubscription(document, "surge").trim();
+
+  assert.match(line, /^广州1 → VM = vmess, 1\.2\.3\.4, 20001, username=vmess-uuid/);
+  assert.match(line, /ws=true/);
+  assert.match(line, /ws-path=\/vm/);
+  // Surge 的 ws-headers 是 `键:值`，不是 JSON。
+  assert.match(line, /ws-headers=Host:cdn\.example\.com/);
+  assert.match(line, /tls=true/);
+  assert.match(line, /sni=hk\.example\.com/);
+});
+
+test("Surge 的 trojan 不重复带 tls=true", () => {
+  const document = {
+    nodes: [node(TROJAN, { address: "5.6.7.8", port: 20002, name: "TJ" })],
+    groups: [],
+  };
+
+  const line = renderProxySubscription(document, "surge").trim();
+
+  // trojan 本身即 TLS，Surge 不接受再带 tls=true。
+  assert.doesNotMatch(line, /tls=true/);
+  assert.match(line, /sni=hk\.example\.com/);
+  assert.match(line, /skip-cert-verify=false/);
+});
+
+test("Surge 全是 VLESS 时只剩说明，不产出空文件", () => {
+  const document = {
+    nodes: [node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" })],
+    groups: [],
+  };
+
+  const lines = renderProxySubscription(document, "surge").trim().split("\n");
+
+  assert.equal(lines.length, 2);
+  assert.ok(lines.every((line) => line.startsWith("#")));
+  // 要告诉用户去用哪种格式，否则他只会看到一个空订阅。
+  assert.match(lines[1], /Clash、sing-box 或 Quantumult X/);
+});
+
+test("Quantumult X 支持 VLESS，字段名用它自己那套", () => {
+  const document = {
+    nodes: [node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" })],
+    groups: [],
+  };
+
+  const line = renderProxySubscription(document, "quantumultx").trim();
+
+  assert.match(line, /^vless=1\.2\.3\.4:20001/);
+  // VLESS 不加密，QX 要求 method 固定 none。
+  assert.match(line, /method=none/);
+  assert.match(line, /password=abc-uuid/);
+  // 传输方式在 QX 里叫 obfs，ws over TLS 是 wss。
+  assert.match(line, /obfs=wss/);
+  assert.match(line, /obfs-uri=\/ray/);
+  assert.match(line, /obfs-host=cdn\.example\.com/);
+  assert.match(line, /tls-verification=true/);
+  assert.match(line, /tag=广州1 → HKT$/);
+});
+
+test("Quantumult X 的 trojan 走 over-tls 而不是 obfs", () => {
+  const document = {
+    nodes: [node(TROJAN, { address: "5.6.7.8", port: 20002, name: "TJ" })],
+    groups: [],
+  };
+
+  const line = renderProxySubscription(document, "quantumultx").trim();
+
+  assert.match(line, /^trojan=5\.6\.7\.8:20002/);
+  assert.match(line, /over-tls=true/);
+  assert.match(line, /tls-host=hk\.example\.com/);
+  assert.doesNotMatch(line, /obfs=/);
+});
+
+test("Quantumult X 的 Shadowsocks 与纯 TCP over TLS", () => {
+  const ss = renderProxySubscription(
+    { nodes: [node(SS, { address: "5.6.7.8", port: 20003, name: "SS" })], groups: [] },
+    "quantumultx",
+  ).trim();
+  assert.match(ss, /^shadowsocks=5\.6\.7\.8:20003, method=aes-128-gcm, password=ss-password/);
+
+  const tcpTls = renderProxySubscription(
+    {
+      nodes: [node("vless://u@hkt.example.com:443?security=tls&sni=hkt.example.com&type=tcp#T", {
+        address: "1.2.3.4", port: 20001, name: "TCP",
+      })],
+      groups: [],
+    },
+    "quantumultx",
+  ).trim();
+  // 纯 TCP 加 TLS 在 QX 里是 obfs=over-tls，不是 wss。
+  assert.match(tcpTls, /obfs=over-tls/);
+  assert.match(tcpTls, /obfs-host=hkt\.example\.com/);
+});
+
+test("Surge 与 QX 都不输出策略组", () => {
+  const document = {
+    nodes: [node(TROJAN, { address: "5.6.7.8", port: 20002, name: "TJ" })],
+    groups: [
+      { name: "ForwardX", type: "select" as const, members: ["TJ"] },
+      { name: "自动选路", type: "url-test" as const, members: ["TJ"] },
+    ],
+  };
+
+  // 两者的订阅都是节点列表，策略组要写在用户自己的配置里。
+  for (const format of ["surge", "quantumultx"] as const) {
+    const output = renderProxySubscription(document, format);
+    assert.doesNotMatch(output, /自动选路/, format);
+    assert.equal(proxySubscriptionFormatSupportsGroups(format), false);
+  }
+});
+
+test("新增格式的别名解析", () => {
+  assert.equal(normalizeProxySubscriptionFormat("surge"), "surge");
+  // Surfboard 用的就是 Surge 的配置格式。
+  assert.equal(normalizeProxySubscriptionFormat("surfboard"), "surge");
+  assert.equal(normalizeProxySubscriptionFormat("quantumultx"), "quantumultx");
+  assert.equal(normalizeProxySubscriptionFormat("qx"), "quantumultx");
+  assert.equal(normalizeProxySubscriptionFormat("QuanX"), "quantumultx");
 });

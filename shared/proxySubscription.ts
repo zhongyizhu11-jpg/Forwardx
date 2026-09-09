@@ -16,7 +16,7 @@ import type {
   ProxySubscriptionGroup,
 } from "./proxySubscriptionPlan";
 
-export const PROXY_SUBSCRIPTION_FORMATS = ["base64", "clash", "singbox", "loon"] as const;
+export const PROXY_SUBSCRIPTION_FORMATS = ["base64", "clash", "singbox", "loon", "surge", "quantumultx"] as const;
 
 export type ProxySubscriptionFormat = (typeof PROXY_SUBSCRIPTION_FORMATS)[number];
 
@@ -25,6 +25,8 @@ export const PROXY_SUBSCRIPTION_FORMAT_LABELS: Record<ProxySubscriptionFormat, s
   clash: "Clash / mihomo",
   singbox: "sing-box",
   loon: "Loon",
+  surge: "Surge / Surfboard",
+  quantumultx: "Quantumult X",
 };
 
 export const PROXY_SUBSCRIPTION_FORMAT_HINTS: Record<ProxySubscriptionFormat, string> = {
@@ -32,6 +34,8 @@ export const PROXY_SUBSCRIPTION_FORMAT_HINTS: Record<ProxySubscriptionFormat, st
   clash: "Clash、Clash.Meta、mihomo、Stash。",
   singbox: "sing-box 及基于它的客户端。",
   loon: "Loon（iOS）。",
+  surge: "Surge（iOS/Mac）与 Surfboard（Android）。Surge 不支持 VLESS，这类节点会被跳过。",
+  quantumultx: "Quantumult X（iOS）。",
 };
 
 export const PROXY_SUBSCRIPTION_FORMAT_CONTENT_TYPES: Record<ProxySubscriptionFormat, string> = {
@@ -39,6 +43,8 @@ export const PROXY_SUBSCRIPTION_FORMAT_CONTENT_TYPES: Record<ProxySubscriptionFo
   clash: "text/yaml; charset=utf-8",
   singbox: "application/json; charset=utf-8",
   loon: "text/plain; charset=utf-8",
+  surge: "text/plain; charset=utf-8",
+  quantumultx: "text/plain; charset=utf-8",
 };
 
 export function normalizeProxySubscriptionFormat(value: unknown): ProxySubscriptionFormat {
@@ -46,6 +52,9 @@ export function normalizeProxySubscriptionFormat(value: unknown): ProxySubscript
   if (raw === "clash" || raw === "meta" || raw === "mihomo" || raw === "stash") return "clash";
   if (raw === "singbox" || raw === "sing-box") return "singbox";
   if (raw === "loon") return "loon";
+  // Surfboard 用的就是 Surge 的配置格式。
+  if (raw === "surge" || raw === "surfboard") return "surge";
+  if (raw === "quantumultx" || raw === "quanx" || raw === "qx") return "quantumultx";
   return "base64";
 }
 
@@ -319,6 +328,101 @@ function renderLoon(nodes: readonly ProxyNode[]): string {
  * 渲染订阅。base64 与 Loon 只输出节点，分组会被忽略 —— 见
  * PROXY_SUBSCRIPTION_FORMATS_WITH_GROUPS 的说明。
  */
+/**
+ * Surge 原生不支持 VLESS（官方手册的协议列表里没有它，社区方案都是靠外部
+ * sing-box 桥接）。与其编出一行 Surge 读不懂的配置，不如跳过并在文件里写明
+ * 原因，否则用户只会看到节点凭空少了。
+ */
+const SURGE_UNSUPPORTED_PROTOCOLS = new Set<ProxyNode["protocol"]>(["vless"]);
+
+function surgeNodeLine(node: ProxyNode): string {
+  const parts: string[] = [];
+  const name = node.name.replace(/[,=]/g, " ").replace(/\s+/g, " ").trim() || "node";
+
+  if (node.protocol === "vmess") {
+    parts.push("vmess", node.address, String(node.port), `username=${node.uuid}`);
+  } else if (node.protocol === "trojan") {
+    parts.push("trojan", node.address, String(node.port), `password=${node.password}`);
+  } else {
+    parts.push("ss", node.address, String(node.port), `encrypt-method=${node.method}`, `password=${node.password}`);
+  }
+
+  if (node.transport === "ws") {
+    parts.push("ws=true");
+    if (node.path) parts.push(`ws-path=${node.path}`);
+    // Surge 的 ws-headers 是 `键:值` 用 | 分隔，不是 JSON。
+    if (node.host) parts.push(`ws-headers=Host:${node.host}`);
+  }
+
+  if (node.tls || node.protocol === "trojan") {
+    // trojan 本身即 TLS，Surge 不接受它再带 tls=true。
+    if (node.protocol !== "trojan") parts.push("tls=true");
+    if (node.sni) parts.push(`sni=${node.sni}`);
+    parts.push(`skip-cert-verify=${node.allowInsecure ? "true" : "false"}`);
+  }
+  parts.push(`udp-relay=${node.udp ? "true" : "false"}`);
+
+  return `${name} = ${parts.join(", ")}`;
+}
+
+function renderSurge(nodes: readonly ProxyNode[]): string {
+  const supported = nodes.filter((node) => !SURGE_UNSUPPORTED_PROTOCOLS.has(node.protocol));
+  const skipped = nodes.filter((node) => SURGE_UNSUPPORTED_PROTOCOLS.has(node.protocol));
+  const lines: string[] = [];
+  if (skipped.length > 0) {
+    lines.push(`# Surge 不支持 VLESS，已跳过 ${skipped.length} 个节点：${skipped.map((node) => node.name).join("、")}`);
+    lines.push("# 这些节点可以用 Clash、sing-box 或 Quantumult X 格式的订阅地址。");
+  }
+  lines.push(...supported.map(surgeNodeLine));
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Quantumult X 的字段名自成一套：传输方式叫 obfs，ws over TLS 是 obfs=wss，
+ * 纯 TCP 加 TLS 是 obfs=over-tls，节点名叫 tag。
+ */
+function quantumultxNodeLine(node: ProxyNode): string {
+  const parts: string[] = [];
+  const target = `${node.address}:${node.port}`;
+
+  if (node.protocol === "vless") {
+    // VLESS 本身不加密，QX 要求 method 固定填 none。
+    parts.push(`vless=${target}`, "method=none", `password=${node.uuid}`);
+  } else if (node.protocol === "vmess") {
+    parts.push(`vmess=${target}`, `method=${node.method && node.method !== "auto" ? node.method : "none"}`, `password=${node.uuid}`);
+  } else if (node.protocol === "trojan") {
+    parts.push(`trojan=${target}`, `password=${node.password}`);
+  } else {
+    parts.push(`shadowsocks=${target}`, `method=${node.method}`, `password=${node.password}`);
+  }
+
+  if (node.protocol === "trojan") {
+    // trojan 在 QX 里用 over-tls / tls-host，而不是 obfs 那套。
+    parts.push("over-tls=true");
+    if (node.sni) parts.push(`tls-host=${node.sni}`);
+  } else if (node.transport === "ws") {
+    parts.push(node.tls ? "obfs=wss" : "obfs=ws");
+    if (node.path) parts.push(`obfs-uri=${node.path}`);
+    if (node.host || node.sni) parts.push(`obfs-host=${node.host || node.sni}`);
+  } else if (node.tls) {
+    parts.push("obfs=over-tls");
+    if (node.sni) parts.push(`obfs-host=${node.sni}`);
+  }
+
+  if (node.tls || node.protocol === "trojan") {
+    parts.push(`tls-verification=${node.allowInsecure ? "false" : "true"}`);
+  }
+  parts.push(`udp-relay=${node.udp ? "true" : "false"}`);
+  // tag 放最后，QX 的惯例，也便于人眼扫读。
+  parts.push(`tag=${node.name.replace(/,/g, " ").trim() || "node"}`);
+
+  return parts.join(", ");
+}
+
+function renderQuantumultX(nodes: readonly ProxyNode[]): string {
+  return `${nodes.map(quantumultxNodeLine).join("\n")}\n`;
+}
+
 export function renderProxySubscription(
   document: ProxySubscriptionDocument,
   format: ProxySubscriptionFormat,
@@ -327,6 +431,8 @@ export function renderProxySubscription(
   if (format === "clash") return renderClash(nodes, groups);
   if (format === "singbox") return renderSingbox(nodes, groups);
   if (format === "loon") return renderLoon(nodes);
+  if (format === "surge") return renderSurge(nodes);
+  if (format === "quantumultx") return renderQuantumultX(nodes);
   return renderBase64(nodes);
 }
 

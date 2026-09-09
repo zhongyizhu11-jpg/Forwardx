@@ -21,6 +21,10 @@ function formatFromUserAgent(userAgent: string): ProxySubscriptionFormat | null 
   if (ua.includes("clash") || ua.includes("mihomo") || ua.includes("stash")) return "clash";
   if (ua.includes("sing-box") || ua.includes("singbox")) return "singbox";
   if (ua.includes("loon")) return "loon";
+  // Surfboard 用 Surge 的配置格式，两者归一。
+  if (ua.includes("surge") || ua.includes("surfboard")) return "surge";
+  // QX 的 UA 里域名部分是 URL 编码的 "Quantumult%20X"。
+  if (ua.includes("quantumult")) return "quantumultx";
   return null;
 }
 

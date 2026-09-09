@@ -100,6 +100,18 @@ test("订阅地址按 token 返回节点，并按客户端 UA 选择格式", () 
     const loon = await get("/api/sub/token-live", { "user-agent": "Loon/700" });
     assert.ok(loon.body.includes("= VLESS,1.2.3.4,20001,"), loon.body.slice(0, 120));
 
+    // Surge 不支持 VLESS：本例两个节点都是 VLESS，应只剩说明行而不是空文件。
+    const surge = await get("/api/sub/token-live", { "user-agent": "Surge iOS/3000" });
+    assert.ok(surge.body.startsWith("# Surge 不支持 VLESS"), surge.body.slice(0, 120));
+    // Surfboard 用 Surge 的格式，走同一个渲染器。
+    const surfboard = await get("/api/sub/token-live", { "user-agent": "Surfboard/1.0" });
+    assert.equal(surfboard.body, surge.body);
+
+    // QX 支持 VLESS，UA 里的域名部分是 URL 编码的 "Quantumult%20X"。
+    const qx = await get("/api/sub/token-live", { "user-agent": "Quantumult%20X/1.0.30" });
+    assert.ok(qx.body.startsWith("vless=1.2.3.4:20001"), qx.body.slice(0, 120));
+    assert.ok(qx.body.includes("tag=广州1 → HKT"), qx.body.slice(0, 200));
+
     // 显式 format 参数优先于 UA。
     const forced = await get("/api/sub/token-live?format=clash", { "user-agent": "Loon/700" });
     assert.ok(forced.body.startsWith("proxies:"));
@@ -111,7 +123,7 @@ test("订阅地址按 token 返回节点，并按客户端 UA 选择格式", () 
     // 访问会被记录下来，便于用户发现订阅地址被别人用了。
     await new Promise((resolve) => setTimeout(resolve, 150));
     const rows = await runtime.queryRaw("SELECT accessCount, lastAccessUserAgent FROM proxy_sub_tokens WHERE id = 1");
-    assert.ok(Number(rows[0].accessCount) >= 5, "访问次数未累加: " + rows[0].accessCount);
+    assert.ok(Number(rows[0].accessCount) >= 8, "访问次数未累加: " + rows[0].accessCount);
 
     await new Promise((resolve) => server.close(resolve));
     console.log("ok");
