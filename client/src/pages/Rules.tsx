@@ -120,6 +120,17 @@ import {
 } from "@shared/forwardTypes";
 import { ruleLatencyProbeMethodForRule } from "@shared/latencyProbe";
 import { formatTrafficMultiplier } from "@shared/trafficMultiplier";
+import {
+  formatHostAddressWithPort,
+  getHostEntryAddress,
+  getHostEntryAddresses,
+  getHostEntryAddressText,
+  hostAutoIpv4,
+  hostAutoIpv6,
+  hostDdnsDomain,
+  pushUniqueHostEntryAddress,
+  type HostEntryAddress,
+} from "@shared/hostEntryAddress";
 import { Fragment, lazy, Suspense, useState, useMemo, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
@@ -903,77 +914,11 @@ function getTunnelDisplay(tunnel: any | null | undefined, showNginxLabel = true)
   };
 }
 
-type EntryAddress = {
-  label: string;
-  value: string;
-};
-
-function pushUniqueEntryAddress(rows: EntryAddress[], label: string, value: unknown) {
-  const text = String(value || "").trim();
-  if (!text || rows.some((row) => row.value === text)) return;
-  rows.push({ label, value: text });
-}
-
-function hostDdnsDomain(host: any | null | undefined) {
-  return host?.ddnsEnabled ? String(host?.ddnsDomain || "").trim() : "";
-}
-
-function hostAutoIpv4(host: any | null | undefined) {
-  const ipv4 = String(host?.ipv4 || "").trim();
-  if (ipv4) return ipv4;
-  const ip = String(host?.ip || "").trim();
-  return ip && !ip.includes(":") ? ip : "";
-}
-
-function hostAutoIpv6(host: any | null | undefined) {
-  const ipv6 = String(host?.ipv6 || "").trim();
-  if (ipv6) return ipv6;
-  const ip = String(host?.ip || "").trim();
-  return ip && ip.includes(":") ? ip : "";
-}
-
-function getHostEntryAddresses(host: any | null | undefined): EntryAddress[] {
-  const rows: EntryAddress[] = [];
-  const manualEntry = String(host?.entryIp || "").trim();
-  const ddnsDomain = hostDdnsDomain(host);
-  const ipv4 = hostAutoIpv4(host);
-  const ipv6 = hostAutoIpv6(host);
-  const manualIsDomain = addressFamily(manualEntry) === "hostname";
-  if (manualEntry && manualIsDomain) {
-    pushUniqueEntryAddress(rows, "自定义", manualEntry);
-  }
-  if (ddnsDomain) {
-    pushUniqueEntryAddress(rows, "DDNS", ddnsDomain);
-  }
-  if (manualEntry && !manualIsDomain) {
-    pushUniqueEntryAddress(rows, "入口", manualEntry);
-  }
-  if (!manualEntry && !ddnsDomain) {
-    pushUniqueEntryAddress(rows, ipv4 ? "IPv4" : ipv6 ? "IPv6" : "IP", ipv4 || ipv6 || host?.ip);
-  }
-  if (ipv6) pushUniqueEntryAddress(rows, "IPv6", ipv6);
-  return rows;
-}
-function getHostEntryAddress(host: any | null | undefined): string {
-  return getHostEntryAddresses(host)[0]?.value || "";
-}
-
-function getHostEntryAddressText(host: any | null | undefined, port?: number | string): string {
-  const entries = getHostEntryAddresses(host);
-  if (entries.length === 0) return "";
-  return entries
-    .map((entry) => port === undefined ? entry.value : formatAddressWithPort(entry.value, port))
-    .join(" / ");
-}
-
-function formatAddressWithPort(address: string, port: number | string): string {
-  const value = String(address || "").trim();
-  if (!value) return "";
-  if (value.includes(":") && !value.startsWith("[") && !value.endsWith("]")) {
-    return `[${value}]:${port}`;
-  }
-  return `${value}:${port}`;
-}
+// 入口地址推导已移到 shared，服务端生成客户端订阅时复用同一实现，
+// 保证订阅里的节点地址和面板上显示的入口地址永远一致。
+type EntryAddress = HostEntryAddress;
+const pushUniqueEntryAddress = pushUniqueHostEntryAddress;
+const formatAddressWithPort = formatHostAddressWithPort;
 
 function normalizeForwardGroupModeForRule(group: any | null | undefined) {
   const mode = String(group?.groupMode || "failover");
