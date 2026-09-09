@@ -39,6 +39,7 @@ import {
   Moon,
   Rocket,
   Route,
+  Rss,
   Zap,
   CreditCard,
   WalletCards,
@@ -101,6 +102,7 @@ const mainMenuItems: SidebarNavItem[] = [
   { icon: Server, label: "主机管理", path: "/hosts" },
   { icon: Route, label: "链路管理", path: "/tunnels" },
   { icon: ArrowRightLeft, label: "转发规则", path: "/rules" },
+  { icon: Rss, label: "客户端订阅", path: "/client-subscriptions" },
 ];
 const profileMenuItem: SidebarNavItem = { icon: UserRound, label: "个人资料", path: "/profile", menuKey: "profile" };
 const lookingGlassMenuItem: SidebarNavItem = { icon: Globe2, label: "网络测试", path: "/looking-glass", menuKey: "lookingGlass" };

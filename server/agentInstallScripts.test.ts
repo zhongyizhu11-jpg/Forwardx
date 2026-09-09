@@ -276,3 +276,31 @@ test("Agent release always builds the published FXP assets from Go", () => {
   assert.match(script, /CGO_ENABLED=0 GOOS=linux GOARCH="\$goarch"/);
   assert.doesNotMatch(script, /FXP_IMPLEMENTATION|forwardx-fxp-rust|cargo|cross build/);
 });
+
+test("iperf3 is optional so a node without it still installs", () => {
+  const script = generateInstallScript("https://panel.example.com", {});
+  const deps = scriptSection(script, "install_deps() {", '  echo "[信息] 系统依赖就绪"');
+
+  // 关键依赖里不再包含 iperf3：它只服务于 Looking Glass 测速，
+  // Agent 侧本就用 LookPath 兜底，装不上不该阻断整个安装。
+  assert.match(deps, /for B in curl jq iptables od; do/);
+  assert.doesNotMatch(deps, /for B in curl jq iptables iperf3 od; do/);
+  assert.match(deps, /if ! command -v iperf3 >\/dev\/null 2>&1; then/);
+  assert.match(deps, /\[WARN\] 可选依赖未安装: iperf3/);
+
+  // 仍然安装它，只是失败不致命。
+  assert.match(deps, /apt-get install -y -qq .*iperf3/);
+});
+
+test("dependency install keeps package manager output for diagnosis", () => {
+  const script = generateInstallScript("https://panel.example.com", {});
+  const deps = scriptSection(script, "install_deps() {", '  echo "[信息] 系统依赖就绪"');
+
+  // 以前所有包管理器输出都丢进 /dev/null，依赖缺失时只剩一句
+  // 「未能安装依赖: X」，无法判断是源不可达还是包名不存在。
+  assert.doesNotMatch(deps, /apt-get install[^\n]*>\/dev\/null 2>&1/);
+  assert.match(deps, /FORWARDX_DEPS_LOG="\$\{TMPDIR:-\/tmp\}\/forwardx-agent-deps\.log"/);
+  assert.match(deps, /apt-get install[^\n]*; \} >>"\$FORWARDX_DEPS_LOG" 2>&1 \|\| true/);
+  assert.match(deps, /tail -n 20 "\$FORWARDX_DEPS_LOG"/);
+  assert.match(deps, /dump_deps_log "\[错误\]"/);
+});
