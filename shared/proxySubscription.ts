@@ -15,6 +15,16 @@ import type {
   ProxySubscriptionDocument,
   ProxySubscriptionGroup,
 } from "./proxySubscriptionPlan";
+import {
+  mihomoRuleSetUrl,
+  singboxRuleSetUrl,
+  PROXY_PRIVATE_IP6_CIDRS,
+  PROXY_PRIVATE_IP_CIDRS,
+  PROXY_RULE_TARGET_DIRECT,
+  PROXY_RULE_TARGET_REJECT,
+  type ProxyRouteRule,
+  type ProxyRuleSetRef,
+} from "./proxyRuleset";
 
 export const PROXY_SUBSCRIPTION_FORMATS = ["base64", "clash", "singbox", "loon", "surge", "quantumultx"] as const;
 
@@ -157,7 +167,16 @@ const PROXY_AUTO_GROUP_TEST_URL = "http://www.gstatic.com/generate_204";
 const PROXY_AUTO_GROUP_INTERVAL_SECONDS = 300;
 const PROXY_AUTO_GROUP_TOLERANCE_MS = 50;
 
-function renderClash(nodes: readonly ProxyNode[], groups: readonly ProxySubscriptionGroup[]): string {
+/** 规则文件的本地缓存与更新间隔，各分类共用。 */
+const PROXY_RULESET_CACHE_DIR = "./ruleset";
+const PROXY_RULESET_INTERVAL_SECONDS = 86400;
+
+function renderClash(
+  nodes: readonly ProxyNode[],
+  groups: readonly ProxySubscriptionGroup[],
+  ruleSets: readonly ProxyRuleSetRef[],
+  rules: readonly ProxyRouteRule[],
+): string {
   const lines: string[] = [nodes.length === 0 ? "proxies: []" : "proxies:"];
   for (const node of nodes) {
     for (const line of clashProxyLines(node)) {
@@ -181,10 +200,38 @@ function renderClash(nodes: readonly ProxyNode[], groups: readonly ProxySubscrip
       }
     }
   }
-  // MATCH 必须指向真实存在的策略组，没有组时只能指 DIRECT，否则 Clash 会因为
-  // 引用了不存在的组而拒绝整份配置。
+  if (ruleSets.length > 0) {
+    lines.push("rule-providers:");
+    for (const ref of ruleSets) {
+      lines.push(`  ${ref.name}:`);
+      lines.push("    type: http");
+      lines.push(`    behavior: ${ref.behavior}`);
+      // mrs 是 mihomo 的二进制规则格式，体积和加载都比 yaml 省。
+      lines.push("    format: mrs");
+      lines.push(`    url: ${yamlQuote(mihomoRuleSetUrl(ref))}`);
+      lines.push(`    path: ${yamlQuote(`${PROXY_RULESET_CACHE_DIR}/${ref.name}.mrs`)}`);
+      lines.push(`    interval: ${PROXY_RULESET_INTERVAL_SECONDS}`);
+    }
+  }
+
   lines.push("rules:");
-  lines.push(`  - MATCH,${groups[0]?.name || "DIRECT"}`);
+  if (rules.length > 0) {
+    for (const rule of rules) {
+      if (rule.type === "rule-set") {
+        lines.push(`  - RULE-SET,${rule.ruleSet},${rule.target}${rule.noResolve ? ",no-resolve" : ""}`);
+      } else if (rule.type === "ip-private") {
+        // 直接列网段而不是引用外部规则集：局域网判断不该依赖一次网络下载。
+        for (const cidr of PROXY_PRIVATE_IP_CIDRS) lines.push(`  - IP-CIDR,${cidr},${rule.target},no-resolve`);
+        for (const cidr of PROXY_PRIVATE_IP6_CIDRS) lines.push(`  - IP-CIDR6,${cidr},${rule.target},no-resolve`);
+      } else {
+        lines.push(`  - MATCH,${rule.target}`);
+      }
+    }
+  } else {
+    // MATCH 必须指向真实存在的策略组，没有组时只能指 DIRECT，否则 Clash 会因为
+    // 引用了不存在的组而拒绝整份配置。
+    lines.push(`  - MATCH,${groups[0]?.name || PROXY_RULE_TARGET_DIRECT}`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -264,14 +311,57 @@ function singboxGroupOutbound(group: ProxySubscriptionGroup): Record<string, unk
   };
 }
 
-function renderSingbox(nodes: readonly ProxyNode[], groups: readonly ProxySubscriptionGroup[]): string {
-  const config = {
+function singboxRouteTarget(target: string): Record<string, unknown> {
+  // sing-box 1.11 起拦截用规则上的 action，不再是一个 block 出站。
+  if (target === PROXY_RULE_TARGET_REJECT) return { action: "reject" };
+  if (target === PROXY_RULE_TARGET_DIRECT) return { outbound: "direct" };
+  return { outbound: target };
+}
+
+function renderSingbox(
+  nodes: readonly ProxyNode[],
+  groups: readonly ProxySubscriptionGroup[],
+  ruleSets: readonly ProxyRuleSetRef[],
+  rules: readonly ProxyRouteRule[],
+): string {
+  const config: Record<string, unknown> = {
     outbounds: [
       ...groups.map(singboxGroupOutbound),
       ...nodes.map(singboxOutbound),
       { type: "direct", tag: "direct" },
     ],
   };
+
+  if (ruleSets.length > 0 || rules.length > 0) {
+    // sing-geoip 只按国家代码发布，非国家的 IP 集在那边不存在，引用了会 404。
+    const usableRuleSets = ruleSets.filter((ref) => !ref.mihomoOnly);
+    const usableNames = new Set(usableRuleSets.map((ref) => ref.name));
+
+    const routeRules: Record<string, unknown>[] = [];
+    for (const rule of rules) {
+      if (rule.type === "ip-private") {
+        // sing-box 自带私有网段判断，不需要外部规则集。
+        routeRules.push({ ip_is_private: true, ...singboxRouteTarget(rule.target) });
+      } else if (rule.type === "rule-set" && usableNames.has(rule.ruleSet)) {
+        routeRules.push({ rule_set: rule.ruleSet, ...singboxRouteTarget(rule.target) });
+      }
+    }
+
+    config.route = {
+      rules: routeRules,
+      rule_set: usableRuleSets.map((ref) => ({
+        type: "remote",
+        tag: ref.name,
+        format: "binary",
+        url: singboxRuleSetUrl(ref),
+        // 规则文件本身不该绕进代理，否则首次启动时代理还没就绪就取不到。
+        download_detour: "direct",
+      })),
+      // MATCH 在 sing-box 里是 route.final，不是一条规则。
+      final: rules.find((rule) => rule.type === "match")?.target || "direct",
+    };
+  }
+
   return `${JSON.stringify(config, null, 2)}\n`;
 }
 
@@ -427,9 +517,9 @@ export function renderProxySubscription(
   document: ProxySubscriptionDocument,
   format: ProxySubscriptionFormat,
 ): string {
-  const { nodes, groups } = document;
-  if (format === "clash") return renderClash(nodes, groups);
-  if (format === "singbox") return renderSingbox(nodes, groups);
+  const { nodes, groups, ruleSets, rules } = document;
+  if (format === "clash") return renderClash(nodes, groups, ruleSets, rules);
+  if (format === "singbox") return renderSingbox(nodes, groups, ruleSets, rules);
   if (format === "loon") return renderLoon(nodes);
   if (format === "surge") return renderSurge(nodes);
   if (format === "quantumultx") return renderQuantumultX(nodes);

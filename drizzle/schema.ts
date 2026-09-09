@@ -438,6 +438,8 @@ export const proxySubTokens = table("proxy_sub_tokens", {
   name: text("name").notNull(),
   token: varchar("token", { length: 64 }).notNull().unique(),
   defaultFormat: varchar("defaultFormat", { length: 16 }).notNull().default("base64"),
+  // 分流规则预设：off | minimal | balanced | comprehensive，按订阅链接（即按设备）配置
+  rulePreset: varchar("rulePreset", { length: 24 }).notNull().default("off"),
   isEnabled: boolean("isEnabled").notNull().default(true),
   accessCount: int("accessCount").notNull().default(0),
   lastAccessAt: epoch("lastAccessAt"),

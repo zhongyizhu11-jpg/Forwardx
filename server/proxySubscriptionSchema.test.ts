@@ -51,12 +51,12 @@ test("全新数据库会建出订阅所需的表和列", () => {
       const columnsOf = (table) => new Set(db.prepare("PRAGMA table_info(" + table + ")").all().map((row) => row.name));
 
       const nodeColumns = columnsOf("proxy_nodes");
-      for (const name of ["userId", "name", "protocol", "address", "port", "uuid", "password", "method", "transport", "tls", "sni", "realityPublicKey", "isEnabled"]) {
+      for (const name of ["userId", "name", "protocol", "address", "port", "uuid", "password", "method", "transport", "tls", "sni", "realityPublicKey", "autoGroup", "isEnabled"]) {
         assert.ok(nodeColumns.has(name), "proxy_nodes 缺列: " + name);
       }
 
       const tokenColumns = columnsOf("proxy_sub_tokens");
-      for (const name of ["userId", "name", "token", "defaultFormat", "isEnabled", "lastAccessAt", "expiresAt"]) {
+      for (const name of ["userId", "name", "token", "defaultFormat", "rulePreset", "isEnabled", "lastAccessAt", "expiresAt"]) {
         assert.ok(tokenColumns.has(name), "proxy_sub_tokens 缺列: " + name);
       }
 

@@ -189,7 +189,7 @@ test("Loon lines follow the official example config layout", () => {
     node(SS, { address: "5.6.7.8", port: 20003, name: "广州2 → SS" }),
   ];
 
-  const lines = renderProxySubscription({ nodes: nodes, groups: [] }, "loon").trim().split("\n");
+  const lines = renderProxySubscription({ nodes: nodes, groups: [], ruleSets: [], rules: [] }, "loon").trim().split("\n");
   assert.equal(lines.length, 3);
 
   const [vless, trojan, ss] = lines;
@@ -208,7 +208,7 @@ test("Loon lines follow the official example config layout", () => {
 test("Loon node names drop the characters that would split the line", () => {
   const nodes = [node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1, 500M = 主力" })];
 
-  const line = renderProxySubscription({ nodes: nodes, groups: [] }, "loon").trim();
+  const line = renderProxySubscription({ nodes: nodes, groups: [], ruleSets: [], rules: [] }, "loon").trim();
   const name = line.slice(0, line.indexOf(" = "));
 
   assert.doesNotMatch(name, /[,=]/);
@@ -221,7 +221,7 @@ test("base64 output decodes back to one link per node", () => {
     node(TROJAN, { address: "5.6.7.8", port: 20002, name: "广州2 → HK" }),
   ];
 
-  const links = decodeBase64Utf8(renderProxySubscription({ nodes: nodes, groups: [] }, "base64")).split("\n");
+  const links = decodeBase64Utf8(renderProxySubscription({ nodes: nodes, groups: [], ruleSets: [], rules: [] }, "base64")).split("\n");
 
   assert.equal(links.length, 2);
   assert.match(links[0], /^vless:\/\/abc-uuid@1\.2\.3\.4:20001\?/);
@@ -232,11 +232,11 @@ test("base64 output decodes back to one link per node", () => {
 test("every format renders an empty node list without crashing", () => {
   // 用常量而不是写死列表：新增格式会自动纳入这条冒烟测试。
   for (const format of PROXY_SUBSCRIPTION_FORMATS) {
-    const output = renderProxySubscription({ nodes: [], groups: [] }, format);
+    const output = renderProxySubscription({ nodes: [], groups: [], ruleSets: [], rules: [] }, format);
     assert.equal(typeof output, "string");
   }
   // 空列表的 Clash 输出仍要是合法 YAML，否则客户端会报解析错误而不是"无节点"。
-  const parsed = parseYamlSubset(renderProxySubscription({ nodes: [], groups: [] }, "clash"));
+  const parsed = parseYamlSubset(renderProxySubscription({ nodes: [], groups: [], ruleSets: [], rules: [] }, "clash"));
   assert.deepEqual(parsed.proxies, []);
   assert.deepEqual(parsed["proxy-groups"], []);
   // 没有策略组时 MATCH 不能指向不存在的组，否则 Clash 拒绝整份配置。
@@ -273,6 +273,8 @@ test("Clash 的自动选路组带测速地址和容差", () => {
       { name: "ForwardX", type: "select" as const, members: ["HKT 自动选路", "广州1 → HKT", "广州2 → HKT"] },
       { name: "HKT 自动选路", type: "url-test" as const, members: ["广州1 → HKT", "广州2 → HKT"] },
     ],
+    ruleSets: [],
+    rules: [],
   };
 
   const parsed = parseYamlSubset(renderProxySubscription(document, "clash"));
@@ -300,6 +302,8 @@ test("Clash 的主备组不带容差", () => {
       { name: "ForwardX", type: "select" as const, members: ["HKT 自动选路"] },
       { name: "HKT 自动选路", type: "fallback" as const, members: ["广州1 → HKT"] },
     ],
+    ruleSets: [],
+    rules: [],
   };
 
   const parsed = parseYamlSubset(renderProxySubscription(document, "clash"));
@@ -321,6 +325,8 @@ test("sing-box 的自动选路组渲染成 urltest", () => {
       { name: "ForwardX", type: "select" as const, members: ["HKT 自动选路"] },
       { name: "HKT 自动选路", type: "url-test" as const, members: ["广州1 → HKT", "广州2 → HKT"] },
     ],
+    ruleSets: [],
+    rules: [],
   };
 
   const parsed = JSON.parse(renderProxySubscription(document, "singbox"));
@@ -346,6 +352,8 @@ test("base64 与 Loon 忽略策略组，只输出节点", () => {
       { name: "ForwardX", type: "select" as const, members: ["HKT 自动选路"] },
       { name: "HKT 自动选路", type: "url-test" as const, members: ["广州1 → HKT"] },
     ],
+    ruleSets: [],
+    rules: [],
   };
 
   // base64 是 URI 列表，Loon 的节点订阅只收节点行；塞进策略组会让订阅解析失败。
@@ -377,6 +385,8 @@ test("Surge 跳过 VLESS 并在文件里说明原因", () => {
       node(TROJAN, { address: "5.6.7.8", port: 20002, name: "广州2 → HK" }),
     ],
     groups: [],
+    ruleSets: [],
+    rules: [],
   };
 
   const output = renderProxySubscription(document, "surge");
@@ -394,6 +404,8 @@ test("Surge 的 VMess 用 username 和 ws-headers", () => {
   const document = {
     nodes: [node(VMESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → VM" })],
     groups: [],
+    ruleSets: [],
+    rules: [],
   };
 
   const line = renderProxySubscription(document, "surge").trim();
@@ -411,6 +423,8 @@ test("Surge 的 trojan 不重复带 tls=true", () => {
   const document = {
     nodes: [node(TROJAN, { address: "5.6.7.8", port: 20002, name: "TJ" })],
     groups: [],
+    ruleSets: [],
+    rules: [],
   };
 
   const line = renderProxySubscription(document, "surge").trim();
@@ -425,6 +439,8 @@ test("Surge 全是 VLESS 时只剩说明，不产出空文件", () => {
   const document = {
     nodes: [node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" })],
     groups: [],
+    ruleSets: [],
+    rules: [],
   };
 
   const lines = renderProxySubscription(document, "surge").trim().split("\n");
@@ -439,6 +455,8 @@ test("Quantumult X 支持 VLESS，字段名用它自己那套", () => {
   const document = {
     nodes: [node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" })],
     groups: [],
+    ruleSets: [],
+    rules: [],
   };
 
   const line = renderProxySubscription(document, "quantumultx").trim();
@@ -459,6 +477,8 @@ test("Quantumult X 的 trojan 走 over-tls 而不是 obfs", () => {
   const document = {
     nodes: [node(TROJAN, { address: "5.6.7.8", port: 20002, name: "TJ" })],
     groups: [],
+    ruleSets: [],
+    rules: [],
   };
 
   const line = renderProxySubscription(document, "quantumultx").trim();
@@ -471,7 +491,7 @@ test("Quantumult X 的 trojan 走 over-tls 而不是 obfs", () => {
 
 test("Quantumult X 的 Shadowsocks 与纯 TCP over TLS", () => {
   const ss = renderProxySubscription(
-    { nodes: [node(SS, { address: "5.6.7.8", port: 20003, name: "SS" })], groups: [] },
+    { nodes: [node(SS, { address: "5.6.7.8", port: 20003, name: "SS" })], groups: [], ruleSets: [], rules: [] },
     "quantumultx",
   ).trim();
   assert.match(ss, /^shadowsocks=5\.6\.7\.8:20003, method=aes-128-gcm, password=ss-password/);
@@ -482,6 +502,8 @@ test("Quantumult X 的 Shadowsocks 与纯 TCP over TLS", () => {
         address: "1.2.3.4", port: 20001, name: "TCP",
       })],
       groups: [],
+      ruleSets: [],
+      rules: [],
     },
     "quantumultx",
   ).trim();
@@ -497,6 +519,8 @@ test("Surge 与 QX 都不输出策略组", () => {
       { name: "ForwardX", type: "select" as const, members: ["TJ"] },
       { name: "自动选路", type: "url-test" as const, members: ["TJ"] },
     ],
+    ruleSets: [],
+    rules: [],
   };
 
   // 两者的订阅都是节点列表，策略组要写在用户自己的配置里。

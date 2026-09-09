@@ -16,6 +16,7 @@ import {
   type ProxySubscriptionPlan,
 } from "../../shared/proxySubscriptionPlan";
 import { PROXY_SUBSCRIPTION_GROUP_NAME } from "../../shared/proxySubscription";
+import { normalizeProxyRulePreset } from "../../shared/proxyRuleset";
 
 // ==================== 客户端订阅：节点模板 ====================
 
@@ -185,11 +186,19 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
   });
 }
 
-/** 订阅实际要渲染的内容：去重后的节点列表加策略组。 */
-export async function getProxySubscriptionDocumentForUser(userId: number): Promise<ProxySubscriptionDocument> {
+/**
+ * 订阅实际要渲染的内容：去重后的节点、策略组、分流规则。
+ *
+ * 规则预设按订阅链接（即按设备）算，不同设备可以要不同的分流。
+ */
+export async function getProxySubscriptionDocumentForUser(
+  userId: number,
+  options: { rulePreset?: unknown } = {},
+): Promise<ProxySubscriptionDocument> {
   const plan = await buildProxySubscriptionPlanForUser(userId);
   const templates = await getProxyNodesByUser(userId);
   return buildProxySubscriptionDocument(plan, templates as any, {
     mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
+    rulePreset: normalizeProxyRulePreset(options.rulePreset),
   });
 }

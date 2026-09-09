@@ -65,7 +65,9 @@ proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Respons
       : formatFromUserAgent(String(req.headers["user-agent"] || ""))
         ?? normalizeProxySubscriptionFormat(record.defaultFormat);
 
-    const document = await db.getProxySubscriptionDocumentForUser(Number(record.userId));
+    const document = await db.getProxySubscriptionDocumentForUser(Number(record.userId), {
+      rulePreset: record.rulePreset,
+    });
     const body = renderProxySubscription(document, format);
 
     const user = await db.getUserById(Number(record.userId));

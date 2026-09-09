@@ -44,7 +44,7 @@ test("订阅地址按 token 返回节点，并按客户端 UA 选择格式", () 
     await insertRule(3, 1, '隐藏的那条', 20003, 1, 0);
     await insertRule(4, 1, '未绑定的转发', 20004, null, 1);
 
-    await exec("INSERT INTO proxy_sub_tokens (id, userId, name, token, defaultFormat, isEnabled) VALUES (1, 1, '手机', 'token-live', 'base64', 1)");
+    await exec("INSERT INTO proxy_sub_tokens (id, userId, name, token, defaultFormat, rulePreset, isEnabled) VALUES (1, 1, '手机', 'token-live', 'base64', 'minimal', 1)");
     await exec("INSERT INTO proxy_sub_tokens (id, userId, name, token, defaultFormat, isEnabled) VALUES (2, 1, '停用的', 'token-off', 'base64', 0)");
 
     const app = express();
@@ -90,12 +90,23 @@ test("订阅地址按 token 返回节点，并按客户端 UA 选择格式", () 
     assert.ok(clash.body.includes("name: \"HKT 自动选路\""), clash.body);
     assert.ok(clash.body.includes("type: url-test"), clash.body);
     assert.ok(clash.body.includes("MATCH,ForwardX"), clash.body);
+    // 令牌上配的是精简预设，订阅应带上规则集与国内直连组。
+    assert.ok(clash.body.includes("rule-providers:"), clash.body);
+    assert.ok(clash.body.includes("RULE-SET,ads,REJECT"), clash.body);
+    assert.ok(clash.body.includes("🎯 国内直连"), clash.body);
+    // 局域网走原生网段，不引用外部规则集。
+    assert.ok(clash.body.includes("IP-CIDR,192.168.0.0/16"), clash.body);
 
     const singbox = await get("/api/sub/token-live", { "user-agent": "sing-box 1.9.0" });
     const singboxOutbounds = JSON.parse(singbox.body).outbounds;
     assert.equal(singboxOutbounds[0].type, "selector");
     assert.equal(singboxOutbounds[1].type, "urltest");
     assert.equal(singboxOutbounds[1].tag, "HKT 自动选路");
+    const singboxRoute = JSON.parse(singbox.body).route;
+    assert.equal(singboxRoute.final, "ForwardX");
+    // sing-box 用内置的 ip_is_private，不下载私有网段规则集。
+    assert.ok(singboxRoute.rules.some((rule) => rule.ip_is_private === true), singbox.body.slice(0, 400));
+    assert.ok(singboxRoute.rule_set.every((ref) => ref.url.endsWith(".srs")), singbox.body.slice(0, 400));
 
     const loon = await get("/api/sub/token-live", { "user-agent": "Loon/700" });
     assert.ok(loon.body.includes("= VLESS,1.2.3.4,20001,"), loon.body.slice(0, 120));

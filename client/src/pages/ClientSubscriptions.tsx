@@ -28,6 +28,13 @@ import {
   normalizeProxyNodeAutoGroup,
   type ProxyNodeAutoGroup,
 } from "@shared/proxySubscriptionPlan";
+import {
+  PROXY_RULE_PRESETS,
+  PROXY_RULE_PRESET_HINTS,
+  PROXY_RULE_PRESET_LABELS,
+  normalizeProxyRulePreset,
+  type ProxyRulePreset,
+} from "@shared/proxyRuleset";
 import { Copy, Eye, EyeOff, Link2, Plus, RefreshCw, Server, Trash2, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -63,6 +70,7 @@ export default function ClientSubscriptionsPage() {
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [tokenName, setTokenName] = useState("");
   const [tokenFormat, setTokenFormat] = useState<ProxySubscriptionFormat>("base64");
+  const [tokenRulePreset, setTokenRulePreset] = useState<ProxyRulePreset>("balanced");
 
   const refresh = () => {
     void utils.proxySubscriptions.listNodes.invalidate();
@@ -443,6 +451,7 @@ export default function ClientSubscriptionsPage() {
               onClick={() => {
                 setTokenName("");
                 setTokenFormat("base64");
+                setTokenRulePreset("balanced");
                 setTokenDialogOpen(true);
               }}
             >
@@ -470,6 +479,24 @@ export default function ClientSubscriptionsPage() {
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
+                        <Select
+                          value={normalizeProxyRulePreset(token.rulePreset)}
+                          onValueChange={(value) => updateToken.mutate({
+                            id: token.id,
+                            rulePreset: value as ProxyRulePreset,
+                          })}
+                        >
+                          <SelectTrigger className="w-28">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PROXY_RULE_PRESETS.map((preset) => (
+                              <SelectItem key={preset} value={preset}>
+                                {PROXY_RULE_PRESET_LABELS[preset]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <Switch
                           checked={!!token.isEnabled}
                           onCheckedChange={(checked) => updateToken.mutate({ id: token.id, isEnabled: checked })}
@@ -634,6 +661,28 @@ export default function ClientSubscriptionsPage() {
                 {PROXY_SUBSCRIPTION_FORMAT_HINTS[tokenFormat]}
               </p>
             </div>
+            <div className="space-y-2">
+              <Label>分流规则</Label>
+              <Select
+                value={tokenRulePreset}
+                onValueChange={(value) => setTokenRulePreset(value as ProxyRulePreset)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROXY_RULE_PRESETS.map((preset) => (
+                    <SelectItem key={preset} value={preset}>
+                      {PROXY_RULE_PRESET_LABELS[preset]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{PROXY_RULE_PRESET_HINTS[tokenRulePreset]}</p>
+              <p className="text-xs text-muted-foreground">
+                规则只对 Clash 与 sing-box 生效，其余格式的订阅只有节点。
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setTokenDialogOpen(false)}>
@@ -646,7 +695,7 @@ export default function ClientSubscriptionsPage() {
                   toast.error("请填写用途，方便以后分清是哪台设备");
                   return;
                 }
-                createToken.mutate({ name, defaultFormat: tokenFormat });
+                createToken.mutate({ name, defaultFormat: tokenFormat, rulePreset: tokenRulePreset });
               }}
               disabled={createToken.isPending}
             >

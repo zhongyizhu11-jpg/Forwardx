@@ -5,6 +5,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { parseProxyNodeLink, type ProxyNode } from "../../shared/proxyNode";
 import { PROXY_SUBSCRIPTION_FORMATS } from "../../shared/proxySubscription";
+import { PROXY_RULE_PRESETS } from "../../shared/proxyRuleset";
 import {
   PROXY_NODE_AUTO_GROUPS,
   PROXY_SUBSCRIPTION_SKIP_LABELS,
@@ -198,6 +199,7 @@ export const proxySubscriptionsRouter = router({
     .input(z.object({
       name: z.string().trim().min(1).max(64),
       defaultFormat: z.enum(PROXY_SUBSCRIPTION_FORMATS).default("base64"),
+      rulePreset: z.enum(PROXY_RULE_PRESETS).default("off"),
     }))
     .mutation(async ({ ctx, input }) => {
       const token = nanoid(SUBSCRIPTION_TOKEN_LENGTH);
@@ -206,6 +208,7 @@ export const proxySubscriptionsRouter = router({
         name: input.name,
         token,
         defaultFormat: input.defaultFormat,
+        rulePreset: input.rulePreset,
       } as any);
       return { id, token };
     }),
@@ -215,6 +218,7 @@ export const proxySubscriptionsRouter = router({
       id: z.number().int().positive(),
       name: z.string().trim().min(1).max(64).optional(),
       defaultFormat: z.enum(PROXY_SUBSCRIPTION_FORMATS).optional(),
+      rulePreset: z.enum(PROXY_RULE_PRESETS).optional(),
       isEnabled: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
@@ -222,6 +226,7 @@ export const proxySubscriptionsRouter = router({
       const data: Record<string, unknown> = {};
       if (input.name !== undefined) data.name = input.name;
       if (input.defaultFormat !== undefined) data.defaultFormat = input.defaultFormat;
+      if (input.rulePreset !== undefined) data.rulePreset = input.rulePreset;
       if (input.isEnabled !== undefined) data.isEnabled = input.isEnabled;
       if (Object.keys(data).length === 0) return { success: true };
       await db.updateProxySubToken(input.id, data as any);

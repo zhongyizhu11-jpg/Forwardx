@@ -9,6 +9,13 @@
 
 import { getHostEntryAddress, type HostEntryAddressSource } from "./hostEntryAddress";
 import {
+  buildProxyRulePlan,
+  normalizeProxyRulePreset,
+  type ProxyRouteRule,
+  type ProxyRuleSetRef,
+  type ProxyRulePreset,
+} from "./proxyRuleset";
+import {
   createEmptyProxyNode,
   relayProxyNode,
   type ProxyNode,
@@ -287,10 +294,12 @@ export type ProxySubscriptionGroup = {
   members: string[];
 };
 
-/** 订阅最终要渲染的内容：节点列表加策略组。 */
+/** 订阅最终要渲染的内容：节点、策略组、分流规则。 */
 export type ProxySubscriptionDocument = {
   nodes: ProxyNode[];
   groups: ProxySubscriptionGroup[];
+  ruleSets: ProxyRuleSetRef[];
+  rules: ProxyRouteRule[];
 };
 
 /** 自动选路组的名字，和模板同名会让客户端里两个条目难以区分，所以加后缀。 */
@@ -310,7 +319,7 @@ export const PROXY_AUTO_GROUP_MIN_MEMBERS = 2;
 export function buildProxySubscriptionDocument(
   plan: ProxySubscriptionPlan,
   templates: readonly ProxyNodeTemplateRow[],
-  options: { mainGroupName: string },
+  options: { mainGroupName: string; rulePreset?: ProxyRulePreset },
 ): ProxySubscriptionDocument {
   const nodes = dedupeProxyNodeNames(plan.entries.map((entry) => entry.node));
   const templatesById = new Map<number, ProxyNodeTemplateRow>();
@@ -340,15 +349,25 @@ export function buildProxySubscriptionDocument(
   }
 
   const groups: ProxySubscriptionGroup[] = [];
+  const selectableMembers = [...autoGroups.map((group) => group.name), ...nodes.map((node) => node.name)];
   if (nodes.length > 0) {
     // 自动选路组排在裸节点前面，用户打开客户端第一眼就是「自动」。
-    groups.push({
-      name: options.mainGroupName,
-      type: "select",
-      members: [...autoGroups.map((group) => group.name), ...nodes.map((node) => node.name)],
-    });
+    groups.push({ name: options.mainGroupName, type: "select", members: selectableMembers });
     groups.push(...autoGroups);
   }
 
-  return { nodes, groups };
+  // 没有节点时不生成规则：规则会指向不存在的策略组，客户端直接拒绝整份配置。
+  const rulePlan = nodes.length > 0
+    ? buildProxyRulePlan({
+      preset: normalizeProxyRulePreset(options.rulePreset),
+      mainGroupName: options.mainGroupName,
+      selectableMembers,
+    })
+    : { ruleSets: [], categoryGroups: [], rules: [] };
+
+  for (const group of rulePlan.categoryGroups) {
+    groups.push({ name: group.name, type: "select", members: group.members });
+  }
+
+  return { nodes, groups, ruleSets: rulePlan.ruleSets, rules: rulePlan.rules };
 }
