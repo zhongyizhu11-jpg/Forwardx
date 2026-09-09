@@ -8,6 +8,7 @@ import {
   renderProxySubscription,
   type ProxySubscriptionFormat,
 } from "../shared/proxySubscription";
+import { normalizeProxyRulePreset } from "../shared/proxyRuleset";
 
 export const proxySubscriptionRouter = express.Router();
 
@@ -65,9 +66,16 @@ proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Respons
       : formatFromUserAgent(String(req.headers["user-agent"] || ""))
         ?? normalizeProxySubscriptionFormat(record.defaultFormat);
 
-    const document = await db.getProxySubscriptionDocumentForUser(Number(record.userId), {
-      rulePreset: record.rulePreset,
-    });
+    // 同一个令牌提供两种订阅：不带 rules 参数是节点订阅，带上才是规则订阅。
+    // 这样换一种不必重新签发地址，Loon 这类要自己配分流的客户端也不受影响。
+    const rulesParam = String(req.query.rules ?? "").trim().toLowerCase();
+    const rulePreset = !rulesParam || rulesParam === "0" || rulesParam === "false"
+      ? "off"
+      : (rulesParam === "1" || rulesParam === "true"
+        ? normalizeProxyRulePreset(record.rulePreset)
+        : normalizeProxyRulePreset(rulesParam));
+
+    const document = await db.getProxySubscriptionDocumentForUser(Number(record.userId), { rulePreset });
     const body = renderProxySubscription(document, format);
 
     const user = await db.getUserById(Number(record.userId));

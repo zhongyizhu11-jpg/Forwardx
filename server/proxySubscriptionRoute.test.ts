@@ -90,23 +90,47 @@ test("订阅地址按 token 返回节点，并按客户端 UA 选择格式", () 
     assert.ok(clash.body.includes("name: \"HKT 自动选路\""), clash.body);
     assert.ok(clash.body.includes("type: url-test"), clash.body);
     assert.ok(clash.body.includes("MATCH,ForwardX"), clash.body);
-    // 令牌上配的是精简预设，订阅应带上规则集与国内直连组。
-    assert.ok(clash.body.includes("rule-providers:"), clash.body);
-    assert.ok(clash.body.includes("RULE-SET,ads,REJECT"), clash.body);
-    assert.ok(clash.body.includes("🎯 国内直连"), clash.body);
+    // 不带 rules 参数是节点订阅：只有节点和选路组，没有分流规则。
+    assert.ok(!clash.body.includes("rule-providers:"), clash.body);
+    assert.ok(!clash.body.includes("RULE-SET,"), clash.body);
+
+    // 同一个令牌带上 rules=1 就是规则订阅，用令牌上配的预设。
+    const clashRules = await get("/api/sub/token-live?format=clash&rules=1");
+    assert.ok(clashRules.body.includes("rule-providers:"), clashRules.body);
+    assert.ok(clashRules.body.includes("RULE-SET,ads,REJECT"), clashRules.body);
+    assert.ok(clashRules.body.includes("🎯 国内直连"), clashRules.body);
     // 局域网走原生网段，不引用外部规则集。
-    assert.ok(clash.body.includes("IP-CIDR,192.168.0.0/16"), clash.body);
+    assert.ok(clashRules.body.includes("IP-CIDR,192.168.0.0/16"), clashRules.body);
+    // 节点部分两者一致，只多了规则。
+    assert.ok(clashRules.body.includes("HKT 自动选路"), clashRules.body);
+
+    // rules 可以直接指定档位，覆盖令牌上的配置。
+    const comprehensive = await get("/api/sub/token-live?format=clash&rules=comprehensive");
+    assert.ok(comprehensive.body.includes("🎬 TikTok"), comprehensive.body.slice(0, 2000));
+    assert.ok(!clashRules.body.includes("🎬 TikTok"), "精简预设不该包含 TikTok");
+
+    // rules=0 明确表示节点订阅。
+    const off = await get("/api/sub/token-live?format=clash&rules=0");
+    assert.ok(!off.body.includes("rule-providers:"), off.body);
 
     const singbox = await get("/api/sub/token-live", { "user-agent": "sing-box 1.9.0" });
     const singboxOutbounds = JSON.parse(singbox.body).outbounds;
     assert.equal(singboxOutbounds[0].type, "selector");
     assert.equal(singboxOutbounds[1].type, "urltest");
     assert.equal(singboxOutbounds[1].tag, "HKT 自动选路");
-    const singboxRoute = JSON.parse(singbox.body).route;
+    // sing-box 没有「只给节点」的格式，节点订阅同样是完整 profile：
+    // 要有 final 指向选择器，但不该有分流规则。
+    const singboxNodesRoute = JSON.parse(singbox.body).route;
+    assert.equal(singboxNodesRoute.final, "ForwardX");
+    assert.equal(singboxNodesRoute.rules, undefined);
+    assert.equal(singboxNodesRoute.rule_set, undefined);
+
+    const singboxRules = await get("/api/sub/token-live?format=singbox&rules=1");
+    const singboxRoute = JSON.parse(singboxRules.body).route;
     assert.equal(singboxRoute.final, "ForwardX");
     // sing-box 用内置的 ip_is_private，不下载私有网段规则集。
-    assert.ok(singboxRoute.rules.some((rule) => rule.ip_is_private === true), singbox.body.slice(0, 400));
-    assert.ok(singboxRoute.rule_set.every((ref) => ref.url.endsWith(".srs")), singbox.body.slice(0, 400));
+    assert.ok(singboxRoute.rules.some((rule) => rule.ip_is_private === true), singboxRules.body.slice(0, 400));
+    assert.ok(singboxRoute.rule_set.every((ref) => ref.url.endsWith(".srs")), singboxRules.body.slice(0, 400));
 
     const loon = await get("/api/sub/token-live", { "user-agent": "Loon/700" });
     assert.ok(loon.body.includes("= VLESS,1.2.3.4,20001,"), loon.body.slice(0, 120));
@@ -134,7 +158,7 @@ test("订阅地址按 token 返回节点，并按客户端 UA 选择格式", () 
     // 访问会被记录下来，便于用户发现订阅地址被别人用了。
     await new Promise((resolve) => setTimeout(resolve, 150));
     const rows = await runtime.queryRaw("SELECT accessCount, lastAccessUserAgent FROM proxy_sub_tokens WHERE id = 1");
-    assert.ok(Number(rows[0].accessCount) >= 8, "访问次数未累加: " + rows[0].accessCount);
+    assert.ok(Number(rows[0].accessCount) >= 12, "访问次数未累加: " + rows[0].accessCount);
 
     await new Promise((resolve) => server.close(resolve));
     console.log("ok");

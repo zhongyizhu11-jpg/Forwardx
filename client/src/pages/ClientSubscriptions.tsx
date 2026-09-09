@@ -35,14 +35,21 @@ import {
   normalizeProxyRulePreset,
   type ProxyRulePreset,
 } from "@shared/proxyRuleset";
-import { Copy, Eye, EyeOff, Link2, Plus, RefreshCw, Server, Trash2, Zap } from "lucide-react";
+import {
+  buildProxySubscriptionUrl,
+  proxyClientTargetsForFormat,
+  proxySubscriptionKindSupported,
+  PROXY_SUBSCRIPTION_KINDS,
+  PROXY_SUBSCRIPTION_KIND_HINTS,
+  PROXY_SUBSCRIPTION_KIND_LABELS,
+  type ProxySubscriptionKind,
+} from "@shared/proxyClientImport";
+import { Copy, Download, Eye, EyeOff, Link2, Plus, RefreshCw, Server, Trash2, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
-function subscriptionUrl(token: string, format: ProxySubscriptionFormat) {
-  const base = `${window.location.origin}/api/sub/${token}`;
-  // 通用格式不带参数，方便直接粘进老客户端；其余格式显式指定，避免 UA 识别失败。
-  return format === "base64" ? base : `${base}?format=${format}`;
+function subscriptionUrl(token: string, format: ProxySubscriptionFormat, kind: ProxySubscriptionKind) {
+  return buildProxySubscriptionUrl({ origin: window.location.origin, token, format, kind });
 }
 
 async function copyText(value: string, message: string) {
@@ -443,7 +450,8 @@ export default function ClientSubscriptionsPage() {
                 订阅链接
               </CardTitle>
               <CardDescription>
-                地址里带着全部节点凭据，谁拿到谁就能用你的节点。建议一台设备一个链接，丢了只重置那一个。
+                每个链接都给出两种地址：节点订阅只有节点，规则订阅连分流一起给。
+                地址里带着全部节点凭据，建议一台设备一个链接，丢了只重置那一个。
               </CardDescription>
             </div>
             <Button
@@ -486,11 +494,11 @@ export default function ClientSubscriptionsPage() {
                             rulePreset: value as ProxyRulePreset,
                           })}
                         >
-                          <SelectTrigger className="w-28">
+                          <SelectTrigger className="w-28" title="规则订阅使用的分流预设">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {PROXY_RULE_PRESETS.map((preset) => (
+                            {PROXY_RULE_PRESETS.filter((preset) => preset !== "off").map((preset) => (
                               <SelectItem key={preset} value={preset}>
                                 {PROXY_RULE_PRESET_LABELS[preset]}
                               </SelectItem>
@@ -531,27 +539,57 @@ export default function ClientSubscriptionsPage() {
                         </Button>
                       </div>
                     </div>
-                    <div className="grid gap-2">
-                      {PROXY_SUBSCRIPTION_FORMATS.map((format) => (
-                        <div key={format} className="flex items-center gap-2">
-                          <span className="w-28 shrink-0 text-xs text-muted-foreground">
-                            {PROXY_SUBSCRIPTION_FORMAT_LABELS[format]}
-                          </span>
-                          <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs">
-                            {subscriptionUrl(token.token, format)}
-                          </code>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => copyText(
-                              subscriptionUrl(token.token, format),
-                              `${PROXY_SUBSCRIPTION_FORMAT_LABELS[format]} 地址已复制`,
-                            )}
-                          >
-                            <Copy className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
+                    <div className="space-y-4">
+                      {PROXY_SUBSCRIPTION_KINDS.map((kind) => {
+                        const formats = PROXY_SUBSCRIPTION_FORMATS
+                          .filter((format) => proxySubscriptionKindSupported(format, kind));
+                        return (
+                          <div key={kind} className="space-y-2">
+                            <div>
+                              <p className="text-xs font-medium">{PROXY_SUBSCRIPTION_KIND_LABELS[kind]}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {PROXY_SUBSCRIPTION_KIND_HINTS[kind]}
+                              </p>
+                            </div>
+                            {formats.map((format) => {
+                              const url = subscriptionUrl(token.token, format, kind);
+                              const targets = proxyClientTargetsForFormat(format);
+                              const importName = `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`;
+                              return (
+                                <div key={format} className="flex flex-wrap items-center gap-2">
+                                  <span className="w-28 shrink-0 text-xs text-muted-foreground">
+                                    {PROXY_SUBSCRIPTION_FORMAT_LABELS[format]}
+                                  </span>
+                                  <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs">
+                                    {url}
+                                  </code>
+                                  {targets.map((target) => (
+                                    <Button
+                                      key={target.id}
+                                      size="sm"
+                                      variant="outline"
+                                      asChild
+                                      title={`在 ${target.label} 中打开`}
+                                    >
+                                      <a href={target.buildImportUrl(url, importName)}>
+                                        <Download className="mr-1 h-3.5 w-3.5" />
+                                        {target.label}
+                                      </a>
+                                    </Button>
+                                  ))}
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => copyText(url, `${PROXY_SUBSCRIPTION_FORMAT_LABELS[format]} 地址已复制`)}
+                                  >
+                                    <Copy className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
@@ -662,7 +700,7 @@ export default function ClientSubscriptionsPage() {
               </p>
             </div>
             <div className="space-y-2">
-              <Label>分流规则</Label>
+              <Label>规则订阅使用的分流预设</Label>
               <Select
                 value={tokenRulePreset}
                 onValueChange={(value) => setTokenRulePreset(value as ProxyRulePreset)}
@@ -671,7 +709,7 @@ export default function ClientSubscriptionsPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PROXY_RULE_PRESETS.map((preset) => (
+                  {PROXY_RULE_PRESETS.filter((preset) => preset !== "off").map((preset) => (
                     <SelectItem key={preset} value={preset}>
                       {PROXY_RULE_PRESET_LABELS[preset]}
                     </SelectItem>
@@ -680,7 +718,7 @@ export default function ClientSubscriptionsPage() {
               </Select>
               <p className="text-xs text-muted-foreground">{PROXY_RULE_PRESET_HINTS[tokenRulePreset]}</p>
               <p className="text-xs text-muted-foreground">
-                规则只对 Clash 与 sing-box 生效，其余格式的订阅只有节点。
+                每个订阅链接都会同时给出「节点订阅」和「规则订阅」两个地址，这里选的是后者用哪档。
               </p>
             </div>
           </div>

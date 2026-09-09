@@ -347,16 +347,19 @@ function renderSingbox(
       }
     }
 
+    const remoteRuleSets = usableRuleSets.map((ref) => ({
+      type: "remote",
+      tag: ref.name,
+      format: "binary",
+      url: singboxRuleSetUrl(ref),
+      // 规则文件本身不该绕进代理，否则首次启动时代理还没就绪就取不到。
+      download_detour: "direct",
+    }));
     config.route = {
-      rules: routeRules,
-      rule_set: usableRuleSets.map((ref) => ({
-        type: "remote",
-        tag: ref.name,
-        format: "binary",
-        url: singboxRuleSetUrl(ref),
-        // 规则文件本身不该绕进代理，否则首次启动时代理还没就绪就取不到。
-        download_detour: "direct",
-      })),
+      // sing-box 没有「只给节点」的格式，节点订阅同样是完整 profile，
+      // 所以即使没有分流规则也要给出 final，否则客户端会退回用第一个出站。
+      ...(routeRules.length > 0 ? { rules: routeRules } : {}),
+      ...(remoteRuleSets.length > 0 ? { rule_set: remoteRuleSets } : {}),
       // MATCH 在 sing-box 里是 route.final，不是一条规则。
       final: rules.find((rule) => rule.type === "match")?.target || "direct",
     };

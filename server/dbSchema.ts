@@ -293,7 +293,7 @@ const tables: TableDef[] = [
       c("id", "id"), c("userId", "int", { notNull: true }), c("name", "text", { notNull: true }),
       c("token", "varchar", { length: 64, notNull: true }),
       c("defaultFormat", "varchar", { length: 16, notNull: true, default: "base64" }),
-      c("rulePreset", "varchar", { length: 24, notNull: true, default: "off" }),
+      c("rulePreset", "varchar", { length: 24, notNull: true, default: "balanced" }),
       c("isEnabled", "bool", { notNull: true, default: true }),
       c("accessCount", "int", { notNull: true, default: 0 }), c("lastAccessAt", "epoch"),
       c("lastAccessIp", "text"), c("lastAccessUserAgent", "text"), c("expiresAt", "epoch"),

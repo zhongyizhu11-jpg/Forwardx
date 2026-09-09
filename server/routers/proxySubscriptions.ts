@@ -199,7 +199,7 @@ export const proxySubscriptionsRouter = router({
     .input(z.object({
       name: z.string().trim().min(1).max(64),
       defaultFormat: z.enum(PROXY_SUBSCRIPTION_FORMATS).default("base64"),
-      rulePreset: z.enum(PROXY_RULE_PRESETS).default("off"),
+      rulePreset: z.enum(PROXY_RULE_PRESETS).default("balanced"),
     }))
     .mutation(async ({ ctx, input }) => {
       const token = nanoid(SUBSCRIPTION_TOKEN_LENGTH);
