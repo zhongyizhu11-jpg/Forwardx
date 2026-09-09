@@ -696,6 +696,8 @@ const IMPORT_TABLE_ORDER = [
   "tunnel_exit_nodes",
   "forward_groups",
   "forward_group_members",
+  "proxy_nodes",
+  "proxy_sub_tokens",
   "forward_rules",
   "forward_rule_tunnel_exits",
   "tunnel_hops",
@@ -1155,9 +1157,19 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
       row.forwardGroupId = mapOptionalId(maps, "forward_groups", source.forwardGroupId);
       row.forwardGroupRuleId = null;
       row.forwardGroupMemberId = mapOptionalId(maps, "forward_group_members", source.forwardGroupMemberId);
+      row.proxyNodeId = mapOptionalId(maps, "proxy_nodes", source.proxyNodeId);
       row.isRunning = false;
       row.pendingDelete = source.pendingDelete ?? false;
       return { row };
+
+    case "proxy_nodes":
+      row.userId = mapRequiredId(maps, "users", source.userId);
+      return { row };
+
+    case "proxy_sub_tokens":
+      row.userId = mapRequiredId(maps, "users", source.userId);
+      // 令牌全局唯一，冲突时按令牌值找已存在的行而不是插入重复。
+      return { row, existingWhere: { token: row.token } };
 
     case "forward_rule_tunnel_exits":
       row.ruleId = mapRequiredId(maps, "forward_rules", source.ruleId);

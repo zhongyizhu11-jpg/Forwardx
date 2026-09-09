@@ -372,12 +372,81 @@ export const forwardRules = table("forward_rules", {
   isRunning: boolean("isRunning").notNull().default(false),
   pendingDelete: boolean("pendingDelete").notNull().default(false),
   sortOrder: int("sortOrder").notNull().default(0),
+  // 客户端订阅：绑定的节点模板，为空表示这条转发不进订阅
+  proxyNodeId: int("proxyNodeId"),
+  // 单个节点的显示开关，绑定了模板也可以临时不出现在订阅里
+  proxyNodeVisible: boolean("proxyNodeVisible").notNull().default(true),
+  // 覆盖自动生成的节点名，为空时按「入口主机 → 模板名」生成
+  proxyNodeName: text("proxyNodeName"),
   userId: int("userId").notNull(),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
   updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
 });
 export type ForwardRule = typeof forwardRules.$inferSelect;
 export type InsertForwardRule = typeof forwardRules.$inferInsert;
+
+/**
+ * 客户端订阅的节点模板。
+ *
+ * 转发规则只存 host:port，不含任何节点凭据，所以订阅无法凭空生成。用户把落地机
+ * 的原始节点链接粘贴一次存在这里，面板据此把每条转发的入口地址改写成可导入的
+ * 节点。与计费的「套餐订阅」(subscription_plans / user_subscriptions) 无关。
+ */
+export const proxyNodes = table("proxy_nodes", {
+  id: serial("id"),
+  userId: int("userId").notNull(),
+  name: text("name").notNull(),
+  remark: text("remark"),
+  protocol: varchar("protocol", { length: 32 }).notNull().default("vless"), // vless | vmess | trojan | shadowsocks
+  // 用户粘贴的原始链接，仅作留档与重新导入，渲染以下面解析后的字段为准
+  sourceLink: text("sourceLink"),
+  address: text("address").notNull(),
+  port: int("port").notNull(),
+  uuid: text("uuid"),
+  password: text("password"),
+  method: text("method"),
+  alterId: int("alterId").notNull().default(0),
+  flow: text("flow"),
+  transport: varchar("transport", { length: 16 }).notNull().default("tcp"), // tcp | ws | grpc | http
+  path: text("path"),
+  host: text("host"),
+  tls: boolean("tls").notNull().default(false),
+  sni: text("sni"),
+  alpn: text("alpn"),
+  fingerprint: text("fingerprint"),
+  allowInsecure: boolean("allowInsecure").notNull().default(false),
+  realityPublicKey: text("realityPublicKey"),
+  realityShortId: text("realityShortId"),
+  udp: boolean("udp").notNull().default(true),
+  isEnabled: boolean("isEnabled").notNull().default(true),
+  sortOrder: int("sortOrder").notNull().default(0),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type ProxyNode = typeof proxyNodes.$inferSelect;
+export type InsertProxyNode = typeof proxyNodes.$inferInsert;
+
+/**
+ * 订阅令牌。订阅地址里带着全部节点凭据，所以令牌必须不可猜且可单独吊销，
+ * 例如手机丢了只吊销那一个而不影响其他设备。
+ */
+export const proxySubTokens = table("proxy_sub_tokens", {
+  id: serial("id"),
+  userId: int("userId").notNull(),
+  name: text("name").notNull(),
+  token: varchar("token", { length: 64 }).notNull().unique(),
+  defaultFormat: varchar("defaultFormat", { length: 16 }).notNull().default("base64"),
+  isEnabled: boolean("isEnabled").notNull().default(true),
+  accessCount: int("accessCount").notNull().default(0),
+  lastAccessAt: epoch("lastAccessAt"),
+  lastAccessIp: text("lastAccessIp"),
+  lastAccessUserAgent: text("lastAccessUserAgent"),
+  expiresAt: epoch("expiresAt"),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type ProxySubToken = typeof proxySubTokens.$inferSelect;
+export type InsertProxySubToken = typeof proxySubTokens.$inferInsert;
 
 export const forwardGroups = table("forward_groups", {
   id: serial("id"),
