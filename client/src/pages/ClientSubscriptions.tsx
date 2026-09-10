@@ -44,7 +44,7 @@ import {
   PROXY_SUBSCRIPTION_KIND_LABELS,
   type ProxySubscriptionKind,
 } from "@shared/proxyClientImport";
-import { ChevronDown, Copy, Download, Eye, EyeOff, Link2, Plus, RefreshCw, Server, Trash2, Zap } from "lucide-react";
+import { ChevronDown, Copy, Download, Eye, EyeOff, KeyRound, Link2, Plus, Server, Trash2, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -144,7 +144,7 @@ export default function ClientSubscriptionsPage() {
   });
   const rotateToken = trpc.proxySubscriptions.rotateToken.useMutation({
     onSuccess: () => {
-      toast.success("订阅地址已重置，旧地址立即失效");
+      toast.success("已换成新的订阅地址，旧地址立即失效");
       refresh();
     },
     onError: (error) => toast.error(error.message),
@@ -488,7 +488,7 @@ export default function ClientSubscriptionsPage() {
               </CardTitle>
               <CardDescription>
                 每个链接都给出两种地址：节点订阅只有节点，规则订阅连分流一起给。
-                地址里带着全部节点凭据，建议一台设备一个链接，丢了只重置那一个。
+                地址里带着全部节点凭据，建议一台设备一个链接，丢了只换那一条。
               </CardDescription>
             </div>
             <Button
@@ -535,20 +535,24 @@ export default function ClientSubscriptionsPage() {
                           checked={!!token.isEnabled}
                           onCheckedChange={(checked) => updateToken.mutate({ id: token.id, isEnabled: checked })}
                         />
+                        {/* 刷新图标在订阅面板里会被读成"重置流量"，所以这里用钥匙图标 +
+                            明确写出"换地址"：这个按钮的代价是所有已导入的客户端都要重填。 */}
                         <Button
                           size="sm"
                           variant="outline"
-                          title="重置订阅地址"
+                          title="换一条新的订阅地址（不影响流量）"
                           onClick={async () => {
                             const ok = await confirm({
-                              title: "重置这个订阅地址？",
-                              description: "旧地址立即失效，已经导入过的客户端需要重新填写新地址。",
-                              confirmText: "重置",
+                              title: "换一条新的订阅地址？",
+                              description:
+                                "只更换订阅地址本身，不会重置流量。旧地址立即失效，已经导入过的客户端都要重新填写新地址。",
+                              confirmText: "换地址",
                             });
                             if (ok) rotateToken.mutate({ id: token.id });
                           }}
                         >
-                          <RefreshCw className="h-4 w-4" />
+                          <KeyRound className="mr-1 h-4 w-4" />
+                          换地址
                         </Button>
                         <Button
                           size="sm"
