@@ -49,6 +49,9 @@ function nodeToRow(node: ProxyNode, sourceLink: string) {
     congestionControl: node.congestionControl || null,
     udpRelayMode: node.udpRelayMode || null,
     disableSni: node.disableSni,
+    snellVersion: node.snellVersion,
+    snellMode: node.snellMode || null,
+    xhttpMode: node.xhttpMode || null,
   };
 }
 

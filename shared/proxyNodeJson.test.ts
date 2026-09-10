@@ -328,3 +328,75 @@ test("hysteria v1 与 hysteria2 是两个协议，v1 仍然不支持", () => {
   }));
   assert.equal(result.ok, false);
 });
+
+// ==================== Snell 与 XHTTP 的 JSON ====================
+
+test("mihomo 的 snell 条目：psk 与 obfs-opts", () => {
+  const { node } = ok(JSON.stringify({
+    name: "S4", type: "snell", server: "hk.example.com", port: 8000,
+    psk: "my-psk", version: 4, udp: true,
+    "obfs-opts": { mode: "http", host: "bing.com" },
+  }));
+
+  assert.equal(node.protocol, "snell");
+  // Snell 的鉴权字段是 psk，不是 password。
+  assert.equal(node.password, "my-psk");
+  assert.equal(node.snellVersion, 4);
+  assert.equal(node.obfs, "http");
+  assert.equal(node.host, "bing.com");
+  // 走裸 TCP，不该被当成 TLS 节点。
+  assert.equal(node.tls, false);
+});
+
+test("sing-box 的 snell 出站：v6 用 mode", () => {
+  const { node } = ok(JSON.stringify({
+    type: "snell", server: "hk.example.com", server_port: 8000,
+    psk: "my-psk", version: 6, mode: "unshaped",
+  }));
+
+  assert.equal(node.protocol, "snell");
+  assert.equal(node.snellVersion, 6);
+  assert.equal(node.snellMode, "unshaped");
+});
+
+test("mihomo 的 xhttp-opts 读得出 mode", () => {
+  const { node } = ok(JSON.stringify({
+    name: "XH", type: "vless", server: "hk.example.com", port: 443, uuid: "u",
+    network: "xhttp", tls: true, servername: "a.com",
+    "xhttp-opts": { path: "/x", host: "a.com", mode: "stream-one" },
+  }));
+
+  assert.equal(node.transport, "xhttp");
+  assert.equal(node.path, "/x");
+  // mode 两端不一致就连不上，不是可选项。
+  assert.equal(node.xhttpMode, "stream-one");
+});
+
+test("妙妙屋X 那种 Snell 服务端入站：psk 在 users 里", () => {
+  const result = parseProxyNodeJson(JSON.stringify({
+    tag: "snell-in", listen: "0.0.0.0", port: 8443, protocol: "snell",
+    settings: { users: [{ psk: "your-psk", version: 4, obfsMode: "http", email: "u@e.com" }] },
+  }));
+
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  // 服务端配置的 listen 是 0.0.0.0，公网地址得由调用方补。
+  assert.equal(result.needsAddress, true);
+  assert.equal(result.node.protocol, "snell");
+  assert.equal(result.node.password, "your-psk");
+  assert.equal(result.node.snellVersion, 4);
+  assert.equal(result.node.obfs, "http");
+});
+
+test("妙妙屋X 那种 AnyTLS 服务端入站：password 也在 settings.users 里", () => {
+  const result = parseProxyNodeJson(JSON.stringify({
+    tag: "anytls-in", listen: "0.0.0.0", port: 443, protocol: "anytls",
+    settings: { users: [{ password: "your-password", email: "u@e.com" }], paddingScheme: ["stop=8"] },
+    streamSettings: { network: "tcp", security: "tls", tlsSettings: { serverName: "your.domain.com" } },
+  }));
+
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  assert.equal(result.node.protocol, "anytls");
+  assert.equal(result.node.password, "your-password");
+  assert.equal(result.node.sni, "your.domain.com");
+  assert.equal(result.node.tls, true);
+});

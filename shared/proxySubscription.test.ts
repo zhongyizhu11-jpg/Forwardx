@@ -448,7 +448,7 @@ test("Surge 全是 VLESS 时只剩说明，不产出空文件", () => {
   assert.equal(lines.length, 2);
   assert.ok(lines.every((line) => line.startsWith("#")));
   // 要告诉用户去用哪种格式，否则他只会看到一个空订阅。
-  assert.match(lines[1], /Clash 或 sing-box/);
+  assert.match(lines[1], /各格式支持的协议/);
 });
 
 test("Quantumult X 支持 VLESS，字段名用它自己那套", () => {
@@ -740,4 +740,157 @@ test("base64 订阅原样带出三种新协议的链接", () => {
   assert.match(links[0], /obfs=salamander/);
   assert.ok(links[1].startsWith("tuic://uuid-1:tuic-pass@1.2.3.4:20002?"));
   assert.ok(links[2].startsWith("anytls://at-pass@1.2.3.4:20003/"));
+});
+
+// ==================== Snell / XHTTP / REALITY 的各家渲染 ====================
+
+const SNELL4 = 'S4 = snell, hk.example.com, 8000, psk="my-psk", version=4, obfs=http, obfs-host=bing.com';
+const SNELL6 = "S6 = snell, hk.example.com, 8000, psk=my-psk, version=6, mode=unshaped";
+const SNELL2 = "S2 = snell, hk.example.com, 8000, psk=my-psk, version=2";
+const VLESS_XHTTP =
+  "vless://abc-uuid@hk.example.com:443?type=xhttp&mode=stream-one&path=%2Fx&host=a.com&security=reality&pbk=PK&sid=ab#XH";
+const VLESS_REALITY = "vless://abc-uuid@hk.example.com:443?security=reality&pbk=PK&sid=ab&sni=a.com#RE";
+const TROJAN_REALITY = "trojan://pw@hk.example.com:443?security=reality&pbk=PK&sni=a.com#TJRE";
+
+test("Clash 的 Snell 用 psk 与 obfs-opts 子块", () => {
+  const parsed = parseYamlSubset(renderProxySubscription(only(SNELL4, "广州1 → S4"), "clash"));
+  const proxy = (parsed.proxies as Record<string, unknown>[])[0];
+
+  assert.equal(proxy.type, "snell");
+  // Snell 的鉴权字段是 psk，不是 password。
+  assert.equal(proxy.psk, "my-psk");
+  assert.equal(proxy.version, 4);
+  assert.deepEqual(proxy["obfs-opts"], { mode: "http", host: "bing.com" });
+  // 走裸 TCP，没有 TLS 也没有 network。
+  assert.equal(proxy.tls, undefined);
+  assert.equal(proxy.network, undefined);
+});
+
+test("mihomo 只到 Snell v5，v6 跳过并说明", () => {
+  const lines = renderProxySubscription(only(SNELL6, "S6"), "clash").trim().split("\n");
+  // 版本对不上是握手完全不兼容，发出去只会连不上。YAML 的注释就写在文件开头。
+  assert.match(lines[0], /^# 已跳过节点「S6」：mihomo 只支持到 Snell v5/);
+  assert.equal(lines[2], "proxies: []");
+  // 一个节点都不剩时不能留下指向不存在策略组的规则。
+  assert.match(renderProxySubscription(only(SNELL6, "S6"), "clash"), /MATCH,DIRECT/);
+});
+
+test("sing-box 的 Snell 只有 v4 与 v6，v2 跳过", () => {
+  const v4 = JSON.parse(renderProxySubscription(only(SNELL4, "S4"), "singbox"));
+  const out = v4.outbounds.find((item: any) => item.type === "snell");
+  assert.equal(out.psk, "my-psk");
+  assert.equal(out.version, 4);
+  assert.equal(out.obfs_mode, "http");
+  assert.equal(out.obfs_host, "bing.com");
+
+  const v6 = JSON.parse(renderProxySubscription(only(SNELL6, "S6"), "singbox"));
+  const out6 = v6.outbounds.find((item: any) => item.type === "snell");
+  assert.equal(out6.version, 6);
+  assert.equal(out6.mode, "unshaped");
+  // v6 用整形模式，不再有 obfs。
+  assert.equal(out6.obfs_mode, undefined);
+
+  const v2 = JSON.parse(renderProxySubscription(only(SNELL2, "S2"), "singbox"));
+  assert.equal(v2.outbounds.find((item: any) => item.type === "snell"), undefined);
+});
+
+test("Surge 的 Snell v1-v6 全支持，psk 带引号", () => {
+  const v4 = renderProxySubscription(only(SNELL4, "S4"), "surge").trim();
+  assert.match(v4, /^S4 = snell, 1\.2\.3\.4, 20001, psk="my-psk", version=4/);
+  assert.match(v4, /obfs=http/);
+  assert.match(v4, /obfs-host=bing\.com/);
+
+  const v6 = renderProxySubscription(only(SNELL6, "S6"), "surge").trim();
+  assert.match(v6, /version=6/);
+  assert.match(v6, /mode=unshaped/);
+  assert.doesNotMatch(v6, /obfs=/);
+});
+
+test("Loon、Quantumult X 与 base64 都装不下 Snell", () => {
+  for (const format of ["loon", "quantumultx"] as const) {
+    const lines = renderProxySubscription(only(SNELL4, "S4"), format).trim().split("\n");
+    assert.ok(lines.every((line) => line.startsWith("#")), format);
+    assert.match(lines[0], /不支持 Snell/);
+  }
+  // base64 是 URI 列表，而 Snell 没有分享链接 —— 编一个出来只会让客户端报无法识别。
+  assert.equal(decodeBase64Utf8(renderProxySubscription(only(SNELL4, "S4"), "base64")).trim(), "");
+});
+
+test("XHTTP 只有 mihomo 跟进，其余格式跳过", () => {
+  const parsed = parseYamlSubset(renderProxySubscription(only(VLESS_XHTTP, "XH"), "clash"));
+  const proxy = (parsed.proxies as Record<string, unknown>[])[0];
+  assert.equal(proxy.network, "xhttp");
+  // mode 决定上下行怎么拆包，两端不一致就连不上。
+  assert.deepEqual(proxy["xhttp-opts"], { path: "/x", host: "a.com", mode: "stream-one" });
+
+  for (const format of ["singbox", "loon", "quantumultx"] as const) {
+    const output = renderProxySubscription(only(VLESS_XHTTP, "XH"), format);
+    assert.doesNotMatch(output, /xhttp-opts|stream-one/, format);
+  }
+  const loon = renderProxySubscription(only(VLESS_XHTTP, "XH"), "loon").trim().split("\n");
+  assert.match(loon[0], /不支持 XHTTP 传输/);
+
+  // base64 是原样带 URI 出去的，XHTTP 写得进去。
+  const links = decodeBase64Utf8(renderProxySubscription(only(VLESS_XHTTP, "XH"), "base64")).trim();
+  assert.match(links, /type=xhttp/);
+  assert.match(links, /mode=stream-one/);
+});
+
+test("REALITY 节点不再静默发给 Surge 和 Quantumult X", () => {
+  // 这两家手册里根本没有 REALITY 这一层。照常渲染会得到一个「普通 TLS」节点：
+  // 能导入、能识别协议、握手必失败 —— 和 Loon 漏公钥是同一类静默失效。
+  for (const link of [VLESS_REALITY, TROJAN_REALITY]) {
+    const qx = renderProxySubscription(only(link, "RE"), "quantumultx").trim().split("\n");
+    assert.ok(qx.every((line) => line.startsWith("#")));
+    assert.match(qx[0], /不支持 REALITY/);
+  }
+  const surge = renderProxySubscription(only(TROJAN_REALITY, "TJRE"), "surge").trim().split("\n");
+  assert.ok(surge.every((line) => line.startsWith("#")));
+  assert.match(surge[0], /不支持 REALITY/);
+});
+
+test("非 REALITY 的节点在 Surge 与 QX 里照常渲染", () => {
+  // 上一条守的是「跳过」，这一条守的是别把好节点一起跳掉。
+  const surge = renderProxySubscription(only(TROJAN, "TJ"), "surge").trim();
+  assert.match(surge, /^TJ = trojan, 1\.2\.3\.4, 20001, password=secret-pass/);
+  const qx = renderProxySubscription(only(VLESS_WS, "VL"), "quantumultx").trim();
+  assert.match(qx, /^vless=1\.2\.3\.4:20001/);
+});
+
+test("Loon 仍然收得到 REALITY 节点", () => {
+  const line = renderProxySubscription(only(VLESS_REALITY, "RE"), "loon").trim();
+  assert.match(line, /public-key="PK"/);
+  assert.match(line, /short-id=ab/);
+});
+
+test("跳掉节点时，策略组里对它的引用要一起清干净", () => {
+  // 留一个指向不存在节点的引用，Clash 会拒绝整份配置，报的还是「订阅导入失败」。
+  // 用 Snell v6 触发：mihomo 只支持到 v5，所以这个节点在 Clash 这条路径上会被跳掉。
+  const document = {
+    nodes: [
+      node(SNELL6, { address: "1.2.3.4", port: 20001, name: "广州1 → S6" }),
+      node(TROJAN, { address: "5.6.7.8", port: 20002, name: "广州2 → HK" }),
+    ],
+    groups: [
+      { name: "ForwardX", type: "select" as const, members: ["S6 自动选路", "广州1 → S6", "广州2 → HK"] },
+      { name: "S6 自动选路", type: "url-test" as const, members: ["广州1 → S6"] },
+    ],
+    ruleSets: [],
+    rules: [],
+  };
+
+  const output = renderProxySubscription(document, "clash");
+  const parsed = parseYamlSubset(output.split("\n").filter((line) => !line.startsWith("#")).join("\n"));
+
+  assert.equal((parsed.proxies as unknown[]).length, 1);
+  const groups = parsed["proxy-groups"] as Record<string, unknown>[];
+  // 只剩一个成员的自动选路组空掉了，而它本身还是主选择器的成员 —— 引用要连着清两层。
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].name, "ForwardX");
+  assert.deepEqual(groups[0].proxies, ["广州2 → HK"]);
+
+  // sing-box 也支持 Snell v6，那边两个节点都在，组原样保留。
+  const singbox = JSON.parse(renderProxySubscription(document, "singbox"));
+  const selector = singbox.outbounds.find((item: any) => item.tag === "ForwardX");
+  assert.deepEqual(selector.outbounds, ["S6 自动选路", "广州1 → S6", "广州2 → HK"]);
 });

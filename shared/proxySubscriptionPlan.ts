@@ -20,6 +20,7 @@ import {
   proxyNodeAlwaysTls,
   proxyNodeRequiresUdp,
   PROXY_NODE_PROTOCOLS,
+  PROXY_NODE_TRANSPORTS,
   relayProxyNode,
   type ProxyNode,
   type ProxyNodeProtocol,
@@ -58,6 +59,9 @@ export type ProxyNodeTemplateRow = {
   congestionControl?: unknown;
   udpRelayMode?: unknown;
   disableSni?: unknown;
+  snellVersion?: unknown;
+  snellMode?: unknown;
+  xhttpMode?: unknown;
   isEnabled?: unknown;
   autoGroup?: unknown;
 };
@@ -145,7 +149,7 @@ function toPort(value: unknown): number {
 }
 
 const PROTOCOLS = new Set<ProxyNodeProtocol>(PROXY_NODE_PROTOCOLS);
-const TRANSPORTS = new Set<ProxyNodeTransport>(["tcp", "ws", "grpc", "http"]);
+const TRANSPORTS = new Set<ProxyNodeTransport>(PROXY_NODE_TRANSPORTS);
 
 /** 把数据库行还原成节点模型。列都是宽松类型，这里统一收敛。 */
 export function proxyNodeFromTemplateRow(row: ProxyNodeTemplateRow): ProxyNode {
@@ -177,6 +181,9 @@ export function proxyNodeFromTemplateRow(row: ProxyNodeTemplateRow): ProxyNode {
   node.congestionControl = text(row.congestionControl);
   node.udpRelayMode = text(row.udpRelayMode);
   node.disableSni = bool(row.disableSni);
+  node.snellVersion = Number(text(row.snellVersion)) || 0;
+  node.snellMode = text(row.snellMode);
+  node.xhttpMode = text(row.xhttpMode);
   // Hysteria2 / TUIC / AnyTLS 的 TLS 是协议自带的，老行里 tls 列可能是 0。
   if (proxyNodeAlwaysTls(node.protocol)) node.tls = true;
   return node;

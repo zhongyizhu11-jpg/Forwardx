@@ -633,3 +633,22 @@ test("数据库行还原出新协议的字段，TLS 不看那一列", () => {
   assert.equal(node.disableSni, true);
   assert.equal(node.tls, true);
 });
+
+test("数据库行还原出 Snell 与 XHTTP 的字段", () => {
+  const snell = proxyNodeFromTemplateRow({
+    id: 4, name: "S4", protocol: "snell", address: "hk.example.com", port: 8000,
+    password: "psk", snellVersion: 4, obfs: "http", host: "bing.com",
+  });
+  assert.equal(snell.protocol, "snell");
+  assert.equal(snell.snellVersion, 4);
+  assert.equal(snell.obfs, "http");
+  // Snell 走裸 TCP，不在「协议自带 TLS」那一档里。
+  assert.equal(snell.tls, false);
+
+  const xhttp = proxyNodeFromTemplateRow({
+    id: 5, name: "XH", protocol: "vless", address: "hk.example.com", port: 443,
+    uuid: "u", transport: "xhttp", xhttpMode: "stream-one", tls: true,
+  });
+  assert.equal(xhttp.transport, "xhttp");
+  assert.equal(xhttp.xhttpMode, "stream-one");
+});

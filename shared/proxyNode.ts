@@ -22,6 +22,7 @@ export const PROXY_NODE_PROTOCOLS = [
   "hysteria2",
   "tuic",
   "anytls",
+  "snell",
 ] as const;
 
 export type ProxyNodeProtocol = (typeof PROXY_NODE_PROTOCOLS)[number];
@@ -34,6 +35,7 @@ export const PROXY_NODE_PROTOCOL_LABELS: Record<ProxyNodeProtocol, string> = {
   hysteria2: "Hysteria2",
   tuic: "TUIC v5",
   anytls: "AnyTLS",
+  snell: "Snell",
 };
 
 /**
@@ -64,7 +66,7 @@ export function proxyNodeAlwaysTls(protocol: unknown): boolean {
   return PROXY_NODE_ALWAYS_TLS_PROTOCOLS.includes(String(protocol ?? "") as ProxyNodeProtocol);
 }
 
-export const PROXY_NODE_TRANSPORTS = ["tcp", "ws", "grpc", "http"] as const;
+export const PROXY_NODE_TRANSPORTS = ["tcp", "ws", "grpc", "http", "xhttp"] as const;
 
 export type ProxyNodeTransport = (typeof PROXY_NODE_TRANSPORTS)[number];
 
@@ -108,6 +110,18 @@ export type ProxyNode = {
   /** TUIC 的握手不带 SNI */
   disableSni: boolean;
   /**
+   * Snell 的版本号（1-6）。0 表示不是 Snell 节点。
+   *
+   * 各家支持的区间不一样：Surge 全都有，mihomo 到 v5 为止，sing-box 只有 v4 与 v6
+   * （v4/v5 线格式一致，可以按 v4 发）。版本对不上不是「参数少一个」而是握手完全
+   * 不兼容，所以渲染时按版本逐家判断能不能出。
+   */
+  snellVersion: number;
+  /** Snell v6 的流量整形：default / unshaped / unsafe-raw */
+  snellMode: string;
+  /** XHTTP 的模式：auto / stream-one / stream-up / packet-up */
+  xhttpMode: string;
+  /**
    * 前置代理：这个节点的连接要先经由哪个节点建立（按名称引用）。
    *
    * 只有 Clash（dialer-proxy）、sing-box（detour）、Surge（underlying-proxy）能表达；
@@ -143,6 +157,9 @@ export function createEmptyProxyNode(): ProxyNode {
     congestionControl: "",
     udpRelayMode: "",
     disableSni: false,
+    snellVersion: 0,
+    snellMode: "",
+    xhttpMode: "",
   };
 }
 
@@ -161,6 +178,8 @@ function normalizeTransport(value: unknown): ProxyNodeTransport {
   if (raw === "h2" || raw === "http") return "http";
   if (raw === "ws" || raw === "websocket") return "ws";
   if (raw === "grpc") return "grpc";
+  // XHTTP 是 Xray 用来取代 H2 的新传输，只有 VLESS 用得上。
+  if (raw === "xhttp" || raw === "splithttp") return "xhttp";
   return "tcp";
 }
 
@@ -284,6 +303,8 @@ function applyTransportQuery(node: ProxyNode, query: URLSearchParams) {
     node.path = text(query.get("path"));
   }
   node.host = text(query.get("host"));
+  // XHTTP 的 mode 决定上下行怎么拆包，两端不一致会连不上，属于必须带的参数。
+  if (node.transport === "xhttp") node.xhttpMode = text(query.get("mode"));
 }
 
 function parseVlessLink(link: string): ProxyNode | null {
@@ -524,6 +545,57 @@ function parseAnytlsLink(link: string): ProxyNode | null {
   return node;
 }
 
+/**
+ * Snell 没有分享链接 —— 它是 Surge 自家的协议，社区里也没有形成 snell:// 的事实
+ * 标准（Sub-Store 同样只从 Clash 条目和 Surge 配置里读）。用户手上最可能有的就是
+ * 一行 Surge 节点配置，所以这里认那一行；Clash 条目与 sing-box 出站走 JSON 那条路。
+ *
+ *   名字 = snell, 1.2.3.4, 8000, psk=xxx, version=4, obfs=http, obfs-host=bing.com
+ *   名字 = snell, 1.2.3.4, 8000, psk="xxx", version=6, mode=default
+ */
+function looksLikeSurgeSnellLine(input: string): boolean {
+  const eq = input.indexOf("=");
+  if (eq < 0) return false;
+  return text(input.slice(eq + 1)).split(",")[0]?.trim().toLowerCase() === "snell";
+}
+
+function parseSurgeSnellLine(input: string): ProxyNode | null {
+  const eq = input.indexOf("=");
+  if (eq < 0) return null;
+  const name = text(input.slice(0, eq));
+  const parts = input.slice(eq + 1).split(",").map((item) => item.trim()).filter(Boolean);
+  // 前三段固定是 snell、地址、端口，之后一律是 键=值。
+  if (parts.length < 3) return null;
+  const address = text(parts[1]);
+  const port = toPort(parts[2]);
+  if (!address || !port) return null;
+
+  const options = new Map<string, string>();
+  for (const part of parts.slice(3)) {
+    const at = part.indexOf("=");
+    if (at < 0) continue;
+    // Surge 的 psk 惯例带引号。
+    options.set(part.slice(0, at).trim().toLowerCase(), part.slice(at + 1).trim().replace(/^"|"$/g, ""));
+  }
+
+  const psk = text(options.get("psk"));
+  if (!psk) return null;
+
+  const node = createEmptyProxyNode();
+  node.protocol = "snell";
+  node.name = name;
+  node.address = address;
+  node.port = port;
+  node.password = psk;
+  // Surge 手册写的默认版本就是 1；不猜成 4，版本猜错是握手完全不兼容。
+  node.snellVersion = Number(text(options.get("version"))) || 1;
+  node.obfs = text(options.get("obfs")).toLowerCase();
+  node.host = text(options.get("obfs-host"));
+  node.snellMode = text(options.get("mode"));
+  node.udp = true;
+  return node;
+}
+
 export type ParseProxyNodeResult =
   | { ok: true; node: ProxyNode }
   | { ok: false; error: string };
@@ -544,6 +616,15 @@ export function parseProxyNodeLink(input: unknown): ParseProxyNodeResult {
       };
     }
     return { ok: true, node: result.node };
+  }
+
+  // Snell 走 Surge 节点行，没有 scheme 可判断，所以先看这一条。
+  if (looksLikeSurgeSnellLine(link)) {
+    const node = parseSurgeSnellLine(link);
+    if (!node) {
+      return { ok: false, error: "Snell 节点行格式无法识别，需要形如 `名字 = snell, 地址, 端口, psk=密钥, version=4`" };
+    }
+    return { ok: true, node };
   }
 
   const lower = link.toLowerCase();
@@ -600,6 +681,7 @@ function buildTransportQuery(node: ProxyNode, params: URLSearchParams) {
   if (node.transport === "grpc") appendQuery(params, "serviceName", node.path);
   else appendQuery(params, "path", node.path);
   if (node.transport !== "tcp") appendQuery(params, "host", node.host);
+  if (node.transport === "xhttp") appendQuery(params, "mode", node.xhttpMode);
 }
 
 function buildTlsQuery(node: ProxyNode, params: URLSearchParams) {
@@ -624,6 +706,9 @@ function formatHostForUri(address: string): string {
 
 /** 把模型还原成节点链接，用于通用 base64 订阅。 */
 export function formatProxyNodeLink(node: ProxyNode): string {
+  // Snell 没有分享链接。编一个 snell:// 出来只会让客户端报「无法识别」，
+  // 所以由调用方（base64 渲染器）在协议清单里跳过，这里给一个明确的空值兜底。
+  if (node.protocol === "snell") return "";
   const host = formatHostForUri(node.address);
   const fragment = node.name ? `#${encodeURIComponent(node.name)}` : "";
   if (node.protocol === "vmess") {

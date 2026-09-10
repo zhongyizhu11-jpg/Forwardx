@@ -44,12 +44,12 @@ export const PROXY_SUBSCRIPTION_FORMAT_LABELS: Record<ProxySubscriptionFormat, s
 };
 
 export const PROXY_SUBSCRIPTION_FORMAT_HINTS: Record<ProxySubscriptionFormat, string> = {
-  base64: "v2rayN、v2rayNG、Shadowrocket 等通用客户端。",
-  clash: "Clash、Clash.Meta、mihomo、Stash。协议最全。",
-  singbox: "sing-box 及基于它的客户端。协议最全。",
-  loon: "Loon（iOS）。不支持 TUIC。",
-  surge: "Surge（iOS/Mac）与 Surfboard（Android）。不支持 VLESS。",
-  quantumultx: "Quantumult X（iOS）。不支持 Hysteria2 / TUIC / AnyTLS。",
+  base64: "v2rayN、v2rayNG、Shadowrocket 等通用客户端。不支持 Snell（该协议没有分享链接）。",
+  clash: "Clash、Clash.Meta、mihomo、Stash。协议最全，Snell 到 v5。",
+  singbox: "sing-box 及基于它的客户端。协议最全，不支持 XHTTP 传输。",
+  loon: "Loon（iOS）。不支持 TUIC、Snell、XHTTP。",
+  surge: "Surge（iOS/Mac）与 Surfboard（Android）。不支持 VLESS、REALITY、XHTTP。",
+  quantumultx: "Quantumult X（iOS）。不支持 Hysteria2 / TUIC / AnyTLS / Snell / REALITY / XHTTP。",
 };
 
 export const PROXY_SUBSCRIPTION_FORMAT_CONTENT_TYPES: Record<ProxySubscriptionFormat, string> = {
@@ -107,6 +107,11 @@ function markUnchainable(nodes: readonly ProxyNode[]): ProxyNode[] {
   );
 }
 
+/**
+ * base64 订阅是一串节点 URI，格式本身没有注释的位置 —— 塞一行 `#` 说明有可能
+ * 让个别客户端整份订阅解析失败。所以这里只能静默跳过，跳过的原因写在面板的
+ * 格式说明里（PROXY_SUBSCRIPTION_FORMAT_HINTS）。
+ */
 function renderBase64(nodes: readonly ProxyNode[]): string {
   return encodeBase64Utf8(markUnchainable(nodes).map((node) => formatProxyNodeLink(node)).join("\n"));
 }
@@ -129,6 +134,22 @@ function clashProxyLines(node: ProxyNode): YamlLine[] {
    * 「tls: true + servername」那两个键，而是直接写 sni + skip-cert-verify。
    * 混进下面那套通用逻辑只会产出 mihomo 读不懂的键，所以单开一条分支并直接返回。
    */
+  // Snell 走裸 TCP，没有 TLS 也没有 streamSettings；混淆是 obfs-opts 子块。
+  if (node.protocol === "snell") {
+    field("type", "snell");
+    field("psk", yamlQuote(node.password));
+    field("version", String(node.snellVersion || 1));
+    // v1/v2 没有 UDP；写了也不会生效，不如不写。
+    if ((node.snellVersion || 1) >= 3) field("udp", node.udp ? "true" : "false");
+    if (node.obfs && node.obfs !== "none") {
+      field("obfs-opts", "");
+      push(6, `mode: ${yamlQuote(node.obfs)}`);
+      if (node.host) push(6, `host: ${yamlQuote(node.host)}`);
+    }
+    if (node.frontProxyName) field("dialer-proxy", yamlQuote(node.frontProxyName));
+    return lines;
+  }
+
   if (node.protocol === "hysteria2" || node.protocol === "tuic" || node.protocol === "anytls") {
     if (node.protocol === "hysteria2") {
       field("type", "hysteria2");
@@ -214,6 +235,13 @@ function clashProxyLines(node: ProxyNode): YamlLine[] {
     if (node.path) push(6, `grpc-service-name: ${yamlQuote(node.path)}`);
   } else if (node.transport === "http") {
     field("network", "http");
+  } else if (node.transport === "xhttp") {
+    field("network", "xhttp");
+    field("xhttp-opts", "");
+    if (node.path) push(6, `path: ${yamlQuote(node.path)}`);
+    if (node.host) push(6, `host: ${yamlQuote(node.host)}`);
+    // mode 决定上下行怎么拆包，两端不一致就连不上，不是可选项。
+    if (node.xhttpMode) push(6, `mode: ${yamlQuote(node.xhttpMode)}`);
   }
 
   return lines;
@@ -233,8 +261,9 @@ function renderClash(
   groups: readonly ProxySubscriptionGroup[],
   ruleSets: readonly ProxyRuleSetRef[],
   rules: readonly ProxyRouteRule[],
+  notices: readonly string[],
 ): string {
-  const lines: string[] = [nodes.length === 0 ? "proxies: []" : "proxies:"];
+  const lines: string[] = [...notices, nodes.length === 0 ? "proxies: []" : "proxies:"];
   for (const node of nodes) {
     for (const line of clashProxyLines(node)) {
       lines.push(`${" ".repeat(line.indent)}${line.text}`);
@@ -329,6 +358,17 @@ function singboxOutbound(node: ProxyNode): Record<string, unknown> {
   } else if (node.protocol === "anytls") {
     outbound.type = "anytls";
     outbound.password = node.password;
+  } else if (node.protocol === "snell") {
+    outbound.type = "snell";
+    outbound.psk = node.password;
+    // sing-box 的 Snell 只认 v4 与 v6。v5 与 v4 线格式一致，按 v4 发即可。
+    outbound.version = (node.snellVersion || 1) === 6 ? 6 : 4;
+    if ((node.snellVersion || 1) === 6) {
+      if (node.snellMode) outbound.mode = node.snellMode;
+    } else if (node.obfs && node.obfs !== "none") {
+      outbound.obfs_mode = node.obfs;
+      if (node.host) outbound.obfs_host = node.host;
+    }
   } else {
     outbound.type = "shadowsocks";
     outbound.method = node.method;
@@ -461,18 +501,66 @@ function renderSingbox(
  * 只会看到节点凭空少了，跟协议毫无字面关联。
  */
 const FORMAT_UNSUPPORTED_PROTOCOLS: Record<ProxySubscriptionFormat, readonly ProxyNodeProtocol[]> = {
-  base64: [],
+  // Snell 没有分享链接，base64 订阅是 URI 列表，装不下它。
+  base64: ["snell"],
   clash: [],
   singbox: [],
-  loon: ["tuic"],
+  loon: ["tuic", "snell"],
   surge: ["vless"],
-  quantumultx: ["hysteria2", "tuic", "anytls"],
+  quantumultx: ["hysteria2", "tuic", "anytls", "snell"],
 };
+
+/** 能表达 REALITY 的格式。Surge 与 Quantumult X 的手册里根本没有这一层。 */
+const FORMATS_WITH_REALITY: readonly ProxySubscriptionFormat[] = ["base64", "clash", "singbox", "loon"];
+
+/** 能表达 XHTTP 传输的格式。这是 Xray 的传输，只有 mihomo 跟进了。 */
+const FORMATS_WITH_XHTTP: readonly ProxySubscriptionFormat[] = ["base64", "clash"];
+
+/**
+ * 这个格式支持这个 Snell 版本吗？
+ *
+ * 版本对不上不是「少一个参数」，是握手完全不兼容，所以按版本逐家判断：
+ *   Surge     v1-v6 全支持，但 v6 不能带 obfs
+ *   mihomo    v1-v5
+ *   sing-box  v4 与 v6；v5 与 v4 线格式一致，按 v4 发
+ */
+function snellUnsupportedReason(node: ProxyNode, format: ProxySubscriptionFormat): string {
+  const version = node.snellVersion || 1;
+  if (format === "clash" && version > 5) {
+    return `mihomo 只支持到 Snell v5，这个节点是 v${version}`;
+  }
+  if (format === "singbox" && version !== 4 && version !== 5 && version !== 6) {
+    return `sing-box 的 Snell 只有 v4 与 v6，这个节点是 v${version}`;
+  }
+  if (format === "surge" && version === 6 && node.obfs && node.obfs !== "none") {
+    return `Surge 的 Snell v6 不支持混淆，这个节点带了 ${node.obfs}`;
+  }
+  return "";
+}
 
 /** 这个格式渲染不了这个节点吗？返回中文原因；空串表示能渲染。 */
 function unsupportedReason(node: ProxyNode, format: ProxySubscriptionFormat): string {
+  const label = PROXY_SUBSCRIPTION_FORMAT_LABELS[format];
   if (FORMAT_UNSUPPORTED_PROTOCOLS[format].includes(node.protocol)) {
-    return `${PROXY_SUBSCRIPTION_FORMAT_LABELS[format]} 不支持 ${PROXY_NODE_PROTOCOL_LABELS[node.protocol]}`;
+    return `${label} 不支持 ${PROXY_NODE_PROTOCOL_LABELS[node.protocol]}`;
+  }
+  /**
+   * REALITY 在 Surge 与 Quantumult X 里没有任何位置可写。
+   *
+   * 照常渲染的话会得到一个「普通 TLS」节点：能导入、能识别协议、握手必失败，
+   * 而客户端只报一句连接失败 —— 与其如此，不如跳过并说清楚。这和 Loon 漏公钥
+   * 是同一类静默失效。
+   */
+  if (node.realityPublicKey && !FORMATS_WITH_REALITY.includes(format)) {
+    return `${label} 不支持 REALITY`;
+  }
+  // XHTTP 是 Xray 用来取代 H2 的传输，目前只有 mihomo 跟进。
+  if (node.transport === "xhttp" && !FORMATS_WITH_XHTTP.includes(format)) {
+    return `${label} 不支持 XHTTP 传输`;
+  }
+  if (node.protocol === "snell") {
+    const reason = snellUnsupportedReason(node, format);
+    if (reason) return reason;
   }
   // Loon 的 Hysteria2 只有 salamander-password 这一个混淆参数，gecko 没有位置可写。
   if (format === "loon" && node.protocol === "hysteria2" && node.obfs && node.obfs !== "salamander") {
@@ -497,13 +585,54 @@ function partitionBySupport(nodes: readonly ProxyNode[], format: ProxySubscripti
   return { supported, skipped };
 }
 
-/** Loon、Surge、Quantumult X 的配置里 `#` 开头都是注释行，可以安全地写说明。 */
+/** Clash（YAML）、Loon、Surge、Quantumult X 里 `#` 开头都是注释行，可以安全地写说明。 */
 function skipNoticeLines(skipped: SupportPartition["skipped"]): string[] {
   if (skipped.length === 0) return [];
   return [
     ...skipped.map(({ node, reason }) => `# 已跳过节点「${node.name}」：${reason}`),
-    "# 这些节点改用 Clash 或 sing-box 格式的订阅地址即可，那两种的协议覆盖最全。",
+    "# 换一种格式的订阅地址即可，各格式支持的协议见面板上的说明。",
   ];
+}
+
+type FilteredDocument = ProxySubscriptionDocument & {
+  /** 已带 `#` 前缀的说明行。JSON 与 base64 装不下注释，那两种格式拿到的是空数组。 */
+  notices: string[];
+};
+
+/**
+ * 按格式裁掉渲染不了的节点，并把策略组里对它们的引用一起清干净。
+ *
+ * 清引用这一步不能省：组是按名字引用成员的，留一个指向不存在节点的引用，Clash
+ * 会拒绝整份配置，报的还是「订阅导入失败」这种毫无线索的错。空掉的组本身又是
+ * 别人的成员（主选择器引用自动选路组），所以要反复清到不动为止。
+ */
+function filterForFormat(
+  document: ProxySubscriptionDocument,
+  format: ProxySubscriptionFormat,
+): FilteredDocument {
+  const { supported, skipped } = partitionBySupport(document.nodes, format);
+  // JSON 没有注释语法；base64 是一整块编码，塞注释有可能让客户端整份解析失败。
+  const notices = format === "singbox" || format === "base64" ? [] : skipNoticeLines(skipped);
+  if (skipped.length === 0) return { ...document, notices };
+  // 一个都不剩时连规则一起清掉：规则会指向不存在的策略组，客户端直接拒绝整份配置。
+  if (supported.length === 0) return { nodes: [], groups: [], ruleSets: [], rules: [], notices };
+
+  const removed = new Set(skipped.map(({ node }) => node.name));
+  let groups = document.groups;
+  for (;;) {
+    const next = groups
+      .map((group) => ({ ...group, members: group.members.filter((member) => !removed.has(member)) }))
+      .filter((group) => {
+        if (group.members.length > 0) return true;
+        removed.add(group.name);
+        return false;
+      });
+    const stable = next.length === groups.length;
+    groups = next;
+    if (stable) break;
+  }
+
+  return { nodes: supported, groups, ruleSets: document.ruleSets, rules: document.rules, notices };
 }
 
 /**
@@ -589,9 +718,8 @@ function loonNodeLine(node: ProxyNode): string {
   return `${name} = ${[...parts, ...options].join(",")}`;
 }
 
-function renderLoon(nodes: readonly ProxyNode[]): string {
-  const { supported, skipped } = partitionBySupport(markUnchainable(nodes), "loon");
-  return `${[...skipNoticeLines(skipped), ...supported.map(loonNodeLine)].join("\n")}\n`;
+function renderLoon(nodes: readonly ProxyNode[], notices: readonly string[]): string {
+  return `${[...notices, ...markUnchainable(nodes).map(loonNodeLine)].join("\n")}\n`;
 }
 
 /**
@@ -616,6 +744,16 @@ function surgeNodeLine(node: ProxyNode): string {
     parts.push("tuic-v5", node.address, String(node.port), `uuid=${node.uuid}`, `password=${node.password}`);
   } else if (node.protocol === "anytls") {
     parts.push("anytls", node.address, String(node.port), `password=${node.password}`);
+  } else if (node.protocol === "snell") {
+    // Snell 是 Surge 自家的协议，psk 按手册惯例带引号。
+    parts.push("snell", node.address, String(node.port), `psk="${node.password}"`);
+    parts.push(`version=${node.snellVersion || 1}`);
+    if ((node.snellVersion || 1) === 6) {
+      if (node.snellMode) parts.push(`mode=${node.snellMode}`);
+    } else if (node.obfs && node.obfs !== "none") {
+      parts.push(`obfs=${node.obfs}`);
+      if (node.host) parts.push(`obfs-host=${node.host}`);
+    }
   } else {
     parts.push("ss", node.address, String(node.port), `encrypt-method=${node.method}`, `password=${node.password}`);
   }
@@ -649,9 +787,8 @@ function surgeNodeLine(node: ProxyNode): string {
   return `${name} = ${parts.join(", ")}`;
 }
 
-function renderSurge(nodes: readonly ProxyNode[]): string {
-  const { supported, skipped } = partitionBySupport(nodes, "surge");
-  return `${[...skipNoticeLines(skipped), ...supported.map(surgeNodeLine)].join("\n")}\n`;
+function renderSurge(nodes: readonly ProxyNode[], notices: readonly string[]): string {
+  return `${[...notices, ...nodes.map(surgeNodeLine)].join("\n")}\n`;
 }
 
 /**
@@ -696,21 +833,20 @@ function quantumultxNodeLine(node: ProxyNode): string {
   return parts.join(", ");
 }
 
-function renderQuantumultX(nodes: readonly ProxyNode[]): string {
-  const { supported, skipped } = partitionBySupport(markUnchainable(nodes), "quantumultx");
-  return `${[...skipNoticeLines(skipped), ...supported.map(quantumultxNodeLine)].join("\n")}\n`;
+function renderQuantumultX(nodes: readonly ProxyNode[], notices: readonly string[]): string {
+  return `${[...notices, ...markUnchainable(nodes).map(quantumultxNodeLine)].join("\n")}\n`;
 }
 
 export function renderProxySubscription(
   document: ProxySubscriptionDocument,
   format: ProxySubscriptionFormat,
 ): string {
-  const { nodes, groups, ruleSets, rules } = document;
-  if (format === "clash") return renderClash(nodes, groups, ruleSets, rules);
+  const { nodes, groups, ruleSets, rules, notices } = filterForFormat(document, format);
+  if (format === "clash") return renderClash(nodes, groups, ruleSets, rules, notices);
   if (format === "singbox") return renderSingbox(nodes, groups, ruleSets, rules);
-  if (format === "loon") return renderLoon(nodes);
-  if (format === "surge") return renderSurge(nodes);
-  if (format === "quantumultx") return renderQuantumultX(nodes);
+  if (format === "loon") return renderLoon(nodes, notices);
+  if (format === "surge") return renderSurge(nodes, notices);
+  if (format === "quantumultx") return renderQuantumultX(nodes, notices);
   return renderBase64(nodes);
 }
 

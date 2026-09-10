@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.3.292] - 2026-09-10
+
+### 新增
+
+- 客户端节点支持 Snell（v1–v6）。Snell 没有分享链接，粘 Surge 的那行节点配置即可（`名字 = snell, 地址, 端口, psk=密钥, version=4`），Clash 条目与 sing-box 出站的 JSON 同样能认。各家支持的版本区间不同，渲染时逐家判断：Surge v1–v6，mihomo 到 v5，sing-box 只有 v4 与 v6（v5 与 v4 线格式一致，按 v4 发）。
+- 支持 XHTTP 传输（VLESS 专用，Xray 用来取代 H2 的新传输）。目前只有 mihomo 跟进，通用 base64 订阅也能原样带出去；sing-box、Loon、Surge、Quantumult X 会跳过并说明。
+
+### 修复
+
+- REALITY 节点不再静默发给 Surge 与 Quantumult X。这两家的配置里根本没有 REALITY 这一层，此前会渲染成一个「普通 TLS」节点：能导入、能识别协议、握手必失败，而客户端只报一句连接失败。与 Loon 漏公钥是同一类静默失效，现在改为跳过并写明原因。
+- 跳过节点时会把策略组里对它的引用一起清干净，空掉的组也一并移除。此前不存在会被跳过的分组格式，所以没有这条路径；留一个指向不存在节点的引用会让 Clash 拒绝整份配置，报的还是「订阅导入失败」这种毫无线索的错。
+
+### 版本
+
+- 面板与 APK Release `2.3.292`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
 ## [2.3.291] - 2026-09-10
 
 ### 新增

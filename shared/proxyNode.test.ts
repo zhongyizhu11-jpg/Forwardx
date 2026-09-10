@@ -329,3 +329,62 @@ test("中转改写把落地地址固化进 SNI —— QUIC 系同样适用", () 
   // 不固化的话客户端会拿入口 IP 当 SNI，证书对不上。
   assert.equal(relayed.sni, "hk.example.com");
 });
+
+// ==================== Snell 与 XHTTP ====================
+
+test("Snell 从 Surge 节点行读出来", () => {
+  // Snell 没有分享链接，用户手上最可能有的就是一行 Surge 配置。
+  const node = parseOrThrow('HK 落地 = snell, 1.2.3.4, 8000, psk="my-psk", version=4, obfs=http, obfs-host=bing.com');
+
+  assert.equal(node.protocol, "snell");
+  assert.equal(node.name, "HK 落地");
+  assert.equal(node.address, "1.2.3.4");
+  assert.equal(node.port, 8000);
+  // psk 惯例带引号，要去掉。
+  assert.equal(node.password, "my-psk");
+  assert.equal(node.snellVersion, 4);
+  assert.equal(node.obfs, "http");
+  assert.equal(node.host, "bing.com");
+  // Snell 走裸 TCP，没有 TLS。
+  assert.equal(node.tls, false);
+});
+
+test("Snell v6 用 mode 而不是 obfs", () => {
+  const node = parseOrThrow("S6 = snell, 1.2.3.4, 8000, psk=k, version=6, mode=unshaped");
+  assert.equal(node.snellVersion, 6);
+  assert.equal(node.snellMode, "unshaped");
+  assert.equal(node.obfs, "");
+});
+
+test("Snell 不写 version 时按 Surge 手册的默认 v1 算", () => {
+  // 不猜成 v4：版本猜错是握手完全不兼容，不是少一个参数。
+  const node = parseOrThrow("S = snell, 1.2.3.4, 8000, psk=k");
+  assert.equal(node.snellVersion, 1);
+});
+
+test("Snell 少了 psk 就报错，而不是收下一个连不上的节点", () => {
+  const result = parseProxyNodeLink("S = snell, 1.2.3.4, 8000, version=4");
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /psk/);
+});
+
+test("Snell 没有分享链接，不该凭空编一个出来", () => {
+  const node = parseOrThrow("S = snell, 1.2.3.4, 8000, psk=k, version=4");
+  assert.equal(formatProxyNodeLink(node), "");
+});
+
+test("VLESS + XHTTP + REALITY 的链接带 mode", () => {
+  const node = parseOrThrow(
+    "vless://u@1.2.3.4:443?type=xhttp&mode=stream-one&path=%2Fx&host=a.com&security=reality&pbk=PK&sid=ab#XH",
+  );
+  assert.equal(node.transport, "xhttp");
+  assert.equal(node.xhttpMode, "stream-one");
+  assert.equal(node.path, "/x");
+  assert.equal(node.host, "a.com");
+  assert.equal(node.realityPublicKey, "PK");
+
+  // mode 两端不一致就连不上，来回一趟不能丢。
+  const again = parseOrThrow(formatProxyNodeLink(node));
+  assert.equal(again.transport, "xhttp");
+  assert.equal(again.xhttpMode, "stream-one");
+});
