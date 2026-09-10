@@ -16,6 +16,8 @@ export type ProxyClientTarget = {
   id: string;
   /** 客户端显示名 */
   label: string;
+  /** 适用平台，展示在图标下方，省得用户逐个点开才知道自己能不能用 */
+  platforms: string;
   /** 该客户端要拉的订阅格式 */
   format: ProxySubscriptionFormat;
   /** 由订阅地址和名称拼出可点击的 scheme */
@@ -39,18 +41,21 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
   {
     id: "clash",
     label: "Clash / mihomo",
+    platforms: "全平台",
     format: "clash",
     buildImportUrl: (url, name) => `clash://install-config?url=${q(url)}&name=${q(name)}`,
   },
   {
     id: "stash",
     label: "Stash",
+    platforms: "iOS / macOS",
     format: "clash",
     buildImportUrl: (url, name) => `stash://install-config?url=${q(url)}&name=${q(name)}`,
   },
   {
     id: "singbox",
     label: "sing-box",
+    platforms: "全平台",
     format: "singbox",
     // 名称走 fragment，不是查询参数。
     buildImportUrl: (url, name) => `sing-box://import-remote-profile?url=${q(url)}#${q(name)}`,
@@ -58,12 +63,14 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
   {
     id: "loon",
     label: "Loon",
+    platforms: "iOS",
     format: "loon",
     buildImportUrl: (url, name) => `loon://import?sub=${q(url)}&name=${q(name)}`,
   },
   {
     id: "surge",
     label: "Surge / Surfboard",
+    platforms: "iOS / macOS / Android",
     format: "surge",
     // surge 后面是三条斜杠，少一条不会被识别。
     buildImportUrl: (url) => `surge:///install-config?url=${q(url)}`,
@@ -71,6 +78,7 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
   {
     id: "quantumultx",
     label: "Quantumult X",
+    platforms: "iOS",
     format: "quantumultx",
     // add-resource 会保留已有资源，update-configuration 则会覆盖，这里取前者。
     buildImportUrl: (url, name) => {
@@ -81,6 +89,7 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
   {
     id: "shadowrocket",
     label: "Shadowrocket",
+    platforms: "iOS",
     format: "base64",
     // sub:// 后面直接跟订阅地址的 base64，不是查询参数。
     buildImportUrl: (url, name) => `sub://${base64UrlOfText(url)}#${q(name)}`,
