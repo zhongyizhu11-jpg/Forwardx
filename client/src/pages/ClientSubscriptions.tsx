@@ -62,6 +62,7 @@ import {
   Layers,
   Link2,
   Package,
+  Pencil,
   Plus,
   QrCode,
   Rocket,
@@ -172,6 +173,11 @@ export default function ClientSubscriptionsPage() {
   const [nodeIncludeDirect, setNodeIncludeDirect] = useState(false);
   // 0 表示不经由任何前置。
   const [nodeFrontProxyId, setNodeFrontProxyId] = useState(0);
+  // 订阅内容里改名：转发派生的条目改规则上的显示名，直连条目改模板名。
+  const [renaming, setRenaming] = useState<
+    { kind: "relay" | "direct"; ruleId: number; templateId: number; name: string } | null
+  >(null);
+  const [renameValue, setRenameValue] = useState("");
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [tokenName, setTokenName] = useState("");
   // 一键订阅面板默认折叠，同一时间只展开一个，免得页面被撑得很长。
@@ -232,6 +238,14 @@ export default function ClientSubscriptionsPage() {
   });
   const setRuleVisible = trpc.proxySubscriptions.setRuleVisible.useMutation({
     onSuccess: () => refresh(),
+    onError: (error) => toast.error(error.message),
+  });
+  const setRuleNodeName = trpc.proxySubscriptions.setRuleNodeName.useMutation({
+    onSuccess: () => {
+      toast.success("节点名已更新");
+      setRenaming(null);
+      refresh();
+    },
     onError: (error) => toast.error(error.message),
   });
   const createToken = trpc.proxySubscriptions.createToken.useMutation({
@@ -512,26 +526,52 @@ export default function ClientSubscriptionsPage() {
                   </p>
                 ) : (
                   <div className="space-y-2">
-                    {preview!.nodes.map((node) => (
+                    {preview!.nodes.map((node: any) => {
+                      // 直连条目不来自转发规则，ruleId 都是 0 —— 拿它当 key 会互相撞。
+                      const direct = node.kind === "direct";
+                      return (
                       <div
-                        key={node.ruleId}
+                        key={direct ? `direct-${node.templateId}` : `rule-${node.ruleId}`}
                         className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
                             <span className="truncate font-medium">{node.name}</span>
+                            {direct && <Badge variant="outline" className="shrink-0">直连</Badge>}
                           </div>
                           <p className="mt-1 truncate text-xs text-muted-foreground">
                             {node.address}:{node.port}
                           </p>
                         </div>
-                        <Switch
-                          checked
-                          onCheckedChange={() => setRuleVisible.mutate({ ruleId: node.ruleId, visible: false })}
-                        />
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            title="改这个节点在订阅里显示的名字"
+                            onClick={() => {
+                              setRenaming({
+                                kind: direct ? "direct" : "relay",
+                                ruleId: node.ruleId,
+                                templateId: node.templateId,
+                                name: node.name,
+                              });
+                              setRenameValue(node.name);
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          {/* 直连条目的显隐在节点模板上，这里不给开关，免得点了没反应。 */}
+                          {!direct && (
+                            <Switch
+                              checked
+                              onCheckedChange={() => setRuleVisible.mutate({ ruleId: node.ruleId, visible: false })}
+                            />
+                          )}
+                        </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1117,6 +1157,58 @@ export default function ClientSubscriptionsPage() {
               disabled={createToken.isPending}
             >
               创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!renaming} onOpenChange={(open) => !open && setRenaming(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>改节点名</DialogTitle>
+            <DialogDescription>
+              只影响这个节点在订阅里显示的名字，转发规则本身不受影响。
+              {renaming?.kind === "direct" ? "这是直连条目，改的是节点模板的名字。" : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="proxy-rename">节点名</Label>
+            <Input
+              id="proxy-rename"
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              maxLength={64}
+              autoFocus
+            />
+            {renaming?.kind === "relay" && (
+              <p className="text-xs text-muted-foreground">
+                留空恢复默认名（由主机名和转发名自动拼出）。
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenaming(null)}>
+              取消
+            </Button>
+            <Button
+              disabled={setRuleNodeName.isPending || updateNode.isPending}
+              onClick={() => {
+                if (!renaming) return;
+                const name = renameValue.trim();
+                if (renaming.kind === "direct") {
+                  // 直连条目的名字就是模板名，落到模板上。
+                  if (!name) {
+                    toast.error("节点模板的名字不能为空");
+                    return;
+                  }
+                  updateNode.mutate({ id: renaming.templateId, name });
+                  setRenaming(null);
+                  return;
+                }
+                setRuleNodeName.mutate({ ruleId: renaming.ruleId, name });
+              }}
+            >
+              保存
             </Button>
           </DialogFooter>
         </DialogContent>

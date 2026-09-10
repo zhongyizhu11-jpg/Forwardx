@@ -211,6 +211,21 @@ export const proxySubscriptionsRouter = router({
       return { success: true };
     }),
 
+  /**
+   * 改订阅里显示的节点名。
+   *
+   * 传空字符串表示恢复默认（由主机名、模板名、转发名拼出来的那个）。名字只影响
+   * 订阅里的显示，转发规则本身不受影响。
+   */
+  setRuleNodeName: protectedProcedure
+    .input(z.object({ ruleId: z.number().int().positive(), name: z.string().trim().max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
+      await assertOwnedRule(input.ruleId, ctx);
+      await db.updateForwardRule(input.ruleId, { proxyNodeName: input.name || null } as any);
+      return { success: true };
+    }),
+
   /** 预览订阅内容：进订阅的节点，以及每条被排除的转发和原因。 */
   preview: protectedProcedure.query(async ({ ctx }) => {
     if (!await hasProxySubscriptionPermission(ctx)) return { groups: [], nodes: [], skipped: [] };
@@ -223,6 +238,8 @@ export const proxySubscriptionsRouter = router({
       nodes: plan.entries.map((entry) => ({
         ruleId: entry.ruleId,
         templateId: entry.templateId,
+        // direct 的条目不来自任何转发规则（ruleId 为 0），改名和显隐都要落到模板上。
+        kind: entry.kind,
         name: entry.node.name,
         protocol: entry.node.protocol,
         address: entry.node.address,

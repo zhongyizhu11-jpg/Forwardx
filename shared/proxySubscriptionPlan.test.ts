@@ -527,3 +527,28 @@ test("没有前置时不产生任何链式字段", () => {
 
   assert.equal(document.nodes[0].frontProxyName, undefined);
 });
+
+test("规则上的自定义名优先，留空则回落到自动生成的名字", () => {
+  // 订阅内容里改名就是写这一列；清空要能恢复默认，否则用户改坏了没法退回。
+  const template = { ...DIRECT_TEMPLATE, id: 30, includeDirect: false };
+  const base = { id: 1, hostId: 1, sourcePort: 10001, proxyNodeId: 30, isEnabled: true, name: "香港转发" };
+  const hosts = [{ id: 1, name: "广州1", ipv4: "1.2.3.4" }];
+
+  const custom = buildProxySubscriptionPlan({
+    rules: [{ ...base, proxyNodeName: "我改的名字" }],
+    templates: [template],
+    hosts,
+  });
+  assert.equal(custom.entries[0].node.name, "我改的名字");
+
+  const cleared = buildProxySubscriptionPlan({
+    rules: [{ ...base, proxyNodeName: "" }],
+    templates: [template],
+    hosts,
+  });
+  assert.notEqual(cleared.entries[0].node.name, "");
+  assert.equal(
+    cleared.entries[0].node.name,
+    defaultProxySubscriptionNodeName({ hostName: "广州1", templateName: "CST/hk", ruleName: "香港转发" }),
+  );
+});
