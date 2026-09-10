@@ -44,8 +44,9 @@ import {
   PROXY_SUBSCRIPTION_KIND_LABELS,
   type ProxySubscriptionKind,
 } from "@shared/proxyClientImport";
-import { ChevronDown, Copy, Download, Eye, EyeOff, KeyRound, Link2, Plus, Server, Trash2, Zap } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronDown, Copy, Download, Eye, EyeOff, KeyRound, Link2, Plus, QrCode, Server, Trash2, Zap } from "lucide-react";
+import QRCode from "qrcode";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 function subscriptionUrl(token: string, format: ProxySubscriptionFormat, kind: ProxySubscriptionKind) {
@@ -84,6 +85,8 @@ export default function ClientSubscriptionsPage() {
   // 一键订阅面板默认折叠，同一时间只展开一个，免得页面被撑得很长。
   const [importOpenTokenId, setImportOpenTokenId] = useState<number | null>(null);
   const [importKind, setImportKind] = useState<ProxySubscriptionKind>("nodes");
+  const [qrTarget, setQrTarget] = useState<{ title: string; url: string } | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState("");
 
   const refresh = () => {
     void utils.proxySubscriptions.listNodes.invalidate();
@@ -156,6 +159,25 @@ export default function ClientSubscriptionsPage() {
     },
     onError: (error) => toast.error(error.message),
   });
+
+  // 二维码固定黑白：跟着主题走的话，深色模式下扫不出来。
+  useEffect(() => {
+    if (!qrTarget) {
+      setQrDataUrl("");
+      return;
+    }
+    let cancelled = false;
+    QRCode.toDataURL(qrTarget.url, { width: 480, margin: 1, color: { dark: "#000000", light: "#ffffff" } })
+      .then((value) => {
+        if (!cancelled) setQrDataUrl(value);
+      })
+      .catch(() => {
+        if (!cancelled) toast.error("二维码生成失败，复制地址手动添加即可");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [qrTarget]);
 
   const nodes = nodesQuery.data ?? [];
   const tokens = tokensQuery.data ?? [];
@@ -680,13 +702,28 @@ export default function ClientSubscriptionsPage() {
                           <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1.5 text-xs">
                             {manualUrl}
                           </code>
+                          {/* 上面的图标只在「面板和客户端同一台设备」时有用；
+                              在电脑上看面板、往手机里导入，走的是这个二维码。 */}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setQrTarget({
+                                title: `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`,
+                                url: manualUrl,
+                              })
+                            }
+                          >
+                            <QrCode className="mr-1 h-3.5 w-3.5" />
+                            扫码
+                          </Button>
                           <Button size="sm" variant="outline" onClick={() => copyText(manualUrl, "订阅地址已复制")}>
                             <Copy className="mr-1 h-3.5 w-3.5" />
                             复制
                           </Button>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          客户端不在上面？复制这条地址手动添加即可，服务端会按客户端标识自动返回对应格式。
+                          客户端不在上面，或者面板开在电脑上？扫码或复制这条地址手动添加即可，服务端会按客户端标识自动返回对应格式。
                         </p>
                       </div>
                     )}
@@ -840,6 +877,55 @@ export default function ClientSubscriptionsPage() {
               创建
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!qrTarget} onOpenChange={(open) => !open && setQrTarget(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <QrCode className="h-4 w-4" />
+              扫码导入
+            </DialogTitle>
+            <DialogDescription>{qrTarget?.title}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="flex justify-center">
+              {qrDataUrl ? (
+                // 白底不能省：二维码本身是透明背景的黑块，深色主题下会糊成一片。
+                <div className="rounded-lg bg-white p-3">
+                  <img src={qrDataUrl} alt="订阅二维码" width={240} height={240} />
+                </div>
+              ) : (
+                <div className="flex h-[264px] w-[264px] items-center justify-center rounded-lg border text-sm text-muted-foreground">
+                  二维码生成中…
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              请在客户端的「添加订阅」里扫码。用系统相机扫只会在浏览器里打开这条地址，得到的是一屏乱码。
+            </p>
+
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1.5 text-xs">
+                {qrTarget?.url}
+              </code>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => qrTarget && copyText(qrTarget.url, "订阅地址已复制")}
+              >
+                <Copy className="mr-1 h-3.5 w-3.5" />
+                复制
+              </Button>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              这张码等于一份完整的节点凭据，别截图发到群里。
+            </p>
+          </div>
         </DialogContent>
       </Dialog>
     </DashboardLayout>
