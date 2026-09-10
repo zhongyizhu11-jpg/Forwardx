@@ -5,8 +5,12 @@ import { decodeBase64Utf8 } from "./proxyNode";
 import { PROXY_SUBSCRIPTION_FORMATS } from "./proxySubscription";
 import {
   buildProxySubscriptionUrl,
+  detectProxyClientPlatform,
+  proxyClientPlatformsLabel,
   proxyClientTargetsForFormat,
+  proxyClientTargetsForPlatform,
   proxySubscriptionKindSupported,
+  PROXY_CLIENT_PLATFORMS,
   PROXY_CLIENT_TARGETS,
   PROXY_SUBSCRIPTION_KINDS,
 } from "./proxyClientImport";
@@ -135,11 +139,76 @@ test("两种订阅种类的常量与标签齐全", () => {
   assert.deepEqual([...PROXY_SUBSCRIPTION_KINDS], ["nodes", "rules"]);
 });
 
-test("每个客户端都标注了适用平台", () => {
+test("每个客户端都标注了适用平台和短名", () => {
   // 图标网格上没有品牌 logo，平台标注是用户判断"我能不能用这个"的唯一线索。
   for (const target of PROXY_CLIENT_TARGETS) {
-    assert.ok(target.platforms, `${target.id} 缺少平台标注`);
+    assert.ok(target.platforms.length > 0, `${target.id} 缺少平台标注`);
+    for (const platform of target.platforms) {
+      assert.ok(PROXY_CLIENT_PLATFORMS.includes(platform), `${target.id} 的平台 ${platform} 不认识`);
+    }
+    assert.ok(target.shortLabel, `${target.id} 缺少短名`);
+    assert.ok(target.shortLabel.length <= 12, `${target.id} 的短名放不进三列网格: ${target.shortLabel}`);
   }
+});
+
+test("平台标注全覆盖时收敛成「全平台」", () => {
+  const clash = PROXY_CLIENT_TARGETS.find((item) => item.id === "clash")!;
+  const loon = PROXY_CLIENT_TARGETS.find((item) => item.id === "loon")!;
+  const stash = PROXY_CLIENT_TARGETS.find((item) => item.id === "stash")!;
+
+  assert.equal(proxyClientPlatformsLabel(clash), "全平台");
+  assert.equal(proxyClientPlatformsLabel(loon), "iOS");
+  assert.equal(proxyClientPlatformsLabel(stash), "iOS / macOS");
+});
+
+test("按平台筛出来的都是该平台真能装的", () => {
+  // deep link 只有装了 App 的设备点得动，筛错了就是一格死按钮。
+  assert.deepEqual(
+    proxyClientTargetsForPlatform("windows").map((item) => item.id).sort(),
+    ["clash", "singbox"],
+  );
+  assert.deepEqual(
+    proxyClientTargetsForPlatform("android").map((item) => item.id).sort(),
+    ["clash", "singbox", "surge"],
+  );
+  assert.deepEqual(
+    proxyClientTargetsForPlatform("macos").map((item) => item.id).sort(),
+    ["clash", "singbox", "stash", "surge"],
+  );
+  // iOS 是唯一七个全能用的。
+  assert.equal(proxyClientTargetsForPlatform("ios").length, PROXY_CLIENT_TARGETS.length);
+});
+
+test("每个平台至少有一个能用的客户端", () => {
+  // 一个都筛不出来的话，界面上会只剩一句"没有可用客户端"，不如不筛。
+  for (const platform of PROXY_CLIENT_PLATFORMS) {
+    assert.ok(proxyClientTargetsForPlatform(platform).length > 0, `${platform} 没有任何可用客户端`);
+  }
+});
+
+test("从 UA 认出设备平台", () => {
+  const ios = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15";
+  const android = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36";
+  const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15";
+  const win = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+  const linux = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36";
+
+  assert.equal(detectProxyClientPlatform(ios), "ios");
+  // Android 的 UA 里也有 Linux，不能被 Linux 分支抢先匹配。
+  assert.equal(detectProxyClientPlatform(android), "android");
+  assert.equal(detectProxyClientPlatform(mac), "macos");
+  assert.equal(detectProxyClientPlatform(win), "windows");
+  assert.equal(detectProxyClientPlatform(linux), "linux");
+  assert.equal(detectProxyClientPlatform(""), null);
+});
+
+test("伪装成 Mac 的 iPad 靠触摸点数认出来", () => {
+  // iPadOS 13 起 Safari 的 UA 和桌面 Mac 一模一样，认错的话 iPad 上会少掉
+  // Loon、Shadowrocket 这些只有 iOS 才有的客户端。
+  const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15";
+
+  assert.equal(detectProxyClientPlatform(mac, { maxTouchPoints: 5 }), "ios");
+  assert.equal(detectProxyClientPlatform(mac, { maxTouchPoints: 0 }), "macos");
 });
 
 test("节点订阅下全部客户端可用，规则订阅下只剩吃 Clash / sing-box 格式的那几个", () => {

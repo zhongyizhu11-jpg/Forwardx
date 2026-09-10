@@ -38,17 +38,72 @@ import {
 } from "@shared/proxyRuleset";
 import {
   buildProxySubscriptionUrl,
+  detectProxyClientPlatform,
+  proxyClientPlatformsLabel,
+  PROXY_CLIENT_PLATFORM_LABELS,
   PROXY_CLIENT_TARGETS,
   proxySubscriptionKindSupported,
   PROXY_SUBSCRIPTION_KINDS,
   PROXY_SUBSCRIPTION_KIND_HINTS,
   PROXY_SUBSCRIPTION_KIND_LABELS,
+  type ProxyClientPlatform,
+  type ProxyClientTarget,
   type ProxySubscriptionKind,
 } from "@shared/proxyClientImport";
-import { ChevronDown, Copy, Download, Eye, EyeOff, KeyRound, Link2, Plus, QrCode, Server, Trash2, Zap } from "lucide-react";
+import {
+  Atom,
+  AudioLines,
+  Cat,
+  ChevronDown,
+  Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Layers,
+  Link2,
+  Package,
+  Plus,
+  QrCode,
+  Rocket,
+  Server,
+  Trash2,
+  Waves,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+
+/**
+ * 每个客户端一个可辨识的图案 + 各自的品牌色。
+ *
+ * 刻意不用各家的官方 logo：那些是第三方商标资源，不该擅自打包进仓库，而且面板的
+ * CSP 也不允许从外部 CDN 拉图片（不少面板还跑在内网）。七格清一色同一个下载图标
+ * 等于没有图标 —— 用户还是得逐字读标签，网格就白排了。
+ */
+const CLIENT_ICONS: Record<string, { icon: LucideIcon; className: string }> = {
+  // mihomo 的吉祥物就是只猫。
+  clash: { icon: Cat, className: "bg-sky-500/10 text-sky-600 dark:text-sky-400" },
+  stash: { icon: Layers, className: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
+  singbox: { icon: Package, className: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
+  loon: { icon: Waves, className: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
+  surge: { icon: AudioLines, className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  quantumultx: { icon: Atom, className: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
+  shadowrocket: { icon: Rocket, className: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
+};
+
+function clientIcon(target: ProxyClientTarget) {
+  return CLIENT_ICONS[target.id] ?? { icon: Package, className: "bg-muted text-muted-foreground" };
+}
+
+/** 当前设备。识别不出来时返回 null —— 那就退回展示全部，别把人挡在外面。 */
+function currentPlatform(): ProxyClientPlatform | null {
+  if (typeof navigator === "undefined") return null;
+  return detectProxyClientPlatform(navigator.userAgent, {
+    maxTouchPoints: navigator.maxTouchPoints,
+  });
+}
 
 function subscriptionUrl(token: string, format: ProxySubscriptionFormat, kind: ProxySubscriptionKind) {
   return buildProxySubscriptionUrl({ origin: window.location.origin, token, format, kind });
@@ -89,6 +144,14 @@ export default function ClientSubscriptionsPage() {
   const [importKind, setImportKind] = useState<ProxySubscriptionKind>("nodes");
   const [qrTarget, setQrTarget] = useState<{ title: string; url: string } | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState("");
+  const [showAllClients, setShowAllClients] = useState(false);
+  // 只认一次：UA 在页面生命周期里不会变。
+  const platform = useMemo(() => currentPlatform(), []);
+  const visibleTargets = useMemo(() => {
+    if (!platform || showAllClients) return [...PROXY_CLIENT_TARGETS];
+    return PROXY_CLIENT_TARGETS.filter((target) => target.platforms.includes(platform));
+  }, [platform, showAllClients]);
+  const hiddenCount = PROXY_CLIENT_TARGETS.length - visibleTargets.length;
 
   const refresh = () => {
     void utils.proxySubscriptions.listNodes.invalidate();
@@ -656,30 +719,40 @@ export default function ClientSubscriptionsPage() {
                           </div>
                         )}
 
-                        <div className="grid grid-cols-3 gap-2">
-                          {PROXY_CLIENT_TARGETS.map((target) => {
+                        {/* 一键导入走 deep link，只有装了该客户端的设备点得动 ——
+                            在 Windows 上摆一格 loon:// 就是个死按钮。所以按当前设备筛，
+                            但留一个口子：识别错了或者想看别的平台，点开就是。 */}
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          {visibleTargets.map((target) => {
                             const supported = proxySubscriptionKindSupported(target.format, kind);
                             const url = subscriptionUrl(token.token, target.format, kind);
                             const importName = `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`;
+                            const { icon: Icon, className: iconClass } = clientIcon(target);
+                            const offPlatform = platform ? !target.platforms.includes(platform) : false;
+                            const usable = supported && !offPlatform;
                             const tile = (
                               <>
                                 <span
-                                  className={`flex h-9 w-9 items-center justify-center rounded-lg ${
-                                    supported ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                                    usable ? iconClass : "bg-muted text-muted-foreground"
                                   }`}
                                 >
-                                  <Download className="h-4 w-4" />
+                                  <Icon className="h-4 w-4" />
                                 </span>
                                 <span className="w-full truncate text-center text-[11px] font-medium leading-tight">
-                                  {target.label}
+                                  {target.shortLabel}
                                 </span>
                                 <span className="w-full truncate text-center text-[10px] text-muted-foreground">
-                                  {supported ? target.platforms : "不支持规则"}
+                                  {!supported
+                                    ? "不支持规则"
+                                    : offPlatform
+                                      ? "本机没有"
+                                      : proxyClientPlatformsLabel(target)}
                                 </span>
                               </>
                             );
                             // 不支持时置灰而不是隐藏：藏起来用户不知道为什么少了几个客户端。
-                            return supported ? (
+                            return usable ? (
                               <a
                                 key={target.id}
                                 href={target.buildImportUrl(url, importName)}
@@ -691,7 +764,11 @@ export default function ClientSubscriptionsPage() {
                             ) : (
                               <div
                                 key={target.id}
-                                title={`${target.label} 的订阅是节点列表，表达不了分流规则；改用「节点订阅」即可。`}
+                                title={
+                                  !supported
+                                    ? `${target.label} 的订阅是节点列表，表达不了分流规则；改用「节点订阅」即可。`
+                                    : `${target.label} 不支持${platform ? PROXY_CLIENT_PLATFORM_LABELS[platform] : "当前系统"}，在这台设备上点了不会有反应。`
+                                }
                                 className="flex cursor-not-allowed flex-col items-center gap-1.5 rounded-lg border border-dashed bg-background/50 p-2.5 opacity-60"
                               >
                                 {tile}
@@ -699,6 +776,18 @@ export default function ClientSubscriptionsPage() {
                             );
                           })}
                         </div>
+
+                        {platform && hiddenCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllClients((value) => !value)}
+                            className="w-full text-center text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                          >
+                            {showAllClients
+                              ? `只看 ${PROXY_CLIENT_PLATFORM_LABELS[platform]} 能用的`
+                              : `还有 ${hiddenCount} 个别的平台的客户端，显示全部`}
+                          </button>
+                        )}
 
                         {/* 手机上一行放不下「地址 + 两个按钮」，挤到地址只剩几个字符，
                             所以窄屏竖排、宽屏再并成一行。 */}

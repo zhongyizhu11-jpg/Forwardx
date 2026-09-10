@@ -12,17 +12,38 @@ import {
 } from "./proxySubscription";
 import { encodeBase64Utf8 } from "./proxyNode";
 
+/**
+ * 一键导入走的是 deep link，只有装了该客户端的设备点得动 —— 在 Windows 上点
+ * loon:// 是个什么都不会发生的死按钮。所以平台不是展示信息，而是筛选依据。
+ * 跨设备导入靠二维码，不靠这些图标。
+ */
+export const PROXY_CLIENT_PLATFORMS = ["ios", "android", "windows", "macos", "linux"] as const;
+
+export type ProxyClientPlatform = (typeof PROXY_CLIENT_PLATFORMS)[number];
+
+export const PROXY_CLIENT_PLATFORM_LABELS: Record<ProxyClientPlatform, string> = {
+  ios: "iOS",
+  android: "Android",
+  windows: "Windows",
+  macos: "macOS",
+  linux: "Linux",
+};
+
 export type ProxyClientTarget = {
   id: string;
   /** 客户端显示名 */
   label: string;
-  /** 适用平台，展示在图标下方，省得用户逐个点开才知道自己能不能用 */
-  platforms: string;
+  /** 窄屏用的短名：三列网格放不下"Quantumult X"这种长名 */
+  shortLabel: string;
+  /** 支持该客户端的平台，用于按当前设备筛选 */
+  platforms: readonly ProxyClientPlatform[];
   /** 该客户端要拉的订阅格式 */
   format: ProxySubscriptionFormat;
   /** 由订阅地址和名称拼出可点击的 scheme */
   buildImportUrl: (subscriptionUrl: string, name: string) => string;
 };
+
+const ALL_PLATFORMS = PROXY_CLIENT_PLATFORMS;
 
 /** base64url，去掉补位的等号：Shadowrocket 的 sub:// 用的是这种。 */
 function base64UrlOfText(value: string): string {
@@ -41,21 +62,24 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
   {
     id: "clash",
     label: "Clash / mihomo",
-    platforms: "全平台",
+    shortLabel: "Clash",
+    platforms: ALL_PLATFORMS,
     format: "clash",
     buildImportUrl: (url, name) => `clash://install-config?url=${q(url)}&name=${q(name)}`,
   },
   {
     id: "stash",
     label: "Stash",
-    platforms: "iOS / macOS",
+    shortLabel: "Stash",
+    platforms: ["ios", "macos"],
     format: "clash",
     buildImportUrl: (url, name) => `stash://install-config?url=${q(url)}&name=${q(name)}`,
   },
   {
     id: "singbox",
     label: "sing-box",
-    platforms: "全平台",
+    shortLabel: "sing-box",
+    platforms: ALL_PLATFORMS,
     format: "singbox",
     // 名称走 fragment，不是查询参数。
     buildImportUrl: (url, name) => `sing-box://import-remote-profile?url=${q(url)}#${q(name)}`,
@@ -63,14 +87,17 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
   {
     id: "loon",
     label: "Loon",
-    platforms: "iOS",
+    shortLabel: "Loon",
+    platforms: ["ios"],
     format: "loon",
     buildImportUrl: (url, name) => `loon://import?sub=${q(url)}&name=${q(name)}`,
   },
   {
     id: "surge",
     label: "Surge / Surfboard",
-    platforms: "iOS / macOS / Android",
+    shortLabel: "Surge",
+    // Surge 是 iOS/macOS，Surfboard 是 Android 上吃同一套配置格式的那个。
+    platforms: ["ios", "macos", "android"],
     format: "surge",
     // surge 后面是三条斜杠，少一条不会被识别。
     buildImportUrl: (url) => `surge:///install-config?url=${q(url)}`,
@@ -78,7 +105,8 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
   {
     id: "quantumultx",
     label: "Quantumult X",
-    platforms: "iOS",
+    shortLabel: "QuantumultX",
+    platforms: ["ios"],
     format: "quantumultx",
     // add-resource 会保留已有资源，update-configuration 则会覆盖，这里取前者。
     buildImportUrl: (url, name) => {
@@ -89,7 +117,8 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
   {
     id: "shadowrocket",
     label: "Shadowrocket",
-    platforms: "iOS",
+    shortLabel: "Shadowrocket",
+    platforms: ["ios"],
     format: "base64",
     // sub:// 后面直接跟订阅地址的 base64，不是查询参数。
     buildImportUrl: (url, name) => `sub://${base64UrlOfText(url)}#${q(name)}`,
@@ -98,6 +127,41 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
 
 export function proxyClientTargetsForFormat(format: ProxySubscriptionFormat): ProxyClientTarget[] {
   return PROXY_CLIENT_TARGETS.filter((target) => target.format === format);
+}
+
+/** 图标下方那行小字。全平台就写"全平台"，否则逐个列出来。 */
+export function proxyClientPlatformsLabel(target: ProxyClientTarget): string {
+  if (target.platforms.length >= PROXY_CLIENT_PLATFORMS.length) return "全平台";
+  return target.platforms.map((item) => PROXY_CLIENT_PLATFORM_LABELS[item]).join(" / ");
+}
+
+export function proxyClientTargetsForPlatform(platform: ProxyClientPlatform): ProxyClientTarget[] {
+  return PROXY_CLIENT_TARGETS.filter((target) => target.platforms.includes(platform));
+}
+
+/**
+ * 从 UA 认出当前设备。
+ *
+ * iPadOS 13 起 Safari 的 UA 伪装成 "Macintosh; Intel Mac OS X"，跟桌面 Mac 一模一样，
+ * 只能靠触摸点数区分 —— 认错的代价是 iPad 上少了 Loon、Shadowrocket 这些只有 iOS 才有的，
+ * 所以宁可让调用方把触摸信息传进来。
+ */
+export function detectProxyClientPlatform(
+  userAgent: string,
+  options?: { maxTouchPoints?: number },
+): ProxyClientPlatform | null {
+  const ua = String(userAgent || "");
+  if (!ua) return null;
+
+  if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
+  if (/Android/i.test(ua)) return "android";
+  if (/Macintosh|Mac OS X/i.test(ua)) {
+    // 伪装成 Mac 的 iPad：桌面 Mac 的触摸点数是 0。
+    return (options?.maxTouchPoints ?? 0) > 1 ? "ios" : "macos";
+  }
+  if (/Windows/i.test(ua)) return "windows";
+  if (/Linux|X11|CrOS/i.test(ua)) return "linux";
+  return null;
 }
 
 // ==================== 订阅种类 ====================
