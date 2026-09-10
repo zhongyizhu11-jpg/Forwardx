@@ -760,6 +760,11 @@ export const tunnelLatencyStats = table("tunnel_latency_stats", {
   seriesLabel: text("seriesLabel"),
   latencyMs: int("latencyMs"),
   isTimeout: boolean("isTimeout").notNull().default(false),
+  // A latency row may represent several probes (for example, a 5-packet ping).
+  // Keep the successful count so partial packet loss is not collapsed into a
+  // binary timeout/success value.
+  probeCount: int("probeCount").notNull().default(1),
+  probeSuccesses: int("probeSuccesses").notNull().default(0),
   recordedAt: epoch("recordedAt").notNull().default(nowDefault()),
 });
 export type TunnelLatencyStat = typeof tunnelLatencyStats.$inferSelect;
@@ -770,6 +775,8 @@ export const forwardGroupLatencyStats = table("forward_group_latency_stats", {
   groupId: int("groupId").notNull(),
   latencyMs: int("latencyMs"),
   isTimeout: boolean("isTimeout").notNull().default(false),
+  probeCount: int("probeCount").notNull().default(1),
+  probeSuccesses: int("probeSuccesses").notNull().default(0),
   recordedAt: epoch("recordedAt").notNull().default(nowDefault()),
 });
 export type ForwardGroupLatencyStat = typeof forwardGroupLatencyStats.$inferSelect;
@@ -800,6 +807,8 @@ export const hostProbeServiceStats = table("host_probe_service_stats", {
   hostId: int("hostId").notNull(),
   latencyMs: int("latencyMs"),
   isTimeout: boolean("isTimeout").notNull().default(false),
+  probeCount: int("probeCount").notNull().default(1),
+  probeSuccesses: int("probeSuccesses").notNull().default(0),
   recordedAt: epoch("recordedAt").notNull().default(nowDefault()),
 });
 export type HostProbeServiceStat = typeof hostProbeServiceStats.$inferSelect;
@@ -859,6 +868,8 @@ export const tcpingStats = table("tcping_stats", {
   hostId: int("hostId").notNull(),
   latencyMs: int("latencyMs"),           // 延迟毫秒数，null 表示超时/不可达
   isTimeout: boolean("isTimeout").notNull().default(false),
+  probeCount: int("probeCount").notNull().default(1),
+  probeSuccesses: int("probeSuccesses").notNull().default(0),
   healthStatus: varchar("healthStatus", { length: 16 }),
   healthPending: boolean("healthPending").notNull().default(false),
   recordedAt: epoch("recordedAt").notNull().default(nowDefault()),
