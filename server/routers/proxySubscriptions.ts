@@ -110,6 +110,7 @@ export const proxySubscriptionsRouter = router({
       remark: z.string().trim().max(200).optional(),
       link: z.string().min(1).max(8192),
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
+      includeDirect: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
@@ -120,6 +121,7 @@ export const proxySubscriptionsRouter = router({
         name: input.name,
         remark: input.remark || null,
         ...(input.autoGroup ? { autoGroup: input.autoGroup } : {}),
+        ...(input.includeDirect !== undefined ? { includeDirect: input.includeDirect } : {}),
         ...nodeToRow(parsed.node, input.link),
       } as any);
       return { id };
@@ -133,6 +135,7 @@ export const proxySubscriptionsRouter = router({
       link: z.string().min(1).max(8192).optional(),
       isEnabled: z.boolean().optional(),
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
+      includeDirect: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
@@ -142,6 +145,7 @@ export const proxySubscriptionsRouter = router({
       if (input.remark !== undefined) data.remark = input.remark || null;
       if (input.isEnabled !== undefined) data.isEnabled = input.isEnabled;
       if (input.autoGroup !== undefined) data.autoGroup = input.autoGroup;
+      if (input.includeDirect !== undefined) data.includeDirect = input.includeDirect;
       if (input.link !== undefined) {
         const parsed = parseProxyNodeLink(input.link);
         if (!parsed.ok) throw new Error(parsed.error);

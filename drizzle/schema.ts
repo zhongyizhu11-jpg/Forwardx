@@ -423,6 +423,9 @@ export const proxyNodes = table("proxy_nodes", {
   udp: boolean("udp").notNull().default(true),
   // 多台中转指向同一落地节点时，订阅里额外生成的选路组类型：off | url-test | fallback
   autoGroup: varchar("autoGroup", { length: 16 }).notNull().default("url-test"),
+  // 把落地机自己的地址也作为一个节点放进订阅。默认关：开了之后落地 IP 会出现在
+  // 每一条订阅地址里，中转机挂了能换，落地机被墙要重搭。
+  includeDirect: boolean("includeDirect").notNull().default(false),
   isEnabled: boolean("isEnabled").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),

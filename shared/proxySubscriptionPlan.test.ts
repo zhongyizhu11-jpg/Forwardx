@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { PROXY_SUBSCRIPTION_GROUP_NAME } from "./proxySubscription";
 import {
+  buildProxySubscriptionDocument,
   buildProxySubscriptionPlan,
   dedupeProxyNodeNames,
   defaultProxySubscriptionNodeName,
@@ -329,4 +331,98 @@ test("自动选路模式的取值收敛", () => {
 test("组名带后缀，避免和落地节点本身重名", () => {
   assert.equal(autoGroupNameForTemplate("HKT"), "HKT 自动选路");
   assert.equal(autoGroupNameForTemplate(""), "节点 自动选路");
+});
+
+// ==================== 落地直连 ====================
+
+const DIRECT_TEMPLATE = {
+  id: 7,
+  name: "CST/hk",
+  protocol: "vless",
+  address: "154.36.174.85",
+  port: 63284,
+  uuid: "u-1",
+  tls: true,
+  isEnabled: true,
+  autoGroup: "url-test",
+};
+
+test("不开开关时，订阅里没有落地直连", () => {
+  // 默认必须是关的：开了之后落地 IP 会进到每一条订阅地址里。
+  const plan = buildProxySubscriptionPlan({
+    rules: [],
+    templates: [{ ...DIRECT_TEMPLATE, includeDirect: false }],
+    hosts: [],
+  });
+
+  assert.equal(plan.entries.length, 0);
+});
+
+test("开了开关，落地机自己的地址原样进订阅", () => {
+  // 模板本来就是一个完整节点，直连就是不做地址改写的那一条。
+  const plan = buildProxySubscriptionPlan({
+    rules: [],
+    templates: [{ ...DIRECT_TEMPLATE, includeDirect: true }],
+    hosts: [],
+  });
+
+  assert.equal(plan.entries.length, 1);
+  const [entry] = plan.entries;
+  assert.equal(entry.kind, "direct");
+  assert.equal(entry.ruleId, 0);
+  assert.equal(entry.templateId, 7);
+  assert.equal(entry.node.address, "154.36.174.85");
+  assert.equal(entry.node.port, 63284);
+  assert.equal(entry.node.uuid, "u-1", "凭据来自模板本身，没有第二份");
+});
+
+test("模板停用时，直连也不出现", () => {
+  const plan = buildProxySubscriptionPlan({
+    rules: [],
+    templates: [{ ...DIRECT_TEMPLATE, includeDirect: true, isEnabled: false }],
+    hosts: [],
+  });
+
+  assert.equal(plan.entries.length, 0);
+});
+
+test("直连排在该落地的各条中转前面", () => {
+  // 它是这个落地的本体，其余都是它的中转变体。
+  const plan = buildProxySubscriptionPlan({
+    rules: [
+      { id: 1, hostId: 1, name: "广州1", sourcePort: 10001, proxyNodeId: 7, isEnabled: true },
+    ],
+    templates: [{ ...DIRECT_TEMPLATE, includeDirect: true }],
+    hosts: [{ id: 1, name: "广州1", ipv4: "1.2.3.4" }],
+  });
+
+  assert.equal(plan.entries.length, 2);
+  assert.equal(plan.entries[0].kind, "direct");
+  assert.equal(plan.entries[1].kind, "relay");
+});
+
+test("直连与中转进同一个选路组，客户端能自己挑快的", () => {
+  // 这是这个功能的意义所在：直连和走中转并列，由客户端测速决定。
+  // templateId 一致是它能进同一组的原因。
+  const template = { ...DIRECT_TEMPLATE, includeDirect: true };
+  const plan = buildProxySubscriptionPlan({
+    rules: [
+      { id: 1, hostId: 1, name: "广州1", sourcePort: 10001, proxyNodeId: 7, isEnabled: true },
+      { id: 2, hostId: 2, name: "广州2", sourcePort: 10002, proxyNodeId: 7, isEnabled: true },
+    ],
+    templates: [template],
+    hosts: [
+      { id: 1, name: "广州1", ipv4: "1.2.3.4" },
+      { id: 2, name: "广州2", ipv4: "5.6.7.8" },
+    ],
+  });
+
+  const document = buildProxySubscriptionDocument(plan, [template], {
+    mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
+  });
+
+  const auto = document.groups.find((group) => group.type === "url-test");
+  assert.ok(auto, "应该生成自动选路组");
+  assert.equal(auto.members.length, 3, "直连 + 两条中转都在组里");
+  assert.equal(auto.members[0], plan.entries[0].node.name, "直连也是组员");
 });

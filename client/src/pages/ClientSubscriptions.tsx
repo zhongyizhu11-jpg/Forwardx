@@ -168,6 +168,8 @@ export default function ClientSubscriptionsPage() {
   const [nodeName, setNodeName] = useState("");
   const [nodeLink, setNodeLink] = useState("");
   const [nodeAutoGroup, setNodeAutoGroup] = useState<ProxyNodeAutoGroup>("url-test");
+  // 默认关：开了之后落地 IP 会出现在每一条订阅地址里。
+  const [nodeIncludeDirect, setNodeIncludeDirect] = useState(false);
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [tokenName, setTokenName] = useState("");
   // 一键订阅面板默认折叠，同一时间只展开一个，免得页面被撑得很长。
@@ -317,6 +319,7 @@ export default function ClientSubscriptionsPage() {
     setNodeName("");
     setNodeLink("");
     setNodeAutoGroup("url-test");
+    setNodeIncludeDirect(false);
     setNodeDialogOpen(true);
   };
 
@@ -325,6 +328,7 @@ export default function ClientSubscriptionsPage() {
     setNodeName(String(node.name || ""));
     setNodeLink(String(node.sourceLink || ""));
     setNodeAutoGroup(normalizeProxyNodeAutoGroup(node.autoGroup));
+    setNodeIncludeDirect(!!node.includeDirect);
     setNodeDialogOpen(true);
   };
 
@@ -339,8 +343,9 @@ export default function ClientSubscriptionsPage() {
       toast.error("请粘贴落地机的节点链接");
       return;
     }
-    if (editingNodeId) updateNode.mutate({ id: editingNodeId, name, link, autoGroup: nodeAutoGroup });
-    else createNode.mutate({ name, link, autoGroup: nodeAutoGroup });
+    const payload = { name, link, autoGroup: nodeAutoGroup, includeDirect: nodeIncludeDirect };
+    if (editingNodeId) updateNode.mutate({ id: editingNodeId, ...payload });
+    else createNode.mutate(payload);
   };
 
   // 权限查询未回来时先不下结论，避免闪一下「无权限」再闪回正常。
@@ -995,6 +1000,24 @@ export default function ClientSubscriptionsPage() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">{PROXY_NODE_AUTO_GROUP_HINTS[nodeAutoGroup]}</p>
+            </div>
+            <div className="space-y-2">
+              <Label>把落地直连也放进订阅</Label>
+              <div className="flex items-start justify-between gap-3 rounded-lg border p-3">
+                <p className="min-w-0 text-xs text-muted-foreground">
+                  订阅里额外给出这台落地机自己的地址，和各条中转并列，客户端可以自己挑快的。
+                  {nodeIncludeDirect ? (
+                    <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                      注意：开了之后落地 IP 会出现在每一条订阅地址里。中转机被墙还能换，落地机被墙要重搭。
+                    </span>
+                  ) : null}
+                </p>
+                <Switch
+                  checked={nodeIncludeDirect}
+                  onCheckedChange={setNodeIncludeDirect}
+                  className="mt-0.5 shrink-0"
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="proxy-node-link">节点链接</Label>

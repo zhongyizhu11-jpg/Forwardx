@@ -26,6 +26,8 @@ import {
 /** proxy_nodes 表的一行，字段名与数据库一致。 */
 export type ProxyNodeTemplateRow = {
   id: number;
+  /** 是否把落地机自己的地址也作为一个节点放进订阅。 */
+  includeDirect?: unknown;
   name?: unknown;
   protocol?: unknown;
   address?: unknown;
@@ -85,8 +87,11 @@ export const PROXY_SUBSCRIPTION_SKIP_LABELS: Record<ProxySubscriptionSkipReason,
 };
 
 export type ProxySubscriptionEntry = {
+  /** 直连节点不来自任何转发规则，这里是 0。 */
   ruleId: number;
   templateId: number;
+  /** relay：经转发入口改写过的；direct：落地机自己的地址，未改写。 */
+  kind: "relay" | "direct";
   node: ProxyNode;
 };
 
@@ -181,6 +186,27 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
   const entries: ProxySubscriptionEntry[] = [];
   const skipped: ProxySubscriptionSkip[] = [];
 
+  /**
+   * 落地机自己的直连地址。
+   *
+   * 模板本来就是一个完整节点（地址、端口、凭据都全），只是平时只拿它的凭据、
+   * 把地址端口换成转发入口。开了这个开关就再原样产出一条 —— 凭据仍然只有模板
+   * 这一份，不存在两处要同步的问题。
+   *
+   * templateId 跟规则派生的那些一致，所以直连会自动进同一个选路组：客户端可以
+   * 自己在「直连落地」和「走中转」之间挑快的。
+   *
+   * 排在最前面：它是这个落地的本体，其余都是它的中转变体。
+   */
+  const directEntries: ProxySubscriptionEntry[] = [];
+  for (const template of input.templates) {
+    if (!bool(template.includeDirect)) continue;
+    if (template.isEnabled !== undefined && !bool(template.isEnabled)) continue;
+    const node = proxyNodeFromTemplateRow(template);
+    if (!node.address || !node.port) continue;
+    directEntries.push({ ruleId: 0, templateId: Number(template.id), kind: "direct", node });
+  }
+
   for (const rule of input.rules) {
     const ruleId = Number(rule.id);
     const ruleName = text(rule.name) || `规则 #${ruleId}`;
@@ -230,11 +256,12 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
     entries.push({
       ruleId,
       templateId,
+      kind: "relay",
       node: relayProxyNode(templateNode, { address, port, name }),
     });
   }
 
-  return { entries, skipped };
+  return { entries: [...directEntries, ...entries], skipped };
 }
 
 /**
