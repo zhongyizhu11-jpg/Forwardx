@@ -499,7 +499,7 @@ export default function ClientSubscriptionsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">订阅内容</CardTitle>
-            <CardDescription>
+            <CardDescription className="text-xs">
               关掉开关只是不进订阅，转发照常运行。
             </CardDescription>
           </CardHeader>
@@ -1001,7 +1001,7 @@ export default function ClientSubscriptionsPage() {
         <DialogContent className="flex max-h-[92svh] flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>{editingNodeId ? "编辑客户端节点" : "添加客户端节点"}</DialogTitle>
-            <DialogDescription>只替换地址和端口，凭据不变。</DialogDescription>
+            <DialogDescription className="text-xs">只替换地址和端口，凭据不变。</DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-1">
             <div className="space-y-2">
@@ -1106,7 +1106,7 @@ export default function ClientSubscriptionsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>新建订阅链接</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-xs">
               建议一台设备一条。
             </DialogDescription>
           </DialogHeader>
@@ -1145,7 +1145,7 @@ export default function ClientSubscriptionsPage() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>改节点名</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-xs">
               只影响这个节点在订阅里显示的名字，转发规则本身不受影响。
               {renaming?.kind === "direct" ? "这是直连条目，改的是节点模板的名字。" : ""}
             </DialogDescription>
@@ -1202,7 +1202,7 @@ export default function ClientSubscriptionsPage() {
               <QrCode className="h-4 w-4 shrink-0" />
               扫码导入
             </DialogTitle>
-            <DialogDescription className="truncate">{qrTarget?.title}</DialogDescription>
+            <DialogDescription className="truncate text-xs">{qrTarget?.title}</DialogDescription>
           </DialogHeader>
 
           <div className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
