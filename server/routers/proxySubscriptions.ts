@@ -41,6 +41,23 @@ function nodeToRow(node: ProxyNode, sourceLink: string) {
   };
 }
 
+/**
+ * 客户端订阅是一项独立授权：管理员始终可用，普通用户要么被手动授权，要么其
+ * 在用套餐附带该权限。超流量或被暂停时权限会被回收（见 billingRepository），
+ * 这里读的就是合并后的有效值。
+ */
+async function hasProxySubscriptionPermission(ctx: any): Promise<boolean> {
+  if (ctx.user.role === "admin") return true;
+  const user = await db.getUserById(ctx.user.id);
+  return !!user?.allowProxySubscription;
+}
+
+async function assertProxySubscriptionAllowed(ctx: any) {
+  if (!await hasProxySubscriptionPermission(ctx)) {
+    throw new Error("当前账号没有客户端订阅权限，请联系管理员开通");
+  }
+}
+
 async function assertOwnedNode(id: number, ctx: any) {
   const node = await db.getProxyNodeById(id);
   if (!node) throw new Error("客户端节点不存在");
@@ -66,13 +83,22 @@ export const proxySubscriptionsRouter = router({
   /** 解析一条节点链接但不落库，供界面在保存前预览与报错。 */
   parseLink: protectedProcedure
     .input(z.object({ link: z.string().min(1).max(8192) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
       const result = parseProxyNodeLink(input.link);
       if (!result.ok) return { ok: false as const, error: result.error };
       return { ok: true as const, node: result.node };
     }),
 
+  /** 当前账号是否可用客户端订阅，界面据此决定是否展示整个页面。 */
+  permission: protectedProcedure.query(async ({ ctx }) => {
+    if (ctx.user.role === "admin") return { allowed: true };
+    const user = await db.getUserById(ctx.user.id);
+    return { allowed: !!user?.allowProxySubscription };
+  }),
+
   listNodes: protectedProcedure.query(async ({ ctx }) => {
+    if (!await hasProxySubscriptionPermission(ctx)) return [];
     const nodes = await db.getProxyNodesByUser(ctx.user.id);
     const counts = await Promise.all(nodes.map((node: any) => db.countRulesUsingProxyNode(node.id)));
     return nodes.map((node: any, index: number) => ({ ...node, ruleCount: counts[index] }));
@@ -86,6 +112,7 @@ export const proxySubscriptionsRouter = router({
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
       const parsed = parseProxyNodeLink(input.link);
       if (!parsed.ok) throw new Error(parsed.error);
       const id = await db.createProxyNode({
@@ -108,6 +135,7 @@ export const proxySubscriptionsRouter = router({
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
       await assertOwnedNode(input.id, ctx);
       const data: Record<string, unknown> = {};
       if (input.name !== undefined) data.name = input.name;
@@ -127,6 +155,7 @@ export const proxySubscriptionsRouter = router({
   deleteNode: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
       await assertOwnedNode(input.id, ctx);
       // 引用它的转发会被自动解绑，只是不再进订阅，转发本身照常运行。
       const released = await db.countRulesUsingProxyNode(input.id);
@@ -146,6 +175,7 @@ export const proxySubscriptionsRouter = router({
       proxyNodeVisible: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
       const rule = await assertOwnedRule(input.ruleId, ctx);
       if (input.proxyNodeId !== null) await assertOwnedNode(input.proxyNodeId, ctx);
       const data: Record<string, unknown> = { proxyNodeId: input.proxyNodeId };
@@ -163,6 +193,7 @@ export const proxySubscriptionsRouter = router({
   setRuleVisible: protectedProcedure
     .input(z.object({ ruleId: z.number().int().positive(), visible: z.boolean() }))
     .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
       await assertOwnedRule(input.ruleId, ctx);
       await db.updateForwardRule(input.ruleId, { proxyNodeVisible: input.visible } as any);
       return { success: true };
@@ -170,6 +201,7 @@ export const proxySubscriptionsRouter = router({
 
   /** 预览订阅内容：进订阅的节点，以及每条被排除的转发和原因。 */
   preview: protectedProcedure.query(async ({ ctx }) => {
+    if (!await hasProxySubscriptionPermission(ctx)) return { groups: [], nodes: [], skipped: [] };
     const plan = await db.buildProxySubscriptionPlanForUser(ctx.user.id);
     const document = await db.getProxySubscriptionDocumentForUser(ctx.user.id);
     return {
@@ -192,6 +224,7 @@ export const proxySubscriptionsRouter = router({
   }),
 
   listTokens: protectedProcedure.query(async ({ ctx }) => {
+    if (!await hasProxySubscriptionPermission(ctx)) return [];
     return db.getProxySubTokensByUser(ctx.user.id);
   }),
 
@@ -202,6 +235,7 @@ export const proxySubscriptionsRouter = router({
       rulePreset: z.enum(PROXY_RULE_PRESETS).default("balanced"),
     }))
     .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
       const token = nanoid(SUBSCRIPTION_TOKEN_LENGTH);
       const id = await db.createProxySubToken({
         userId: ctx.user.id,
@@ -222,6 +256,7 @@ export const proxySubscriptionsRouter = router({
       isEnabled: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
       await assertOwnedToken(input.id, ctx);
       const data: Record<string, unknown> = {};
       if (input.name !== undefined) data.name = input.name;
@@ -237,6 +272,7 @@ export const proxySubscriptionsRouter = router({
   rotateToken: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
       await assertOwnedToken(input.id, ctx);
       const token = nanoid(SUBSCRIPTION_TOKEN_LENGTH);
       await db.updateProxySubToken(input.id, { token, accessCount: 0 } as any);
@@ -246,6 +282,7 @@ export const proxySubscriptionsRouter = router({
   deleteToken: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
       await assertOwnedToken(input.id, ctx);
       await db.deleteProxySubToken(input.id);
       return { success: true };

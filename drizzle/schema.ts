@@ -151,6 +151,8 @@ export const users = table("users", {
   // 允许使用的转发方式，逗号分隔，如 "iptables,realm,socat"；null 或空串 = 全部允许
   allowedForwardTypes: text("allowedForwardTypes"),
   allowForwardXTunnel: boolean("allowForwardXTunnel").notNull().default(false),
+  // 是否允许使用客户端订阅（有效值，由手动授权与套餐授权合并得出）
+  allowProxySubscription: boolean("allowProxySubscription").notNull().default(false),
   gostRateLimitIn: int("gostRateLimitIn").notNull().default(0),
   gostRateLimitOut: int("gostRateLimitOut").notNull().default(0),
   maxConnections: int("maxConnections").notNull().default(0),
@@ -161,6 +163,7 @@ export const users = table("users", {
   manualMaxConnections: int("manualMaxConnections").notNull().default(0),
   manualMaxIPs: int("manualMaxIPs").notNull().default(0),
   manualAllowForwardXTunnel: boolean("manualAllowForwardXTunnel").notNull().default(false),
+  manualAllowProxySubscription: boolean("manualAllowProxySubscription").notNull().default(false),
   manualGostRateLimitIn: int("manualGostRateLimitIn").notNull().default(0),
   manualGostRateLimitOut: int("manualGostRateLimitOut").notNull().default(0),
   manualTrafficLimit: bigint("manualTrafficLimit", { mode: "number" }).notNull().default(0),
@@ -916,6 +919,8 @@ export const subscriptionPlans = table("subscription_plans", {
   maxRules: int("maxRules").notNull().default(20),
   maxConnections: int("maxConnections").notNull().default(2000),
   maxIPs: int("maxIPs").notNull().default(10),
+  // 该套餐是否附带客户端订阅权限
+  allowProxySubscription: boolean("allowProxySubscription").notNull().default(false),
   isActive: boolean("isActive").notNull().default(true),
   isStoreVisible: boolean("isStoreVisible").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),

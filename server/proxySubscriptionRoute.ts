@@ -75,20 +75,27 @@ proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Respons
         ? normalizeProxyRulePreset(record.rulePreset)
         : normalizeProxyRulePreset(rulesParam));
 
+    // 权限是订阅本身的前提：管理员随时可能收回，或者用户超了流量被自动回收。
+    // 与令牌无效同样返回 404，不泄露「这个令牌存在但没权限」。
+    const owner = await db.getUserById(Number(record.userId));
+    if (!owner || (owner.role !== "admin" && !owner.allowProxySubscription)) {
+      res.status(404).type("text/plain").send("订阅不存在");
+      return;
+    }
+
     const document = await db.getProxySubscriptionDocumentForUser(Number(record.userId), { rulePreset });
     const body = renderProxySubscription(document, format);
 
-    const user = await db.getUserById(Number(record.userId));
-    if (user) {
-      const used = Number(user.trafficUsed || 0);
-      const userExpiresAt = user.expiresAt ? new Date(user.expiresAt as any).getTime() : 0;
+    {
+      const used = Number(owner.trafficUsed || 0);
+      const userExpiresAt = owner.expiresAt ? new Date(owner.expiresAt as any).getTime() : 0;
       res.setHeader(
         "Subscription-Userinfo",
         formatProxySubscriptionUserInfo({
           // 面板只记录总量，没有分上下行的口径，全部计入 download 以免客户端重复累加。
           upload: 0,
           download: used,
-          total: Number(user.trafficLimit || 0),
+          total: Number(owner.trafficLimit || 0),
           expire: userExpiresAt ? Math.floor(userExpiresAt / 1000) : 0,
         }),
       );

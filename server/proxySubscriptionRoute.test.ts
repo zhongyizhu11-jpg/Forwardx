@@ -26,7 +26,7 @@ test("订阅地址按 token 返回节点，并按客户端 UA 选择格式", () 
 
     const exec = (sql, params = []) => runtime.executeRaw(sql, params);
 
-    await exec("INSERT INTO users (id, username, password, role, trafficUsed, trafficLimit) VALUES (1, 'owner', 'hash', 'user', 12345, 1000000)");
+    await exec("INSERT INTO users (id, username, password, role, trafficUsed, trafficLimit, allowProxySubscription) VALUES (1, 'owner', 'hash', 'user', 12345, 1000000, 1)");
     await exec("INSERT INTO users (id, username, password, role) VALUES (2, 'other', 'hash', 'user')");
     await exec("INSERT INTO hosts (id, name, ip, ipv4, userId) VALUES (1, '广州1', '1.2.3.4', '1.2.3.4', 1)");
     await exec("INSERT INTO hosts (id, name, ip, ipv4, userId) VALUES (2, '广州2', '5.6.7.8', '5.6.7.8', 1)");
@@ -198,7 +198,7 @@ test("订阅只包含令牌所属用户的节点", () => {
     await schema.ensureDatabaseSchema();
     const exec = (sql, params = []) => runtime.executeRaw(sql, params);
 
-    await exec("INSERT INTO users (id, username, password, role) VALUES (1, 'alice', 'hash', 'user')");
+    await exec("INSERT INTO users (id, username, password, role, allowProxySubscription) VALUES (1, 'alice', 'hash', 'user', 1)");
     await exec("INSERT INTO users (id, username, password, role) VALUES (2, 'bob', 'hash', 'user')");
     await exec("INSERT INTO hosts (id, name, ip, ipv4, userId) VALUES (1, '共享入口', '1.2.3.4', '1.2.3.4', 1)");
 
@@ -233,6 +233,87 @@ test("订阅只包含令牌所属用户的节点", () => {
     assert.equal(links.length, 1, "越权拿到了别人的节点: " + links.join(" | "));
     assert.ok(links[0].includes("alice-uuid"), links[0]);
     assert.ok(!links[0].includes("bob-uuid"), links[0]);
+
+    await new Promise((resolve) => server.close(resolve));
+    console.log("ok");
+  `;
+
+  try {
+    const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, DATABASE_TYPE: "sqlite", FORWARDX_TEST_DB: databasePath },
+      timeout: 120_000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /ok/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+
+test("没有客户端订阅权限时订阅地址一律 404", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-proxy-sub-perm-"));
+  const databasePath = path.join(directory, "sub-perm.db");
+  const script = String.raw`
+    import assert from "node:assert/strict";
+    import http from "node:http";
+    import path from "node:path";
+    import { pathToFileURL } from "node:url";
+    import express from "express";
+
+    const url = (file) => pathToFileURL(path.join(process.cwd(), file)).href;
+    const runtime = await import(url("server/dbRuntime.ts"));
+    const schema = await import(url("server/dbSchema.ts"));
+    const route = await import(url("server/proxySubscriptionRoute.ts"));
+
+    await runtime.connectDatabase({ type: "sqlite", sqlite: { path: process.env.FORWARDX_TEST_DB } });
+    await schema.ensureDatabaseSchema();
+    const exec = (sql, params = []) => runtime.executeRaw(sql, params);
+
+    // 两个用户配置完全一样，只差订阅权限。
+    await exec("INSERT INTO users (id, username, password, role, allowProxySubscription) VALUES (1, 'yes', 'hash', 'user', 1)");
+    await exec("INSERT INTO users (id, username, password, role, allowProxySubscription) VALUES (2, 'no', 'hash', 'user', 0)");
+    await exec("INSERT INTO users (id, username, password, role, allowProxySubscription) VALUES (3, 'boss', 'hash', 'admin', 0)");
+    await exec("INSERT INTO hosts (id, name, ip, ipv4, userId) VALUES (1, '入口', '1.2.3.4', '1.2.3.4', 1)");
+
+    for (const userId of [1, 2, 3]) {
+      await exec(
+        "INSERT INTO proxy_nodes (id, userId, name, protocol, address, port, uuid, transport, tls, isEnabled) VALUES (?, ?, '落地', 'vless', 'h.example.com', 443, 'uuid-' || ?, 'tcp', 1, 1)",
+        [userId, userId, userId],
+      );
+      await exec(
+        "INSERT INTO forward_rules (id, hostId, name, forwardType, protocol, sourcePort, targetIp, targetPort, userId, isEnabled, isRunning, pendingDelete, proxyNodeId, proxyNodeVisible) VALUES (?, 1, 'r', 'realm', 'tcp', ?, 'h.example.com', 443, ?, 1, 1, 0, ?, 1)",
+        [userId, 20000 + userId, userId, userId],
+      );
+      await exec(
+        "INSERT INTO proxy_sub_tokens (id, userId, name, token, defaultFormat, isEnabled) VALUES (?, ?, 'dev', ?, 'base64', 1)",
+        [userId, userId, "token-" + userId],
+      );
+    }
+
+    const app = express();
+    app.use(route.proxySubscriptionRouter);
+    const server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+
+    const status = (token) => new Promise((resolve, reject) => {
+      http.get({ host: "127.0.0.1", port, path: "/api/sub/" + token }, (response) => {
+        response.resume();
+        response.on("end", () => resolve(response.statusCode));
+      }).on("error", reject);
+    });
+
+    assert.equal(await status("token-1"), 200, "有权限的用户应能拉到订阅");
+    // 与令牌无效同样 404，不泄露「这个令牌存在但没权限」。
+    assert.equal(await status("token-2"), 404, "无权限的用户不该拉到订阅");
+    assert.equal(await status("token-3"), 200, "管理员不受该权限限制");
+
+    // 收回权限后立刻失效，不需要吊销令牌。
+    await exec("UPDATE users SET allowProxySubscription = 0 WHERE id = 1");
+    assert.equal(await status("token-1"), 404, "收回权限后订阅应立即失效");
 
     await new Promise((resolve) => server.close(resolve));
     console.log("ok");

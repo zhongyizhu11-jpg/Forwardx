@@ -34,6 +34,18 @@ test("转发规则的订阅绑定字段在表定义里", () => {
   assert.ok(columns.has("proxyNodeName"));
 });
 
+test("订阅权限的列在 users 与套餐表上", () => {
+  const defs = getDatabaseTableDefs();
+  const columnsOf = (name: string) =>
+    new Set(defs.find((table) => table.name === name)?.columns.map((column) => column.name) ?? []);
+
+  const users = columnsOf("users");
+  // 有效值与手动授权分开存：有效值由手动与套餐合并得出，不能直接覆盖手动授权。
+  assert.ok(users.has("allowProxySubscription"));
+  assert.ok(users.has("manualAllowProxySubscription"));
+  assert.ok(columnsOf("subscription_plans").has("allowProxySubscription"));
+});
+
 test("全新数据库会建出订阅所需的表和列", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-proxy-schema-"));
   try {
