@@ -67,6 +67,10 @@ import {
   Rocket,
   Server,
   Shield,
+  Boxes,
+  Ship,
+  Binary,
+  Blocks,
   Trash2,
   Waves,
   Zap,
@@ -93,6 +97,11 @@ const CLIENT_ICONS: Record<string, { icon: LucideIcon; className: string }> = {
   quantumultx: { icon: Atom, className: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
   hiddify: { icon: Shield, className: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
   shadowrocket: { icon: Rocket, className: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
+  v2rayng: { icon: Binary, className: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
+  surfboard: { icon: Ship, className: "bg-lime-500/10 text-lime-600 dark:text-lime-400" },
+  nekobox: { icon: Boxes, className: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  nekoray: { icon: Blocks, className: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400" },
+  v2rayn: { icon: Binary, className: "bg-slate-500/10 text-slate-600 dark:text-slate-400" },
 };
 
 function clientIcon(target: ProxyClientTarget) {
@@ -107,8 +116,13 @@ function currentPlatform(): ProxyClientPlatform | null {
   });
 }
 
-function subscriptionUrl(token: string, format: ProxySubscriptionFormat, kind: ProxySubscriptionKind) {
-  return buildProxySubscriptionUrl({ origin: window.location.origin, token, format, kind });
+function subscriptionUrl(
+  token: string,
+  format: ProxySubscriptionFormat,
+  kind: ProxySubscriptionKind,
+  pinFormat = false,
+) {
+  return buildProxySubscriptionUrl({ origin: window.location.origin, token, format, kind, pinFormat });
 }
 
 async function copyText(value: string, message: string) {
@@ -144,7 +158,7 @@ export default function ClientSubscriptionsPage() {
   // 一键订阅面板默认折叠，同一时间只展开一个，免得页面被撑得很长。
   const [importOpenTokenId, setImportOpenTokenId] = useState<number | null>(null);
   const [importKind, setImportKind] = useState<ProxySubscriptionKind>("nodes");
-  const [qrTarget, setQrTarget] = useState<{ title: string; url: string } | null>(null);
+  const [qrTarget, setQrTarget] = useState<{ title: string; url: string; hint?: string } | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [showAllClients, setShowAllClients] = useState(false);
   // 只认一次：UA 在页面生命周期里不会变。
@@ -727,7 +741,9 @@ export default function ClientSubscriptionsPage() {
                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                           {visibleTargets.map((target) => {
                             const supported = proxySubscriptionKindSupported(target.format, kind);
-                            const url = subscriptionUrl(token.token, target.format, kind);
+                            // 从客户端图标点进去时已经知道是哪个客户端了，钉死格式，
+                            // 不让它掉到令牌默认格式上。
+                            const url = subscriptionUrl(token.token, target.format, kind, true);
                             const importName = `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`;
                             const { icon: Icon, className: iconClass } = clientIcon(target);
                             const offPlatform = platform ? !target.platforms.includes(platform) : false;
@@ -749,21 +765,46 @@ export default function ClientSubscriptionsPage() {
                                     ? "不支持规则"
                                     : offPlatform
                                       ? "本机没有"
-                                      : proxyClientPlatformsLabel(target)}
+                                      : target.buildImportUrl
+                                        ? proxyClientPlatformsLabel(target)
+                                        : "手动添加"}
                                 </span>
                               </>
                             );
+                            const tileClass =
+                              "flex flex-col items-center gap-1.5 rounded-lg border bg-background p-2.5 text-inherit transition-colors hover:border-primary hover:bg-primary/5";
+                            const covers = target.covers ? `。同样适用于：${target.covers}` : "";
+
                             // 不支持时置灰而不是隐藏：藏起来用户不知道为什么少了几个客户端。
+                            if (usable && !target.buildImportUrl) {
+                              // 没有官方 scheme 的客户端：点开给它对应格式的地址和二维码，
+                              // 外加一句粘到哪儿 —— 订阅地址本身对任何客户端都有效，
+                              // 少的只是自动跳转那一步，不是不支持。
+                              return (
+                                <button
+                                  key={target.id}
+                                  type="button"
+                                  title={`${target.label} 没有一键导入，点开取地址手动添加${covers}`}
+                                  onClick={() =>
+                                    setQrTarget({
+                                      title: `${target.label} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`,
+                                      url,
+                                      hint: target.manualHint,
+                                    })
+                                  }
+                                  className={tileClass}
+                                >
+                                  {tile}
+                                </button>
+                              );
+                            }
+
                             return usable ? (
                               <a
                                 key={target.id}
-                                href={target.buildImportUrl(url, importName)}
-                                title={
-                                  target.covers
-                                    ? `在 ${target.label} 中打开。同样适用于：${target.covers}`
-                                    : `在 ${target.label} 中打开`
-                                }
-                                className="flex flex-col items-center gap-1.5 rounded-lg border bg-background p-2.5 transition-colors hover:border-primary hover:bg-primary/5"
+                                href={target.buildImportUrl!(url, importName)}
+                                title={`在 ${target.label} 中打开${covers}`}
+                                className={tileClass}
                               >
                                 {tile}
                               </a>
@@ -1014,9 +1055,16 @@ export default function ClientSubscriptionsPage() {
               )}
             </div>
 
-            <p className="text-xs text-muted-foreground">
-              请在客户端的「添加订阅」里扫码。用系统相机扫只会在浏览器里打开这条地址，得到的是一屏乱码。
-            </p>
+            {qrTarget?.hint ? (
+              <p className="rounded-md border border-dashed bg-muted/40 px-2 py-1.5 text-xs leading-relaxed">
+                <span className="font-medium">粘到这里：</span>
+                {qrTarget.hint}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                请在客户端的「添加订阅」里扫码。用系统相机扫只会在浏览器里打开这条地址，得到的是一屏乱码。
+              </p>
+            )}
 
             {/* 手机上截断的地址等于没有：复制失败时连手动选中都做不到，所以整条断行显示。 */}
             <code className="block break-all rounded bg-muted px-2 py-1.5 text-xs leading-relaxed">

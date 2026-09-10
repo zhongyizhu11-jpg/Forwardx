@@ -46,8 +46,20 @@ export type ProxyClientTarget = {
   covers?: string;
   /** 该客户端要拉的订阅格式 */
   format: ProxySubscriptionFormat;
-  /** 由订阅地址和名称拼出可点击的 scheme */
-  buildImportUrl: (subscriptionUrl: string, name: string) => string;
+  /**
+   * 由订阅地址和名称拼出可点击的 scheme。
+   *
+   * 只有官方确实有导入 scheme 的客户端才给 —— 编一个出来的结果是一格点了
+   * 没反应的按钮，比没有这一格更糟。没有的填 manualHint 走手动。
+   */
+  buildImportUrl?: (subscriptionUrl: string, name: string) => string;
+  /**
+   * 没有 scheme 时，告诉用户在这个客户端里把地址粘到哪儿。
+   *
+   * 订阅地址本身对任何客户端都有效，deep link 只是省一次粘贴 —— 所以没有
+   * scheme 不等于不支持，只是少一步自动化。
+   */
+  manualHint?: string;
 };
 
 const ALL_PLATFORMS = PROXY_CLIENT_PLATFORMS;
@@ -146,6 +158,52 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
     // sub:// 后面直接跟订阅地址的 base64，不是查询参数。
     buildImportUrl: (url, name) => `sub://${base64UrlOfText(url)}#${q(name)}`,
   },
+  {
+    id: "v2rayng",
+    label: "v2rayNG",
+    shortLabel: "v2rayNG",
+    platforms: ["android"],
+    format: "base64",
+    // install-sub 是订阅（会保留自动更新），install-config 是单条配置，这里要前者。
+    // name 参数在部分版本上不生效（2dust/v2rayNG#3470），但地址照样导入成功，
+    // 顶多是分组名要自己改一次 —— 不影响能不能用。
+    buildImportUrl: (url, name) => `v2rayng://install-sub?url=${q(url)}&name=${q(name)}`,
+  },
+  {
+    id: "surfboard",
+    label: "Surfboard",
+    shortLabel: "Surfboard",
+    platforms: ["android"],
+    // Surfboard 严格照 Surge 的配置格式来，订阅按 UA 本来就会给它 Surge 格式。
+    format: "surge",
+    // surge:///install-config 是 Surge 的 iOS/macOS 专属，Surfboard 不认。
+    manualHint: "配置标签页 → 右下角「添加订阅」→ 从 URL 导入 → 粘贴这条地址",
+  },
+  {
+    id: "nekobox",
+    label: "NekoBox",
+    shortLabel: "NekoBox",
+    platforms: ["android"],
+    format: "base64",
+    // 一键导入在官方那边还只是个未实现的功能请求（MatsuriDayo/NekoBoxForAndroid#323）。
+    manualHint: "左上角菜单 → 分组 → 右上角新建 → 类型选「订阅」→ 粘贴这条地址",
+  },
+  {
+    id: "nekoray",
+    label: "NekoRay",
+    shortLabel: "NekoRay",
+    platforms: ["windows", "linux"],
+    format: "base64",
+    manualHint: "程序 → 分组 → 新建分组 → 类型选「订阅」→ 粘贴这条地址",
+  },
+  {
+    id: "v2rayn",
+    label: "v2rayN",
+    shortLabel: "v2rayN",
+    platforms: ["windows"],
+    format: "base64",
+    manualHint: "订阅 → 订阅分组设置 → 添加 → 粘贴这条地址 → 再点「更新订阅」",
+  },
 ];
 
 export function proxyClientTargetsForFormat(format: ProxySubscriptionFormat): ProxyClientTarget[] {
@@ -214,10 +272,18 @@ export function buildProxySubscriptionUrl(options: {
   token: string;
   format: ProxySubscriptionFormat;
   kind: ProxySubscriptionKind;
+  /**
+   * 强制带上 format 参数。
+   *
+   * 服务端定格式的顺序是 ?format= → UA → 令牌默认格式。通用 base64 平时不带
+   * format，好让同一条地址粘到哪个客户端都能协商出对的格式；但从某个客户端
+   * 图标点进去时我们已经知道是哪个客户端了，不钉死的话，UA 认不出来就会掉到
+   * 令牌默认格式上 —— 默认设成 Clash 的话，Shadowrocket 会收到一份 Clash YAML。
+   */
+  pinFormat?: boolean;
 }): string {
   const params = new URLSearchParams();
-  // 通用 base64 不带 format，方便直接粘进只认裸地址的老客户端。
-  if (options.format !== "base64") params.set("format", options.format);
+  if (options.format !== "base64" || options.pinFormat) params.set("format", options.format);
   // rules=1 表示按订阅链接上配置的预设来，具体档位不暴露在地址里。
   if (options.kind === "rules") params.set("rules", "1");
   const query = params.toString();

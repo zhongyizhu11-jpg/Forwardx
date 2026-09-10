@@ -26,6 +26,12 @@ function formatFromUserAgent(userAgent: string): ProxySubscriptionFormat | null 
   if (ua.includes("surge") || ua.includes("surfboard")) return "surge";
   // QX 的 UA 里域名部分是 URL 编码的 "Quantumult%20X"。
   if (ua.includes("quantumult")) return "quantumultx";
+  // 下面这些吃通用 base64。不认它们的话会掉到令牌默认格式上 ——
+  // 默认设成 Clash 的话，Shadowrocket 会收到一份它读不懂的 Clash YAML。
+  if (ua.includes("shadowrocket")) return "base64";
+  if (ua.includes("hiddify")) return "base64";
+  if (ua.includes("v2rayng") || ua.includes("v2rayn")) return "base64";
+  if (ua.includes("nekobox") || ua.includes("nekoray")) return "base64";
   return null;
 }
 
