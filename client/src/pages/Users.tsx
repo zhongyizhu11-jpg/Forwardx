@@ -296,6 +296,7 @@ function UsersContent() {
   const [maxRules, setMaxRules] = useState(0);
   const [maxPorts, setMaxPorts] = useState(0);
   const [maxConnections, setMaxConnections] = useState(0);
+  const [allowProxySubscription, setAllowProxySubscription] = useState(false);
   const [maxIPs, setMaxIPs] = useState(0);
   // 允许使用的转发方式：默认三种全部允许
   const [allowIptables, setAllowIptables] = useState(true);
@@ -883,6 +884,7 @@ function UsersContent() {
     setMaxRules(u.manualMaxRules || 0);
     setMaxPorts(u.manualMaxPorts || 0);
     setMaxConnections(u.manualMaxConnections || 0);
+    setAllowProxySubscription(!!u.manualAllowProxySubscription);
     setMaxIPs(u.manualMaxIPs || 0);
     // 转发方式权限：allowedForwardTypes 为 null 表示全部允许，空串表示全部禁用
     const allowedRaw = (u.allowedForwardTypes as string | null) || "";
@@ -939,6 +941,7 @@ function UsersContent() {
       maxConnections,
       maxIPs,
       allowedForwardTypes,
+      allowProxySubscription,
     });
     // 保留旧版主机授权。新版资源授权与历史主机授权是并行权限，保存流量设置不能清空后者。
     updateHostPermsMutation.mutate({
@@ -2210,6 +2213,21 @@ function UsersContent() {
                   />
                   <p className="text-xs text-muted-foreground">同一主机或同一隧道下，多条规则共享这个单 IP 接入上限。</p>
                 </div>
+              </div>
+              <Separator />
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <Label>客户端订阅</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    允许该用户把自己的转发汇聚成订阅地址导入客户端。套餐里已附带该权限的用户不受这里影响；
+                    转发被停用或流量用尽时权限会自动收回。
+                  </p>
+                </div>
+                <Switch
+                  checked={allowProxySubscription}
+                  onCheckedChange={setAllowProxySubscription}
+                  className="mt-1 shrink-0"
+                />
               </div>
               <Separator />
               <div className="space-y-2">

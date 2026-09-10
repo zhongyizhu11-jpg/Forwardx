@@ -39,6 +39,7 @@ type PlanForm = {
   maxRules: string;
   maxConnections: string;
   maxIPs: string;
+  allowProxySubscription: boolean;
   isActive: boolean;
   isStoreVisible: boolean;
   syncExistingSubscribers: boolean;
@@ -84,6 +85,7 @@ const emptyForm: PlanForm = {
   maxRules: "20",
   maxConnections: "2000",
   maxIPs: "10",
+  allowProxySubscription: false,
   isActive: true,
   isStoreVisible: true,
   syncExistingSubscribers: true,
@@ -572,6 +574,7 @@ function toForm(plan: any): PlanForm {
     maxRules: String(plan.maxRules ?? 20),
     maxConnections: String(plan.maxConnections ?? 2000),
     maxIPs: String(plan.maxIPs ?? 10),
+    allowProxySubscription: !!plan.allowProxySubscription,
     isActive: !!plan.isActive,
     isStoreVisible: !!plan.isStoreVisible,
     syncExistingSubscribers: true,
@@ -602,6 +605,7 @@ function payload(form: PlanForm) {
     maxRules: Math.max(0, Math.floor(Number(form.maxRules || 0))),
     maxConnections: Math.max(0, Math.floor(Number(form.maxConnections || 0))),
     maxIPs: Math.max(0, Math.floor(Number(form.maxIPs || 0))),
+    allowProxySubscription: form.allowProxySubscription,
     isActive: form.isActive,
     isStoreVisible: form.isActive && form.isStoreVisible,
     sortOrder: Math.max(0, Math.floor(Number(form.sortOrder || 0))),
@@ -1336,6 +1340,21 @@ export default function Plans() {
             <div className="space-y-2">
               <Label>单 IP 接入限制</Label>
               <Input type="number" min={0} value={form.maxIPs} onChange={(e) => setForm({ ...form, maxIPs: e.target.value })} />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+                <div className="min-w-0">
+                  <Label>附带客户端订阅权限</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    开启后，购买该套餐的用户即可使用客户端订阅。与转发权限不同，这项不会因为有订阅就自动开启。
+                  </p>
+                </div>
+                <Switch
+                  checked={form.allowProxySubscription}
+                  onCheckedChange={(checked) => setForm({ ...form, allowProxySubscription: checked })}
+                  className="mt-1 shrink-0"
+                />
+              </div>
               <p className="text-xs text-muted-foreground">同组规则共享限制。</p>
             </div>
             <div className="space-y-2">

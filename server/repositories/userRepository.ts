@@ -530,6 +530,7 @@ function usersForListQuery(db: any) {
       balanceCents: users.balanceCents,
       allowedForwardTypes: users.allowedForwardTypes,
       allowForwardXTunnel: users.allowForwardXTunnel,
+      allowProxySubscription: users.allowProxySubscription,
       trafficLimit: users.trafficLimit,
       trafficUsed: users.trafficUsed,
       trafficBillingUsed: sql<number>`CASE
@@ -661,12 +662,14 @@ export async function updateUserTrafficSettings(userId: number, data: {
   manualMaxConnections?: number;
   manualMaxIPs?: number;
   manualAllowForwardXTunnel?: boolean;
+  manualAllowProxySubscription?: boolean;
   manualGostRateLimitIn?: number;
   manualGostRateLimitOut?: number;
   manualTrafficLimit?: number;
   manualExpiresAt?: Date | null;
   allowedForwardTypes?: string | null;
   allowForwardXTunnel?: boolean;
+  allowProxySubscription?: boolean;
   displayRemark?: string | null;
 }) {
   const db = await getDb();
@@ -681,6 +684,7 @@ export async function setUserForwardAccess(userId: number, enabled: boolean, rea
   await db.update(users).set({
     canAddRules: enabled,
     allowForwardXTunnel: enabled,
+    allowProxySubscription: enabled,
     forwardAccessPauseReason: enabled ? null : (reason ?? "manual"),
     updatedAt: now,
   }).where(eq(users.id, userId));
@@ -886,6 +890,7 @@ export async function getUserTrafficSummaries() {
     gostRateLimitIn: users.gostRateLimitIn,
     gostRateLimitOut: users.gostRateLimitOut,
     allowForwardXTunnel: users.allowForwardXTunnel,
+    allowProxySubscription: users.allowProxySubscription,
     expiresAt: users.expiresAt,
     trafficAutoReset: users.trafficAutoReset,
     trafficResetDay: users.trafficResetDay,

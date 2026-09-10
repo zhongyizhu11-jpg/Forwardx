@@ -936,6 +936,7 @@ export async function getActiveUserSubscriptions(userId?: number) {
         maxRules: subscriptionPlans.maxRules,
         maxConnections: subscriptionPlans.maxConnections,
         maxIPs: subscriptionPlans.maxIPs,
+        allowProxySubscription: subscriptionPlans.allowProxySubscription,
       })
       .from(userSubscriptions)
       .leftJoin(subscriptionPlans, eq(userSubscriptions.planId, subscriptionPlans.id))
@@ -1514,6 +1515,7 @@ export async function getEffectiveUserPlanLimits(userId: number) {
     return {
       canAddRules: false,
       allowForwardXTunnel: false,
+      allowProxySubscription: false,
       maxPorts: 0,
       maxRules: 0,
       maxConnections: 0,
@@ -1551,6 +1553,8 @@ export async function getEffectiveUserPlanLimits(userId: number) {
   return {
     canAddRules: true,
     allowForwardXTunnel: true,
+    // 与 canAddRules 不同：客户端订阅要套餐显式开启，不是有订阅就给。
+    allowProxySubscription: (active as any[]).some((sub: any) => !!sub.allowProxySubscription),
     maxPorts: sumWithUnlimited("portCount"),
     maxRules: sumWithUnlimited("maxRules"),
     maxConnections: sumWithUnlimited("maxConnections"),
@@ -1615,6 +1619,8 @@ export function mergeManualAndPlanLimits(user: any, planLimits: any) {
   const planCanAddRules = !!planLimits?.canAddRules;
   const manualAllowForwardXTunnel = !!user?.manualAllowForwardXTunnel;
   const planAllowForwardXTunnel = !!planLimits?.allowForwardXTunnel;
+  const manualAllowProxySubscription = !!user?.manualAllowProxySubscription;
+  const planAllowProxySubscription = !!planLimits?.allowProxySubscription;
   const manualDefaultActive = manualCanAddRules && !planCanAddRules;
   const manualMaxRules = positiveInt(user?.manualMaxRules);
   const manualMaxPorts = positiveInt(user?.manualMaxPorts);
@@ -1636,6 +1642,7 @@ export function mergeManualAndPlanLimits(user: any, planLimits: any) {
   return {
     canAddRules: manualCanAddRules || planCanAddRules,
     allowForwardXTunnel: manualAllowForwardXTunnel || planAllowForwardXTunnel,
+    allowProxySubscription: manualAllowProxySubscription || planAllowProxySubscription,
     maxPorts: mergeLimitValue([
       { active: planCanAddRules, value: planLimits?.maxPorts },
       { active: manualDefaultActive || manualMaxPorts > 0, value: manualMaxPorts },
@@ -1907,6 +1914,8 @@ async function syncUserSubscriptionEntitlementsUnlocked(
     ...effectiveLimits,
     canAddRules: effectiveLimits.canAddRules && !manualPaused && !trafficExceeded,
     allowForwardXTunnel: effectiveLimits.allowForwardXTunnel && !manualPaused && !trafficExceeded,
+    // 超流量时转发已被停用，订阅里的节点本就连不通，权限一并收回避免给出死节点。
+    allowProxySubscription: effectiveLimits.allowProxySubscription && !manualPaused && !trafficExceeded,
     forwardAccessPauseReason: (effectiveLimits.canAddRules && !manualPaused && !trafficExceeded
       ? null
       : manualPaused
@@ -1985,6 +1994,7 @@ export async function backfillManualEntitlementsFromEffectiveUsers() {
     await updateUserTrafficSettings(Number(user.id), {
       manualCanAddRules,
       manualAllowForwardXTunnel: manualCanAddRules && !!user.allowForwardXTunnel,
+      manualAllowProxySubscription: manualCanAddRules && !!(user as any).allowProxySubscription,
       manualMaxRules: overPlan(user.maxRules, planLimits.maxRules),
       manualMaxPorts: overPlan(user.maxPorts, planLimits.maxPorts),
       manualMaxConnections: overPlan(user.maxConnections, planLimits.maxConnections),

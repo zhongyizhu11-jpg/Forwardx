@@ -319,6 +319,7 @@ export const usersRouter = router({
         // 逗号分隔的转发方式列表；null 为全部允许
         allowedForwardTypes: z.string().nullable().optional(),
         allowForwardXTunnel: z.boolean().optional(),
+        allowProxySubscription: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { userId, expiresAt, allowedForwardTypes, ...rest } = input;
@@ -363,10 +364,17 @@ export const usersRouter = router({
         if (input.displayRemark !== undefined) {
           data.displayRemark = input.displayRemark?.trim() || null;
         }
+        // 客户端订阅是独立授权：不跟着转发权限自动开启，只按管理员的显式选择。
+        if (input.allowProxySubscription !== undefined) {
+          data.manualAllowProxySubscription = input.allowProxySubscription;
+          delete data.allowProxySubscription;
+        }
         if (input.canAddRules !== undefined) {
           data.manualCanAddRules = input.canAddRules;
           data.forwardAccessPauseReason = input.canAddRules ? null : "manual";
           data.manualAllowForwardXTunnel = input.canAddRules ? (data.allowForwardXTunnel ?? true) : false;
+          // 停用转发时一并收回订阅：节点指向的转发已经停了，订阅只会给出死节点。
+          if (!input.canAddRules) data.manualAllowProxySubscription = false;
           delete data.canAddRules;
           delete data.allowForwardXTunnel;
         }

@@ -65,6 +65,9 @@ export default function ClientSubscriptionsPage() {
   const utils = trpc.useUtils();
   const confirm = useConfirmDialog();
 
+  const permissionQuery = trpc.proxySubscriptions.permission.useQuery();
+  const allowed = permissionQuery.data?.allowed ?? true;
+
   const nodesQuery = trpc.proxySubscriptions.listNodes.useQuery();
   const tokensQuery = trpc.proxySubscriptions.listTokens.useQuery();
   const previewQuery = trpc.proxySubscriptions.preview.useQuery();
@@ -200,6 +203,37 @@ export default function ClientSubscriptionsPage() {
     if (editingNodeId) updateNode.mutate({ id: editingNodeId, name, link, autoGroup: nodeAutoGroup });
     else createNode.mutate({ name, link, autoGroup: nodeAutoGroup });
   };
+
+  // 权限查询未回来时先不下结论，避免闪一下「无权限」再闪回正常。
+  if (permissionQuery.isLoading) {
+    return (
+      <DashboardLayout>
+        <DataSectionLoading />
+      </DashboardLayout>
+    );
+  }
+
+  if (!allowed) {
+    return (
+      <DashboardLayout>
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-2xl font-semibold">客户端订阅</h1>
+          </div>
+          <Card>
+            <CardContent className="py-10 text-center">
+              <p className="text-sm text-muted-foreground">
+                当前账号没有客户端订阅权限。
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                该权限由管理员单独授予，或包含在部分套餐中。转发被停用或流量用尽时也会暂时收回。
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

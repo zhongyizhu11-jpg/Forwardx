@@ -22,6 +22,7 @@ const planInput = z.object({
   maxRules: z.number().int().min(0).default(20),
   maxConnections: z.number().int().min(0).max(1_000_000).default(2000),
   maxIPs: z.number().int().min(0).max(100_000).default(10),
+  allowProxySubscription: z.boolean().default(false),
   isActive: z.boolean().default(true),
   isStoreVisible: z.boolean().default(true),
   sortOrder: z.number().int().min(0).max(9999).default(0),

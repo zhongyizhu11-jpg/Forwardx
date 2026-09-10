@@ -1043,15 +1043,22 @@ function DashboardLayoutContent({
   };
 
   const hiddenNormalUserMainPaths = ["/hosts", "/tunnels"];
+  // 没有客户端订阅权限的用户不该在侧边栏看到这一项。管理员始终可见。
+  const proxySubscriptionPermission = trpc.proxySubscriptions.permission.useQuery(undefined, {
+    enabled: !isAdmin,
+    staleTime: 60_000,
+  });
+  const canShowProxySubscription = isAdmin || proxySubscriptionPermission.data?.allowed === true;
   const isSidebarNavItemVisible = (item: SidebarNavItem) => {
     if (item.menuKey === "plugins" && publicInfo?.pluginsEnabled !== true) return false;
     return !item.menuKey || sidebarMenuSettings[item.menuKey] !== false;
   };
   const filterSidebarNavItems = (items: SidebarNavItem[]) => items.filter(isSidebarNavItemVisible);
   const visibleMainMenuItems = filterSidebarNavItems(
-    isAdmin
+    (isAdmin
       ? mainMenuItems
       : mainMenuItems.filter((item) => !hiddenNormalUserMainPaths.includes(item.path))
+    ).filter((item) => item.path !== "/client-subscriptions" || canShowProxySubscription)
   );
   const canShowNetworkTest = (isAdmin || publicInfo?.lookingGlassUserEnabled === true) && sidebarMenuSettings.lookingGlass !== false;
   const userStoreMenuItems = !isAdmin
