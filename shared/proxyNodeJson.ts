@@ -16,6 +16,7 @@
 
 import {
   createEmptyProxyNode,
+  proxyNodeAlwaysTls,
   PROXY_NODE_TRANSPORTS,
   type ProxyNode,
   type ProxyNodeProtocol,
@@ -34,9 +35,15 @@ const PROTOCOL_ALIASES: Record<string, ProxyNodeProtocol> = {
   trojan: "trojan",
   ss: "shadowsocks",
   shadowsocks: "shadowsocks",
+  hysteria2: "hysteria2",
+  // hy2 是 Hysteria 2 的官方简写，部分工具的配置里就写这个。
+  hy2: "hysteria2",
+  tuic: "tuic",
+  anytls: "anytls",
 };
 
 /** 不是代理协议的出/入站类型，遍历时要跳过。 */
+// 注意 "hysteria" 是 v1，与 hysteria2 是两个不兼容的协议，这里挡的只是 v1。
 const NON_PROXY_TYPES = new Set([
   "direct", "block", "dns", "selector", "urltest", "hysteria", "socks", "http",
   "dokodemo-door", "api", "freedom", "blackhole", "wireguard", "tun", "mixed", "redirect", "tproxy",
@@ -97,6 +104,13 @@ function fromSingboxOutbound(raw: Record<string, unknown>): ProxyNode | null {
   node.method = text(raw.method);
   node.alterId = Number(raw.alter_id) || 0;
   node.flow = text(raw.flow);
+  node.congestionControl = text(raw.congestion_control);
+  node.udpRelayMode = text(raw.udp_relay_mode);
+  const obfs = raw.obfs as Record<string, unknown> | undefined;
+  if (obfs && typeof obfs === "object") {
+    node.obfs = text(obfs.type).toLowerCase();
+    node.obfsPassword = text(obfs.password);
+  }
 
   const transport = raw.transport as Record<string, unknown> | undefined;
   if (transport && typeof transport === "object") {
@@ -113,6 +127,7 @@ function fromSingboxOutbound(raw: Record<string, unknown>): ProxyNode | null {
     node.sni = text(tls.server_name);
     node.alpn = toAlpn(tls.alpn);
     node.allowInsecure = toBool(tls.insecure);
+    node.disableSni = toBool(tls.disable_sni);
     const utls = tls.utls as Record<string, unknown> | undefined;
     node.fingerprint = text(utls?.fingerprint);
     const reality = tls.reality as Record<string, unknown> | undefined;
@@ -143,6 +158,12 @@ function fromClashProxy(raw: Record<string, unknown>): ProxyNode | null {
   node.alterId = Number(raw.alterId) || 0;
   node.flow = text(raw.flow);
   node.udp = raw.udp === undefined ? true : toBool(raw.udp);
+  node.obfs = text(raw.obfs).toLowerCase();
+  node.obfsPassword = text(raw["obfs-password"]);
+  // mihomo 的 tuic 键名是 congestion-controller，别写成 sing-box 的 congestion_control。
+  node.congestionControl = text(raw["congestion-controller"]);
+  node.udpRelayMode = text(raw["udp-relay-mode"]);
+  node.disableSni = toBool(raw["disable-sni"]);
 
   node.transport = toTransport(raw.network);
   const wsOpts = raw["ws-opts"] as Record<string, unknown> | undefined;
@@ -340,7 +361,7 @@ export function parseProxyNodeJson(input: unknown): ParseProxyNodeJsonResult {
     if (!node) {
       return {
         ok: false,
-        error: `暂不支持该协议：${text(root.type) || "未知"}。目前支持 VLESS / VMess / Trojan / Shadowsocks`,
+        error: `暂不支持该协议：${text(root.type) || "未知"}。目前支持 VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS`,
       };
     }
     return finish(node, root.server_port !== undefined ? "singbox-outbound" : "clash-proxy");
@@ -358,5 +379,8 @@ function finish(node: ProxyNode, source: ProxyNodeJsonSource): ParseProxyNodeJso
   if (!node.port) return { ok: false, error: "配置里没有可用的端口" };
   const hasCredential = node.uuid || node.password;
   if (!hasCredential) return { ok: false, error: "配置里没有找到 UUID 或密码" };
+  // Hysteria2 / TUIC / AnyTLS 的配置里不会写 tls: true —— TLS 是协议自带的。
+  // 漏掉这一步，渲染时会当成明文节点，客户端握手直接失败。
+  if (proxyNodeAlwaysTls(node.protocol)) node.tls = true;
   return { ok: true, node, needsAddress: !node.address, source };
 }

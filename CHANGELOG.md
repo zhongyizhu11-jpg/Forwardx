@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.3.291] - 2026-09-10
+
+### 新增
+
+- 客户端节点支持 Hysteria2、TUIC v5、AnyTLS 三种协议，链接与 JSON 两种粘贴方式都认（`hysteria2://`、`hy2://`、`tuic://`、`anytls://`，以及 sing-box 出站与 mihomo 条目的 JSON）。加上原有的 VLESS / VMess / Trojan / Shadowsocks，覆盖了目前主流在用的协议。
+- 转发规则只放行 TCP 时，不允许绑定 Hysteria2 / TUIC 这类跑在 QUIC 上的节点，订阅组装时也会把这类组合排除并在「订阅内容」里写明原因。QUIC 全程只用 UDP，这种组合能导入、能识别协议，握手却永远收不到回包，客户端只报一句超时。
+
+### 改进
+
+- 各家客户端缺哪种协议，订阅里逐个节点写明跳过原因，而不是让节点凭空消失：Quantumult X 没有 Hysteria2 / TUIC / AnyTLS，Loon 没有 TUIC，Surge 没有 VLESS。协议覆盖最全的是 Clash 与 sing-box 两种格式。
+- Loon 的 Hysteria2 只有 `salamander-password` 一个混淆参数位，用 gecko 混淆的节点会被跳过并说明，而不是发出一个连不上的节点。
+- Loon 的 `alpn` 改为带引号的逗号写法。此前多个 alpn 用冒号连接，节点行本身以逗号分隔，写法不一致会让 Loon 解析错位。
+
+### 版本
+
+- 面板与 APK Release `2.3.291`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
 ## [2.3.290] - 2026-09-10
 
 ### 修复

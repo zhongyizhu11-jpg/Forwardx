@@ -154,6 +154,8 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
       hostId: forwardRules.hostId,
       name: forwardRules.name,
       sourcePort: forwardRules.sourcePort,
+      // QUIC 系节点绑到只放行 TCP 的转发上会静默连不上，订阅组装时要据此排除。
+      protocol: forwardRules.protocol,
       proxyNodeId: forwardRules.proxyNodeId,
       proxyNodeVisible: forwardRules.proxyNodeVisible,
       proxyNodeName: forwardRules.proxyNodeName,

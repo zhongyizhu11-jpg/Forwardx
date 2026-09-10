@@ -17,6 +17,9 @@ import {
 } from "./proxyRuleset";
 import {
   createEmptyProxyNode,
+  proxyNodeAlwaysTls,
+  proxyNodeRequiresUdp,
+  PROXY_NODE_PROTOCOLS,
   relayProxyNode,
   type ProxyNode,
   type ProxyNodeProtocol,
@@ -50,6 +53,11 @@ export type ProxyNodeTemplateRow = {
   realityPublicKey?: unknown;
   realityShortId?: unknown;
   udp?: unknown;
+  obfs?: unknown;
+  obfsPassword?: unknown;
+  congestionControl?: unknown;
+  udpRelayMode?: unknown;
+  disableSni?: unknown;
   isEnabled?: unknown;
   autoGroup?: unknown;
 };
@@ -60,6 +68,8 @@ export type ProxySubscriptionRuleRow = {
   hostId?: unknown;
   name?: unknown;
   sourcePort?: unknown;
+  /** 转发放行的协议：tcp | udp | both */
+  protocol?: unknown;
   proxyNodeId?: unknown;
   proxyNodeVisible?: unknown;
   proxyNodeName?: unknown;
@@ -78,7 +88,8 @@ export type ProxySubscriptionSkipReason =
   | "hidden"
   | "template-disabled"
   | "rule-disabled"
-  | "no-entry-address";
+  | "no-entry-address"
+  | "udp-not-forwarded";
 
 export const PROXY_SUBSCRIPTION_SKIP_LABELS: Record<ProxySubscriptionSkipReason, string> = {
   unbound: "未绑定客户端节点",
@@ -86,6 +97,7 @@ export const PROXY_SUBSCRIPTION_SKIP_LABELS: Record<ProxySubscriptionSkipReason,
   "template-disabled": "所属节点模板已停用",
   "rule-disabled": "转发已停用",
   "no-entry-address": "入口主机没有可用地址",
+  "udp-not-forwarded": "节点走 QUIC（只用 UDP），但这条转发没放行 UDP",
 };
 
 export type ProxySubscriptionEntry = {
@@ -132,7 +144,7 @@ function toPort(value: unknown): number {
   return Number.isInteger(port) && port > 0 && port <= 65535 ? port : 0;
 }
 
-const PROTOCOLS = new Set<ProxyNodeProtocol>(["vless", "vmess", "trojan", "shadowsocks"]);
+const PROTOCOLS = new Set<ProxyNodeProtocol>(PROXY_NODE_PROTOCOLS);
 const TRANSPORTS = new Set<ProxyNodeTransport>(["tcp", "ws", "grpc", "http"]);
 
 /** 把数据库行还原成节点模型。列都是宽松类型，这里统一收敛。 */
@@ -160,6 +172,13 @@ export function proxyNodeFromTemplateRow(row: ProxyNodeTemplateRow): ProxyNode {
   node.realityPublicKey = text(row.realityPublicKey);
   node.realityShortId = text(row.realityShortId);
   node.udp = row.udp === undefined ? true : bool(row.udp);
+  node.obfs = text(row.obfs).toLowerCase();
+  node.obfsPassword = text(row.obfsPassword);
+  node.congestionControl = text(row.congestionControl);
+  node.udpRelayMode = text(row.udpRelayMode);
+  node.disableSni = bool(row.disableSni);
+  // Hysteria2 / TUIC / AnyTLS 的 TLS 是协议自带的，老行里 tls 列可能是 0。
+  if (proxyNodeAlwaysTls(node.protocol)) node.tls = true;
   return node;
 }
 
@@ -266,6 +285,19 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
     }
     if (template.isEnabled !== undefined && !bool(template.isEnabled)) {
       skip("template-disabled");
+      continue;
+    }
+
+    /**
+     * QUIC 系协议（Hysteria2 / TUIC）只跑 UDP。转发规则若只放行 TCP，这条链路
+     * 从第一个握手包起就不通，而客户端那边只会显示一句超时 —— 跟「转发没放 UDP」
+     * 毫无字面关联。与其把一个注定连不上的节点发出去，不如在这里排除并写明原因。
+     *
+     * 只在明确是 tcp 时排除：protocol 缺省（调用方没查这一列）时不做判断，
+     * 宁可放行也不要凭猜测吞掉节点。
+     */
+    if (proxyNodeRequiresUdp(text(template.protocol).toLowerCase()) && text(rule.protocol).toLowerCase() === "tcp") {
+      skip("udp-not-forwarded");
       continue;
     }
 

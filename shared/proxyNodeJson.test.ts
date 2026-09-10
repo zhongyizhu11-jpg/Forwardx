@@ -232,7 +232,8 @@ test("坏 JSON 的报错要说人话", () => {
 });
 
 test("认得结构但协议不支持时，说明支持哪些", () => {
-  const result = parseProxyNodeJson(JSON.stringify({ type: "hysteria2", server: "1.2.3.4", port: 443, password: "p" }));
+  // 换成一个真的不支持的协议；hysteria2 已经支持了。
+  const result = parseProxyNodeJson(JSON.stringify({ type: "ssr", server: "1.2.3.4", port: 443, password: "p" }));
   assert.equal(result.ok, false);
   assert.match(result.ok ? "" : result.error, /VLESS/);
 });
@@ -242,4 +243,88 @@ test("缺凭据的配置不放过", () => {
   const result = parseProxyNodeJson(JSON.stringify({ type: "vless", server: "1.2.3.4", server_port: 443 }));
   assert.equal(result.ok, false);
   assert.match(result.ok ? "" : result.error, /UUID|密码/);
+});
+
+// ==================== Hysteria2 / TUIC / AnyTLS 的 JSON ====================
+
+test("sing-box 的 hysteria2 出站：混淆是对象", () => {
+  const { node } = ok(JSON.stringify({
+    type: "hysteria2",
+    tag: "HY2",
+    server: "hk.example.com",
+    server_port: 8443,
+    password: "pw",
+    obfs: { type: "salamander", password: "ob" },
+    tls: { enabled: true, server_name: "hk.example.com", alpn: ["h3"] },
+  }));
+
+  assert.equal(node.protocol, "hysteria2");
+  assert.equal(node.password, "pw");
+  assert.equal(node.obfs, "salamander");
+  assert.equal(node.obfsPassword, "ob");
+  assert.deepEqual(node.alpn, ["h3"]);
+  assert.equal(node.tls, true);
+});
+
+test("sing-box 的 tuic 出站：下划线键名，disable_sni 在 tls 里", () => {
+  const { node } = ok(JSON.stringify({
+    type: "tuic",
+    server: "hk.example.com",
+    server_port: 443,
+    uuid: "uuid-1",
+    password: "pw",
+    congestion_control: "bbr",
+    udp_relay_mode: "native",
+    tls: { enabled: true, disable_sni: true },
+  }));
+
+  assert.equal(node.protocol, "tuic");
+  assert.equal(node.congestionControl, "bbr");
+  assert.equal(node.udpRelayMode, "native");
+  assert.equal(node.disableSni, true);
+});
+
+test("mihomo 的 tuic 条目：连字符键名", () => {
+  const { node } = ok(JSON.stringify({
+    name: "TUIC",
+    type: "tuic",
+    server: "hk.example.com",
+    port: 443,
+    uuid: "uuid-1",
+    password: "pw",
+    "congestion-controller": "bbr",
+    "udp-relay-mode": "native",
+    "disable-sni": true,
+  }));
+
+  assert.equal(node.protocol, "tuic");
+  assert.equal(node.congestionControl, "bbr");
+  assert.equal(node.udpRelayMode, "native");
+  assert.equal(node.disableSni, true);
+  // 条目里没有 tls 字段，但 TUIC 的 TLS 是协议自带的。
+  assert.equal(node.tls, true);
+});
+
+test("mihomo 的 anytls 与 hysteria2 条目", () => {
+  const anytls = ok(JSON.stringify({
+    name: "AT", type: "anytls", server: "hk.example.com", port: 443, password: "pw", sni: "hk.example.com",
+  })).node;
+  assert.equal(anytls.protocol, "anytls");
+  assert.equal(anytls.password, "pw");
+  assert.equal(anytls.tls, true);
+
+  const hy2 = ok(JSON.stringify({
+    name: "HY2", type: "hysteria2", server: "hk.example.com", port: 8443,
+    password: "pw", obfs: "salamander", "obfs-password": "ob",
+  })).node;
+  assert.equal(hy2.protocol, "hysteria2");
+  assert.equal(hy2.obfs, "salamander");
+  assert.equal(hy2.obfsPassword, "ob");
+});
+
+test("hysteria v1 与 hysteria2 是两个协议，v1 仍然不支持", () => {
+  const result = parseProxyNodeJson(JSON.stringify({
+    type: "hysteria", server: "hk.example.com", server_port: 443, auth_str: "pw",
+  }));
+  assert.equal(result.ok, false);
 });

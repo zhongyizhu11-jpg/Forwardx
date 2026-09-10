@@ -14,7 +14,15 @@
 // 函数体内（延迟求值），运行时安全 —— proxyNode.test.ts 里有端到端用例实际验证这一点。
 import { looksLikeProxyNodeJson, parseProxyNodeJson } from "./proxyNodeJson";
 
-export const PROXY_NODE_PROTOCOLS = ["vless", "vmess", "trojan", "shadowsocks"] as const;
+export const PROXY_NODE_PROTOCOLS = [
+  "vless",
+  "vmess",
+  "trojan",
+  "shadowsocks",
+  "hysteria2",
+  "tuic",
+  "anytls",
+] as const;
 
 export type ProxyNodeProtocol = (typeof PROXY_NODE_PROTOCOLS)[number];
 
@@ -23,7 +31,38 @@ export const PROXY_NODE_PROTOCOL_LABELS: Record<ProxyNodeProtocol, string> = {
   vmess: "VMess",
   trojan: "Trojan",
   shadowsocks: "Shadowsocks",
+  hysteria2: "Hysteria2",
+  tuic: "TUIC v5",
+  anytls: "AnyTLS",
 };
+
+/**
+ * 跑在 QUIC 上的协议，也就是只走 UDP 的那几个。
+ *
+ * ForwardX 的转发规则可以只放行 TCP。把这类节点绑到一条 TCP-only 的转发上，
+ * 客户端能导入、能识别协议，握手时却永远收不到回包 —— 报出来只是一句超时，
+ * 跟「转发没放 UDP」毫无字面关联。所以要在绑定时就拦住。
+ */
+export const PROXY_NODE_QUIC_PROTOCOLS: readonly ProxyNodeProtocol[] = ["hysteria2", "tuic"];
+
+export function proxyNodeRequiresUdp(protocol: unknown): boolean {
+  return PROXY_NODE_QUIC_PROTOCOLS.includes(String(protocol ?? "") as ProxyNodeProtocol);
+}
+
+/**
+ * 这几个协议自带 TLS（Hysteria2 / TUIC 是 QUIC-TLS，AnyTLS 顾名思义），
+ * 链接里不会写 security=tls，解析和渲染时都按「一定有 TLS」处理。
+ */
+export const PROXY_NODE_ALWAYS_TLS_PROTOCOLS: readonly ProxyNodeProtocol[] = [
+  "trojan",
+  "hysteria2",
+  "tuic",
+  "anytls",
+];
+
+export function proxyNodeAlwaysTls(protocol: unknown): boolean {
+  return PROXY_NODE_ALWAYS_TLS_PROTOCOLS.includes(String(protocol ?? "") as ProxyNodeProtocol);
+}
 
 export const PROXY_NODE_TRANSPORTS = ["tcp", "ws", "grpc", "http"] as const;
 
@@ -58,6 +97,16 @@ export type ProxyNode = {
   realityPublicKey: string;
   realityShortId: string;
   udp: boolean;
+  /** Hysteria2 的混淆方式：salamander 或 gecko，空表示不混淆 */
+  obfs: string;
+  /** Hysteria2 的混淆密码 */
+  obfsPassword: string;
+  /** TUIC 的拥塞控制：cubic / new_reno / bbr */
+  congestionControl: string;
+  /** TUIC 的 UDP 转发模式：native 或 quic */
+  udpRelayMode: string;
+  /** TUIC 的握手不带 SNI */
+  disableSni: boolean;
   /**
    * 前置代理：这个节点的连接要先经由哪个节点建立（按名称引用）。
    *
@@ -89,6 +138,11 @@ export function createEmptyProxyNode(): ProxyNode {
     realityPublicKey: "",
     realityShortId: "",
     udp: true,
+    obfs: "",
+    obfsPassword: "",
+    congestionControl: "",
+    udpRelayMode: "",
+    disableSni: false,
   };
 }
 
@@ -371,6 +425,105 @@ function parseShadowsocksLink(link: string): ProxyNode | null {
   return node;
 }
 
+/**
+ * hysteria2:// 与 hy2:// 是同一种，见 Hysteria 2 官方的 URI Scheme。
+ *
+ *   hysteria2://[auth@]hostname[:port]/?obfs=&obfs-password=&sni=&insecure=#name
+ *
+ * 端口可以省，省略时按官方默认的 443 算；auth 整段就是密码（部分面板会发
+ * `用户:密码` 的形式，那也是一整个字符串，不能在冒号处劈开）。
+ */
+function parseHysteria2Link(link: string, scheme: string): ProxyNode | null {
+  const { body, query, name } = splitLink(stripScheme(link, scheme));
+  const at = body.lastIndexOf("@");
+  // 没有 auth 段的链接是合法的（服务端可以不校验），此时整段都是地址。
+  const password = at >= 0 ? text(decodeURIComponent(body.slice(0, at))) : "";
+  const { address, port } = splitHostPort(at >= 0 ? body.slice(at + 1) : body);
+  if (!address) return null;
+
+  const node = createEmptyProxyNode();
+  node.protocol = "hysteria2";
+  node.name = name;
+  node.address = address;
+  node.port = port || 443;
+  node.password = password;
+  node.tls = true;
+  node.sni = text(query.get("sni"));
+  node.alpn = splitAlpn(query.get("alpn"));
+  node.allowInsecure = isTruthyFlag(query.get("insecure")) || isTruthyFlag(query.get("allowInsecure"));
+  node.obfs = text(query.get("obfs")).toLowerCase();
+  node.obfsPassword = text(query.get("obfs-password")) || text(query.get("obfsPassword"));
+  return node;
+}
+
+/**
+ * tuic:// 是 TUIC v5 的分享链接：
+ *
+ *   tuic://uuid:password@host:port?congestion_control=&udp_relay_mode=&alpn=&sni=&allow_insecure=&disable_sni=#name
+ *
+ * v4 用的是单一 token，这里不认 —— v4 与 v5 的握手不兼容，猜错版本生成的
+ * 节点连不上，而客户端只会报超时。
+ */
+function parseTuicLink(link: string): ProxyNode | null {
+  const { body, query, name } = splitLink(stripScheme(link, "tuic://"));
+  const at = body.lastIndexOf("@");
+  if (at < 0) return null;
+  const credential = text(decodeURIComponent(body.slice(0, at)));
+  const colon = credential.indexOf(":");
+  if (colon < 0) return null;
+  const uuid = credential.slice(0, colon).trim();
+  const password = credential.slice(colon + 1).trim();
+  const { address, port } = splitHostPort(body.slice(at + 1));
+  if (!uuid || !address || !port) return null;
+
+  const node = createEmptyProxyNode();
+  node.protocol = "tuic";
+  node.name = name;
+  node.address = address;
+  node.port = port;
+  node.uuid = uuid;
+  node.password = password;
+  node.tls = true;
+  node.sni = text(query.get("sni"));
+  // TUIC 跑在 QUIC 上，ALPN 不写时各家默认值不一致，缺省补 h3 免得两端对不上。
+  node.alpn = splitAlpn(query.get("alpn"));
+  if (!node.alpn.length) node.alpn = ["h3"];
+  node.allowInsecure = isTruthyFlag(query.get("allow_insecure")) || isTruthyFlag(query.get("insecure"));
+  node.disableSni = isTruthyFlag(query.get("disable_sni"));
+  node.congestionControl = text(query.get("congestion_control")) || text(query.get("congestion_controller"));
+  node.udpRelayMode = text(query.get("udp_relay_mode"));
+  return node;
+}
+
+/**
+ * anytls:// 见 anytls-go 的 URI Scheme：
+ *
+ *   anytls://password@hostname[:port]/?sni=&insecure=
+ *
+ * 端口省略时按官方文档的默认 443。AnyTLS 跑在 TCP 上，不是 QUIC。
+ */
+function parseAnytlsLink(link: string): ProxyNode | null {
+  const { body, query, name } = splitLink(stripScheme(link, "anytls://"));
+  const at = body.lastIndexOf("@");
+  if (at < 0) return null;
+  const password = text(decodeURIComponent(body.slice(0, at)));
+  const { address, port } = splitHostPort(body.slice(at + 1));
+  if (!password || !address) return null;
+
+  const node = createEmptyProxyNode();
+  node.protocol = "anytls";
+  node.name = name;
+  node.address = address;
+  node.port = port || 443;
+  node.password = password;
+  node.tls = true;
+  node.sni = text(query.get("sni"));
+  node.alpn = splitAlpn(query.get("alpn"));
+  node.allowInsecure = isTruthyFlag(query.get("insecure")) || isTruthyFlag(query.get("allowInsecure"));
+  node.fingerprint = text(query.get("fp"));
+  return node;
+}
+
 export type ParseProxyNodeResult =
   | { ok: true; node: ProxyNode }
   | { ok: false; error: string };
@@ -399,6 +552,10 @@ export function parseProxyNodeLink(input: unknown): ParseProxyNodeResult {
   else if (lower.startsWith("vmess://")) node = parseVmessLink(link);
   else if (lower.startsWith("trojan://")) node = parseTrojanLink(link);
   else if (lower.startsWith("ss://")) node = parseShadowsocksLink(link);
+  else if (lower.startsWith("hysteria2://")) node = parseHysteria2Link(link, "hysteria2://");
+  else if (lower.startsWith("hy2://")) node = parseHysteria2Link(link, "hy2://");
+  else if (lower.startsWith("tuic://")) node = parseTuicLink(link);
+  else if (lower.startsWith("anytls://")) node = parseAnytlsLink(link);
   else {
     return {
       ok: false,
@@ -488,6 +645,36 @@ export function formatProxyNodeLink(node: ProxyNode): string {
       fp: node.fingerprint,
     };
     return `vmess://${encodeBase64Utf8(JSON.stringify(payload))}`;
+  }
+  if (node.protocol === "hysteria2") {
+    const params = new URLSearchParams();
+    appendQuery(params, "sni", node.sni);
+    if (node.alpn.length) params.set("alpn", node.alpn.join(","));
+    appendQuery(params, "obfs", node.obfs);
+    appendQuery(params, "obfs-password", node.obfsPassword);
+    if (node.allowInsecure) params.set("insecure", "1");
+    const query = params.toString();
+    // 官方 URI 里主机与查询串之间带一个 /，照写以免个别客户端的解析器挑剔。
+    return `hysteria2://${encodeURIComponent(node.password)}@${host}:${node.port}/${query ? `?${query}` : ""}${fragment}`;
+  }
+  if (node.protocol === "tuic") {
+    const params = new URLSearchParams();
+    appendQuery(params, "sni", node.sni);
+    if (node.alpn.length) params.set("alpn", node.alpn.join(","));
+    appendQuery(params, "congestion_control", node.congestionControl);
+    appendQuery(params, "udp_relay_mode", node.udpRelayMode);
+    if (node.disableSni) params.set("disable_sni", "1");
+    if (node.allowInsecure) params.set("allow_insecure", "1");
+    const credential = `${encodeURIComponent(node.uuid)}:${encodeURIComponent(node.password)}`;
+    const query = params.toString();
+    return `tuic://${credential}@${host}:${node.port}${query ? `?${query}` : ""}${fragment}`;
+  }
+  if (node.protocol === "anytls") {
+    const params = new URLSearchParams();
+    appendQuery(params, "sni", node.sni);
+    if (node.allowInsecure) params.set("insecure", "1");
+    const query = params.toString();
+    return `anytls://${encodeURIComponent(node.password)}@${host}:${node.port}/${query ? `?${query}` : ""}${fragment}`;
   }
   if (node.protocol === "shadowsocks") {
     const credential = encodeBase64Utf8(`${node.method}:${node.password}`)

@@ -9,7 +9,11 @@
 import {
   encodeBase64Utf8,
   formatProxyNodeLink,
+  PROXY_NODE_PROTOCOL_LABELS,
+  proxyNodeAlwaysTls,
+  proxyNodeRequiresUdp,
   type ProxyNode,
+  type ProxyNodeProtocol,
 } from "./proxyNode";
 import type {
   ProxySubscriptionDocument,
@@ -41,11 +45,11 @@ export const PROXY_SUBSCRIPTION_FORMAT_LABELS: Record<ProxySubscriptionFormat, s
 
 export const PROXY_SUBSCRIPTION_FORMAT_HINTS: Record<ProxySubscriptionFormat, string> = {
   base64: "v2rayN、v2rayNG、Shadowrocket 等通用客户端。",
-  clash: "Clash、Clash.Meta、mihomo、Stash。",
-  singbox: "sing-box 及基于它的客户端。",
-  loon: "Loon（iOS）。",
-  surge: "Surge（iOS/Mac）与 Surfboard（Android）。Surge 不支持 VLESS，这类节点会被跳过。",
-  quantumultx: "Quantumult X（iOS）。",
+  clash: "Clash、Clash.Meta、mihomo、Stash。协议最全。",
+  singbox: "sing-box 及基于它的客户端。协议最全。",
+  loon: "Loon（iOS）。不支持 TUIC。",
+  surge: "Surge（iOS/Mac）与 Surfboard（Android）。不支持 VLESS。",
+  quantumultx: "Quantumult X（iOS）。不支持 Hysteria2 / TUIC / AnyTLS。",
 };
 
 export const PROXY_SUBSCRIPTION_FORMAT_CONTENT_TYPES: Record<ProxySubscriptionFormat, string> = {
@@ -119,6 +123,41 @@ function clashProxyLines(node: ProxyNode): YamlLine[] {
 
   field("server", yamlQuote(node.address));
   field("port", String(node.port));
+
+  /**
+   * Hysteria2 / TUIC / AnyTLS 的字段自成一套：没有 network 与 ws-opts，TLS 也不是
+   * 「tls: true + servername」那两个键，而是直接写 sni + skip-cert-verify。
+   * 混进下面那套通用逻辑只会产出 mihomo 读不懂的键，所以单开一条分支并直接返回。
+   */
+  if (node.protocol === "hysteria2" || node.protocol === "tuic" || node.protocol === "anytls") {
+    if (node.protocol === "hysteria2") {
+      field("type", "hysteria2");
+      field("password", yamlQuote(node.password));
+      if (node.obfs) {
+        field("obfs", yamlQuote(node.obfs));
+        if (node.obfsPassword) field("obfs-password", yamlQuote(node.obfsPassword));
+      }
+    } else if (node.protocol === "tuic") {
+      field("type", "tuic");
+      field("uuid", yamlQuote(node.uuid));
+      field("password", yamlQuote(node.password));
+      // mihomo 这里叫 congestion-controller，sing-box 叫 congestion_control，别混。
+      if (node.congestionControl) field("congestion-controller", yamlQuote(node.congestionControl));
+      if (node.udpRelayMode) field("udp-relay-mode", yamlQuote(node.udpRelayMode));
+      if (node.disableSni) field("disable-sni", "true");
+    } else {
+      field("type", "anytls");
+      field("password", yamlQuote(node.password));
+      if (node.fingerprint) field("client-fingerprint", yamlQuote(node.fingerprint));
+      // udp 只在 anytls 的文档字段表里；hysteria2 与 tuic 本身跑在 QUIC 上，没这个键。
+      field("udp", node.udp ? "true" : "false");
+    }
+    if (node.sni) field("sni", yamlQuote(node.sni));
+    if (node.alpn.length) field("alpn", `[${node.alpn.map((item) => yamlQuote(item)).join(", ")}]`);
+    if (node.allowInsecure) field("skip-cert-verify", "true");
+    if (node.frontProxyName) field("dialer-proxy", yamlQuote(node.frontProxyName));
+    return lines;
+  }
 
   if (node.protocol === "vless") {
     field("type", "vless");
@@ -274,18 +313,39 @@ function singboxOutbound(node: ProxyNode): Record<string, unknown> {
   } else if (node.protocol === "trojan") {
     outbound.type = "trojan";
     outbound.password = node.password;
+  } else if (node.protocol === "hysteria2") {
+    outbound.type = "hysteria2";
+    outbound.password = node.password;
+    if (node.obfs) {
+      outbound.obfs = { type: node.obfs, ...(node.obfsPassword ? { password: node.obfsPassword } : {}) };
+    }
+  } else if (node.protocol === "tuic") {
+    outbound.type = "tuic";
+    outbound.uuid = node.uuid;
+    if (node.password) outbound.password = node.password;
+    // sing-box 用下划线命名，mihomo 用连字符且键名还不一样，两边不能照抄。
+    if (node.congestionControl) outbound.congestion_control = node.congestionControl;
+    if (node.udpRelayMode) outbound.udp_relay_mode = node.udpRelayMode;
+  } else if (node.protocol === "anytls") {
+    outbound.type = "anytls";
+    outbound.password = node.password;
   } else {
     outbound.type = "shadowsocks";
     outbound.method = node.method;
     outbound.password = node.password;
   }
 
-  if (node.tls || node.protocol === "trojan") {
+  if (node.tls || proxyNodeAlwaysTls(node.protocol)) {
     const tls: Record<string, unknown> = { enabled: true };
     if (node.sni) tls.server_name = node.sni;
     if (node.allowInsecure) tls.insecure = true;
     if (node.alpn.length) tls.alpn = [...node.alpn];
-    if (node.fingerprint) tls.utls = { enabled: true, fingerprint: node.fingerprint };
+    // TUIC 的「握手不带 SNI」在 sing-box 里是 TLS 选项，不是出站字段。
+    if (node.protocol === "tuic" && node.disableSni) tls.disable_sni = true;
+    // uTLS 是给 TCP 上的 TLS 指纹伪装用的，QUIC 系协议没有这一层，写了也是无效键。
+    if (node.fingerprint && !proxyNodeRequiresUdp(node.protocol)) {
+      tls.utls = { enabled: true, fingerprint: node.fingerprint };
+    }
     if (node.realityPublicKey) {
       tls.reality = {
         enabled: true,
@@ -389,6 +449,72 @@ function renderSingbox(
 }
 
 /**
+ * 各家客户端各自缺哪些协议。
+ *
+ * 依据都是官方手册，不是印象：
+ *   Loon        手册的协议列表里有 Hysteria2，没有 TUIC。AnyTLS 手册未列，但
+ *               Loon 已支持（Sub-Store 的 Loon 产出器有 anytls 分支），故不跳过。
+ *   Surge       策略列表里有 Hysteria 2 / TUIC v5 / AnyTLS，唯独没有 VLESS。
+ *   Quantumult X 至今只有 SS / VMess / Trojan / VLESS 那一套，QUIC 系一个都没有。
+ *
+ * 与其编出一行客户端读不懂的配置，不如跳过并在文件开头写明原因 —— 否则用户
+ * 只会看到节点凭空少了，跟协议毫无字面关联。
+ */
+const FORMAT_UNSUPPORTED_PROTOCOLS: Record<ProxySubscriptionFormat, readonly ProxyNodeProtocol[]> = {
+  base64: [],
+  clash: [],
+  singbox: [],
+  loon: ["tuic"],
+  surge: ["vless"],
+  quantumultx: ["hysteria2", "tuic", "anytls"],
+};
+
+/** 这个格式渲染不了这个节点吗？返回中文原因；空串表示能渲染。 */
+function unsupportedReason(node: ProxyNode, format: ProxySubscriptionFormat): string {
+  if (FORMAT_UNSUPPORTED_PROTOCOLS[format].includes(node.protocol)) {
+    return `${PROXY_SUBSCRIPTION_FORMAT_LABELS[format]} 不支持 ${PROXY_NODE_PROTOCOL_LABELS[node.protocol]}`;
+  }
+  // Loon 的 Hysteria2 只有 salamander-password 这一个混淆参数，gecko 没有位置可写。
+  if (format === "loon" && node.protocol === "hysteria2" && node.obfs && node.obfs !== "salamander") {
+    return `Loon 的 Hysteria2 只支持 salamander 混淆，这个节点用的是 ${node.obfs}`;
+  }
+  return "";
+}
+
+type SupportPartition = {
+  supported: ProxyNode[];
+  skipped: { node: ProxyNode; reason: string }[];
+};
+
+function partitionBySupport(nodes: readonly ProxyNode[], format: ProxySubscriptionFormat): SupportPartition {
+  const supported: ProxyNode[] = [];
+  const skipped: { node: ProxyNode; reason: string }[] = [];
+  for (const node of nodes) {
+    const reason = unsupportedReason(node, format);
+    if (reason) skipped.push({ node, reason });
+    else supported.push(node);
+  }
+  return { supported, skipped };
+}
+
+/** Loon、Surge、Quantumult X 的配置里 `#` 开头都是注释行，可以安全地写说明。 */
+function skipNoticeLines(skipped: SupportPartition["skipped"]): string[] {
+  if (skipped.length === 0) return [];
+  return [
+    ...skipped.map(({ node, reason }) => `# 已跳过节点「${node.name}」：${reason}`),
+    "# 这些节点改用 Clash 或 sing-box 格式的订阅地址即可，那两种的协议覆盖最全。",
+  ];
+}
+
+/**
+ * Loon 的 alpn 是逗号分隔并且要带引号 —— 节点行本身以逗号分隔，不加引号的话
+ * 多个 alpn 会把整行拆错位。单个值加引号同样合法。
+ */
+function loonAlpn(node: ProxyNode): string {
+  return node.alpn.length ? `alpn="${node.alpn.join(",")}"` : "";
+}
+
+/**
  * Loon 的节点行以逗号分隔、以 `=` 分隔名称与配置，所以名称里出现这两个字符会
  * 把整行解析错位，这里替换成安全字符而不是直接丢弃节点。
  */
@@ -400,6 +526,29 @@ function loonNodeLine(node: ProxyNode): string {
   const name = loonNodeName(node.name);
   const parts: string[] = [];
   const options: string[] = [];
+
+  // Hysteria2 与 AnyTLS 没有 transport / over-tls 那一套，单独走一条分支。
+  if (node.protocol === "hysteria2") {
+    parts.push("Hysteria2", node.address, String(node.port), `"${node.password}"`);
+    if (node.sni) options.push(`tls-name=${node.sni}`);
+    options.push(`skip-cert-verify=${node.allowInsecure ? "true" : "false"}`);
+    const alpn = loonAlpn(node);
+    if (alpn) options.push(alpn);
+    // Loon 只认 salamander，gecko 的节点已在 unsupportedReason 里跳掉了。
+    if (node.obfsPassword && node.obfs === "salamander") {
+      options.push(`salamander-password=${node.obfsPassword}`);
+    }
+    options.push(`udp=${node.udp ? "true" : "false"}`);
+    return `${name} = ${[...parts, ...options].join(",")}`;
+  }
+  if (node.protocol === "anytls") {
+    parts.push("anytls", node.address, String(node.port), `"${node.password}"`);
+    options.push(`skip-cert-verify=${node.allowInsecure ? "true" : "false"}`);
+    if (node.sni) options.push(`tls-name=${node.sni}`);
+    const alpn = loonAlpn(node);
+    if (alpn) options.push(alpn);
+    return `${name} = ${[...parts, ...options].join(",")}`;
+  }
 
   if (node.protocol === "vless") {
     parts.push("VLESS", node.address, String(node.port), `"${node.uuid}"`);
@@ -425,7 +574,8 @@ function loonNodeLine(node: ProxyNode): string {
   if (node.tls || node.protocol === "trojan") {
     // 官方示例配置用的是 tls-name，新版文档里的 sni 只是别名，这里取兼容性更好的写法。
     if (node.sni) options.push(`tls-name=${node.sni}`);
-    if (node.alpn.length) options.push(`alpn=${node.alpn.join(":")}`);
+    const alpn = loonAlpn(node);
+    if (alpn) options.push(alpn);
     options.push(`skip-cert-verify=${node.allowInsecure ? "true" : "false"}`);
   }
   // Reality。少了公钥就握不上手，而客户端只会报一句连接失败 —— 看不出缺的是参数。
@@ -440,20 +590,14 @@ function loonNodeLine(node: ProxyNode): string {
 }
 
 function renderLoon(nodes: readonly ProxyNode[]): string {
-  return `${markUnchainable(nodes).map(loonNodeLine).join("\n")}\n`;
+  const { supported, skipped } = partitionBySupport(markUnchainable(nodes), "loon");
+  return `${[...skipNoticeLines(skipped), ...supported.map(loonNodeLine)].join("\n")}\n`;
 }
 
 /**
  * 渲染订阅。base64 与 Loon 只输出节点，分组会被忽略 —— 见
  * PROXY_SUBSCRIPTION_FORMATS_WITH_GROUPS 的说明。
  */
-/**
- * Surge 原生不支持 VLESS（官方手册的协议列表里没有它，社区方案都是靠外部
- * sing-box 桥接）。与其编出一行 Surge 读不懂的配置，不如跳过并在文件里写明
- * 原因，否则用户只会看到节点凭空少了。
- */
-const SURGE_UNSUPPORTED_PROTOCOLS = new Set<ProxyNode["protocol"]>(["vless"]);
-
 function surgeNodeLine(node: ProxyNode): string {
   const parts: string[] = [];
   const name = node.name.replace(/[,=]/g, " ").replace(/\s+/g, " ").trim() || "node";
@@ -462,8 +606,24 @@ function surgeNodeLine(node: ProxyNode): string {
     parts.push("vmess", node.address, String(node.port), `username=${node.uuid}`);
   } else if (node.protocol === "trojan") {
     parts.push("trojan", node.address, String(node.port), `password=${node.password}`);
+  } else if (node.protocol === "hysteria2") {
+    parts.push("hysteria2", node.address, String(node.port), `password=${node.password}`);
+    // Surge 的混淆按类型分成两个参数名，没有统一的 obfs 键。
+    if (node.obfsPassword && node.obfs === "salamander") parts.push(`salamander-password=${node.obfsPassword}`);
+    if (node.obfsPassword && node.obfs === "gecko") parts.push(`gecko-password=${node.obfsPassword}`);
+  } else if (node.protocol === "tuic") {
+    // Surge 把 v4 和 v5 当成两种策略类型，v5 才是 uuid + password 这一套。
+    parts.push("tuic-v5", node.address, String(node.port), `uuid=${node.uuid}`, `password=${node.password}`);
+  } else if (node.protocol === "anytls") {
+    parts.push("anytls", node.address, String(node.port), `password=${node.password}`);
   } else {
     parts.push("ss", node.address, String(node.port), `encrypt-method=${node.method}`, `password=${node.password}`);
+  }
+
+  // Surge 的节点行本身以逗号分隔，alpn 写多个值会把行拆错位，所以只取第一个。
+  // Hysteria2 与 TUIC 的默认 alpn 就是 h3，落地机基本不会给第二个值。
+  if (node.alpn.length && (node.protocol === "hysteria2" || node.protocol === "tuic" || node.protocol === "anytls")) {
+    parts.push(`alpn=${node.alpn[0]}`);
   }
 
   // 前置代理：Surge 的节点行参数，值是另一个节点或策略组的名字。
@@ -476,27 +636,22 @@ function surgeNodeLine(node: ProxyNode): string {
     if (node.host) parts.push(`ws-headers=Host:${node.host}`);
   }
 
-  if (node.tls || node.protocol === "trojan") {
-    // trojan 本身即 TLS，Surge 不接受它再带 tls=true。
-    if (node.protocol !== "trojan") parts.push("tls=true");
+  if (node.tls || proxyNodeAlwaysTls(node.protocol)) {
+    // trojan / hysteria2 / tuic / anytls 本身即 TLS，Surge 不接受它们再带 tls=true。
+    if (!proxyNodeAlwaysTls(node.protocol)) parts.push("tls=true");
     if (node.sni) parts.push(`sni=${node.sni}`);
     parts.push(`skip-cert-verify=${node.allowInsecure ? "true" : "false"}`);
   }
-  parts.push(`udp-relay=${node.udp ? "true" : "false"}`);
+  // Hysteria2 / TUIC / AnyTLS 的 UDP 转发是协议自带的，Surge 手册明说不需要这个参数。
+  const carriesUdpItself = node.protocol === "hysteria2" || node.protocol === "tuic" || node.protocol === "anytls";
+  if (!carriesUdpItself) parts.push(`udp-relay=${node.udp ? "true" : "false"}`);
 
   return `${name} = ${parts.join(", ")}`;
 }
 
 function renderSurge(nodes: readonly ProxyNode[]): string {
-  const supported = nodes.filter((node) => !SURGE_UNSUPPORTED_PROTOCOLS.has(node.protocol));
-  const skipped = nodes.filter((node) => SURGE_UNSUPPORTED_PROTOCOLS.has(node.protocol));
-  const lines: string[] = [];
-  if (skipped.length > 0) {
-    lines.push(`# Surge 不支持 VLESS，已跳过 ${skipped.length} 个节点：${skipped.map((node) => node.name).join("、")}`);
-    lines.push("# 这些节点可以用 Clash、sing-box 或 Quantumult X 格式的订阅地址。");
-  }
-  lines.push(...supported.map(surgeNodeLine));
-  return `${lines.join("\n")}\n`;
+  const { supported, skipped } = partitionBySupport(nodes, "surge");
+  return `${[...skipNoticeLines(skipped), ...supported.map(surgeNodeLine)].join("\n")}\n`;
 }
 
 /**
@@ -542,7 +697,8 @@ function quantumultxNodeLine(node: ProxyNode): string {
 }
 
 function renderQuantumultX(nodes: readonly ProxyNode[]): string {
-  return `${markUnchainable(nodes).map(quantumultxNodeLine).join("\n")}\n`;
+  const { supported, skipped } = partitionBySupport(markUnchainable(nodes), "quantumultx");
+  return `${[...skipNoticeLines(skipped), ...supported.map(quantumultxNodeLine)].join("\n")}\n`;
 }
 
 export function renderProxySubscription(

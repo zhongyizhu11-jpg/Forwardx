@@ -3,7 +3,13 @@ import { z } from "zod";
 
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
-import { parseProxyNodeLink, type ProxyNode } from "../../shared/proxyNode";
+import {
+  parseProxyNodeLink,
+  PROXY_NODE_PROTOCOL_LABELS,
+  proxyNodeRequiresUdp,
+  type ProxyNode,
+  type ProxyNodeProtocol,
+} from "../../shared/proxyNode";
 import { PROXY_SUBSCRIPTION_FORMATS } from "../../shared/proxySubscription";
 import { PROXY_RULE_PRESETS } from "../../shared/proxyRuleset";
 import {
@@ -38,6 +44,11 @@ function nodeToRow(node: ProxyNode, sourceLink: string) {
     realityPublicKey: node.realityPublicKey || null,
     realityShortId: node.realityShortId || null,
     udp: node.udp,
+    obfs: node.obfs || null,
+    obfsPassword: node.obfsPassword || null,
+    congestionControl: node.congestionControl || null,
+    udpRelayMode: node.udpRelayMode || null,
+    disableSni: node.disableSni,
   };
 }
 
@@ -189,7 +200,20 @@ export const proxySubscriptionsRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
       const rule = await assertOwnedRule(input.ruleId, ctx);
-      if (input.proxyNodeId !== null) await assertOwnedNode(input.proxyNodeId, ctx);
+      if (input.proxyNodeId !== null) {
+        const node = await assertOwnedNode(input.proxyNodeId, ctx);
+        /**
+         * Hysteria2 与 TUIC 跑在 QUIC 上，全程只用 UDP。绑到一条只放行 TCP 的
+         * 转发上，客户端能导入、能识别协议，握手却永远收不到回包 —— 报出来只是
+         * 一句超时。这里直接拦住并说清要改什么，比事后排查省事得多。
+         */
+        if (proxyNodeRequiresUdp(node.protocol) && String(rule.protocol || "").toLowerCase() === "tcp") {
+          throw new Error(
+            `${PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol} 走 QUIC，只用 UDP；`
+            + "这条转发目前只放行 TCP，请先把转发协议改成 UDP 或 TCP+UDP",
+          );
+        }
+      }
       const data: Record<string, unknown> = { proxyNodeId: input.proxyNodeId };
       if (input.proxyNodeName !== undefined) data.proxyNodeName = input.proxyNodeName || null;
       if (input.proxyNodeVisible !== undefined) data.proxyNodeVisible = input.proxyNodeVisible;

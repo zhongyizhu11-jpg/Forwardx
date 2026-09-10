@@ -400,7 +400,8 @@ export const proxyNodes = table("proxy_nodes", {
   userId: int("userId").notNull(),
   name: text("name").notNull(),
   remark: text("remark"),
-  protocol: varchar("protocol", { length: 32 }).notNull().default("vless"), // vless | vmess | trojan | shadowsocks
+  // vless | vmess | trojan | shadowsocks | hysteria2 | tuic | anytls
+  protocol: varchar("protocol", { length: 32 }).notNull().default("vless"),
   // 用户粘贴的原始链接，仅作留档与重新导入，渲染以下面解析后的字段为准
   sourceLink: text("sourceLink"),
   address: text("address").notNull(),
@@ -421,6 +422,13 @@ export const proxyNodes = table("proxy_nodes", {
   realityPublicKey: text("realityPublicKey"),
   realityShortId: text("realityShortId"),
   udp: boolean("udp").notNull().default(true),
+  // Hysteria2 的混淆：salamander | gecko，空表示不混淆
+  obfs: text("obfs"),
+  obfsPassword: text("obfsPassword"),
+  // TUIC 的拥塞控制（cubic | new_reno | bbr）与 UDP 转发模式（native | quic）
+  congestionControl: text("congestionControl"),
+  udpRelayMode: text("udpRelayMode"),
+  disableSni: boolean("disableSni").notNull().default(false),
   // 多台中转指向同一落地节点时，订阅里额外生成的选路组类型：off | url-test | fallback
   autoGroup: varchar("autoGroup", { length: 16 }).notNull().default("url-test"),
   // 把落地机自己的地址也作为一个节点放进订阅。默认关：开了之后落地 IP 会出现在

@@ -393,7 +393,7 @@ test("Surge 跳过 VLESS 并在文件里说明原因", () => {
   const lines = output.trim().split("\n");
 
   // Surge 原生不支持 VLESS，编一行它读不懂的配置比跳过更糟。
-  assert.match(lines[0], /^# Surge 不支持 VLESS/);
+  assert.match(lines[0], /^# 已跳过节点.+Surge \/ Surfboard 不支持 VLESS/);
   assert.match(lines[0], /广州1 → HKT/);
   assert.match(lines[1], /^#/);
   assert.equal(lines.length, 3);
@@ -448,7 +448,7 @@ test("Surge 全是 VLESS 时只剩说明，不产出空文件", () => {
   assert.equal(lines.length, 2);
   assert.ok(lines.every((line) => line.startsWith("#")));
   // 要告诉用户去用哪种格式，否则他只会看到一个空订阅。
-  assert.match(lines[1], /Clash、sing-box 或 Quantumult X/);
+  assert.match(lines[1], /Clash 或 sing-box/);
 });
 
 test("Quantumult X 支持 VLESS，字段名用它自己那套", () => {
@@ -570,4 +570,174 @@ test("非 Reality 的节点不会凭空多出 public-key", () => {
 
   assert.doesNotMatch(output, /public-key/);
   assert.doesNotMatch(output, /short-id/);
+});
+
+// ==================== Hysteria2 / TUIC / AnyTLS 各家渲染 ====================
+
+const HY2 = "hysteria2://hy2-pass@hk.example.com:8443/?obfs=salamander&obfs-password=ob&sni=hk.example.com&alpn=h3#HY2";
+const HY2_GECKO = "hysteria2://hy2-pass@hk.example.com:8443/?obfs=gecko&obfs-password=ob&sni=hk.example.com#HY2G";
+const TUIC = "tuic://uuid-1:tuic-pass@hk.example.com:443?congestion_control=bbr&udp_relay_mode=native&sni=hk.example.com#TUIC";
+const ANYTLS = "anytls://at-pass@hk.example.com:443/?sni=hk.example.com#AT";
+
+function only(link: string, name: string) {
+  return {
+    nodes: [node(link, { address: "1.2.3.4", port: 20001, name })],
+    groups: [],
+    ruleSets: [],
+    rules: [],
+  };
+}
+
+test("Clash 的 Hysteria2 用 password + obfs，而不是 tls: true 那一套", () => {
+  const parsed = parseYamlSubset(renderProxySubscription(only(HY2, "广州1 → HY2"), "clash"));
+  const proxy = (parsed.proxies as Record<string, unknown>[])[0];
+
+  assert.equal(proxy.type, "hysteria2");
+  assert.equal(proxy.password, "hy2-pass");
+  assert.equal(proxy.obfs, "salamander");
+  assert.equal(proxy["obfs-password"], "ob");
+  // Hysteria2 的服务器名在 mihomo 里就叫 sni，不是 servername。
+  assert.equal(proxy.sni, "hk.example.com");
+  // 这几个键在 hysteria2 条目里不存在，写了就是无效字段。
+  assert.equal(proxy.tls, undefined);
+  assert.equal(proxy.servername, undefined);
+  assert.equal(proxy.network, undefined);
+});
+
+test("Clash 的 TUIC 用 congestion-controller 这个连字符键名", () => {
+  const parsed = parseYamlSubset(renderProxySubscription(only(TUIC, "广州1 → TUIC"), "clash"));
+  const proxy = (parsed.proxies as Record<string, unknown>[])[0];
+
+  assert.equal(proxy.type, "tuic");
+  assert.equal(proxy.uuid, "uuid-1");
+  assert.equal(proxy.password, "tuic-pass");
+  // sing-box 那边叫 congestion_control，抄错了 mihomo 会当成未知字段。
+  assert.equal(proxy["congestion-controller"], "bbr");
+  assert.equal(proxy["udp-relay-mode"], "native");
+});
+
+test("Clash 的 AnyTLS 带 udp，QUIC 系不带", () => {
+  const anytls = parseYamlSubset(renderProxySubscription(only(ANYTLS, "AT"), "clash"));
+  assert.equal(((anytls.proxies as Record<string, unknown>[])[0]).udp, true);
+
+  const hy2 = parseYamlSubset(renderProxySubscription(only(HY2, "HY2"), "clash"));
+  // 官方字段表里 hysteria2 没有 udp 这一项，它本身就跑在 UDP 上。
+  assert.equal(((hy2.proxies as Record<string, unknown>[])[0]).udp, undefined);
+});
+
+test("sing-box 的 Hysteria2 混淆是对象，TUIC 的 disable_sni 在 tls 里", () => {
+  const hy2 = JSON.parse(renderProxySubscription(only(HY2, "HY2"), "singbox"));
+  const hy2Out = hy2.outbounds.find((item: any) => item.type === "hysteria2");
+  assert.deepEqual(hy2Out.obfs, { type: "salamander", password: "ob" });
+  assert.equal(hy2Out.password, "hy2-pass");
+  assert.equal(hy2Out.tls.enabled, true);
+  assert.equal(hy2Out.tls.server_name, "hk.example.com");
+
+  const tuicLink = `${TUIC.split("#")[0]}&disable_sni=1#TUIC`;
+  const tuic = JSON.parse(renderProxySubscription(only(tuicLink, "TUIC"), "singbox"));
+  const tuicOut = tuic.outbounds.find((item: any) => item.type === "tuic");
+  assert.equal(tuicOut.uuid, "uuid-1");
+  assert.equal(tuicOut.congestion_control, "bbr");
+  assert.equal(tuicOut.udp_relay_mode, "native");
+  // disable_sni 是 TLS 选项，放到出站顶层 sing-box 不认。
+  assert.equal(tuicOut.tls.disable_sni, true);
+  assert.equal(tuicOut.disable_sni, undefined);
+});
+
+test("sing-box 的 AnyTLS 只要 password 和 tls", () => {
+  const parsed = JSON.parse(renderProxySubscription(only(ANYTLS, "AT"), "singbox"));
+  const out = parsed.outbounds.find((item: any) => item.type === "anytls");
+  assert.equal(out.password, "at-pass");
+  assert.equal(out.tls.enabled, true);
+});
+
+test("Loon 支持 Hysteria2 与 AnyTLS，但没有 TUIC", () => {
+  const hy2 = renderProxySubscription(only(HY2, "广州1 → HY2"), "loon").trim();
+  assert.match(hy2, /^广州1 → HY2 = Hysteria2,1\.2\.3\.4,20001,"hy2-pass"/);
+  assert.match(hy2, /tls-name=hk\.example\.com/);
+  assert.match(hy2, /salamander-password=ob/);
+  // Loon 的 alpn 要带引号，否则多个值会把逗号分隔的行拆错位。
+  assert.match(hy2, /alpn="h3"/);
+
+  const at = renderProxySubscription(only(ANYTLS, "AT"), "loon").trim();
+  assert.match(at, /^AT = anytls,1\.2\.3\.4,20001,"at-pass"/);
+
+  const tuic = renderProxySubscription(only(TUIC, "TUIC"), "loon").trim().split("\n");
+  assert.ok(tuic.every((line) => line.startsWith("#")));
+  assert.match(tuic[0], /Loon 不支持 TUIC/);
+});
+
+test("Loon 的 Hysteria2 遇到 gecko 混淆宁可跳过", () => {
+  // Loon 只有 salamander-password 一个参数位；照发出去就是「能导入、连不上」。
+  const lines = renderProxySubscription(only(HY2_GECKO, "HY2G"), "loon").trim().split("\n");
+  assert.ok(lines.every((line) => line.startsWith("#")));
+  assert.match(lines[0], /只支持 salamander 混淆/);
+});
+
+test("Surge 的三个新协议各用各的策略类型名", () => {
+  const hy2 = renderProxySubscription(only(HY2, "HY2"), "surge").trim();
+  assert.match(hy2, /^HY2 = hysteria2, 1\.2\.3\.4, 20001, password=hy2-pass/);
+  assert.match(hy2, /salamander-password=ob/);
+  // 协议自带 TLS，Surge 不接受再写 tls=true；UDP 也是协议自带的。
+  assert.doesNotMatch(hy2, /tls=true/);
+  assert.doesNotMatch(hy2, /udp-relay=/);
+  assert.match(hy2, /sni=hk\.example\.com/);
+
+  const tuic = renderProxySubscription(only(TUIC, "TUIC"), "surge").trim();
+  // Surge 把 v4 和 v5 当两种类型，v5 才是 uuid + password。
+  assert.match(tuic, /^TUIC = tuic-v5, 1\.2\.3\.4, 20001, uuid=uuid-1, password=tuic-pass/);
+
+  const at = renderProxySubscription(only(ANYTLS, "AT"), "surge").trim();
+  assert.match(at, /^AT = anytls, 1\.2\.3\.4, 20001, password=at-pass/);
+});
+
+test("Surge 的 gecko 混淆用另一个参数名", () => {
+  const line = renderProxySubscription(only(HY2_GECKO, "HY2G"), "surge").trim();
+  assert.match(line, /gecko-password=ob/);
+  assert.doesNotMatch(line, /salamander-password/);
+});
+
+test("Quantumult X 一个 QUIC 系协议都不支持，逐个说明跳过原因", () => {
+  const document = {
+    nodes: [
+      node(HY2, { address: "1.2.3.4", port: 20001, name: "HY2" }),
+      node(TUIC, { address: "1.2.3.4", port: 20002, name: "TUIC" }),
+      node(ANYTLS, { address: "1.2.3.4", port: 20003, name: "AT" }),
+      node(TROJAN, { address: "5.6.7.8", port: 20004, name: "TJ" }),
+    ],
+    groups: [],
+    ruleSets: [],
+    rules: [],
+  };
+
+  const lines = renderProxySubscription(document, "quantumultx").trim().split("\n");
+
+  assert.equal(lines.length, 5);
+  assert.match(lines[0], /HY2.+不支持 Hysteria2/);
+  assert.match(lines[1], /TUIC.+不支持 TUIC/);
+  assert.match(lines[2], /AT.+不支持 AnyTLS/);
+  assert.match(lines[3], /^#/);
+  // trojan 照常渲染，不受跳过影响。
+  assert.match(lines[4], /^trojan=5\.6\.7\.8:20004/);
+});
+
+test("base64 订阅原样带出三种新协议的链接", () => {
+  const document = {
+    nodes: [
+      node(HY2, { address: "1.2.3.4", port: 20001, name: "HY2" }),
+      node(TUIC, { address: "1.2.3.4", port: 20002, name: "TUIC" }),
+      node(ANYTLS, { address: "1.2.3.4", port: 20003, name: "AT" }),
+    ],
+    groups: [],
+    ruleSets: [],
+    rules: [],
+  };
+
+  const links = decodeBase64Utf8(renderProxySubscription(document, "base64")).trim().split("\n");
+
+  assert.equal(links.length, 3);
+  assert.ok(links[0].startsWith("hysteria2://hy2-pass@1.2.3.4:20001/"));
+  assert.match(links[0], /obfs=salamander/);
+  assert.ok(links[1].startsWith("tuic://uuid-1:tuic-pass@1.2.3.4:20002?"));
+  assert.ok(links[2].startsWith("anytls://at-pass@1.2.3.4:20003/"));
 });
