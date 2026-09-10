@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.3.290] - 2026-09-10
+
+### 修复
+
+- Loon 格式的订阅漏掉了 VLESS Reality 的公钥与 short-id，导致这类节点在 Loon 中一律连接失败。Clash 与 sing-box 两种格式此前已正确输出，只有 Loon 这条路径遗漏。缺少公钥时握手无法完成，而客户端只显示一句连接失败，看不出缺的是参数而非网络。
+- 节点链接现在也认 Shadowrocket 写法的 VLESS：整段为 base64、用 `tls=1` 而非 `security=tls`、Reality 不写 `security` 而靠 `pbk` 判断、名称在 `remarks` 参数里、流控写成 `xtls=N`。此前这类链接会直接报「格式无法识别」。
+
+### 版本
+
+- 面板与 APK Release `2.3.290`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
 ## [2.3.289] - 2026-09-10
 
 ### 修复
