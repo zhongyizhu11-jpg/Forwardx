@@ -4,6 +4,11 @@ import { AGENT_VERSION } from "./_core/systemRouter";
 import { clearHostTcpingRequest, hasHostTcpingRequest, isHostMetricsWatching, pushAgentDesiredState } from "./agentEvents";
 import { getEnabledProxyInboundsByHost, proxyInboundFromRow } from "./repositories/proxyInboundRepository";
 import { buildSingboxRuntimePlan } from "./singboxRuntimePlan";
+import {
+  PROXY_INBOUND_TRAFFIC_FORWARD_TYPE,
+  proxyInboundTrafficProtocol,
+  proxyInboundTrafficRuleId,
+} from "../shared/proxyInboundTraffic";
 import { effectiveGithubAccelerator } from "../shared/githubAccelerator";
 import { AGENT_PLUGIN_TASK_VERSION, buildMetaAgentSelfTestPayload, buildRuleAgentSelfTestPayload, hasAgentVersionChanged, isAgentUpgradeTargetSatisfied, isAgentVersionAtLeast, parseSelfTestMeta, tunnelSecretSeed } from "./agentRouteUtils";
 import { resolveAgentAdvertisedPanelUrl } from "./agentPanelUrl";
@@ -5799,6 +5804,30 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       if (runningRule) addRunningRule(runningRule);
     }
 
+    /**
+     * 落地入站的端口也要进 runningRules —— 但只为了计数，不为了转发。
+     *
+     * 这条路能走通靠两个既有事实：runningRules 只驱动「写状态 + 装计数链」，
+     * 转发器是 actions 启动的；而非 iptables/nftables/forwardx 的方式走
+     * countingRuleProcess 模式，装计数链只需要监听端口和协议，不需要目标地址。
+     * 所以放进来但不发 apply 动作，就只会计数。已装的 Agent 不必升级。
+     *
+     * 必须放在下面那个 expectedRulePorts 循环之前：那里算的是「这台机器上应该
+     * 存在哪些端口」，漏掉的话 Agent 会把落地端口的计数链当孤儿清掉。
+     */
+    const hostProxyInbounds = await getEnabledProxyInboundsByHost(Number(host.id));
+    for (const row of hostProxyInbounds as any[]) {
+      addRunningRule({
+        ruleId: proxyInboundTrafficRuleId(Number(row.id)),
+        sourcePort: Number(row.port) || 0,
+        // 只计数，没有转发目标。
+        targetIp: "",
+        targetPort: 0,
+        protocol: proxyInboundTrafficProtocol(row.protocol),
+        forwardType: PROXY_INBOUND_TRAFFIC_FORWARD_TYPE,
+      });
+    }
+
     for (const runningRule of runningRules) {
       const port = Number(runningRule.sourcePort || 0);
       if (port > 0) expectedRulePorts.add(runtimePortProtocolKey(port, runningRule.protocol));
@@ -6289,9 +6318,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
      * 会按签名去重，所以只会真正下发一次。
      */
     if (!deferActionsForLocalState) {
-      const inboundRows = await getEnabledProxyInboundsByHost(Number(host.id));
       const singboxPlan = buildSingboxRuntimePlan({
-        inbounds: inboundRows.map((row: any) => ({
+        inbounds: (hostProxyInbounds as any[]).map((row: any) => ({
           inbound: proxyInboundFromRow(row),
           // 用行 id 做 tag：改名不该让 sing-box 认为这是另一个入站。
           tag: `inbound-${Number(row.id)}`,

@@ -16,6 +16,10 @@ import {
   type AgentTrafficStat,
   type AgentTunnelTcpingResult,
 } from "../shared/agentDtos";
+import {
+  isProxyInboundTrafficRuleId,
+  proxyInboundIdFromTrafficRuleId,
+} from "../shared/proxyInboundTraffic";
 import { recordForwardGroupAutoHopLatency } from "./forwardGroupAutoLatencyState";
 import { getTunnelAutoHopAggregate, recordTunnelAutoHopLatency } from "./tunnelAutoLatencyState";
 import { getTunnelMultiEntryLatency, recordTunnelMultiEntryLatency } from "./tunnelMultiEntryLatencyState";
@@ -746,12 +750,28 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       return;
     }
 
+    /**
+     * 落地入站的上报混在同一个 stats 数组里，靠 ruleId 的基数偏移区分。
+     *
+     * 必须先拆开再去查转发规则：入站的那个 id 不是转发规则 id，混着查会白查一遍，
+     * 而且它会走到「查不到上下文」的分支被当成无效数据丢掉 —— 那正是「都要记」
+     * 却记不上的静默失败。
+     */
+    const inboundStats = stats.filter((stat) => isProxyInboundTrafficRuleId(stat.ruleId));
+    const ruleStats = stats.filter((stat) => !isProxyInboundTrafficRuleId(stat.ruleId));
+    const inboundOwners = inboundStats.length > 0
+      ? await db.getProxyInboundOwnersByIds(inboundStats.map((stat) => proxyInboundIdFromTrafficRuleId(stat.ruleId)))
+      : new Map<number, number>();
+
     const preliminaryTrafficContexts = await db.getForwardRuleTrafficContextsByIds(
-      stats.map((stat) => Number(stat.ruleId)),
+      ruleStats.map((stat) => Number(stat.ruleId)),
     );
-    const accountingUserIds = (preliminaryTrafficContexts as any[])
-      .map((context) => Number(context?.rule?.userId || 0))
-      .filter((userId) => userId > 0);
+    const accountingUserIds = Array.from(new Set([
+      ...(preliminaryTrafficContexts as any[])
+        .map((context) => Number(context?.rule?.userId || 0)),
+      // 入站的所有者也要一起上锁，否则同一个用户的两条计费路径可能并发写配额。
+      ...Array.from(inboundOwners.values()).map((userId) => Number(userId)),
+    ])).filter((userId) => userId > 0);
     await withTrafficAccountingUserLocks(accountingUserIds, () => db.withDatabaseTransaction(async () => {
       // Lock database rows in the same deterministic order as the in-process
       // keyed locks. This protects quota/billing counters when reports arrive
@@ -777,7 +797,7 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       billingResource: NonNullable<Awaited<ReturnType<typeof db.findTrafficBillingResourceForRule>>>;
     }> = [];
     const trafficBillingEnabled = await db.getTrafficBillingEnabledForWrite();
-    const trafficContexts = await db.getForwardRuleTrafficContextsByIds(stats.map((stat) => Number(stat.ruleId)));
+    const trafficContexts = await db.getForwardRuleTrafficContextsByIds(ruleStats.map((stat) => Number(stat.ruleId)));
     const contextsByRuleId = new Map((trafficContexts as any[]).map((context) => [Number(context.rule.id), context]));
     const tunnelContextsById = new Map<number, any>();
     for (const context of trafficContexts as any[]) {
@@ -812,7 +832,28 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
         .map((context) => context.rule)
         .filter((rule) => rulesWithBytes.has(Number(rule.id))))
       : new Map();
-    for (const stat of stats) {
+    /**
+     * 落地入站的流量按「转发套餐」算，与转发规则走同一个配额出口。
+     *
+     * 只累加配额，不写 traffic_stats —— 那张表是按 ruleId 组织的历史明细，塞一个
+     * 不存在的规则 id 进去会污染按规则看的报表。落地流量在主机维度的统计里本来
+     * 就看得到。
+     */
+    for (const stat of inboundStats) {
+      const inboundId = proxyInboundIdFromTrafficRuleId(stat.ruleId);
+      const userId = Number(inboundOwners.get(inboundId) || 0);
+      const bytes = (Number(stat.bytesIn) || 0) + (Number(stat.bytesOut) || 0);
+      if (userId <= 0 || bytes <= 0) {
+        ignoredStatCount += 1;
+        continue;
+      }
+      acceptedStatCount += 1;
+      acceptedBytesIn += Number(stat.bytesIn) || 0;
+      acceptedBytesOut += Number(stat.bytesOut) || 0;
+      quotaTrafficByUser.set(userId, (quotaTrafficByUser.get(userId) || 0) + bytes);
+    }
+
+    for (const stat of ruleStats) {
       const bytesIn = Number(stat.bytesIn) || 0;
       const bytesOut = Number(stat.bytesOut) || 0;
       const context = contextsByRuleId.get(Number(stat.ruleId)) as any;

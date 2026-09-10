@@ -9,7 +9,7 @@
  * 消失 —— 与其让两边悄悄分叉，不如让它明确地不可编辑（inboundId 非 0 即为派生）。
  */
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 
 import {
   hosts,
@@ -176,6 +176,26 @@ export async function deleteProxyInbound(id: number) {
   for (const node of derived) await deleteProxyNode(Number((node as any).id));
   await db.delete(proxyInbounds).where(eq(proxyInbounds.id, id));
   return { releasedNodes: derived.length };
+}
+
+/**
+ * 一批入站各自属于哪个用户。流量上报要靠它把字节数落到人头上。
+ *
+ * 一次查完而不是逐条查：一台机器上可能有十几个入站，每次心跳都逐条查是白花的
+ * 往返。查不到的 id 不出现在结果里，调用方按「无主流量」丢弃并计入 ignored。
+ */
+export async function getProxyInboundOwnersByIds(ids: readonly number[]): Promise<Map<number, number>> {
+  const owners = new Map<number, number>();
+  const wanted = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return owners;
+  const db = await getDb();
+  if (!db) return owners;
+  const rows = await db
+    .select({ id: proxyInbounds.id, userId: proxyInbounds.userId })
+    .from(proxyInbounds)
+    .where(inArray(proxyInbounds.id, wanted));
+  for (const row of rows as any[]) owners.set(Number(row.id), Number(row.userId));
+  return owners;
 }
 
 // ==================== 派生客户端节点 ====================

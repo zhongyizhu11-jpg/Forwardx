@@ -231,7 +231,7 @@ export default function ProxyInbounds() {
             <div>
               <CardTitle className="text-base">落地节点</CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">
-                在自己的主机上开节点，自动进订阅。租来的线路机装不了 Agent，那种仍然去「客户端订阅」粘链接。
+                在自己的主机上开节点，自动进订阅。流量按端口计数，和转发规则走同一个套餐额度。租来的线路机装不了 Agent，那种仍然去「客户端订阅」粘链接。
               </p>
             </div>
             <Button size="sm" onClick={openCreate} disabled={hosts.length === 0}>
