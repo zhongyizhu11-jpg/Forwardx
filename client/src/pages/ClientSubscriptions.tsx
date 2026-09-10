@@ -394,7 +394,7 @@ export default function ClientSubscriptionsPage() {
                 当前账号没有客户端订阅权限。
               </p>
               <p className="mt-2 text-xs text-muted-foreground">
-                该权限由管理员单独授予，或包含在部分套餐中。转发被停用或流量用尽时也会暂时收回。
+                联系管理员开通。
               </p>
             </CardContent>
           </Card>
@@ -406,27 +406,15 @@ export default function ClientSubscriptionsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold">客户端订阅</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            转发规则只记录地址和端口，不含节点凭据。把落地机的节点链接在这里登记一次，
-            面板会把每条绑定的转发改写成可导入的节点，之后新增转发会自动进订阅。
-          </p>
-        </div>
+        <h1 className="text-2xl font-semibold">客户端订阅</h1>
 
         <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Server className="h-4 w-4" />
-                落地节点
-              </CardTitle>
-              <CardDescription>
-                按落地机登记，不是按转发。多条转发指向同一台落地机时共用一个节点即可，
-                面板会为它们额外生成一个自动选路组。
-              </CardDescription>
-            </div>
-            <Button size="sm" onClick={openCreateNode}>
+          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Server className="h-4 w-4" />
+              落地节点
+            </CardTitle>
+            <Button size="sm" className="shrink-0" onClick={openCreateNode}>
               <Plus className="mr-1 h-4 w-4" />
               添加节点
             </Button>
@@ -511,8 +499,8 @@ export default function ClientSubscriptionsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">订阅内容</CardTitle>
-            <CardDescription>
-              客户端拉到的就是这份列表。关掉开关可以让某个节点不出现在订阅里，转发本身照常运行。
+            <CardDescription className="text-xs">
+              关掉开关只是不进订阅，转发照常运行。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -610,8 +598,7 @@ export default function ClientSubscriptionsPage() {
                       </div>
                     ))}
                     <p className="text-xs text-muted-foreground">
-                      在客户端里选这个组，它会自己挑最快的中转，那条挂了自动换下一条。
-                      通用 Base64 和 Loon 的节点订阅格式表达不了策略组，只会拿到裸节点。
+                      选这个组，客户端自动挑最快的中转。
                     </p>
                   </div>
                 )}
@@ -671,18 +658,13 @@ export default function ClientSubscriptionsPage() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Link2 className="h-4 w-4" />
-                订阅链接
-              </CardTitle>
-              <CardDescription>
-                每个链接都给出两种地址：节点订阅只有节点，规则订阅连分流一起给。
-                地址里带着全部节点凭据，建议一台设备一个链接，丢了只重置那一条。
-              </CardDescription>
-            </div>
+          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Link2 className="h-4 w-4" />
+              订阅链接
+            </CardTitle>
             <Button
+              className="shrink-0"
               size="sm"
               onClick={() => {
                 setTokenName("");
@@ -975,7 +957,7 @@ export default function ClientSubscriptionsPage() {
                         </div>
                         <div className="space-y-1.5">
                           <p className="text-xs text-muted-foreground">
-                            客户端不在上面，或者面板开在电脑上？扫码或复制这条地址手动添加即可，服务端会按客户端标识自动返回对应格式。
+                            其他客户端用这条地址手动添加。
                           </p>
                           {/* 这个设置只在「客户端标识认不出来」时才生效，所以就放在那句话下面。
                               上面图标点进去的地址都钉死了格式，走不到这里。 */}
@@ -1014,15 +996,14 @@ export default function ClientSubscriptionsPage() {
       </div>
 
       <Dialog open={nodeDialogOpen} onOpenChange={setNodeDialogOpen}>
-        <DialogContent>
+        {/* DialogContent 默认 max-h + overflow-hidden，内容超出直接裁掉、滚不动。
+            改成 flex 列、正文单独一层可滚 —— 项目里其他长弹窗都是这个写法。 */}
+        <DialogContent className="flex max-h-[92svh] flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>{editingNodeId ? "编辑客户端节点" : "添加客户端节点"}</DialogTitle>
-            <DialogDescription>
-              粘贴落地机上的节点链接，或 sing-box / Clash / v2rayN 的节点 JSON。面板只会把地址和端口换成转发入口，
-              UUID、密码、SNI、传输方式等全部原样保留。
-            </DialogDescription>
+            <DialogDescription className="text-xs">只替换地址和端口，凭据不变。</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-1">
             <div className="space-y-2">
               <Label htmlFor="proxy-node-name">节点名称</Label>
               <Input
@@ -1052,14 +1033,13 @@ export default function ClientSubscriptionsPage() {
               <p className="text-xs text-muted-foreground">{PROXY_NODE_AUTO_GROUP_HINTS[nodeAutoGroup]}</p>
             </div>
             <div className="space-y-2">
-              <Label>把这个节点也放进订阅</Label>
+              <Label>加进订阅</Label>
               <div className="flex items-start justify-between gap-3 rounded-lg border p-3">
                 <p className="min-w-0 text-xs text-muted-foreground">
-                  订阅里额外给出这个节点自己的地址。落地机开了就是直连落地，和各条中转并列由客户端挑快的；
-                  租来的线路机这类不做转发的节点，也靠它进订阅。
+                  订阅里额外给出这个节点自己的地址。
                   {nodeIncludeDirect ? (
                     <span className="mt-1 block text-amber-600 dark:text-amber-500">
-                      注意：开了之后落地 IP 会出现在每一条订阅地址里。中转机被墙还能换，落地机被墙要重搭。
+                      该节点 IP 会出现在每条订阅地址里。
                     </span>
                   ) : null}
                 </p>
@@ -1091,11 +1071,10 @@ export default function ClientSubscriptionsPage() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                连接先经由这个节点建立，例如落地经由租来的线路机。被选中的节点会自动进订阅，不必再单独开「也放进订阅」。
+                连接先经由它建立。
                 {nodeFrontProxyId > 0 ? (
                   <span className="mt-1 block text-amber-600 dark:text-amber-500">
-                    Clash / sing-box / Surge 导入即生效；Loon 与 Quantumult X 的订阅格式没有这个位置，
-                    那边节点名会标注「需手动接」，要在客户端里自己连一次。
+                    Loon 与 QX 需在客户端里手连一次。
                   </span>
                 ) : null}
               </p>
@@ -1127,8 +1106,8 @@ export default function ClientSubscriptionsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>新建订阅链接</DialogTitle>
-            <DialogDescription>
-              建议一台设备一个链接，丢了只重置那一条。分流预设和回落格式建好后在「一键订阅」里随时改。
+            <DialogDescription className="text-xs">
+              建议一台设备一条。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -1166,7 +1145,7 @@ export default function ClientSubscriptionsPage() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>改节点名</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-xs">
               只影响这个节点在订阅里显示的名字，转发规则本身不受影响。
               {renaming?.kind === "direct" ? "这是直连条目，改的是节点模板的名字。" : ""}
             </DialogDescription>
@@ -1217,16 +1196,16 @@ export default function ClientSubscriptionsPage() {
       <Dialog open={!!qrTarget} onOpenChange={(open) => !open && setQrTarget(null)}>
         {/* DialogContent 是 grid，子项默认 min-width:auto —— 底下那条不可断行的长地址
             会把整列撑宽再被 overflow-hidden 切掉，所以这里逐层 min-w-0，地址本身也断行。 */}
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="flex max-h-[92svh] flex-col overflow-hidden sm:max-w-sm">
           <DialogHeader className="min-w-0 pr-8">
             <DialogTitle className="flex items-center gap-2">
               <QrCode className="h-4 w-4 shrink-0" />
               扫码导入
             </DialogTitle>
-            <DialogDescription className="truncate">{qrTarget?.title}</DialogDescription>
+            <DialogDescription className="truncate text-xs">{qrTarget?.title}</DialogDescription>
           </DialogHeader>
 
-          <div className="min-w-0 space-y-3">
+          <div className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
             <div className="flex justify-center">
               {qrDataUrl ? (
                 // 白底不能省：二维码本身是透明背景的黑块，深色主题下会糊成一片。
@@ -1248,7 +1227,7 @@ export default function ClientSubscriptionsPage() {
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                请在客户端的「添加订阅」里扫码。用系统相机扫只会在浏览器里打开这条地址，得到的是一屏乱码。
+                在客户端的「添加订阅」里扫，别用系统相机。
               </p>
             )}
 
@@ -1267,7 +1246,7 @@ export default function ClientSubscriptionsPage() {
             </Button>
 
             <p className="text-xs text-muted-foreground">
-              这张码等于一份完整的节点凭据，别截图发到群里。
+              含完整凭据，别外发。
             </p>
           </div>
         </DialogContent>
