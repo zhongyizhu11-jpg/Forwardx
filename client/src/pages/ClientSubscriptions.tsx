@@ -409,14 +409,12 @@ export default function ClientSubscriptionsPage() {
         <h1 className="text-2xl font-semibold">客户端订阅</h1>
 
         <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Server className="h-4 w-4" />
-                落地节点
-              </CardTitle>
-            </div>
-            <Button size="sm" onClick={openCreateNode}>
+          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Server className="h-4 w-4" />
+              落地节点
+            </CardTitle>
+            <Button size="sm" className="shrink-0" onClick={openCreateNode}>
               <Plus className="mr-1 h-4 w-4" />
               添加节点
             </Button>
@@ -660,14 +658,13 @@ export default function ClientSubscriptionsPage() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Link2 className="h-4 w-4" />
-                订阅链接
-              </CardTitle>
-            </div>
+          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Link2 className="h-4 w-4" />
+              订阅链接
+            </CardTitle>
             <Button
+              className="shrink-0"
               size="sm"
               onClick={() => {
                 setTokenName("");
