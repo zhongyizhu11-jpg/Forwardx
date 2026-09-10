@@ -23,7 +23,9 @@
 
 ### 版本
 
-- 面板与 APK Release `2.3.287`，Agent `2.2.194`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+- 面板与 APK Release `2.3.287`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。
+- **本次 Agent 有改动，需要升级**：上游 v2.3.280 改写了 Agent 的指标采集与 TCPing 上报（`agent/metrics.go` 等，约 500 行），面板升级后请一并升级各主机的 Agent，否则拿不到新的诊断与流量统计。ForwardX FXP runtime 无改动。
+- 另需注意：Agent 版本号此前也与上游撞过号 —— 本仓库和上游都独立发布过 `2.2.194`，内容不同。本次升到 `2.2.195` 以区分，并确保已安装的 Agent 能收到升级提示（升级判定按版本号比较，号不变就不会提示）。
 
 ## [2.3.286] - 2026-09-10
 
