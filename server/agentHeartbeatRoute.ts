@@ -2,6 +2,9 @@ import { Router, Request, Response } from "express";
 import * as db from "./db";
 import { AGENT_VERSION } from "./_core/systemRouter";
 import { clearHostTcpingRequest, hasHostTcpingRequest, isHostMetricsWatching, pushAgentDesiredState } from "./agentEvents";
+import { getEnabledProxyInboundsByHost, proxyInboundFromRow } from "./repositories/proxyInboundRepository";
+import { buildSingboxRuntimePlan } from "./singboxRuntimePlan";
+import { effectiveGithubAccelerator } from "../shared/githubAccelerator";
 import { AGENT_PLUGIN_TASK_VERSION, buildMetaAgentSelfTestPayload, buildRuleAgentSelfTestPayload, hasAgentVersionChanged, isAgentUpgradeTargetSatisfied, isAgentVersionAtLeast, parseSelfTestMeta, tunnelSecretSeed } from "./agentRouteUtils";
 import { resolveAgentAdvertisedPanelUrl } from "./agentPanelUrl";
 import { getAgentMigrationSwitchTarget, getPanelMigrationAgentDirective } from "./panelMigrationAgentState";
@@ -914,6 +917,29 @@ function shouldSendDesiredState(hostId: number, actions: any[], activeWorkAction
     setBoundedMapValue(agentDesiredStateSendCache, id, { signature, sentAt: now }, AGENT_HOST_CACHE_MAX);
   }
   return shouldSend;
+}
+
+/**
+ * 下载 sing-box 用的 GitHub 加速设置。
+ *
+ * 每次心跳都读一遍设置表，但缓存几秒 —— 这个值几乎不变，而心跳是每台主机每
+ * 半分钟一次，不缓存的话纯属白查。
+ */
+let singboxAcceleratorCache: { value: { enabled: boolean; url: string }; at: number } | null = null;
+const SINGBOX_ACCELERATOR_CACHE_MS = 30_000;
+
+async function getSingboxAccelerator() {
+  const now = Date.now();
+  if (singboxAcceleratorCache && now - singboxAcceleratorCache.at < SINGBOX_ACCELERATOR_CACHE_MS) {
+    return singboxAcceleratorCache.value;
+  }
+  const all = await db.getAllSettings().catch(() => ({} as Record<string, string | null>));
+  const value = effectiveGithubAccelerator({
+    enabled: all.githubAcceleratorEnabled === "true",
+    url: all.githubAcceleratorUrl ?? "",
+  });
+  singboxAcceleratorCache = { value, at: now };
+  return value;
 }
 
 function shouldSendRuntimeSyncAction(hostId: number, action: any, force: boolean, now: number, resendAfterMs = 0) {
@@ -6251,6 +6277,50 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         if (reportedNginxHasWork && !nginxDesiredRelevant) {
           appendPanelLog("warn", `[NginxRuntime] stale shared runtime cleanup queued host=${host.id} name=${String(host.name || "-")}`);
         }
+      }
+    }
+    /**
+     * 落地节点：把这台主机上启用中的入站合成一份 sing-box 配置推下去。
+     *
+     * 无条件生成计划（有入站就下发，没有就下发一份收尾），而不是「有入站才管」：
+     * 用户删掉最后一个入站之后，这台机器上就再也没有行了，那时若不下发收尾，
+     * sing-box 会带着一份过期配置继续跑。收尾用的命令每一条都带 `|| true`，
+     * 对从没装过 sing-box 的主机是无害的空操作，而 shouldSendRuntimeSyncAction
+     * 会按签名去重，所以只会真正下发一次。
+     */
+    if (!deferActionsForLocalState) {
+      const inboundRows = await getEnabledProxyInboundsByHost(Number(host.id));
+      const singboxPlan = buildSingboxRuntimePlan({
+        inbounds: inboundRows.map((row: any) => ({
+          inbound: proxyInboundFromRow(row),
+          // 用行 id 做 tag：改名不该让 sing-box 认为这是另一个入站。
+          tag: `inbound-${Number(row.id)}`,
+        })),
+        accelerator: await getSingboxAccelerator(),
+      });
+      const singboxAction = {
+        statusType: "runtime",
+        ruleId: 0,
+        tunnelId: 0,
+        op: "apply",
+        forwardType: "singbox-runtime-sync",
+        sourcePort: 0,
+        targetIp: "",
+        targetPort: 0,
+        protocol: "tcp",
+        knownRunning: false,
+        forceRuntimeSync: true,
+        commands: singboxPlan.commands,
+        managedConfigs: singboxPlan.managedConfigs,
+      } as any;
+      if (shouldSendRuntimeSyncAction(
+        Number(host.id),
+        singboxAction,
+        runtimeSyncBootstrap,
+        responseIssuedAt,
+        AGENT_GOST_RUNTIME_RECONCILE_MS,
+      )) {
+        actions.push(singboxAction);
       }
     }
     if (!deferActionsForLocalState && mimicRuntimeSyncWanted) {

@@ -441,6 +441,9 @@ export const proxyNodes = table("proxy_nodes", {
   includeDirect: boolean("includeDirect").notNull().default(false),
   // 前置代理：这个节点的连接先经由哪个节点建立（指向同表另一行）。0 表示不经由。
   frontProxyId: int("frontProxyId").notNull().default(0),
+  // 由哪个落地入站派生而来（proxy_inbounds.id）。0 表示是用户自己粘链接建的。
+  // 派生出来的节点不该手工改：下次保存入站时会被整行覆盖。
+  inboundId: int("inboundId").notNull().default(0),
   isEnabled: boolean("isEnabled").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
@@ -448,6 +451,56 @@ export const proxyNodes = table("proxy_nodes", {
 });
 export type ProxyNode = typeof proxyNodes.$inferSelect;
 export type InsertProxyNode = typeof proxyNodes.$inferInsert;
+
+/**
+ * 落地入站：面板在自己管的主机上开出来的节点。
+ *
+ * 与 proxy_nodes 的分工 —— 这张表是「落地机怎么听」，那张是「客户端怎么连」。
+ * 保存入站时会派生一行 proxy_nodes（带 inboundId 标记），订阅那一整套原样接上。
+ * Reality 私钥只存在这张表，绝不进派生节点。
+ */
+export const proxyInbounds = table("proxy_inbounds", {
+  id: serial("id"),
+  userId: int("userId").notNull(),
+  // 开在哪台主机上。那台机器必须装了 Agent，面板才推得下去配置。
+  hostId: int("hostId").notNull(),
+  name: text("name").notNull(),
+  remark: text("remark"),
+  // vless | vmess | trojan | shadowsocks | hysteria2 | tuic | anytls | snell
+  protocol: varchar("protocol", { length: 32 }).notNull().default("vless"),
+  port: int("port").notNull(),
+  transport: varchar("transport", { length: 16 }).notNull().default("tcp"), // tcp | ws | grpc | http
+  security: varchar("security", { length: 16 }).notNull().default("reality"), // reality | tls | none
+  uuid: text("uuid"),
+  password: text("password"),
+  method: text("method"),
+  flow: text("flow"),
+  path: text("path"),
+  host: text("host"),
+  xhttpMode: text("xhttpMode"),
+  serverName: text("serverName"),
+  alpn: text("alpn"),
+  certPath: text("certPath"),
+  keyPath: text("keyPath"),
+  // Reality 私钥只在服务端，公钥才发给客户端
+  realityPrivateKey: text("realityPrivateKey"),
+  realityPublicKey: text("realityPublicKey"),
+  realityShortId: text("realityShortId"),
+  realityDest: text("realityDest"),
+  obfs: text("obfs"),
+  obfsPassword: text("obfsPassword"),
+  upMbps: int("upMbps").notNull().default(0),
+  downMbps: int("downMbps").notNull().default(0),
+  congestionControl: text("congestionControl"),
+  snellVersion: int("snellVersion").notNull().default(0),
+  snellMode: text("snellMode"),
+  isEnabled: boolean("isEnabled").notNull().default(true),
+  sortOrder: int("sortOrder").notNull().default(0),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type ProxyInbound = typeof proxyInbounds.$inferSelect;
+export type InsertProxyInbound = typeof proxyInbounds.$inferInsert;
 
 /**
  * 订阅令牌。订阅地址里带着全部节点凭据，所以令牌必须不可猜且可单独吊销，
