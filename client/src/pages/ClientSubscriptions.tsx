@@ -108,6 +108,23 @@ function clientIcon(target: ProxyClientTarget) {
   return CLIENT_ICONS[target.id] ?? { icon: Package, className: "bg-muted text-muted-foreground" };
 }
 
+/**
+ * 可选的官方图标：把图片丢进 assets/clientLogos/<客户端 id>.svg|png|webp 就会自动用上。
+ *
+ * 构建期扫描而不是运行期探测：没放图标的面板不会为此发一串 404 请求，放了的
+ * 也走正常打包，不受 CSP 限制（面板常跑在内网，外部 CDN 一律拉不到）。
+ * 仓库里不预置这些图 —— 闭源客户端的图标是各自开发者的商标资源，
+ * 而这个面板是公开分发的。详见该目录下的 README。
+ */
+const CLIENT_LOGOS: Record<string, string> = Object.fromEntries(
+  Object.entries(
+    import.meta.glob("../assets/clientLogos/*.{svg,png,webp}", {
+      eager: true,
+      import: "default",
+    }) as Record<string, string>,
+  ).map(([path, url]) => [path.replace(/^.*\/(.+)\.\w+$/, "$1"), url]),
+);
+
 /** 当前设备。识别不出来时返回 null —— 那就退回展示全部，别把人挡在外面。 */
 function currentPlatform(): ProxyClientPlatform | null {
   if (typeof navigator === "undefined") return null;
@@ -746,16 +763,26 @@ export default function ClientSubscriptionsPage() {
                             const url = subscriptionUrl(token.token, target.format, kind, true);
                             const importName = `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`;
                             const { icon: Icon, className: iconClass } = clientIcon(target);
+                            const logo = CLIENT_LOGOS[target.id];
                             const offPlatform = platform ? !target.platforms.includes(platform) : false;
                             const usable = supported && !offPlatform;
                             const tile = (
                               <>
                                 <span
-                                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
-                                    usable ? iconClass : "bg-muted text-muted-foreground"
+                                  className={`flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg ${
+                                    logo ? "bg-transparent" : usable ? iconClass : "bg-muted text-muted-foreground"
                                   }`}
                                 >
-                                  <Icon className="h-4 w-4" />
+                                  {logo ? (
+                                    // 置灰的格子连图标一起褪色，否则一格彩色 logo 配一行"本机没有"很矛盾。
+                                    <img
+                                      src={logo}
+                                      alt=""
+                                      className={`h-full w-full object-contain ${usable ? "" : "opacity-50 grayscale"}`}
+                                    />
+                                  ) : (
+                                    <Icon className="h-4 w-4" />
+                                  )}
                                 </span>
                                 <span className="w-full truncate text-center text-[11px] font-medium leading-tight">
                                   {target.shortLabel}
