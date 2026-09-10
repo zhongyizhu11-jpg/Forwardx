@@ -37,6 +37,13 @@ export type ProxyClientTarget = {
   shortLabel: string;
   /** 支持该客户端的平台，用于按当前设备筛选 */
   platforms: readonly ProxyClientPlatform[];
+  /**
+   * 同一个 scheme 还覆盖哪些客户端。
+   *
+   * 一格 clash:// 管着整个 Clash 家族，界面上只写"Clash"会让用 Clash Verge 的人
+   * 以为没有自己那个，所以把名字列出来。
+   */
+  covers?: string;
   /** 该客户端要拉的订阅格式 */
   format: ProxySubscriptionFormat;
   /** 由订阅地址和名称拼出可点击的 scheme */
@@ -64,6 +71,8 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
     label: "Clash / mihomo",
     shortLabel: "Clash",
     platforms: ALL_PLATFORMS,
+    // 这些都注册 clash:// install-config，一格全覆盖。
+    covers: "Clash Verge Rev、ClashX、ClashX Meta、FlClash、Clash for Android、Clash Meta",
     format: "clash",
     buildImportUrl: (url, name) => `clash://install-config?url=${q(url)}&name=${q(name)}`,
   },
@@ -94,10 +103,13 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
   },
   {
     id: "surge",
-    label: "Surge / Surfboard",
+    label: "Surge",
     shortLabel: "Surge",
-    // Surge 是 iOS/macOS，Surfboard 是 Android 上吃同一套配置格式的那个。
-    platforms: ["ios", "macos", "android"],
+    // surge:///install-config 是 Surge 的 iOS/macOS 专属。安卓上的 Surfboard 虽然
+    // 读同一套配置格式（订阅按 UA 给它 Surge 格式），但只有自己的导入界面、
+    // 不认这个 scheme —— 列进 android 就是在安卓上摆一个点了没反应的按钮。
+    platforms: ["ios", "macos"],
+    covers: "Surfboard（安卓，需手动粘贴地址）",
     format: "surge",
     // surge 后面是三条斜杠，少一条不会被识别。
     buildImportUrl: (url) => `surge:///install-config?url=${q(url)}`,
@@ -113,6 +125,17 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
       const payload = JSON.stringify({ server_remote: [`${url}, tag=${name}`] });
       return `quantumult-x:///add-resource?remote-resource=${q(payload)}`;
     },
+  },
+  {
+    id: "hiddify",
+    label: "Hiddify",
+    shortLabel: "Hiddify",
+    platforms: ALL_PLATFORMS,
+    // Hiddify 明确支持 v2ray sublink（也就是通用 base64），走这条最稳。
+    format: "base64",
+    // 官方 wiki 的当前写法是 hiddify://import/<sublink>#name，订阅地址放在路径里
+    // 而不是查询参数；install-config?url= 那套已被标记为不推荐。
+    buildImportUrl: (url, name) => `hiddify://import/${url}#${q(name)}`,
   },
   {
     id: "shadowrocket",

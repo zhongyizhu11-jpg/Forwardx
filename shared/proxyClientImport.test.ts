@@ -135,6 +135,13 @@ test("导入链接里的中文名称被编码，不会破坏 scheme", () => {
   }
 });
 
+test("每个客户端都指向一个自己平台上真能用的 scheme", () => {
+  // 一个客户端不能既没平台又留在列表里 —— 那格在任何设备上都点不动。
+  for (const target of PROXY_CLIENT_TARGETS) {
+    assert.ok(target.platforms.length > 0, `${target.id} 没有任何平台`);
+  }
+});
+
 test("两种订阅种类的常量与标签齐全", () => {
   assert.deepEqual([...PROXY_SUBSCRIPTION_KINDS], ["nodes", "rules"]);
 });
@@ -165,18 +172,50 @@ test("按平台筛出来的都是该平台真能装的", () => {
   // deep link 只有装了 App 的设备点得动，筛错了就是一格死按钮。
   assert.deepEqual(
     proxyClientTargetsForPlatform("windows").map((item) => item.id).sort(),
-    ["clash", "singbox"],
+    ["clash", "hiddify", "singbox"],
   );
   assert.deepEqual(
     proxyClientTargetsForPlatform("android").map((item) => item.id).sort(),
-    ["clash", "singbox", "surge"],
+    ["clash", "hiddify", "singbox"],
   );
   assert.deepEqual(
     proxyClientTargetsForPlatform("macos").map((item) => item.id).sort(),
-    ["clash", "singbox", "stash", "surge"],
+    ["clash", "hiddify", "singbox", "stash", "surge"],
   );
-  // iOS 是唯一七个全能用的。
+  // iOS 是唯一全部都能用的。
   assert.equal(proxyClientTargetsForPlatform("ios").length, PROXY_CLIENT_TARGETS.length);
+});
+
+test("Surfboard 不进 android：它不认 surge:// scheme", () => {
+  // surge:///install-config 是 Surge 的 iOS/macOS 专属。Surfboard 读同一套配置
+  // 格式（订阅按 UA 给它 Surge 格式），但只有自己的导入界面 —— 列进 android
+  // 等于在安卓上摆一个点了没反应的按钮。
+  const surge = PROXY_CLIENT_TARGETS.find((item) => item.id === "surge")!;
+
+  assert.deepEqual([...surge.platforms], ["ios", "macos"]);
+  assert.ok(!surge.platforms.includes("android"));
+});
+
+test("Hiddify 的订阅地址放在路径里，不是查询参数", () => {
+  // 官方 wiki 当前写法是 hiddify://import/<sublink>#name；
+  // install-config?url= 那套已被标记为不推荐。
+  const url = "https://panel.example.com/api/sub/tok123";
+  const target = PROXY_CLIENT_TARGETS.find((item) => item.id === "hiddify")!;
+
+  const link = target.buildImportUrl(url, "我的手机");
+
+  assert.equal(link, `hiddify://import/${url}#${encodeURIComponent("我的手机")}`);
+  // 通用 base64 的地址不带查询串，放进路径不会被 ? 截断。
+  assert.equal(target.format, "base64");
+  assert.ok(!url.includes("?"), "base64 订阅地址不该带查询参数，否则塞进路径会被截断");
+});
+
+test("一格 scheme 覆盖多个客户端时把名字列出来", () => {
+  // 只写"Clash"会让用 Clash Verge 的人以为没有自己那个。
+  const clash = PROXY_CLIENT_TARGETS.find((item) => item.id === "clash")!;
+
+  assert.ok(clash.covers?.includes("Clash Verge"), clash.covers);
+  assert.ok(clash.covers?.includes("ClashX"), clash.covers);
 });
 
 test("每个平台至少有一个能用的客户端", () => {

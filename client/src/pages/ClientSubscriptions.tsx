@@ -66,6 +66,7 @@ import {
   QrCode,
   Rocket,
   Server,
+  Shield,
   Trash2,
   Waves,
   Zap,
@@ -90,6 +91,7 @@ const CLIENT_ICONS: Record<string, { icon: LucideIcon; className: string }> = {
   loon: { icon: Waves, className: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
   surge: { icon: AudioLines, className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
   quantumultx: { icon: Atom, className: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
+  hiddify: { icon: Shield, className: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
   shadowrocket: { icon: Rocket, className: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
 };
 
@@ -756,7 +758,11 @@ export default function ClientSubscriptionsPage() {
                               <a
                                 key={target.id}
                                 href={target.buildImportUrl(url, importName)}
-                                title={`在 ${target.label} 中打开`}
+                                title={
+                                  target.covers
+                                    ? `在 ${target.label} 中打开。同样适用于：${target.covers}`
+                                    : `在 ${target.label} 中打开`
+                                }
                                 className="flex flex-col items-center gap-1.5 rounded-lg border bg-background p-2.5 transition-colors hover:border-primary hover:bg-primary/5"
                               >
                                 {tile}
