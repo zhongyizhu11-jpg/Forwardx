@@ -12,6 +12,7 @@ import { createContext } from "./_core/context";
 import { agentRouter } from "./agentRoutes";
 import { paymentCallbackRouter } from "./payment";
 import { migrationRouter } from "./migration";
+import { clientLogoRouter } from "./clientLogoRoute";
 import { proxySubscriptionRouter } from "./proxySubscriptionRoute";
 import { initDatabase } from "./db";
 import { installPanelLogger } from "./_core/panelLogger";
@@ -137,6 +138,7 @@ async function startServer() {
   app.use(agentRouter);
   app.use(migrationRouter);
   app.use(proxySubscriptionRouter);
+  app.use(clientLogoRouter);
   app.use(
     "/api/trpc",
     createExpressMiddleware({

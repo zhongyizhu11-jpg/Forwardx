@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import {
   PROXY_NODE_PROTOCOL_LABELS,
@@ -37,28 +38,117 @@ import {
 } from "@shared/proxyRuleset";
 import {
   buildProxySubscriptionUrl,
+  detectProxyClientPlatform,
+  proxyClientPlatformsLabel,
+  PROXY_CLIENT_PLATFORM_LABELS,
   PROXY_CLIENT_TARGETS,
   proxySubscriptionKindSupported,
   PROXY_SUBSCRIPTION_KINDS,
   PROXY_SUBSCRIPTION_KIND_HINTS,
   PROXY_SUBSCRIPTION_KIND_LABELS,
+  type ProxyClientPlatform,
+  type ProxyClientTarget,
   type ProxySubscriptionKind,
 } from "@shared/proxyClientImport";
-import { ChevronDown, Copy, Download, Eye, EyeOff, KeyRound, Link2, Plus, QrCode, Server, Trash2, Zap } from "lucide-react";
+import {
+  Atom,
+  AudioLines,
+  Cat,
+  ChevronDown,
+  Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Layers,
+  Link2,
+  Package,
+  Plus,
+  QrCode,
+  Rocket,
+  Server,
+  Shield,
+  Boxes,
+  Ship,
+  Binary,
+  Blocks,
+  Trash2,
+  Waves,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-function subscriptionUrl(token: string, format: ProxySubscriptionFormat, kind: ProxySubscriptionKind) {
-  return buildProxySubscriptionUrl({ origin: window.location.origin, token, format, kind });
+/**
+ * 每个客户端一个可辨识的图案 + 各自的品牌色。
+ *
+ * 刻意不用各家的官方 logo：那些是第三方商标资源，不该擅自打包进仓库，而且面板的
+ * CSP 也不允许从外部 CDN 拉图片（不少面板还跑在内网）。七格清一色同一个下载图标
+ * 等于没有图标 —— 用户还是得逐字读标签，网格就白排了。
+ */
+const CLIENT_ICONS: Record<string, { icon: LucideIcon; className: string }> = {
+  // mihomo 的吉祥物就是只猫。
+  clash: { icon: Cat, className: "bg-sky-500/10 text-sky-600 dark:text-sky-400" },
+  stash: { icon: Layers, className: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
+  singbox: { icon: Package, className: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
+  loon: { icon: Waves, className: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
+  surge: { icon: AudioLines, className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  quantumultx: { icon: Atom, className: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
+  hiddify: { icon: Shield, className: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+  shadowrocket: { icon: Rocket, className: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
+  v2rayng: { icon: Binary, className: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
+  surfboard: { icon: Ship, className: "bg-lime-500/10 text-lime-600 dark:text-lime-400" },
+  nekobox: { icon: Boxes, className: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  nekoray: { icon: Blocks, className: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400" },
+  v2rayn: { icon: Binary, className: "bg-slate-500/10 text-slate-600 dark:text-slate-400" },
+};
+
+function clientIcon(target: ProxyClientTarget) {
+  return CLIENT_ICONS[target.id] ?? { icon: Package, className: "bg-muted text-muted-foreground" };
+}
+
+/**
+ * 可选的官方图标：把图片丢进 assets/clientLogos/<客户端 id>.svg|png|webp 就会自动用上。
+ *
+ * 构建期扫描而不是运行期探测：没放图标的面板不会为此发一串 404 请求，放了的
+ * 也走正常打包，不受 CSP 限制（面板常跑在内网，外部 CDN 一律拉不到）。
+ * 仓库里不预置这些图 —— 闭源客户端的图标是各自开发者的商标资源，
+ * 而这个面板是公开分发的。详见该目录下的 README。
+ */
+const CLIENT_LOGOS: Record<string, string> = Object.fromEntries(
+  Object.entries(
+    import.meta.glob("../assets/clientLogos/*.{svg,png,webp}", {
+      eager: true,
+      import: "default",
+    }) as Record<string, string>,
+  ).map(([path, url]) => [path.replace(/^.*\/(.+)\.\w+$/, "$1"), url]),
+);
+
+/** 当前设备。识别不出来时返回 null —— 那就退回展示全部，别把人挡在外面。 */
+function currentPlatform(): ProxyClientPlatform | null {
+  if (typeof navigator === "undefined") return null;
+  return detectProxyClientPlatform(navigator.userAgent, {
+    maxTouchPoints: navigator.maxTouchPoints,
+  });
+}
+
+function subscriptionUrl(
+  token: string,
+  format: ProxySubscriptionFormat,
+  kind: ProxySubscriptionKind,
+  pinFormat = false,
+) {
+  return buildProxySubscriptionUrl({ origin: window.location.origin, token, format, kind, pinFormat });
 }
 
 async function copyText(value: string, message: string) {
-  try {
-    await navigator.clipboard.writeText(value);
+  // 面板常跑在 http://ip:port 上，非安全上下文里 navigator.clipboard 根本不存在，
+  // 所以走带 execCommand 回退的共享实现，而不是直接调 clipboard API。
+  if (await copyTextToClipboard(value)) {
     toast.success(message);
-  } catch {
-    toast.error("复制失败，请手动选中复制");
+  } else {
+    toast.error("复制失败，请长按选中地址复制");
   }
 }
 
@@ -85,8 +175,18 @@ export default function ClientSubscriptionsPage() {
   // 一键订阅面板默认折叠，同一时间只展开一个，免得页面被撑得很长。
   const [importOpenTokenId, setImportOpenTokenId] = useState<number | null>(null);
   const [importKind, setImportKind] = useState<ProxySubscriptionKind>("nodes");
-  const [qrTarget, setQrTarget] = useState<{ title: string; url: string } | null>(null);
+  const [qrTarget, setQrTarget] = useState<{ title: string; url: string; hint?: string } | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState("");
+  const [showAllClients, setShowAllClients] = useState(false);
+  // 服务器数据目录里放的图标。放了就盖掉内置图案，没放（多数情况）就是个空对象。
+  const [runtimeLogos, setRuntimeLogos] = useState<Record<string, string>>({});
+  // 只认一次：UA 在页面生命周期里不会变。
+  const platform = useMemo(() => currentPlatform(), []);
+  const visibleTargets = useMemo(() => {
+    if (!platform || showAllClients) return [...PROXY_CLIENT_TARGETS];
+    return PROXY_CLIENT_TARGETS.filter((target) => target.platforms.includes(platform));
+  }, [platform, showAllClients]);
+  const hiddenCount = PROXY_CLIENT_TARGETS.length - visibleTargets.length;
 
   const refresh = () => {
     void utils.proxySubscriptions.listNodes.invalidate();
@@ -159,6 +259,22 @@ export default function ClientSubscriptionsPage() {
     },
     onError: (error) => toast.error(error.message),
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/client-logos")
+      .then((res) => (res.ok ? res.json() : {}))
+      .then((data) => {
+        if (!cancelled && data && typeof data === "object") {
+          setRuntimeLogos(data as Record<string, string>);
+        }
+      })
+      // 拿不到就用内置图案，不值得为此打扰用户。
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 二维码固定黑白：跟着主题走的话，深色模式下扫不出来。
   useEffect(() => {
@@ -654,42 +770,100 @@ export default function ClientSubscriptionsPage() {
                           </div>
                         )}
 
-                        <div className="grid grid-cols-3 gap-2">
-                          {PROXY_CLIENT_TARGETS.map((target) => {
+                        {/* 一键导入走 deep link，只有装了该客户端的设备点得动 ——
+                            在 Windows 上摆一格 loon:// 就是个死按钮。所以按当前设备筛，
+                            但留一个口子：识别错了或者想看别的平台，点开就是。 */}
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          {visibleTargets.map((target) => {
                             const supported = proxySubscriptionKindSupported(target.format, kind);
-                            const url = subscriptionUrl(token.token, target.format, kind);
+                            // 从客户端图标点进去时已经知道是哪个客户端了，钉死格式，
+                            // 不让它掉到令牌默认格式上。
+                            const url = subscriptionUrl(token.token, target.format, kind, true);
                             const importName = `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`;
+                            const { icon: Icon, className: iconClass } = clientIcon(target);
+                            // 运行时的优先：放在服务器上就能换图，不必重新构建。
+                            const logo = runtimeLogos[target.id]
+                              ? `/api/client-logos/${target.id}`
+                              : CLIENT_LOGOS[target.id];
+                            const offPlatform = platform ? !target.platforms.includes(platform) : false;
+                            const usable = supported && !offPlatform;
                             const tile = (
                               <>
                                 <span
-                                  className={`flex h-9 w-9 items-center justify-center rounded-lg ${
-                                    supported ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                                  className={`flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg ${
+                                    logo ? "bg-transparent" : usable ? iconClass : "bg-muted text-muted-foreground"
                                   }`}
                                 >
-                                  <Download className="h-4 w-4" />
+                                  {logo ? (
+                                    // 置灰的格子连图标一起褪色，否则一格彩色 logo 配一行"本机没有"很矛盾。
+                                    <img
+                                      src={logo}
+                                      alt=""
+                                      className={`h-full w-full object-contain ${usable ? "" : "opacity-50 grayscale"}`}
+                                    />
+                                  ) : (
+                                    <Icon className="h-4 w-4" />
+                                  )}
                                 </span>
                                 <span className="w-full truncate text-center text-[11px] font-medium leading-tight">
-                                  {target.label}
+                                  {target.shortLabel}
                                 </span>
                                 <span className="w-full truncate text-center text-[10px] text-muted-foreground">
-                                  {supported ? target.platforms : "不支持规则"}
+                                  {!supported
+                                    ? "不支持规则"
+                                    : offPlatform
+                                      ? "本机没有"
+                                      : target.buildImportUrl
+                                        ? proxyClientPlatformsLabel(target)
+                                        : "手动添加"}
                                 </span>
                               </>
                             );
+                            const tileClass =
+                              "flex flex-col items-center gap-1.5 rounded-lg border bg-background p-2.5 text-inherit transition-colors hover:border-primary hover:bg-primary/5";
+                            const covers = target.covers ? `。同样适用于：${target.covers}` : "";
+
                             // 不支持时置灰而不是隐藏：藏起来用户不知道为什么少了几个客户端。
-                            return supported ? (
+                            if (usable && !target.buildImportUrl) {
+                              // 没有官方 scheme 的客户端：点开给它对应格式的地址和二维码，
+                              // 外加一句粘到哪儿 —— 订阅地址本身对任何客户端都有效，
+                              // 少的只是自动跳转那一步，不是不支持。
+                              return (
+                                <button
+                                  key={target.id}
+                                  type="button"
+                                  title={`${target.label} 没有一键导入，点开取地址手动添加${covers}`}
+                                  onClick={() =>
+                                    setQrTarget({
+                                      title: `${target.label} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`,
+                                      url,
+                                      hint: target.manualHint,
+                                    })
+                                  }
+                                  className={tileClass}
+                                >
+                                  {tile}
+                                </button>
+                              );
+                            }
+
+                            return usable ? (
                               <a
                                 key={target.id}
-                                href={target.buildImportUrl(url, importName)}
-                                title={`在 ${target.label} 中打开`}
-                                className="flex flex-col items-center gap-1.5 rounded-lg border bg-background p-2.5 transition-colors hover:border-primary hover:bg-primary/5"
+                                href={target.buildImportUrl!(url, importName)}
+                                title={`在 ${target.label} 中打开${covers}`}
+                                className={tileClass}
                               >
                                 {tile}
                               </a>
                             ) : (
                               <div
                                 key={target.id}
-                                title={`${target.label} 的订阅是节点列表，表达不了分流规则；改用「节点订阅」即可。`}
+                                title={
+                                  !supported
+                                    ? `${target.label} 的订阅是节点列表，表达不了分流规则；改用「节点订阅」即可。`
+                                    : `${target.label} 不支持${platform ? PROXY_CLIENT_PLATFORM_LABELS[platform] : "当前系统"}，在这台设备上点了不会有反应。`
+                                }
                                 className="flex cursor-not-allowed flex-col items-center gap-1.5 rounded-lg border border-dashed bg-background/50 p-2.5 opacity-60"
                               >
                                 {tile}
@@ -698,29 +872,51 @@ export default function ClientSubscriptionsPage() {
                           })}
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        {platform && hiddenCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllClients((value) => !value)}
+                            className="w-full text-center text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                          >
+                            {showAllClients
+                              ? `只看 ${PROXY_CLIENT_PLATFORM_LABELS[platform]} 能用的`
+                              : `还有 ${hiddenCount} 个别的平台的客户端，显示全部`}
+                          </button>
+                        )}
+
+                        {/* 手机上一行放不下「地址 + 两个按钮」，挤到地址只剩几个字符，
+                            所以窄屏竖排、宽屏再并成一行。 */}
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                           <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1.5 text-xs">
                             {manualUrl}
                           </code>
-                          {/* 上面的图标只在「面板和客户端同一台设备」时有用；
-                              在电脑上看面板、往手机里导入，走的是这个二维码。 */}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              setQrTarget({
-                                title: `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`,
-                                url: manualUrl,
-                              })
-                            }
-                          >
-                            <QrCode className="mr-1 h-3.5 w-3.5" />
-                            扫码
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => copyText(manualUrl, "订阅地址已复制")}>
-                            <Copy className="mr-1 h-3.5 w-3.5" />
-                            复制
-                          </Button>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {/* 上面的图标只在「面板和客户端同一台设备」时有用；
+                                在电脑上看面板、往手机里导入，走的是这个二维码。 */}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="flex-1 sm:flex-none"
+                              onClick={() =>
+                                setQrTarget({
+                                  title: `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`,
+                                  url: manualUrl,
+                                })
+                              }
+                            >
+                              <QrCode className="mr-1 h-3.5 w-3.5" />
+                              扫码
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="flex-1 sm:flex-none"
+                              onClick={() => copyText(manualUrl, "订阅地址已复制")}
+                            >
+                              <Copy className="mr-1 h-3.5 w-3.5" />
+                              复制
+                            </Button>
+                          </div>
                         </div>
                         <p className="text-xs text-muted-foreground">
                           客户端不在上面，或者面板开在电脑上？扫码或复制这条地址手动添加即可，服务端会按客户端标识自动返回对应格式。
@@ -881,46 +1077,56 @@ export default function ClientSubscriptionsPage() {
       </Dialog>
 
       <Dialog open={!!qrTarget} onOpenChange={(open) => !open && setQrTarget(null)}>
+        {/* DialogContent 是 grid，子项默认 min-width:auto —— 底下那条不可断行的长地址
+            会把整列撑宽再被 overflow-hidden 切掉，所以这里逐层 min-w-0，地址本身也断行。 */}
         <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
+          <DialogHeader className="min-w-0 pr-8">
             <DialogTitle className="flex items-center gap-2">
-              <QrCode className="h-4 w-4" />
+              <QrCode className="h-4 w-4 shrink-0" />
               扫码导入
             </DialogTitle>
-            <DialogDescription>{qrTarget?.title}</DialogDescription>
+            <DialogDescription className="truncate">{qrTarget?.title}</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             <div className="flex justify-center">
               {qrDataUrl ? (
                 // 白底不能省：二维码本身是透明背景的黑块，深色主题下会糊成一片。
-                <div className="rounded-lg bg-white p-3">
-                  <img src={qrDataUrl} alt="订阅二维码" width={240} height={240} />
+                // 宽度跟着对话框走，窄屏上整体缩小而不是被裁掉一半。
+                <div className="w-full max-w-[264px] rounded-lg bg-white p-3">
+                  <img src={qrDataUrl} alt="订阅二维码" className="block h-auto w-full" />
                 </div>
               ) : (
-                <div className="flex h-[264px] w-[264px] items-center justify-center rounded-lg border text-sm text-muted-foreground">
+                <div className="flex aspect-square w-full max-w-[264px] items-center justify-center rounded-lg border text-sm text-muted-foreground">
                   二维码生成中…
                 </div>
               )}
             </div>
 
-            <p className="text-xs text-muted-foreground">
-              请在客户端的「添加订阅」里扫码。用系统相机扫只会在浏览器里打开这条地址，得到的是一屏乱码。
-            </p>
+            {qrTarget?.hint ? (
+              <p className="rounded-md border border-dashed bg-muted/40 px-2 py-1.5 text-xs leading-relaxed">
+                <span className="font-medium">粘到这里：</span>
+                {qrTarget.hint}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                请在客户端的「添加订阅」里扫码。用系统相机扫只会在浏览器里打开这条地址，得到的是一屏乱码。
+              </p>
+            )}
 
-            <div className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1.5 text-xs">
-                {qrTarget?.url}
-              </code>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => qrTarget && copyText(qrTarget.url, "订阅地址已复制")}
-              >
-                <Copy className="mr-1 h-3.5 w-3.5" />
-                复制
-              </Button>
-            </div>
+            {/* 手机上截断的地址等于没有：复制失败时连手动选中都做不到，所以整条断行显示。 */}
+            <code className="block break-all rounded bg-muted px-2 py-1.5 text-xs leading-relaxed">
+              {qrTarget?.url}
+            </code>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              onClick={() => qrTarget && copyText(qrTarget.url, "订阅地址已复制")}
+            >
+              <Copy className="mr-1 h-3.5 w-3.5" />
+              复制地址
+            </Button>
 
             <p className="text-xs text-muted-foreground">
               这张码等于一份完整的节点凭据，别截图发到群里。
