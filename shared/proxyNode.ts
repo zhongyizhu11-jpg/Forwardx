@@ -206,13 +206,18 @@ function splitHostPort(value: string): HostPort {
 
 function applyTlsQuery(node: ProxyNode, query: URLSearchParams) {
   const security = text(query.get("security")).toLowerCase();
-  node.tls = security === "tls" || security === "reality" || security === "xtls";
+  const publicKey = text(query.get("pbk"));
+  // Shadowrocket 那套链接不写 security，而是 tls=1；Reality 靠 pbk 存在与否判断。
+  // 少认一种写法的后果是整条链接解析失败，用户只会看到「格式无法识别」。
+  node.tls = security === "tls" || security === "reality" || security === "xtls"
+    || isTruthyFlag(query.get("tls"));
   node.sni = text(query.get("sni")) || text(query.get("peer"));
   node.alpn = splitAlpn(query.get("alpn"));
   node.fingerprint = text(query.get("fp"));
   node.allowInsecure = isTruthyFlag(query.get("allowInsecure")) || isTruthyFlag(query.get("insecure"));
-  if (security === "reality") {
-    node.realityPublicKey = text(query.get("pbk"));
+  if (security === "reality" || publicKey) {
+    node.tls = true;
+    node.realityPublicKey = publicKey;
     node.realityShortId = text(query.get("sid"));
   }
 }
@@ -229,18 +234,43 @@ function applyTransportQuery(node: ProxyNode, query: URLSearchParams) {
 
 function parseVlessLink(link: string): ProxyNode | null {
   const { body, query, name } = splitLink(stripScheme(link, "vless://"));
-  const at = body.lastIndexOf("@");
+
+  /**
+   * 两种写法都要认：
+   *   标准       vless://uuid@host:port?security=reality&pbk=...
+   *   Shadowrocket vless://base64(method:uuid@host:port)?tls=1&peer=...&pbk=...
+   * 后者整段是 base64，里面还多一个 method 前缀（vless 用不上，丢掉）。
+   */
+  let payload = body;
+  if (!payload.includes("@")) {
+    const decoded = decodeBase64Utf8(payload);
+    if (!decoded.includes("@")) return null;
+    payload = decoded;
+  }
+
+  const at = payload.lastIndexOf("@");
   if (at < 0) return null;
-  const uuid = text(decodeURIComponent(body.slice(0, at)));
-  const { address, port } = splitHostPort(body.slice(at + 1));
+  let credential = text(decodeURIComponent(payload.slice(0, at)));
+  // base64 形式里是 method:uuid，vless 没有加密方式这一说，取冒号后面的。
+  const colon = credential.lastIndexOf(":");
+  if (colon > 0) credential = credential.slice(colon + 1);
+  const uuid = credential;
+  const { address, port } = splitHostPort(payload.slice(at + 1));
   if (!uuid || !address || !port) return null;
   const node = createEmptyProxyNode();
   node.protocol = "vless";
-  node.name = name;
+  // Shadowrocket 把名字放在 remarks 参数里，不是 # 后面。
+  node.name = name || text(query.get("remarks"));
   node.address = address;
   node.port = port;
   node.uuid = uuid;
-  node.flow = text(query.get("flow"));
+  // xtls=N 是 Shadowrocket 的写法。现役 Xray 只剩 vision 一种流控，
+  // direct / splice 早已移除，所以有 xtls 就按 vision 算。
+  // xtls 是 Shadowrocket 的写法，取值是数字（见过 1 和 2），不是布尔，
+  // 所以不能用 isTruthyFlag —— 那样 xtls=2 会被当成假。非 0 即启用。
+  const xtls = text(query.get("xtls"));
+  node.flow = text(query.get("flow"))
+    || (xtls && xtls !== "0" ? "xtls-rprx-vision" : "");
   applyTransportQuery(node, query);
   applyTlsQuery(node, query);
   return node;

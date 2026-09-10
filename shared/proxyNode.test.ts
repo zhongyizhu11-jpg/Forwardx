@@ -188,3 +188,53 @@ test("unsupported and malformed links report a usable reason", () => {
   const empty = parseProxyNodeLink("   ");
   assert.equal(empty.ok, false);
 });
+
+// ==================== Reality 与 Shadowrocket 写法 ====================
+
+test("Shadowrocket 的 vless 链接：整段 base64，参数名也不同", () => {
+  // 标准写法是 vless://uuid@host:port?security=reality&pbk=...
+  // Shadowrocket 写成 vless://base64(method:uuid@host:port)?tls=1&peer=...&pbk=...
+  // 不认这种的后果是整条链接解析失败，用户只看到「格式无法识别」。
+  const link =
+    "vless://YXV0bzpiOGRjOGIxMi1iMmY4LTQ0MTAtYjk3NS1kMDgwNWJlYWRkZDNAMTU0LjM2LjE3NC44NTo2MzI4NA" +
+    "?remarks=Cst%20hk&tls=1&peer=aws.amazon.com&xtls=2&pbk=PUBKEY123";
+  const result = parseProxyNodeLink(link);
+
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  const node = result.node;
+  assert.equal(node.address, "154.36.174.85");
+  assert.equal(node.port, 63284);
+  assert.equal(node.uuid, "b8dc8b12-b2f8-4410-b975-d0805beaddd3", "base64 里的 method: 前缀要丢掉");
+  assert.equal(node.name, "Cst hk", "名字在 remarks 参数里，不是 # 后面");
+  assert.equal(node.tls, true, "tls=1 也算开启 TLS");
+  assert.equal(node.sni, "aws.amazon.com", "peer 就是 SNI");
+  assert.equal(node.realityPublicKey, "PUBKEY123", "没写 security=reality，靠 pbk 存在判断");
+  assert.equal(node.flow, "xtls-rprx-vision", "xtls=2 是数字不是布尔");
+});
+
+test("xtls=0 不算启用流控", () => {
+  const link = "vless://u@1.2.3.4:443?tls=1&xtls=0";
+  const result = parseProxyNodeLink(link);
+  assert.ok(result.ok);
+  assert.equal(result.node.flow, "");
+});
+
+test("显式给了 flow 时以 flow 为准", () => {
+  const link = "vless://u@1.2.3.4:443?security=reality&pbk=K&flow=xtls-rprx-vision&xtls=1";
+  const result = parseProxyNodeLink(link);
+  assert.ok(result.ok);
+  assert.equal(result.node.flow, "xtls-rprx-vision");
+});
+
+test("标准写法不受影响", () => {
+  // 改解析器最容易伤到的就是原本能用的那条路。
+  const link =
+    "vless://b8dc8b12@1.2.3.4:443?security=reality&sni=a.com&pbk=PK&sid=ab12&fp=chrome&flow=xtls-rprx-vision#名字";
+  const result = parseProxyNodeLink(link);
+
+  assert.ok(result.ok);
+  assert.equal(result.node.uuid, "b8dc8b12");
+  assert.equal(result.node.name, "名字");
+  assert.equal(result.node.realityPublicKey, "PK");
+  assert.equal(result.node.realityShortId, "ab12");
+});

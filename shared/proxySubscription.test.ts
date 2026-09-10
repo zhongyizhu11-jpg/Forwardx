@@ -539,3 +539,35 @@ test("新增格式的别名解析", () => {
   assert.equal(normalizeProxySubscriptionFormat("qx"), "quantumultx");
   assert.equal(normalizeProxySubscriptionFormat("QuanX"), "quantumultx");
 });
+
+test("Loon 的 VLESS Reality 节点必须带公钥", () => {
+  // 缺公钥就握不上手，而 Loon 只会显示一句 Failed —— 看不出缺的是参数而不是网络。
+  // 写法按 Loon 官方文档的 VLESS Reality 示例：public-key 带引号，short-id 不带。
+  const parsed = parseProxyNodeLink(
+    "vless://uuid-1@1.2.3.4:443?security=reality&sni=aws.amazon.com&pbk=PUBKEY123&sid=ab12&flow=xtls-rprx-vision#HK",
+  );
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+
+  const output = renderProxySubscription(
+    { nodes: [parsed.node], groups: [], ruleSets: [], rules: [] },
+    "loon",
+  );
+
+  assert.match(output, /public-key="PUBKEY123"/);
+  assert.match(output, /short-id=ab12/);
+  assert.match(output, /flow=xtls-rprx-vision/);
+  assert.match(output, /over-tls=true/);
+});
+
+test("非 Reality 的节点不会凭空多出 public-key", () => {
+  const parsed = parseProxyNodeLink("vless://uuid-2@1.2.3.4:443?security=tls&sni=a.com#HK");
+  assert.ok(parsed.ok);
+
+  const output = renderProxySubscription(
+    { nodes: [parsed.node], groups: [], ruleSets: [], rules: [] },
+    "loon",
+  );
+
+  assert.doesNotMatch(output, /public-key/);
+  assert.doesNotMatch(output, /short-id/);
+});

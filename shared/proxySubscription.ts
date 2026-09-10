@@ -428,6 +428,12 @@ function loonNodeLine(node: ProxyNode): string {
     if (node.alpn.length) options.push(`alpn=${node.alpn.join(":")}`);
     options.push(`skip-cert-verify=${node.allowInsecure ? "true" : "false"}`);
   }
+  // Reality。少了公钥就握不上手，而客户端只会报一句连接失败 —— 看不出缺的是参数。
+  // 写法按 Loon 官方文档的 VLESS Reality 示例：public-key 带引号，short-id 不带。
+  if (node.realityPublicKey) {
+    options.push(`public-key="${node.realityPublicKey}"`);
+    if (node.realityShortId) options.push(`short-id=${node.realityShortId}`);
+  }
   options.push(`udp=${node.udp ? "true" : "false"}`);
 
   return `${name} = ${[...parts, ...options].join(",")}`;
