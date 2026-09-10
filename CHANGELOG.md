@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.3.286] - 2026-09-10
+
+### 新增
+
+- 一键订阅的客户端从 7 个补到 13 个，新增 Hiddify、v2rayNG、Surfboard、NekoBox、NekoRay、v2rayN。其中 Hiddify 与 v2rayNG 有官方导入 scheme，点一下直接跳进客户端；Surfboard、NekoBox、NekoRay、v2rayN 官方没有导入 scheme（NekoBox 的还只是未实现的功能请求），这几格点开会给出该客户端对应格式的订阅地址、二维码和一句「粘到哪儿」的说明。订阅地址本身对任何客户端都有效，deep link 只是省一次粘贴 —— 没有 scheme 不等于不支持。原本的 7 格容易被误读成「只支持 7 个客户端」，实际是 7 个 URL scheme，其中一格 Clash 就覆盖了 Clash Verge Rev、ClashX、ClashX Meta、FlClash、Clash for Android、Clash Meta，现在把覆盖范围写进了悬停提示。
+- 客户端图标按当前设备自动筛选。一键导入走的是 deep link，只有装了该客户端的设备点得动，在 Windows 上摆一格 Loon 就是个点了没反应的按钮。现在按浏览器所在系统筛（iOS 8 个、Android 6 个、macOS 与 Windows 各 5 个、Linux 3 个），识别不出来时展示全部，另有「显示全部」可随时翻出其他平台的，被筛掉的置灰并写明「本机没有」而不是凭空消失。iPadOS 的浏览器标识与桌面 Mac 完全一致，靠触摸点数区分，避免 iPad 上少掉只有 iOS 才有的那几个客户端。
+- 新增 `scripts/fetch-client-logos.mjs`，一条命令把各客户端的官方图标下载到面板数据目录（`/data/clientLogos/`）。开源客户端取自各自上游仓库，闭源客户端取自 App Store 的公开接口（1024px 原图）。图标放在数据目录而不是打包进产物：换图不需要重新构建，升级也不会被覆盖。未放置图标时使用界面内置的图案。
+
+### 修复
+
+- 扫码弹窗在手机上被裁切：二维码只显示一半，标题、订阅地址和复制按钮跑出屏幕。根因是弹窗底部那条不可断行的订阅地址把内部栅格撑到比屏幕还宽，再被裁掉，三处症状是同一个原因。现在地址断行显示、二维码宽度跟着弹窗走，窄屏整体缩小而不是被裁；地址也不再截断 —— 手机上截断的地址等于没有。
+- 订阅页的复制按钮在以 `http://` 访问的面板上必定失败。浏览器的剪贴板接口只在安全上下文中存在，此前直接调用它，非 HTTPS 面板上只会提示复制失败。改用面板已有的带回退实现。
+- 修复一个格式协商问题：订阅格式的判定顺序是地址参数 → 客户端标识 → 令牌默认格式，而通用 base64 的地址刻意不带格式参数。于是当令牌默认格式被设为 Clash 时，从 Shadowrocket、Hiddify、v2rayNG 的图标点进去会收到一份它们读不懂的 Clash 配置。现在从客户端图标进入时固定格式，同时把这几个客户端的标识加入服务端识别，让手动复制的通用地址对它们也能协商正确。
+- 修正 Surge 的平台标注：`surge:///install-config` 是 Surge 在 iOS/macOS 上的专属 scheme，安卓上的 Surfboard 虽然读同一套配置格式，但只有自己的导入界面、不认这个 scheme，此前误标为支持安卓。
+
+### 版本
+
+- 面板与 APK Release `2.3.286`，Agent `2.2.194`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
 ## [2.3.285] - 2026-09-10
 
 ### 新增
