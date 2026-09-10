@@ -134,3 +134,22 @@ test("导入链接里的中文名称被编码，不会破坏 scheme", () => {
 test("两种订阅种类的常量与标签齐全", () => {
   assert.deepEqual([...PROXY_SUBSCRIPTION_KINDS], ["nodes", "rules"]);
 });
+
+test("每个客户端都标注了适用平台", () => {
+  // 图标网格上没有品牌 logo，平台标注是用户判断"我能不能用这个"的唯一线索。
+  for (const target of PROXY_CLIENT_TARGETS) {
+    assert.ok(target.platforms, `${target.id} 缺少平台标注`);
+  }
+});
+
+test("节点订阅下全部客户端可用，规则订阅下只剩吃 Clash / sing-box 格式的那几个", () => {
+  const usable = (kind: "nodes" | "rules") =>
+    PROXY_CLIENT_TARGETS.filter((target) => proxySubscriptionKindSupported(target.format, kind));
+
+  assert.equal(usable("nodes").length, PROXY_CLIENT_TARGETS.length);
+  // 其余客户端在界面上置灰而不是隐藏，所以这里断言的是"可用数量"，不是"展示数量"。
+  assert.deepEqual(
+    usable("rules").map((target) => target.id).sort(),
+    ["clash", "singbox", "stash"],
+  );
+});
