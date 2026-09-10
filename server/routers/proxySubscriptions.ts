@@ -111,6 +111,7 @@ export const proxySubscriptionsRouter = router({
       link: z.string().min(1).max(8192),
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
       includeDirect: z.boolean().optional(),
+      frontProxyId: z.number().int().min(0).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
@@ -122,6 +123,7 @@ export const proxySubscriptionsRouter = router({
         remark: input.remark || null,
         ...(input.autoGroup ? { autoGroup: input.autoGroup } : {}),
         ...(input.includeDirect !== undefined ? { includeDirect: input.includeDirect } : {}),
+        ...(input.frontProxyId !== undefined ? { frontProxyId: input.frontProxyId } : {}),
         ...nodeToRow(parsed.node, input.link),
       } as any);
       return { id };
@@ -136,6 +138,7 @@ export const proxySubscriptionsRouter = router({
       isEnabled: z.boolean().optional(),
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
       includeDirect: z.boolean().optional(),
+      frontProxyId: z.number().int().min(0).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
@@ -146,6 +149,11 @@ export const proxySubscriptionsRouter = router({
       if (input.isEnabled !== undefined) data.isEnabled = input.isEnabled;
       if (input.autoGroup !== undefined) data.autoGroup = input.autoGroup;
       if (input.includeDirect !== undefined) data.includeDirect = input.includeDirect;
+      if (input.frontProxyId !== undefined) {
+        // 自己指向自己会在渲染时造出一条指向自身的链，客户端行为不可预期。
+        if (input.frontProxyId === input.id) throw new Error("前置代理不能指向节点自己");
+        data.frontProxyId = input.frontProxyId;
+      }
       if (input.link !== undefined) {
         const parsed = parseProxyNodeLink(input.link);
         if (!parsed.ok) throw new Error(parsed.error);

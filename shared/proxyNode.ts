@@ -58,6 +58,13 @@ export type ProxyNode = {
   realityPublicKey: string;
   realityShortId: string;
   udp: boolean;
+  /**
+   * 前置代理：这个节点的连接要先经由哪个节点建立（按名称引用）。
+   *
+   * 只有 Clash（dialer-proxy）、sing-box（detour）、Surge（underlying-proxy）能表达；
+   * Loon 与 Quantumult X 的订阅格式没有这个位置，那边只能在客户端里手连一次。
+   */
+  frontProxyName?: string;
 };
 
 export function createEmptyProxyNode(): ProxyNode {
