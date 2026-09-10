@@ -17,8 +17,8 @@ import {
   type ProxyNodeProtocol,
 } from "@shared/proxyNode";
 import {
+  normalizeProxySubscriptionFormat,
   PROXY_SUBSCRIPTION_FORMATS,
-  PROXY_SUBSCRIPTION_FORMAT_HINTS,
   PROXY_SUBSCRIPTION_FORMAT_LABELS,
   type ProxySubscriptionFormat,
 } from "@shared/proxySubscription";
@@ -118,7 +118,7 @@ function clientIcon(target: ProxyClientTarget) {
  */
 const CLIENT_LOGOS: Record<string, string> = Object.fromEntries(
   Object.entries(
-    import.meta.glob("../assets/clientLogos/*.{svg,png,webp}", {
+    import.meta.glob("../assets/clientLogos/*.{svg,png,webp,jpg,jpeg,ico}", {
       eager: true,
       import: "default",
     }) as Record<string, string>,
@@ -170,8 +170,6 @@ export default function ClientSubscriptionsPage() {
   const [nodeAutoGroup, setNodeAutoGroup] = useState<ProxyNodeAutoGroup>("url-test");
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [tokenName, setTokenName] = useState("");
-  const [tokenFormat, setTokenFormat] = useState<ProxySubscriptionFormat>("base64");
-  const [tokenRulePreset, setTokenRulePreset] = useState<ProxyRulePreset>("balanced");
   // 一键订阅面板默认折叠，同一时间只展开一个，免得页面被撑得很长。
   const [importOpenTokenId, setImportOpenTokenId] = useState<number | null>(null);
   const [importKind, setImportKind] = useState<ProxySubscriptionKind>("nodes");
@@ -633,8 +631,6 @@ export default function ClientSubscriptionsPage() {
               size="sm"
               onClick={() => {
                 setTokenName("");
-                setTokenFormat("base64");
-                setTokenRulePreset("balanced");
                 setTokenDialogOpen(true);
               }}
             >
@@ -745,7 +741,8 @@ export default function ClientSubscriptionsPage() {
                         </p>
 
                         {kind === "rules" && (
-                          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background px-2 py-1.5">
+                          <div className="space-y-1.5 rounded-md border bg-background px-2 py-1.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-xs text-muted-foreground">
                               分流规则：{PROXY_RULE_PRESET_LABELS[preset]}
                             </span>
@@ -767,6 +764,9 @@ export default function ClientSubscriptionsPage() {
                                 ))}
                               </SelectContent>
                             </Select>
+                            </div>
+                            {/* 光看"精简/均衡/完整"不知道差在哪，说明得跟着控件走。 */}
+                            <p className="text-xs text-muted-foreground">{PROXY_RULE_PRESET_HINTS[preset]}</p>
                           </div>
                         )}
 
@@ -918,9 +918,35 @@ export default function ClientSubscriptionsPage() {
                             </Button>
                           </div>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          客户端不在上面，或者面板开在电脑上？扫码或复制这条地址手动添加即可，服务端会按客户端标识自动返回对应格式。
-                        </p>
+                        <div className="space-y-1.5">
+                          <p className="text-xs text-muted-foreground">
+                            客户端不在上面，或者面板开在电脑上？扫码或复制这条地址手动添加即可，服务端会按客户端标识自动返回对应格式。
+                          </p>
+                          {/* 这个设置只在「客户端标识认不出来」时才生效，所以就放在那句话下面。
+                              上面图标点进去的地址都钉死了格式，走不到这里。 */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs text-muted-foreground">认不出来时按</span>
+                            <Select
+                              value={normalizeProxySubscriptionFormat(token.defaultFormat)}
+                              onValueChange={(value) => updateToken.mutate({
+                                id: token.id,
+                                defaultFormat: value as ProxySubscriptionFormat,
+                              })}
+                            >
+                              <SelectTrigger className="h-7 w-auto gap-1 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {PROXY_SUBSCRIPTION_FORMATS.map((format) => (
+                                  <SelectItem key={format} value={format}>
+                                    {PROXY_SUBSCRIPTION_FORMAT_LABELS[format]}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <span className="text-xs text-muted-foreground">返回</span>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -998,62 +1024,17 @@ export default function ClientSubscriptionsPage() {
           <DialogHeader>
             <DialogTitle>新建订阅链接</DialogTitle>
             <DialogDescription>
-              默认格式用于客户端没有表明身份时的回落；Clash、sing-box、Loon 通常能被自动识别。
+              建议一台设备一个链接，丢了只重置那一条。分流预设和回落格式建好后在「一键订阅」里随时改。
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="proxy-token-name">用途</Label>
-              <Input
-                id="proxy-token-name"
-                value={tokenName}
-                onChange={(event) => setTokenName(event.target.value)}
-                placeholder="例如 我的手机"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>默认格式</Label>
-              <Select
-                value={tokenFormat}
-                onValueChange={(value) => setTokenFormat(value as ProxySubscriptionFormat)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROXY_SUBSCRIPTION_FORMATS.map((format) => (
-                    <SelectItem key={format} value={format}>
-                      {PROXY_SUBSCRIPTION_FORMAT_LABELS[format]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {PROXY_SUBSCRIPTION_FORMAT_HINTS[tokenFormat]}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>规则订阅使用的分流预设</Label>
-              <Select
-                value={tokenRulePreset}
-                onValueChange={(value) => setTokenRulePreset(value as ProxyRulePreset)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROXY_RULE_PRESETS.filter((preset) => preset !== "off").map((preset) => (
-                    <SelectItem key={preset} value={preset}>
-                      {PROXY_RULE_PRESET_LABELS[preset]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">{PROXY_RULE_PRESET_HINTS[tokenRulePreset]}</p>
-              <p className="text-xs text-muted-foreground">
-                每个订阅链接都会同时给出「节点订阅」和「规则订阅」两个地址，这里选的是后者用哪档。
-              </p>
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="proxy-token-name">用途</Label>
+            <Input
+              id="proxy-token-name"
+              value={tokenName}
+              onChange={(event) => setTokenName(event.target.value)}
+              placeholder="例如 我的手机"
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setTokenDialogOpen(false)}>
@@ -1066,7 +1047,8 @@ export default function ClientSubscriptionsPage() {
                   toast.error("请填写用途，方便以后分清是哪台设备");
                   return;
                 }
-                createToken.mutate({ name, defaultFormat: tokenFormat, rulePreset: tokenRulePreset });
+                // 格式与预设都在「一键订阅」面板里就地调整，创建时走服务端默认。
+                createToken.mutate({ name });
               }}
               disabled={createToken.isPending}
             >

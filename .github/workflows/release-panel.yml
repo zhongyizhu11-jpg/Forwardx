@@ -96,7 +96,8 @@ jobs:
             pnpm-workspace.yaml \
             scripts/install-panel-local.sh \
             scripts/install-panel-docker.sh \
-            scripts/migrate-agent-legacy.sh
+            scripts/migrate-agent-legacy.sh \
+            scripts/fetch-client-logos.mjs
           cp ".release/${BUNDLE}" "dist/panel/${BUNDLE}"
           ls -lh "dist/panel/${BUNDLE}"
 

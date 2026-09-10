@@ -13,7 +13,7 @@ import path from "path";
 
 import { PROXY_CLIENT_TARGETS } from "../shared/proxyClientImport";
 
-const EXTENSIONS = [".svg", ".png", ".webp", ".jpg", ".jpeg"] as const;
+const EXTENSIONS = [".svg", ".png", ".webp", ".jpg", ".jpeg", ".ico"] as const;
 
 const CONTENT_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
@@ -21,6 +21,7 @@ const CONTENT_TYPES: Record<string, string> = {
   ".webp": "image/webp",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
+  ".ico": "image/x-icon",
 };
 
 /** 只认已知的客户端 id，杜绝拿这个路由当任意文件读取用。 */

@@ -324,7 +324,7 @@ export async function consumeTelegramLoginCode(code: string) {
   });
 }
 
-export async function createUser(data: { username: string; password: string; name?: string; email?: string; emailVerified?: boolean; emailVerifiedAt?: Date | null; role?: "user" | "admin"; canAddRules?: boolean }) {
+export async function createUser(data: { username: string; password: string; name?: string; email?: string; emailVerified?: boolean; emailVerifiedAt?: Date | null; role?: "user" | "admin"; canAddRules?: boolean; allowProxySubscription?: boolean }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   return insertAndGetId("users", {
@@ -338,6 +338,10 @@ export async function createUser(data: { username: string; password: string; nam
     role: data.role ?? "user",
     accountEnabled: true,
     canAddRules: data.canAddRules ?? false,
+    // 有效值与手动授权两列都写：有效值由「手动 OR 套餐」合并得出，只写手动的话
+    // 要等下一次同步才生效，中间这段时间订阅地址是 404 的。
+    allowProxySubscription: data.allowProxySubscription ?? false,
+    manualAllowProxySubscription: data.allowProxySubscription ?? false,
   });
 }
 

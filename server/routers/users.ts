@@ -67,6 +67,7 @@ export const usersRouter = router({
         name: z.string().trim().max(DISPLAY_NAME_MAX_LENGTH).optional(),
         email: z.string().email().optional(),
         canAddRules: z.boolean().default(false),
+        allowProxySubscription: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
         const existing = await db.getUserByUsername(input.username);
@@ -75,7 +76,12 @@ export const usersRouter = router({
           throw new Error("用户名已存在");
         }
         // 安全限制：通过后台创建的用户一律为普通用户，不允许创建新管理员
-        const id = await db.createUser({ ...input, role: "user" });
+        const id = await db.createUser({
+          ...input,
+          role: "user",
+          // 与编辑页同一条规则：转发都不让开，订阅只会给出一堆连不通的死节点。
+          allowProxySubscription: input.canAddRules && input.allowProxySubscription,
+        });
         console.info(`[Users] Created user userId=${id} username=${maskIdentifier(input.username)} ${actorLabel(ctx)}`);
         return { id };
       }),

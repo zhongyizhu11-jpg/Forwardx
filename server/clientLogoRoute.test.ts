@@ -49,6 +49,22 @@ test("不认识的文件名一律忽略", () => {
   });
 });
 
+test("13 个客户端的图标全都认得，含 .ico", () => {
+  // 下载脚本按字节定扩展名，实际会产出 svg/png/jpg/ico 四种。少认一种就是
+  // 那一格白下载了 —— v2rayN 上游只提供 .ico（内含 256x256）。
+  withDir([
+    "clash.png", "stash.jpg", "singbox.svg", "loon.jpg", "surge.jpg",
+    "quantumultx.jpg", "hiddify.svg", "shadowrocket.jpg", "v2rayng.png",
+    "surfboard.png", "nekobox.png", "nekoray.png", "v2rayn.ico",
+  ], (dir) => {
+    const found = scanClientLogos(dir);
+    assert.equal(Object.keys(found).length, 13);
+    assert.equal(found.v2rayn, ".ico");
+    assert.equal(found.surfboard, ".png");
+    assert.equal(found.nekoray, ".png");
+  });
+});
+
 test("同一个客户端有多个扩展名时取矢量优先", () => {
   // SVG 在任何倍率下都清楚，优先于位图。
   withDir(["clash.png", "clash.svg", "clash.jpg"], (dir) => {

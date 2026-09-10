@@ -32,6 +32,22 @@ test("通用 base64 不带 format，方便粘进只认裸地址的老客户端",
   assert.equal(url, "https://panel.example.com/api/sub/tok123");
 });
 
+test("每个客户端图标给出的地址都钉死了格式", () => {
+  // 令牌的「默认格式」只是 UA 认不出来时的回落。图标是"已经知道是哪个客户端"的
+  // 场景，一律钉死 —— 否则默认格式设成 Clash 时，Shadowrocket 会收到 Clash YAML。
+  // 创建订阅链接时已经不再问默认格式了，这条守住"不问也不会出错"。
+  for (const target of PROXY_CLIENT_TARGETS) {
+    const url = buildProxySubscriptionUrl({
+      origin: ORIGIN,
+      token: TOKEN,
+      format: target.format,
+      kind: "nodes",
+      pinFormat: true,
+    });
+    assert.ok(url.includes(`format=${target.format}`), `${target.id} 的地址没带格式: ${url}`);
+  }
+});
+
 test("pinFormat 会把 base64 也写进地址", () => {
   // 服务端定格式的顺序是 ?format= → UA → 令牌默认格式。从客户端图标点进去时
   // 已经知道是哪个客户端，不钉死的话 UA 认不出来就会掉到令牌默认格式上 ——
