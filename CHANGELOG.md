@@ -1,5 +1,49 @@
 # Changelog
 
+## [2.3.292] - 2026-09-10
+
+### 新增
+
+- 客户端节点支持 Snell（v1–v6）。Snell 没有分享链接，粘 Surge 的那行节点配置即可（`名字 = snell, 地址, 端口, psk=密钥, version=4`），Clash 条目与 sing-box 出站的 JSON 同样能认。各家支持的版本区间不同，渲染时逐家判断：Surge v1–v6，mihomo 到 v5，sing-box 只有 v4 与 v6（v5 与 v4 线格式一致，按 v4 发）。
+- 支持 XHTTP 传输（VLESS 专用，Xray 用来取代 H2 的新传输）。目前只有 mihomo 跟进，通用 base64 订阅也能原样带出去；sing-box、Loon、Surge、Quantumult X 会跳过并说明。
+
+### 修复
+
+- REALITY 节点不再静默发给 Surge 与 Quantumult X。这两家的配置里根本没有 REALITY 这一层，此前会渲染成一个「普通 TLS」节点：能导入、能识别协议、握手必失败，而客户端只报一句连接失败。与 Loon 漏公钥是同一类静默失效，现在改为跳过并写明原因。
+- 跳过节点时会把策略组里对它的引用一起清干净，空掉的组也一并移除。此前不存在会被跳过的分组格式，所以没有这条路径；留一个指向不存在节点的引用会让 Clash 拒绝整份配置，报的还是「订阅导入失败」这种毫无线索的错。
+
+### 版本
+
+- 面板与 APK Release `2.3.292`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
+## [2.3.291] - 2026-09-10
+
+### 新增
+
+- 客户端节点支持 Hysteria2、TUIC v5、AnyTLS 三种协议，链接与 JSON 两种粘贴方式都认（`hysteria2://`、`hy2://`、`tuic://`、`anytls://`，以及 sing-box 出站与 mihomo 条目的 JSON）。加上原有的 VLESS / VMess / Trojan / Shadowsocks，覆盖了目前主流在用的协议。
+- 转发规则只放行 TCP 时，不允许绑定 Hysteria2 / TUIC 这类跑在 QUIC 上的节点，订阅组装时也会把这类组合排除并在「订阅内容」里写明原因。QUIC 全程只用 UDP，这种组合能导入、能识别协议，握手却永远收不到回包，客户端只报一句超时。
+
+### 改进
+
+- 各家客户端缺哪种协议，订阅里逐个节点写明跳过原因，而不是让节点凭空消失：Quantumult X 没有 Hysteria2 / TUIC / AnyTLS，Loon 没有 TUIC，Surge 没有 VLESS。协议覆盖最全的是 Clash 与 sing-box 两种格式。
+- Loon 的 Hysteria2 只有 `salamander-password` 一个混淆参数位，用 gecko 混淆的节点会被跳过并说明，而不是发出一个连不上的节点。
+- Loon 的 `alpn` 改为带引号的逗号写法。此前多个 alpn 用冒号连接，节点行本身以逗号分隔，写法不一致会让 Loon 解析错位。
+
+### 版本
+
+- 面板与 APK Release `2.3.291`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
+## [2.3.290] - 2026-09-10
+
+### 修复
+
+- Loon 格式的订阅漏掉了 VLESS Reality 的公钥与 short-id，导致这类节点在 Loon 中一律连接失败。Clash 与 sing-box 两种格式此前已正确输出，只有 Loon 这条路径遗漏。缺少公钥时握手无法完成，而客户端只显示一句连接失败，看不出缺的是参数而非网络。
+- 节点链接现在也认 Shadowrocket 写法的 VLESS：整段为 base64、用 `tls=1` 而非 `security=tls`、Reality 不写 `security` 而靠 `pbk` 判断、名称在 `remarks` 参数里、流控写成 `xtls=N`。此前这类链接会直接报「格式无法识别」。
+
+### 版本
+
+- 面板与 APK Release `2.3.290`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
 ## [2.3.289] - 2026-09-10
 
 ### 修复

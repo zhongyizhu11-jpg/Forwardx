@@ -552,3 +552,103 @@ test("规则上的自定义名优先，留空则回落到自动生成的名字",
     defaultProxySubscriptionNodeName({ hostName: "广州1", templateName: "CST/hk", ruleName: "香港转发" }),
   );
 });
+
+// ==================== QUIC 系节点与转发协议 ====================
+
+const HY2_TEMPLATE: ProxyNodeTemplateRow = {
+  id: 2,
+  name: "HY2",
+  protocol: "hysteria2",
+  address: "hk.example.com",
+  port: 8443,
+  password: "pw",
+  obfs: "salamander",
+  obfsPassword: "ob",
+  sni: "hk.example.com",
+  isEnabled: true,
+};
+
+test("Hysteria2 绑到只放行 TCP 的转发会被排除并说明原因", () => {
+  const plan = buildProxySubscriptionPlan({
+    rules: [rule({ id: 1, proxyNodeId: 2, protocol: "tcp" })],
+    templates: [HY2_TEMPLATE],
+    hosts: HOSTS,
+  });
+
+  // QUIC 全程只走 UDP，这条链路从第一个包起就不通；发出去只会得到一句超时。
+  assert.equal(plan.entries.length, 0);
+  assert.equal(plan.skipped.length, 1);
+  assert.equal(plan.skipped[0].reason, "udp-not-forwarded");
+});
+
+test("转发放行了 UDP 或 TCP+UDP 时 QUIC 节点照常进订阅", () => {
+  for (const protocol of ["udp", "both"]) {
+    const plan = buildProxySubscriptionPlan({
+      rules: [rule({ id: 1, proxyNodeId: 2, protocol })],
+      templates: [HY2_TEMPLATE],
+      hosts: HOSTS,
+    });
+    assert.equal(plan.entries.length, 1, `protocol=${protocol}`);
+    assert.equal(plan.entries[0].node.protocol, "hysteria2");
+  }
+});
+
+test("调用方没查 protocol 列时不凭猜测吞掉节点", () => {
+  const plan = buildProxySubscriptionPlan({
+    rules: [rule({ id: 1, proxyNodeId: 2 })],
+    templates: [HY2_TEMPLATE],
+    hosts: HOSTS,
+  });
+  assert.equal(plan.entries.length, 1);
+});
+
+test("TCP 系协议不受转发协议限制", () => {
+  const plan = buildProxySubscriptionPlan({
+    rules: [rule({ id: 1, proxyNodeId: 1, protocol: "tcp" })],
+    templates: [HKT_TEMPLATE],
+    hosts: HOSTS,
+  });
+  assert.equal(plan.entries.length, 1);
+});
+
+test("数据库行还原出新协议的字段，TLS 不看那一列", () => {
+  const node = proxyNodeFromTemplateRow({
+    id: 3,
+    name: "TUIC",
+    protocol: "tuic",
+    address: "hk.example.com",
+    port: 443,
+    uuid: "uuid-1",
+    password: "pw",
+    congestionControl: "bbr",
+    udpRelayMode: "native",
+    disableSni: true,
+    // 老行里这一列可能是 0：TUIC 的 TLS 是协议自带的，不该据此当成明文节点。
+    tls: false,
+  });
+
+  assert.equal(node.protocol, "tuic");
+  assert.equal(node.congestionControl, "bbr");
+  assert.equal(node.udpRelayMode, "native");
+  assert.equal(node.disableSni, true);
+  assert.equal(node.tls, true);
+});
+
+test("数据库行还原出 Snell 与 XHTTP 的字段", () => {
+  const snell = proxyNodeFromTemplateRow({
+    id: 4, name: "S4", protocol: "snell", address: "hk.example.com", port: 8000,
+    password: "psk", snellVersion: 4, obfs: "http", host: "bing.com",
+  });
+  assert.equal(snell.protocol, "snell");
+  assert.equal(snell.snellVersion, 4);
+  assert.equal(snell.obfs, "http");
+  // Snell 走裸 TCP，不在「协议自带 TLS」那一档里。
+  assert.equal(snell.tls, false);
+
+  const xhttp = proxyNodeFromTemplateRow({
+    id: 5, name: "XH", protocol: "vless", address: "hk.example.com", port: 443,
+    uuid: "u", transport: "xhttp", xhttpMode: "stream-one", tls: true,
+  });
+  assert.equal(xhttp.transport, "xhttp");
+  assert.equal(xhttp.xhttpMode, "stream-one");
+});

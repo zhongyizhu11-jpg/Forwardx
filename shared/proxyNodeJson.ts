@@ -16,6 +16,7 @@
 
 import {
   createEmptyProxyNode,
+  proxyNodeAlwaysTls,
   PROXY_NODE_TRANSPORTS,
   type ProxyNode,
   type ProxyNodeProtocol,
@@ -34,9 +35,16 @@ const PROTOCOL_ALIASES: Record<string, ProxyNodeProtocol> = {
   trojan: "trojan",
   ss: "shadowsocks",
   shadowsocks: "shadowsocks",
+  hysteria2: "hysteria2",
+  // hy2 是 Hysteria 2 的官方简写，部分工具的配置里就写这个。
+  hy2: "hysteria2",
+  tuic: "tuic",
+  anytls: "anytls",
+  snell: "snell",
 };
 
 /** 不是代理协议的出/入站类型，遍历时要跳过。 */
+// 注意 "hysteria" 是 v1，与 hysteria2 是两个不兼容的协议，这里挡的只是 v1。
 const NON_PROXY_TYPES = new Set([
   "direct", "block", "dns", "selector", "urltest", "hysteria", "socks", "http",
   "dokodemo-door", "api", "freedom", "blackhole", "wireguard", "tun", "mixed", "redirect", "tproxy",
@@ -97,10 +105,26 @@ function fromSingboxOutbound(raw: Record<string, unknown>): ProxyNode | null {
   node.method = text(raw.method);
   node.alterId = Number(raw.alter_id) || 0;
   node.flow = text(raw.flow);
+  node.congestionControl = text(raw.congestion_control);
+  node.udpRelayMode = text(raw.udp_relay_mode);
+  if (protocol === "snell") {
+    // sing-box 的 Snell 鉴权字段是 psk，不是 password。
+    node.password = text(raw.psk) || node.password;
+    node.snellVersion = Number(raw.version) || 1;
+    node.obfs = text(raw.obfs_mode).toLowerCase();
+    node.host = text(raw.obfs_host) || node.host;
+    node.snellMode = text(raw.mode);
+  }
+  const obfs = raw.obfs as Record<string, unknown> | undefined;
+  if (obfs && typeof obfs === "object") {
+    node.obfs = text(obfs.type).toLowerCase();
+    node.obfsPassword = text(obfs.password);
+  }
 
   const transport = raw.transport as Record<string, unknown> | undefined;
   if (transport && typeof transport === "object") {
     node.transport = toTransport(transport.type);
+    node.xhttpMode = text(transport.mode);
     // grpc 用 service_name，ws/http 用 path。
     node.path = text(transport.service_name) || text(transport.path);
     const headers = transport.headers as Record<string, unknown> | undefined;
@@ -113,6 +137,7 @@ function fromSingboxOutbound(raw: Record<string, unknown>): ProxyNode | null {
     node.sni = text(tls.server_name);
     node.alpn = toAlpn(tls.alpn);
     node.allowInsecure = toBool(tls.insecure);
+    node.disableSni = toBool(tls.disable_sni);
     const utls = tls.utls as Record<string, unknown> | undefined;
     node.fingerprint = text(utls?.fingerprint);
     const reality = tls.reality as Record<string, unknown> | undefined;
@@ -143,6 +168,21 @@ function fromClashProxy(raw: Record<string, unknown>): ProxyNode | null {
   node.alterId = Number(raw.alterId) || 0;
   node.flow = text(raw.flow);
   node.udp = raw.udp === undefined ? true : toBool(raw.udp);
+  node.obfs = text(raw.obfs).toLowerCase();
+  node.obfsPassword = text(raw["obfs-password"]);
+  // mihomo 的 tuic 键名是 congestion-controller，别写成 sing-box 的 congestion_control。
+  node.congestionControl = text(raw["congestion-controller"]);
+  node.udpRelayMode = text(raw["udp-relay-mode"]);
+  node.disableSni = toBool(raw["disable-sni"]);
+  if (protocol === "snell") {
+    node.password = text(raw.psk) || node.password;
+    node.snellVersion = Number(raw.version) || 1;
+    const obfsOpts = raw["obfs-opts"] as Record<string, unknown> | undefined;
+    if (obfsOpts && typeof obfsOpts === "object") {
+      node.obfs = text(obfsOpts.mode).toLowerCase();
+      node.host = text(obfsOpts.host) || node.host;
+    }
+  }
 
   node.transport = toTransport(raw.network);
   const wsOpts = raw["ws-opts"] as Record<string, unknown> | undefined;
@@ -154,6 +194,12 @@ function fromClashProxy(raw: Record<string, unknown>): ProxyNode | null {
   const grpcOpts = raw["grpc-opts"] as Record<string, unknown> | undefined;
   if (grpcOpts && typeof grpcOpts === "object") {
     node.path = text(grpcOpts["grpc-service-name"]);
+  }
+  const xhttpOpts = raw["xhttp-opts"] as Record<string, unknown> | undefined;
+  if (xhttpOpts && typeof xhttpOpts === "object") {
+    node.path = text(xhttpOpts.path) || node.path;
+    node.host = text(xhttpOpts.host) || node.host;
+    node.xhttpMode = text(xhttpOpts.mode);
   }
 
   // Clash 里 vless/trojan 默认走 TLS，vmess 看 tls 字段。
@@ -216,14 +262,29 @@ function fromServerInbound(raw: Record<string, unknown>): ProxyNode | null {
   const user = Array.isArray(users) ? users[0] : undefined;
   if (user) {
     node.uuid = text(user.uuid);
-    node.password = text(user.password);
+    // Snell 服务端的鉴权字段是 psk（妙妙屋X 的 Snell 入站就是这么写的）。
+    node.password = text(user.password) || text(user.psk);
+    node.snellVersion = Number(user.version) || node.snellVersion;
+    node.obfs = text(user.obfsMode).toLowerCase() || node.obfs;
+    node.host = text(user.obfsHost) || node.host;
+    node.snellMode = text(user.v6Mode) || node.snellMode;
     node.flow = text(user.flow);
     node.alterId = Number(user.alterId) || 0;
   }
   node.method = text(raw.method);
 
-  // Xray 服务端把用户放在 settings.clients 里。
+  // Xray 服务端把用户放在 settings.clients 里；Snell 与 AnyTLS 用的是 settings.users。
   const settings = raw.settings as Record<string, unknown> | undefined;
+  const settingsUsers = settings?.users as Array<Record<string, unknown>> | undefined;
+  const settingsUser = Array.isArray(settingsUsers) ? settingsUsers[0] : undefined;
+  if (settingsUser) {
+    node.password = node.password || text(settingsUser.password) || text(settingsUser.psk);
+    node.uuid = node.uuid || text(settingsUser.id);
+    node.snellVersion = node.snellVersion || Number(settingsUser.version) || 0;
+    node.obfs = node.obfs || text(settingsUser.obfsMode).toLowerCase();
+    node.host = node.host || text(settingsUser.obfsHost);
+    node.snellMode = node.snellMode || text(settingsUser.v6Mode);
+  }
   const clients = settings?.clients as Array<Record<string, unknown>> | undefined;
   const client = Array.isArray(clients) ? clients[0] : undefined;
   if (client) {
@@ -340,7 +401,7 @@ export function parseProxyNodeJson(input: unknown): ParseProxyNodeJsonResult {
     if (!node) {
       return {
         ok: false,
-        error: `暂不支持该协议：${text(root.type) || "未知"}。目前支持 VLESS / VMess / Trojan / Shadowsocks`,
+        error: `暂不支持该协议：${text(root.type) || "未知"}。目前支持 VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS / Snell`,
       };
     }
     return finish(node, root.server_port !== undefined ? "singbox-outbound" : "clash-proxy");
@@ -358,5 +419,8 @@ function finish(node: ProxyNode, source: ProxyNodeJsonSource): ParseProxyNodeJso
   if (!node.port) return { ok: false, error: "配置里没有可用的端口" };
   const hasCredential = node.uuid || node.password;
   if (!hasCredential) return { ok: false, error: "配置里没有找到 UUID 或密码" };
+  // Hysteria2 / TUIC / AnyTLS 的配置里不会写 tls: true —— TLS 是协议自带的。
+  // 漏掉这一步，渲染时会当成明文节点，客户端握手直接失败。
+  if (proxyNodeAlwaysTls(node.protocol)) node.tls = true;
   return { ok: true, node, needsAddress: !node.address, source };
 }

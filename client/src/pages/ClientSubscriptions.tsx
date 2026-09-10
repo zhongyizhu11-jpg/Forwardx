@@ -424,7 +424,7 @@ export default function ClientSubscriptionsPage() {
               <DataSectionLoading />
             ) : nodes.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
-                还没有登记节点。先从落地机复制一条 VLESS / VMess / Trojan / Shadowsocks 链接粘进来。
+                还没有登记节点。先从落地机复制一条节点链接粘进来，VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS / Snell 都行。
               </p>
             ) : (
               <div className="space-y-2">
@@ -1085,8 +1085,8 @@ export default function ClientSubscriptionsPage() {
                 id="proxy-node-link"
                 value={nodeLink}
                 onChange={(event) => setNodeLink(event.target.value)}
-                placeholder={'vless://... / vmess:// / trojan:// / ss://\n或粘贴 JSON：{"type":"vless","server":"...","server_port":443,...}'}
-                rows={4}
+                placeholder={'vless:// vmess:// trojan:// ss:// hysteria2:// tuic:// anytls://\nSnell 没有链接，粘 Surge 那行：名字 = snell, 地址, 端口, psk=密钥, version=4\n或粘贴 JSON：{"type":"vless","server":"...","server_port":443,...}'}
+                rows={5}
                 className="font-mono text-xs"
               />
             </div>

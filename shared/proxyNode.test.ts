@@ -178,7 +178,8 @@ test("Reality parameters are preserved through the rewrite", () => {
 });
 
 test("unsupported and malformed links report a usable reason", () => {
-  const unsupported = parseProxyNodeLink("hysteria2://pass@example.com:443");
+  // SSR 已经没人在用，也不打算支持；换协议时记得这里要挑一个真的不支持的。
+  const unsupported = parseProxyNodeLink("ssr://cGFzc0BleGFtcGxlLmNvbTo0NDM");
   assert.equal(unsupported.ok, false);
   if (!unsupported.ok) assert.match(unsupported.error, /暂不支持该协议/);
 
@@ -187,4 +188,203 @@ test("unsupported and malformed links report a usable reason", () => {
 
   const empty = parseProxyNodeLink("   ");
   assert.equal(empty.ok, false);
+});
+
+// ==================== Reality 与 Shadowrocket 写法 ====================
+
+test("Shadowrocket 的 vless 链接：整段 base64，参数名也不同", () => {
+  // 标准写法是 vless://uuid@host:port?security=reality&pbk=...
+  // Shadowrocket 写成 vless://base64(method:uuid@host:port)?tls=1&peer=...&pbk=...
+  // 不认这种的后果是整条链接解析失败，用户只看到「格式无法识别」。
+  const link =
+    "vless://YXV0bzpiOGRjOGIxMi1iMmY4LTQ0MTAtYjk3NS1kMDgwNWJlYWRkZDNAMTU0LjM2LjE3NC44NTo2MzI4NA" +
+    "?remarks=Cst%20hk&tls=1&peer=aws.amazon.com&xtls=2&pbk=PUBKEY123";
+  const result = parseProxyNodeLink(link);
+
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  const node = result.node;
+  assert.equal(node.address, "154.36.174.85");
+  assert.equal(node.port, 63284);
+  assert.equal(node.uuid, "b8dc8b12-b2f8-4410-b975-d0805beaddd3", "base64 里的 method: 前缀要丢掉");
+  assert.equal(node.name, "Cst hk", "名字在 remarks 参数里，不是 # 后面");
+  assert.equal(node.tls, true, "tls=1 也算开启 TLS");
+  assert.equal(node.sni, "aws.amazon.com", "peer 就是 SNI");
+  assert.equal(node.realityPublicKey, "PUBKEY123", "没写 security=reality，靠 pbk 存在判断");
+  assert.equal(node.flow, "xtls-rprx-vision", "xtls=2 是数字不是布尔");
+});
+
+test("xtls=0 不算启用流控", () => {
+  const link = "vless://u@1.2.3.4:443?tls=1&xtls=0";
+  const result = parseProxyNodeLink(link);
+  assert.ok(result.ok);
+  assert.equal(result.node.flow, "");
+});
+
+test("显式给了 flow 时以 flow 为准", () => {
+  const link = "vless://u@1.2.3.4:443?security=reality&pbk=K&flow=xtls-rprx-vision&xtls=1";
+  const result = parseProxyNodeLink(link);
+  assert.ok(result.ok);
+  assert.equal(result.node.flow, "xtls-rprx-vision");
+});
+
+test("标准写法不受影响", () => {
+  // 改解析器最容易伤到的就是原本能用的那条路。
+  const link =
+    "vless://b8dc8b12@1.2.3.4:443?security=reality&sni=a.com&pbk=PK&sid=ab12&fp=chrome&flow=xtls-rprx-vision#名字";
+  const result = parseProxyNodeLink(link);
+
+  assert.ok(result.ok);
+  assert.equal(result.node.uuid, "b8dc8b12");
+  assert.equal(result.node.name, "名字");
+  assert.equal(result.node.realityPublicKey, "PK");
+  assert.equal(result.node.realityShortId, "ab12");
+});
+
+// ==================== Hysteria2 / TUIC / AnyTLS ====================
+
+test("Hysteria2 链接解析出密码、SNI 与混淆", () => {
+  const node = parseOrThrow(
+    "hysteria2://my%40pass@hk.example.com:8443/?obfs=salamander&obfs-password=ob&sni=real.example.com&insecure=1#HY2",
+  );
+
+  assert.equal(node.protocol, "hysteria2");
+  assert.equal(node.address, "hk.example.com");
+  assert.equal(node.port, 8443);
+  // 密码里带 @ 是常见的，必须按最后一个 @ 切分并解码。
+  assert.equal(node.password, "my@pass");
+  assert.equal(node.sni, "real.example.com");
+  assert.equal(node.obfs, "salamander");
+  assert.equal(node.obfsPassword, "ob");
+  assert.equal(node.allowInsecure, true);
+  // 协议自带 TLS，链接里不会写 security=tls。
+  assert.equal(node.tls, true);
+  assert.equal(node.name, "HY2");
+});
+
+test("hy2:// 是 Hysteria2 的官方简写，省略端口时按 443 算", () => {
+  const node = parseOrThrow("hy2://pw@hk.example.com/?sni=a.com#简写");
+  assert.equal(node.protocol, "hysteria2");
+  assert.equal(node.port, 443);
+  assert.equal(node.password, "pw");
+});
+
+test("TUIC 链接拆出 uuid 与密码，缺省 ALPN 补 h3", () => {
+  const node = parseOrThrow(
+    "tuic://2DD61D93-75D8-4DA4-AC0E-6AECE7EAC365:pass@hk.example.com:443?congestion_control=bbr&udp_relay_mode=native&sni=a.com&disable_sni=1#TUIC",
+  );
+
+  assert.equal(node.protocol, "tuic");
+  assert.equal(node.uuid, "2DD61D93-75D8-4DA4-AC0E-6AECE7EAC365");
+  assert.equal(node.password, "pass");
+  assert.equal(node.congestionControl, "bbr");
+  assert.equal(node.udpRelayMode, "native");
+  assert.equal(node.disableSni, true);
+  assert.deepEqual(node.alpn, ["h3"]);
+  assert.equal(node.tls, true);
+});
+
+test("TUIC 少了 uuid:password 那个冒号就不该蒙混过关", () => {
+  // v4 是单一 token，握手与 v5 不兼容；猜成 v5 会生成一个连不上的节点。
+  const result = parseProxyNodeLink("tuic://just-a-token@hk.example.com:443#v4");
+  assert.equal(result.ok, false);
+});
+
+test("AnyTLS 链接解析，端口可省", () => {
+  const node = parseOrThrow("anytls://letmein@example.com/?sni=real.example.com&insecure=1#AT");
+  assert.equal(node.protocol, "anytls");
+  assert.equal(node.port, 443);
+  assert.equal(node.password, "letmein");
+  assert.equal(node.sni, "real.example.com");
+  assert.equal(node.allowInsecure, true);
+  assert.equal(node.tls, true);
+});
+
+test("新协议来回一趟不丢参数", () => {
+  for (const link of [
+    "hysteria2://pw@hk.example.com:8443/?obfs=salamander&obfs-password=ob&sni=a.com&insecure=1#名字",
+    "tuic://uuid-1:pw@hk.example.com:443?congestion_control=bbr&udp_relay_mode=native&sni=a.com#名字",
+    "anytls://pw@hk.example.com:443/?sni=a.com#名字",
+  ]) {
+    const first = parseOrThrow(link);
+    const second = parseOrThrow(formatProxyNodeLink(first));
+    assert.equal(second.protocol, first.protocol);
+    assert.equal(second.address, first.address);
+    assert.equal(second.port, first.port);
+    assert.equal(second.uuid, first.uuid);
+    assert.equal(second.password, first.password);
+    assert.equal(second.sni, first.sni);
+    assert.equal(second.obfs, first.obfs);
+    assert.equal(second.obfsPassword, first.obfsPassword);
+    assert.equal(second.congestionControl, first.congestionControl);
+    assert.equal(second.udpRelayMode, first.udpRelayMode);
+    assert.equal(second.name, first.name);
+  }
+});
+
+test("中转改写把落地地址固化进 SNI —— QUIC 系同样适用", () => {
+  const node = parseOrThrow("hysteria2://pw@hk.example.com:8443/#HY2");
+  const relayed = relayProxyNode(node, { address: "1.2.3.4", port: 20001, name: "广州1 → HY2" });
+  assert.equal(relayed.address, "1.2.3.4");
+  assert.equal(relayed.port, 20001);
+  // 不固化的话客户端会拿入口 IP 当 SNI，证书对不上。
+  assert.equal(relayed.sni, "hk.example.com");
+});
+
+// ==================== Snell 与 XHTTP ====================
+
+test("Snell 从 Surge 节点行读出来", () => {
+  // Snell 没有分享链接，用户手上最可能有的就是一行 Surge 配置。
+  const node = parseOrThrow('HK 落地 = snell, 1.2.3.4, 8000, psk="my-psk", version=4, obfs=http, obfs-host=bing.com');
+
+  assert.equal(node.protocol, "snell");
+  assert.equal(node.name, "HK 落地");
+  assert.equal(node.address, "1.2.3.4");
+  assert.equal(node.port, 8000);
+  // psk 惯例带引号，要去掉。
+  assert.equal(node.password, "my-psk");
+  assert.equal(node.snellVersion, 4);
+  assert.equal(node.obfs, "http");
+  assert.equal(node.host, "bing.com");
+  // Snell 走裸 TCP，没有 TLS。
+  assert.equal(node.tls, false);
+});
+
+test("Snell v6 用 mode 而不是 obfs", () => {
+  const node = parseOrThrow("S6 = snell, 1.2.3.4, 8000, psk=k, version=6, mode=unshaped");
+  assert.equal(node.snellVersion, 6);
+  assert.equal(node.snellMode, "unshaped");
+  assert.equal(node.obfs, "");
+});
+
+test("Snell 不写 version 时按 Surge 手册的默认 v1 算", () => {
+  // 不猜成 v4：版本猜错是握手完全不兼容，不是少一个参数。
+  const node = parseOrThrow("S = snell, 1.2.3.4, 8000, psk=k");
+  assert.equal(node.snellVersion, 1);
+});
+
+test("Snell 少了 psk 就报错，而不是收下一个连不上的节点", () => {
+  const result = parseProxyNodeLink("S = snell, 1.2.3.4, 8000, version=4");
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /psk/);
+});
+
+test("Snell 没有分享链接，不该凭空编一个出来", () => {
+  const node = parseOrThrow("S = snell, 1.2.3.4, 8000, psk=k, version=4");
+  assert.equal(formatProxyNodeLink(node), "");
+});
+
+test("VLESS + XHTTP + REALITY 的链接带 mode", () => {
+  const node = parseOrThrow(
+    "vless://u@1.2.3.4:443?type=xhttp&mode=stream-one&path=%2Fx&host=a.com&security=reality&pbk=PK&sid=ab#XH",
+  );
+  assert.equal(node.transport, "xhttp");
+  assert.equal(node.xhttpMode, "stream-one");
+  assert.equal(node.path, "/x");
+  assert.equal(node.host, "a.com");
+  assert.equal(node.realityPublicKey, "PK");
+
+  // mode 两端不一致就连不上，来回一趟不能丢。
+  const again = parseOrThrow(formatProxyNodeLink(node));
+  assert.equal(again.transport, "xhttp");
+  assert.equal(again.xhttpMode, "stream-one");
 });

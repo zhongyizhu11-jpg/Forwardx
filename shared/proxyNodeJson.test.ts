@@ -232,7 +232,8 @@ test("坏 JSON 的报错要说人话", () => {
 });
 
 test("认得结构但协议不支持时，说明支持哪些", () => {
-  const result = parseProxyNodeJson(JSON.stringify({ type: "hysteria2", server: "1.2.3.4", port: 443, password: "p" }));
+  // 换成一个真的不支持的协议；hysteria2 已经支持了。
+  const result = parseProxyNodeJson(JSON.stringify({ type: "ssr", server: "1.2.3.4", port: 443, password: "p" }));
   assert.equal(result.ok, false);
   assert.match(result.ok ? "" : result.error, /VLESS/);
 });
@@ -242,4 +243,160 @@ test("缺凭据的配置不放过", () => {
   const result = parseProxyNodeJson(JSON.stringify({ type: "vless", server: "1.2.3.4", server_port: 443 }));
   assert.equal(result.ok, false);
   assert.match(result.ok ? "" : result.error, /UUID|密码/);
+});
+
+// ==================== Hysteria2 / TUIC / AnyTLS 的 JSON ====================
+
+test("sing-box 的 hysteria2 出站：混淆是对象", () => {
+  const { node } = ok(JSON.stringify({
+    type: "hysteria2",
+    tag: "HY2",
+    server: "hk.example.com",
+    server_port: 8443,
+    password: "pw",
+    obfs: { type: "salamander", password: "ob" },
+    tls: { enabled: true, server_name: "hk.example.com", alpn: ["h3"] },
+  }));
+
+  assert.equal(node.protocol, "hysteria2");
+  assert.equal(node.password, "pw");
+  assert.equal(node.obfs, "salamander");
+  assert.equal(node.obfsPassword, "ob");
+  assert.deepEqual(node.alpn, ["h3"]);
+  assert.equal(node.tls, true);
+});
+
+test("sing-box 的 tuic 出站：下划线键名，disable_sni 在 tls 里", () => {
+  const { node } = ok(JSON.stringify({
+    type: "tuic",
+    server: "hk.example.com",
+    server_port: 443,
+    uuid: "uuid-1",
+    password: "pw",
+    congestion_control: "bbr",
+    udp_relay_mode: "native",
+    tls: { enabled: true, disable_sni: true },
+  }));
+
+  assert.equal(node.protocol, "tuic");
+  assert.equal(node.congestionControl, "bbr");
+  assert.equal(node.udpRelayMode, "native");
+  assert.equal(node.disableSni, true);
+});
+
+test("mihomo 的 tuic 条目：连字符键名", () => {
+  const { node } = ok(JSON.stringify({
+    name: "TUIC",
+    type: "tuic",
+    server: "hk.example.com",
+    port: 443,
+    uuid: "uuid-1",
+    password: "pw",
+    "congestion-controller": "bbr",
+    "udp-relay-mode": "native",
+    "disable-sni": true,
+  }));
+
+  assert.equal(node.protocol, "tuic");
+  assert.equal(node.congestionControl, "bbr");
+  assert.equal(node.udpRelayMode, "native");
+  assert.equal(node.disableSni, true);
+  // 条目里没有 tls 字段，但 TUIC 的 TLS 是协议自带的。
+  assert.equal(node.tls, true);
+});
+
+test("mihomo 的 anytls 与 hysteria2 条目", () => {
+  const anytls = ok(JSON.stringify({
+    name: "AT", type: "anytls", server: "hk.example.com", port: 443, password: "pw", sni: "hk.example.com",
+  })).node;
+  assert.equal(anytls.protocol, "anytls");
+  assert.equal(anytls.password, "pw");
+  assert.equal(anytls.tls, true);
+
+  const hy2 = ok(JSON.stringify({
+    name: "HY2", type: "hysteria2", server: "hk.example.com", port: 8443,
+    password: "pw", obfs: "salamander", "obfs-password": "ob",
+  })).node;
+  assert.equal(hy2.protocol, "hysteria2");
+  assert.equal(hy2.obfs, "salamander");
+  assert.equal(hy2.obfsPassword, "ob");
+});
+
+test("hysteria v1 与 hysteria2 是两个协议，v1 仍然不支持", () => {
+  const result = parseProxyNodeJson(JSON.stringify({
+    type: "hysteria", server: "hk.example.com", server_port: 443, auth_str: "pw",
+  }));
+  assert.equal(result.ok, false);
+});
+
+// ==================== Snell 与 XHTTP 的 JSON ====================
+
+test("mihomo 的 snell 条目：psk 与 obfs-opts", () => {
+  const { node } = ok(JSON.stringify({
+    name: "S4", type: "snell", server: "hk.example.com", port: 8000,
+    psk: "my-psk", version: 4, udp: true,
+    "obfs-opts": { mode: "http", host: "bing.com" },
+  }));
+
+  assert.equal(node.protocol, "snell");
+  // Snell 的鉴权字段是 psk，不是 password。
+  assert.equal(node.password, "my-psk");
+  assert.equal(node.snellVersion, 4);
+  assert.equal(node.obfs, "http");
+  assert.equal(node.host, "bing.com");
+  // 走裸 TCP，不该被当成 TLS 节点。
+  assert.equal(node.tls, false);
+});
+
+test("sing-box 的 snell 出站：v6 用 mode", () => {
+  const { node } = ok(JSON.stringify({
+    type: "snell", server: "hk.example.com", server_port: 8000,
+    psk: "my-psk", version: 6, mode: "unshaped",
+  }));
+
+  assert.equal(node.protocol, "snell");
+  assert.equal(node.snellVersion, 6);
+  assert.equal(node.snellMode, "unshaped");
+});
+
+test("mihomo 的 xhttp-opts 读得出 mode", () => {
+  const { node } = ok(JSON.stringify({
+    name: "XH", type: "vless", server: "hk.example.com", port: 443, uuid: "u",
+    network: "xhttp", tls: true, servername: "a.com",
+    "xhttp-opts": { path: "/x", host: "a.com", mode: "stream-one" },
+  }));
+
+  assert.equal(node.transport, "xhttp");
+  assert.equal(node.path, "/x");
+  // mode 两端不一致就连不上，不是可选项。
+  assert.equal(node.xhttpMode, "stream-one");
+});
+
+test("妙妙屋X 那种 Snell 服务端入站：psk 在 users 里", () => {
+  const result = parseProxyNodeJson(JSON.stringify({
+    tag: "snell-in", listen: "0.0.0.0", port: 8443, protocol: "snell",
+    settings: { users: [{ psk: "your-psk", version: 4, obfsMode: "http", email: "u@e.com" }] },
+  }));
+
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  // 服务端配置的 listen 是 0.0.0.0，公网地址得由调用方补。
+  assert.equal(result.needsAddress, true);
+  assert.equal(result.node.protocol, "snell");
+  assert.equal(result.node.password, "your-psk");
+  assert.equal(result.node.snellVersion, 4);
+  assert.equal(result.node.obfs, "http");
+});
+
+test("妙妙屋X 那种 AnyTLS 服务端入站：password 也在 settings.users 里", () => {
+  const result = parseProxyNodeJson(JSON.stringify({
+    tag: "anytls-in", listen: "0.0.0.0", port: 443, protocol: "anytls",
+    settings: { users: [{ password: "your-password", email: "u@e.com" }], paddingScheme: ["stop=8"] },
+    streamSettings: { network: "tcp", security: "tls", tlsSettings: { serverName: "your.domain.com" } },
+  }));
+
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  assert.equal(result.node.protocol, "anytls");
+  assert.equal(result.node.password, "your-password");
+  assert.equal(result.node.sni, "your.domain.com");
+  assert.equal(result.node.tls, true);
 });
