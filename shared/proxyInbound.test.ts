@@ -6,6 +6,7 @@ import { renderProxySubscription } from "./proxySubscription";
 import {
   buildSingboxConfig,
   buildSingboxInbound,
+  PROXY_INBOUND_SNELL_VERSIONS,
   createEmptyProxyInbound,
   isValidRealityShortId,
   proxyInboundRealityDest,
@@ -84,7 +85,7 @@ test("缺凭据、缺密钥、缺证书路径都当场报错", () => {
   );
   assert.match(
     validateProxyInbound(inbound({ protocol: "snell", port: 8000, security: "none", password: "psk" })),
-    /Snell 版本/,
+    /Snell 入站只支持/,
   );
 });
 
@@ -146,15 +147,41 @@ test("Shadowsocks 的 method 与 password 在顶层，不在 users 里", () => {
   assert.equal(json.tls, undefined);
 });
 
+test("Snell 入站只收 v5 与 v6，v4 要挡住", () => {
+  /**
+   * 这个区间是拿 sing-box 1.14.0 的二进制逐个版本试出来的，不是从文档抄的：
+   *   入站 v1/v2/v3/v4 → unsupported version
+   *   出站 v5          → unsupported version
+   * 两边不一样，看着像笔误，所以单独留一条测试钉住。
+   *
+   * 放行 v4 的后果不是「这一个节点连不上」，而是 sing-box 拒绝加载整份配置 ——
+   * 同一台落地机上其他入站跟着一起停。
+   */
+  assert.deepEqual([...PROXY_INBOUND_SNELL_VERSIONS], [5, 6]);
+  for (const version of [1, 2, 3, 4]) {
+    const reason = validateProxyInbound(
+      inbound({ protocol: "snell", port: 8000, security: "none", password: "psk", snellVersion: version }),
+    );
+    assert.match(reason, /只支持 v5 和 v6/, `v${version}`);
+  }
+  for (const version of [5, 6]) {
+    assert.equal(
+      validateProxyInbound(inbound({ protocol: "snell", port: 8000, security: "none", password: "psk", snellVersion: version })),
+      "",
+      `v${version}`,
+    );
+  }
+});
+
 test("Snell 的 psk 在顶层，版本决定是 obfs_mode 还是 mode", () => {
-  const v4 = buildSingboxInbound(
-    inbound({ protocol: "snell", port: 8000, security: "none", password: "psk", snellVersion: 4, obfs: "http" }),
-    "s4",
+  const v5 = buildSingboxInbound(
+    inbound({ protocol: "snell", port: 8000, security: "none", password: "psk", snellVersion: 5, obfs: "http" }),
+    "s5",
   );
-  assert.equal(v4.psk, "psk");
-  assert.equal(v4.version, 4);
-  assert.equal(v4.obfs_mode, "http");
-  assert.equal(v4.mode, undefined);
+  assert.equal(v5.psk, "psk");
+  assert.equal(v5.version, 5);
+  assert.equal(v5.obfs_mode, "http");
+  assert.equal(v5.mode, undefined);
 
   const v6 = buildSingboxInbound(
     inbound({ protocol: "snell", port: 8000, security: "none", password: "psk", snellVersion: 6, snellMode: "unshaped" }),

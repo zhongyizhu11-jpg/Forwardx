@@ -61,6 +61,21 @@ const ALWAYS_TLS_PROTOCOLS: readonly ProxyInboundProtocol[] = ["trojan", "hyster
 /** 压根没有 TLS 层的协议，安全层只能选「无」。 */
 const NO_TLS_PROTOCOLS: readonly ProxyInboundProtocol[] = ["shadowsocks", "snell"];
 
+/**
+ * sing-box 的 Snell 入站只收 v5 和 v6 —— 注意这和出站不是一回事，出站收的是
+ * v4 和 v6。不是笔误，是拿 1.14.0 的二进制逐个版本试出来的：
+ *
+ *   入站 v1/v2/v3/v4 → unsupported version
+ *   出站 v5          → unsupported version
+ *
+ * 影响到订阅那一侧：v5 的落地渲染给 sing-box 客户端时会写成 v4（见
+ * proxySubscription.ts 的 snell 分支）。这样能通，是因为 v4 与 v5 线格式一致。
+ */
+export const PROXY_INBOUND_SNELL_VERSIONS = [5, 6] as const;
+
+/** 入站默认开 v5：兼容面最广，mihomo 到 v5、Surge v1-v6 都认。 */
+export const PROXY_INBOUND_SNELL_DEFAULT_VERSION = 5;
+
 /** 这个协议能选哪些安全层。UI 用它来收窄下拉，而不是让用户选完再报错。 */
 export function proxyInboundSecurities(protocol: ProxyInboundProtocol): ProxyInboundSecurity[] {
   if (NO_TLS_PROTOCOLS.includes(protocol)) return ["none"];
@@ -130,7 +145,7 @@ export type ProxyInbound = {
   downMbps: number;
   /** TUIC 的拥塞控制：cubic / new_reno / bbr */
   congestionControl: string;
-  /** Snell 的版本（4/5/6）与 v6 的整形模式 */
+  /** Snell 的版本与 v6 的整形模式。入站只能是 5 或 6，见 PROXY_INBOUND_SNELL_VERSIONS。 */
   snellVersion: number;
   snellMode: string;
 };
@@ -228,10 +243,13 @@ export function validateProxyInbound(inbound: ProxyInbound): string {
   if (inbound.security === "tls" && (!text(inbound.certPath) || !text(inbound.keyPath))) {
     return "TLS 需要证书和私钥的路径";
   }
-  // Snell v6 换成了流量整形，没有 obfs；v4/v5 才有。
   if (inbound.protocol === "snell") {
     const version = Number(inbound.snellVersion) || 0;
-    if (version !== 4 && version !== 5 && version !== 6) return "Snell 版本只能是 4、5 或 6";
+    if (!(PROXY_INBOUND_SNELL_VERSIONS as readonly number[]).includes(version)) {
+      // 放行 v4 的后果不是「这个节点连不上」，而是整份配置解析失败 ——
+      // sing-box 会拒绝加载，同一台落地机上其他入站跟着一起停。
+      return `sing-box 的 Snell 入站只支持 v${PROXY_INBOUND_SNELL_VERSIONS.join(" 和 v")}，这个是 v${version || "?"}`;
+    }
   }
   return "";
 }
@@ -328,7 +346,7 @@ export function buildSingboxInbound(inbound: ProxyInbound, tag: string): Record<
     base.users = [{ name: SINGBOX_USER_NAME, password: inbound.password }];
   } else {
     // Snell：psk 在顶层，版本决定是 obfs_mode 还是 mode。
-    base.version = inbound.snellVersion || 4;
+    base.version = inbound.snellVersion || PROXY_INBOUND_SNELL_DEFAULT_VERSION;
     base.psk = inbound.password;
     if (inbound.snellVersion === 6) {
       if (inbound.snellMode) base.mode = inbound.snellMode;
