@@ -394,7 +394,7 @@ export default function ClientSubscriptionsPage() {
                 当前账号没有客户端订阅权限。
               </p>
               <p className="mt-2 text-xs text-muted-foreground">
-                由管理员授予，或包含在部分套餐中。
+                联系管理员开通。
               </p>
             </CardContent>
           </Card>
@@ -422,7 +422,7 @@ export default function ClientSubscriptionsPage() {
                 落地节点
               </CardTitle>
               <CardDescription>
-                按落地机登记，不是按转发。多条转发共用一个节点即可。
+                按落地机登记，多条转发共用一个。
               </CardDescription>
             </div>
             <Button size="sm" onClick={openCreateNode}>
@@ -511,7 +511,7 @@ export default function ClientSubscriptionsPage() {
           <CardHeader>
             <CardTitle className="text-base">订阅内容</CardTitle>
             <CardDescription>
-              客户端拉到的就是这份列表。关掉开关只是不进订阅，转发照常运行。
+              关掉开关只是不进订阅，转发照常运行。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -609,7 +609,7 @@ export default function ClientSubscriptionsPage() {
                       </div>
                     ))}
                     <p className="text-xs text-muted-foreground">
-                      客户端选这个组会自己挑最快的中转。Base64 与 Loon 表达不了策略组，只有裸节点。
+                      选这个组，客户端自动挑最快的中转。
                     </p>
                   </div>
                 )}
@@ -676,7 +676,7 @@ export default function ClientSubscriptionsPage() {
                 订阅链接
               </CardTitle>
               <CardDescription>
-                节点订阅只有节点，规则订阅连分流一起给。地址含全部凭据，建议一台设备一条。
+                地址含全部凭据，建议一台设备一条。
               </CardDescription>
             </div>
             <Button
@@ -972,7 +972,7 @@ export default function ClientSubscriptionsPage() {
                         </div>
                         <div className="space-y-1.5">
                           <p className="text-xs text-muted-foreground">
-                            客户端不在上面，或面板开在电脑上？扫码或复制这条地址手动添加。
+                            其他客户端用这条地址手动添加。
                           </p>
                           {/* 这个设置只在「客户端标识认不出来」时才生效，所以就放在那句话下面。
                               上面图标点进去的地址都钉死了格式，走不到这里。 */}
@@ -1016,7 +1016,7 @@ export default function ClientSubscriptionsPage() {
         <DialogContent className="flex max-h-[92svh] flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>{editingNodeId ? "编辑客户端节点" : "添加客户端节点"}</DialogTitle>
-            <DialogDescription>只替换地址和端口，凭据原样保留。</DialogDescription>
+            <DialogDescription>只替换地址和端口，凭据不变。</DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-1">
             <div className="space-y-2">
@@ -1051,7 +1051,7 @@ export default function ClientSubscriptionsPage() {
               <Label>加进订阅</Label>
               <div className="flex items-start justify-between gap-3 rounded-lg border p-3">
                 <p className="min-w-0 text-xs text-muted-foreground">
-                  额外给出这个节点自己的地址：落地机的直连，或没做转发的线路机。
+                  订阅里额外给出这个节点自己的地址。
                   {nodeIncludeDirect ? (
                     <span className="mt-1 block text-amber-600 dark:text-amber-500">
                       该节点 IP 会出现在每条订阅地址里。
@@ -1086,10 +1086,10 @@ export default function ClientSubscriptionsPage() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                连接先经由它建立，它会自动进订阅。
+                连接先经由它建立。
                 {nodeFrontProxyId > 0 ? (
                   <span className="mt-1 block text-amber-600 dark:text-amber-500">
-                    Clash / sing-box / Surge 自动生效；Loon 与 QX 需在客户端里手连一次。
+                    Loon 与 QX 需在客户端里手连一次。
                   </span>
                 ) : null}
               </p>
@@ -1122,7 +1122,7 @@ export default function ClientSubscriptionsPage() {
           <DialogHeader>
             <DialogTitle>新建订阅链接</DialogTitle>
             <DialogDescription>
-              建议一台设备一条。分流预设和回落格式建好后在「一键订阅」里改。
+              建议一台设备一条。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -1242,7 +1242,7 @@ export default function ClientSubscriptionsPage() {
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                请在客户端的「添加订阅」里扫，系统相机扫不出来。
+                在客户端的「添加订阅」里扫，别用系统相机。
               </p>
             )}
 
@@ -1261,7 +1261,7 @@ export default function ClientSubscriptionsPage() {
             </Button>
 
             <p className="text-xs text-muted-foreground">
-              这张码含完整凭据，别外发。
+              含完整凭据，别外发。
             </p>
           </div>
         </DialogContent>
