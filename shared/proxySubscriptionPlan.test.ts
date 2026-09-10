@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { PROXY_SUBSCRIPTION_GROUP_NAME } from "./proxySubscription";
 import {
   buildProxySubscriptionPlan,
   dedupeProxyNodeNames,
@@ -329,4 +330,225 @@ test("自动选路模式的取值收敛", () => {
 test("组名带后缀，避免和落地节点本身重名", () => {
   assert.equal(autoGroupNameForTemplate("HKT"), "HKT 自动选路");
   assert.equal(autoGroupNameForTemplate(""), "节点 自动选路");
+});
+
+// ==================== 落地直连 ====================
+
+const DIRECT_TEMPLATE = {
+  id: 7,
+  name: "CST/hk",
+  protocol: "vless",
+  address: "154.36.174.85",
+  port: 63284,
+  uuid: "u-1",
+  tls: true,
+  isEnabled: true,
+  autoGroup: "url-test",
+};
+
+test("不开开关时，订阅里没有落地直连", () => {
+  // 默认必须是关的：开了之后落地 IP 会进到每一条订阅地址里。
+  const plan = buildProxySubscriptionPlan({
+    rules: [],
+    templates: [{ ...DIRECT_TEMPLATE, includeDirect: false }],
+    hosts: [],
+  });
+
+  assert.equal(plan.entries.length, 0);
+});
+
+test("开了开关，落地机自己的地址原样进订阅", () => {
+  // 模板本来就是一个完整节点，直连就是不做地址改写的那一条。
+  const plan = buildProxySubscriptionPlan({
+    rules: [],
+    templates: [{ ...DIRECT_TEMPLATE, includeDirect: true }],
+    hosts: [],
+  });
+
+  assert.equal(plan.entries.length, 1);
+  const [entry] = plan.entries;
+  assert.equal(entry.kind, "direct");
+  assert.equal(entry.ruleId, 0);
+  assert.equal(entry.templateId, 7);
+  assert.equal(entry.node.address, "154.36.174.85");
+  assert.equal(entry.node.port, 63284);
+  assert.equal(entry.node.uuid, "u-1", "凭据来自模板本身，没有第二份");
+});
+
+test("模板停用时，直连也不出现", () => {
+  const plan = buildProxySubscriptionPlan({
+    rules: [],
+    templates: [{ ...DIRECT_TEMPLATE, includeDirect: true, isEnabled: false }],
+    hosts: [],
+  });
+
+  assert.equal(plan.entries.length, 0);
+});
+
+test("直连排在该落地的各条中转前面", () => {
+  // 它是这个落地的本体，其余都是它的中转变体。
+  const plan = buildProxySubscriptionPlan({
+    rules: [
+      { id: 1, hostId: 1, name: "广州1", sourcePort: 10001, proxyNodeId: 7, isEnabled: true },
+    ],
+    templates: [{ ...DIRECT_TEMPLATE, includeDirect: true }],
+    hosts: [{ id: 1, name: "广州1", ipv4: "1.2.3.4" }],
+  });
+
+  assert.equal(plan.entries.length, 2);
+  assert.equal(plan.entries[0].kind, "direct");
+  assert.equal(plan.entries[1].kind, "relay");
+});
+
+test("直连与中转进同一个选路组，客户端能自己挑快的", () => {
+  // 这是这个功能的意义所在：直连和走中转并列，由客户端测速决定。
+  // templateId 一致是它能进同一组的原因。
+  const template = { ...DIRECT_TEMPLATE, includeDirect: true };
+  const plan = buildProxySubscriptionPlan({
+    rules: [
+      { id: 1, hostId: 1, name: "广州1", sourcePort: 10001, proxyNodeId: 7, isEnabled: true },
+      { id: 2, hostId: 2, name: "广州2", sourcePort: 10002, proxyNodeId: 7, isEnabled: true },
+    ],
+    templates: [template],
+    hosts: [
+      { id: 1, name: "广州1", ipv4: "1.2.3.4" },
+      { id: 2, name: "广州2", ipv4: "5.6.7.8" },
+    ],
+  });
+
+  const document = buildProxySubscriptionDocument(plan, [template], {
+    mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
+  });
+
+  const auto = document.groups.find((group) => group.type === "url-test");
+  assert.ok(auto, "应该生成自动选路组");
+  assert.equal(auto.members.length, 3, "直连 + 两条中转都在组里");
+  assert.equal(auto.members[0], plan.entries[0].node.name, "直连也是组员");
+});
+
+// ==================== 前置代理 ====================
+
+const LINE_MACHINE = {
+  id: 20,
+  name: "HK线路机",
+  protocol: "trojan",
+  address: "203.0.113.7",
+  port: 443,
+  password: "pw",
+  tls: true,
+  isEnabled: true,
+};
+
+const LANDING_VIA_LINE = {
+  id: 21,
+  name: "HKT落地",
+  protocol: "vless",
+  address: "154.36.174.85",
+  port: 63284,
+  uuid: "u",
+  tls: true,
+  isEnabled: true,
+  includeDirect: true,
+  frontProxyId: 20,
+};
+
+test("被引用为前置的节点，即使没开直连开关也必须进订阅", () => {
+  // 否则 dialer-proxy 会指向一个不存在的节点，Clash 直接拒绝整份配置，
+  // 用户看到的是「订阅导入失败」，跟前置代理毫无字面关联。
+  const plan = buildProxySubscriptionPlan({
+    rules: [],
+    // 线路机没开 includeDirect —— 它只是被当作前置引用。
+    templates: [{ ...LINE_MACHINE, includeDirect: false }, LANDING_VIA_LINE],
+    hosts: [],
+  });
+
+  const names = plan.entries.map((entry) => entry.node.name);
+  assert.ok(names.includes("HK线路机"), `线路机必须在订阅里，实际：${names.join("、")}`);
+  assert.ok(names.includes("HKT落地"));
+});
+
+test("前置节点被停用时不挂引用，宁可少一层也不要坏配置", () => {
+  const plan = buildProxySubscriptionPlan({
+    rules: [],
+    templates: [{ ...LINE_MACHINE, isEnabled: false }, LANDING_VIA_LINE],
+    hosts: [],
+  });
+
+  const landing = plan.entries.find((entry) => entry.node.name === "HKT落地");
+  assert.ok(landing);
+  assert.equal(landing.frontTemplateId, 0, "引用不到就不该挂");
+});
+
+test("前置引用指向去重之后的名字", () => {
+  // 名字去重发生在渲染前。提前写死名字的话，一旦去重给前置加了序号，
+  // 引用就指向一个不存在的节点 —— 这条锁住的就是这个顺序。
+  const collide = { ...LINE_MACHINE, id: 22, name: "同名", includeDirect: true };
+  const other = { ...LINE_MACHINE, id: 23, name: "同名", includeDirect: true };
+  const landing = { ...LANDING_VIA_LINE, frontProxyId: 23 };
+
+  const plan = buildProxySubscriptionPlan({ rules: [], templates: [collide, other, landing], hosts: [] });
+  const document = buildProxySubscriptionDocument(plan, [collide, other, landing], {
+    mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
+  });
+
+  const names = document.nodes.map((node) => node.name);
+  assert.equal(new Set(names).size, names.length, "名字必须互不重复");
+
+  const chained = document.nodes.find((node) => node.frontProxyName);
+  assert.ok(chained, "落地节点应该挂着前置引用");
+  assert.ok(
+    names.includes(chained.frontProxyName!),
+    `引用的名字必须真实存在：${chained.frontProxyName} 不在 ${names.join("、")} 里`,
+  );
+});
+
+test("转发派生的节点也能带前置", () => {
+  // 客户端 → 广州入口 → …，而这条连接本身再经由线路机建立。
+  const plan = buildProxySubscriptionPlan({
+    rules: [{ id: 1, hostId: 1, name: "广州", sourcePort: 10001, proxyNodeId: 21, isEnabled: true }],
+    templates: [LINE_MACHINE, { ...LANDING_VIA_LINE, includeDirect: false }],
+    hosts: [{ id: 1, name: "广州", ipv4: "1.2.3.4" }],
+  });
+
+  const relay = plan.entries.find((entry) => entry.kind === "relay");
+  assert.ok(relay);
+  assert.equal(relay.frontTemplateId, 20);
+});
+
+test("没有前置时不产生任何链式字段", () => {
+  const plan = buildProxySubscriptionPlan({
+    rules: [],
+    templates: [{ ...LINE_MACHINE, includeDirect: true }],
+    hosts: [],
+  });
+  const document = buildProxySubscriptionDocument(plan, [LINE_MACHINE], {
+    mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
+  });
+
+  assert.equal(document.nodes[0].frontProxyName, undefined);
+});
+
+test("规则上的自定义名优先，留空则回落到自动生成的名字", () => {
+  // 订阅内容里改名就是写这一列；清空要能恢复默认，否则用户改坏了没法退回。
+  const template = { ...DIRECT_TEMPLATE, id: 30, includeDirect: false };
+  const base = { id: 1, hostId: 1, sourcePort: 10001, proxyNodeId: 30, isEnabled: true, name: "香港转发" };
+  const hosts = [{ id: 1, name: "广州1", ipv4: "1.2.3.4" }];
+
+  const custom = buildProxySubscriptionPlan({
+    rules: [{ ...base, proxyNodeName: "我改的名字" }],
+    templates: [template],
+    hosts,
+  });
+  assert.equal(custom.entries[0].node.name, "我改的名字");
+
+  const cleared = buildProxySubscriptionPlan({
+    rules: [{ ...base, proxyNodeName: "" }],
+    templates: [template],
+    hosts,
+  });
+  assert.notEqual(cleared.entries[0].node.name, "");
+  assert.equal(
+    cleared.entries[0].node.name,
+    defaultProxySubscriptionNodeName({ hostName: "广州1", templateName: "CST/hk", ruleName: "香港转发" }),
+  );
 });

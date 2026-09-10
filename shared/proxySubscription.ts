@@ -88,8 +88,23 @@ function yamlQuote(value: string): string {
   return `"${String(value ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/**
+ * base64 / Loon / Quantumult X 的订阅格式没有前置代理的位置。
+ *
+ * 直接原样发出去是错的：用户会以为链路生效了，实际是绕过前置直连落地 —— 轻则
+ * 走了条差路，重则落地根本不可直连。所以在名字上标出来，让人一眼看出这条还要
+ * 在客户端里手连一次前置，而不是静默给出一个行为不符预期的节点。
+ *
+ * 不选择跳过：跳掉的话订阅里会凭空少一个节点，用户更没法排查。
+ */
+function markUnchainable(nodes: readonly ProxyNode[]): ProxyNode[] {
+  return nodes.map((node) =>
+    node.frontProxyName ? { ...node, name: `${node.name}（需手动接 ${node.frontProxyName}）` } : node,
+  );
+}
+
 function renderBase64(nodes: readonly ProxyNode[]): string {
-  return encodeBase64Utf8(nodes.map((node) => formatProxyNodeLink(node)).join("\n"));
+  return encodeBase64Utf8(markUnchainable(nodes).map((node) => formatProxyNodeLink(node)).join("\n"));
 }
 
 type YamlLine = { indent: number; text: string };
@@ -124,6 +139,9 @@ function clashProxyLines(node: ProxyNode): YamlLine[] {
   }
 
   field("udp", node.udp ? "true" : "false");
+  // 前置代理：这条连接先经由另一个节点建立。mihomo 的 dialer-proxy 是节点级字段，
+  // 所以纯节点订阅也带得动，不必是完整配置。
+  if (node.frontProxyName) field("dialer-proxy", yamlQuote(node.frontProxyName));
 
   if (node.tls || node.protocol === "trojan") {
     // Clash 的 trojan 用 sni，vless/vmess 用 servername，不能互换。
@@ -240,6 +258,8 @@ function singboxOutbound(node: ProxyNode): Record<string, unknown> {
     tag: node.name,
     server: node.address,
     server_port: node.port,
+    // 前置代理：sing-box 里叫 detour，指向另一个出站的 tag。
+    ...(node.frontProxyName ? { detour: node.frontProxyName } : {}),
   };
 
   if (node.protocol === "vless") {
@@ -414,7 +434,7 @@ function loonNodeLine(node: ProxyNode): string {
 }
 
 function renderLoon(nodes: readonly ProxyNode[]): string {
-  return `${nodes.map(loonNodeLine).join("\n")}\n`;
+  return `${markUnchainable(nodes).map(loonNodeLine).join("\n")}\n`;
 }
 
 /**
@@ -439,6 +459,9 @@ function surgeNodeLine(node: ProxyNode): string {
   } else {
     parts.push("ss", node.address, String(node.port), `encrypt-method=${node.method}`, `password=${node.password}`);
   }
+
+  // 前置代理：Surge 的节点行参数，值是另一个节点或策略组的名字。
+  if (node.frontProxyName) parts.push(`underlying-proxy=${node.frontProxyName}`);
 
   if (node.transport === "ws") {
     parts.push("ws=true");
@@ -513,7 +536,7 @@ function quantumultxNodeLine(node: ProxyNode): string {
 }
 
 function renderQuantumultX(nodes: readonly ProxyNode[]): string {
-  return `${nodes.map(quantumultxNodeLine).join("\n")}\n`;
+  return `${markUnchainable(nodes).map(quantumultxNodeLine).join("\n")}\n`;
 }
 
 export function renderProxySubscription(

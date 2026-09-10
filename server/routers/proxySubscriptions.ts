@@ -110,6 +110,8 @@ export const proxySubscriptionsRouter = router({
       remark: z.string().trim().max(200).optional(),
       link: z.string().min(1).max(8192),
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
+      includeDirect: z.boolean().optional(),
+      frontProxyId: z.number().int().min(0).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
@@ -120,6 +122,8 @@ export const proxySubscriptionsRouter = router({
         name: input.name,
         remark: input.remark || null,
         ...(input.autoGroup ? { autoGroup: input.autoGroup } : {}),
+        ...(input.includeDirect !== undefined ? { includeDirect: input.includeDirect } : {}),
+        ...(input.frontProxyId !== undefined ? { frontProxyId: input.frontProxyId } : {}),
         ...nodeToRow(parsed.node, input.link),
       } as any);
       return { id };
@@ -133,6 +137,8 @@ export const proxySubscriptionsRouter = router({
       link: z.string().min(1).max(8192).optional(),
       isEnabled: z.boolean().optional(),
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
+      includeDirect: z.boolean().optional(),
+      frontProxyId: z.number().int().min(0).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
@@ -142,6 +148,12 @@ export const proxySubscriptionsRouter = router({
       if (input.remark !== undefined) data.remark = input.remark || null;
       if (input.isEnabled !== undefined) data.isEnabled = input.isEnabled;
       if (input.autoGroup !== undefined) data.autoGroup = input.autoGroup;
+      if (input.includeDirect !== undefined) data.includeDirect = input.includeDirect;
+      if (input.frontProxyId !== undefined) {
+        // 自己指向自己会在渲染时造出一条指向自身的链，客户端行为不可预期。
+        if (input.frontProxyId === input.id) throw new Error("前置代理不能指向节点自己");
+        data.frontProxyId = input.frontProxyId;
+      }
       if (input.link !== undefined) {
         const parsed = parseProxyNodeLink(input.link);
         if (!parsed.ok) throw new Error(parsed.error);
@@ -199,6 +211,21 @@ export const proxySubscriptionsRouter = router({
       return { success: true };
     }),
 
+  /**
+   * 改订阅里显示的节点名。
+   *
+   * 传空字符串表示恢复默认（由主机名、模板名、转发名拼出来的那个）。名字只影响
+   * 订阅里的显示，转发规则本身不受影响。
+   */
+  setRuleNodeName: protectedProcedure
+    .input(z.object({ ruleId: z.number().int().positive(), name: z.string().trim().max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
+      await assertOwnedRule(input.ruleId, ctx);
+      await db.updateForwardRule(input.ruleId, { proxyNodeName: input.name || null } as any);
+      return { success: true };
+    }),
+
   /** 预览订阅内容：进订阅的节点，以及每条被排除的转发和原因。 */
   preview: protectedProcedure.query(async ({ ctx }) => {
     if (!await hasProxySubscriptionPermission(ctx)) return { groups: [], nodes: [], skipped: [] };
@@ -211,6 +238,8 @@ export const proxySubscriptionsRouter = router({
       nodes: plan.entries.map((entry) => ({
         ruleId: entry.ruleId,
         templateId: entry.templateId,
+        // direct 的条目不来自任何转发规则（ruleId 为 0），改名和显隐都要落到模板上。
+        kind: entry.kind,
         name: entry.node.name,
         protocol: entry.node.protocol,
         address: entry.node.address,

@@ -26,6 +26,10 @@ import {
 /** proxy_nodes 表的一行，字段名与数据库一致。 */
 export type ProxyNodeTemplateRow = {
   id: number;
+  /** 是否把这个节点自己的地址也作为一个节点放进订阅。 */
+  includeDirect?: unknown;
+  /** 前置代理：连接先经由哪个节点建立（同表另一行的 id）。 */
+  frontProxyId?: unknown;
   name?: unknown;
   protocol?: unknown;
   address?: unknown;
@@ -85,8 +89,19 @@ export const PROXY_SUBSCRIPTION_SKIP_LABELS: Record<ProxySubscriptionSkipReason,
 };
 
 export type ProxySubscriptionEntry = {
+  /** 直连节点不来自任何转发规则，这里是 0。 */
   ruleId: number;
   templateId: number;
+  /** relay：经转发入口改写过的；direct：落地机自己的地址，未改写。 */
+  kind: "relay" | "direct";
+  /**
+   * 前置代理模板的 id，0 表示没有。
+   *
+   * 这里刻意存 id 而不是名字：节点名要到 buildProxySubscriptionDocument 里去重之后
+   * 才最终确定，提前写死名字的话，一旦去重给前置节点加了序号，引用就指向一个不
+   * 存在的名字 —— Clash 会拒绝整份配置，报的还是「订阅导入失败」这种毫无线索的错。
+   */
+  frontTemplateId: number;
   node: ProxyNode;
 };
 
@@ -181,6 +196,48 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
   const entries: ProxySubscriptionEntry[] = [];
   const skipped: ProxySubscriptionSkip[] = [];
 
+  /**
+   * 落地机自己的直连地址。
+   *
+   * 模板本来就是一个完整节点（地址、端口、凭据都全），只是平时只拿它的凭据、
+   * 把地址端口换成转发入口。开了这个开关就再原样产出一条 —— 凭据仍然只有模板
+   * 这一份，不存在两处要同步的问题。
+   *
+   * templateId 跟规则派生的那些一致，所以直连会自动进同一个选路组：客户端可以
+   * 自己在「直连落地」和「走中转」之间挑快的。
+   *
+   * 排在最前面：它是这个落地的本体，其余都是它的中转变体。
+   */
+  /**
+   * 被当作前置代理引用的模板，无论有没有开「直连也放进订阅」，都必须出现在订阅里。
+   *
+   * 否则渲染出的 dialer-proxy / detour 会指向一个不存在的节点 —— Clash 遇到这种
+   * 引用会拒绝整份配置，用户看到的是「订阅导入失败」，跟前置代理毫无字面关联。
+   * 这和之前空分组时 MATCH 指向不存在策略组是同一类问题。
+   */
+  const referencedAsFront = new Set<number>();
+  for (const template of input.templates) {
+    const frontId = Number(template.frontProxyId || 0);
+    if (frontId) referencedAsFront.add(frontId);
+  }
+
+  const directEntries: ProxySubscriptionEntry[] = [];
+  for (const template of input.templates) {
+    const templateId = Number(template.id);
+    if (!bool(template.includeDirect) && !referencedAsFront.has(templateId)) continue;
+    if (template.isEnabled !== undefined && !bool(template.isEnabled)) continue;
+    const node = proxyNodeFromTemplateRow(template);
+    if (!node.address || !node.port) continue;
+    directEntries.push({ ruleId: 0, templateId, kind: "direct", frontTemplateId: 0, node });
+  }
+
+  /** 前置节点自己没能进订阅时就不挂引用 —— 宁可少一层，也不要一份坏配置。 */
+  const emittedTemplateIds = new Set(directEntries.map((entry) => entry.templateId));
+  const frontIdOf = (template: ProxyNodeTemplateRow): number => {
+    const frontId = Number(template.frontProxyId || 0);
+    return frontId && emittedTemplateIds.has(frontId) ? frontId : 0;
+  };
+
   for (const rule of input.rules) {
     const ruleId = Number(rule.id);
     const ruleName = text(rule.name) || `规则 #${ruleId}`;
@@ -230,11 +287,19 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
     entries.push({
       ruleId,
       templateId,
+      kind: "relay",
+      frontTemplateId: frontIdOf(template),
       node: relayProxyNode(templateNode, { address, port, name }),
     });
   }
 
-  return { entries, skipped };
+  // 直连条目自己也可能有前置（例如落地直连要经由线路机）。
+  const directWithFront = directEntries.map((entry) => {
+    const template = templatesById.get(entry.templateId);
+    return { ...entry, frontTemplateId: template ? frontIdOf(template) : 0 };
+  });
+
+  return { entries: [...directWithFront, ...entries], skipped };
 }
 
 /**
@@ -321,7 +386,25 @@ export function buildProxySubscriptionDocument(
   templates: readonly ProxyNodeTemplateRow[],
   options: { mainGroupName: string; rulePreset?: ProxyRulePreset },
 ): ProxySubscriptionDocument {
-  const nodes = dedupeProxyNodeNames(plan.entries.map((entry) => entry.node));
+  const deduped = dedupeProxyNodeNames(plan.entries.map((entry) => entry.node));
+
+  /**
+   * 前置引用在这里才落成名字 —— 必须等去重跑完。
+   *
+   * 一个模板只会产出一条直连条目，所以用「模板 id → 该条目去重后的名字」这张表
+   * 就能把引用对准。引用不到就不挂，宁可少一层也不要指向不存在的节点。
+   */
+  const frontNameByTemplateId = new Map<number, string>();
+  plan.entries.forEach((entry, index) => {
+    const name = deduped[index]?.name;
+    if (entry.kind === "direct" && name) frontNameByTemplateId.set(entry.templateId, name);
+  });
+
+  const nodes = deduped.map((node, index) => {
+    const frontName = frontNameByTemplateId.get(plan.entries[index]?.frontTemplateId ?? 0);
+    return frontName ? { ...node, frontProxyName: frontName } : node;
+  });
+
   const templatesById = new Map<number, ProxyNodeTemplateRow>();
   for (const template of templates) templatesById.set(Number(template.id), template);
 

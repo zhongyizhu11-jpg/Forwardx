@@ -48,13 +48,70 @@ function flag(name) {
   return i >= 0 ? args[i + 1] : null;
 }
 
-function defaultDir() {
-  const dataDir = process.platform === "win32" ? path.resolve(process.cwd(), "data") : "/data";
-  const sqliteDir = path.dirname(process.env.SQLITE_PATH || path.join(dataDir, "forwardx.db"));
-  return process.env.FORWARDX_CLIENT_LOGO_DIR || path.join(sqliteDir, "clientLogos");
+/**
+ * 找出面板真正读取图标的目录。
+ *
+ * 这一步不能想当然：本地安装的面板把数据放在 /opt/forwardx-panel/data，路径写在
+ * .env 的 SQLITE_PATH 里，面板启动时通过 dotenv 加载。而这个脚本是手动跑的、
+ * 不会加载 .env —— 只看 process.env 的话会下到 /data，下载全部成功、面板一张
+ * 也看不到，两边都不报错。所以这里要主动去读面板的配置。
+ */
+function readEnvFile(file) {
+  try {
+    const out = {};
+    for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+      const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
+      if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
-const outDir = path.resolve(flag("dir") || defaultDir());
+function panelRoots() {
+  // 依次是：显式指定、脚本自己所在的面板目录、当前目录、默认安装位置。
+  const scriptRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  return [process.env.FORWARDX_PANEL_DIR, scriptRoot, process.cwd(), "/opt/forwardx-panel"]
+    .filter(Boolean)
+    .map((dir) => path.resolve(dir));
+}
+
+function resolveDataDir() {
+  if (process.env.SQLITE_PATH) {
+    return { dir: path.dirname(process.env.SQLITE_PATH), from: "环境变量 SQLITE_PATH" };
+  }
+
+  for (const root of panelRoots()) {
+    const env = readEnvFile(path.join(root, ".env"));
+    if (env.SQLITE_PATH) {
+      return { dir: path.dirname(env.SQLITE_PATH), from: `${root}/.env 的 SQLITE_PATH` };
+    }
+    const configPath = env.DATABASE_CONFIG_PATH || path.join(root, "data", "database.json");
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const sqlitePath = config?.sqlite?.path;
+      if (sqlitePath) return { dir: path.dirname(sqlitePath), from: `${configPath} 的 sqlite.path` };
+    } catch {
+      // 配置不存在或不是 SQLite，继续找下一个候选。
+    }
+  }
+
+  const fallback = process.platform === "win32" ? path.resolve(process.cwd(), "data") : "/data";
+  return { dir: fallback, from: "默认值（没找到面板配置）" };
+}
+
+function defaultDir() {
+  if (process.env.FORWARDX_CLIENT_LOGO_DIR) {
+    return { dir: process.env.FORWARDX_CLIENT_LOGO_DIR, from: "环境变量 FORWARDX_CLIENT_LOGO_DIR" };
+  }
+  const { dir, from } = resolveDataDir();
+  return { dir: path.join(dir, "clientLogos"), from };
+}
+
+const explicitDir = flag("dir");
+const resolved = explicitDir ? { dir: explicitDir, from: "命令行 --dir" } : defaultDir();
+const outDir = path.resolve(resolved.dir);
 const only = (flag("only") || "").split(",").map((s) => s.trim()).filter(Boolean);
 const wanted = (id) => only.length === 0 || only.includes(id);
 
@@ -93,7 +150,12 @@ async function appStoreArtwork(appId) {
 }
 
 fs.mkdirSync(outDir, { recursive: true });
-console.log(`图标目录：${outDir}\n`);
+console.log(`图标目录：${outDir}`);
+console.log(`来源：${resolved.from}\n`);
+if (resolved.from.startsWith("默认值")) {
+  console.log("⚠️  没能定位面板的数据目录。如果面板不在默认位置，图标会下到面板读不到的地方。");
+  console.log("   请确认后用 --dir 指定，或设置 FORWARDX_PANEL_DIR 指向面板安装目录。\n");
+}
 
 let ok = 0;
 let failed = 0;

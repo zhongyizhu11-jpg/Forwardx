@@ -62,6 +62,7 @@ import {
   Layers,
   Link2,
   Package,
+  Pencil,
   Plus,
   QrCode,
   Rocket,
@@ -168,6 +169,15 @@ export default function ClientSubscriptionsPage() {
   const [nodeName, setNodeName] = useState("");
   const [nodeLink, setNodeLink] = useState("");
   const [nodeAutoGroup, setNodeAutoGroup] = useState<ProxyNodeAutoGroup>("url-test");
+  // 默认关：开了之后落地 IP 会出现在每一条订阅地址里。
+  const [nodeIncludeDirect, setNodeIncludeDirect] = useState(false);
+  // 0 表示不经由任何前置。
+  const [nodeFrontProxyId, setNodeFrontProxyId] = useState(0);
+  // 订阅内容里改名：转发派生的条目改规则上的显示名，直连条目改模板名。
+  const [renaming, setRenaming] = useState<
+    { kind: "relay" | "direct"; ruleId: number; templateId: number; name: string } | null
+  >(null);
+  const [renameValue, setRenameValue] = useState("");
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [tokenName, setTokenName] = useState("");
   // 一键订阅面板默认折叠，同一时间只展开一个，免得页面被撑得很长。
@@ -228,6 +238,14 @@ export default function ClientSubscriptionsPage() {
   });
   const setRuleVisible = trpc.proxySubscriptions.setRuleVisible.useMutation({
     onSuccess: () => refresh(),
+    onError: (error) => toast.error(error.message),
+  });
+  const setRuleNodeName = trpc.proxySubscriptions.setRuleNodeName.useMutation({
+    onSuccess: () => {
+      toast.success("节点名已更新");
+      setRenaming(null);
+      refresh();
+    },
     onError: (error) => toast.error(error.message),
   });
   const createToken = trpc.proxySubscriptions.createToken.useMutation({
@@ -317,6 +335,8 @@ export default function ClientSubscriptionsPage() {
     setNodeName("");
     setNodeLink("");
     setNodeAutoGroup("url-test");
+    setNodeIncludeDirect(false);
+    setNodeFrontProxyId(0);
     setNodeDialogOpen(true);
   };
 
@@ -325,6 +345,8 @@ export default function ClientSubscriptionsPage() {
     setNodeName(String(node.name || ""));
     setNodeLink(String(node.sourceLink || ""));
     setNodeAutoGroup(normalizeProxyNodeAutoGroup(node.autoGroup));
+    setNodeIncludeDirect(!!node.includeDirect);
+    setNodeFrontProxyId(Number(node.frontProxyId || 0));
     setNodeDialogOpen(true);
   };
 
@@ -339,8 +361,15 @@ export default function ClientSubscriptionsPage() {
       toast.error("请粘贴落地机的节点链接");
       return;
     }
-    if (editingNodeId) updateNode.mutate({ id: editingNodeId, name, link, autoGroup: nodeAutoGroup });
-    else createNode.mutate({ name, link, autoGroup: nodeAutoGroup });
+    const payload = {
+      name,
+      link,
+      autoGroup: nodeAutoGroup,
+      includeDirect: nodeIncludeDirect,
+      frontProxyId: nodeFrontProxyId,
+    };
+    if (editingNodeId) updateNode.mutate({ id: editingNodeId, ...payload });
+    else createNode.mutate(payload);
   };
 
   // 权限查询未回来时先不下结论，避免闪一下「无权限」再闪回正常。
@@ -497,26 +526,52 @@ export default function ClientSubscriptionsPage() {
                   </p>
                 ) : (
                   <div className="space-y-2">
-                    {preview!.nodes.map((node) => (
+                    {preview!.nodes.map((node: any) => {
+                      // 直连条目不来自转发规则，ruleId 都是 0 —— 拿它当 key 会互相撞。
+                      const direct = node.kind === "direct";
+                      return (
                       <div
-                        key={node.ruleId}
+                        key={direct ? `direct-${node.templateId}` : `rule-${node.ruleId}`}
                         className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
                             <span className="truncate font-medium">{node.name}</span>
+                            {direct && <Badge variant="outline" className="shrink-0">直连</Badge>}
                           </div>
                           <p className="mt-1 truncate text-xs text-muted-foreground">
                             {node.address}:{node.port}
                           </p>
                         </div>
-                        <Switch
-                          checked
-                          onCheckedChange={() => setRuleVisible.mutate({ ruleId: node.ruleId, visible: false })}
-                        />
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            title="改这个节点在订阅里显示的名字"
+                            onClick={() => {
+                              setRenaming({
+                                kind: direct ? "direct" : "relay",
+                                ruleId: node.ruleId,
+                                templateId: node.templateId,
+                                name: node.name,
+                              });
+                              setRenameValue(node.name);
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          {/* 直连条目的显隐在节点模板上，这里不给开关，免得点了没反应。 */}
+                          {!direct && (
+                            <Switch
+                              checked
+                              onCheckedChange={() => setRuleVisible.mutate({ ruleId: node.ruleId, visible: false })}
+                            />
+                          )}
+                        </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -963,7 +1018,7 @@ export default function ClientSubscriptionsPage() {
           <DialogHeader>
             <DialogTitle>{editingNodeId ? "编辑客户端节点" : "添加客户端节点"}</DialogTitle>
             <DialogDescription>
-              粘贴落地机上的原始节点链接。面板只会把地址和端口换成转发入口，
+              粘贴落地机上的节点链接，或 sing-box / Clash / v2rayN 的节点 JSON。面板只会把地址和端口换成转发入口，
               UUID、密码、SNI、传输方式等全部原样保留。
             </DialogDescription>
           </DialogHeader>
@@ -997,12 +1052,61 @@ export default function ClientSubscriptionsPage() {
               <p className="text-xs text-muted-foreground">{PROXY_NODE_AUTO_GROUP_HINTS[nodeAutoGroup]}</p>
             </div>
             <div className="space-y-2">
+              <Label>把这个节点也放进订阅</Label>
+              <div className="flex items-start justify-between gap-3 rounded-lg border p-3">
+                <p className="min-w-0 text-xs text-muted-foreground">
+                  订阅里额外给出这个节点自己的地址。落地机开了就是直连落地，和各条中转并列由客户端挑快的；
+                  租来的线路机这类不做转发的节点，也靠它进订阅。
+                  {nodeIncludeDirect ? (
+                    <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                      注意：开了之后落地 IP 会出现在每一条订阅地址里。中转机被墙还能换，落地机被墙要重搭。
+                    </span>
+                  ) : null}
+                </p>
+                <Switch
+                  checked={nodeIncludeDirect}
+                  onCheckedChange={setNodeIncludeDirect}
+                  className="mt-0.5 shrink-0"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>前置代理</Label>
+              <Select
+                value={String(nodeFrontProxyId)}
+                onValueChange={(value) => setNodeFrontProxyId(Number(value))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="不经由" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">不经由</SelectItem>
+                  {nodes
+                    .filter((item: any) => Number(item.id) !== editingNodeId)
+                    .map((item: any) => (
+                      <SelectItem key={item.id} value={String(item.id)}>
+                        {item.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                连接先经由这个节点建立，例如落地经由租来的线路机。被选中的节点会自动进订阅，不必再单独开「也放进订阅」。
+                {nodeFrontProxyId > 0 ? (
+                  <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                    Clash / sing-box / Surge 导入即生效；Loon 与 Quantumult X 的订阅格式没有这个位置，
+                    那边节点名会标注「需手动接」，要在客户端里自己连一次。
+                  </span>
+                ) : null}
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="proxy-node-link">节点链接</Label>
               <Textarea
                 id="proxy-node-link"
                 value={nodeLink}
                 onChange={(event) => setNodeLink(event.target.value)}
-                placeholder="vless://... 或 vmess:// / trojan:// / ss://"
+                placeholder={'vless://... / vmess:// / trojan:// / ss://\n或粘贴 JSON：{"type":"vless","server":"...","server_port":443,...}'}
                 rows={4}
                 className="font-mono text-xs"
               />
@@ -1053,6 +1157,58 @@ export default function ClientSubscriptionsPage() {
               disabled={createToken.isPending}
             >
               创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!renaming} onOpenChange={(open) => !open && setRenaming(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>改节点名</DialogTitle>
+            <DialogDescription>
+              只影响这个节点在订阅里显示的名字，转发规则本身不受影响。
+              {renaming?.kind === "direct" ? "这是直连条目，改的是节点模板的名字。" : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="proxy-rename">节点名</Label>
+            <Input
+              id="proxy-rename"
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              maxLength={64}
+              autoFocus
+            />
+            {renaming?.kind === "relay" && (
+              <p className="text-xs text-muted-foreground">
+                留空恢复默认名（由主机名和转发名自动拼出）。
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenaming(null)}>
+              取消
+            </Button>
+            <Button
+              disabled={setRuleNodeName.isPending || updateNode.isPending}
+              onClick={() => {
+                if (!renaming) return;
+                const name = renameValue.trim();
+                if (renaming.kind === "direct") {
+                  // 直连条目的名字就是模板名，落到模板上。
+                  if (!name) {
+                    toast.error("节点模板的名字不能为空");
+                    return;
+                  }
+                  updateNode.mutate({ id: renaming.templateId, name });
+                  setRenaming(null);
+                  return;
+                }
+                setRuleNodeName.mutate({ ruleId: renaming.ruleId, name });
+              }}
+            >
+              保存
             </Button>
           </DialogFooter>
         </DialogContent>

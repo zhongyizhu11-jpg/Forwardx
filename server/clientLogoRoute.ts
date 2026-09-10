@@ -28,9 +28,30 @@ const CONTENT_TYPES: Record<string, string> = {
 const KNOWN_IDS = new Set(PROXY_CLIENT_TARGETS.map((target) => target.id));
 
 export function clientLogoDir(): string {
-  const defaultDataDir = process.platform === "win32" ? path.resolve(process.cwd(), "data") : "/data";
-  const sqliteDir = path.dirname(String(process.env.SQLITE_PATH || path.join(defaultDataDir, "forwardx.db")));
-  return process.env.FORWARDX_CLIENT_LOGO_DIR || path.join(sqliteDir, "clientLogos");
+  if (process.env.FORWARDX_CLIENT_LOGO_DIR) return process.env.FORWARDX_CLIENT_LOGO_DIR;
+  return path.join(resolveDataDir(), "clientLogos");
+}
+
+/**
+ * 图标目录跟着数据库走。
+ *
+ * 必须和 scripts/fetch-client-logos.mjs 解析出同一个目录，否则脚本把图标下到
+ * 一处、面板去另一处找，两边都不报错，界面上只是永远没有图标。所以除了
+ * SQLITE_PATH，也认 database.json —— 它才是安装脚本一定会写的那份配置。
+ */
+function resolveDataDir(): string {
+  if (process.env.SQLITE_PATH) return path.dirname(process.env.SQLITE_PATH);
+
+  const configPath = process.env.DATABASE_CONFIG_PATH || path.resolve(process.cwd(), "data", "database.json");
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const sqlitePath = config?.sqlite?.path;
+    if (typeof sqlitePath === "string" && sqlitePath) return path.dirname(sqlitePath);
+  } catch {
+    // 配置不存在，或用的是 MySQL/PostgreSQL —— 回落到默认数据目录。
+  }
+
+  return process.platform === "win32" ? path.resolve(process.cwd(), "data") : "/data";
 }
 
 /** 扫一遍目录，返回 { 客户端 id: 扩展名 }。同一个 id 有多个扩展名时按 EXTENSIONS 的顺序取第一个。 */

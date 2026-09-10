@@ -106,7 +106,7 @@ test("Clash output is structurally valid YAML with the right per-protocol field 
   ];
 
   const document = buildProxySubscriptionDocument(
-    { entries: nodes.map((node, index) => ({ ruleId: index + 1, templateId: index + 1, node })), skipped: [] },
+    { entries: nodes.map((node, index) => ({ ruleId: index + 1, templateId: index + 1, kind: "relay" as const, frontTemplateId: 0, node })), skipped: [] },
     [],
     { mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME },
   );
@@ -158,7 +158,7 @@ test("sing-box output is valid JSON with a selector over every node", () => {
   ];
 
   const document = buildProxySubscriptionDocument(
-    { entries: nodes.map((node, index) => ({ ruleId: index + 1, templateId: index + 1, node })), skipped: [] },
+    { entries: nodes.map((node, index) => ({ ruleId: index + 1, templateId: index + 1, kind: "relay" as const, frontTemplateId: 0, node })), skipped: [] },
     [],
     { mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME },
   );
