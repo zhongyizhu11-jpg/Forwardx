@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { scanClientLogos } from "./clientLogoRoute";
+import { clientLogoDir, scanClientLogos } from "./clientLogoRoute";
 
 function withDir(files: string[], run: (dir: string) => void) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-logos-"));
@@ -63,6 +63,50 @@ test("13 个客户端的图标全都认得，含 .ico", () => {
     assert.equal(found.surfboard, ".png");
     assert.equal(found.nekoray, ".png");
   });
+});
+
+test("图标目录跟着 database.json 里的数据库路径走", () => {
+  // 安装脚本一定会写 database.json，但 SQLITE_PATH 未必进到进程环境里。
+  // 只认环境变量的话，面板会去 /data 找、而下载脚本写到了 /opt/... 下，
+  // 两边都不报错，界面上永远没有图标。
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-panel-"));
+  const dataDir = path.join(dir, "data");
+  fs.mkdirSync(dataDir);
+  fs.writeFileSync(
+    path.join(dataDir, "database.json"),
+    JSON.stringify({ type: "sqlite", sqlite: { path: path.join(dataDir, "forwardx.db") } }),
+  );
+
+  const savedSqlite = process.env.SQLITE_PATH;
+  const savedConfig = process.env.DATABASE_CONFIG_PATH;
+  const savedLogoDir = process.env.FORWARDX_CLIENT_LOGO_DIR;
+  delete process.env.SQLITE_PATH;
+  delete process.env.FORWARDX_CLIENT_LOGO_DIR;
+  process.env.DATABASE_CONFIG_PATH = path.join(dataDir, "database.json");
+  try {
+    assert.equal(clientLogoDir(), path.join(dataDir, "clientLogos"));
+  } finally {
+    if (savedSqlite === undefined) delete process.env.SQLITE_PATH;
+    else process.env.SQLITE_PATH = savedSqlite;
+    if (savedConfig === undefined) delete process.env.DATABASE_CONFIG_PATH;
+    else process.env.DATABASE_CONFIG_PATH = savedConfig;
+    if (savedLogoDir !== undefined) process.env.FORWARDX_CLIENT_LOGO_DIR = savedLogoDir;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("SQLITE_PATH 优先于 database.json", () => {
+  const savedSqlite = process.env.SQLITE_PATH;
+  const savedLogoDir = process.env.FORWARDX_CLIENT_LOGO_DIR;
+  delete process.env.FORWARDX_CLIENT_LOGO_DIR;
+  process.env.SQLITE_PATH = "/srv/panel/data/forwardx.db";
+  try {
+    assert.equal(clientLogoDir(), path.join("/srv/panel/data", "clientLogos"));
+  } finally {
+    if (savedSqlite === undefined) delete process.env.SQLITE_PATH;
+    else process.env.SQLITE_PATH = savedSqlite;
+    if (savedLogoDir !== undefined) process.env.FORWARDX_CLIENT_LOGO_DIR = savedLogoDir;
+  }
 });
 
 test("同一个客户端有多个扩展名时取矢量优先", () => {
