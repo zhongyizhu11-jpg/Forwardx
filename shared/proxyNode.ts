@@ -10,6 +10,10 @@
  * 概念，本文件全部是代理节点概念，命名一律用 proxy 前缀。
  */
 
+// 循环引用：proxyNodeJson 也从这里取 createEmptyProxyNode 和类型。两边的使用都在
+// 函数体内（延迟求值），运行时安全 —— proxyNode.test.ts 里有端到端用例实际验证这一点。
+import { looksLikeProxyNodeJson, parseProxyNodeJson } from "./proxyNodeJson";
+
 export const PROXY_NODE_PROTOCOLS = ["vless", "vmess", "trojan", "shadowsocks"] as const;
 
 export type ProxyNodeProtocol = (typeof PROXY_NODE_PROTOCOLS)[number];
@@ -338,6 +342,20 @@ export type ParseProxyNodeResult =
 export function parseProxyNodeLink(input: unknown): ParseProxyNodeResult {
   const link = text(input);
   if (!link) return { ok: false, error: "节点链接为空" };
+
+  // 粘的是 JSON（sing-box 出站、Clash 条目、v2rayN 的 VMess、或整份配置）走另一条路。
+  if (looksLikeProxyNodeJson(link)) {
+    const result = parseProxyNodeJson(link);
+    if (!result.ok) return { ok: false, error: result.error };
+    if (result.needsAddress) {
+      return {
+        ok: false,
+        error: "这份配置里没有公网地址（服务端配置的 listen 通常是 0.0.0.0），请在「地址」栏补上落地机的地址",
+      };
+    }
+    return { ok: true, node: result.node };
+  }
+
   const lower = link.toLowerCase();
   let node: ProxyNode | null = null;
   if (lower.startsWith("vless://")) node = parseVlessLink(link);

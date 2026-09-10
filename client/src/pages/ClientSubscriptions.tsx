@@ -968,7 +968,7 @@ export default function ClientSubscriptionsPage() {
           <DialogHeader>
             <DialogTitle>{editingNodeId ? "编辑客户端节点" : "添加客户端节点"}</DialogTitle>
             <DialogDescription>
-              粘贴落地机上的原始节点链接。面板只会把地址和端口换成转发入口，
+              粘贴落地机上的节点链接，或 sing-box / Clash / v2rayN 的节点 JSON。面板只会把地址和端口换成转发入口，
               UUID、密码、SNI、传输方式等全部原样保留。
             </DialogDescription>
           </DialogHeader>
@@ -1025,7 +1025,7 @@ export default function ClientSubscriptionsPage() {
                 id="proxy-node-link"
                 value={nodeLink}
                 onChange={(event) => setNodeLink(event.target.value)}
-                placeholder="vless://... 或 vmess:// / trojan:// / ss://"
+                placeholder={'vless://... / vmess:// / trojan:// / ss://\n或粘贴 JSON：{"type":"vless","server":"...","server_port":443,...}'}
                 rows={4}
                 className="font-mono text-xs"
               />

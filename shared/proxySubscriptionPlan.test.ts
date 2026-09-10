@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { PROXY_SUBSCRIPTION_GROUP_NAME } from "./proxySubscription";
 import {
-  buildProxySubscriptionDocument,
   buildProxySubscriptionPlan,
   dedupeProxyNodeNames,
   defaultProxySubscriptionNodeName,
