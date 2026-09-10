@@ -26,6 +26,11 @@ const REPO_LOGOS = {
   hiddify: "https://raw.githubusercontent.com/hiddify/hiddify-app/main/assets/images/logo.svg",
   v2rayng: "https://raw.githubusercontent.com/2dust/v2rayNG/master/V2rayNG/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
   nekobox: "https://raw.githubusercontent.com/MatsuriDayo/NekoBoxForAndroid/main/app/src/main/ic_launcher-playstore.png",
+  nekoray: "https://raw.githubusercontent.com/MatsuriDayo/nekoray/main/res/public/nekobox.png",
+  // v2rayN 仓库里只有 .ico，里面含 256x256，浏览器会自己挑最大那张。
+  v2rayn: "https://raw.githubusercontent.com/2dust/v2rayN/master/v2rayN/v2rayN/Resources/NotifyIcon1.ico",
+  // Surfboard 没有开源仓库，用官网的 logo。
+  surfboard: "https://getsurfboard.com/img/logo.png",
 };
 
 // 闭源客户端：App Store 的公开 lookup 接口，按 App ID 取 1024px 官方 artwork。
@@ -69,6 +74,7 @@ function extensionOf(buffer, fallback = ".png") {
   if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return ".png";
   if (buffer[0] === 0xff && buffer[1] === 0xd8) return ".jpg";
   if (buffer.subarray(0, 4).toString() === "RIFF" && buffer.subarray(8, 12).toString() === "WEBP") return ".webp";
+  if (buffer[0] === 0x00 && buffer[1] === 0x00 && buffer[2] === 0x01 && buffer[3] === 0x00) return ".ico";
   const head = buffer.subarray(0, 400).toString("utf8").trimStart();
   if (head.startsWith("<svg") || head.startsWith("<?xml")) return ".svg";
   return fallback;

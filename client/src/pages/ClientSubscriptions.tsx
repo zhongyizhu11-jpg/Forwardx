@@ -118,7 +118,7 @@ function clientIcon(target: ProxyClientTarget) {
  */
 const CLIENT_LOGOS: Record<string, string> = Object.fromEntries(
   Object.entries(
-    import.meta.glob("../assets/clientLogos/*.{svg,png,webp}", {
+    import.meta.glob("../assets/clientLogos/*.{svg,png,webp,jpg,jpeg,ico}", {
       eager: true,
       import: "default",
     }) as Record<string, string>,
