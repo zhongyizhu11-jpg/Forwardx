@@ -406,13 +406,7 @@ export default function ClientSubscriptionsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold">客户端订阅</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            转发规则只记录地址和端口，不含节点凭据。把落地机的节点链接在这里登记一次，
-            面板会把每条绑定的转发改写成可导入的节点，之后新增转发会自动进订阅。
-          </p>
-        </div>
+        <h1 className="text-2xl font-semibold">客户端订阅</h1>
 
         <Card>
           <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
@@ -421,9 +415,6 @@ export default function ClientSubscriptionsPage() {
                 <Server className="h-4 w-4" />
                 落地节点
               </CardTitle>
-              <CardDescription>
-                按落地机登记，多条转发共用一个。
-              </CardDescription>
             </div>
             <Button size="sm" onClick={openCreateNode}>
               <Plus className="mr-1 h-4 w-4" />
@@ -675,9 +666,6 @@ export default function ClientSubscriptionsPage() {
                 <Link2 className="h-4 w-4" />
                 订阅链接
               </CardTitle>
-              <CardDescription>
-                地址含全部凭据，建议一台设备一条。
-              </CardDescription>
             </div>
             <Button
               size="sm"
