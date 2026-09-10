@@ -178,6 +178,8 @@ export default function ClientSubscriptionsPage() {
   const [qrTarget, setQrTarget] = useState<{ title: string; url: string; hint?: string } | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [showAllClients, setShowAllClients] = useState(false);
+  // 服务器数据目录里放的图标。放了就盖掉内置图案，没放（多数情况）就是个空对象。
+  const [runtimeLogos, setRuntimeLogos] = useState<Record<string, string>>({});
   // 只认一次：UA 在页面生命周期里不会变。
   const platform = useMemo(() => currentPlatform(), []);
   const visibleTargets = useMemo(() => {
@@ -257,6 +259,22 @@ export default function ClientSubscriptionsPage() {
     },
     onError: (error) => toast.error(error.message),
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/client-logos")
+      .then((res) => (res.ok ? res.json() : {}))
+      .then((data) => {
+        if (!cancelled && data && typeof data === "object") {
+          setRuntimeLogos(data as Record<string, string>);
+        }
+      })
+      // 拿不到就用内置图案，不值得为此打扰用户。
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 二维码固定黑白：跟着主题走的话，深色模式下扫不出来。
   useEffect(() => {
@@ -763,7 +781,10 @@ export default function ClientSubscriptionsPage() {
                             const url = subscriptionUrl(token.token, target.format, kind, true);
                             const importName = `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`;
                             const { icon: Icon, className: iconClass } = clientIcon(target);
-                            const logo = CLIENT_LOGOS[target.id];
+                            // 运行时的优先：放在服务器上就能换图，不必重新构建。
+                            const logo = runtimeLogos[target.id]
+                              ? `/api/client-logos/${target.id}`
+                              : CLIENT_LOGOS[target.id];
                             const offPlatform = platform ? !target.platforms.includes(platform) : false;
                             const usable = supported && !offPlatform;
                             const tile = (
