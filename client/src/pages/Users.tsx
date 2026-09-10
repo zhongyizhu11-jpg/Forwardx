@@ -228,6 +228,8 @@ function UsersContent() {
   const [newUserName, setNewUserName] = useState("");
   // 出于安全考虑，后台创建的用户一律为普通用户
   const [newCanAddRules, setNewCanAddRules] = useState(true);
+  // 默认关：订阅地址里带着全部节点凭据，得管理员显式给。
+  const [newAllowProxySubscription, setNewAllowProxySubscription] = useState(false);
   // Reset password dialog
   const [showResetPassword, setShowResetPassword] = useState(false);
   const [resetUserId, setResetUserId] = useState<number | null>(null);
@@ -452,6 +454,7 @@ function UsersContent() {
       setNewUserPassword("");
       setNewUserName("");
       setNewCanAddRules(true);
+      setNewAllowProxySubscription(false);
     },
     onError: (err) => toast.error(err.message || "创建用户失败"),
   });
@@ -745,6 +748,7 @@ function UsersContent() {
       password: newUserPassword,
       name: newUserName.trim() || undefined,
       canAddRules: newCanAddRules,
+      allowProxySubscription: newAllowProxySubscription,
     });
   };
 
@@ -1793,7 +1797,28 @@ function UsersContent() {
                 </div>
                 <Switch
                   checked={newCanAddRules}
-                  onCheckedChange={setNewCanAddRules}
+                  onCheckedChange={(checked) => {
+                    setNewCanAddRules(checked);
+                    // 转发关掉时一并收回订阅，跟编辑页同一条规则。
+                    if (!checked) setNewAllowProxySubscription(false);
+                  }}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>客户端订阅</Label>
+              <div className="flex items-center justify-between rounded-lg border border-border/40 p-3">
+                <div className="min-w-0 pr-3">
+                  <p className="text-xs text-muted-foreground">
+                    {newCanAddRules
+                      ? "允许把自己的转发汇聚成订阅地址导入客户端。之后可在编辑用户里改。"
+                      : "转发总开关关闭时不可用 —— 转发都停了，订阅只会给出一堆连不通的节点。"}
+                  </p>
+                </div>
+                <Switch
+                  checked={newAllowProxySubscription}
+                  disabled={!newCanAddRules}
+                  onCheckedChange={setNewAllowProxySubscription}
                 />
               </div>
             </div>

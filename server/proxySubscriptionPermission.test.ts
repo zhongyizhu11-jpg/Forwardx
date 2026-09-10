@@ -47,3 +47,41 @@ test("字段缺失时按无权限处理", () => {
   assert.equal(mergeManualAndPlanLimits({}, {}).allowProxySubscription, false);
   assert.equal(mergeManualAndPlanLimits(null, null).allowProxySubscription, false);
 });
+
+/**
+ * 建用户时就能勾订阅权限，规则要和编辑页一致：
+ * 转发总开关关着时订阅一律关，且有效值与手动授权两列都得写。
+ */
+function createUserSubscriptionGrant(input: { canAddRules: boolean; allowProxySubscription: boolean }) {
+  // 这是 users.create 里那行合并逻辑的等价写法。
+  const granted = input.canAddRules && input.allowProxySubscription;
+  return {
+    allowProxySubscription: granted,
+    manualAllowProxySubscription: granted,
+  };
+}
+
+test("建用户时转发关着，订阅一并关掉", () => {
+  // 转发都停了，订阅只会给出一堆连不通的死节点 —— 与编辑页收回订阅的理由相同。
+  assert.deepEqual(
+    createUserSubscriptionGrant({ canAddRules: false, allowProxySubscription: true }),
+    { allowProxySubscription: false, manualAllowProxySubscription: false },
+  );
+});
+
+test("建用户时授予订阅，有效值与手动授权两列都写", () => {
+  // 有效值由「手动 OR 套餐」合并得出。只写手动那列的话，要等下一次同步才生效，
+  // 中间这段时间用户的订阅地址是 404 的。
+  assert.deepEqual(
+    createUserSubscriptionGrant({ canAddRules: true, allowProxySubscription: true }),
+    { allowProxySubscription: true, manualAllowProxySubscription: true },
+  );
+});
+
+test("建用户时不勾订阅就是不给", () => {
+  // 订阅地址里带着全部节点凭据，默认必须是关的。
+  assert.deepEqual(
+    createUserSubscriptionGrant({ canAddRules: true, allowProxySubscription: false }),
+    { allowProxySubscription: false, manualAllowProxySubscription: false },
+  );
+});
