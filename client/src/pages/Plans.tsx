@@ -37,6 +37,8 @@ type PlanForm = {
   trafficGB: string;
   rateLimitMbps: string;
   maxRules: string;
+  maxProxyInbounds: string;
+  maxProxySubTokens: string;
   maxConnections: string;
   maxIPs: string;
   allowProxySubscription: boolean;
@@ -83,6 +85,8 @@ const emptyForm: PlanForm = {
   trafficGB: "0",
   rateLimitMbps: "0",
   maxRules: "20",
+  maxProxyInbounds: "0",
+  maxProxySubTokens: "0",
   maxConnections: "2000",
   maxIPs: "10",
   allowProxySubscription: false,
@@ -572,6 +576,8 @@ function toForm(plan: any): PlanForm {
     trafficGB: String(Number(plan.trafficLimit || 0) / 1024 / 1024 / 1024 || 0),
     rateLimitMbps: String(Number(plan.rateLimitMbps || 0) || 0),
     maxRules: String(plan.maxRules ?? 20),
+    maxProxyInbounds: String(plan.maxProxyInbounds ?? 0),
+    maxProxySubTokens: String(plan.maxProxySubTokens ?? 0),
     maxConnections: String(plan.maxConnections ?? 2000),
     maxIPs: String(plan.maxIPs ?? 10),
     allowProxySubscription: !!plan.allowProxySubscription,
@@ -603,6 +609,8 @@ function payload(form: PlanForm) {
     trafficLimit: Math.max(0, Math.floor(Number(form.trafficGB || 0) * 1024 * 1024 * 1024)),
     rateLimitMbps: Math.max(0, Math.floor(Number(form.rateLimitMbps || 0))),
     maxRules: Math.max(0, Math.floor(Number(form.maxRules || 0))),
+    maxProxyInbounds: Math.max(0, Math.floor(Number(form.maxProxyInbounds || 0))),
+    maxProxySubTokens: Math.max(0, Math.floor(Number(form.maxProxySubTokens || 0))),
     maxConnections: Math.max(0, Math.floor(Number(form.maxConnections || 0))),
     maxIPs: Math.max(0, Math.floor(Number(form.maxIPs || 0))),
     allowProxySubscription: form.allowProxySubscription,
@@ -1331,6 +1339,16 @@ export default function Plans() {
             <div className="space-y-2">
               <Label>最大规则数（0 为不限）</Label>
               <Input type="number" min={0} value={form.maxRules} onChange={(e) => setForm({ ...form, maxRules: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>最大落地节点数（0 为不限）</Label>
+              <Input type="number" min={0} value={form.maxProxyInbounds} onChange={(e) => setForm({ ...form, maxProxyInbounds: e.target.value })} />
+              <p className="text-xs text-muted-foreground">买了这个套餐能自己开几个落地节点。只在套餐开了客户端订阅时才有意义。</p>
+            </div>
+            <div className="space-y-2">
+              <Label>最大订阅地址数（0 为不限）</Label>
+              <Input type="number" min={0} value={form.maxProxySubTokens} onChange={(e) => setForm({ ...form, maxProxySubTokens: e.target.value })} />
+              <p className="text-xs text-muted-foreground">能生成几条订阅地址。同样只在开了客户端订阅时才有意义。</p>
             </div>
             <div className="space-y-2">
               <Label>最大连接数</Label>

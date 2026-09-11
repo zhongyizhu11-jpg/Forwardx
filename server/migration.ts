@@ -701,6 +701,8 @@ const IMPORT_TABLE_ORDER = [
   "proxy_inbounds",
   "proxy_inbound_users",
   "proxy_nodes",
+  // 排在 proxy_nodes 之后：分享记录同时指向节点与用户，两边的 id 都得先映射好。
+  "proxy_node_shares",
   "proxy_sub_tokens",
   "forward_rules",
   "forward_rule_tunnel_exits",
@@ -1182,6 +1184,12 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
       row.inboundId = mapOptionalId(maps, "proxy_inbounds", source.inboundId) || 0;
       row.inboundUserId = mapOptionalId(maps, "proxy_inbound_users", source.inboundUserId) || 0;
       return { row };
+
+    case "proxy_node_shares":
+      row.nodeId = mapRequiredId(maps, "proxy_nodes", source.nodeId);
+      row.userId = mapRequiredId(maps, "users", source.userId);
+      // 同一个节点对同一个人只该有一条。
+      return { row, existingWhere: { nodeId: row.nodeId, userId: row.userId } };
 
     case "proxy_sub_tokens":
       row.userId = mapRequiredId(maps, "users", source.userId);

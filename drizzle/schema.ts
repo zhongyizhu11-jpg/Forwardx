@@ -148,6 +148,12 @@ export const users = table("users", {
   forwardAccessPauseReason: varchar("forwardAccessPauseReason", { length: 64 }),
   maxRules: int("maxRules").notNull().default(0),       // 最大规则条数，0 = 不限制
   maxPorts: int("maxPorts").notNull().default(0),       // 最大端口数，0 = 不限制（与 maxRules 相同概念，但可独立控制）
+  // 自己能开几个落地节点（proxy_inbounds），0 = 不限制。
+  // 与 maxRules 分开：转发和自建落地是两件事，租两个落地的人不一定只配两条转发。
+  maxProxyInbounds: int("maxProxyInbounds").notNull().default(0),
+  // 能生成几条订阅地址（proxy_sub_tokens），0 = 不限制。
+  // 每条地址都是一份完整凭据，发出去就收不回来 —— 只能靠吊销那一条。
+  maxProxySubTokens: int("maxProxySubTokens").notNull().default(0),
   // 允许使用的转发方式，逗号分隔，如 "iptables,realm,socat"；null 或空串 = 全部允许
   allowedForwardTypes: text("allowedForwardTypes"),
   allowForwardXTunnel: boolean("allowForwardXTunnel").notNull().default(false),
@@ -159,6 +165,8 @@ export const users = table("users", {
   maxIPs: int("maxIPs").notNull().default(0),
   manualCanAddRules: boolean("manualCanAddRules").notNull().default(false),
   manualMaxRules: int("manualMaxRules").notNull().default(0),
+  manualMaxProxyInbounds: int("manualMaxProxyInbounds").notNull().default(0),
+  manualMaxProxySubTokens: int("manualMaxProxySubTokens").notNull().default(0),
   manualMaxPorts: int("manualMaxPorts").notNull().default(0),
   manualMaxConnections: int("manualMaxConnections").notNull().default(0),
   manualMaxIPs: int("manualMaxIPs").notNull().default(0),
@@ -563,6 +571,27 @@ export const proxySubTokens = table("proxy_sub_tokens", {
 });
 export type ProxySubToken = typeof proxySubTokens.$inferSelect;
 export type InsertProxySubToken = typeof proxySubTokens.$inferInsert;
+
+/**
+ * 节点分享：把某个节点放进另一个用户的订阅，但不转让所有权。
+ *
+ * 与「归属用户」的区别 —— 归属是把这一份凭据整个转给对方（对方的订阅、对方的
+ * 配额、对方能改）；分享是同一份凭据同时出现在别人的订阅里，节点仍然是我的。
+ * 有人只租一两个落地，不值得为他单开端口时用这个。
+ *
+ * 流量记在节点主人头上：分享出去的是同一个端口，面板按端口计量，没法把这个
+ * 端口上的量拆给几个订阅者。界面上要写清楚，别让人事后才发现。
+ */
+export const proxyNodeShares = table("proxy_node_shares", {
+  id: serial("id"),
+  // 分享出去的是哪个节点（proxy_nodes.id），节点主人看它的 userId。
+  nodeId: int("nodeId").notNull(),
+  // 分享给谁。这个人的订阅里会多出这个节点。
+  userId: int("userId").notNull(),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+});
+export type ProxyNodeShare = typeof proxyNodeShares.$inferSelect;
+export type InsertProxyNodeShare = typeof proxyNodeShares.$inferInsert;
 
 export const forwardGroups = table("forward_groups", {
   id: serial("id"),
@@ -1037,6 +1066,10 @@ export const subscriptionPlans = table("subscription_plans", {
   trafficLimit: bigint("trafficLimit", { mode: "number" }).notNull().default(0),
   rateLimitMbps: int("rateLimitMbps").notNull().default(0),
   maxRules: int("maxRules").notNull().default(20),
+  // 套餐附带的自建落地节点数，0 = 不限制。只在套餐开了客户端订阅时才有意义。
+  maxProxyInbounds: int("maxProxyInbounds").notNull().default(0),
+  // 套餐附带的订阅地址条数，0 = 不限制。同样只在开了客户端订阅时有意义。
+  maxProxySubTokens: int("maxProxySubTokens").notNull().default(0),
   maxConnections: int("maxConnections").notNull().default(2000),
   maxIPs: int("maxIPs").notNull().default(10),
   // 该套餐是否附带客户端订阅权限

@@ -27,13 +27,14 @@ import {
   PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
   isProxyInboundShadowsocksMethod,
   proxyInboundSupportsMultiUser,
+  proxyNodesFromInbound,
   proxyInboundUserCredentialKinds,
   validateProxyInbound,
   type ProxyInboundUser,
   type ProxyInbound,
   type ProxyInboundProtocol,
 } from "../../shared/proxyInbound";
-import { PROXY_NODE_TRANSPORTS } from "../../shared/proxyNode";
+import { formatProxyNodeLink, PROXY_NODE_TRANSPORTS } from "../../shared/proxyNode";
 import {
   generateProxyInboundPassword,
   generateProxyInboundPsk,
@@ -61,6 +62,28 @@ async function assertOwnedInbound(id: number, ctx: any) {
   if (!inbound) throw new Error("落地节点不存在");
   if (ctx.user.role !== "admin" && inbound.userId !== ctx.user.id) throw new Error("无权操作该落地节点");
   return inbound;
+}
+
+/**
+ * 这个用户还能不能再开一个落地节点。
+ *
+ * 主机授权只管「能在哪台机器上开」，管不住「开几个」—— 一个拿到主机授权的租户
+ * 可以把那台机器的端口占满。配额是那道刹车。
+ *
+ * 检查的是**归属者**的额度而不是操作者的：管理员替租户开节点时，占的是租户的份额。
+ * 管理员自己不受限 —— 他要是想开满，配额也拦不住他，拦了反而碍事。
+ */
+async function assertInboundQuota(ownerId: number, ctx: any) {
+  if (ctx.user.role === "admin" && ownerId === ctx.user.id) return;
+  const owner = await db.getUserById(ownerId);
+  const limit = Number((owner as any)?.maxProxyInbounds || 0);
+  // 0 = 不限，与 maxRules / maxPorts 一致。
+  if (limit <= 0) return;
+  const used = await db.countProxyInboundsByUser(ownerId);
+  if (used >= limit) {
+    const who = ctx.user.id === ownerId ? "你" : `用户「${(owner as any)?.username || ownerId}」`;
+    throw new Error(`${who}的落地节点已达上限（${used}/${limit}）。删掉一个，或让管理员调高上限。`);
+  }
 }
 
 /**
@@ -279,14 +302,55 @@ export const proxyInboundsRouter = router({
     const rows = ctx.user.role === "admin"
       ? await db.getAllProxyInbounds()
       : await db.getProxyInboundsByUser(ctx.user.id);
+    // 派生节点的订阅状态一次查完 —— 那个开关的入口在「新建节点」这一段。
+    const derived = await db.getProxyInboundDerivedNodes(rows.map((row: any) => Number(row.id)));
+    // 这些派生节点各自分享给了几个人。行上要标出来，否则「分享给谁」只有
+    // 用户编辑页看得到，管理员在节点这边看不出这个端口已经租出去了。
+    const shareUserIds = await db.getProxyNodeShareUserIds(
+      Array.from(derived.values()).flatMap((entry: any) => entry.ids as number[]),
+    );
     return Promise.all(rows.map(async (row: any) => ({
       ...row,
       // 私钥不出接口：前端没有任何用得上它的地方，多送一次就多一条泄漏路径。
       realityPrivateKey: undefined,
       // 同理用户凭据也不出去，只给 id 和名字，够界面显示和编辑了。
       users: (await db.getProxyInboundUsers(Number(row.id))).map((user) => ({ id: user.id, name: user.name })),
+      derivedNodeIds: derived.get(Number(row.id))?.ids || [],
+      includeDirect: derived.get(Number(row.id))?.includeDirect ?? false,
+      sharedUserCount: new Set(
+        (derived.get(Number(row.id))?.ids || []).flatMap((id: number) => shareUserIds.get(Number(id)) || []),
+      ).size,
     })));
   }),
+
+  /**
+   * 这个自建节点的分享链接，一个用户一条。
+   *
+   * 单独一个查询而不是塞进 list：链接里带着完整凭据，而 list 是每次进页面都会拉、
+   * 还在轮询的。凭据只在用户主动要的时候才发出去，少一条泄漏路径。
+   */
+  links: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await assertAllowed(ctx);
+      const row = await assertOwnedInbound(input.id, ctx);
+      const inbound = await db.loadProxyInbound(input.id);
+      if (!inbound) throw new Error("落地节点不存在");
+
+      const address = await db.getProxyInboundAddress(Number((row as any).hostId));
+      if (!address) {
+        // 主机还没有可用地址时，链接里的 host 会是空的 —— 给不出能用的链接，
+        // 不如直说，免得用户复制走一条连不上的。
+        throw new Error("这台主机还没有可用地址，生成不出能连的链接");
+      }
+
+      return proxyNodesFromInbound(inbound, { address }).map(({ user, node }) => ({
+        userId: Number(user?.id || 0),
+        userName: String(user?.name || ""),
+        name: node.name,
+        link: formatProxyNodeLink(node),
+      }));
+    }),
 
   create: protectedProcedure
     .input(inboundInput)
@@ -294,6 +358,8 @@ export const proxyInboundsRouter = router({
       await assertAllowed(ctx);
       await assertUsableHost(input.hostId, ctx);
       const ownerId = await resolveOwnerId(ctx, input.userId);
+
+      await assertInboundQuota(ownerId, ctx);
 
       const conflict = await db.findProxyInboundPortConflict(input.hostId, input.port);
       if (conflict) throw new Error(`该主机的 ${input.port} 端口已被落地节点「${conflict.name}」占用`);
@@ -356,6 +422,11 @@ export const proxyInboundsRouter = router({
       const ownerId = input.userId !== undefined
         ? await resolveOwnerId(ctx, input.userId)
         : Number(row.userId);
+      /**
+       * 换归属时也要看新主人的额度，否则「建不了就先建给自己再转过去」能绕开上限。
+       * 没换归属时不查：那会让一个已经超额的用户连改名字都改不了。
+       */
+      if (ownerId !== Number(row.userId)) await assertInboundQuota(ownerId, ctx);
 
       await db.updateProxyInbound(input.id, {
         hostId,

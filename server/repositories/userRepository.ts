@@ -518,11 +518,15 @@ function usersForListQuery(db: any) {
       canAddRules: users.canAddRules,
       forwardAccessPauseReason: users.forwardAccessPauseReason,
       maxRules: users.maxRules,
+      maxProxyInbounds: users.maxProxyInbounds,
+      maxProxySubTokens: users.maxProxySubTokens,
       maxPorts: users.maxPorts,
       maxConnections: users.maxConnections,
       maxIPs: users.maxIPs,
       manualCanAddRules: users.manualCanAddRules,
       manualMaxRules: users.manualMaxRules,
+      manualMaxProxyInbounds: users.manualMaxProxyInbounds,
+      manualMaxProxySubTokens: users.manualMaxProxySubTokens,
       manualMaxPorts: users.manualMaxPorts,
       manualMaxConnections: users.manualMaxConnections,
       manualMaxIPs: users.manualMaxIPs,
@@ -659,11 +663,15 @@ export async function updateUserTrafficSettings(userId: number, data: {
   canAddRules?: boolean;
   forwardAccessPauseReason?: ForwardAccessPauseReason;
   maxRules?: number;
+  maxProxyInbounds?: number;
+  maxProxySubTokens?: number;
   maxPorts?: number;
   maxConnections?: number;
   maxIPs?: number;
   manualCanAddRules?: boolean;
   manualMaxRules?: number;
+  manualMaxProxyInbounds?: number;
+  manualMaxProxySubTokens?: number;
   manualMaxPorts?: number;
   manualMaxConnections?: number;
   manualMaxIPs?: number;

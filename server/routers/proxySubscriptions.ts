@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { z } from "zod";
 
-import { protectedProcedure, router } from "../_core/trpc";
+import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import {
   parseProxyNodeLink,
@@ -18,6 +18,7 @@ import {
 } from "../../shared/proxySubscriptionPlan";
 import { resolveProxyNodeHealth, type ProxyNodeProbeSample } from "../../shared/proxyNodeHealth";
 import { normalizeProxyNodeResetDay } from "../../shared/proxyNodeQuota";
+import { redactSharedProxyNodeRow } from "../../shared/proxyNodeShare";
 
 /**
  * 订阅令牌够长才安全：地址里带着全部节点凭据，一旦可猜就等于把节点送人。
@@ -116,6 +117,7 @@ export const proxySubscriptionsRouter = router({
   listNodes: protectedProcedure.query(async ({ ctx }) => {
     if (!await hasProxySubscriptionPermission(ctx)) return [];
     const nodes = await db.getProxyNodesByUser(ctx.user.id);
+    const shareUserIds = await db.getProxyNodeShareUserIds(nodes.map((node: any) => Number(node.id)));
     const ruleIdsByNode = await db.getRuleIdsUsingProxyNodes(nodes.map((node: any) => Number(node.id)));
     const allRuleIds = Array.from(new Set(Array.from(ruleIdsByNode.values()).flat()));
 
@@ -137,7 +139,7 @@ export const proxySubscriptionsRouter = router({
       byRule.set(Number(row.ruleId), list);
     }
 
-    return nodes.map((node: any) => {
+    const owned = nodes.map((node: any) => {
       const ruleIds = ruleIdsByNode.get(Number(node.id)) || [];
       const samples: ProxyNodeProbeSample[] = [];
       for (const ruleId of ruleIds) {
@@ -158,9 +160,63 @@ export const proxySubscriptionsRouter = router({
         ...node,
         ruleCount: ruleIds.length,
         health: resolveProxyNodeHealth(samples),
+        sharedToUserIds: shareUserIds.get(Number(node.id)) || [],
+        sharedFrom: null as null | { userId: number; name: string },
       };
     });
+
+    /**
+     * 别人分享给我的节点也列出来，否则订阅里凭空多出几条，用户在管理页找不到
+     * 它们是哪来的。这些行是只读的 —— 编辑与删除在服务端本来就按 userId 挡着，
+     * 界面据 sharedFrom 把入口收起来，别让人点进去才发现改不了。
+     */
+    const shared = await db.getProxyNodesSharedToUser(ctx.user.id);
+    if (shared.length === 0) return owned;
+    const ownerIds = Array.from(new Set(shared.map((node: any) => Number(node.userId)))) as number[];
+    const owners = new Map<number, string>();
+    for (const ownerId of ownerIds) {
+      const owner = await db.getUserById(ownerId);
+      owners.set(ownerId, String(owner?.name || owner?.username || `用户 #${ownerId}`));
+    }
+    const sharedRows = shared.map((node: any) => ({
+      ...redactSharedProxyNodeRow(node),
+      // 分享进来的节点只可能以直连形态出现：收方名下没有绑着它的转发。
+      includeDirect: true,
+      frontProxyId: 0,
+      ruleCount: 0,
+      health: resolveProxyNodeHealth([]),
+      sharedToUserIds: [] as number[],
+      sharedFrom: { userId: Number(node.userId), name: owners.get(Number(node.userId)) || "" },
+    }));
+    return [...owned, ...sharedRows];
   }),
+
+  /**
+   * 这些节点各自分享给了谁。
+   *
+   * 管理员专用：要选人就得先能列用户，而用户清单本来就只有管理员看得到。
+   * 普通用户在自己的节点行上看到的是「已分享 N」这个计数，不含是谁。
+   */
+  nodeShares: adminProcedure
+    .input(z.object({ nodeIds: z.array(z.number().int().positive()).max(100) }))
+    .query(async ({ input }) => {
+      const map = await db.getProxyNodeShareUserIds(input.nodeIds);
+      return Array.from(map.entries()).map(([nodeId, userIds]) => ({ nodeId, userIds }));
+    }),
+
+  /** 设定这个节点分享给谁（全量替换）。 */
+  setNodeShares: adminProcedure
+    .input(z.object({
+      nodeId: z.number().int().positive(),
+      userIds: z.array(z.number().int().positive()).max(200),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const node = await db.getProxyNodeById(input.nodeId);
+      if (!node) throw new Error("客户端节点不存在");
+      await db.setProxyNodeShareUsers(input.nodeId, input.userIds);
+      console.info(`[ProxyNode] Updated shares nodeId=${input.nodeId} count=${input.userIds.length} by=${ctx.user.id}`);
+      return { success: true };
+    }),
 
   createNode: protectedProcedure
     .input(z.object({
@@ -373,6 +429,23 @@ export const proxySubscriptionsRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
+      /**
+       * 订阅地址条数也有上限。
+       *
+       * 每条地址都是一份完整凭据，发出去就收不回来 —— 只能吊销那一条。不设上限的话
+       * 一个租户可以生成几十条分发出去，而你从「有几个用户」上完全看不出来。
+       * 管理员不受限，与其他配额一致。
+       */
+      if (ctx.user.role !== "admin") {
+        const owner = await db.getUserById(ctx.user.id);
+        const limit = Number((owner as any)?.maxProxySubTokens || 0);
+        if (limit > 0) {
+          const used = await db.countProxySubTokensByUser(ctx.user.id);
+          if (used >= limit) {
+            throw new Error(`订阅地址已达上限（${used}/${limit}）。删掉一条，或让管理员调高上限。`);
+          }
+        }
+      }
       const token = nanoid(SUBSCRIPTION_TOKEN_LENGTH);
       const id = await db.createProxySubToken({
         userId: ctx.user.id,

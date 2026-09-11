@@ -296,6 +296,10 @@ function UsersContent() {
   const [cancelSubscriptionPlanLabel, setCancelSubscriptionPlanLabel] = useState("");
   const [hiddenCancelledSubscriptionIds, setHiddenCancelledSubscriptionIds] = useState<number[]>([]);
   const [maxRules, setMaxRules] = useState(0);
+  /** 自建落地节点数上限。0 = 不限，与其他配额一致。 */
+  const [maxProxyInbounds, setMaxProxyInbounds] = useState(0);
+  /** 订阅地址条数上限。0 = 不限。 */
+  const [maxProxySubTokens, setMaxProxySubTokens] = useState(0);
   const [maxPorts, setMaxPorts] = useState(0);
   const [maxConnections, setMaxConnections] = useState(0);
   const [allowProxySubscription, setAllowProxySubscription] = useState(false);
@@ -318,6 +322,8 @@ function UsersContent() {
   const [addAllowedPortForwardId, setAddAllowedPortForwardId] = useState("");
   const [addAllowedForwardGroupId, setAddAllowedForwardGroupId] = useState("");
   const [addAllowedTunnelId, setAddAllowedTunnelId] = useState("");
+  const [sharedProxyNodeIds, setSharedProxyNodeIds] = useState<number[]>([]);
+  const [addSharedProxyNodeId, setAddSharedProxyNodeId] = useState("");
   const [addBillingHostId, setAddBillingHostId] = useState("");
   const [addBillingTunnelId, setAddBillingTunnelId] = useState("");
   const [addBillingForwardGroupId, setAddBillingForwardGroupId] = useState("");
@@ -341,11 +347,17 @@ function UsersContent() {
     { userId: trafficUserId! },
     { enabled: showTrafficSettings && !!trafficUserId }
   );
+  const { data: userProxyNodeShares, isLoading: userProxyNodeSharesLoading } = trpc.users.getProxyNodeShares.useQuery(
+    { userId: trafficUserId! },
+    { enabled: showTrafficSettings && !!trafficUserId }
+  );
+  const { data: proxyNodeShareOptions } = trpc.users.proxyNodeShareOptions.useQuery(undefined, { enabled: showTrafficSettings });
   const permissionDataLoading = showTrafficSettings && !!trafficUserId && (
     userHostPermsLoading
     || userForwardGroupPermsLoading
     || userTunnelPermsLoading
     || userTrafficBillingPermsLoading
+    || userProxyNodeSharesLoading
   );
   const { data: userSummary, isLoading: summaryLoading } = trpc.users.summary.useQuery(undefined, {
     enabled: currentUser?.role === "admin",
@@ -383,6 +395,9 @@ function UsersContent() {
     },
     onError: (err) => toast.error(err.message || "更新隧道权限失败"),
   });
+  const updateProxyNodeSharesMutation = trpc.users.setProxyNodeShares.useMutation({
+    onError: (err) => toast.error(err.message || "更新节点分享失败"),
+  });
   const updateTrafficBillingPermsMutation = trpc.users.setTrafficBillingPermissions.useMutation({
     onSuccess: () => {
       utils.users.list.invalidate();
@@ -410,6 +425,12 @@ function UsersContent() {
       setAllowedTunnelIds([...userTunnelPerms]);
     }
   }, [userTunnelPerms]);
+
+  useEffect(() => {
+    if (userProxyNodeShares) {
+      setSharedProxyNodeIds([...userProxyNodeShares]);
+    }
+  }, [userProxyNodeShares]);
 
   useEffect(() => {
     if (userTrafficBillingPerms) {
@@ -519,6 +540,8 @@ function UsersContent() {
         trafficAutoReset: variables.trafficAutoReset,
         trafficResetDay: variables.trafficResetDay,
         manualMaxRules: variables.maxRules,
+        manualMaxProxyInbounds: variables.maxProxyInbounds,
+        manualMaxProxySubTokens: variables.maxProxySubTokens,
         manualMaxPorts: variables.maxPorts,
         manualMaxConnections: variables.maxConnections,
         manualMaxIPs: variables.maxIPs,
@@ -886,6 +909,8 @@ function UsersContent() {
     setGostRateLimitInInput(unifiedRateLimit > 0 ? String(unifiedRateLimit) : "0");
     setGostRateLimitOutInput(unifiedRateLimit > 0 ? String(unifiedRateLimit) : "0");
     setMaxRules(u.manualMaxRules || 0);
+    setMaxProxyInbounds(u.manualMaxProxyInbounds || 0);
+    setMaxProxySubTokens(u.manualMaxProxySubTokens || 0);
     setMaxPorts(u.manualMaxPorts || 0);
     setMaxConnections(u.manualMaxConnections || 0);
     setAllowProxySubscription(!!u.manualAllowProxySubscription);
@@ -941,6 +966,8 @@ function UsersContent() {
       trafficAutoReset,
       trafficResetDay,
       maxRules,
+      maxProxyInbounds,
+      maxProxySubTokens,
       maxPorts,
       maxConnections,
       maxIPs,
@@ -959,6 +986,10 @@ function UsersContent() {
     updateTunnelPermsMutation.mutate({
       userId: trafficUserId,
       tunnelIds: allowedTunnelIds,
+    });
+    updateProxyNodeSharesMutation.mutate({
+      userId: trafficUserId,
+      nodeIds: sharedProxyNodeIds,
     });
     updateTrafficBillingPermsMutation.mutate({
       userId: trafficUserId,
@@ -981,6 +1012,13 @@ function UsersContent() {
     if (!Number.isFinite(hostId)) return;
     setAllowedHostIds(prev => (prev.includes(hostId) ? prev : [...prev, hostId]));
     setAddAllowedHostId("");
+  };
+
+  const addProxyNodeShare = (value: string) => {
+    const nodeId = Number(value);
+    if (!Number.isFinite(nodeId)) return;
+    setSharedProxyNodeIds(prev => (prev.includes(nodeId) ? prev : [...prev, nodeId]));
+    setAddSharedProxyNodeId("");
   };
 
   const addTunnelPermission = (value: string) => {
@@ -1119,6 +1157,15 @@ function UsersContent() {
   const availableAllowedChainAndFailoverGroups = chainAndFailoverGroups.filter((group: any) => !allowedForwardGroupIds.includes(Number(group.id)));
   const selectedAllowedHosts = (allHosts || []).filter((host: any) => allowedHostIds.includes(Number(host.id)));
   const availableAllowedHosts = (allHosts || []).filter((host: any) => !allowedHostIds.includes(Number(host.id)));
+  /**
+   * 分享候选：排掉他自己的节点 —— 自己的节点本来就在他订阅里，再分享一遍
+   * 客户端里会出现两条一模一样的线路。
+   */
+  const shareableProxyNodes = (proxyNodeShareOptions || []).filter(
+    (node: any) => Number(node.userId) !== Number(trafficUserId || 0),
+  );
+  const selectedSharedProxyNodes = shareableProxyNodes.filter((node: any) => sharedProxyNodeIds.includes(Number(node.id)));
+  const availableSharedProxyNodes = shareableProxyNodes.filter((node: any) => !sharedProxyNodeIds.includes(Number(node.id)));
   const selectedAllowedTunnels = (allTunnels || []).filter((t: any) => allowedTunnelIds.includes(Number(t.id)));
   const availableAllowedTunnels = (allTunnels || []).filter((t: any) => !allowedTunnelIds.includes(Number(t.id)));
   const billableHosts = (allHosts || []).filter((h: any) => billableHostIds.has(Number(h.id)));
@@ -1799,8 +1846,6 @@ function UsersContent() {
                   checked={newCanAddRules}
                   onCheckedChange={(checked) => {
                     setNewCanAddRules(checked);
-                    // 转发关掉时一并收回订阅，跟编辑页同一条规则。
-                    if (!checked) setNewAllowProxySubscription(false);
                   }}
                 />
               </div>
@@ -1810,14 +1855,12 @@ function UsersContent() {
               <div className="flex items-center justify-between rounded-lg border border-border/40 p-3">
                 <div className="min-w-0 pr-3">
                   <p className="text-xs text-muted-foreground">
-                    {newCanAddRules
-                      ? "允许把自己的转发汇聚成订阅地址导入客户端。之后可在编辑用户里改。"
-                      : "转发总开关关闭时不可用 —— 转发都停了，订阅只会给出一堆连不通的节点。"}
+                    允许拉订阅地址导入客户端。与转发各给各的 —— 只给订阅也成立，
+                    那种用户零转发，订阅里是他自己主机上的落地节点。
                   </p>
                 </div>
                 <Switch
                   checked={newAllowProxySubscription}
-                  disabled={!newCanAddRules}
                   onCheckedChange={setNewAllowProxySubscription}
                 />
               </div>
@@ -2207,6 +2250,30 @@ function UsersContent() {
                   <p className="text-xs text-muted-foreground">0 或留空表示不限制</p>
                 </div>
                 <div className="space-y-2">
+                  <Label>最大落地节点数</Label>
+                  <Input
+                    type="number"
+                    value={maxProxyInbounds || ""}
+                    onChange={(e) => setMaxProxyInbounds(parseInt(e.target.value) || 0)}
+                    placeholder="0=不限制"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    他自己能在被授权的主机上开几个落地节点。管理员替他开的也算在内。0 或留空表示不限制。
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>最大订阅地址数</Label>
+                  <Input
+                    type="number"
+                    value={maxProxySubTokens || ""}
+                    onChange={(e) => setMaxProxySubTokens(parseInt(e.target.value) || 0)}
+                    placeholder="0=不限制"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    他能生成几条订阅地址。每条都是一份完整凭据，发出去就只能靠吊销那一条收回。0 或留空表示不限制。
+                  </p>
+                </div>
+                <div className="space-y-2">
                   <Label>最大端口数</Label>
                   <Input
                     type="number"
@@ -2244,8 +2311,8 @@ function UsersContent() {
                 <div className="min-w-0">
                   <Label>客户端订阅</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    允许该用户把自己的转发汇聚成订阅地址导入客户端。套餐里已附带该权限的用户不受这里影响；
-                    转发被停用或流量用尽时权限会自动收回。
+                    允许该用户拉订阅地址导入客户端。与转发权限各给各的，只给订阅也成立。
+                    套餐里已附带该权限的用户不受这里影响；流量用尽或账号被停时权限会自动收回。
                   </p>
                 </div>
                 <Switch
@@ -2556,6 +2623,65 @@ function UsersContent() {
                 ) : (
                   <p className="rounded-lg border border-dashed border-border/50 px-3 py-2 text-xs text-muted-foreground">
                     暂未授权隧道，可从上方选择添加。
+                  </p>
+                )}
+              </div>
+
+              <Separator />
+
+              <div className="space-y-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <Label className="text-sm font-medium">订阅节点分享</Label>
+                  <Badge variant="outline" className="text-[10px]">{sharedProxyNodeIds.length} 个</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  选中的节点会直接出现在他的订阅里，节点仍然是原主人的，他改不了也删不掉。
+                  流量记在节点主人名下 —— 同一个端口分给几个人用，面板按端口计量，拆不开。
+                </p>
+                <Select value={addSharedProxyNodeId} onValueChange={addProxyNodeShare} disabled={!availableSharedProxyNodes.length}>
+                  <SelectTrigger className="h-9 w-full">
+                    <SelectValue placeholder={availableSharedProxyNodes.length ? "选择要分享的节点" : "暂无可分享的节点"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableSharedProxyNodes.map((node: any) => (
+                      <SelectItem key={node.id} value={String(node.id)}>
+                        {node.name} · {String(node.protocol || "-")} · {String(node.address || "-")}:{node.port}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedSharedProxyNodes.length > 0 ? (
+                  <AutoAnimateContainer className="space-y-2">
+                    {selectedSharedProxyNodes.map((node: any) => (
+                      <div key={node.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 p-2.5">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium truncate">{node.name}</span>
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0">{String(node.protocol || "-")}</Badge>
+                            {!node.isEnabled ? (
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground">已停用</Badge>
+                            ) : null}
+                          </div>
+                          <p className="text-[10px] text-muted-foreground font-mono truncate">
+                            {String(node.address || "-")}:{node.port}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0"
+                          title="取消分享"
+                          onClick={() => setSharedProxyNodeIds(prev => prev.filter(id => id !== Number(node.id)))}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </AutoAnimateContainer>
+                ) : (
+                  <p className="rounded-lg border border-dashed border-border/50 px-3 py-2 text-xs text-muted-foreground">
+                    暂未分享节点。只租一两个落地、不值得单开端口的用户可以从上方选。
                   </p>
                 )}
               </div>

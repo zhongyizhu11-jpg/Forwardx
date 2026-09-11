@@ -1,5 +1,7 @@
+import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import ProxyInboundsSection from "@/components/proxy/ProxyInboundsSection";
+import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -84,6 +86,7 @@ import {
   QrCode,
   Rocket,
   Server,
+  Share2,
   Shield,
   Boxes,
   Ship,
@@ -258,6 +261,23 @@ const PREVIEW_GROUPS = [
   { key: "relay", label: "中转" },
   { key: "direct", label: "直连" },
 ] as const;
+
+/**
+ * 子块小标题：一行文字 + 一条细横线。
+ *
+ * 「订阅内容」这张卡里原本有五个子块，各用一种样式 —— 彩色框、虚线框、灰底框、
+ * 纯标题。样式不同会让人以为它们是不同性质的东西，其实都只是「订阅里的一部分」。
+ * 统一成同一条线之后，视觉重量交还给内容本身。
+ */
+function SectionLabel({ children, count }: { children: React.ReactNode; count?: number }) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+      <span>{children}</span>
+      {count !== undefined ? <span className="tabular-nums">({count})</span> : null}
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
 
 const QUOTA_STATE_STYLES = {
   none: "text-muted-foreground",
@@ -496,23 +516,44 @@ export default function ClientSubscriptionsPage() {
 
   const nodes = nodesQuery.data ?? [];
   const tokens = tokensQuery.data ?? [];
+  const { user: me } = useAuth();
+  const isAdmin = me?.role === "admin";
 
+  /** 从节点这边发起分享。粘进来的节点只有一份凭据，所以就是一个列表。 */
+  const [shareNode, setShareNode] = useState<{ id: number; name: string } | null>(null);
+
+  /**
+   * 「落地节点」这一段只列粘进来的，不列自建节点派生出来的那些。
+   *
+   * 派生节点在上面的「新建节点」里管着，两处都列就成了同一个节点出现两次；
+   * 而且这一段的「编辑」是按「换一条节点链接」设计的，派生节点根本没有链接，
+   * 点进去只会得到一句「请粘贴落地机的节点链接」—— 一个必然失败的入口。
+   *
+   * 但它们仍然留在 nodes 里：绑转发的下拉和前置代理的下拉都要能选到自建节点，
+   * 那是「自建落地 + 中转」的正常用法。
+   */
+  const pastedNodes = useMemo(
+    // 别人分享进来的节点即便在对方那边是自建派生的，在这一侧也没有「新建节点」
+    // 可以管，过滤掉的话它会在订阅里出现却在管理页上找不到，所以留在这一段。
+    () => (nodes as any[]).filter((node) => !Number(node?.inboundId || 0) || node?.sharedFrom),
+    [nodes],
+  );
   /**
    * 只有一个节点时一律不分组：分组下拉这时是藏起来的，若还按上次选的方式分，
    * 就会出现一个改不掉的分组标题。
    */
-  const effectiveGroupMode: ProxyNodeGroupMode = nodes.length > 1 ? nodeGroupMode : "none";
+  const effectiveGroupMode: ProxyNodeGroupMode = pastedNodes.length > 1 ? nodeGroupMode : "none";
   const nodeGroups = useMemo(
-    () => groupProxyNodes(nodes as any[], effectiveGroupMode),
-    [nodes, effectiveGroupMode],
+    () => groupProxyNodes(pastedNodes, effectiveGroupMode),
+    [pastedNodes, effectiveGroupMode],
   );
   const onlineNodeCount = useMemo(
-    () => (nodes as any[]).filter((node) => node?.health?.state === "online").length,
-    [nodes],
+    () => pastedNodes.filter((node) => node?.health?.state === "online").length,
+    [pastedNodes],
   );
   const offlineNodeCount = useMemo(
-    () => (nodes as any[]).filter((node) => node?.health?.state === "offline").length,
-    [nodes],
+    () => pastedNodes.filter((node) => node?.health?.state === "offline").length,
+    [pastedNodes],
   );
 
   const toggleQuota = (id: number) => {
@@ -672,16 +713,16 @@ export default function ClientSubscriptionsPage() {
               <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${nodesCollapsed ? "-rotate-90" : ""}`} />
               <Server className="h-4 w-4 shrink-0" />
               <CardTitle className="text-base">落地节点</CardTitle>
-              {nodes.length > 0 ? (
+              {pastedNodes.length > 0 ? (
                 <span className="truncate text-xs text-muted-foreground">
-                  {nodes.length} 个
+                  {pastedNodes.length} 个
                   {onlineNodeCount > 0 ? ` · ${onlineNodeCount} 在线` : ""}
                   {offlineNodeCount > 0 ? ` · ${offlineNodeCount} 离线` : ""}
                 </span>
               ) : null}
             </button>
             <div className="flex shrink-0 items-center gap-2">
-              {nodes.length > 1 ? (
+              {pastedNodes.length > 1 ? (
                 <Select value={nodeGroupMode} onValueChange={(value) => changeGroupMode(value as ProxyNodeGroupMode)}>
                   <SelectTrigger className="h-8 w-24 text-xs">
                     <SelectValue />
@@ -702,7 +743,7 @@ export default function ClientSubscriptionsPage() {
           <CardContent hidden={nodesCollapsed} className="pt-0">
             {nodesQuery.isLoading ? (
               <DataSectionLoading />
-            ) : nodes.length === 0 ? (
+            ) : pastedNodes.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
                 还没有登记节点。先从落地机复制一条节点链接粘进来，VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS / Snell 都行。
               </p>
@@ -746,10 +787,22 @@ export default function ClientSubscriptionsPage() {
                                   {!node.isEnabled && (
                                     <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">停用</Badge>
                                   )}
+                                  {node.sharedFrom ? (
+                                    <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+                                      {node.sharedFrom.name} 分享
+                                    </Badge>
+                                  ) : null}
+                                  {node.sharedToUserIds?.length ? (
+                                    <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+                                      已分享 {node.sharedToUserIds.length}
+                                    </Badge>
+                                  ) : null}
                                 </div>
                                 <p className="truncate text-[11px] leading-tight text-muted-foreground">
                                   {node.address}:{node.port}
-                                  {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
+                                  {node.sharedFrom
+                                    ? " · 由管理员分享，不可修改"
+                                    : node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
                                 </p>
                                 {quotaExpanded ? <ProxyNodeQuotaDetail node={node} /> : null}
                               </div>
@@ -758,11 +811,24 @@ export default function ClientSubscriptionsPage() {
                                 expanded={quotaExpanded}
                                 onToggle={() => toggleQuota(Number(node.id))}
                               />
+                              {node.sharedFrom ? null : (
+                              <>
                               <Switch
                                 className="shrink-0 scale-90"
                                 checked={!!node.isEnabled}
                                 onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
                               />
+                              {isAdmin ? (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-7 w-7 shrink-0"
+                                  title="分享给用户"
+                                  onClick={() => setShareNode({ id: Number(node.id), name: String(node.name || "") })}
+                                >
+                                  <Share2 className="h-3.5 w-3.5" />
+                                </Button>
+                              ) : null}
                               <Button
                                 size="icon"
                                 variant="ghost"
@@ -790,6 +856,8 @@ export default function ClientSubscriptionsPage() {
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
+                              </>
+                              )}
                             </div>
                             );
                           })}
@@ -821,9 +889,6 @@ export default function ClientSubscriptionsPage() {
                 </span>
               ) : null}
             </button>
-            <CardDescription className="w-full text-xs">
-              关掉开关只是不进订阅，转发照常运行。
-            </CardDescription>
           </CardHeader>
           <CardContent hidden={previewCollapsed} className="pt-0">
             {previewQuery.isLoading ? (
@@ -898,6 +963,7 @@ export default function ClientSubscriptionsPage() {
                             <Switch
                               className="scale-90"
                               checked
+                              title="关掉只是不进订阅，转发照常运行"
                               onCheckedChange={() => setRuleVisible.mutate({ ruleId: node.ruleId, visible: false })}
                             />
                           )}
@@ -915,7 +981,7 @@ export default function ClientSubscriptionsPage() {
 
                 {hiddenRules.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">已隐藏（不在订阅里）</p>
+                    <SectionLabel count={hiddenRules.length}>已隐藏</SectionLabel>
                     {hiddenRules.map((item) => (
                       <div
                         key={item.ruleId}
@@ -934,33 +1000,28 @@ export default function ClientSubscriptionsPage() {
                 )}
 
                 {(preview?.groups.length ?? 0) > 0 && (
-                  <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
-                    <p className="flex items-center gap-1.5 text-xs font-medium">
-                      <Zap className="h-3.5 w-3.5" />
-                      自动选路组（Clash 与 sing-box 可用）
-                    </p>
+                  <div className="space-y-1.5">
+                    <SectionLabel>
+                      <Zap className="mr-1 inline h-3 w-3" />
+                      自动选路组（Clash 与 sing-box）
+                    </SectionLabel>
                     {preview!.groups.map((group) => (
-                      <div key={group.name} className="text-xs text-muted-foreground">
+                      <div key={group.name} className="truncate rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground">
                         <span className="font-medium text-foreground">{group.name}</span>
-                        {group.type === "url-test" ? " 自动选最快 · " : " 主备切换 · "}
+                        {group.type === "url-test" ? " · 自动选最快 · " : " · 主备切换 · "}
                         {group.members.join(" / ")}
                       </div>
                     ))}
-                    <p className="text-xs text-muted-foreground">
-                      选这个组，客户端自动挑最快的中转。
-                    </p>
                   </div>
                 )}
 
                 {unboundRules.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">
-                      还没加入订阅的转发（选一个落地节点即可加入）
-                    </p>
+                    <SectionLabel count={unboundRules.length}>还没加入订阅的转发</SectionLabel>
                     {unboundRules.map((item) => (
                       <div
                         key={item.ruleId}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed p-3"
+                        className="flex items-center gap-2 rounded-md border border-dashed px-2.5 py-1.5"
                       >
                         <span className="min-w-0 flex-1 truncate text-sm">{item.ruleName}</span>
                         <Select
@@ -971,7 +1032,7 @@ export default function ClientSubscriptionsPage() {
                             proxyNodeId: Number(value),
                           })}
                         >
-                          <SelectTrigger className="w-48">
+                          <SelectTrigger className="h-8 w-36 shrink-0 text-xs">
                             <SelectValue
                               placeholder={enabledNodes.length === 0 ? "请先添加落地节点" : "选择落地节点"}
                             />
@@ -990,9 +1051,9 @@ export default function ClientSubscriptionsPage() {
                 )}
 
                 {otherSkipped.length > 0 && (
-                  <div className="rounded-lg bg-muted/50 p-3">
-                    <p className="text-xs font-medium text-muted-foreground">未进入订阅的转发</p>
-                    <ul className="mt-2 space-y-1">
+                  <div className="space-y-1.5">
+                    <SectionLabel count={otherSkipped.length}>未进入订阅的转发</SectionLabel>
+                    <ul className="space-y-1">
                       {otherSkipped.map((item) => (
                         <li key={item.ruleId} className="text-xs text-muted-foreground">
                           {item.ruleName} —— {item.label}
@@ -1105,7 +1166,9 @@ export default function ClientSubscriptionsPage() {
                     </Button>
 
                     {expanded && (
-                      <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                      /* 不再套一层边框：它已经被令牌那个框包着，而且只在展开时出现，
+                         归属关系本来就清楚。三层边框套在一起才是真的乱。 */
+                      <div className="space-y-3 border-t pt-3">
                         <div className="flex rounded-md border bg-background p-0.5">
                           {PROXY_SUBSCRIPTION_KINDS.map((item) => (
                             <button
@@ -1343,6 +1406,13 @@ export default function ClientSubscriptionsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <ProxyNodeShareDialog
+        open={!!shareNode}
+        onOpenChange={(open) => { if (!open) setShareNode(null); }}
+        targets={shareNode ? [{ id: shareNode.id, label: shareNode.name }] : []}
+        title={shareNode ? `分享「${shareNode.name}」` : "分享这个节点"}
+      />
 
       <Dialog open={nodeDialogOpen} onOpenChange={setNodeDialogOpen}>
         {/* DialogContent 默认 max-h + overflow-hidden，内容超出直接裁掉、滚不动。
