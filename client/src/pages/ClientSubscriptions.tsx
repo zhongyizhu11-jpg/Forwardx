@@ -54,9 +54,8 @@ import {
 } from "@shared/proxyClientImport";
 import { type ProxyNodeHealth } from "@shared/proxyNodeHealth";
 import {
-  formatProxyNodeQuota,
-  formatQuotaBytes,
-  proxyNodeQuotaPercent,
+  formatProxyNodeQuotaDetail,
+  hasProxyNodeQuota,
   proxyNodeQuotaState,
 } from "@shared/proxyNodeQuota";
 import {
@@ -73,6 +72,7 @@ import {
   ChevronDown,
   Copy,
   Eye,
+  Gauge,
   EyeOff,
   KeyRound,
   Layers,
@@ -265,35 +265,52 @@ const QUOTA_STATE_STYLES = {
   exceeded: "text-red-600 dark:text-red-500",
 } as const;
 
-/**
- * 行上的 `带宽/总流量/已用流量`，例如 `500M/1000G/367G`。
- *
- * 已用量只数得到经面板转发规则走过的流量 —— 订阅里的「直连」条目是客户端直连
- * 落地机的，中转机不在路径上，面板看不见。所以这个数只会比机房账单**小**。
- * 这句话写在悬停说明里：一个看着精确、实际偏小的用量，会让人在快超额时以为
- * 还很宽裕，那比不显示更糟。
- */
-function ProxyNodeQuotaText({ node }: { node: any }) {
-  const quota = {
+function nodeQuotaOf(node: any) {
+  return {
     bandwidthMbps: Number(node.bandwidthMbps || 0),
     trafficLimit: Number(node.trafficLimit || 0),
     trafficUsed: Number(node.trafficUsed || 0),
   };
-  const text = formatProxyNodeQuota(quota);
-  if (!text) {
-    return <span className="shrink-0 text-xs text-muted-foreground/50" title="还没填这台机器的带宽和总流量，去「编辑」里补上">—</span>;
-  }
+}
+
+/**
+ * 套餐用量的开关：一个小图标，点一下才展开。
+ *
+ * 常驻显示试过两版都不行 —— 放第一行会把节点名挤没，放第二行会把 IP 端口截断。
+ * 手机上那一行就这么宽，地址和套餐只能二选一常驻，而地址是每次都要看的那个。
+ *
+ * 但图标本身带颜色：用到 80% 变黄、超额变红。不然把数字藏起来的代价就是
+ * 「快超额了却要逐个点开才发现」，那比挤掉地址更糟。
+ */
+function ProxyNodeQuotaToggle({ node, expanded, onToggle }: { node: any; expanded: boolean; onToggle: () => void }) {
+  const quota = nodeQuotaOf(node);
+  if (!hasProxyNodeQuota(quota)) return null;
   const state = proxyNodeQuotaState(quota);
-  const percent = proxyNodeQuotaPercent(quota);
-  const detail = [
-    "带宽 / 总流量 / 已用流量",
-    quota.trafficLimit > 0 ? `已用 ${percent}%` : "没设总流量，只显示已用量",
-    `已用量只统计经面板转发走过的流量，直连订阅条目和这台机器上别的服务不计入 —— 所以只会比机房账单小。可在「编辑」里手工校准。`,
-  ].join("\n");
   return (
-    <span className={`shrink-0 text-xs tabular-nums ${QUOTA_STATE_STYLES[state]}`} title={detail}>
-      {text}
-    </span>
+    <button
+      type="button"
+      className={`shrink-0 rounded p-1 transition-colors hover:bg-muted ${QUOTA_STATE_STYLES[state]}`}
+      onClick={onToggle}
+      aria-expanded={expanded}
+      // 桌面端悬停就能看到，不必点开；手机上没有悬停，所以图标本身要能点。
+      title={`${formatProxyNodeQuotaDetail(quota)}${state === "exceeded" ? "（已超出总流量）" : state === "warn" ? "（接近总流量）" : ""}`}
+    >
+      <Gauge className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+/**
+ * 展开后的那一行。带标签写清三个数各自是什么 —— 折起来时的 `500M/1T/367G`
+ * 得先知道顺序才读得懂，展开了就没必要让人猜。
+ */
+function ProxyNodeQuotaDetail({ node }: { node: any }) {
+  const quota = nodeQuotaOf(node);
+  const state = proxyNodeQuotaState(quota);
+  return (
+    <p className={`truncate text-[11px] leading-tight ${QUOTA_STATE_STYLES[state]}`}>
+      {formatProxyNodeQuotaDetail(quota)}
+    </p>
   );
 }
 
@@ -320,6 +337,8 @@ export default function ClientSubscriptionsPage() {
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>(readStoredCollapsed);
   const [nodesCollapsed, setNodesCollapsed] = useState(false);
   const [previewCollapsed, setPreviewCollapsed] = useState(false);
+  /** 展开了套餐详情的节点。只在本次会话里记着 —— 这是个随手看一眼的动作，不值得持久化。 */
+  const [expandedQuotaIds, setExpandedQuotaIds] = useState<number[]>([]);
 
   const [nodeDialogOpen, setNodeDialogOpen] = useState(false);
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null);
@@ -494,6 +513,10 @@ export default function ClientSubscriptionsPage() {
     () => (nodes as any[]).filter((node) => node?.health?.state === "offline").length,
     [nodes],
   );
+
+  const toggleQuota = (id: number) => {
+    setExpandedQuotaIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  };
 
   const isGroupCollapsed = (key: string) => collapsedGroups.includes(key);
   const toggleGroup = (key: string) => {
@@ -705,7 +728,9 @@ export default function ClientSubscriptionsPage() {
                       ) : null}
                       {collapsed ? null : (
                         <div className="space-y-1.5">
-                          {group.nodes.map((node: any) => (
+                          {group.nodes.map((node: any) => {
+                            const quotaExpanded = expandedQuotaIds.includes(Number(node.id));
+                            return (
                             <div
                               key={node.id}
                               className="flex items-center gap-2 rounded-md border px-2.5 py-1.5"
@@ -721,15 +746,17 @@ export default function ClientSubscriptionsPage() {
                                     <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">停用</Badge>
                                   )}
                                 </div>
-                                <div className="flex items-baseline gap-1.5">
-                                  <p className="min-w-0 flex-1 truncate text-[11px] leading-tight text-muted-foreground">
-                                    {node.address}:{node.port}
-                                    {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
-                                  </p>
-                                  {/* 套餐放行末且不收缩：地址长了截断地址，这个数字要一直看得见。 */}
-                                  <ProxyNodeQuotaText node={node} />
-                                </div>
+                                <p className="truncate text-[11px] leading-tight text-muted-foreground">
+                                  {node.address}:{node.port}
+                                  {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
+                                </p>
+                                {quotaExpanded ? <ProxyNodeQuotaDetail node={node} /> : null}
                               </div>
+                              <ProxyNodeQuotaToggle
+                                node={node}
+                                expanded={quotaExpanded}
+                                onToggle={() => toggleQuota(Number(node.id))}
+                              />
                               <Switch
                                 className="shrink-0 scale-90"
                                 checked={!!node.isEnabled}
@@ -763,7 +790,8 @@ export default function ClientSubscriptionsPage() {
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
