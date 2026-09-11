@@ -1,6 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import DataSectionLoading from "@/components/DataSectionLoading";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -9,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { ProxyNodeRow, proxyNodeMetaText } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog, type ProxyNodeShareTarget } from "@/components/proxy/ProxyNodeShareDialog";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
@@ -26,7 +26,7 @@ import {
   type ProxyInboundSecurity,
 } from "@shared/proxyInbound";
 import { PROXY_NODE_PROTOCOL_LABELS, type ProxyNodeProtocol, type ProxyNodeTransport } from "@shared/proxyNode";
-import { ChevronDown, Copy, KeyRound, Link2, Pencil, Plus, Radio, RefreshCw, Server, Share2, Trash2, UserPlus, UserRound, Users } from "lucide-react";
+import { ChevronDown, Copy, KeyRound, Link2, Pencil, Plus, Radio, RefreshCw, Share2, Trash2, UserPlus, UserRound, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -383,64 +383,48 @@ export default function ProxyInboundsSection() {
             ) : (
               <div className="space-y-1.5">
                 {rows.map((row) => (
-                  <div key={row.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-sm font-medium leading-tight">{row.name}</span>
-                        <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] font-normal">
-                          {PROXY_NODE_PROTOCOL_LABELS[row.protocol as ProxyNodeProtocol] || row.protocol}
-                        </Badge>
-                        {row.security !== "none" ? (
-                          <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">
-                            {PROXY_INBOUND_SECURITY_LABELS[row.security as ProxyInboundSecurity] || row.security}
-                          </Badge>
-                        ) : null}
-                        {!row.isEnabled ? (
-                          <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal text-muted-foreground">停用</Badge>
-                        ) : null}
-                      </div>
-                      <p className="truncate text-[11px] leading-tight text-muted-foreground">
-                        <Server className="mr-1 inline h-3 w-3" />
-                        {hostName(Number(row.hostId))} · 端口 {row.port}
-                        {isAdmin ? ` · 归 ${ownerLabel(Number(row.userId))}` : ""}
-                        {row.transport && row.transport !== "tcp" ? ` · ${TRANSPORT_LABELS[row.transport] || row.transport}` : ""}
-                        {Array.isArray(row.users) && row.users.length > 1 ? ` · ${row.users.length} 个用户` : ""}
-                        {Number(row.sharedUserCount || 0) > 0 ? ` · 分享给 ${row.sharedUserCount} 人` : ""}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-0.5">
+                  <ProxyNodeRow
+                    key={row.id}
+                    name={row.name}
+                    muted={!row.isEnabled}
+                    meta={proxyNodeMetaText([
+                      PROXY_NODE_PROTOCOL_LABELS[row.protocol as ProxyNodeProtocol] || row.protocol,
+                      row.security !== "none"
+                        ? PROXY_INBOUND_SECURITY_LABELS[row.security as ProxyInboundSecurity] || row.security
+                        : "",
+                      `${hostName(Number(row.hostId))}:${row.port}`,
+                      row.transport && row.transport !== "tcp"
+                        ? TRANSPORT_LABELS[row.transport] || row.transport
+                        : "",
+                      isAdmin ? `归 ${ownerLabel(Number(row.userId))}` : "",
+                      Array.isArray(row.users) && row.users.length > 1 ? `${row.users.length} 个用户` : "",
+                      Number(row.sharedUserCount || 0) > 0 ? `分享给 ${row.sharedUserCount} 人` : "",
+                      !row.isEnabled ? "已停用" : "",
+                    ])}
+                    toggle={(
                       <Switch
-                        className="mr-1 scale-90"
+                        className="shrink-0 scale-90"
                         checked={!!row.includeDirect}
                         title={row.includeDirect ? "已在订阅里，关掉就不出现" : "加进订阅"}
                         onCheckedChange={(checked) => void setInSubscription(row, checked)}
                       />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        disabled={linkLoadingId === Number(row.id)}
-                        onClick={() => void openLinks(row)}
-                        title="复制节点链接"
-                      >
-                        <Link2 className="h-3.5 w-3.5" />
-                      </Button>
-                      {isAdmin ? (
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openShare(row)} title="分享给用户">
-                          <Share2 className="h-3.5 w-3.5" />
-                        </Button>
-                      ) : null}
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(row)} title="编辑">
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void askRotate(row)} title="重新生成凭据">
-                        <KeyRound className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void askDelete(row)} title="删除">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </div>
+                    )}
+                    actions={[
+                      {
+                        key: "link",
+                        label: "复制链接",
+                        icon: Link2,
+                        disabled: linkLoadingId === Number(row.id),
+                        onSelect: () => void openLinks(row),
+                      },
+                      ...(isAdmin
+                        ? [{ key: "share", label: "分享给用户", icon: Share2, onSelect: () => openShare(row) }]
+                        : []),
+                      { key: "edit", label: "编辑", icon: Pencil, onSelect: () => openEdit(row) },
+                      { key: "rotate", label: "重置凭据", icon: KeyRound, onSelect: () => void askRotate(row) },
+                      { key: "delete", label: "删除", icon: Trash2, destructive: true, onSelect: () => void askDelete(row) },
+                    ]}
+                  />
                 ))}
               </div>
             )}
