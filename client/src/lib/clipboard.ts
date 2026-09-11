@@ -1,3 +1,15 @@
+/**
+ * 浏览器只在安全上下文（HTTPS 或 localhost）下允许网页写剪贴板。
+ *
+ * 面板经常是 http://IP:端口 直接访问的，那种情况下一键复制必然失败，而且
+ * 没有任何办法绕过去 —— 调用方据此改成「把内容摆出来让人自己选」，不能只丢
+ * 一句「复制失败」了事。
+ */
+export function clipboardNeedsManualCopy(): boolean {
+  if (typeof window === "undefined") return false;
+  return !window.isSecureContext;
+}
+
 export async function copyTextToClipboard(text: string): Promise<boolean> {
   if (!text) return false;
 

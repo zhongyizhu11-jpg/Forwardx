@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { ProxyNodeRow, proxyNodeMetaText } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog, type ProxyNodeShareTarget } from "@/components/proxy/ProxyNodeShareDialog";
-import { copyTextToClipboard } from "@/lib/clipboard";
+import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import {
   PROXY_INBOUND_PROTOCOLS,
@@ -195,8 +195,11 @@ export default function ProxyInboundsSection() {
   };
 
   const copyLink = async (link: string) => {
-    if (await copyTextToClipboard(link)) toast.success("链接已复制，粘进客户端即可");
-    else toast.error("复制失败，请长按选中链接复制");
+    if (await copyTextToClipboard(link)) {
+      toast.success("链接已复制，粘进客户端即可");
+      return true;
+    }
+    return false;
   };
 
   const openLinks = async (row: any) => {
@@ -207,11 +210,14 @@ export default function ProxyInboundsSection() {
         toast.error("这个节点还没生成出链接");
         return;
       }
-      // 只有一条就别弹窗了 —— 单用户节点点一下就该到剪贴板。
-      if (rows.length === 1) {
-        await copyLink(rows[0].link);
-        return;
-      }
+      /**
+       * 只有一条时先试着直接进剪贴板，成功就不弹窗 —— 单用户节点点一下就该好。
+       *
+       * 复制不成也要把弹窗打开：面板多半是 http://IP 访问的，浏览器不给网页写
+       * 剪贴板，这时只能让人自己选中复制 —— 而原来只弹一句「请长按选中链接」，
+       * 链接压根没显示出来，让人长按什么？
+       */
+      if (rows.length === 1 && await copyLink(rows[0].link)) return;
       setLinkRows(rows);
       setLinkDialogOpen(true);
     } catch (error: any) {
@@ -786,7 +792,11 @@ export default function ProxyInboundsSection() {
               <div key={item.userId} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium leading-tight">{item.userName || item.name}</p>
-                  <p className="truncate text-[11px] leading-tight text-muted-foreground">{item.link}</p>
+                  {/* select-all + break-all：复制不了的时候要能一下选中整条，
+                      truncate 会把后半截藏起来，选也选不全。 */}
+                  <p className="select-all break-all font-mono text-[11px] leading-tight text-muted-foreground">
+                    {item.link}
+                  </p>
                 </div>
                 <Button
                   variant="ghost"
@@ -799,6 +809,12 @@ export default function ProxyInboundsSection() {
                 </Button>
               </div>
             ))}
+            {clipboardNeedsManualCopy() ? (
+              <p className="pt-1 text-xs text-muted-foreground">
+                当前是 http 访问，浏览器不允许网页写剪贴板 —— 请长按上面的链接选中后复制。
+                换成 HTTPS 或 localhost 访问就能一键复制。
+              </p>
+            ) : null}
             <p className="pt-1 text-xs text-amber-600 dark:text-amber-500">
               链接里带着这个用户的完整凭据，发给谁，谁就能用这个节点。
             </p>

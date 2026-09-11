@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { copyTextToClipboard } from "@/lib/clipboard";
+import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
 import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
 import {
@@ -171,9 +171,14 @@ async function copyText(value: string, message: string) {
   // 所以走带 execCommand 回退的共享实现，而不是直接调 clipboard API。
   if (await copyTextToClipboard(value)) {
     toast.success(message);
-  } else {
-    toast.error("复制失败，请长按选中地址复制");
+    return;
   }
+  // 说清为什么，否则用户只会以为是面板坏了，反复点。
+  toast.error(
+    clipboardNeedsManualCopy()
+      ? "当前是 http 访问，浏览器不允许网页写剪贴板，请长按选中地址复制"
+      : "复制失败，请长按选中地址复制",
+  );
 }
 
 const NODE_GROUP_MODE_STORAGE_KEY = "forwardx.proxyNodes.groupMode";
