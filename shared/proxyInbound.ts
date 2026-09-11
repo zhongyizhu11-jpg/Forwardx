@@ -83,6 +83,44 @@ const NO_TLS_PROTOCOLS: readonly ProxyInboundProtocol[] = ["shadowsocks", "snell
  */
 export const PROXY_INBOUND_SNELL_VERSIONS = [5, 6] as const;
 
+/**
+ * Shadowsocks 只放出 SS2022 这三种。
+ *
+ * 老的 AEAD（aes-256-gcm、chacha20-ietf-poly1305 这些）有已知的主动探测手段 ——
+ * 中间设备能把流量识别出来，正是 SS2022 要堵的那个洞。既然是新开的节点，
+ * 没有理由让人选一个一开始就可被识别的算法；要接别人给的老节点，那条路是
+ * 「客户端订阅」里粘链接，不走这里。
+ *
+ * 每种的密钥长度不一样，密码必须按长度生成 —— 长度不对 sing-box 拒绝加载
+ * **整份**配置，同一台机器上其他入站会跟着停。
+ */
+export const PROXY_INBOUND_SHADOWSOCKS_METHODS = [
+  "2022-blake3-aes-128-gcm",
+  "2022-blake3-aes-256-gcm",
+  "2022-blake3-chacha20-poly1305",
+] as const;
+
+export type ProxyInboundShadowsocksMethod = (typeof PROXY_INBOUND_SHADOWSOCKS_METHODS)[number];
+
+/** 各加密方式的密钥字节数，决定随机密码要生成多长。 */
+export const PROXY_INBOUND_SHADOWSOCKS_KEY_BYTES: Record<ProxyInboundShadowsocksMethod, number> = {
+  "2022-blake3-aes-128-gcm": 16,
+  "2022-blake3-aes-256-gcm": 32,
+  "2022-blake3-chacha20-poly1305": 32,
+};
+
+/**
+ * 默认 AES-128。
+ *
+ * 128 位密钥没有任何可行攻击，实际安全性不比 256 弱，但更快 —— 在没有 AES
+ * 硬件加速的小机器上差得尤其明显。这也是 SS2022 作者推荐的默认。
+ */
+export const PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD: ProxyInboundShadowsocksMethod = "2022-blake3-aes-128-gcm";
+
+export function isProxyInboundShadowsocksMethod(value: unknown): value is ProxyInboundShadowsocksMethod {
+  return (PROXY_INBOUND_SHADOWSOCKS_METHODS as readonly string[]).includes(String(value ?? ""));
+}
+
 /** 入站默认开 v5：兼容面最广，mihomo 到 v5、Surge v1-v6 都认。 */
 export const PROXY_INBOUND_SNELL_DEFAULT_VERSION = 5;
 
@@ -324,7 +362,17 @@ export function validateProxyInbound(inbound: ProxyInbound): string {
     }
   } else {
     if (!text(inbound.password)) return inbound.protocol === "snell" ? "缺少 PSK" : "缺少密码";
-    if (inbound.protocol === "shadowsocks" && !text(inbound.method)) return "缺少加密方式";
+    if (inbound.protocol === "shadowsocks") {
+      if (!text(inbound.method)) return "缺少加密方式";
+      /**
+       * 认不出来的加密方式挡在这里，而不是让它走到落地机上去。
+       * sing-box 对不认识的 method 是拒绝加载整份配置 —— 同一台机器上其他入站
+       * 会跟着一起停，而报错跟「你刚改了加密方式」看不出关联。
+       */
+      if (!isProxyInboundShadowsocksMethod(inbound.method)) {
+        return `不支持的加密方式「${text(inbound.method)}」，只能用 SS2022 的那三种`;
+      }
+    }
   }
 
   if (inbound.security === "reality") {

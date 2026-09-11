@@ -14,6 +14,8 @@ import {
   PROXY_INBOUND_PROTOCOLS,
   PROXY_INBOUND_SECURITY_LABELS,
   PROXY_INBOUND_SNELL_VERSIONS,
+  PROXY_INBOUND_SHADOWSOCKS_METHODS,
+  PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
   proxyInboundSecurities,
   proxyInboundSupportsMultiUser,
   proxyInboundTransports,
@@ -53,6 +55,8 @@ type InboundForm = {
   obfs: string;
   obfsPassword: string;
   snellVersion: number;
+  /** Shadowsocks 的加密方式。其他协议用不到，留着也不会下发。 */
+  method: string;
   isEnabled: boolean;
   /** 只有 id 与名字：凭据一律服务端生成，前端拿不到也不该传。 */
   users: Array<{ id: number; name: string }>;
@@ -78,6 +82,7 @@ function emptyForm(): InboundForm {
     obfs: "",
     obfsPassword: "",
     snellVersion: PROXY_INBOUND_SNELL_VERSIONS[0],
+    method: PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
     isEnabled: true,
     users: [{ id: 0, name: "默认" }],
   };
@@ -193,6 +198,7 @@ export default function ProxyInboundsSection() {
       obfs: String(row.obfs || ""),
       obfsPassword: String(row.obfsPassword || ""),
       snellVersion: Number(row.snellVersion || PROXY_INBOUND_SNELL_VERSIONS[0]),
+      method: String(row.method || PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD),
       isEnabled: !!row.isEnabled,
       users: Array.isArray(row.users) && row.users.length > 0
         ? row.users.map((user: any) => ({ id: Number(user.id) || 0, name: String(user.name || "") }))
@@ -223,6 +229,7 @@ export default function ProxyInboundsSection() {
       obfs: form.obfs.trim(),
       obfsPassword: form.obfsPassword.trim(),
       snellVersion: form.snellVersion,
+      method: form.method,
       isEnabled: form.isEnabled,
       users: form.users.map((user, index) => ({ id: user.id, name: user.name.trim() || `用户 ${index + 1}` })),
     };
@@ -437,6 +444,27 @@ export default function ProxyInboundsSection() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+              ) : null}
+              {form.protocol === "shadowsocks" ? (
+                <div className="min-w-0 space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs">加密方式</Label>
+                  <Select value={form.method} onValueChange={(value) => setForm((prev) => ({ ...prev, method: value }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {PROXY_INBOUND_SHADOWSOCKS_METHODS.map((item) => (
+                        <SelectItem key={item} value={item}>
+                          {item}
+                          {item === PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD ? "（推荐）" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    只给 SS2022 这三种。老的 aes-256-gcm、chacha20-ietf-poly1305 有已知的主动探测手段，
+                    新开的节点没理由用一个一开始就可被识别的算法。
+                    AES-128 不比 256 弱（128 位密钥没有可行攻击）而且更快，小机器上差别明显，所以默认它。
+                  </p>
                 </div>
               ) : null}
               {form.protocol === "snell" ? (
