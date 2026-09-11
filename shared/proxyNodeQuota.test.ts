@@ -37,7 +37,16 @@ test("流量按 1000 进制换算，跟机房卖的套餐对得上", () => {
   assert.equal(formatQuotaBytes(10e12), "10T");
   // 不满 1T 的仍然按 G 显示。
   assert.equal(formatQuotaBytes(999 * GB), "999G");
-  assert.equal(formatQuotaBytes(0), "0G");
+  assert.equal(formatQuotaBytes(0), "0");
+});
+
+test("不到 1M 的用量显示成 <1M，不四舍五入成 1M", () => {
+  // 套餐按 G 卖，几百字节等于没用；写成「1M」会让人以为真跑了 1MB。
+  assert.equal(formatQuotaBytes(100), "<1M");
+  assert.equal(formatQuotaBytes(999_999), "<1M");
+  assert.equal(formatQuotaBytes(1e6), "1M");
+  // 0 就是 0，不写成 0G。
+  assert.equal(formatQuotaBytes(0), "0");
 });
 
 test("大于 100 的数不带小数", () => {
@@ -59,7 +68,7 @@ test("没填的那一段占位而不是省略，三段才对得齐", () => {
     bandwidthMbps: 0,
     trafficLimit: 0,
     trafficUsed: 12 * GB,
-  }), "—/—/12G");
+  }), "\u2014/\u2014/12G");
 });
 
 test("什么都没有时返回空串，让界面决定整块不显示", () => {
