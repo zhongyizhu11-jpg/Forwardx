@@ -811,8 +811,8 @@ export default function ProxyInboundsSection() {
             ))}
             {clipboardNeedsManualCopy() ? (
               <p className="pt-1 text-xs text-muted-foreground">
-                当前是 http 访问，浏览器不允许网页写剪贴板 —— 请长按上面的链接选中后复制。
-                换成 HTTPS 或 localhost 访问就能一键复制。
+                当前是 http 访问，没有剪贴板 API，只能走旧办法，有些浏览器（iOS 尤其）会拒绝。
+                一键复制不成时，长按上面的链接选中即可。
               </p>
             ) : null}
             <p className="pt-1 text-xs text-amber-600 dark:text-amber-500">

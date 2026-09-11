@@ -173,10 +173,10 @@ async function copyText(value: string, message: string) {
     toast.success(message);
     return;
   }
-  // 说清为什么，否则用户只会以为是面板坏了，反复点。
+  // 说一句为什么，否则用户只会以为是面板坏了，反复点。
   toast.error(
     clipboardNeedsManualCopy()
-      ? "当前是 http 访问，浏览器不允许网页写剪贴板，请长按选中地址复制"
+      ? "当前是 http 访问，浏览器限制了剪贴板，请长按选中地址复制"
       : "复制失败，请长按选中地址复制",
   );
 }

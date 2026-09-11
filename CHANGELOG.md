@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.3.320] - 2026-09-11
+
+### 修复
+
+- **iOS 上「复制」按钮点了没反应**。兜底用的是 `readonly` textarea + `select()`，这套组合在 iOS 上选不中内容，`execCommand` 直接返回 false。iOS 需要元素可编辑、并用 `Range` 选中内容。顺带把那个临时元素从「不可见」改成「1px 透明但真实渲染」——`opacity:0` 加负 z-index 在 iOS 上同样会让选中失败，字号给 16px 是避免 Safari 因为小字号输入框而把整页放大。
+
+### 说明
+
+- **上一版把原因说错了**。当时写的是「http 访问下浏览器不允许网页写剪贴板，没有办法绕过去」。实测不成立：用 Chromium 开一个 `http://192.0.2.2:8899` 的非安全上下文页面，`document.execCommand("copy")` 返回 `true`，连在 `await fetch` 之后调用也是 `true`。
+- 准确的说法是：`navigator.clipboard` 确实只在 HTTPS / localhost 下存在，但退回 `execCommand` 之后能不能成，取决于浏览器实现——Chromium 可以，iOS 挑剔。所以这是个可修的兼容性问题，不是环境死路。
+- 上一版加的退路（复制不成就把链接弹窗打开、链接整条可选）保留：它对任何失败原因都管用。
+
+### 版本
+
+- 面板与 APK Release `2.3.320`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
 ## [2.3.319] - 2026-09-11
 
 ### 修复
