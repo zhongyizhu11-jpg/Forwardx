@@ -33,6 +33,7 @@ const TRANSPORT_LABELS: Record<string, string> = {
   ws: "WebSocket",
   grpc: "gRPC",
   http: "HTTP",
+  httpupgrade: "HTTPUpgrade",
   xhttp: "XHTTP",
 };
 

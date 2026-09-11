@@ -235,6 +235,15 @@ function clashProxyLines(node: ProxyNode): YamlLine[] {
     if (node.path) push(6, `grpc-service-name: ${yamlQuote(node.path)}`);
   } else if (node.transport === "http") {
     field("network", "http");
+  } else if (node.transport === "httpupgrade") {
+    // mihomo 的 httpupgrade 复用 ws-opts 放 path 与 Host，不是另起一个 opts 块。
+    field("network", "httpupgrade");
+    field("ws-opts", "");
+    if (node.path) push(6, `path: ${yamlQuote(node.path)}`);
+    if (node.host) {
+      push(6, "headers:");
+      push(8, `Host: ${yamlQuote(node.host)}`);
+    }
   } else if (node.transport === "xhttp") {
     field("network", "xhttp");
     field("xhttp-opts", "");
@@ -410,6 +419,13 @@ function singboxOutbound(node: ProxyNode): Record<string, unknown> {
       ...(node.path ? { path: node.path } : {}),
       ...(node.host ? { host: [node.host] } : {}),
     };
+  } else if (node.transport === "httpupgrade") {
+    // host 是单个字符串，不是 http 那样的数组。
+    outbound.transport = {
+      type: "httpupgrade",
+      ...(node.path ? { path: node.path } : {}),
+      ...(node.host ? { host: node.host } : {}),
+    };
   }
 
   return outbound;
@@ -517,6 +533,15 @@ const FORMATS_WITH_REALITY: readonly ProxySubscriptionFormat[] = ["base64", "cla
 const FORMATS_WITH_XHTTP: readonly ProxySubscriptionFormat[] = ["base64", "clash"];
 
 /**
+ * 认得 HTTPUpgrade 的格式。
+ *
+ * sing-box 原生支持（两端都验过），mihomo 用 `network: httpupgrade`，
+ * v2rayN 系的链接写 `type=httpupgrade`。Loon / Surge / QX 没有这个传输，
+ * 照常渲染的话会得到一个协议对、传输错的节点 —— 能导入、握手必失败。
+ */
+const FORMATS_WITH_HTTPUPGRADE: readonly ProxySubscriptionFormat[] = ["base64", "clash", "singbox"];
+
+/**
  * 这个格式支持这个 Snell 版本吗？
  *
  * 版本对不上不是「少一个参数」，是握手完全不兼容，所以按版本逐家判断：
@@ -557,6 +582,9 @@ function unsupportedReason(node: ProxyNode, format: ProxySubscriptionFormat): st
   // XHTTP 是 Xray 用来取代 H2 的传输，目前只有 mihomo 跟进。
   if (node.transport === "xhttp" && !FORMATS_WITH_XHTTP.includes(format)) {
     return `${label} 不支持 XHTTP 传输`;
+  }
+  if (node.transport === "httpupgrade" && !FORMATS_WITH_HTTPUPGRADE.includes(format)) {
+    return `${label} 不支持 HTTPUpgrade 传输`;
   }
   if (node.protocol === "snell") {
     const reason = snellUnsupportedReason(node, format);

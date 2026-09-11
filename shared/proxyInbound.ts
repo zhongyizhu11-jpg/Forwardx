@@ -221,7 +221,8 @@ export function proxyInboundNeedsCertificate(security: ProxyInboundSecurity): bo
  */
 export function proxyInboundTransports(protocol: ProxyInboundProtocol): ProxyNodeTransport[] {
   if (protocol === "vless" || protocol === "vmess" || protocol === "trojan") {
-    return ["tcp", "ws", "grpc", "http"];
+    // httpupgrade 比 ws 少一次握手往返，过 CDN 时更省事；sing-box 两端都支持。
+    return ["tcp", "ws", "grpc", "http", "httpupgrade"];
   }
   // shadowsocks / snell / hysteria2 / tuic / anytls 都只有一种承载。
   return ["tcp"];
@@ -492,6 +493,14 @@ function singboxTransport(inbound: ProxyInbound): Record<string, unknown> | null
       type: "http",
       ...(inbound.path ? { path: inbound.path } : {}),
       ...(inbound.host ? { host: [inbound.host] } : {}),
+    };
+  }
+  if (inbound.transport === "httpupgrade") {
+    // 注意 host 是单个字符串，不是 http 那样的数组 —— 写成数组 sing-box 直接拒配置。
+    return {
+      type: "httpupgrade",
+      ...(inbound.path ? { path: inbound.path } : {}),
+      ...(inbound.host ? { host: inbound.host } : {}),
     };
   }
   // tcp 没有传输块。xhttp 走不到这里 —— validateProxyInbound 已经挡在前面了。

@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.3.306] - 2026-09-11
+
+### 新增
+
+- 传输方式加上 **HTTPUpgrade**。VLESS / VMess / Trojan 建节点时可选，比 WebSocket 少一次握手往返，过 CDN 时更省事。粘别处的 HTTPUpgrade 节点进来中转也认（`type=httpupgrade`，`httpu` 简写也收）。
+
+### 说明
+
+- 订阅里 base64、Clash（mihomo）、sing-box 三种格式支持它；Loon / Surge / QX 没有这个传输，会跳过并说明原因，而不是渲染出一个协议对、传输错的死节点。
+- 中转改写地址时 Host 头保留原落地域名 —— 和 WebSocket 同理，不留的话发出去的 Host 是中转 IP，对端按 Host 路由就找不到人。
+- 两端都拿 sing-box 1.14.0 的真二进制验过：入站配置 `check` 通过，订阅渲染出的 sing-box 出站也 `check` 通过，链接来回读写一致。
+- 注意 `host` 在 httpupgrade 里是单个字符串，不是 HTTP/2 那样的数组 —— 写成数组 sing-box 直接拒绝配置。
+- **伪装网站没做**：sing-box 根本没有 `fallback` 字段（实测报 `unknown field "fallback"`），那是 Xray 的机制。sing-box 给出的答案是 REALITY，而我们建节点默认就是它。要真正的伪装站点得另起 nginx，不属于节点管理这一层。
+- BBR 也没做：那是装机时做一次的系统调优，跟节点管理不是一回事。
+
+### 版本
+
+- 面板与 APK Release `2.3.306`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
 ## [2.3.305] - 2026-09-11
 
 ### 新增
