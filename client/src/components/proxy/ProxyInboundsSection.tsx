@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -386,13 +387,19 @@ export default function ProxyInboundsSection() {
                   <ProxyNodeRow
                     key={row.id}
                     name={row.name}
+                    tag={(
+                      <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+                        {PROXY_NODE_PROTOCOL_LABELS[row.protocol as ProxyNodeProtocol] || row.protocol}
+                      </Badge>
+                    )}
                     muted={!row.isEnabled}
+                    // 地址排最前：它是这一行里最常要看的，排后面就会被前面的
+                    // 安全层、归属挤到省略号里去。
                     meta={proxyNodeMetaText([
-                      PROXY_NODE_PROTOCOL_LABELS[row.protocol as ProxyNodeProtocol] || row.protocol,
+                      `${hostName(Number(row.hostId))}:${row.port}`,
                       row.security !== "none"
                         ? PROXY_INBOUND_SECURITY_LABELS[row.security as ProxyInboundSecurity] || row.security
                         : "",
-                      `${hostName(Number(row.hostId))}:${row.port}`,
                       row.transport && row.transport !== "tcp"
                         ? TRANSPORT_LABELS[row.transport] || row.transport
                         : "",

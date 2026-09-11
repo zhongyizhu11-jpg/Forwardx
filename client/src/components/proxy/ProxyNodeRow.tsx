@@ -24,10 +24,15 @@ export type ProxyNodeRowAction = {
 /**
  * 节点行的统一骨架，「新建节点」与「落地节点」两段共用。
  *
- * 为什么第一行只放名字：这行原本是「名字 + 协议徽章 + 安全徽章 + 停用徽章」，
- * 徽章是 shrink-0 而名字是唯一能压缩的元素 —— 手机上一行就那么宽，动作按钮每多
- * 一个，被吃掉的全是名字，最后名字只剩一个字。所以把所有次要信息都压到第二行的
- * 一句 truncate 文字里，第一行留给名字，谁也抢不走。
+ * 第一行的规矩：名字 + 最多一个徽章，别的一律放第二行。
+ *
+ * 这行原本是「名字 + 协议徽章 + 安全徽章 + 停用徽章」，徽章都是 shrink-0 而名字是
+ * 唯一能压缩的元素 —— 手机上一行就那么宽，动作按钮每多一个，被吃掉的全是名字，
+ * 最后名字只剩一个字。徽章本身不是问题，问题是数量不封顶：只要还能往这行加东西，
+ * 下次就会再加一个。
+ *
+ * 所以放一个就到顶，而且必须是长度有上限的（协议名最长是 Shadowsocks，约 70px）。
+ * 要再加第三样东西，加到 meta 里去。
  *
  * 为什么动作收进 ⋯：同样是宽度守恒。行内只留「用量」和开关两个常用的，其余进菜单；
  * 以后再加功能也只是菜单里多一项，不会再挤到名字。
@@ -35,6 +40,7 @@ export type ProxyNodeRowAction = {
 export function ProxyNodeRow({
   leading,
   name,
+  tag,
   meta,
   detail,
   inline,
@@ -45,6 +51,8 @@ export function ProxyNodeRow({
   /** 状态点之类的前置标记。 */
   leading?: ReactNode;
   name: ReactNode;
+  /** 名字后面那一个徽章。只放长度有上限的东西，协议名这种。 */
+  tag?: ReactNode;
   /** 第二行：协议、地址、端口、停用、分享人数……一句话说完，超长就截断。 */
   meta: ReactNode;
   /** 展开后的补充信息（如套餐用量），跟在第二行下面。 */
@@ -74,7 +82,10 @@ export function ProxyNodeRow({
     <div className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${muted ? "opacity-60" : ""}`}>
       {leading}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium leading-tight">{name}</p>
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-sm font-medium leading-tight">{name}</span>
+          {tag}
+        </div>
         <p className="truncate text-[11px] leading-tight text-muted-foreground">{meta}</p>
         {detail}
       </div>

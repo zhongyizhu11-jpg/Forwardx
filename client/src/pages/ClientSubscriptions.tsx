@@ -800,9 +800,13 @@ export default function ClientSubscriptionsPage() {
                               key={node.id}
                               leading={<ProxyNodeHealthDot health={node.health} />}
                               name={node.name}
+                              tag={(
+                                <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+                                  {PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol}
+                                </Badge>
+                              )}
                               muted={!node.isEnabled}
                               meta={proxyNodeMetaText([
-                                PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol,
                                 `${node.address}:${node.port}`,
                                 node.sharedFrom
                                   ? `${node.sharedFrom.name} 分享，不可修改`
