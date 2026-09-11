@@ -15,6 +15,15 @@
 
 export const PROXY_NODE_TRAFFIC_WARN_PERCENT = 80;
 
+/**
+ * 多大的流量才写成 T。
+ *
+ * 定在 1T：`1T` 比 `1000G` 短，节点行上那一栏本来就窄。想让 1000G 的套餐照原样
+ * 显示成「1000G」（跟机房卖的写法一致），把这里改成 `2e12` 即可 ——
+ * 只有这一个地方要改，测试里也只有几条断言跟着动。
+ */
+export const QUOTA_TERABYTE_THRESHOLD = 1e12;
+
 export type ProxyNodeQuota = {
   /** 上行带宽 Mbps，0 表示没填。 */
   bandwidthMbps: number;
@@ -45,13 +54,8 @@ export function formatBandwidthMbps(mbps: number): string {
 export function formatQuotaBytes(bytes: number): string {
   const value = Number(bytes);
   if (!Number.isFinite(value) || value <= 0) return "0G";
-  /**
-   * T 的门槛定在 2T 而不是 1T：机房把 1000G 的套餐就叫「1000G」，
-   * 自动换算成「1T」会跟你买的东西对不上号。2T 以上才用 T，是因为那个量级
-   * 大家本来就说「2T」「10T」。
-   */
   const units = [
-    { limit: 2e12, suffix: "T", scale: 1e12 },
+    { limit: QUOTA_TERABYTE_THRESHOLD, suffix: "T", scale: 1e12 },
     { limit: 1e9, suffix: "G", scale: 1e9 },
     { limit: 1e6, suffix: "M", scale: 1e6 },
   ];
