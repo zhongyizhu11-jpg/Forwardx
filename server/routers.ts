@@ -11,6 +11,7 @@ import { hostsRouter } from "./routers/hosts";
 import { lookingGlassRouter } from "./routers/lookingGlass";
 import { plansRouter } from "./routers/plans";
 import { pluginsRouter } from "./routers/plugins";
+import { proxyInboundsRouter } from "./routers/proxyInbounds";
 import { proxySubscriptionsRouter } from "./routers/proxySubscriptions";
 import { rulesRouter } from "./routers/rules";
 import { setupRouter } from "./routers/setup";
@@ -37,6 +38,7 @@ export const appRouter = router({
   telegram: telegramRouter,
   trafficBilling: trafficBillingRouter,
   agentTokens: agentTokensRouter,
+  proxyInbounds: proxyInboundsRouter,
   proxySubscriptions: proxySubscriptionsRouter,
   announcements: announcementsRouter,
 });

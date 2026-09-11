@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import {
   forwardRules,
@@ -71,6 +71,106 @@ export async function countRulesUsingProxyNode(id: number) {
     .from(forwardRules)
     .where(and(eq(forwardRules.proxyNodeId, id), eq(forwardRules.pendingDelete, false)));
   return rows.length;
+}
+
+/**
+ * 一批节点各自被哪些转发绑定。
+ *
+ * 一次查完而不是每个节点查一遍：节点多起来之后，逐个 count 会把一次列表请求
+ * 变成几十条查询。调用方拿到规则 id 之后还要用它去汇总流量和探测结果，
+ * 所以这里返回 id 而不只是个数。
+ */
+export async function getRuleIdsUsingProxyNodes(
+  nodeIds: readonly number[],
+): Promise<Map<number, number[]>> {
+  const result = new Map<number, number[]>();
+  const ids = Array.from(new Set(nodeIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  for (const id of ids) result.set(id, []);
+  if (ids.length === 0) return result;
+
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db
+    .select({ id: forwardRules.id, proxyNodeId: forwardRules.proxyNodeId })
+    .from(forwardRules)
+    .where(and(inArray(forwardRules.proxyNodeId, ids), eq(forwardRules.pendingDelete, false)));
+
+  for (const row of rows as any[]) {
+    const nodeId = Number(row.proxyNodeId || 0);
+    const list = result.get(nodeId);
+    if (list) list.push(Number(row.id));
+  }
+  return result;
+}
+
+// ==================== 落地机的套餐用量 ====================
+
+/**
+ * 给一批落地节点累加已用流量。
+ *
+ * 为什么要单独存一列而不是查 traffic_stats 求和：那张表只保留 72 小时，
+ * 过期行会被清掉。要显示「这个月用了 367G」就必须有一个不会被清的累计值。
+ *
+ * 口径要说清：这里只累加**经过面板转发规则**的流量。订阅里的「直连」条目是
+ * 客户端直连落地机的，中转机不在路径上，面板看不见；这台机器上跑的别的服务
+ * 同理。所以这个数只会小于等于机房账单，需要对齐时用 setProxyNodeTrafficUsed
+ * 手工校准。
+ */
+export async function addProxyNodeTraffic(entries: ReadonlyMap<number, number>) {
+  if (entries.size === 0) return;
+  const db = await getDb();
+  if (!db) return;
+  for (const [nodeId, bytes] of entries) {
+    const id = Number(nodeId);
+    const delta = Number(bytes);
+    if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(delta) || delta <= 0) continue;
+    await db.update(proxyNodes).set({
+      trafficUsed: sql`${proxyNodes.trafficUsed} + ${delta}`,
+      updatedAt: nowDate(),
+    }).where(eq(proxyNodes.id, id));
+  }
+}
+
+/** 手工校准已用量，用来跟机房的账单对齐。之后仍然继续累加。 */
+export async function setProxyNodeTrafficUsed(id: number, bytes: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(proxyNodes).set({
+    trafficUsed: Math.max(0, Math.floor(Number(bytes) || 0)),
+    updatedAt: nowDate(),
+  }).where(eq(proxyNodes.id, Number(id)));
+}
+
+/** 用量清零，并记下这次重置的时间（月度自动重置靠它判断本周期是否已经重置过）。 */
+export async function resetProxyNodeTraffic(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(proxyNodes).set({
+    trafficUsed: 0,
+    lastTrafficReset: nowDate(),
+    updatedAt: nowDate(),
+  }).where(eq(proxyNodes.id, Number(id)));
+}
+
+/**
+ * 该做月度重置的节点。
+ *
+ * 只挑「开了自动重置、且今天已经到了重置日」的，重复触发由 lastTrafficReset
+ * 挡住 —— 调度任务每小时跑一次，不挡的话一天会清零二十几次。
+ */
+export async function getProxyNodesForTrafficAutoReset(reference = nowDate()) {
+  const db = await getDb();
+  if (!db) return [];
+  const day = reference.getDate();
+  return db
+    .select()
+    .from(proxyNodes)
+    .where(and(
+      eq(proxyNodes.trafficAutoReset, true),
+      // 28 号之后把 29/30/31 号设的也一起带上：那几天在二月不存在，
+      // 不带的话二月整月不会重置。
+      sql`${proxyNodes.trafficResetDay} <= ${day}`,
+    ));
 }
 
 // ==================== 客户端订阅：令牌 ====================

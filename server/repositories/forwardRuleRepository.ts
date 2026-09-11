@@ -616,6 +616,9 @@ export async function getForwardRuleTrafficContextsByIds(ruleIds: number[]) {
         isEnabled: forwardRules.isEnabled,
         isRunning: forwardRules.isRunning,
         pendingDelete: forwardRules.pendingDelete,
+        // 这条转发走的是哪个落地节点。落地机的已用流量按它累加 ——
+        // 顺手多取一列，不必为此再查一遍。
+        proxyNodeId: forwardRules.proxyNodeId,
         trafficTunnelId: tunnels.id,
         trafficTunnelEntryHostId: tunnels.entryHostId,
         trafficTunnelEntryGroupId: tunnels.entryGroupId,
@@ -706,6 +709,7 @@ export async function getForwardRuleTrafficContextsByIds(ruleIds: number[]) {
         isEnabled: row.isEnabled,
         isRunning: row.isRunning,
         pendingDelete: row.pendingDelete,
+        proxyNodeId: row.proxyNodeId,
       },
       tunnel: Number(row.trafficTunnelId || 0) > 0 ? {
         id: row.trafficTunnelId,

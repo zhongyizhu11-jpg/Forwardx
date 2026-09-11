@@ -32,6 +32,7 @@ import SettingsPage from "@/pages/Settings";
 import StorePage from "@/pages/Store";
 import SubscriptionsPage from "@/pages/Subscriptions";
 import ClientSubscriptionsPage from "@/pages/ClientSubscriptions";
+import ProxyInboundsPage from "@/pages/ProxyInbounds";
 import TrafficBillingPage from "@/pages/TrafficBilling";
 import TunnelsPage from "@/pages/Tunnels";
 import UsersPage from "@/pages/Users";
@@ -115,6 +116,7 @@ function Router() {
       <Route path="/store">{routeComponent(StorePage)}</Route>
       <Route path="/subscriptions">{routeComponent(SubscriptionsPage)}</Route>
       <Route path="/client-subscriptions">{routeComponent(ClientSubscriptionsPage)}</Route>
+      <Route path="/proxy-inbounds">{routeComponent(ProxyInboundsPage)}</Route>
       <Route path="/wallet">{routeComponent(WalletPage)}</Route>
       <Route path="/announcements">{routeComponent(AnnouncementsPage)}</Route>
       <Route path="/settings">{() => <AdminRoute component={SettingsPage} />}</Route>

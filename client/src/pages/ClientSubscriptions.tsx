@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
 import {
   PROXY_NODE_PROTOCOL_LABELS,
@@ -50,6 +51,20 @@ import {
   type ProxyClientTarget,
   type ProxySubscriptionKind,
 } from "@shared/proxyClientImport";
+import { type ProxyNodeHealth } from "@shared/proxyNodeHealth";
+import {
+  formatProxyNodeQuota,
+  formatQuotaBytes,
+  proxyNodeQuotaPercent,
+  proxyNodeQuotaState,
+} from "@shared/proxyNodeQuota";
+import {
+  groupProxyNodes,
+  normalizeProxyNodeGroupMode,
+  PROXY_NODE_GROUP_MODES,
+  PROXY_NODE_GROUP_MODE_LABELS,
+  type ProxyNodeGroupMode,
+} from "@shared/proxyNodeGrouping";
 import {
   Atom,
   AudioLines,
@@ -153,6 +168,123 @@ async function copyText(value: string, message: string) {
   }
 }
 
+const NODE_GROUP_MODE_STORAGE_KEY = "forwardx.proxyNodes.groupMode";
+const NODE_COLLAPSED_STORAGE_KEY = "forwardx.proxyNodes.collapsed";
+
+function readStoredGroupMode(): ProxyNodeGroupMode {
+  if (typeof window === "undefined") return "none";
+  try {
+    return normalizeProxyNodeGroupMode(window.localStorage.getItem(NODE_GROUP_MODE_STORAGE_KEY));
+  } catch {
+    return "none";
+  }
+}
+
+/** 折叠起来的分组键。存不上也不影响用，只是下次进来又是展开的。 */
+function readStoredCollapsed(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(NODE_COLLAPSED_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStored(key: string, value: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // 隐私模式下写不进去，忽略即可 —— 这只是个记住偏好的便利。
+  }
+}
+
+const NODE_HEALTH_STYLES: Record<ProxyNodeHealth["state"], string> = {
+  online: "bg-emerald-500",
+  offline: "bg-red-500",
+  // 灰色而不是红色：没人在探它不等于它挂了，标红会把好节点冤枉成故障。
+  unknown: "bg-muted-foreground/40",
+};
+
+/**
+ * 落地节点的在线小圆点。
+ *
+ * 探测是中转机发出的 tcping，所以这里回答的是「中转连不连得上这个落地」，
+ * 不是「你的客户端连不连得上」—— 悬停说明里写明了，免得红点被当成落地挂了
+ * 而其实只是中转到落地那一段不通。
+ */
+function ProxyNodeHealthDot({ health }: { health?: ProxyNodeHealth | null }) {
+  const state = health?.state || "unknown";
+  const detail = health?.title || "暂无探测结果";
+  const label = state === "online" ? "在线" : state === "offline" ? "离线" : "未知";
+  return (
+    <span
+      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${NODE_HEALTH_STYLES[state]}`}
+      title={`${label} · ${detail}（由中转机探测，不代表你的客户端能连上）`}
+      aria-label={`${label}：${detail}`}
+    />
+  );
+}
+
+/**
+ * GB ↔ 字节。用 1000 而不是 1024：机房卖的「1000G」是按 1000 算的，
+ * 按 1024 存进去再显示出来会变成 931G，跟你填的数对不上。
+ */
+const GB_IN_BYTES = 1e9;
+
+function bytesFromGb(value: string): number {
+  const gb = Number(String(value).trim());
+  if (!Number.isFinite(gb) || gb <= 0) return 0;
+  return Math.round(gb * GB_IN_BYTES);
+}
+
+function gbFromBytes(bytes: unknown): string {
+  const value = Number(bytes) || 0;
+  if (value <= 0) return "";
+  const gb = value / GB_IN_BYTES;
+  return String(gb >= 100 ? Math.round(gb) : Number(gb.toFixed(2)));
+}
+
+const QUOTA_STATE_STYLES = {
+  none: "text-muted-foreground",
+  normal: "text-muted-foreground",
+  warn: "text-amber-600 dark:text-amber-500",
+  exceeded: "text-red-600 dark:text-red-500",
+} as const;
+
+/**
+ * 行上的 `带宽/总流量/已用流量`，例如 `500M/1000G/367G`。
+ *
+ * 已用量只数得到经面板转发规则走过的流量 —— 订阅里的「直连」条目是客户端直连
+ * 落地机的，中转机不在路径上，面板看不见。所以这个数只会比机房账单**小**。
+ * 这句话写在悬停说明里：一个看着精确、实际偏小的用量，会让人在快超额时以为
+ * 还很宽裕，那比不显示更糟。
+ */
+function ProxyNodeQuotaText({ node }: { node: any }) {
+  const quota = {
+    bandwidthMbps: Number(node.bandwidthMbps || 0),
+    trafficLimit: Number(node.trafficLimit || 0),
+    trafficUsed: Number(node.trafficUsed || 0),
+  };
+  const text = formatProxyNodeQuota(quota);
+  if (!text) {
+    return <span className="shrink-0 text-xs text-muted-foreground/50" title="还没填这台机器的带宽和总流量，去「编辑」里补上">—</span>;
+  }
+  const state = proxyNodeQuotaState(quota);
+  const percent = proxyNodeQuotaPercent(quota);
+  const detail = [
+    "带宽 / 总流量 / 已用流量",
+    quota.trafficLimit > 0 ? `已用 ${percent}%` : "没设总流量，只显示已用量",
+    `已用量只统计经面板转发走过的流量，直连订阅条目和这台机器上别的服务不计入 —— 所以只会比机房账单小。可在「编辑」里手工校准。`,
+  ].join("\n");
+  return (
+    <span className={`shrink-0 text-xs tabular-nums ${QUOTA_STATE_STYLES[state]}`} title={detail}>
+      {text}
+    </span>
+  );
+}
+
 export default function ClientSubscriptionsPage() {
   const utils = trpc.useUtils();
   const confirm = useConfirmDialog();
@@ -160,9 +292,21 @@ export default function ClientSubscriptionsPage() {
   const permissionQuery = trpc.proxySubscriptions.permission.useQuery();
   const allowed = permissionQuery.data?.allowed ?? true;
 
-  const nodesQuery = trpc.proxySubscriptions.listNodes.useQuery();
+  /**
+   * 轮询而不是只在进页面时取一次：在线状态与流量是会变的，不刷新的话那个小圆点
+   * 会一直停在你进页面那一刻的颜色 —— 一个不动的状态灯比没有状态灯更误导。
+   * 探测的新鲜期是 6 分钟，30 秒一次足够跟上，也不至于把面板打满。
+   */
+  const nodesQuery = trpc.proxySubscriptions.listNodes.useQuery(undefined, {
+    refetchInterval: pollingInterval("slow"),
+    refetchOnWindowFocus: true,
+  });
   const tokensQuery = trpc.proxySubscriptions.listTokens.useQuery();
   const previewQuery = trpc.proxySubscriptions.preview.useQuery();
+
+  const [nodeGroupMode, setNodeGroupMode] = useState<ProxyNodeGroupMode>(readStoredGroupMode);
+  const [collapsedGroups, setCollapsedGroups] = useState<string[]>(readStoredCollapsed);
+  const [nodesCollapsed, setNodesCollapsed] = useState(false);
 
   const [nodeDialogOpen, setNodeDialogOpen] = useState(false);
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null);
@@ -173,6 +317,12 @@ export default function ClientSubscriptionsPage() {
   const [nodeIncludeDirect, setNodeIncludeDirect] = useState(false);
   // 0 表示不经由任何前置。
   const [nodeFrontProxyId, setNodeFrontProxyId] = useState(0);
+  /** 落地机的套餐规格。带宽用 Mbps，总流量用 GB —— 机房就是按这两个单位卖的。 */
+  const [nodeBandwidthMbps, setNodeBandwidthMbps] = useState("");
+  const [nodeTrafficLimitGb, setNodeTrafficLimitGb] = useState("");
+  const [nodeTrafficUsedGb, setNodeTrafficUsedGb] = useState("");
+  const [nodeTrafficAutoReset, setNodeTrafficAutoReset] = useState(false);
+  const [nodeTrafficResetDay, setNodeTrafficResetDay] = useState("1");
   // 订阅内容里改名：转发派生的条目改规则上的显示名，直连条目改模板名。
   const [renaming, setRenaming] = useState<
     { kind: "relay" | "direct"; ruleId: number; templateId: number; name: string } | null
@@ -313,6 +463,37 @@ export default function ClientSubscriptionsPage() {
 
   const nodes = nodesQuery.data ?? [];
   const tokens = tokensQuery.data ?? [];
+
+  /**
+   * 只有一个节点时一律不分组：分组下拉这时是藏起来的，若还按上次选的方式分，
+   * 就会出现一个改不掉的分组标题。
+   */
+  const effectiveGroupMode: ProxyNodeGroupMode = nodes.length > 1 ? nodeGroupMode : "none";
+  const nodeGroups = useMemo(
+    () => groupProxyNodes(nodes as any[], effectiveGroupMode),
+    [nodes, effectiveGroupMode],
+  );
+  const onlineNodeCount = useMemo(
+    () => (nodes as any[]).filter((node) => node?.health?.state === "online").length,
+    [nodes],
+  );
+  const offlineNodeCount = useMemo(
+    () => (nodes as any[]).filter((node) => node?.health?.state === "offline").length,
+    [nodes],
+  );
+
+  const isGroupCollapsed = (key: string) => collapsedGroups.includes(key);
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key];
+      writeStored(NODE_COLLAPSED_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+  const changeGroupMode = (mode: ProxyNodeGroupMode) => {
+    setNodeGroupMode(mode);
+    writeStored(NODE_GROUP_MODE_STORAGE_KEY, mode);
+  };
   const preview = previewQuery.data;
 
   // 只有「已隐藏」需要一键恢复，其他原因要用户自己去改转发或模板。
@@ -337,6 +518,11 @@ export default function ClientSubscriptionsPage() {
     setNodeAutoGroup("url-test");
     setNodeIncludeDirect(false);
     setNodeFrontProxyId(0);
+    setNodeBandwidthMbps("");
+    setNodeTrafficLimitGb("");
+    setNodeTrafficUsedGb("");
+    setNodeTrafficAutoReset(false);
+    setNodeTrafficResetDay("1");
     setNodeDialogOpen(true);
   };
 
@@ -347,6 +533,11 @@ export default function ClientSubscriptionsPage() {
     setNodeAutoGroup(normalizeProxyNodeAutoGroup(node.autoGroup));
     setNodeIncludeDirect(!!node.includeDirect);
     setNodeFrontProxyId(Number(node.frontProxyId || 0));
+    setNodeBandwidthMbps(Number(node.bandwidthMbps || 0) > 0 ? String(node.bandwidthMbps) : "");
+    setNodeTrafficLimitGb(gbFromBytes(node.trafficLimit));
+    setNodeTrafficUsedGb(gbFromBytes(node.trafficUsed));
+    setNodeTrafficAutoReset(!!node.trafficAutoReset);
+    setNodeTrafficResetDay(String(Number(node.trafficResetDay || 1)));
     setNodeDialogOpen(true);
   };
 
@@ -367,9 +558,17 @@ export default function ClientSubscriptionsPage() {
       autoGroup: nodeAutoGroup,
       includeDirect: nodeIncludeDirect,
       frontProxyId: nodeFrontProxyId,
+      bandwidthMbps: Math.max(0, Math.floor(Number(nodeBandwidthMbps) || 0)),
+      trafficLimit: bytesFromGb(nodeTrafficLimitGb),
+      trafficAutoReset: nodeTrafficAutoReset,
+      trafficResetDay: Math.min(28, Math.max(1, Math.floor(Number(nodeTrafficResetDay) || 1))),
     };
-    if (editingNodeId) updateNode.mutate({ id: editingNodeId, ...payload });
-    else createNode.mutate(payload);
+    if (editingNodeId) {
+      // 已用量只在编辑时能改：新建时还没有任何用量，给个输入框只会让人以为要填。
+      updateNode.mutate({ id: editingNodeId, ...payload, trafficUsed: bytesFromGb(nodeTrafficUsedGb) });
+    } else {
+      createNode.mutate(payload);
+    }
   };
 
   // 权限查询未回来时先不下结论，避免闪一下「无权限」再闪回正常。
@@ -409,17 +608,45 @@ export default function ClientSubscriptionsPage() {
         <h1 className="text-2xl font-semibold">客户端订阅</h1>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Server className="h-4 w-4" />
-              落地节点
-            </CardTitle>
-            <Button size="sm" className="shrink-0" onClick={openCreateNode}>
-              <Plus className="mr-1 h-4 w-4" />
-              添加节点
-            </Button>
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
+            {/* 整块可折叠：节点多的时候要能一把收起来，好翻到下面的订阅内容。 */}
+            <button
+              type="button"
+              className="flex min-w-0 items-center gap-2 text-left"
+              onClick={() => setNodesCollapsed((prev) => !prev)}
+              aria-expanded={!nodesCollapsed}
+            >
+              <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${nodesCollapsed ? "-rotate-90" : ""}`} />
+              <Server className="h-4 w-4 shrink-0" />
+              <CardTitle className="text-base">落地节点</CardTitle>
+              {nodes.length > 0 ? (
+                <span className="truncate text-xs text-muted-foreground">
+                  {nodes.length} 个
+                  {onlineNodeCount > 0 ? ` · ${onlineNodeCount} 在线` : ""}
+                  {offlineNodeCount > 0 ? ` · ${offlineNodeCount} 离线` : ""}
+                </span>
+              ) : null}
+            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {nodes.length > 1 ? (
+                <Select value={nodeGroupMode} onValueChange={(value) => changeGroupMode(value as ProxyNodeGroupMode)}>
+                  <SelectTrigger className="h-8 w-24 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROXY_NODE_GROUP_MODES.map((mode) => (
+                      <SelectItem key={mode} value={mode}>{PROXY_NODE_GROUP_MODE_LABELS[mode]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+              <Button size="sm" onClick={openCreateNode}>
+                <Plus className="mr-1 h-4 w-4" />
+                添加节点
+              </Button>
+            </div>
           </CardHeader>
-          <CardContent>
+          <CardContent hidden={nodesCollapsed} className="pt-0">
             {nodesQuery.isLoading ? (
               <DataSectionLoading />
             ) : nodes.length === 0 ? (
@@ -427,70 +654,89 @@ export default function ClientSubscriptionsPage() {
                 还没有登记节点。先从落地机复制一条节点链接粘进来，VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS / Snell 都行。
               </p>
             ) : (
-              <div className="space-y-2">
-                {nodes.map((node: any) => (
-                  <div
-                    key={node.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{node.name}</span>
-                        <Badge variant="secondary">
-                          {PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol}
-                        </Badge>
-                        {!node.isEnabled && <Badge variant="outline">已停用</Badge>}
-                      </div>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
-                        {node.address}:{node.port}
-                        {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发在用` : " · 暂无转发绑定"}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Select
-                        value={normalizeProxyNodeAutoGroup(node.autoGroup)}
-                        onValueChange={(value) => updateNode.mutate({
-                          id: node.id,
-                          autoGroup: value as ProxyNodeAutoGroup,
-                        })}
-                      >
-                        <SelectTrigger className="w-32">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PROXY_NODE_AUTO_GROUPS.map((mode) => (
-                            <SelectItem key={mode} value={mode}>
-                              {PROXY_NODE_AUTO_GROUP_LABELS[mode]}
-                            </SelectItem>
+              <div className="space-y-3">
+                {nodeGroups.map((group) => {
+                  // 不分组时只有一组，没必要给它加个「全部」标题占一行。
+                  const showHeader = effectiveGroupMode !== "none";
+                  const collapsed = showHeader && isGroupCollapsed(group.key);
+                  return (
+                    <div key={group.key} className="space-y-1.5">
+                      {showHeader ? (
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground"
+                          onClick={() => toggleGroup(group.key)}
+                          aria-expanded={!collapsed}
+                        >
+                          <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
+                          <span>{group.label}</span>
+                          <span className="tabular-nums">({group.nodes.length})</span>
+                          <span className="h-px flex-1 bg-border" />
+                        </button>
+                      ) : null}
+                      {collapsed ? null : (
+                        <div className="space-y-1.5">
+                          {group.nodes.map((node: any) => (
+                            <div
+                              key={node.id}
+                              className="flex items-center gap-2 rounded-md border px-2.5 py-1.5"
+                            >
+                              <ProxyNodeHealthDot health={node.health} />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate text-sm font-medium leading-tight">{node.name}</span>
+                                  <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+                                    {PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol}
+                                  </Badge>
+                                  {!node.isEnabled && (
+                                    <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">停用</Badge>
+                                  )}
+                                </div>
+                                <p className="truncate text-[11px] leading-tight text-muted-foreground">
+                                  {node.address}:{node.port}
+                                  {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
+                                </p>
+                              </div>
+                              <ProxyNodeQuotaText node={node} />
+                              <Switch
+                                className="shrink-0 scale-90"
+                                checked={!!node.isEnabled}
+                                onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
+                              />
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 shrink-0"
+                                title="编辑"
+                                onClick={() => openEditNode(node)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 shrink-0"
+                                title="删除"
+                                onClick={async () => {
+                                  const ok = await confirm({
+                                    title: "删除这个客户端节点？",
+                                    description: node.ruleCount > 0
+                                      ? `${node.ruleCount} 条转发会被解绑，不再出现在订阅里。转发本身继续运行，不受影响。`
+                                      : "该节点没有被任何转发绑定。",
+                                    confirmText: "删除",
+                                  });
+                                  if (ok) deleteNode.mutate({ id: node.id });
+                                }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                           ))}
-                        </SelectContent>
-                      </Select>
-                      <Switch
-                        checked={!!node.isEnabled}
-                        onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
-                      />
-                      <Button size="sm" variant="outline" onClick={() => openEditNode(node)}>
-                        编辑
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={async () => {
-                          const ok = await confirm({
-                            title: "删除这个客户端节点？",
-                            description: node.ruleCount > 0
-                              ? `${node.ruleCount} 条转发会被解绑，不再出现在订阅里。转发本身继续运行，不受影响。`
-                              : "该节点没有被任何转发绑定。",
-                            confirmText: "删除",
-                          });
-                          if (ok) deleteNode.mutate({ id: node.id });
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -520,22 +766,25 @@ export default function ClientSubscriptionsPage() {
                       return (
                       <div
                         key={direct ? `direct-${node.templateId}` : `rule-${node.ruleId}`}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+                        className="flex items-center gap-2 rounded-md border px-2.5 py-1.5"
                       >
+                        <Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
-                            <span className="truncate font-medium">{node.name}</span>
-                            {direct && <Badge variant="outline" className="shrink-0">直连</Badge>}
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-sm font-medium leading-tight">{node.name}</span>
+                            {direct && (
+                              <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">直连</Badge>
+                            )}
                           </div>
-                          <p className="mt-1 truncate text-xs text-muted-foreground">
+                          <p className="truncate text-[11px] leading-tight text-muted-foreground">
                             {node.address}:{node.port}
                           </p>
                         </div>
-                        <div className="flex shrink-0 items-center gap-2">
+                        <div className="flex shrink-0 items-center gap-1">
                           <Button
-                            size="sm"
+                            size="icon"
                             variant="ghost"
+                            className="h-7 w-7"
                             title="改这个节点在订阅里显示的名字"
                             onClick={() => {
                               setRenaming({
@@ -547,11 +796,12 @@ export default function ClientSubscriptionsPage() {
                               setRenameValue(node.name);
                             }}
                           >
-                            <Pencil className="h-4 w-4" />
+                            <Pencil className="h-3.5 w-3.5" />
                           </Button>
                           {/* 直连条目的显隐在节点模板上，这里不给开关，免得点了没反应。 */}
                           {!direct && (
                             <Switch
+                              className="scale-90"
                               checked
                               onCheckedChange={() => setRuleVisible.mutate({ ruleId: node.ruleId, visible: false })}
                             />
@@ -569,13 +819,12 @@ export default function ClientSubscriptionsPage() {
                     {hiddenRules.map((item) => (
                       <div
                         key={item.ruleId}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed p-3"
+                        className="flex items-center gap-2 rounded-md border border-dashed px-2.5 py-1.5"
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <EyeOff className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="truncate text-sm text-muted-foreground">{item.ruleName}</span>
-                        </div>
+                        <EyeOff className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{item.ruleName}</span>
                         <Switch
+                          className="shrink-0 scale-90"
                           checked={false}
                           onCheckedChange={() => setRuleVisible.mutate({ ruleId: item.ruleId, visible: true })}
                         />
@@ -1048,6 +1297,78 @@ export default function ClientSubscriptionsPage() {
                   onCheckedChange={setNodeIncludeDirect}
                   className="mt-0.5 shrink-0"
                 />
+              </div>
+            </div>
+            <div className="space-y-2 rounded-lg border p-3">
+              <Label>这台落地机的套餐</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-xs text-muted-foreground">带宽（Mbps）</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    value={nodeBandwidthMbps}
+                    onChange={(event) => setNodeBandwidthMbps(event.target.value)}
+                    placeholder="500"
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-xs text-muted-foreground">总流量（GB）</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    value={nodeTrafficLimitGb}
+                    onChange={(event) => setNodeTrafficLimitGb(event.target.value)}
+                    placeholder="1000"
+                  />
+                </div>
+              </div>
+              {editingNodeId ? (
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">已用流量（GB）</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      value={nodeTrafficUsedGb}
+                      onChange={(event) => setNodeTrafficUsedGb(event.target.value)}
+                      placeholder="0"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => setNodeTrafficUsedGb("")}
+                    >
+                      清零
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    面板自己会累加，这里只是用来跟机房的账单对齐。
+                    <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                      面板只数得到经转发规则走过的流量 —— 订阅里的「直连」条目和这台机器上跑的别的服务都不计入，
+                      所以这个数只会比机房账单小，不会大。
+                    </span>
+                  </p>
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <div className="min-w-0">
+                  <Label className="text-xs">每月自动清零</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">按机房的流量周期来，日期只能填 1-28。</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {nodeTrafficAutoReset ? (
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      className="h-8 w-16"
+                      value={nodeTrafficResetDay}
+                      onChange={(event) => setNodeTrafficResetDay(event.target.value)}
+                    />
+                  ) : null}
+                  <Switch checked={nodeTrafficAutoReset} onCheckedChange={setNodeTrafficAutoReset} />
+                </div>
               </div>
             </div>
             <div className="space-y-2">

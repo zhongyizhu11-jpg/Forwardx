@@ -21,6 +21,7 @@ import {
   startSelfTestSweepTimer,
 } from "./selfTestTiming";
 import { billingMonthlyBoundary, billingStartOfCalendarDay } from "@shared/billingTime";
+import { normalizeProxyNodeResetDay } from "@shared/proxyNodeQuota";
 import { expireStalePendingOrders, recoverStaleProcessingPaymentOrders } from "./payment";
 
 type TimedOutForwardTest = {
@@ -98,6 +99,20 @@ async function runMonthlyTrafficReset() {
     }
     if (hostsToReset.length > 0) {
       console.log(`[Scheduler] Monthly host traffic reset: ${hostsToReset.length} host(s) reset`);
+    }
+
+    /**
+     * 落地机的套餐流量也按月重置。lastTrafficReset 挡住重复触发 ——
+     * 这个任务每小时跑一次，不挡的话重置日当天会清零二十几次。
+     */
+    const nodesToReset = await db.getProxyNodesForTrafficAutoReset(now);
+    for (const node of nodesToReset as any[]) {
+      const resetDay = normalizeProxyNodeResetDay((node as any).trafficResetDay);
+      const boundary = billingMonthlyBoundary(now, resetDay);
+      const last = (node as any).lastTrafficReset ? new Date((node as any).lastTrafficReset) : null;
+      if (last && last.getTime() >= boundary.getTime()) continue;
+      await db.resetProxyNodeTraffic(Number(node.id));
+      console.log(`[Scheduler] Auto-reset proxy node traffic for node ${node.id} (${node.name})`);
     }
 
     const recharged = await db.rechargeSubscriptionTrafficCycles();

@@ -16,6 +16,8 @@ import {
   PROXY_NODE_AUTO_GROUPS,
   PROXY_SUBSCRIPTION_SKIP_LABELS,
 } from "../../shared/proxySubscriptionPlan";
+import { resolveProxyNodeHealth, type ProxyNodeProbeSample } from "../../shared/proxyNodeHealth";
+import { normalizeProxyNodeResetDay } from "../../shared/proxyNodeQuota";
 
 /**
  * 订阅令牌够长才安全：地址里带着全部节点凭据，一旦可猜就等于把节点送人。
@@ -114,8 +116,50 @@ export const proxySubscriptionsRouter = router({
   listNodes: protectedProcedure.query(async ({ ctx }) => {
     if (!await hasProxySubscriptionPermission(ctx)) return [];
     const nodes = await db.getProxyNodesByUser(ctx.user.id);
-    const counts = await Promise.all(nodes.map((node: any) => db.countRulesUsingProxyNode(node.id)));
-    return nodes.map((node: any, index: number) => ({ ...node, ruleCount: counts[index] }));
+    const ruleIdsByNode = await db.getRuleIdsUsingProxyNodes(nodes.map((node: any) => Number(node.id)));
+    const allRuleIds = Array.from(new Set(Array.from(ruleIdsByNode.values()).flat()));
+
+    /**
+     * 探测结果一次查完。
+     *
+     * 走 getTrafficSummaryByRule 是因为它顺带带回每条规则最近一次 tcping ——
+     * 探测目标就是这条转发的落地地址，所以规则的探测结果直接就是
+     * 「这个落地通不通」。这里只要探测，流量走 proxy_nodes.trafficUsed
+     * 那个累计列（traffic_stats 只留 72 小时，累计量算不回来）。
+     */
+    const summary = allRuleIds.length > 0
+      ? await db.getTrafficSummaryByRule({ userId: ctx.user.id, ruleIds: allRuleIds })
+      : [];
+    const byRule = new Map<number, any[]>();
+    for (const row of summary as any[]) {
+      const list = byRule.get(Number(row.ruleId)) || [];
+      list.push(row);
+      byRule.set(Number(row.ruleId), list);
+    }
+
+    return nodes.map((node: any) => {
+      const ruleIds = ruleIdsByNode.get(Number(node.id)) || [];
+      const samples: ProxyNodeProbeSample[] = [];
+      for (const ruleId of ruleIds) {
+        for (const row of byRule.get(ruleId) || []) {
+          const at = row.latestLatencyAt ? new Date(row.latestLatencyAt).getTime() : 0;
+          if (at > 0) {
+            samples.push({
+              latencyMs: row.latestLatencyMs === null || row.latestLatencyMs === undefined
+                ? null
+                : Number(row.latestLatencyMs),
+              isTimeout: !!row.latestLatencyIsTimeout,
+              at,
+            });
+          }
+        }
+      }
+      return {
+        ...node,
+        ruleCount: ruleIds.length,
+        health: resolveProxyNodeHealth(samples),
+      };
+    });
   }),
 
   createNode: protectedProcedure
@@ -126,6 +170,10 @@ export const proxySubscriptionsRouter = router({
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
       includeDirect: z.boolean().optional(),
       frontProxyId: z.number().int().min(0).optional(),
+      bandwidthMbps: z.number().int().min(0).max(1_000_000).optional(),
+      trafficLimit: z.number().int().min(0).optional(),
+      trafficAutoReset: z.boolean().optional(),
+      trafficResetDay: z.number().int().min(1).max(31).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
@@ -138,6 +186,12 @@ export const proxySubscriptionsRouter = router({
         ...(input.autoGroup ? { autoGroup: input.autoGroup } : {}),
         ...(input.includeDirect !== undefined ? { includeDirect: input.includeDirect } : {}),
         ...(input.frontProxyId !== undefined ? { frontProxyId: input.frontProxyId } : {}),
+        ...(input.bandwidthMbps !== undefined ? { bandwidthMbps: input.bandwidthMbps } : {}),
+        ...(input.trafficLimit !== undefined ? { trafficLimit: input.trafficLimit } : {}),
+        ...(input.trafficAutoReset !== undefined ? { trafficAutoReset: input.trafficAutoReset } : {}),
+        ...(input.trafficResetDay !== undefined
+          ? { trafficResetDay: normalizeProxyNodeResetDay(input.trafficResetDay) }
+          : {}),
         ...nodeToRow(parsed.node, input.link),
       } as any);
       return { id };
@@ -153,11 +207,28 @@ export const proxySubscriptionsRouter = router({
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
       includeDirect: z.boolean().optional(),
       frontProxyId: z.number().int().min(0).optional(),
+      /** 落地机的套餐规格。带宽 Mbps，0 表示没填。 */
+      bandwidthMbps: z.number().int().min(0).max(1_000_000).optional(),
+      /** 套餐总流量（字节），0 表示不限。 */
+      trafficLimit: z.number().int().min(0).optional(),
+      trafficAutoReset: z.boolean().optional(),
+      trafficResetDay: z.number().int().min(1).max(31).optional(),
+      /** 手工校准已用量，用来跟机房账单对齐。之后仍然继续累加。 */
+      trafficUsed: z.number().int().min(0).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
       await assertOwnedNode(input.id, ctx);
       const data: Record<string, unknown> = {};
+      if (input.bandwidthMbps !== undefined) data.bandwidthMbps = input.bandwidthMbps;
+      if (input.trafficLimit !== undefined) data.trafficLimit = input.trafficLimit;
+      if (input.trafficAutoReset !== undefined) data.trafficAutoReset = input.trafficAutoReset;
+      if (input.trafficResetDay !== undefined) {
+        // 收敛到 1-28：29/30/31 在二月不存在，那样设会整月不重置，
+        // 而界面上看不出原因。
+        data.trafficResetDay = normalizeProxyNodeResetDay(input.trafficResetDay);
+      }
+      if (input.trafficUsed !== undefined) data.trafficUsed = input.trafficUsed;
       if (input.name !== undefined) data.name = input.name;
       if (input.remark !== undefined) data.remark = input.remark || null;
       if (input.isEnabled !== undefined) data.isEnabled = input.isEnabled;
@@ -175,6 +246,16 @@ export const proxySubscriptionsRouter = router({
       }
       if (Object.keys(data).length === 0) return { success: true };
       await db.updateProxyNode(input.id, data as any);
+      return { success: true };
+    }),
+
+  /** 已用流量清零。换套餐周期或刚跟机房对完账时用。 */
+  resetNodeTraffic: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await assertProxySubscriptionAllowed(ctx);
+      await assertOwnedNode(input.id, ctx);
+      await db.resetProxyNodeTraffic(input.id);
       return { success: true };
     }),
 

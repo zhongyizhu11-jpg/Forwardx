@@ -696,6 +696,10 @@ const IMPORT_TABLE_ORDER = [
   "tunnel_exit_nodes",
   "forward_groups",
   "forward_group_members",
+  // 排在 proxy_nodes 前面：节点的 inboundId / inboundUserId 指向它们，
+  // 先有入站和入站用户才映射得出来。
+  "proxy_inbounds",
+  "proxy_inbound_users",
   "proxy_nodes",
   "proxy_sub_tokens",
   "forward_rules",
@@ -1162,8 +1166,21 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
       row.pendingDelete = source.pendingDelete ?? false;
       return { row };
 
+    case "proxy_inbounds":
+      row.userId = mapRequiredId(maps, "users", source.userId);
+      row.hostId = mapRequiredId(maps, "hosts", source.hostId);
+      return { row };
+
+    case "proxy_inbound_users":
+      row.inboundId = mapRequiredId(maps, "proxy_inbounds", source.inboundId);
+      return { row };
+
     case "proxy_nodes":
       row.userId = mapRequiredId(maps, "users", source.userId);
+      // 派生节点要跟着它的入站走，否则导入后会变成一个没人维护的孤儿节点。
+      // 这一列是 notNull default 0，而 mapOptionalId 对「没有」返回的是 null。
+      row.inboundId = mapOptionalId(maps, "proxy_inbounds", source.inboundId) || 0;
+      row.inboundUserId = mapOptionalId(maps, "proxy_inbound_users", source.inboundUserId) || 0;
       return { row };
 
     case "proxy_sub_tokens":

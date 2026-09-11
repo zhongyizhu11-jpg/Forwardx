@@ -441,6 +441,25 @@ export const proxyNodes = table("proxy_nodes", {
   includeDirect: boolean("includeDirect").notNull().default(false),
   // 前置代理：这个节点的连接先经由哪个节点建立（指向同表另一行）。0 表示不经由。
   frontProxyId: int("frontProxyId").notNull().default(0),
+  // 由哪个落地入站派生而来（proxy_inbounds.id）。0 表示是用户自己粘链接建的。
+  // 派生出来的节点不该手工改：下次保存入站时会被整行覆盖。
+  inboundId: int("inboundId").notNull().default(0),
+  // 对应入站上的哪个用户（proxy_inbound_users.id）。0 表示该协议只有单用户。
+  // 派生时靠它把节点与用户对齐，用户删掉时才知道该删哪一条节点。
+  inboundUserId: int("inboundUserId").notNull().default(0),
+  // 这台落地机的套餐规格与用量。带宽与总流量是人填的（面板无从得知你买的是什么套餐），
+  // 已用由面板自己累加 —— traffic_stats 只保留 72 小时，累计量必须单独存一列，
+  // 不能靠查那张表算出来。
+  // 上行带宽 Mbps，0 表示没填。
+  bandwidthMbps: int("bandwidthMbps").notNull().default(0),
+  // 套餐总流量（字节），0 表示不限或没填。
+  trafficLimit: bigint("trafficLimit", { mode: "number" }).notNull().default(0),
+  // 已用流量（字节）。只统计经面板转发规则走过的量 —— 直连订阅条目和这台机器上
+  // 别的服务面板看不见，所以这个数是「面板经手的量」，可以手工校准成机房口径。
+  trafficUsed: bigint("trafficUsed", { mode: "number" }).notNull().default(0),
+  trafficAutoReset: boolean("trafficAutoReset").notNull().default(false),
+  trafficResetDay: int("trafficResetDay").notNull().default(1),
+  lastTrafficReset: epoch("lastTrafficReset"),
   isEnabled: boolean("isEnabled").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
@@ -448,6 +467,78 @@ export const proxyNodes = table("proxy_nodes", {
 });
 export type ProxyNode = typeof proxyNodes.$inferSelect;
 export type InsertProxyNode = typeof proxyNodes.$inferInsert;
+
+/**
+ * 落地入站：面板在自己管的主机上开出来的节点。
+ *
+ * 与 proxy_nodes 的分工 —— 这张表是「落地机怎么听」，那张是「客户端怎么连」。
+ * 保存入站时会派生一行 proxy_nodes（带 inboundId 标记），订阅那一整套原样接上。
+ * Reality 私钥只存在这张表，绝不进派生节点。
+ */
+export const proxyInbounds = table("proxy_inbounds", {
+  id: serial("id"),
+  userId: int("userId").notNull(),
+  // 开在哪台主机上。那台机器必须装了 Agent，面板才推得下去配置。
+  hostId: int("hostId").notNull(),
+  name: text("name").notNull(),
+  remark: text("remark"),
+  // vless | vmess | trojan | shadowsocks | hysteria2 | tuic | anytls | snell
+  protocol: varchar("protocol", { length: 32 }).notNull().default("vless"),
+  port: int("port").notNull(),
+  transport: varchar("transport", { length: 16 }).notNull().default("tcp"), // tcp | ws | grpc | http
+  security: varchar("security", { length: 16 }).notNull().default("reality"), // reality | acme | tls | none
+  uuid: text("uuid"),
+  password: text("password"),
+  method: text("method"),
+  flow: text("flow"),
+  path: text("path"),
+  host: text("host"),
+  xhttpMode: text("xhttpMode"),
+  serverName: text("serverName"),
+  alpn: text("alpn"),
+  certPath: text("certPath"),
+  keyPath: text("keyPath"),
+  // security=acme 时注册 ACME 账户用的邮箱
+  acmeEmail: text("acmeEmail"),
+  // Reality 私钥只在服务端，公钥才发给客户端
+  realityPrivateKey: text("realityPrivateKey"),
+  realityPublicKey: text("realityPublicKey"),
+  realityShortId: text("realityShortId"),
+  realityDest: text("realityDest"),
+  obfs: text("obfs"),
+  obfsPassword: text("obfsPassword"),
+  upMbps: int("upMbps").notNull().default(0),
+  downMbps: int("downMbps").notNull().default(0),
+  congestionControl: text("congestionControl"),
+  snellVersion: int("snellVersion").notNull().default(0),
+  snellMode: text("snellMode"),
+  isEnabled: boolean("isEnabled").notNull().default(true),
+  sortOrder: int("sortOrder").notNull().default(0),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type ProxyInbound = typeof proxyInbounds.$inferSelect;
+export type InsertProxyInbound = typeof proxyInbounds.$inferInsert;
+
+/**
+ * 落地入站上的用户：一个入站可以给多个人各发一份凭据。
+ *
+ * 只有支持多用户的协议用得上（见 shared/proxyInbound.ts 的
+ * PROXY_INBOUND_MULTI_USER_PROTOCOLS）。Shadowsocks 与 Snell 的凭据仍在入站行上。
+ */
+export const proxyInboundUsers = table("proxy_inbound_users", {
+  id: serial("id"),
+  inboundId: int("inboundId").notNull(),
+  // 给人看的标签，会拼进派生出来的节点名
+  name: text("name").notNull(),
+  uuid: text("uuid"),
+  password: text("password"),
+  sortOrder: int("sortOrder").notNull().default(0),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type ProxyInboundUser = typeof proxyInboundUsers.$inferSelect;
+export type InsertProxyInboundUser = typeof proxyInboundUsers.$inferInsert;
 
 /**
  * 订阅令牌。订阅地址里带着全部节点凭据，所以令牌必须不可猜且可单独吊销，
