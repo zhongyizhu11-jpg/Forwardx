@@ -25,16 +25,19 @@ test("带宽按机房口径写，没填显示破折号", () => {
 
 test("流量按 1000 进制换算，跟机房卖的套餐对得上", () => {
   /**
-   * 这条是刻意的：机房的「1000G」是按 1000 算的。按 1024 换算会显示成 931G，
+   * 进制这条是刻意的：机房的「1000G」是按 1000 算的。按 1024 换算会显示成 931G，
    * 跟你买的套餐对不上号，看着像面板算错了 —— 然后你会去查一个不存在的 bug。
+   * 单位本身满 1T 就升到 T，那只是写得短一点，数值没变。
    */
-  assert.equal(formatQuotaBytes(1000 * GB), "1000G");
+  // 满 1T 就用 T —— 比 1000G 短，那一栏本来就窄。
+  assert.equal(formatQuotaBytes(1000 * GB), "1T");
   assert.equal(formatQuotaBytes(367 * GB), "367G");
   assert.equal(formatQuotaBytes(1.5 * GB), "1.5G");
-  // 2T 以上才用 T：1000G 的套餐就该显示成 1000G。
   assert.equal(formatQuotaBytes(2e12), "2T");
-  assert.equal(formatQuotaBytes(1.5e12), "1500G");
+  assert.equal(formatQuotaBytes(1.5e12), "1.5T");
   assert.equal(formatQuotaBytes(10e12), "10T");
+  // 不满 1T 的仍然按 G 显示。
+  assert.equal(formatQuotaBytes(999 * GB), "999G");
   assert.equal(formatQuotaBytes(0), "0G");
 });
 
@@ -49,7 +52,7 @@ test("整行拼成 500M/1000G/367G", () => {
     bandwidthMbps: 500,
     trafficLimit: 1000 * GB,
     trafficUsed: 367 * GB,
-  }), "500M/1000G/367G");
+  }), "500M/1T/367G");
 });
 
 test("没填的那一段占位而不是省略，三段才对得齐", () => {

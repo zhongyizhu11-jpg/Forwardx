@@ -46,12 +46,11 @@ export function formatQuotaBytes(bytes: number): string {
   const value = Number(bytes);
   if (!Number.isFinite(value) || value <= 0) return "0G";
   /**
-   * T 的门槛定在 2T 而不是 1T：机房把 1000G 的套餐就叫「1000G」，
-   * 自动换算成「1T」会跟你买的东西对不上号。2T 以上才用 T，是因为那个量级
-   * 大家本来就说「2T」「10T」。
+   * 满 1T 就用 T：1000G 显示成 1T 更短，行上那一栏本来就窄。
+   * 认得出 1T 就是 1000G 的套餐，不会有歧义。
    */
   const units = [
-    { limit: 2e12, suffix: "T", scale: 1e12 },
+    { limit: 1e12, suffix: "T", scale: 1e12 },
     { limit: 1e9, suffix: "G", scale: 1e9 },
     { limit: 1e6, suffix: "M", scale: 1e6 },
   ];
