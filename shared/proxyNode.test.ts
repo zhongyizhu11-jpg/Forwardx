@@ -388,3 +388,38 @@ test("VLESS + XHTTP + REALITY 的链接带 mode", () => {
   assert.equal(again.transport, "xhttp");
   assert.equal(again.xhttpMode, "stream-one");
 });
+
+test("HTTPUpgrade 传输能来回读写，且不与 http 混淆", () => {
+  /**
+   * 两者名字像但不是一回事：http 是 H2，httpupgrade 是在普通 HTTP 上升级连接，
+   * 比 ws 少一次握手往返。收敛错了会得到一个协议对、传输错的节点 ——
+   * 能导入、握手必失败。
+   */
+  const link = "vless://11111111-2222-3333-4444-555555555555@1.2.3.4:8443"
+    + "?encryption=none&security=tls&sni=a.example.com&type=httpupgrade&path=%2Fray&host=a.example.com#hu";
+  const parsed = parseProxyNodeLink(link);
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+  assert.equal(parsed.node.transport, "httpupgrade");
+  assert.equal(parsed.node.path, "/ray");
+  assert.equal(parsed.node.host, "a.example.com");
+
+  // h2 仍然收敛成 http，没有被新分支抢走。
+  assert.equal(parseProxyNodeLink(link.replace("type=httpupgrade", "type=h2")).ok, true);
+  const h2 = parseProxyNodeLink(link.replace("type=httpupgrade", "type=h2"));
+  assert.equal(h2.ok && h2.node.transport, "http");
+
+  // 写回去还是 httpupgrade。
+  assert.match(formatProxyNodeLink(parsed.node), /type=httpupgrade/);
+});
+
+test("中转改写地址时，HTTPUpgrade 的 Host 头留着原落地域名", () => {
+  // 不留的话发出去的 Host 是中转 IP，对端按 Host 路由就找不到人 —— 与 ws 同理。
+  const parsed = parseProxyNodeLink(
+    "vless://11111111-2222-3333-4444-555555555555@land.example.com:8443"
+    + "?encryption=none&security=tls&type=httpupgrade&path=%2Fray#hu",
+  );
+  assert.ok(parsed.ok);
+  const relayed = relayProxyNode(parsed.node, { address: "1.2.3.4", port: 20001, name: "中转" });
+  assert.equal(relayed.address, "1.2.3.4");
+  assert.equal(relayed.host, "land.example.com");
+});

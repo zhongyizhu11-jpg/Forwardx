@@ -22,6 +22,10 @@ import {
   PROXY_INBOUND_SECURITIES,
   PROXY_INBOUND_SNELL_DEFAULT_VERSION,
   PROXY_INBOUND_SNELL_VERSIONS,
+  PROXY_INBOUND_SHADOWSOCKS_METHODS,
+  proxyInboundShadowsocksKeyBytes,
+  PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
+  isProxyInboundShadowsocksMethod,
   proxyInboundSupportsMultiUser,
   proxyInboundUserCredentialKinds,
   validateProxyInbound,
@@ -45,16 +49,6 @@ import {
  * 反而显眼。用户可以改。
  */
 const DEFAULT_REALITY_SERVER_NAME = "dl.google.com";
-
-/** Shadowsocks 默认用 SS2022：AEAD 那几个老加密方式已经有已知的主动探测手段。 */
-const DEFAULT_SHADOWSOCKS_METHOD = "2022-blake3-aes-128-gcm";
-
-/** SS2022 的密码是定长的 base64，长度跟着加密方式的密钥长度走。 */
-const SHADOWSOCKS_2022_KEY_BYTES: Record<string, number> = {
-  "2022-blake3-aes-128-gcm": 16,
-  "2022-blake3-aes-256-gcm": 32,
-  "2022-blake3-chacha20-poly1305": 32,
-};
 
 async function assertAllowed(ctx: any) {
   if (ctx.user.role === "admin") return;
@@ -127,10 +121,16 @@ function fillGeneratedCredentials(inbound: ProxyInbound): ProxyInbound {
     filled.users = [];
   }
   if (filled.protocol === "shadowsocks") {
-    filled.method = filled.method || DEFAULT_SHADOWSOCKS_METHOD;
-    const bytes = SHADOWSOCKS_2022_KEY_BYTES[filled.method];
-    // SS2022 的密码必须是定长 base64；长度不对 sing-box 会整份拒绝加载。
-    filled.password = filled.password || (bytes ? generateProxyInboundPsk(bytes) : generateProxyInboundPassword());
+    filled.method = isProxyInboundShadowsocksMethod(filled.method)
+      ? filled.method
+      : PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD;
+    /**
+     * 两类算法的密码规则不一样，走不同的生成路径：
+     *   SS2022   定长密钥，长度不对 sing-box 整份拒绝加载。
+     *   老 AEAD  任意口令，给普通随机串即可（实测什么长度都收）。
+     */
+    const bytes = proxyInboundShadowsocksKeyBytes(filled.method);
+    filled.password = filled.password || (bytes > 0 ? generateProxyInboundPsk(bytes) : generateProxyInboundPassword());
   } else if (filled.protocol === "snell") {
     filled.password = filled.password || generateProxyInboundPsk(16);
   }
@@ -266,7 +266,8 @@ export const proxyInboundsRouter = router({
     })),
     snellVersions: [...PROXY_INBOUND_SNELL_VERSIONS],
     defaultRealityServerName: DEFAULT_REALITY_SERVER_NAME,
-    defaultShadowsocksMethod: DEFAULT_SHADOWSOCKS_METHOD,
+    shadowsocksMethods: [...PROXY_INBOUND_SHADOWSOCKS_METHODS],
+    defaultShadowsocksMethod: PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
   })),
 
   list: protectedProcedure.query(async ({ ctx }) => {

@@ -55,6 +55,7 @@ import {
 import { type ProxyNodeHealth } from "@shared/proxyNodeHealth";
 import {
   formatProxyNodeQuotaDetail,
+  formatProxyNodeQuotaLabeled,
   hasProxyNodeQuota,
   proxyNodeQuotaState,
 } from "@shared/proxyNodeQuota";
@@ -293,7 +294,7 @@ function ProxyNodeQuotaToggle({ node, expanded, onToggle }: { node: any; expande
       onClick={onToggle}
       aria-expanded={expanded}
       // 桌面端悬停就能看到，不必点开；手机上没有悬停，所以图标本身要能点。
-      title={`${formatProxyNodeQuotaDetail(quota)}${state === "exceeded" ? "（已超出总流量）" : state === "warn" ? "（接近总流量）" : ""}`}
+      title={`${formatProxyNodeQuotaLabeled(quota)}${state === "exceeded" ? "（已超出总流量）" : state === "warn" ? "（接近总流量）" : ""}`}
     >
       <Gauge className="h-3.5 w-3.5" />
     </button>

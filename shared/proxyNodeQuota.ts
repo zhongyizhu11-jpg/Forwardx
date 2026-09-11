@@ -97,13 +97,26 @@ export function proxyNodeQuotaState(quota: ProxyNodeQuota): ProxyNodeQuotaState 
 }
 
 /**
- * 展开后的一行带标签说明：`带宽 500M · 总流量 1000G · 已用 367G`。
+ * 展开后的那一行：`1G / 10T / 33.2M · 0%`。
  *
- * 与折起来时的 `500M/1000G/367G` 是同一份数据的两种写法：那个要挤在一行里所以
- * 只能用斜杠，展开之后有地方了，就把三个数各自叫什么写清楚 —— 斜杠那种写法
- * 得先知道顺序才读得懂。没填的那一段直接不出现，而不是占位。
+ * 只给数字，不写「带宽」「总流量」这些标签 —— 加上标签这一行就有二十几个字，
+ * 手机上放不下会被截断，结果是**后面的已用量看不见**，而那恰恰是最想看的数。
+ * 三个数的顺序固定为 带宽 / 总流量 / 已用，缺的那一段用破折号占位好对齐。
+ *
+ * 标签不是丢掉，而是移到了悬停说明里（见 formatProxyNodeQuotaLabeled）——
+ * 桌面端鼠标一停就知道哪个是哪个，手机上则靠固定顺序。
  */
 export function formatProxyNodeQuotaDetail(quota: ProxyNodeQuota): string {
+  const bandwidth = formatBandwidthMbps(quota.bandwidthMbps);
+  const limit = (Number(quota.trafficLimit) || 0) > 0 ? formatQuotaBytes(quota.trafficLimit) : "—";
+  const used = formatQuotaBytes(quota.trafficUsed);
+  const head = `${bandwidth} / ${limit} / ${used}`;
+  // 没设总量就没有分母，百分比也就没有意义。
+  return (Number(quota.trafficLimit) || 0) > 0 ? `${head} · ${proxyNodeQuotaPercent(quota)}%` : head;
+}
+
+/** 带标签的完整写法，给悬停说明用 —— 那里不缺地方，正好补上顺序之外的含义。 */
+export function formatProxyNodeQuotaLabeled(quota: ProxyNodeQuota): string {
   const parts: string[] = [];
   if ((Number(quota.bandwidthMbps) || 0) > 0) parts.push(`带宽 ${formatBandwidthMbps(quota.bandwidthMbps)}`);
   if ((Number(quota.trafficLimit) || 0) > 0) parts.push(`总流量 ${formatQuotaBytes(quota.trafficLimit)}`);

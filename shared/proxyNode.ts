@@ -66,7 +66,7 @@ export function proxyNodeAlwaysTls(protocol: unknown): boolean {
   return PROXY_NODE_ALWAYS_TLS_PROTOCOLS.includes(String(protocol ?? "") as ProxyNodeProtocol);
 }
 
-export const PROXY_NODE_TRANSPORTS = ["tcp", "ws", "grpc", "http", "xhttp"] as const;
+export const PROXY_NODE_TRANSPORTS = ["tcp", "ws", "grpc", "http", "httpupgrade", "xhttp"] as const;
 
 export type ProxyNodeTransport = (typeof PROXY_NODE_TRANSPORTS)[number];
 
@@ -178,6 +178,8 @@ function normalizeTransport(value: unknown): ProxyNodeTransport {
   if (raw === "h2" || raw === "http") return "http";
   if (raw === "ws" || raw === "websocket") return "ws";
   if (raw === "grpc") return "grpc";
+  // HTTPUpgrade 比 ws 少一次握手往返。v2rayN 写 httpupgrade，也见过 httpu 的简写。
+  if (raw === "httpupgrade" || raw === "httpu") return "httpupgrade";
   // XHTTP 是 Xray 用来取代 H2 的新传输，只有 VLESS 用得上。
   if (raw === "xhttp" || raw === "splithttp") return "xhttp";
   return "tcp";
@@ -663,7 +665,11 @@ export type ProxyNodeRelayEntry = {
 export function relayProxyNode(node: ProxyNode, entry: ProxyNodeRelayEntry): ProxyNode {
   const relayed: ProxyNode = { ...node, alpn: [...node.alpn] };
   if (relayed.tls && !relayed.sni) relayed.sni = node.address;
-  if ((relayed.transport === "ws" || relayed.transport === "http") && !relayed.host) {
+  /**
+   * 中转改写地址之后 Host 头要留着原来的落地域名 —— 不然发出去的是中转 IP，
+   * 对端按 Host 路由就找不到人。httpupgrade 和 ws 一样靠 Host 头，同等对待。
+   */
+  if ((relayed.transport === "ws" || relayed.transport === "http" || relayed.transport === "httpupgrade") && !relayed.host) {
     relayed.host = node.address;
   }
   relayed.address = text(entry.address);

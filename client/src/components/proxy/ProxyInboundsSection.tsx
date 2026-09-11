@@ -14,6 +14,9 @@ import {
   PROXY_INBOUND_PROTOCOLS,
   PROXY_INBOUND_SECURITY_LABELS,
   PROXY_INBOUND_SNELL_VERSIONS,
+  PROXY_INBOUND_SHADOWSOCKS_METHODS,
+  PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
+  isLegacyShadowsocksMethod,
   proxyInboundSecurities,
   proxyInboundSupportsMultiUser,
   proxyInboundTransports,
@@ -30,6 +33,7 @@ const TRANSPORT_LABELS: Record<string, string> = {
   ws: "WebSocket",
   grpc: "gRPC",
   http: "HTTP",
+  httpupgrade: "HTTPUpgrade",
   xhttp: "XHTTP",
 };
 
@@ -53,6 +57,8 @@ type InboundForm = {
   obfs: string;
   obfsPassword: string;
   snellVersion: number;
+  /** Shadowsocks 的加密方式。其他协议用不到，留着也不会下发。 */
+  method: string;
   isEnabled: boolean;
   /** 只有 id 与名字：凭据一律服务端生成，前端拿不到也不该传。 */
   users: Array<{ id: number; name: string }>;
@@ -78,6 +84,7 @@ function emptyForm(): InboundForm {
     obfs: "",
     obfsPassword: "",
     snellVersion: PROXY_INBOUND_SNELL_VERSIONS[0],
+    method: PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
     isEnabled: true,
     users: [{ id: 0, name: "默认" }],
   };
@@ -111,7 +118,7 @@ export default function ProxyInboundsSection() {
 
   const createInbound = trpc.proxyInbounds.create.useMutation({
     onSuccess: () => {
-      toast.success("落地节点已创建，配置正在下发");
+      toast.success("节点已创建，配置正在下发");
       setDialogOpen(false);
       refresh();
     },
@@ -119,7 +126,7 @@ export default function ProxyInboundsSection() {
   });
   const updateInbound = trpc.proxyInbounds.update.useMutation({
     onSuccess: () => {
-      toast.success("落地节点已更新，配置正在下发");
+      toast.success("节点已更新，配置正在下发");
       setDialogOpen(false);
       refresh();
     },
@@ -134,7 +141,7 @@ export default function ProxyInboundsSection() {
   });
   const deleteInbound = trpc.proxyInbounds.delete.useMutation({
     onSuccess: () => {
-      toast.success("落地节点已删除");
+      toast.success("节点已删除");
       refresh();
     },
     onError: (error) => toast.error(error.message),
@@ -193,6 +200,7 @@ export default function ProxyInboundsSection() {
       obfs: String(row.obfs || ""),
       obfsPassword: String(row.obfsPassword || ""),
       snellVersion: Number(row.snellVersion || PROXY_INBOUND_SNELL_VERSIONS[0]),
+      method: String(row.method || PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD),
       isEnabled: !!row.isEnabled,
       users: Array.isArray(row.users) && row.users.length > 0
         ? row.users.map((user: any) => ({ id: Number(user.id) || 0, name: String(user.name || "") }))
@@ -223,6 +231,7 @@ export default function ProxyInboundsSection() {
       obfs: form.obfs.trim(),
       obfsPassword: form.obfsPassword.trim(),
       snellVersion: form.snellVersion,
+      method: form.method,
       isEnabled: form.isEnabled,
       users: form.users.map((user, index) => ({ id: user.id, name: user.name.trim() || `用户 ${index + 1}` })),
     };
@@ -242,7 +251,7 @@ export default function ProxyInboundsSection() {
 
   const askDelete = async (row: any) => {
     const ok = await confirm({
-      title: "删除落地节点？",
+      title: "删除节点？",
       description: `「${row.name}」会停止监听，它派生的客户端节点也会从订阅里移除。绑定过它的转发规则会自动解绑，转发本身继续运行。`,
       confirmText: "删除",
       tone: "destructive",
@@ -282,18 +291,13 @@ export default function ProxyInboundsSection() {
               <Plus className="mr-1 h-4 w-4" />
               新建
             </Button>
-            <p className="w-full text-xs text-muted-foreground">
-              在自己的主机上开节点，自动进订阅。流量按端口计数，和转发规则走同一个套餐额度。
-              一台机器可以开多个端口分给不同用户，各自扣各自的额度、各自只看得到自己的用量。
-              租来的线路机装不了 Agent，那种去上面的「落地节点」粘链接。
-            </p>
           </CardHeader>
           <CardContent hidden={collapsed} className="pt-0">
             {inboundsQuery.isLoading ? (
               <DataSectionLoading />
             ) : rows.length === 0 ? (
-              <p className="py-8 text-center text-xs text-muted-foreground">
-                还没有落地节点。新建一个 REALITY 节点即可，它不需要域名和证书。
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                还没有节点。REALITY 不需要域名和证书，建完就能用。
               </p>
             ) : (
               <div className="space-y-1.5">
@@ -339,7 +343,7 @@ export default function ProxyInboundsSection() {
             )}
             {hosts.length === 0 ? (
               <p className="mt-3 text-xs text-amber-600 dark:text-amber-500">
-                还没有可用主机。落地节点要靠 Agent 下发配置，先去「主机管理」装一台。
+                还没有可用主机。自建节点要靠 Agent 下发配置，先去「主机管理」装一台。
               </p>
             ) : null}
           </CardContent>
@@ -349,7 +353,7 @@ export default function ProxyInboundsSection() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="flex max-h-[92svh] flex-col overflow-hidden sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{form.id > 0 ? "编辑落地节点" : "新建落地节点"}</DialogTitle>
+            <DialogTitle>{form.id > 0 ? "编辑节点" : "新建节点"}</DialogTitle>
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -437,6 +441,33 @@ export default function ProxyInboundsSection() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+              ) : null}
+              {form.protocol === "shadowsocks" ? (
+                <div className="min-w-0 space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs">加密方式</Label>
+                  <Select value={form.method} onValueChange={(value) => setForm((prev) => ({ ...prev, method: value }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {PROXY_INBOUND_SHADOWSOCKS_METHODS.map((item) => (
+                        <SelectItem key={item} value={item}>
+                          {item}
+                          {item === PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD ? "（推荐）" : ""}
+                          {isLegacyShadowsocksMethod(item) ? "（旧版）" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {isLegacyShadowsocksMethod(form.method) ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-500">
+                      老式 AEAD 有已知的主动探测手段，中间设备能把这类流量识别出来。
+                      只在对端客户端太旧、不支持 SS2022 时才用它。
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      AES-128 不比 256 弱（128 位密钥没有可行攻击）而且更快，小机器上差别明显，所以默认它。
+                    </p>
+                  )}
                 </div>
               ) : null}
               {form.protocol === "snell" ? (

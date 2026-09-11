@@ -83,6 +83,62 @@ const NO_TLS_PROTOCOLS: readonly ProxyInboundProtocol[] = ["shadowsocks", "snell
  */
 export const PROXY_INBOUND_SNELL_VERSIONS = [5, 6] as const;
 
+/**
+ * Shadowsocks 可选的加密方式。
+ *
+ * 前三种是 SS2022，后两种是老的 AEAD。两类的**密码规则完全不同**，这是这里
+ * 最容易踩的坑：
+ *
+ *   SS2022    密码是定长的密钥，长度由算法定死（16 或 32 字节的 base64）。
+ *             长度不对，sing-box 报 `bad key` 并拒绝加载**整份**配置 ——
+ *             同一台机器上其他入站会跟着一起停。
+ *   老 AEAD   密码是任意口令，密钥由它派生出来，多长都收（实测 7/24/44 字符
+ *             都能通过 check）。
+ *
+ * 所以下面那张长度表只列 SS2022；老 AEAD 走普通随机口令那条路。
+ */
+export const PROXY_INBOUND_SHADOWSOCKS_METHODS = [
+  "2022-blake3-aes-128-gcm",
+  "2022-blake3-aes-256-gcm",
+  "2022-blake3-chacha20-poly1305",
+  "aes-128-gcm",
+  "aes-256-gcm",
+] as const;
+
+export type ProxyInboundShadowsocksMethod = (typeof PROXY_INBOUND_SHADOWSOCKS_METHODS)[number];
+
+/**
+ * 定长密钥的算法及其字节数。只有 SS2022 在这里 —— 老 AEAD 的密码是口令不是密钥，
+ * 给它按长度生成没有意义。查不到就表示「随便给个随机口令即可」。
+ */
+export const PROXY_INBOUND_SHADOWSOCKS_KEY_BYTES: Partial<Record<ProxyInboundShadowsocksMethod, number>> = {
+  "2022-blake3-aes-128-gcm": 16,
+  "2022-blake3-aes-256-gcm": 32,
+  "2022-blake3-chacha20-poly1305": 32,
+};
+
+/** 这个算法要不要定长密钥；0 表示用普通随机口令。 */
+export function proxyInboundShadowsocksKeyBytes(method: string): number {
+  return PROXY_INBOUND_SHADOWSOCKS_KEY_BYTES[method as ProxyInboundShadowsocksMethod] ?? 0;
+}
+
+/** 老式 AEAD（非 SS2022）。这些有已知的主动探测手段，界面上要标出来。 */
+export function isLegacyShadowsocksMethod(method: string): boolean {
+  return isProxyInboundShadowsocksMethod(method) && proxyInboundShadowsocksKeyBytes(method) === 0;
+}
+
+/**
+ * 默认 AES-128。
+ *
+ * 128 位密钥没有任何可行攻击，实际安全性不比 256 弱，但更快 —— 在没有 AES
+ * 硬件加速的小机器上差得尤其明显。这也是 SS2022 作者推荐的默认。
+ */
+export const PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD: ProxyInboundShadowsocksMethod = "2022-blake3-aes-128-gcm";
+
+export function isProxyInboundShadowsocksMethod(value: unknown): value is ProxyInboundShadowsocksMethod {
+  return (PROXY_INBOUND_SHADOWSOCKS_METHODS as readonly string[]).includes(String(value ?? ""));
+}
+
 /** 入站默认开 v5：兼容面最广，mihomo 到 v5、Surge v1-v6 都认。 */
 export const PROXY_INBOUND_SNELL_DEFAULT_VERSION = 5;
 
@@ -165,7 +221,8 @@ export function proxyInboundNeedsCertificate(security: ProxyInboundSecurity): bo
  */
 export function proxyInboundTransports(protocol: ProxyInboundProtocol): ProxyNodeTransport[] {
   if (protocol === "vless" || protocol === "vmess" || protocol === "trojan") {
-    return ["tcp", "ws", "grpc", "http"];
+    // httpupgrade 比 ws 少一次握手往返，过 CDN 时更省事；sing-box 两端都支持。
+    return ["tcp", "ws", "grpc", "http", "httpupgrade"];
   }
   // shadowsocks / snell / hysteria2 / tuic / anytls 都只有一种承载。
   return ["tcp"];
@@ -324,7 +381,17 @@ export function validateProxyInbound(inbound: ProxyInbound): string {
     }
   } else {
     if (!text(inbound.password)) return inbound.protocol === "snell" ? "缺少 PSK" : "缺少密码";
-    if (inbound.protocol === "shadowsocks" && !text(inbound.method)) return "缺少加密方式";
+    if (inbound.protocol === "shadowsocks") {
+      if (!text(inbound.method)) return "缺少加密方式";
+      /**
+       * 认不出来的加密方式挡在这里，而不是让它走到落地机上去。
+       * sing-box 对不认识的 method 是拒绝加载整份配置 —— 同一台机器上其他入站
+       * 会跟着一起停，而报错跟「你刚改了加密方式」看不出关联。
+       */
+      if (!isProxyInboundShadowsocksMethod(inbound.method)) {
+        return `不支持的加密方式「${text(inbound.method)}」，只能用 SS2022 的那三种`;
+      }
+    }
   }
 
   if (inbound.security === "reality") {
@@ -426,6 +493,14 @@ function singboxTransport(inbound: ProxyInbound): Record<string, unknown> | null
       type: "http",
       ...(inbound.path ? { path: inbound.path } : {}),
       ...(inbound.host ? { host: [inbound.host] } : {}),
+    };
+  }
+  if (inbound.transport === "httpupgrade") {
+    // 注意 host 是单个字符串，不是 http 那样的数组 —— 写成数组 sing-box 直接拒配置。
+    return {
+      type: "httpupgrade",
+      ...(inbound.path ? { path: inbound.path } : {}),
+      ...(inbound.host ? { host: inbound.host } : {}),
     };
   }
   // tcp 没有传输块。xhttp 走不到这里 —— validateProxyInbound 已经挡在前面了。

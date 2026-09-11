@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   formatBandwidthMbps,
   formatProxyNodeQuotaDetail,
+  formatProxyNodeQuotaLabeled,
   hasProxyNodeQuota,
   formatQuotaBytes,
   normalizeProxyNodeResetDay,
@@ -96,35 +97,40 @@ test("重置日收敛到 1-28", () => {
   assert.equal(normalizeProxyNodeResetDay(undefined), 1);
 });
 
-test("展开后的一行带标签，三个数各自写清是什么", () => {
-  // 折起来时的 `500M/1T/367G` 得先知道顺序才读得懂；展开了就没必要让人猜。
+test("展开行只给数字，不写标签 —— 写了会被截断，最想看的已用量反而没了", () => {
+  assert.equal(
+    formatProxyNodeQuotaDetail({ bandwidthMbps: 1000, trafficLimit: 10e12, trafficUsed: 33.2e6 }),
+    "1G / 10T / 33.2M · 0%",
+  );
   assert.equal(
     formatProxyNodeQuotaDetail({ bandwidthMbps: 500, trafficLimit: 1000 * GB, trafficUsed: 367 * GB }),
-    "带宽 500M · 总流量 1T · 已用 367G（37%）",
+    "500M / 1T / 367G · 37%",
   );
 });
 
-test("没填的那一段在展开行里直接不出现，而不是占位", () => {
-  // 折起来那一行要对齐所以用破折号占位，展开这一行是散文式的，占位只是噪音。
+test("缺的那一段用破折号占位，三个数的位置才对得齐", () => {
+  // 顺序固定为 带宽 / 总流量 / 已用；省略会让人数不清第几个是第几个。
   assert.equal(
     formatProxyNodeQuotaDetail({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 12 * GB }),
-    "已用 12G",
-  );
-  assert.equal(
-    formatProxyNodeQuotaDetail({ bandwidthMbps: 1000, trafficLimit: 0, trafficUsed: 0 }),
-    "带宽 1G · 已用 0",
+    "\u2014 / \u2014 / 12G",
   );
 });
 
-test("没设总流量就不显示百分比 —— 没有分母", () => {
+test("没设总流量就不给百分比 —— 没有分母", () => {
   const text = formatProxyNodeQuotaDetail({ bandwidthMbps: 500, trafficLimit: 0, trafficUsed: 5 * GB });
   assert.doesNotMatch(text, /%/);
 });
 
-test("三样全空时没有可展开的东西，图标不该出现", () => {
-  assert.equal(hasProxyNodeQuota({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 0 }), false);
-  // 任意一样有值就值得给个入口。
-  assert.equal(hasProxyNodeQuota({ bandwidthMbps: 500, trafficLimit: 0, trafficUsed: 0 }), true);
-  assert.equal(hasProxyNodeQuota({ bandwidthMbps: 0, trafficLimit: 1000 * GB, trafficUsed: 0 }), true);
-  assert.equal(hasProxyNodeQuota({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 1 }), true);
+test("带标签的写法留给悬停说明，那里不缺地方", () => {
+  // 手机上靠固定顺序认，桌面端鼠标一停就能知道哪个是哪个。
+  assert.equal(
+    formatProxyNodeQuotaLabeled({ bandwidthMbps: 500, trafficLimit: 1000 * GB, trafficUsed: 367 * GB }),
+    "带宽 500M · 总流量 1T · 已用 367G（37%）",
+  );
+  // 带标签那一版是散文式的，缺项直接不出现而不是占位。
+  assert.equal(
+    formatProxyNodeQuotaLabeled({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 12 * GB }),
+    "已用 12G",
+  );
 });
+
