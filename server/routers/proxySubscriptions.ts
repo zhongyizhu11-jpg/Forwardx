@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { z } from "zod";
 
-import { protectedProcedure, router } from "../_core/trpc";
+import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import {
   parseProxyNodeLink,
@@ -190,6 +190,33 @@ export const proxySubscriptionsRouter = router({
     }));
     return [...owned, ...sharedRows];
   }),
+
+  /**
+   * 这些节点各自分享给了谁。
+   *
+   * 管理员专用：要选人就得先能列用户，而用户清单本来就只有管理员看得到。
+   * 普通用户在自己的节点行上看到的是「已分享 N」这个计数，不含是谁。
+   */
+  nodeShares: adminProcedure
+    .input(z.object({ nodeIds: z.array(z.number().int().positive()).max(100) }))
+    .query(async ({ input }) => {
+      const map = await db.getProxyNodeShareUserIds(input.nodeIds);
+      return Array.from(map.entries()).map(([nodeId, userIds]) => ({ nodeId, userIds }));
+    }),
+
+  /** 设定这个节点分享给谁（全量替换）。 */
+  setNodeShares: adminProcedure
+    .input(z.object({
+      nodeId: z.number().int().positive(),
+      userIds: z.array(z.number().int().positive()).max(200),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const node = await db.getProxyNodeById(input.nodeId);
+      if (!node) throw new Error("客户端节点不存在");
+      await db.setProxyNodeShareUsers(input.nodeId, input.userIds);
+      console.info(`[ProxyNode] Updated shares nodeId=${input.nodeId} count=${input.userIds.length} by=${ctx.user.id}`);
+      return { success: true };
+    }),
 
   createNode: protectedProcedure
     .input(z.object({

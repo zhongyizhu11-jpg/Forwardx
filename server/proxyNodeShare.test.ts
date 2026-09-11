@@ -140,6 +140,48 @@ test("重新设置是全量替换", () => {
   `);
 });
 
+test("从节点这边选人，和从用户那边选节点是同一件事", () => {
+  // 两个入口写的是同一张表，从哪边设都得能从另一边读出来。
+  runInDatabase(String.raw`
+    await exec("INSERT INTO users (id, username, password, role, allowProxySubscription) VALUES (3, 'carol', 'hash', 'user', 1)");
+    const nodeId = await makeNode(1, "HK-01", 443);
+    await repo.setProxyNodeShareUsers(nodeId, [2, 3]);
+    assert.deepEqual(await repo.getProxyNodeIdsSharedToUser(2), [nodeId]);
+    assert.deepEqual(await repo.getProxyNodeShareRecipients(nodeId), [2, 3]);
+
+    await repo.setProxyNodeShareUsers(nodeId, [3]);
+    assert.deepEqual(await repo.getProxyNodeIdsSharedToUser(2), [], "去掉的人要真的拿不到");
+    assert.deepEqual(await repo.getProxyNodeShareRecipients(nodeId), [3]);
+  `);
+});
+
+test("从节点这边也不会把节点分享给它自己的主人", () => {
+  runInDatabase(String.raw`
+    const nodeId = await makeNode(1, "HK-01", 443);
+    await repo.setProxyNodeShareUsers(nodeId, [1, 2]);
+    assert.deepEqual(await repo.getProxyNodeShareRecipients(nodeId), [2]);
+  `);
+});
+
+test("两个入口互不覆盖：一个节点分给多人，改其中一人不影响另一人", () => {
+  /**
+   * setProxyNodeSharesForUser 按用户全量替换，setProxyNodeShareUsers 按节点全量替换。
+   * 两个「全量」的范围不一样，搞混的话从用户那边保存一次会把别人的分享清掉。
+   */
+  runInDatabase(String.raw`
+    await exec("INSERT INTO users (id, username, password, role, allowProxySubscription) VALUES (3, 'carol', 'hash', 'user', 1)");
+    const a = await makeNode(1, "HK-01", 443);
+    const b = await makeNode(1, "HK-02", 444);
+    await repo.setProxyNodeShareUsers(a, [2, 3]);
+
+    // 在 bob 的权限页里把他的节点改成只有 b。
+    await repo.setProxyNodeSharesForUser(2, [b]);
+
+    assert.deepEqual(await repo.getProxyNodeIdsSharedToUser(2), [b]);
+    assert.deepEqual(await repo.getProxyNodeIdsSharedToUser(3), [a], "carol 的分享不该被 bob 那次保存带走");
+  `);
+});
+
 test("节点删掉，分享记录跟着删", () => {
   /**
    * 留着的话对方订阅指向一个不存在的节点 id，而管理端还显示「已分享给 1 人」——

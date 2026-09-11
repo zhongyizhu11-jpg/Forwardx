@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { ProxyNodeShareDialog, type ProxyNodeShareTarget } from "@/components/proxy/ProxyNodeShareDialog";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import {
@@ -25,7 +26,7 @@ import {
   type ProxyInboundSecurity,
 } from "@shared/proxyInbound";
 import { PROXY_NODE_PROTOCOL_LABELS, type ProxyNodeProtocol, type ProxyNodeTransport } from "@shared/proxyNode";
-import { ChevronDown, Copy, KeyRound, Link2, Pencil, Plus, Radio, RefreshCw, Server, Trash2, UserPlus, UserRound, Users } from "lucide-react";
+import { ChevronDown, Copy, KeyRound, Link2, Pencil, Plus, Radio, RefreshCw, Server, Share2, Trash2, UserPlus, UserRound, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -170,6 +171,27 @@ export default function ProxyInboundsSection() {
   const [linkRows, setLinkRows] = useState<Array<{ userId: number; userName: string; name: string; link: string }>>([]);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [linkLoadingId, setLinkLoadingId] = useState(0);
+
+  /**
+   * 从节点这边发起分享。多用户入站派生出好几行节点，每一行是一份独立凭据，
+   * 所以是按凭据分别选人 —— 把两份凭据混成一个列表，就分不清谁拿到了哪一份。
+   */
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [shareTargets, setShareTargets] = useState<ProxyNodeShareTarget[]>([]);
+
+  const openShare = (row: any) => {
+    const ids: number[] = (row.derivedNodeIds || []).map((id: any) => Number(id)).filter(Boolean);
+    if (ids.length === 0) {
+      toast.error("这个节点还没生成出客户端节点，保存一次再试");
+      return;
+    }
+    const users = Array.isArray(row.users) ? row.users : [];
+    setShareTargets(ids.map((id, index) => ({
+      id,
+      label: users[index]?.name ? `凭据：${users[index].name}` : `凭据 ${index + 1}`,
+    })));
+    setShareDialogOpen(true);
+  };
 
   const copyLink = async (link: string) => {
     if (await copyTextToClipboard(link)) toast.success("链接已复制，粘进客户端即可");
@@ -403,6 +425,11 @@ export default function ProxyInboundsSection() {
                       >
                         <Link2 className="h-3.5 w-3.5" />
                       </Button>
+                      {isAdmin ? (
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openShare(row)} title="分享给用户">
+                          <Share2 className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : null}
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(row)} title="编辑">
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
@@ -752,6 +779,12 @@ export default function ProxyInboundsSection() {
       </Dialog>
 
       {/* 多用户入站一个用户一条链接，得先挑一个 —— 复制错了等于把别人的凭据发出去。 */}
+      <ProxyNodeShareDialog
+        open={shareDialogOpen}
+        onOpenChange={setShareDialogOpen}
+        targets={shareTargets}
+      />
+
       <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
         <DialogContent className="flex max-h-[92svh] flex-col overflow-hidden sm:max-w-lg">
           <DialogHeader>

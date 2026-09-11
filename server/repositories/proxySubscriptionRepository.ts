@@ -195,6 +195,28 @@ export async function getProxyNodeShareOptions() {
     .orderBy(asc(proxyNodes.sortOrder), asc(proxyNodes.id));
 }
 
+/**
+ * 设定「这个节点分享给了谁」（全量替换）。
+ *
+ * 和 setProxyNodeSharesForUser 是同一件事的两个入口：那个从用户出发挑节点，
+ * 这个从节点出发挑人。站在节点这边想把它租出去时，绕到用户页去一个个找人
+ * 是件很别扭的事。
+ */
+export async function setProxyNodeShareUsers(nodeId: number, userIds: readonly number[]) {
+  const db = await getDb();
+  if (!db) return;
+  const id = Number(nodeId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  await db.delete(proxyNodeShares).where(eq(proxyNodeShares.nodeId, id));
+
+  const node = await getProxyNodeById(id);
+  if (!node) return;
+  const ids = Array.from(new Set(userIds.map((value) => Number(value))))
+    .filter((value) => Number.isInteger(value) && value > 0 && value !== Number(node.userId));
+  if (ids.length === 0) return;
+  await db.insert(proxyNodeShares).values(ids.map((userId) => ({ nodeId: id, userId })) as any);
+}
+
 /** 节点被分享给的那些人。管理端展示用。 */
 export async function getProxyNodeShareRecipients(nodeId: number): Promise<number[]> {
   const map = await getProxyNodeShareUserIds([Number(nodeId)]);

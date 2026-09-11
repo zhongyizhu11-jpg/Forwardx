@@ -1,5 +1,7 @@
+import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import ProxyInboundsSection from "@/components/proxy/ProxyInboundsSection";
+import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -84,6 +86,7 @@ import {
   QrCode,
   Rocket,
   Server,
+  Share2,
   Shield,
   Boxes,
   Ship,
@@ -513,6 +516,11 @@ export default function ClientSubscriptionsPage() {
 
   const nodes = nodesQuery.data ?? [];
   const tokens = tokensQuery.data ?? [];
+  const { user: me } = useAuth();
+  const isAdmin = me?.role === "admin";
+
+  /** 从节点这边发起分享。粘进来的节点只有一份凭据，所以就是一个列表。 */
+  const [shareNode, setShareNode] = useState<{ id: number; name: string } | null>(null);
 
   /**
    * 「落地节点」这一段只列粘进来的，不列自建节点派生出来的那些。
@@ -810,6 +818,17 @@ export default function ClientSubscriptionsPage() {
                                 checked={!!node.isEnabled}
                                 onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
                               />
+                              {isAdmin ? (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-7 w-7 shrink-0"
+                                  title="分享给用户"
+                                  onClick={() => setShareNode({ id: Number(node.id), name: String(node.name || "") })}
+                                >
+                                  <Share2 className="h-3.5 w-3.5" />
+                                </Button>
+                              ) : null}
                               <Button
                                 size="icon"
                                 variant="ghost"
@@ -1387,6 +1406,13 @@ export default function ClientSubscriptionsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <ProxyNodeShareDialog
+        open={!!shareNode}
+        onOpenChange={(open) => { if (!open) setShareNode(null); }}
+        targets={shareNode ? [{ id: shareNode.id, label: shareNode.name }] : []}
+        title={shareNode ? `分享「${shareNode.name}」` : "分享这个节点"}
+      />
 
       <Dialog open={nodeDialogOpen} onOpenChange={setNodeDialogOpen}>
         {/* DialogContent 默认 max-h + overflow-hidden，内容超出直接裁掉、滚不动。
