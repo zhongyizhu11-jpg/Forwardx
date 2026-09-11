@@ -36,15 +36,25 @@ export const PROXY_INBOUND_PROTOCOLS = [
 
 export type ProxyInboundProtocol = (typeof PROXY_INBOUND_PROTOCOLS)[number];
 
-export const PROXY_INBOUND_SECURITIES = ["reality", "tls", "none"] as const;
+export const PROXY_INBOUND_SECURITIES = ["reality", "acme", "tls", "none"] as const;
 
 export type ProxyInboundSecurity = (typeof PROXY_INBOUND_SECURITIES)[number];
 
 export const PROXY_INBOUND_SECURITY_LABELS: Record<ProxyInboundSecurity, string> = {
   reality: "REALITY",
-  tls: "TLS",
+  acme: "TLS（自动签证书）",
+  tls: "TLS（自备证书）",
   none: "无",
 };
+
+/**
+ * 自动签证书走 sing-box 自己的 ACME，面板不实现 ACME 客户端。
+ *
+ * 这样证书的申请与续期都在落地机上完成，私钥一次都不经过面板 —— 面板只声明
+ * 域名和邮箱。用的是 1.14 引入的 certificate.providers，不是 tls.acme：后者在
+ * 1.14 已标记废弃、1.16 移除，建在上面等于给自己埋一个到点必炸的雷。
+ */
+export const PROXY_INBOUND_ACME_DATA_DIR = "/var/lib/forwardx-singbox/acme";
 
 /**
  * REALITY 只能架在 TCP 上的 TLS 之上。
@@ -79,10 +89,15 @@ export const PROXY_INBOUND_SNELL_DEFAULT_VERSION = 5;
 /** 这个协议能选哪些安全层。UI 用它来收窄下拉，而不是让用户选完再报错。 */
 export function proxyInboundSecurities(protocol: ProxyInboundProtocol): ProxyInboundSecurity[] {
   if (NO_TLS_PROTOCOLS.includes(protocol)) return ["none"];
-  const securities: ProxyInboundSecurity[] = ["tls"];
+  const securities: ProxyInboundSecurity[] = ["acme", "tls"];
   if (PROXY_INBOUND_REALITY_PROTOCOLS.includes(protocol)) securities.unshift("reality");
   if (!ALWAYS_TLS_PROTOCOLS.includes(protocol)) securities.push("none");
   return securities;
+}
+
+/** 需要真证书的安全层。REALITY 不在其列 —— 它正是拿来绕开证书的。 */
+export function proxyInboundNeedsCertificate(security: ProxyInboundSecurity): boolean {
+  return security === "tls" || security === "acme";
 }
 
 /**
@@ -128,6 +143,8 @@ export type ProxyInbound = {
   /** security=tls 时的证书路径，落地机本地路径。 */
   certPath: string;
   keyPath: string;
+  /** security=acme 时用来注册 ACME 账户的邮箱。到期提醒会发到这里。 */
+  acmeEmail: string;
   /** REALITY：私钥只在服务端，公钥才发给客户端。 */
   realityPrivateKey: string;
   realityPublicKey: string;
@@ -168,6 +185,7 @@ export function createEmptyProxyInbound(): ProxyInbound {
     alpn: [],
     certPath: "",
     keyPath: "",
+    acmeEmail: "",
     realityPrivateKey: "",
     realityPublicKey: "",
     realityShortId: "",
@@ -243,6 +261,22 @@ export function validateProxyInbound(inbound: ProxyInbound): string {
   if (inbound.security === "tls" && (!text(inbound.certPath) || !text(inbound.keyPath))) {
     return "TLS 需要证书和私钥的路径";
   }
+  if (inbound.security === "acme") {
+    if (!text(inbound.serverName)) return "自动签证书需要一个解析到这台落地机的域名";
+    if (!text(inbound.acmeEmail)) return "自动签证书需要一个邮箱，用来注册 ACME 账户";
+    /**
+     * 域名必须是真域名：IP 签不出证书，而 ACME 失败在客户端只表现为握手失败。
+     *
+     * 顶级标签要求含字母 —— 只写「点分标签」的话 1.2.3.4 也能匹配上，因为标签
+     * 本来就允许数字。真实顶级域一律含字母（punycode 的 xn-- 也含）。
+     */
+    const domain = text(inbound.serverName);
+    const labelOk = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(domain);
+    const tldHasLetter = /[a-z]/i.test(domain.slice(domain.lastIndexOf(".") + 1));
+    if (!labelOk || !tldHasLetter) {
+      return "自动签证书的域名看起来不是一个合法域名（不能填 IP）";
+    }
+  }
   if (inbound.protocol === "snell") {
     const version = Number(inbound.snellVersion) || 0;
     if (!(PROXY_INBOUND_SNELL_VERSIONS as readonly number[]).includes(version)) {
@@ -262,11 +296,27 @@ export function proxyInboundRealityDest(inbound: ProxyInbound): { server: string
   return { server: raw.slice(0, colon), port: toPort(raw.slice(colon + 1)) || 443 };
 }
 
+/**
+ * 这个入站用的 ACME 证书提供者 tag。
+ *
+ * 按域名去重：同一个域名上的多个入站共用一张证书，既省一次签发，也避开
+ * Let's Encrypt 按域名算的签发频率限制 —— 每个入站各签一次很容易撞上。
+ */
+export function proxyInboundAcmeTag(inbound: ProxyInbound): string {
+  return `acme-${text(inbound.serverName).toLowerCase().replace(/[^a-z0-9.-]/g, "-")}`;
+}
+
 function singboxServerTls(inbound: ProxyInbound): Record<string, unknown> | null {
   if (inbound.security === "none") return null;
   const tls: Record<string, unknown> = { enabled: true };
   if (inbound.serverName) tls.server_name = inbound.serverName;
   if (inbound.alpn.length) tls.alpn = [...inbound.alpn];
+  if (inbound.security === "acme") {
+    // 指向 certificate.providers 里的那一条。buildSingboxConfig 保证它一定存在 ——
+    // sing-box 的 check 查不出悬空引用，那样只会在握手时才失败。
+    tls.certificate_provider = proxyInboundAcmeTag(inbound);
+    return tls;
+  }
   if (inbound.security === "reality") {
     const dest = proxyInboundRealityDest(inbound);
     tls.reality = {
@@ -362,10 +412,38 @@ export function buildSingboxInbound(inbound: ProxyInbound, tag: string): Record<
   return base;
 }
 
+/**
+ * 这一批入站需要的 ACME 证书提供者。
+ *
+ * 与入站一起生成而不是分开配置：引用与被引用方同源，就不可能出现「入站指向一个
+ * 不存在的 provider」——sing-box 的 check 查不出那种悬空引用，配置照样通过、服务
+ * 照样起来，只在客户端握手时失败，又是一次看不出原因的连接失败。
+ */
+export function buildSingboxCertificateProviders(
+  inbounds: readonly { inbound: ProxyInbound }[],
+): Record<string, unknown>[] {
+  const byTag = new Map<string, Record<string, unknown>>();
+  for (const { inbound } of inbounds) {
+    if (inbound.security !== "acme") continue;
+    const tag = proxyInboundAcmeTag(inbound);
+    if (byTag.has(tag)) continue;
+    byTag.set(tag, {
+      type: "acme",
+      tag,
+      domain: [inbound.serverName],
+      email: inbound.acmeEmail,
+      data_directory: PROXY_INBOUND_ACME_DATA_DIR,
+    });
+  }
+  return Array.from(byTag.values());
+}
+
 /** 落地机上一份完整的 sing-box 配置。入站由面板下发，出站固定直连。 */
 export function buildSingboxConfig(inbounds: readonly { inbound: ProxyInbound; tag: string }[]): string {
+  const providers = buildSingboxCertificateProviders(inbounds);
   const config = {
     log: { level: "warn", timestamp: true },
+    ...(providers.length > 0 ? { certificate: { providers } } : {}),
     inbounds: inbounds.map((item) => buildSingboxInbound(item.inbound, item.tag)),
     // 落地机的职责就是把流量放出去，不做分流。
     outbounds: [{ type: "direct", tag: "direct" }],
@@ -401,6 +479,8 @@ export function proxyNodeFromInbound(inbound: ProxyInbound, options: ProxyNodeFr
   node.host = inbound.host;
   node.xhttpMode = inbound.xhttpMode;
   node.tls = inbound.security !== "none";
+  // 自动签的是公信证书，客户端不必跳过校验；自备证书那条路由用户自己保证。
+  if (inbound.security === "acme") node.allowInsecure = false;
   node.sni = inbound.serverName;
   node.alpn = [...inbound.alpn];
   node.obfs = inbound.obfs;

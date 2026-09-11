@@ -55,6 +55,7 @@ export function proxyInboundFromRow(row: Record<string, unknown>): ProxyInbound 
   inbound.alpn = text(row.alpn).split(",").map((item) => item.trim()).filter(Boolean);
   inbound.certPath = text(row.certPath);
   inbound.keyPath = text(row.keyPath);
+  inbound.acmeEmail = text(row.acmeEmail);
   inbound.realityPrivateKey = text(row.realityPrivateKey);
   inbound.realityPublicKey = text(row.realityPublicKey);
   inbound.realityShortId = text(row.realityShortId);
@@ -87,6 +88,7 @@ export function proxyInboundToRow(inbound: ProxyInbound): Partial<InsertProxyInb
     alpn: inbound.alpn.length ? inbound.alpn.join(",") : null,
     certPath: inbound.certPath || null,
     keyPath: inbound.keyPath || null,
+    acmeEmail: inbound.acmeEmail || null,
     realityPrivateKey: inbound.realityPrivateKey || null,
     realityPublicKey: inbound.realityPublicKey || null,
     realityShortId: inbound.realityShortId || null,

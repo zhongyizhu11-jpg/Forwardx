@@ -470,7 +470,7 @@ export const proxyInbounds = table("proxy_inbounds", {
   protocol: varchar("protocol", { length: 32 }).notNull().default("vless"),
   port: int("port").notNull(),
   transport: varchar("transport", { length: 16 }).notNull().default("tcp"), // tcp | ws | grpc | http
-  security: varchar("security", { length: 16 }).notNull().default("reality"), // reality | tls | none
+  security: varchar("security", { length: 16 }).notNull().default("reality"), // reality | acme | tls | none
   uuid: text("uuid"),
   password: text("password"),
   method: text("method"),
@@ -482,6 +482,8 @@ export const proxyInbounds = table("proxy_inbounds", {
   alpn: text("alpn"),
   certPath: text("certPath"),
   keyPath: text("keyPath"),
+  // security=acme 时注册 ACME 账户用的邮箱
+  acmeEmail: text("acmeEmail"),
   // Reality 私钥只在服务端，公钥才发给客户端
   realityPrivateKey: text("realityPrivateKey"),
   realityPublicKey: text("realityPublicKey"),

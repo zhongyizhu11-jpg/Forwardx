@@ -138,6 +138,7 @@ const inboundInput = z.object({
   host: z.string().trim().max(253).optional(),
   certPath: z.string().trim().max(300).optional(),
   keyPath: z.string().trim().max(300).optional(),
+  acmeEmail: z.string().trim().max(200).optional(),
   flow: z.string().trim().max(64).optional(),
   method: z.string().trim().max(64).optional(),
   obfs: z.string().trim().max(32).optional(),
@@ -166,6 +167,7 @@ function mergeInbound(base: ProxyInbound, input: Partial<InboundInput>): ProxyIn
   if (input.host !== undefined) merged.host = input.host;
   if (input.certPath !== undefined) merged.certPath = input.certPath;
   if (input.keyPath !== undefined) merged.keyPath = input.keyPath;
+  if (input.acmeEmail !== undefined) merged.acmeEmail = input.acmeEmail;
   if (input.flow !== undefined) merged.flow = input.flow;
   if (input.method !== undefined) merged.method = input.method;
   if (input.obfs !== undefined) merged.obfs = input.obfs.toLowerCase();

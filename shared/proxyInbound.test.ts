@@ -10,6 +10,7 @@ import {
   createEmptyProxyInbound,
   isValidRealityShortId,
   proxyInboundRealityDest,
+  proxyInboundNeedsCertificate,
   proxyInboundSecurities,
   proxyInboundTransports,
   proxyNodeFromInbound,
@@ -38,12 +39,12 @@ const VLESS_REALITY = inbound({
 
 test("REALITY 只对 TCP 系协议开放", () => {
   // REALITY 是架在 TCP 的 TLS 之上的，QUIC 那一层没有它的位置。
-  assert.deepEqual(proxyInboundSecurities("vless"), ["reality", "tls", "none"]);
-  assert.deepEqual(proxyInboundSecurities("trojan"), ["reality", "tls"]);
-  assert.deepEqual(proxyInboundSecurities("hysteria2"), ["tls"]);
-  assert.deepEqual(proxyInboundSecurities("tuic"), ["tls"]);
+  assert.deepEqual(proxyInboundSecurities("vless"), ["reality", "acme", "tls", "none"]);
+  assert.deepEqual(proxyInboundSecurities("trojan"), ["reality", "acme", "tls"]);
+  assert.deepEqual(proxyInboundSecurities("hysteria2"), ["acme", "tls"]);
+  assert.deepEqual(proxyInboundSecurities("tuic"), ["acme", "tls"]);
   // AnyTLS 的服务端能开 REALITY，但主流客户端都明说不支持，开出来没人连得上。
-  assert.deepEqual(proxyInboundSecurities("anytls"), ["tls"]);
+  assert.deepEqual(proxyInboundSecurities("anytls"), ["acme", "tls"]);
   // 这两个压根没有 TLS 层。
   assert.deepEqual(proxyInboundSecurities("shadowsocks"), ["none"]);
   assert.deepEqual(proxyInboundSecurities("snell"), ["none"]);
@@ -291,4 +292,85 @@ test("派生的节点转成链接后能再解析回来", () => {
   assert.equal(parsed.node.password, "pw");
   assert.equal(parsed.node.obfs, "salamander");
   assert.equal(parsed.node.sni, "a.com");
+});
+
+// ==================== 自动签证书（ACME） ====================
+
+const ACME_TROJAN = inbound({
+  protocol: "trojan",
+  name: "HK TLS",
+  port: 443,
+  security: "acme",
+  password: "pw",
+  serverName: "a.example.com",
+  acmeEmail: "me@example.com",
+});
+
+test("需要真证书的安全层里有 acme，REALITY 不在其列", () => {
+  assert.equal(proxyInboundNeedsCertificate("acme"), true);
+  assert.equal(proxyInboundNeedsCertificate("tls"), true);
+  // REALITY 正是拿来绕开证书的。
+  assert.equal(proxyInboundNeedsCertificate("reality"), false);
+  assert.equal(proxyInboundNeedsCertificate("none"), false);
+  // 有 TLS 层的协议都能选自动签。
+  assert.ok(proxyInboundSecurities("trojan").includes("acme"));
+  assert.ok(proxyInboundSecurities("hysteria2").includes("acme"));
+  assert.ok(!proxyInboundSecurities("shadowsocks").includes("acme"));
+});
+
+test("自动签证书缺域名或邮箱都当场报错，且不许填 IP", () => {
+  assert.equal(validateProxyInbound(ACME_TROJAN), "");
+  assert.match(validateProxyInbound({ ...ACME_TROJAN, serverName: "" }), /域名/);
+  assert.match(validateProxyInbound({ ...ACME_TROJAN, acmeEmail: "" }), /邮箱/);
+  // IP 签不出证书，而失败在客户端只表现为握手失败 —— 必须在保存时就挡住。
+  for (const bad of ["1.2.3.4", "192.168.0.1", "10.0.0.1"]) {
+    assert.match(validateProxyInbound({ ...ACME_TROJAN, serverName: bad }), /不是一个合法域名/, bad);
+  }
+  // 正常域名不能被误伤，含数字的和多级的都要放行。
+  for (const good of ["a.example.com", "n1.cdn-2.example.co.uk", "xn--fiqs8s.example.com"]) {
+    assert.equal(validateProxyInbound({ ...ACME_TROJAN, serverName: good }), "", good);
+  }
+});
+
+test("入站的引用与 provider 同源生成，不可能悬空", () => {
+  /**
+   * sing-box 的 check 查不出 certificate_provider 指向一个不存在的 tag：配置照样
+   * 通过、服务照样起来，只在客户端握手时失败。所以引用和被引用方必须一起生成。
+   */
+  const config = JSON.parse(buildSingboxConfig([{ inbound: ACME_TROJAN, tag: "in-1" }]));
+  const tags = new Set((config.certificate.providers as any[]).map((item) => item.tag));
+  for (const item of config.inbounds as any[]) {
+    const ref = item.tls?.certificate_provider;
+    if (ref) assert.ok(tags.has(ref), `悬空引用: ${ref}`);
+  }
+  assert.equal((config.certificate.providers as any[])[0].type, "acme");
+  assert.deepEqual((config.certificate.providers as any[])[0].domain, ["a.example.com"]);
+  assert.equal((config.certificate.providers as any[])[0].email, "me@example.com");
+});
+
+test("同一个域名上的多个入站共用一张证书", () => {
+  // 每个入站各签一次很容易撞上 Let's Encrypt 按域名算的签发频率限制。
+  const config = JSON.parse(buildSingboxConfig([
+    { inbound: ACME_TROJAN, tag: "in-1" },
+    { inbound: { ...ACME_TROJAN, protocol: "anytls", port: 8443 }, tag: "in-2" },
+    { inbound: { ...ACME_TROJAN, serverName: "b.example.com", port: 9443 }, tag: "in-3" },
+  ]));
+
+  const providers = config.certificate.providers as any[];
+  assert.equal(providers.length, 2);
+  assert.deepEqual(providers.map((item) => item.tag), ["acme-a.example.com", "acme-b.example.com"]);
+  assert.equal(config.inbounds[0].tls.certificate_provider, config.inbounds[1].tls.certificate_provider);
+  assert.notEqual(config.inbounds[0].tls.certificate_provider, config.inbounds[2].tls.certificate_provider);
+});
+
+test("没有自动签的入站时不生成 certificate 块", () => {
+  const config = JSON.parse(buildSingboxConfig([{ inbound: VLESS_REALITY, tag: "in-1" }]));
+  assert.equal(config.certificate, undefined);
+});
+
+test("自动签的证书是公信的，派生节点不跳过证书校验", () => {
+  const node = proxyNodeFromInbound(ACME_TROJAN, { address: "1.2.3.4" });
+  assert.equal(node.tls, true);
+  assert.equal(node.sni, "a.example.com");
+  assert.equal(node.allowInsecure, false);
 });

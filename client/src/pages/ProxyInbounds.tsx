@@ -46,6 +46,7 @@ type InboundForm = {
   host: string;
   certPath: string;
   keyPath: string;
+  acmeEmail: string;
   obfs: string;
   obfsPassword: string;
   snellVersion: number;
@@ -67,6 +68,7 @@ function emptyForm(): InboundForm {
     host: "",
     certPath: "",
     keyPath: "",
+    acmeEmail: "",
     obfs: "",
     obfsPassword: "",
     snellVersion: PROXY_INBOUND_SNELL_VERSIONS[0],
@@ -163,6 +165,7 @@ export default function ProxyInbounds() {
       host: String(row.host || ""),
       certPath: String(row.certPath || ""),
       keyPath: String(row.keyPath || ""),
+      acmeEmail: String(row.acmeEmail || ""),
       obfs: String(row.obfs || ""),
       obfsPassword: String(row.obfsPassword || ""),
       snellVersion: Number(row.snellVersion || PROXY_INBOUND_SNELL_VERSIONS[0]),
@@ -187,6 +190,7 @@ export default function ProxyInbounds() {
       host: form.host.trim(),
       certPath: form.certPath.trim(),
       keyPath: form.keyPath.trim(),
+      acmeEmail: form.acmeEmail.trim(),
       obfs: form.obfs.trim(),
       obfsPassword: form.obfsPassword.trim(),
       snellVersion: form.snellVersion,
@@ -220,6 +224,7 @@ export default function ProxyInbounds() {
   const saving = createInbound.isPending || updateInbound.isPending;
   const isReality = form.security === "reality";
   const isTls = form.security === "tls";
+  const isAcme = form.security === "acme";
   const hasTransportOptions = transports.length > 1;
   const usesPath = form.transport === "ws" || form.transport === "grpc" || form.transport === "http";
 
@@ -400,6 +405,36 @@ export default function ProxyInbounds() {
                     placeholder="留空按握手域名的 443"
                   />
                 </div>
+              </div>
+            ) : null}
+
+            {isAcme ? (
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">域名</Label>
+                  <Input
+                    value={form.serverName}
+                    onChange={(event) => setForm((prev) => ({ ...prev, serverName: event.target.value }))}
+                    placeholder="a.example.com"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    这个域名要先解析到这台落地机，签证书时会来验。填 IP 签不出来。
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">邮箱</Label>
+                  <Input
+                    value={form.acmeEmail}
+                    onChange={(event) => setForm((prev) => ({ ...prev, acmeEmail: event.target.value }))}
+                    placeholder="you@example.com"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    注册 Let's Encrypt 账户用，证书快到期时会发提醒到这里。
+                  </p>
+                </div>
+                <p className="text-xs text-amber-600 dark:text-amber-500">
+                  签证书需要落地机的 80 或 443 端口能从公网访问到。证书由落地机自己申请和续期，私钥不经过面板。
+                </p>
               </div>
             ) : null}
 

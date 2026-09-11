@@ -304,7 +304,7 @@ const tables: TableDef[] = [
       c("security", "varchar", { length: 16, notNull: true, default: "reality" }),
       c("uuid", "text"), c("password", "text"), c("method", "text"), c("flow", "text"),
       c("path", "text"), c("host", "text"), c("xhttpMode", "text"),
-      c("serverName", "text"), c("alpn", "text"), c("certPath", "text"), c("keyPath", "text"),
+      c("serverName", "text"), c("alpn", "text"), c("certPath", "text"), c("keyPath", "text"), c("acmeEmail", "text"),
       c("realityPrivateKey", "text"), c("realityPublicKey", "text"),
       c("realityShortId", "text"), c("realityDest", "text"),
       c("obfs", "text"), c("obfsPassword", "text"),

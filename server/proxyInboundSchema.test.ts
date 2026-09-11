@@ -51,6 +51,7 @@ test("全新数据库会建出落地入站需要的表和列", () => {
       for (const name of [
         "userId", "hostId", "name", "protocol", "port", "transport", "security",
         "uuid", "password", "method", "flow", "serverName", "certPath", "keyPath",
+        "acmeEmail",
         "realityPrivateKey", "realityPublicKey", "realityShortId", "realityDest",
         "obfs", "obfsPassword", "upMbps", "downMbps", "congestionControl",
         "snellVersion", "snellMode", "isEnabled",
