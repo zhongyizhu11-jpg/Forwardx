@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 
 import {
   forwardRules,
@@ -71,6 +71,36 @@ export async function countRulesUsingProxyNode(id: number) {
     .from(forwardRules)
     .where(and(eq(forwardRules.proxyNodeId, id), eq(forwardRules.pendingDelete, false)));
   return rows.length;
+}
+
+/**
+ * 一批节点各自被哪些转发绑定。
+ *
+ * 一次查完而不是每个节点查一遍：节点多起来之后，逐个 count 会把一次列表请求
+ * 变成几十条查询。调用方拿到规则 id 之后还要用它去汇总流量和探测结果，
+ * 所以这里返回 id 而不只是个数。
+ */
+export async function getRuleIdsUsingProxyNodes(
+  nodeIds: readonly number[],
+): Promise<Map<number, number[]>> {
+  const result = new Map<number, number[]>();
+  const ids = Array.from(new Set(nodeIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  for (const id of ids) result.set(id, []);
+  if (ids.length === 0) return result;
+
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db
+    .select({ id: forwardRules.id, proxyNodeId: forwardRules.proxyNodeId })
+    .from(forwardRules)
+    .where(and(inArray(forwardRules.proxyNodeId, ids), eq(forwardRules.pendingDelete, false)));
+
+  for (const row of rows as any[]) {
+    const nodeId = Number(row.proxyNodeId || 0);
+    const list = result.get(nodeId);
+    if (list) list.push(Number(row.id));
+  }
+  return result;
 }
 
 // ==================== 客户端订阅：令牌 ====================

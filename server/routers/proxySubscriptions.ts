@@ -16,6 +16,11 @@ import {
   PROXY_NODE_AUTO_GROUPS,
   PROXY_SUBSCRIPTION_SKIP_LABELS,
 } from "../../shared/proxySubscriptionPlan";
+import {
+  PROXY_NODE_TRAFFIC_WINDOW_HOURS,
+  resolveProxyNodeHealth,
+  type ProxyNodeProbeSample,
+} from "../../shared/proxyNodeHealth";
 
 /**
  * 订阅令牌够长才安全：地址里带着全部节点凭据，一旦可猜就等于把节点送人。
@@ -114,8 +119,60 @@ export const proxySubscriptionsRouter = router({
   listNodes: protectedProcedure.query(async ({ ctx }) => {
     if (!await hasProxySubscriptionPermission(ctx)) return [];
     const nodes = await db.getProxyNodesByUser(ctx.user.id);
-    const counts = await Promise.all(nodes.map((node: any) => db.countRulesUsingProxyNode(node.id)));
-    return nodes.map((node: any, index: number) => ({ ...node, ruleCount: counts[index] }));
+    const ruleIdsByNode = await db.getRuleIdsUsingProxyNodes(nodes.map((node: any) => Number(node.id)));
+    const allRuleIds = Array.from(new Set(Array.from(ruleIdsByNode.values()).flat()));
+
+    /**
+     * 流量与探测一次查完。
+     *
+     * 用 getTrafficSummaryByRule 而不是自己拼 SQL，是为了跟「转发规则」页显示的
+     * 数字对齐 —— 那个函数处理了转发组、隧道、故障切换这些情况下流量该算到哪条
+     * 规则上。自己写一条朴素的 SUM，组里的规则会显示成 0，同一份流量在两个页面
+     * 上对不上号，比没有这个数字更糟。
+     *
+     * 它同时带回每条规则最近一次 tcping —— 探测目标就是这条转发的落地地址，
+     * 所以规则的探测结果直接就是「这个落地通不通」。
+     */
+    const summary = allRuleIds.length > 0
+      ? await db.getTrafficSummaryByRule({
+        userId: ctx.user.id,
+        ruleIds: allRuleIds,
+        since: new Date(Date.now() - PROXY_NODE_TRAFFIC_WINDOW_HOURS * 60 * 60 * 1000),
+      })
+      : [];
+    const byRule = new Map<number, any[]>();
+    for (const row of summary as any[]) {
+      const list = byRule.get(Number(row.ruleId)) || [];
+      list.push(row);
+      byRule.set(Number(row.ruleId), list);
+    }
+
+    return nodes.map((node: any) => {
+      const ruleIds = ruleIdsByNode.get(Number(node.id)) || [];
+      let trafficBytes = 0;
+      const samples: ProxyNodeProbeSample[] = [];
+      for (const ruleId of ruleIds) {
+        for (const row of byRule.get(ruleId) || []) {
+          trafficBytes += Number(row.bytesIn || 0) + Number(row.bytesOut || 0);
+          const at = row.latestLatencyAt ? new Date(row.latestLatencyAt).getTime() : 0;
+          if (at > 0) {
+            samples.push({
+              latencyMs: row.latestLatencyMs === null || row.latestLatencyMs === undefined
+                ? null
+                : Number(row.latestLatencyMs),
+              isTimeout: !!row.latestLatencyIsTimeout,
+              at,
+            });
+          }
+        }
+      }
+      return {
+        ...node,
+        ruleCount: ruleIds.length,
+        trafficBytes,
+        health: resolveProxyNodeHealth(samples),
+      };
+    });
   }),
 
   createNode: protectedProcedure

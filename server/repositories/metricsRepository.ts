@@ -22,7 +22,12 @@ import { normalizeAgentProbeCounts } from "../../shared/agentDtos";
 
 const TRAFFIC_BUCKET_MINUTES = 30;
 const TRAFFIC_BUCKET_SECONDS = TRAFFIC_BUCKET_MINUTES * 60;
-const TRAFFIC_BUCKET_RETENTION_HOURS = 72;
+/**
+ * 明细与分桶的保留期。导出是因为界面上「近 N 小时」的字样必须跟它一致 ——
+ * 这里改了而界面没跟上，那句标签就变成了一句假话（数字按更短的窗口算，
+ * 标签却写着更长的时间范围）。
+ */
+export const TRAFFIC_BUCKET_RETENTION_HOURS = 72;
 const LEGACY_TRAFFIC_REPORT_RETENTION_HOURS = 7 * 24;
 const SQLITE_HISTORY_DELETE_BATCH_SIZE = 2_000;
 const SQLITE_LATEST_METRIC_HOST_BATCH_SIZE = 100;

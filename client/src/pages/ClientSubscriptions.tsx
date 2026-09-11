@@ -10,7 +10,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { formatBytes } from "@/components/hosts/hostDisplay";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
 import {
   PROXY_NODE_PROTOCOL_LABELS,
@@ -50,6 +52,10 @@ import {
   type ProxyClientTarget,
   type ProxySubscriptionKind,
 } from "@shared/proxyClientImport";
+import {
+  PROXY_NODE_TRAFFIC_WINDOW_HOURS,
+  type ProxyNodeHealth,
+} from "@shared/proxyNodeHealth";
 import {
   Atom,
   AudioLines,
@@ -153,6 +159,33 @@ async function copyText(value: string, message: string) {
   }
 }
 
+const NODE_HEALTH_STYLES: Record<ProxyNodeHealth["state"], string> = {
+  online: "bg-emerald-500",
+  offline: "bg-red-500",
+  // 灰色而不是红色：没人在探它不等于它挂了，标红会把好节点冤枉成故障。
+  unknown: "bg-muted-foreground/40",
+};
+
+/**
+ * 落地节点的在线小圆点。
+ *
+ * 探测是中转机发出的 tcping，所以这里回答的是「中转连不连得上这个落地」，
+ * 不是「你的客户端连不连得上」—— 悬停说明里写明了，免得红点被当成落地挂了
+ * 而其实只是中转到落地那一段不通。
+ */
+function ProxyNodeHealthDot({ health }: { health?: ProxyNodeHealth | null }) {
+  const state = health?.state || "unknown";
+  const detail = health?.title || "暂无探测结果";
+  const label = state === "online" ? "在线" : state === "offline" ? "离线" : "未知";
+  return (
+    <span
+      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${NODE_HEALTH_STYLES[state]}`}
+      title={`${label} · ${detail}（由中转机探测，不代表你的客户端能连上）`}
+      aria-label={`${label}：${detail}`}
+    />
+  );
+}
+
 export default function ClientSubscriptionsPage() {
   const utils = trpc.useUtils();
   const confirm = useConfirmDialog();
@@ -160,7 +193,15 @@ export default function ClientSubscriptionsPage() {
   const permissionQuery = trpc.proxySubscriptions.permission.useQuery();
   const allowed = permissionQuery.data?.allowed ?? true;
 
-  const nodesQuery = trpc.proxySubscriptions.listNodes.useQuery();
+  /**
+   * 轮询而不是只在进页面时取一次：在线状态与流量是会变的，不刷新的话那个小圆点
+   * 会一直停在你进页面那一刻的颜色 —— 一个不动的状态灯比没有状态灯更误导。
+   * 探测的新鲜期是 6 分钟，30 秒一次足够跟上，也不至于把面板打满。
+   */
+  const nodesQuery = trpc.proxySubscriptions.listNodes.useQuery(undefined, {
+    refetchInterval: pollingInterval("slow"),
+    refetchOnWindowFocus: true,
+  });
   const tokensQuery = trpc.proxySubscriptions.listTokens.useQuery();
   const previewQuery = trpc.proxySubscriptions.preview.useQuery();
 
@@ -435,6 +476,7 @@ export default function ClientSubscriptionsPage() {
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
+                        <ProxyNodeHealthDot health={node.health} />
                         <span className="font-medium">{node.name}</span>
                         <Badge variant="secondary">
                           {PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol}
@@ -447,24 +489,14 @@ export default function ClientSubscriptionsPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Select
-                        value={normalizeProxyNodeAutoGroup(node.autoGroup)}
-                        onValueChange={(value) => updateNode.mutate({
-                          id: node.id,
-                          autoGroup: value as ProxyNodeAutoGroup,
-                        })}
-                      >
-                        <SelectTrigger className="w-32">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PROXY_NODE_AUTO_GROUPS.map((mode) => (
-                            <SelectItem key={mode} value={mode}>
-                              {PROXY_NODE_AUTO_GROUP_LABELS[mode]}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className="w-28 shrink-0 text-right" title={`近 ${PROXY_NODE_TRAFFIC_WINDOW_HOURS} 小时经这个落地的流量，按绑定的转发汇总（上行 + 下行）`}>
+                        <div className="text-sm font-medium tabular-nums">
+                          {node.ruleCount > 0 ? formatBytes(node.trafficBytes) : "—"}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {node.ruleCount > 0 ? `近 ${PROXY_NODE_TRAFFIC_WINDOW_HOURS} 小时` : "无转发绑定"}
+                        </div>
+                      </div>
                       <Switch
                         checked={!!node.isEnabled}
                         onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
