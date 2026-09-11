@@ -97,17 +97,28 @@ export function proxyNodeQuotaState(quota: ProxyNodeQuota): ProxyNodeQuotaState 
 }
 
 /**
- * 一行 `500M/1000G/367G`。
+ * 展开后的一行带标签说明：`带宽 500M · 总流量 1000G · 已用 367G`。
  *
- * 没填的那一段显示 `—` 而不是省略，位置才对得齐；三段都没有内容时返回空串，
- * 让界面自己决定是不是整块不显示。
+ * 与折起来时的 `500M/1000G/367G` 是同一份数据的两种写法：那个要挤在一行里所以
+ * 只能用斜杠，展开之后有地方了，就把三个数各自叫什么写清楚 —— 斜杠那种写法
+ * 得先知道顺序才读得懂。没填的那一段直接不出现，而不是占位。
  */
-export function formatProxyNodeQuota(quota: ProxyNodeQuota): string {
-  const bandwidth = formatBandwidthMbps(quota.bandwidthMbps);
-  const limit = (Number(quota.trafficLimit) || 0) > 0 ? formatQuotaBytes(quota.trafficLimit) : "—";
-  const used = formatQuotaBytes(quota.trafficUsed);
-  if (bandwidth === "—" && limit === "—" && (Number(quota.trafficUsed) || 0) <= 0) return "";
-  return `${bandwidth}/${limit}/${used}`;
+export function formatProxyNodeQuotaDetail(quota: ProxyNodeQuota): string {
+  const parts: string[] = [];
+  if ((Number(quota.bandwidthMbps) || 0) > 0) parts.push(`带宽 ${formatBandwidthMbps(quota.bandwidthMbps)}`);
+  if ((Number(quota.trafficLimit) || 0) > 0) parts.push(`总流量 ${formatQuotaBytes(quota.trafficLimit)}`);
+  parts.push(`已用 ${formatQuotaBytes(quota.trafficUsed)}`);
+  if ((Number(quota.trafficLimit) || 0) > 0) {
+    parts[parts.length - 1] += `（${proxyNodeQuotaPercent(quota)}%）`;
+  }
+  return parts.join(" · ");
+}
+
+/** 这个节点有没有值得展开的套餐信息。三样全空时连图标都不该出现。 */
+export function hasProxyNodeQuota(quota: ProxyNodeQuota): boolean {
+  return (Number(quota.bandwidthMbps) || 0) > 0
+    || (Number(quota.trafficLimit) || 0) > 0
+    || (Number(quota.trafficUsed) || 0) > 0;
 }
 
 /**

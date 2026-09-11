@@ -3,7 +3,8 @@ import test from "node:test";
 
 import {
   formatBandwidthMbps,
-  formatProxyNodeQuota,
+  formatProxyNodeQuotaDetail,
+  hasProxyNodeQuota,
   formatQuotaBytes,
   normalizeProxyNodeResetDay,
   proxyNodeQuotaPercent,
@@ -55,26 +56,6 @@ test("大于 100 的数不带小数", () => {
   assert.equal(formatQuotaBytes(99.9 * GB), "99.9G");
 });
 
-test("整行拼成 500M/1000G/367G", () => {
-  assert.equal(formatProxyNodeQuota({
-    bandwidthMbps: 500,
-    trafficLimit: 1000 * GB,
-    trafficUsed: 367 * GB,
-  }), "500M/1T/367G");
-});
-
-test("没填的那一段占位而不是省略，三段才对得齐", () => {
-  assert.equal(formatProxyNodeQuota({
-    bandwidthMbps: 0,
-    trafficLimit: 0,
-    trafficUsed: 12 * GB,
-  }), "\u2014/\u2014/12G");
-});
-
-test("什么都没有时返回空串，让界面决定整块不显示", () => {
-  assert.equal(formatProxyNodeQuota({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 0 }), "");
-});
-
 test("百分比在没设总量时是 0，而不是除以零", () => {
   assert.equal(proxyNodeQuotaPercent({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 5 * GB }), 0);
   assert.equal(proxyNodeQuotaState({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 5 * GB }), "none");
@@ -113,4 +94,37 @@ test("重置日收敛到 1-28", () => {
   assert.equal(normalizeProxyNodeResetDay(15), 15);
   assert.equal(normalizeProxyNodeResetDay("7"), 7);
   assert.equal(normalizeProxyNodeResetDay(undefined), 1);
+});
+
+test("展开后的一行带标签，三个数各自写清是什么", () => {
+  // 折起来时的 `500M/1T/367G` 得先知道顺序才读得懂；展开了就没必要让人猜。
+  assert.equal(
+    formatProxyNodeQuotaDetail({ bandwidthMbps: 500, trafficLimit: 1000 * GB, trafficUsed: 367 * GB }),
+    "带宽 500M · 总流量 1T · 已用 367G（37%）",
+  );
+});
+
+test("没填的那一段在展开行里直接不出现，而不是占位", () => {
+  // 折起来那一行要对齐所以用破折号占位，展开这一行是散文式的，占位只是噪音。
+  assert.equal(
+    formatProxyNodeQuotaDetail({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 12 * GB }),
+    "已用 12G",
+  );
+  assert.equal(
+    formatProxyNodeQuotaDetail({ bandwidthMbps: 1000, trafficLimit: 0, trafficUsed: 0 }),
+    "带宽 1G · 已用 0",
+  );
+});
+
+test("没设总流量就不显示百分比 —— 没有分母", () => {
+  const text = formatProxyNodeQuotaDetail({ bandwidthMbps: 500, trafficLimit: 0, trafficUsed: 5 * GB });
+  assert.doesNotMatch(text, /%/);
+});
+
+test("三样全空时没有可展开的东西，图标不该出现", () => {
+  assert.equal(hasProxyNodeQuota({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 0 }), false);
+  // 任意一样有值就值得给个入口。
+  assert.equal(hasProxyNodeQuota({ bandwidthMbps: 500, trafficLimit: 0, trafficUsed: 0 }), true);
+  assert.equal(hasProxyNodeQuota({ bandwidthMbps: 0, trafficLimit: 1000 * GB, trafficUsed: 0 }), true);
+  assert.equal(hasProxyNodeQuota({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 1 }), true);
 });
