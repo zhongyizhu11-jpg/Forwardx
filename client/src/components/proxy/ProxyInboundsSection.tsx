@@ -383,6 +383,7 @@ export default function ProxyInboundsSection() {
                         {isAdmin ? ` · 归 ${ownerLabel(Number(row.userId))}` : ""}
                         {row.transport && row.transport !== "tcp" ? ` · ${TRANSPORT_LABELS[row.transport] || row.transport}` : ""}
                         {Array.isArray(row.users) && row.users.length > 1 ? ` · ${row.users.length} 个用户` : ""}
+                        {Number(row.sharedUserCount || 0) > 0 ? ` · 分享给 ${row.sharedUserCount} 人` : ""}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-0.5">

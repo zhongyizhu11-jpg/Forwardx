@@ -39,6 +39,7 @@ export const MIGRATION_TABLES = [
   "proxy_inbounds",
   "proxy_inbound_users",
   "proxy_sub_tokens",
+  "proxy_node_shares",
   "host_metrics",
   "host_traffic_counters",
   "user_traffic_counters",
@@ -352,6 +353,16 @@ const tables: TableDef[] = [
     ],
     unique: [["token"]],
     indexes: [["userId"]],
+  },
+  {
+    // 节点分享：同一个节点出现在别人的订阅里，所有权不变。
+    name: "proxy_node_shares",
+    columns: [
+      c("id", "id"), c("nodeId", "int", { notNull: true }), c("userId", "int", { notNull: true }),
+      c("createdAt", "epoch", { notNull: true, default: "now" }),
+    ],
+    unique: [["nodeId", "userId"]],
+    indexes: [["userId"], ["nodeId"]],
   },
   {
     name: "forward_groups",

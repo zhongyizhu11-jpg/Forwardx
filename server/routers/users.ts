@@ -215,6 +215,31 @@ export const usersRouter = router({
         return { success: true };
       }),
 
+    /**
+     * 分享给这个用户的节点。
+     *
+     * 与主机/隧道权限的区别：那些是「能不能用这台机器建转发」，这个是
+     * 「他的订阅里直接多出这几个节点」，不转让所有权，节点还是原主人的。
+     */
+    getProxyNodeShares: adminProcedure
+      .input(z.object({ userId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getProxyNodeIdsSharedToUser(input.userId);
+      }),
+    setProxyNodeShares: adminProcedure
+      .input(z.object({ userId: z.number(), nodeIds: z.array(z.number()) }))
+      .mutation(async ({ input, ctx }) => {
+        await withKeyedTaskLock(`user-resource-permissions:${input.userId}`, async () => {
+          await db.setProxyNodeSharesForUser(input.userId, input.nodeIds);
+        });
+        console.info(`[Users] Updated proxy node shares userId=${input.userId} count=${input.nodeIds.length} ${actorLabel(ctx)}`);
+        return { success: true };
+      }),
+    /** 可分享的节点清单。不含凭据，只够在选择框里认出是哪个节点。 */
+    proxyNodeShareOptions: adminProcedure.query(async () => {
+      return db.getProxyNodeShareOptions();
+    }),
+
     getForwardGroupPermissions: adminProcedure
       .input(z.object({ userId: z.number() }))
       .query(async ({ input }) => {

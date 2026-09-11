@@ -572,6 +572,27 @@ export const proxySubTokens = table("proxy_sub_tokens", {
 export type ProxySubToken = typeof proxySubTokens.$inferSelect;
 export type InsertProxySubToken = typeof proxySubTokens.$inferInsert;
 
+/**
+ * 节点分享：把某个节点放进另一个用户的订阅，但不转让所有权。
+ *
+ * 与「归属用户」的区别 —— 归属是把这一份凭据整个转给对方（对方的订阅、对方的
+ * 配额、对方能改）；分享是同一份凭据同时出现在别人的订阅里，节点仍然是我的。
+ * 有人只租一两个落地，不值得为他单开端口时用这个。
+ *
+ * 流量记在节点主人头上：分享出去的是同一个端口，面板按端口计量，没法把这个
+ * 端口上的量拆给几个订阅者。界面上要写清楚，别让人事后才发现。
+ */
+export const proxyNodeShares = table("proxy_node_shares", {
+  id: serial("id"),
+  // 分享出去的是哪个节点（proxy_nodes.id），节点主人看它的 userId。
+  nodeId: int("nodeId").notNull(),
+  // 分享给谁。这个人的订阅里会多出这个节点。
+  userId: int("userId").notNull(),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+});
+export type ProxyNodeShare = typeof proxyNodeShares.$inferSelect;
+export type InsertProxyNodeShare = typeof proxyNodeShares.$inferInsert;
+
 export const forwardGroups = table("forward_groups", {
   id: serial("id"),
   name: text("name").notNull(),

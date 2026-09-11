@@ -3,6 +3,7 @@ import {
   forwardRules,
   forwardGroups,
   hosts,
+  proxyNodeShares,
   tunnels,
   userForwardGroupPermissions,
   userHostPermissions,
@@ -135,6 +136,9 @@ export async function deleteUserPermissions(userId: number) {
   if (!db) return;
   await db.delete(userHostPermissions).where(eq(userHostPermissions.userId, userId));
   await db.delete(userTunnelPermissions).where(eq(userTunnelPermissions.userId, userId));
+  // 分享给他的节点记录也清掉：留着就是一条指向不存在用户的分享，
+  // 节点主人那边还显示「已分享给 1 人」。
+  await db.delete(proxyNodeShares).where(eq(proxyNodeShares.userId, userId));
   await db.delete(userSubscriptions).where(eq(userSubscriptions.userId, userId));
   clearLinkAccessScopeCache();
 }

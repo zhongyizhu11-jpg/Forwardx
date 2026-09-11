@@ -525,7 +525,9 @@ export default function ClientSubscriptionsPage() {
    * 那是「自建落地 + 中转」的正常用法。
    */
   const pastedNodes = useMemo(
-    () => (nodes as any[]).filter((node) => !Number(node?.inboundId || 0)),
+    // 别人分享进来的节点即便在对方那边是自建派生的，在这一侧也没有「新建节点」
+    // 可以管，过滤掉的话它会在订阅里出现却在管理页上找不到，所以留在这一段。
+    () => (nodes as any[]).filter((node) => !Number(node?.inboundId || 0) || node?.sharedFrom),
     [nodes],
   );
   /**
@@ -777,10 +779,22 @@ export default function ClientSubscriptionsPage() {
                                   {!node.isEnabled && (
                                     <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">停用</Badge>
                                   )}
+                                  {node.sharedFrom ? (
+                                    <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+                                      {node.sharedFrom.name} 分享
+                                    </Badge>
+                                  ) : null}
+                                  {node.sharedToUserIds?.length ? (
+                                    <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+                                      已分享 {node.sharedToUserIds.length}
+                                    </Badge>
+                                  ) : null}
                                 </div>
                                 <p className="truncate text-[11px] leading-tight text-muted-foreground">
                                   {node.address}:{node.port}
-                                  {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
+                                  {node.sharedFrom
+                                    ? " · 由管理员分享，不可修改"
+                                    : node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
                                 </p>
                                 {quotaExpanded ? <ProxyNodeQuotaDetail node={node} /> : null}
                               </div>
@@ -789,6 +803,8 @@ export default function ClientSubscriptionsPage() {
                                 expanded={quotaExpanded}
                                 onToggle={() => toggleQuota(Number(node.id))}
                               />
+                              {node.sharedFrom ? null : (
+                              <>
                               <Switch
                                 className="shrink-0 scale-90"
                                 checked={!!node.isEnabled}
@@ -821,6 +837,8 @@ export default function ClientSubscriptionsPage() {
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
+                              </>
+                              )}
                             </div>
                             );
                           })}

@@ -304,6 +304,11 @@ export const proxyInboundsRouter = router({
       : await db.getProxyInboundsByUser(ctx.user.id);
     // 派生节点的订阅状态一次查完 —— 那个开关的入口在「新建节点」这一段。
     const derived = await db.getProxyInboundDerivedNodes(rows.map((row: any) => Number(row.id)));
+    // 这些派生节点各自分享给了几个人。行上要标出来，否则「分享给谁」只有
+    // 用户编辑页看得到，管理员在节点这边看不出这个端口已经租出去了。
+    const shareUserIds = await db.getProxyNodeShareUserIds(
+      Array.from(derived.values()).flatMap((entry: any) => entry.ids as number[]),
+    );
     return Promise.all(rows.map(async (row: any) => ({
       ...row,
       // 私钥不出接口：前端没有任何用得上它的地方，多送一次就多一条泄漏路径。
@@ -312,6 +317,9 @@ export const proxyInboundsRouter = router({
       users: (await db.getProxyInboundUsers(Number(row.id))).map((user) => ({ id: user.id, name: user.name })),
       derivedNodeIds: derived.get(Number(row.id))?.ids || [],
       includeDirect: derived.get(Number(row.id))?.includeDirect ?? false,
+      sharedUserCount: new Set(
+        (derived.get(Number(row.id))?.ids || []).flatMap((id: number) => shareUserIds.get(Number(id)) || []),
+      ).size,
     })));
   }),
 

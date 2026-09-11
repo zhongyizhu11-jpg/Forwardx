@@ -4,6 +4,7 @@ import {
   forwardRules,
   hosts,
   proxyNodes,
+  proxyNodeShares,
   proxySubTokens,
   type InsertProxyNode,
   type InsertProxySubToken,
@@ -17,6 +18,7 @@ import {
 } from "../../shared/proxySubscriptionPlan";
 import { PROXY_SUBSCRIPTION_GROUP_NAME } from "../../shared/proxySubscription";
 import { normalizeProxyRulePreset } from "../../shared/proxyRuleset";
+import { shareProxyNodeRow } from "../../shared/proxyNodeShare";
 
 // ==================== 客户端订阅：节点模板 ====================
 
@@ -60,6 +62,9 @@ export async function deleteProxyNode(id: number) {
     .update(forwardRules)
     .set({ proxyNodeId: null, updatedAt: nowDate() } as any)
     .where(eq(forwardRules.proxyNodeId, id));
+  // 分享记录跟着一起删：留着的话对方订阅里会指向一个不存在的节点 id，
+  // 而管理端的「已分享给谁」还照旧显示，看不出人已经拿不到了。
+  await db.delete(proxyNodeShares).where(eq(proxyNodeShares.nodeId, id));
   await db.delete(proxyNodes).where(eq(proxyNodes.id, id));
 }
 
@@ -101,6 +106,127 @@ export async function getRuleIdsUsingProxyNodes(
     if (list) list.push(Number(row.id));
   }
   return result;
+}
+
+// ==================== 节点分享 ====================
+
+/**
+ * 分享给某个用户的节点 id。
+ */
+export async function getProxyNodeIdsSharedToUser(userId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ nodeId: proxyNodeShares.nodeId })
+    .from(proxyNodeShares)
+    .where(eq(proxyNodeShares.userId, Number(userId)));
+  return rows.map((row: any) => Number(row.nodeId)).filter((id: number) => id > 0);
+}
+
+/**
+ * 一批节点各自分享给了谁。一次查完 —— 节点列表要给每一行标「已分享给 N 人」，
+ * 逐行查会把一次列表请求变成几十条查询。
+ */
+export async function getProxyNodeShareUserIds(
+  nodeIds: readonly number[],
+): Promise<Map<number, number[]>> {
+  const result = new Map<number, number[]>();
+  const ids = Array.from(new Set(nodeIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  for (const id of ids) result.set(id, []);
+  if (ids.length === 0) return result;
+
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db
+    .select({ nodeId: proxyNodeShares.nodeId, userId: proxyNodeShares.userId })
+    .from(proxyNodeShares)
+    .where(inArray(proxyNodeShares.nodeId, ids));
+  for (const row of rows as any[]) {
+    result.get(Number(row.nodeId))?.push(Number(row.userId));
+  }
+  return result;
+}
+
+/**
+ * 设定「这个用户能拿到哪些节点」（全量替换），和主机权限那套一个路数。
+ *
+ * 自己的节点不用分享，落进来的话对方订阅里会出现两份同名节点，客户端里就是
+ * 两条一模一样的线路 —— 这里直接滤掉。
+ */
+export async function setProxyNodeSharesForUser(userId: number, nodeIds: readonly number[]) {
+  const db = await getDb();
+  if (!db) return;
+  const recipient = Number(userId);
+  await db.delete(proxyNodeShares).where(eq(proxyNodeShares.userId, recipient));
+
+  const ids = Array.from(new Set(nodeIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (ids.length === 0) return;
+  const owned = await db
+    .select({ id: proxyNodes.id, userId: proxyNodes.userId })
+    .from(proxyNodes)
+    .where(inArray(proxyNodes.id, ids));
+  const values = (owned as any[])
+    .filter((row) => Number(row.userId) !== recipient)
+    .map((row) => ({ nodeId: Number(row.id), userId: recipient }));
+  if (values.length > 0) await db.insert(proxyNodeShares).values(values as any);
+}
+
+/**
+ * 可供分享的节点清单（管理端选人用）。
+ *
+ * 只取选择框要显示的几列 —— 这个接口是给管理员挑节点的，凭据没有任何理由
+ * 跟着列表一起发出去。
+ */
+export async function getProxyNodeShareOptions() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      id: proxyNodes.id,
+      userId: proxyNodes.userId,
+      name: proxyNodes.name,
+      protocol: proxyNodes.protocol,
+      address: proxyNodes.address,
+      port: proxyNodes.port,
+      inboundId: proxyNodes.inboundId,
+      isEnabled: proxyNodes.isEnabled,
+    })
+    .from(proxyNodes)
+    .orderBy(asc(proxyNodes.sortOrder), asc(proxyNodes.id));
+}
+
+/** 节点被分享给的那些人。管理端展示用。 */
+export async function getProxyNodeShareRecipients(nodeId: number): Promise<number[]> {
+  const map = await getProxyNodeShareUserIds([Number(nodeId)]);
+  return map.get(Number(nodeId)) || [];
+}
+
+/** 分享到某个用户名下的节点行（原样，未做分享改写）。 */
+export async function getProxyNodesSharedToUser(userId: number) {
+  const ids = await getProxyNodeIdsSharedToUser(userId);
+  if (ids.length === 0) return [];
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(proxyNodes)
+    .where(and(inArray(proxyNodes.id, ids), eq(proxyNodes.isEnabled, true)))
+    .orderBy(asc(proxyNodes.sortOrder), asc(proxyNodes.id));
+}
+
+/**
+ * 订阅要用的节点：自己的，加上别人分享给我的。
+ *
+ * 订阅组装的每一处都得走这个函数，不能有的地方用 getProxyNodesByUser ——
+ * 计划和文档两次取的模板集合一旦不一致，订阅里会出现「有节点名没节点」
+ * 或者策略组指向不存在的节点这种坏配置。
+ */
+export async function getProxyNodesForSubscription(userId: number) {
+  const [owned, shared] = await Promise.all([
+    getProxyNodesByUser(userId),
+    getProxyNodesSharedToUser(userId),
+  ]);
+  return [...owned, ...shared.map((row: any) => shareProxyNodeRow(row))];
 }
 
 // ==================== 落地机的套餐用量 ====================
@@ -278,7 +404,7 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
     .where(and(eq(forwardRules.userId, userId), eq(forwardRules.pendingDelete, false)))
     .orderBy(asc(forwardRules.sortOrder), asc(forwardRules.id));
 
-  const templates = await getProxyNodesByUser(userId);
+  const templates = await getProxyNodesForSubscription(userId);
   const hostRows = await db
     .select({
       id: hosts.id,
@@ -309,7 +435,7 @@ export async function getProxySubscriptionDocumentForUser(
   options: { rulePreset?: unknown } = {},
 ): Promise<ProxySubscriptionDocument> {
   const plan = await buildProxySubscriptionPlanForUser(userId);
-  const templates = await getProxyNodesByUser(userId);
+  const templates = await getProxyNodesForSubscription(userId);
   return buildProxySubscriptionDocument(plan, templates as any, {
     mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
     rulePreset: normalizeProxyRulePreset(options.rulePreset),
