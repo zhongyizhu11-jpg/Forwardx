@@ -16,6 +16,7 @@ import {
   PROXY_INBOUND_SNELL_VERSIONS,
   PROXY_INBOUND_SHADOWSOCKS_METHODS,
   PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
+  isLegacyShadowsocksMethod,
   proxyInboundSecurities,
   proxyInboundSupportsMultiUser,
   proxyInboundTransports,
@@ -451,15 +452,21 @@ export default function ProxyInboundsSection() {
                         <SelectItem key={item} value={item}>
                           {item}
                           {item === PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD ? "（推荐）" : ""}
+                          {isLegacyShadowsocksMethod(item) ? "（旧版）" : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">
-                    只给 SS2022 这三种。老的 aes-256-gcm、chacha20-ietf-poly1305 有已知的主动探测手段，
-                    新开的节点没理由用一个一开始就可被识别的算法。
-                    AES-128 不比 256 弱（128 位密钥没有可行攻击）而且更快，小机器上差别明显，所以默认它。
-                  </p>
+                  {isLegacyShadowsocksMethod(form.method) ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-500">
+                      老式 AEAD 有已知的主动探测手段，中间设备能把这类流量识别出来。
+                      只在对端客户端太旧、不支持 SS2022 时才用它。
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      AES-128 不比 256 弱（128 位密钥没有可行攻击）而且更快，小机器上差别明显，所以默认它。
+                    </p>
+                  )}
                 </div>
               ) : null}
               {form.protocol === "snell" ? (

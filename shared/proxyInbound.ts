@@ -84,30 +84,48 @@ const NO_TLS_PROTOCOLS: readonly ProxyInboundProtocol[] = ["shadowsocks", "snell
 export const PROXY_INBOUND_SNELL_VERSIONS = [5, 6] as const;
 
 /**
- * Shadowsocks 只放出 SS2022 这三种。
+ * Shadowsocks 可选的加密方式。
  *
- * 老的 AEAD（aes-256-gcm、chacha20-ietf-poly1305 这些）有已知的主动探测手段 ——
- * 中间设备能把流量识别出来，正是 SS2022 要堵的那个洞。既然是新开的节点，
- * 没有理由让人选一个一开始就可被识别的算法；要接别人给的老节点，那条路是
- * 「客户端订阅」里粘链接，不走这里。
+ * 前三种是 SS2022，后两种是老的 AEAD。两类的**密码规则完全不同**，这是这里
+ * 最容易踩的坑：
  *
- * 每种的密钥长度不一样，密码必须按长度生成 —— 长度不对 sing-box 拒绝加载
- * **整份**配置，同一台机器上其他入站会跟着停。
+ *   SS2022    密码是定长的密钥，长度由算法定死（16 或 32 字节的 base64）。
+ *             长度不对，sing-box 报 `bad key` 并拒绝加载**整份**配置 ——
+ *             同一台机器上其他入站会跟着一起停。
+ *   老 AEAD   密码是任意口令，密钥由它派生出来，多长都收（实测 7/24/44 字符
+ *             都能通过 check）。
+ *
+ * 所以下面那张长度表只列 SS2022；老 AEAD 走普通随机口令那条路。
  */
 export const PROXY_INBOUND_SHADOWSOCKS_METHODS = [
   "2022-blake3-aes-128-gcm",
   "2022-blake3-aes-256-gcm",
   "2022-blake3-chacha20-poly1305",
+  "aes-128-gcm",
+  "aes-256-gcm",
 ] as const;
 
 export type ProxyInboundShadowsocksMethod = (typeof PROXY_INBOUND_SHADOWSOCKS_METHODS)[number];
 
-/** 各加密方式的密钥字节数，决定随机密码要生成多长。 */
-export const PROXY_INBOUND_SHADOWSOCKS_KEY_BYTES: Record<ProxyInboundShadowsocksMethod, number> = {
+/**
+ * 定长密钥的算法及其字节数。只有 SS2022 在这里 —— 老 AEAD 的密码是口令不是密钥，
+ * 给它按长度生成没有意义。查不到就表示「随便给个随机口令即可」。
+ */
+export const PROXY_INBOUND_SHADOWSOCKS_KEY_BYTES: Partial<Record<ProxyInboundShadowsocksMethod, number>> = {
   "2022-blake3-aes-128-gcm": 16,
   "2022-blake3-aes-256-gcm": 32,
   "2022-blake3-chacha20-poly1305": 32,
 };
+
+/** 这个算法要不要定长密钥；0 表示用普通随机口令。 */
+export function proxyInboundShadowsocksKeyBytes(method: string): number {
+  return PROXY_INBOUND_SHADOWSOCKS_KEY_BYTES[method as ProxyInboundShadowsocksMethod] ?? 0;
+}
+
+/** 老式 AEAD（非 SS2022）。这些有已知的主动探测手段，界面上要标出来。 */
+export function isLegacyShadowsocksMethod(method: string): boolean {
+  return isProxyInboundShadowsocksMethod(method) && proxyInboundShadowsocksKeyBytes(method) === 0;
+}
 
 /**
  * 默认 AES-128。

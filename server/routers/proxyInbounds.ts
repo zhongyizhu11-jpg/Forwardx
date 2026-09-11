@@ -23,7 +23,7 @@ import {
   PROXY_INBOUND_SNELL_DEFAULT_VERSION,
   PROXY_INBOUND_SNELL_VERSIONS,
   PROXY_INBOUND_SHADOWSOCKS_METHODS,
-  PROXY_INBOUND_SHADOWSOCKS_KEY_BYTES,
+  proxyInboundShadowsocksKeyBytes,
   PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
   isProxyInboundShadowsocksMethod,
   proxyInboundSupportsMultiUser,
@@ -124,9 +124,13 @@ function fillGeneratedCredentials(inbound: ProxyInbound): ProxyInbound {
     filled.method = isProxyInboundShadowsocksMethod(filled.method)
       ? filled.method
       : PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD;
-    const bytes = PROXY_INBOUND_SHADOWSOCKS_KEY_BYTES[filled.method as keyof typeof PROXY_INBOUND_SHADOWSOCKS_KEY_BYTES];
-    // SS2022 的密码必须是定长 base64；长度不对 sing-box 会整份拒绝加载。
-    filled.password = filled.password || (bytes ? generateProxyInboundPsk(bytes) : generateProxyInboundPassword());
+    /**
+     * 两类算法的密码规则不一样，走不同的生成路径：
+     *   SS2022   定长密钥，长度不对 sing-box 整份拒绝加载。
+     *   老 AEAD  任意口令，给普通随机串即可（实测什么长度都收）。
+     */
+    const bytes = proxyInboundShadowsocksKeyBytes(filled.method);
+    filled.password = filled.password || (bytes > 0 ? generateProxyInboundPsk(bytes) : generateProxyInboundPassword());
   } else if (filled.protocol === "snell") {
     filled.password = filled.password || generateProxyInboundPsk(16);
   }
