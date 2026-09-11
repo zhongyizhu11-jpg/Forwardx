@@ -1519,6 +1519,7 @@ export async function getEffectiveUserPlanLimits(userId: number) {
       maxPorts: 0,
       maxRules: 0,
       maxProxyInbounds: 0,
+      maxProxySubTokens: 0,
       maxConnections: 0,
       maxIPs: 0,
       baseTrafficLimit: 0,
@@ -1559,6 +1560,7 @@ export async function getEffectiveUserPlanLimits(userId: number) {
     maxPorts: sumWithUnlimited("portCount"),
     maxRules: sumWithUnlimited("maxRules"),
     maxProxyInbounds: sumWithUnlimited("maxProxyInbounds"),
+    maxProxySubTokens: sumWithUnlimited("maxProxySubTokens"),
     maxConnections: sumWithUnlimited("maxConnections"),
     maxIPs: sumWithUnlimited("maxIPs"),
     baseTrafficLimit,
@@ -1626,6 +1628,7 @@ export function mergeManualAndPlanLimits(user: any, planLimits: any) {
   const manualDefaultActive = manualCanAddRules && !planCanAddRules;
   const manualMaxRules = positiveInt(user?.manualMaxRules);
   const manualMaxProxyInbounds = positiveInt(user?.manualMaxProxyInbounds);
+  const manualMaxProxySubTokens = positiveInt(user?.manualMaxProxySubTokens);
   const manualMaxPorts = positiveInt(user?.manualMaxPorts);
   const manualMaxConnections = positiveInt(user?.manualMaxConnections);
   const manualMaxIPs = positiveInt(user?.manualMaxIPs);
@@ -1663,6 +1666,11 @@ export function mergeManualAndPlanLimits(user: any, planLimits: any) {
     maxProxyInbounds: mergeLimitValue([
       { active: planAllowProxySubscription, value: planLimits?.maxProxyInbounds },
       { active: manualMaxProxyInbounds > 0, value: manualMaxProxyInbounds },
+    ]),
+    /** 订阅地址条数。同样按订阅权限开闸，与 maxProxyInbounds 一套规矩。 */
+    maxProxySubTokens: mergeLimitValue([
+      { active: planAllowProxySubscription, value: planLimits?.maxProxySubTokens },
+      { active: manualMaxProxySubTokens > 0, value: manualMaxProxySubTokens },
     ]),
     maxConnections: mergeLimitValue([
       { active: planCanAddRules, value: planLimits?.maxConnections },

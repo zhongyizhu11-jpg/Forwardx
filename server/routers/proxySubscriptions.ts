@@ -373,6 +373,23 @@ export const proxySubscriptionsRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       await assertProxySubscriptionAllowed(ctx);
+      /**
+       * 订阅地址条数也有上限。
+       *
+       * 每条地址都是一份完整凭据，发出去就收不回来 —— 只能吊销那一条。不设上限的话
+       * 一个租户可以生成几十条分发出去，而你从「有几个用户」上完全看不出来。
+       * 管理员不受限，与其他配额一致。
+       */
+      if (ctx.user.role !== "admin") {
+        const owner = await db.getUserById(ctx.user.id);
+        const limit = Number((owner as any)?.maxProxySubTokens || 0);
+        if (limit > 0) {
+          const used = await db.countProxySubTokensByUser(ctx.user.id);
+          if (used >= limit) {
+            throw new Error(`订阅地址已达上限（${used}/${limit}）。删掉一条，或让管理员调高上限。`);
+          }
+        }
+      }
       const token = nanoid(SUBSCRIPTION_TOKEN_LENGTH);
       const id = await db.createProxySubToken({
         userId: ctx.user.id,

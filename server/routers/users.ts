@@ -80,7 +80,14 @@ export const usersRouter = router({
           ...input,
           role: "user",
           // 与编辑页同一条规则：转发都不让开，订阅只会给出一堆连不通的死节点。
-          allowProxySubscription: input.canAddRules && input.allowProxySubscription,
+          /**
+           * 订阅权限不再绑在转发权限上。
+           *
+           * 以前绑着是因为订阅只能由转发规则汇聚而成 —— 没转发就是一张空订阅。
+           * 有了自建落地节点之后不成立了：一个用户可以零转发，只靠自己主机上的
+           * 落地节点出订阅（直连条目根本不经过中转）。两种权限现在各给各的。
+           */
+          allowProxySubscription: input.allowProxySubscription,
         });
         console.info(`[Users] Created user userId=${id} username=${maskIdentifier(input.username)} ${actorLabel(ctx)}`);
         return { id };
@@ -321,6 +328,8 @@ export const usersRouter = router({
         maxRules: z.number().min(0).optional(),
         /** 自建落地节点数上限，0 = 不限。与 maxRules 一样走 manual 那一列。 */
         maxProxyInbounds: z.number().min(0).optional(),
+        /** 订阅地址条数上限，0 = 不限。 */
+        maxProxySubTokens: z.number().min(0).optional(),
         maxPorts: z.number().min(0).optional(),
         maxConnections: z.number().min(0).optional(),
         maxIPs: z.number().min(0).optional(),
@@ -343,6 +352,10 @@ export const usersRouter = router({
         if (data.gostRateLimitOut !== undefined) {
           data.manualGostRateLimitOut = Math.max(0, Math.floor(Number(data.gostRateLimitOut) || 0));
           delete data.gostRateLimitOut;
+        }
+        if (data.maxProxySubTokens !== undefined) {
+          data.manualMaxProxySubTokens = Math.max(0, Math.floor(Number(data.maxProxySubTokens) || 0));
+          delete data.maxProxySubTokens;
         }
         if (data.maxProxyInbounds !== undefined) {
           data.manualMaxProxyInbounds = Math.max(0, Math.floor(Number(data.maxProxyInbounds) || 0));

@@ -298,6 +298,8 @@ function UsersContent() {
   const [maxRules, setMaxRules] = useState(0);
   /** 自建落地节点数上限。0 = 不限，与其他配额一致。 */
   const [maxProxyInbounds, setMaxProxyInbounds] = useState(0);
+  /** 订阅地址条数上限。0 = 不限。 */
+  const [maxProxySubTokens, setMaxProxySubTokens] = useState(0);
   const [maxPorts, setMaxPorts] = useState(0);
   const [maxConnections, setMaxConnections] = useState(0);
   const [allowProxySubscription, setAllowProxySubscription] = useState(false);
@@ -522,6 +524,7 @@ function UsersContent() {
         trafficResetDay: variables.trafficResetDay,
         manualMaxRules: variables.maxRules,
         manualMaxProxyInbounds: variables.maxProxyInbounds,
+        manualMaxProxySubTokens: variables.maxProxySubTokens,
         manualMaxPorts: variables.maxPorts,
         manualMaxConnections: variables.maxConnections,
         manualMaxIPs: variables.maxIPs,
@@ -890,6 +893,7 @@ function UsersContent() {
     setGostRateLimitOutInput(unifiedRateLimit > 0 ? String(unifiedRateLimit) : "0");
     setMaxRules(u.manualMaxRules || 0);
     setMaxProxyInbounds(u.manualMaxProxyInbounds || 0);
+    setMaxProxySubTokens(u.manualMaxProxySubTokens || 0);
     setMaxPorts(u.manualMaxPorts || 0);
     setMaxConnections(u.manualMaxConnections || 0);
     setAllowProxySubscription(!!u.manualAllowProxySubscription);
@@ -946,6 +950,7 @@ function UsersContent() {
       trafficResetDay,
       maxRules,
       maxProxyInbounds,
+      maxProxySubTokens,
       maxPorts,
       maxConnections,
       maxIPs,
@@ -1804,8 +1809,6 @@ function UsersContent() {
                   checked={newCanAddRules}
                   onCheckedChange={(checked) => {
                     setNewCanAddRules(checked);
-                    // 转发关掉时一并收回订阅，跟编辑页同一条规则。
-                    if (!checked) setNewAllowProxySubscription(false);
                   }}
                 />
               </div>
@@ -1815,14 +1818,12 @@ function UsersContent() {
               <div className="flex items-center justify-between rounded-lg border border-border/40 p-3">
                 <div className="min-w-0 pr-3">
                   <p className="text-xs text-muted-foreground">
-                    {newCanAddRules
-                      ? "允许把自己的转发汇聚成订阅地址导入客户端。之后可在编辑用户里改。"
-                      : "转发总开关关闭时不可用 —— 转发都停了，订阅只会给出一堆连不通的节点。"}
+                    允许拉订阅地址导入客户端。与转发各给各的 —— 只给订阅也成立，
+                    那种用户零转发，订阅里是他自己主机上的落地节点。
                   </p>
                 </div>
                 <Switch
                   checked={newAllowProxySubscription}
-                  disabled={!newCanAddRules}
                   onCheckedChange={setNewAllowProxySubscription}
                 />
               </div>
@@ -2224,6 +2225,18 @@ function UsersContent() {
                   </p>
                 </div>
                 <div className="space-y-2">
+                  <Label>最大订阅地址数</Label>
+                  <Input
+                    type="number"
+                    value={maxProxySubTokens || ""}
+                    onChange={(e) => setMaxProxySubTokens(parseInt(e.target.value) || 0)}
+                    placeholder="0=不限制"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    他能生成几条订阅地址。每条都是一份完整凭据，发出去就只能靠吊销那一条收回。0 或留空表示不限制。
+                  </p>
+                </div>
+                <div className="space-y-2">
                   <Label>最大端口数</Label>
                   <Input
                     type="number"
@@ -2261,8 +2274,8 @@ function UsersContent() {
                 <div className="min-w-0">
                   <Label>客户端订阅</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    允许该用户把自己的转发汇聚成订阅地址导入客户端。套餐里已附带该权限的用户不受这里影响；
-                    转发被停用或流量用尽时权限会自动收回。
+                    允许该用户拉订阅地址导入客户端。与转发权限各给各的，只给订阅也成立。
+                    套餐里已附带该权限的用户不受这里影响；流量用尽或账号被停时权限会自动收回。
                   </p>
                 </div>
                 <Switch

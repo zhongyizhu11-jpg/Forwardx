@@ -124,3 +124,36 @@ test("新建后的计数跟着涨，删除后跟着降", () => {
     assert.equal(await repo.countProxyInboundsByUser(1), 1);
   `);
 });
+
+test("订阅地址条数同样有上限，也按订阅权限开闸", () => {
+  // 每条地址都是一份完整凭据，发出去只能靠吊销那一条收回。
+  assert.equal(mergeManualAndPlanLimits({ manualMaxProxySubTokens: 3 }, {}).maxProxySubTokens, 3);
+  assert.equal(mergeManualAndPlanLimits({}, {}).maxProxySubTokens, 0);
+
+  const forwardOnly = mergeManualAndPlanLimits({}, {
+    canAddRules: true, allowProxySubscription: false, maxProxySubTokens: 5,
+  });
+  assert.equal(forwardOnly.maxProxySubTokens, 0, "没开订阅的套餐不该给出订阅地址额度");
+
+  const withSubscription = mergeManualAndPlanLimits({}, {
+    canAddRules: true, allowProxySubscription: true, maxProxySubTokens: 5,
+  });
+  assert.equal(withSubscription.maxProxySubTokens, 5);
+});
+
+test("两种权限互不牵连：只给订阅的用户仍然拿得到订阅额度", () => {
+  /**
+   * 这条守的是解绑之后的完整性 —— 一个零转发、只买订阅的租户，
+   * 他的落地节点额度和订阅地址额度都得照常算出来，否则「只给订阅」等于没给。
+   */
+  const merged = mergeManualAndPlanLimits({}, {
+    canAddRules: false,
+    allowProxySubscription: true,
+    maxProxyInbounds: 2,
+    maxProxySubTokens: 1,
+  });
+  assert.equal(merged.canAddRules, false);
+  assert.equal(merged.allowProxySubscription, true);
+  assert.equal(merged.maxProxyInbounds, 2);
+  assert.equal(merged.maxProxySubTokens, 1);
+});

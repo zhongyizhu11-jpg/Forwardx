@@ -151,6 +151,9 @@ export const users = table("users", {
   // 自己能开几个落地节点（proxy_inbounds），0 = 不限制。
   // 与 maxRules 分开：转发和自建落地是两件事，租两个落地的人不一定只配两条转发。
   maxProxyInbounds: int("maxProxyInbounds").notNull().default(0),
+  // 能生成几条订阅地址（proxy_sub_tokens），0 = 不限制。
+  // 每条地址都是一份完整凭据，发出去就收不回来 —— 只能靠吊销那一条。
+  maxProxySubTokens: int("maxProxySubTokens").notNull().default(0),
   // 允许使用的转发方式，逗号分隔，如 "iptables,realm,socat"；null 或空串 = 全部允许
   allowedForwardTypes: text("allowedForwardTypes"),
   allowForwardXTunnel: boolean("allowForwardXTunnel").notNull().default(false),
@@ -163,6 +166,7 @@ export const users = table("users", {
   manualCanAddRules: boolean("manualCanAddRules").notNull().default(false),
   manualMaxRules: int("manualMaxRules").notNull().default(0),
   manualMaxProxyInbounds: int("manualMaxProxyInbounds").notNull().default(0),
+  manualMaxProxySubTokens: int("manualMaxProxySubTokens").notNull().default(0),
   manualMaxPorts: int("manualMaxPorts").notNull().default(0),
   manualMaxConnections: int("manualMaxConnections").notNull().default(0),
   manualMaxIPs: int("manualMaxIPs").notNull().default(0),
@@ -1043,6 +1047,8 @@ export const subscriptionPlans = table("subscription_plans", {
   maxRules: int("maxRules").notNull().default(20),
   // 套餐附带的自建落地节点数，0 = 不限制。只在套餐开了客户端订阅时才有意义。
   maxProxyInbounds: int("maxProxyInbounds").notNull().default(0),
+  // 套餐附带的订阅地址条数，0 = 不限制。同样只在开了客户端订阅时有意义。
+  maxProxySubTokens: int("maxProxySubTokens").notNull().default(0),
   maxConnections: int("maxConnections").notNull().default(2000),
   maxIPs: int("maxIPs").notNull().default(10),
   // 该套餐是否附带客户端订阅权限

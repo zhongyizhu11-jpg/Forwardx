@@ -175,6 +175,17 @@ export async function getProxyNodesForTrafficAutoReset(reference = nowDate()) {
 
 // ==================== 客户端订阅：令牌 ====================
 
+/** 某个用户有几条订阅地址。配额检查用。 */
+export async function countProxySubTokensByUser(userId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db
+    .select({ id: proxySubTokens.id })
+    .from(proxySubTokens)
+    .where(eq(proxySubTokens.userId, Number(userId)));
+  return rows.length;
+}
+
 export async function getProxySubTokensByUser(userId: number) {
   const db = await getDb();
   if (!db) return [];
