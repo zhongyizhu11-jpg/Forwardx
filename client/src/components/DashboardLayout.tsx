@@ -39,7 +39,6 @@ import {
   Moon,
   Rocket,
   Route,
-  Radio,
   Rss,
   Zap,
   CreditCard,
@@ -103,8 +102,7 @@ const mainMenuItems: SidebarNavItem[] = [
   { icon: Server, label: "主机管理", path: "/hosts" },
   { icon: Route, label: "链路管理", path: "/tunnels" },
   { icon: ArrowRightLeft, label: "转发规则", path: "/rules" },
-  { icon: Rss, label: "客户端订阅", path: "/client-subscriptions" },
-  { icon: Radio, label: "落地节点", path: "/proxy-inbounds" },
+  { icon: Rss, label: "订阅管理", path: "/client-subscriptions" },
 ];
 const profileMenuItem: SidebarNavItem = { icon: UserRound, label: "个人资料", path: "/profile", menuKey: "profile" };
 const lookingGlassMenuItem: SidebarNavItem = { icon: Globe2, label: "网络测试", path: "/looking-glass", menuKey: "lookingGlass" };
@@ -1062,7 +1060,7 @@ function DashboardLayoutContent({
       : mainMenuItems.filter((item) => !hiddenNormalUserMainPaths.includes(item.path))
     ).filter((item) => (
       // 落地节点与客户端订阅是同一件事的两头，共用一个权限开关。
-      (item.path !== "/client-subscriptions" && item.path !== "/proxy-inbounds") || canShowProxySubscription
+      item.path !== "/client-subscriptions" || canShowProxySubscription
     ))
   );
   const canShowNetworkTest = (isAdmin || publicInfo?.lookingGlassUserEnabled === true) && sidebarMenuSettings.lookingGlass !== false;

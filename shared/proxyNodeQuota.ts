@@ -53,7 +53,12 @@ export function formatBandwidthMbps(mbps: number): string {
  */
 export function formatQuotaBytes(bytes: number): string {
   const value = Number(bytes);
-  if (!Number.isFinite(value) || value <= 0) return "0G";
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  /**
+   * 不到 1M 的显示成「<1M」而不是四舍五入成「1M」。
+   * 套餐是按 G 卖的，这个量级本来就等于没用；写成 1M 会让人以为真跑了 1MB。
+   */
+  if (value < 1e6) return "<1M";
   const units = [
     { limit: QUOTA_TERABYTE_THRESHOLD, suffix: "T", scale: 1e12 },
     { limit: 1e9, suffix: "G", scale: 1e9 },
@@ -67,7 +72,7 @@ export function formatQuotaBytes(bytes: number): string {
       return `${text}${unit.suffix}`;
     }
   }
-  return `${Math.max(1, Math.round(value / 1e6))}M`;
+  return `${Math.round(value / 1e6)}M`;
 }
 
 /** 已用占总量的百分比。没设总量时返回 0 —— 没有分母就没有百分比。 */

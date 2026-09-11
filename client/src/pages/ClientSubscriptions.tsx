@@ -1,4 +1,5 @@
 import DashboardLayout from "@/components/DashboardLayout";
+import ProxyInboundsSection from "@/components/proxy/ProxyInboundsSection";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -246,6 +247,17 @@ function gbFromBytes(bytes: unknown): string {
   return String(gb >= 100 ? Math.round(gb) : Number(gb.toFixed(2)));
 }
 
+/**
+ * 订阅内容的两类条目。
+ *
+ * 中转在前：那是主力 —— 直连条目只有开了「加进订阅」的节点才有，通常只有一两条，
+ * 而且落地 IP 直接暴露在订阅里，放后面不容易被误当成常规入口。
+ */
+const PREVIEW_GROUPS = [
+  { key: "relay", label: "中转" },
+  { key: "direct", label: "直连" },
+] as const;
+
 const QUOTA_STATE_STYLES = {
   none: "text-muted-foreground",
   normal: "text-muted-foreground",
@@ -307,6 +319,7 @@ export default function ClientSubscriptionsPage() {
   const [nodeGroupMode, setNodeGroupMode] = useState<ProxyNodeGroupMode>(readStoredGroupMode);
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>(readStoredCollapsed);
   const [nodesCollapsed, setNodesCollapsed] = useState(false);
+  const [previewCollapsed, setPreviewCollapsed] = useState(false);
 
   const [nodeDialogOpen, setNodeDialogOpen] = useState(false);
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null);
@@ -496,6 +509,16 @@ export default function ClientSubscriptionsPage() {
   };
   const preview = previewQuery.data;
 
+  const previewNodes = (preview?.nodes ?? []) as any[];
+  const directPreviewNodes = useMemo(
+    () => previewNodes.filter((node) => node?.kind === "direct"),
+    [previewNodes],
+  );
+  const relayPreviewNodes = useMemo(
+    () => previewNodes.filter((node) => node?.kind !== "direct"),
+    [previewNodes],
+  );
+
   // 只有「已隐藏」需要一键恢复，其他原因要用户自己去改转发或模板。
   const hiddenRules = useMemo(
     () => (preview?.skipped ?? []).filter((item) => item.reason === "hidden"),
@@ -585,7 +608,7 @@ export default function ClientSubscriptionsPage() {
       <DashboardLayout>
         <div className="space-y-6">
           <div>
-            <h1 className="text-2xl font-semibold">客户端订阅</h1>
+            <h1 className="text-2xl font-semibold">订阅管理</h1>
           </div>
           <Card>
             <CardContent className="py-10 text-center">
@@ -605,7 +628,13 @@ export default function ClientSubscriptionsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <h1 className="text-2xl font-semibold">客户端订阅</h1>
+        <h1 className="text-2xl font-semibold">订阅管理</h1>
+
+        {/*
+          「新建节点」放在最前面：自建落地是这一页的起点 —— 先在自己的机器上开出节点，
+          再把别处租来的粘进下面的「落地节点」，两类汇合成订阅内容。
+        */}
+        <ProxyInboundsSection />
 
         <Card>
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
@@ -692,12 +721,15 @@ export default function ClientSubscriptionsPage() {
                                     <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">停用</Badge>
                                   )}
                                 </div>
-                                <p className="truncate text-[11px] leading-tight text-muted-foreground">
-                                  {node.address}:{node.port}
-                                  {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
-                                </p>
+                                <div className="flex items-baseline gap-1.5">
+                                  <p className="min-w-0 flex-1 truncate text-[11px] leading-tight text-muted-foreground">
+                                    {node.address}:{node.port}
+                                    {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
+                                  </p>
+                                  {/* 套餐放行末且不收缩：地址长了截断地址，这个数字要一直看得见。 */}
+                                  <ProxyNodeQuotaText node={node} />
+                                </div>
                               </div>
-                              <ProxyNodeQuotaText node={node} />
                               <Switch
                                 className="shrink-0 scale-90"
                                 checked={!!node.isEnabled}
@@ -743,13 +775,28 @@ export default function ClientSubscriptionsPage() {
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">订阅内容</CardTitle>
-            <CardDescription className="text-xs">
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
+            <button
+              type="button"
+              className="flex min-w-0 items-center gap-2 text-left"
+              onClick={() => setPreviewCollapsed((prev) => !prev)}
+              aria-expanded={!previewCollapsed}
+            >
+              <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${previewCollapsed ? "-rotate-90" : ""}`} />
+              <CardTitle className="text-base">订阅内容</CardTitle>
+              {(preview?.nodes.length ?? 0) > 0 ? (
+                <span className="truncate text-xs text-muted-foreground">
+                  {preview!.nodes.length} 条
+                  {relayPreviewNodes.length > 0 ? ` · 中转 ${relayPreviewNodes.length}` : ""}
+                  {directPreviewNodes.length > 0 ? ` · 直连 ${directPreviewNodes.length}` : ""}
+                </span>
+              ) : null}
+            </button>
+            <CardDescription className="w-full text-xs">
               关掉开关只是不进订阅，转发照常运行。
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent hidden={previewCollapsed} className="pt-0">
             {previewQuery.isLoading ? (
               <DataSectionLoading />
             ) : (
@@ -759,8 +806,27 @@ export default function ClientSubscriptionsPage() {
                     订阅里还没有节点。先添加落地节点，再在下面把转发加进来。
                   </p>
                 ) : (
-                  <div className="space-y-2">
-                    {preview!.nodes.map((node: any) => {
+                  <div className="space-y-3">
+                    {PREVIEW_GROUPS.map((group) => {
+                      const groupNodes = group.key === "direct" ? directPreviewNodes : relayPreviewNodes;
+                      if (groupNodes.length === 0) return null;
+                      const collapsed = isGroupCollapsed(group.key);
+                      return (
+                        <div key={group.key} className="space-y-1.5">
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground"
+                            onClick={() => toggleGroup(group.key)}
+                            aria-expanded={!collapsed}
+                          >
+                            <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
+                            <span>{group.label}</span>
+                            <span className="tabular-nums">({groupNodes.length})</span>
+                            <span className="h-px flex-1 bg-border" />
+                          </button>
+                          {collapsed ? null : (
+                            <div className="space-y-1.5">
+                              {groupNodes.map((node: any) => {
                       // 直连条目不来自转发规则，ruleId 都是 0 —— 拿它当 key 会互相撞。
                       const direct = node.kind === "direct";
                       return (
@@ -808,6 +874,11 @@ export default function ClientSubscriptionsPage() {
                           )}
                         </div>
                       </div>
+                      );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
