@@ -340,7 +340,7 @@ export default function Store() {
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as StoreTab)} className="space-y-4">
             <TabsList className="grid h-auto w-full grid-cols-2 sm:w-auto">
               <TabsTrigger value="plans" className="gap-2">
-                <Package className="h-4 w-4" /> 订阅套餐
+                <Package className="h-4 w-4" /> 套餐
               </TabsTrigger>
               <TabsTrigger value="billing" className="gap-2">
                 <Coins className="h-4 w-4" /> 按量计费

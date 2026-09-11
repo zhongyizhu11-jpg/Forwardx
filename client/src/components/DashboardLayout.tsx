@@ -1066,7 +1066,7 @@ function DashboardLayoutContent({
   const canShowNetworkTest = (isAdmin || publicInfo?.lookingGlassUserEnabled === true) && sidebarMenuSettings.lookingGlass !== false;
   const userStoreMenuItems = !isAdmin
     ? [
-        { icon: Package, label: "我的订阅", path: "/subscriptions" },
+        { icon: Package, label: "我的套餐", path: "/subscriptions" },
         { icon: ReceiptText, label: "账单中心", path: "/wallet" },
         ...(storeStatus?.enabled ? [{ icon: ShoppingBag, label: "商店", path: "/store" }] : []),
       ]
