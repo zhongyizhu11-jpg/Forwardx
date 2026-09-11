@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { copyTextToClipboard } from "@/lib/clipboard";
+import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
 import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
 import {
@@ -171,9 +171,14 @@ async function copyText(value: string, message: string) {
   // 所以走带 execCommand 回退的共享实现，而不是直接调 clipboard API。
   if (await copyTextToClipboard(value)) {
     toast.success(message);
-  } else {
-    toast.error("复制失败，请长按选中地址复制");
+    return;
   }
+  // 说一句为什么，否则用户只会以为是面板坏了，反复点。
+  toast.error(
+    clipboardNeedsManualCopy()
+      ? "当前是 http 访问，浏览器限制了剪贴板，请长按选中地址复制"
+      : "复制失败，请长按选中地址复制",
+  );
 }
 
 const NODE_GROUP_MODE_STORAGE_KEY = "forwardx.proxyNodes.groupMode";
@@ -800,9 +805,13 @@ export default function ClientSubscriptionsPage() {
                               key={node.id}
                               leading={<ProxyNodeHealthDot health={node.health} />}
                               name={node.name}
+                              tag={(
+                                <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+                                  {PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol}
+                                </Badge>
+                              )}
                               muted={!node.isEnabled}
                               meta={proxyNodeMetaText([
-                                PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol,
                                 `${node.address}:${node.port}`,
                                 node.sharedFrom
                                   ? `${node.sharedFrom.name} 分享，不可修改`
