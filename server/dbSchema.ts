@@ -288,10 +288,17 @@ const tables: TableDef[] = [
       c("snellVersion", "int", { notNull: true, default: 0 }), c("snellMode", "text"), c("xhttpMode", "text"),
       c("autoGroup", "varchar", { length: 16, notNull: true, default: "url-test" }), c("includeDirect", "bool", { notNull: true, default: false }), c("frontProxyId", "int", { notNull: true, default: 0 }),
       c("inboundId", "int", { notNull: true, default: 0 }), c("inboundUserId", "int", { notNull: true, default: 0 }),
+      // 落地机的套餐规格与用量：带宽与总流量人填，已用由面板累加。
+      c("bandwidthMbps", "int", { notNull: true, default: 0 }),
+      c("trafficLimit", "bigint", { notNull: true, default: 0 }),
+      c("trafficUsed", "bigint", { notNull: true, default: 0 }),
+      c("trafficAutoReset", "bool", { notNull: true, default: false }),
+      c("trafficResetDay", "int", { notNull: true, default: 1 }),
+      c("lastTrafficReset", "epoch"),
       c("isEnabled", "bool", { notNull: true, default: true }), c("sortOrder", "int", { notNull: true, default: 0 }),
       c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],
-    indexes: [["userId"], ["userId", "sortOrder"]],
+    indexes: [["userId"], ["userId", "sortOrder"], ["trafficAutoReset"]],
   },
   {
     // 落地入站：面板在自己管的主机上开出来的节点。Reality 私钥只存在这张表。

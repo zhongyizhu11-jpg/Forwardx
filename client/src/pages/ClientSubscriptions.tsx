@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { formatBytes } from "@/components/hosts/hostDisplay";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
@@ -52,10 +51,13 @@ import {
   type ProxyClientTarget,
   type ProxySubscriptionKind,
 } from "@shared/proxyClientImport";
+import { type ProxyNodeHealth } from "@shared/proxyNodeHealth";
 import {
-  PROXY_NODE_TRAFFIC_WINDOW_HOURS,
-  type ProxyNodeHealth,
-} from "@shared/proxyNodeHealth";
+  formatProxyNodeQuota,
+  formatQuotaBytes,
+  proxyNodeQuotaPercent,
+  proxyNodeQuotaState,
+} from "@shared/proxyNodeQuota";
 import {
   groupProxyNodes,
   normalizeProxyNodeGroupMode,
@@ -225,6 +227,64 @@ function ProxyNodeHealthDot({ health }: { health?: ProxyNodeHealth | null }) {
   );
 }
 
+/**
+ * GB ↔ 字节。用 1000 而不是 1024：机房卖的「1000G」是按 1000 算的，
+ * 按 1024 存进去再显示出来会变成 931G，跟你填的数对不上。
+ */
+const GB_IN_BYTES = 1e9;
+
+function bytesFromGb(value: string): number {
+  const gb = Number(String(value).trim());
+  if (!Number.isFinite(gb) || gb <= 0) return 0;
+  return Math.round(gb * GB_IN_BYTES);
+}
+
+function gbFromBytes(bytes: unknown): string {
+  const value = Number(bytes) || 0;
+  if (value <= 0) return "";
+  const gb = value / GB_IN_BYTES;
+  return String(gb >= 100 ? Math.round(gb) : Number(gb.toFixed(2)));
+}
+
+const QUOTA_STATE_STYLES = {
+  none: "text-muted-foreground",
+  normal: "text-muted-foreground",
+  warn: "text-amber-600 dark:text-amber-500",
+  exceeded: "text-red-600 dark:text-red-500",
+} as const;
+
+/**
+ * 行上的 `带宽/总流量/已用流量`，例如 `500M/1000G/367G`。
+ *
+ * 已用量只数得到经面板转发规则走过的流量 —— 订阅里的「直连」条目是客户端直连
+ * 落地机的，中转机不在路径上，面板看不见。所以这个数只会比机房账单**小**。
+ * 这句话写在悬停说明里：一个看着精确、实际偏小的用量，会让人在快超额时以为
+ * 还很宽裕，那比不显示更糟。
+ */
+function ProxyNodeQuotaText({ node }: { node: any }) {
+  const quota = {
+    bandwidthMbps: Number(node.bandwidthMbps || 0),
+    trafficLimit: Number(node.trafficLimit || 0),
+    trafficUsed: Number(node.trafficUsed || 0),
+  };
+  const text = formatProxyNodeQuota(quota);
+  if (!text) {
+    return <span className="shrink-0 text-xs text-muted-foreground/50" title="还没填这台机器的带宽和总流量，去「编辑」里补上">—</span>;
+  }
+  const state = proxyNodeQuotaState(quota);
+  const percent = proxyNodeQuotaPercent(quota);
+  const detail = [
+    "带宽 / 总流量 / 已用流量",
+    quota.trafficLimit > 0 ? `已用 ${percent}%` : "没设总流量，只显示已用量",
+    `已用量只统计经面板转发走过的流量，直连订阅条目和这台机器上别的服务不计入 —— 所以只会比机房账单小。可在「编辑」里手工校准。`,
+  ].join("\n");
+  return (
+    <span className={`shrink-0 text-xs tabular-nums ${QUOTA_STATE_STYLES[state]}`} title={detail}>
+      {text}
+    </span>
+  );
+}
+
 export default function ClientSubscriptionsPage() {
   const utils = trpc.useUtils();
   const confirm = useConfirmDialog();
@@ -257,6 +317,12 @@ export default function ClientSubscriptionsPage() {
   const [nodeIncludeDirect, setNodeIncludeDirect] = useState(false);
   // 0 表示不经由任何前置。
   const [nodeFrontProxyId, setNodeFrontProxyId] = useState(0);
+  /** 落地机的套餐规格。带宽用 Mbps，总流量用 GB —— 机房就是按这两个单位卖的。 */
+  const [nodeBandwidthMbps, setNodeBandwidthMbps] = useState("");
+  const [nodeTrafficLimitGb, setNodeTrafficLimitGb] = useState("");
+  const [nodeTrafficUsedGb, setNodeTrafficUsedGb] = useState("");
+  const [nodeTrafficAutoReset, setNodeTrafficAutoReset] = useState(false);
+  const [nodeTrafficResetDay, setNodeTrafficResetDay] = useState("1");
   // 订阅内容里改名：转发派生的条目改规则上的显示名，直连条目改模板名。
   const [renaming, setRenaming] = useState<
     { kind: "relay" | "direct"; ruleId: number; templateId: number; name: string } | null
@@ -452,6 +518,11 @@ export default function ClientSubscriptionsPage() {
     setNodeAutoGroup("url-test");
     setNodeIncludeDirect(false);
     setNodeFrontProxyId(0);
+    setNodeBandwidthMbps("");
+    setNodeTrafficLimitGb("");
+    setNodeTrafficUsedGb("");
+    setNodeTrafficAutoReset(false);
+    setNodeTrafficResetDay("1");
     setNodeDialogOpen(true);
   };
 
@@ -462,6 +533,11 @@ export default function ClientSubscriptionsPage() {
     setNodeAutoGroup(normalizeProxyNodeAutoGroup(node.autoGroup));
     setNodeIncludeDirect(!!node.includeDirect);
     setNodeFrontProxyId(Number(node.frontProxyId || 0));
+    setNodeBandwidthMbps(Number(node.bandwidthMbps || 0) > 0 ? String(node.bandwidthMbps) : "");
+    setNodeTrafficLimitGb(gbFromBytes(node.trafficLimit));
+    setNodeTrafficUsedGb(gbFromBytes(node.trafficUsed));
+    setNodeTrafficAutoReset(!!node.trafficAutoReset);
+    setNodeTrafficResetDay(String(Number(node.trafficResetDay || 1)));
     setNodeDialogOpen(true);
   };
 
@@ -482,9 +558,17 @@ export default function ClientSubscriptionsPage() {
       autoGroup: nodeAutoGroup,
       includeDirect: nodeIncludeDirect,
       frontProxyId: nodeFrontProxyId,
+      bandwidthMbps: Math.max(0, Math.floor(Number(nodeBandwidthMbps) || 0)),
+      trafficLimit: bytesFromGb(nodeTrafficLimitGb),
+      trafficAutoReset: nodeTrafficAutoReset,
+      trafficResetDay: Math.min(28, Math.max(1, Math.floor(Number(nodeTrafficResetDay) || 1))),
     };
-    if (editingNodeId) updateNode.mutate({ id: editingNodeId, ...payload });
-    else createNode.mutate(payload);
+    if (editingNodeId) {
+      // 已用量只在编辑时能改：新建时还没有任何用量，给个输入框只会让人以为要填。
+      updateNode.mutate({ id: editingNodeId, ...payload, trafficUsed: bytesFromGb(nodeTrafficUsedGb) });
+    } else {
+      createNode.mutate(payload);
+    }
   };
 
   // 权限查询未回来时先不下结论，避免闪一下「无权限」再闪回正常。
@@ -613,12 +697,7 @@ export default function ClientSubscriptionsPage() {
                                   {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
                                 </p>
                               </div>
-                              <span
-                                className="shrink-0 text-xs tabular-nums text-muted-foreground"
-                                title={`近 ${PROXY_NODE_TRAFFIC_WINDOW_HOURS} 小时经这个落地的流量，按绑定的转发汇总（上行 + 下行）`}
-                              >
-                                {node.ruleCount > 0 ? formatBytes(node.trafficBytes) : "—"}
-                              </span>
+                              <ProxyNodeQuotaText node={node} />
                               <Switch
                                 className="shrink-0 scale-90"
                                 checked={!!node.isEnabled}
@@ -1218,6 +1297,78 @@ export default function ClientSubscriptionsPage() {
                   onCheckedChange={setNodeIncludeDirect}
                   className="mt-0.5 shrink-0"
                 />
+              </div>
+            </div>
+            <div className="space-y-2 rounded-lg border p-3">
+              <Label>这台落地机的套餐</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-xs text-muted-foreground">带宽（Mbps）</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    value={nodeBandwidthMbps}
+                    onChange={(event) => setNodeBandwidthMbps(event.target.value)}
+                    placeholder="500"
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-xs text-muted-foreground">总流量（GB）</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    value={nodeTrafficLimitGb}
+                    onChange={(event) => setNodeTrafficLimitGb(event.target.value)}
+                    placeholder="1000"
+                  />
+                </div>
+              </div>
+              {editingNodeId ? (
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">已用流量（GB）</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      value={nodeTrafficUsedGb}
+                      onChange={(event) => setNodeTrafficUsedGb(event.target.value)}
+                      placeholder="0"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => setNodeTrafficUsedGb("")}
+                    >
+                      清零
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    面板自己会累加，这里只是用来跟机房的账单对齐。
+                    <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                      面板只数得到经转发规则走过的流量 —— 订阅里的「直连」条目和这台机器上跑的别的服务都不计入，
+                      所以这个数只会比机房账单小，不会大。
+                    </span>
+                  </p>
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <div className="min-w-0">
+                  <Label className="text-xs">每月自动清零</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">按机房的流量周期来，日期只能填 1-28。</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {nodeTrafficAutoReset ? (
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      className="h-8 w-16"
+                      value={nodeTrafficResetDay}
+                      onChange={(event) => setNodeTrafficResetDay(event.target.value)}
+                    />
+                  ) : null}
+                  <Switch checked={nodeTrafficAutoReset} onCheckedChange={setNodeTrafficAutoReset} />
+                </div>
               </div>
             </div>
             <div className="space-y-2">

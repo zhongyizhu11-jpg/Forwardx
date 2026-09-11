@@ -789,6 +789,13 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       }
 
     const quotaTrafficByUser = new Map<number, number>();
+    /**
+     * 每个落地节点这一批走了多少字节。
+     *
+     * 落地机的「已用流量」要跨 72 小时保留期累计，所以必须在入库这一刻就加到
+     * proxy_nodes.trafficUsed 上 —— traffic_stats 过期会被清掉，事后算不回来。
+     */
+    const trafficByProxyNode = new Map<number, number>();
     const trafficBatch: db.TrafficStatBatchItem[] = [];
     const runningRuleIds = new Set<number>();
     const billingEntries: Array<{
@@ -914,6 +921,12 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
           bytesOut,
           stat.connections || 0,
         );
+        const proxyNodeId = Number((rule as any).proxyNodeId || 0);
+        if (proxyNodeId > 0) {
+          // 用未乘倍率的原始字节：这是落地机实际跑的量，机房按这个算，
+          // 而倍率是面板向用户计费用的，两回事。
+          trafficByProxyNode.set(proxyNodeId, (trafficByProxyNode.get(proxyNodeId) || 0) + ruleBytes);
+        }
         const billingResource = billingResourcesByRuleId.get(Number(rule.id));
         if (billingResource?.config) {
           billingEntries.push({ rule, ruleBytes, billingResource });
@@ -926,6 +939,7 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
 
     await db.insertTrafficStatsBatch(trafficBatch);
     await db.markForwardRulesRunning(Array.from(runningRuleIds));
+    await db.addProxyNodeTraffic(trafficByProxyNode);
 
     for (const { rule, ruleBytes, billingResource } of billingEntries) {
       strictTrafficAccounting = true;

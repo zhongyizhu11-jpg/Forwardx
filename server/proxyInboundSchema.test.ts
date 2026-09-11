@@ -108,6 +108,10 @@ test("已有数据库升级时会补出新表和新列", () => {
 
       const columnsOf = (table) => new Set(db.prepare("PRAGMA table_info(" + table + ")").all().map((row) => row.name));
       assert.ok(columnsOf("proxy_nodes").has("inboundId"), "升级后 proxy_nodes 仍缺 inboundId");
+      // 落地机套餐的累计用量列：漏掉的话升级后用量会一直是 0，而且看不出原因。
+      for (const name of ["bandwidthMbps", "trafficLimit", "trafficUsed", "trafficAutoReset", "trafficResetDay", "lastTrafficReset"]) {
+        assert.ok(columnsOf("proxy_nodes").has(name), "升级后 proxy_nodes 缺列: " + name);
+      }
       assert.ok(columnsOf("proxy_inbounds").has("realityPrivateKey"), "升级后没有建出 proxy_inbounds");
       assert.ok(columnsOf("proxy_inbound_users").has("password"), "升级后没有建出 proxy_inbound_users");
 

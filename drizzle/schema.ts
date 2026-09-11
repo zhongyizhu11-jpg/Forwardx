@@ -447,6 +447,19 @@ export const proxyNodes = table("proxy_nodes", {
   // 对应入站上的哪个用户（proxy_inbound_users.id）。0 表示该协议只有单用户。
   // 派生时靠它把节点与用户对齐，用户删掉时才知道该删哪一条节点。
   inboundUserId: int("inboundUserId").notNull().default(0),
+  // 这台落地机的套餐规格与用量。带宽与总流量是人填的（面板无从得知你买的是什么套餐），
+  // 已用由面板自己累加 —— traffic_stats 只保留 72 小时，累计量必须单独存一列，
+  // 不能靠查那张表算出来。
+  // 上行带宽 Mbps，0 表示没填。
+  bandwidthMbps: int("bandwidthMbps").notNull().default(0),
+  // 套餐总流量（字节），0 表示不限或没填。
+  trafficLimit: bigint("trafficLimit", { mode: "number" }).notNull().default(0),
+  // 已用流量（字节）。只统计经面板转发规则走过的量 —— 直连订阅条目和这台机器上
+  // 别的服务面板看不见，所以这个数是「面板经手的量」，可以手工校准成机房口径。
+  trafficUsed: bigint("trafficUsed", { mode: "number" }).notNull().default(0),
+  trafficAutoReset: boolean("trafficAutoReset").notNull().default(false),
+  trafficResetDay: int("trafficResetDay").notNull().default(1),
+  lastTrafficReset: epoch("lastTrafficReset"),
   isEnabled: boolean("isEnabled").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
