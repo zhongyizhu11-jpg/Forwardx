@@ -335,6 +335,38 @@ export async function replaceProxyInboundUsers(
  * 入站自己只知道监听在 ::，不知道对外是哪个 IP；而主机那边已经有一套地址解析
  * （入口 IP、DDNS 域名、v4/v6），直接复用，免得两处各算一份还算得不一样。
  */
+/**
+ * 每个入站派生出来的节点，以及它们「是否加进订阅」。
+ *
+ * 自建节点的订阅状态归入站管 —— 派生节点不在「落地节点」那一段列出来（那一段是
+ * 粘进来的），所以那个开关得在「新建节点」这边给出入口，否则建完的节点要不要
+ * 进订阅就没地方改了。
+ */
+export async function getProxyInboundDerivedNodes(
+  inboundIds: readonly number[],
+): Promise<Map<number, { ids: number[]; includeDirect: boolean }>> {
+  const result = new Map<number, { ids: number[]; includeDirect: boolean }>();
+  const ids = Array.from(new Set(inboundIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)));
+  for (const id of ids) result.set(id, { ids: [], includeDirect: false });
+  if (ids.length === 0) return result;
+
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db
+    .select({ id: proxyNodes.id, inboundId: proxyNodes.inboundId, includeDirect: proxyNodes.includeDirect })
+    .from(proxyNodes)
+    .where(inArray(proxyNodes.inboundId, ids));
+
+  for (const row of rows as any[]) {
+    const entry = result.get(Number(row.inboundId));
+    if (!entry) continue;
+    entry.ids.push(Number(row.id));
+    // 多用户入站有好几条派生节点，只要有一条进了订阅就算开着。
+    if (row.includeDirect === true || row.includeDirect === 1) entry.includeDirect = true;
+  }
+  return result;
+}
+
 export async function getProxyInboundAddress(hostId: number): Promise<string> {
   const db = await getDb();
   if (!db) return "";
@@ -427,7 +459,18 @@ export async function syncProxyNodeFromInbound(inboundId: number): Promise<numbe
       kept.add(Number(current.id));
       ids.push(Number(current.id));
     } else {
-      const created = Number(await insertAndGetId("proxy_nodes", data as any));
+      /**
+       * 新派生的节点默认「加进订阅」。
+       *
+       * 这一列对**粘进来的**落地节点默认是关的，因为那种是租来的机器，落地 IP
+       * 要藏在中转后面。但自建节点不一样：它就开在自己的主机上，直连本来就是
+       * 它的用法，而这一段的说明写的也是「自动进订阅」—— 建完却不出现在订阅里，
+       * 那句话就成了假的。
+       *
+       * 只在新建时给默认值，更新时不动：用户后来手动关掉的话，下次保存入站
+       * 不该把他的选择覆盖回去。
+       */
+      const created = Number(await insertAndGetId("proxy_nodes", { ...data, includeDirect: true } as any));
       kept.add(created);
       ids.push(created);
     }

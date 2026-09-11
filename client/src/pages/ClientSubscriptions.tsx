@@ -515,21 +515,35 @@ export default function ClientSubscriptionsPage() {
   const tokens = tokensQuery.data ?? [];
 
   /**
+   * 「落地节点」这一段只列粘进来的，不列自建节点派生出来的那些。
+   *
+   * 派生节点在上面的「新建节点」里管着，两处都列就成了同一个节点出现两次；
+   * 而且这一段的「编辑」是按「换一条节点链接」设计的，派生节点根本没有链接，
+   * 点进去只会得到一句「请粘贴落地机的节点链接」—— 一个必然失败的入口。
+   *
+   * 但它们仍然留在 nodes 里：绑转发的下拉和前置代理的下拉都要能选到自建节点，
+   * 那是「自建落地 + 中转」的正常用法。
+   */
+  const pastedNodes = useMemo(
+    () => (nodes as any[]).filter((node) => !Number(node?.inboundId || 0)),
+    [nodes],
+  );
+  /**
    * 只有一个节点时一律不分组：分组下拉这时是藏起来的，若还按上次选的方式分，
    * 就会出现一个改不掉的分组标题。
    */
-  const effectiveGroupMode: ProxyNodeGroupMode = nodes.length > 1 ? nodeGroupMode : "none";
+  const effectiveGroupMode: ProxyNodeGroupMode = pastedNodes.length > 1 ? nodeGroupMode : "none";
   const nodeGroups = useMemo(
-    () => groupProxyNodes(nodes as any[], effectiveGroupMode),
-    [nodes, effectiveGroupMode],
+    () => groupProxyNodes(pastedNodes, effectiveGroupMode),
+    [pastedNodes, effectiveGroupMode],
   );
   const onlineNodeCount = useMemo(
-    () => (nodes as any[]).filter((node) => node?.health?.state === "online").length,
-    [nodes],
+    () => pastedNodes.filter((node) => node?.health?.state === "online").length,
+    [pastedNodes],
   );
   const offlineNodeCount = useMemo(
-    () => (nodes as any[]).filter((node) => node?.health?.state === "offline").length,
-    [nodes],
+    () => pastedNodes.filter((node) => node?.health?.state === "offline").length,
+    [pastedNodes],
   );
 
   const toggleQuota = (id: number) => {
@@ -689,16 +703,16 @@ export default function ClientSubscriptionsPage() {
               <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${nodesCollapsed ? "-rotate-90" : ""}`} />
               <Server className="h-4 w-4 shrink-0" />
               <CardTitle className="text-base">落地节点</CardTitle>
-              {nodes.length > 0 ? (
+              {pastedNodes.length > 0 ? (
                 <span className="truncate text-xs text-muted-foreground">
-                  {nodes.length} 个
+                  {pastedNodes.length} 个
                   {onlineNodeCount > 0 ? ` · ${onlineNodeCount} 在线` : ""}
                   {offlineNodeCount > 0 ? ` · ${offlineNodeCount} 离线` : ""}
                 </span>
               ) : null}
             </button>
             <div className="flex shrink-0 items-center gap-2">
-              {nodes.length > 1 ? (
+              {pastedNodes.length > 1 ? (
                 <Select value={nodeGroupMode} onValueChange={(value) => changeGroupMode(value as ProxyNodeGroupMode)}>
                   <SelectTrigger className="h-8 w-24 text-xs">
                     <SelectValue />
@@ -719,7 +733,7 @@ export default function ClientSubscriptionsPage() {
           <CardContent hidden={nodesCollapsed} className="pt-0">
             {nodesQuery.isLoading ? (
               <DataSectionLoading />
-            ) : nodes.length === 0 ? (
+            ) : pastedNodes.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
                 还没有登记节点。先从落地机复制一条节点链接粘进来，VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS / Snell 都行。
               </p>

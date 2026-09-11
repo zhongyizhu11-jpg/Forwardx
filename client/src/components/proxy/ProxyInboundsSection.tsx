@@ -139,6 +139,27 @@ export default function ProxyInboundsSection() {
     },
     onError: (error) => toast.error(error.message),
   });
+  /**
+   * 自建节点要不要进订阅，改的是它派生出来那条 proxy_node 的 includeDirect。
+   * 直接复用订阅那边现成的 updateNode —— 派生节点本来就是一条 proxy_node，
+   * 不必为此另开一个接口。多用户入站有好几条，一起改。
+   */
+  const updateNode = trpc.proxySubscriptions.updateNode.useMutation({
+    onError: (error) => toast.error(error.message),
+  });
+  const setInSubscription = async (row: any, checked: boolean) => {
+    const ids: number[] = Array.isArray(row.derivedNodeIds) ? row.derivedNodeIds : [];
+    if (ids.length === 0) {
+      toast.error("这个节点还没派生出客户端节点，通常是主机还没有可用地址");
+      return;
+    }
+    await Promise.all(ids.map((id) => updateNode.mutateAsync({ id, includeDirect: checked })));
+    toast.success(checked ? "已加进订阅" : "已从订阅移除");
+    void utils.proxyInbounds.list.invalidate();
+    void utils.proxySubscriptions.listNodes.invalidate();
+    void utils.proxySubscriptions.preview.invalidate();
+  };
+
   const deleteInbound = trpc.proxyInbounds.delete.useMutation({
     onSuccess: () => {
       toast.success("节点已删除");
@@ -327,6 +348,12 @@ export default function ProxyInboundsSection() {
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-0.5">
+                      <Switch
+                        className="mr-1 scale-90"
+                        checked={!!row.includeDirect}
+                        title={row.includeDirect ? "已在订阅里，关掉就不出现" : "加进订阅"}
+                        onCheckedChange={(checked) => void setInSubscription(row, checked)}
+                      />
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(row)} title="编辑">
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>

@@ -279,12 +279,16 @@ export const proxyInboundsRouter = router({
     const rows = ctx.user.role === "admin"
       ? await db.getAllProxyInbounds()
       : await db.getProxyInboundsByUser(ctx.user.id);
+    // 派生节点的订阅状态一次查完 —— 那个开关的入口在「新建节点」这一段。
+    const derived = await db.getProxyInboundDerivedNodes(rows.map((row: any) => Number(row.id)));
     return Promise.all(rows.map(async (row: any) => ({
       ...row,
       // 私钥不出接口：前端没有任何用得上它的地方，多送一次就多一条泄漏路径。
       realityPrivateKey: undefined,
       // 同理用户凭据也不出去，只给 id 和名字，够界面显示和编辑了。
       users: (await db.getProxyInboundUsers(Number(row.id))).map((user) => ({ id: user.id, name: user.name })),
+      derivedNodeIds: derived.get(Number(row.id))?.ids || [],
+      includeDirect: derived.get(Number(row.id))?.includeDirect ?? false,
     })));
   }),
 
