@@ -116,7 +116,7 @@ export default function ProxyInboundsSection() {
 
   const createInbound = trpc.proxyInbounds.create.useMutation({
     onSuccess: () => {
-      toast.success("落地节点已创建，配置正在下发");
+      toast.success("节点已创建，配置正在下发");
       setDialogOpen(false);
       refresh();
     },
@@ -124,7 +124,7 @@ export default function ProxyInboundsSection() {
   });
   const updateInbound = trpc.proxyInbounds.update.useMutation({
     onSuccess: () => {
-      toast.success("落地节点已更新，配置正在下发");
+      toast.success("节点已更新，配置正在下发");
       setDialogOpen(false);
       refresh();
     },
@@ -139,7 +139,7 @@ export default function ProxyInboundsSection() {
   });
   const deleteInbound = trpc.proxyInbounds.delete.useMutation({
     onSuccess: () => {
-      toast.success("落地节点已删除");
+      toast.success("节点已删除");
       refresh();
     },
     onError: (error) => toast.error(error.message),
@@ -249,7 +249,7 @@ export default function ProxyInboundsSection() {
 
   const askDelete = async (row: any) => {
     const ok = await confirm({
-      title: "删除落地节点？",
+      title: "删除节点？",
       description: `「${row.name}」会停止监听，它派生的客户端节点也会从订阅里移除。绑定过它的转发规则会自动解绑，转发本身继续运行。`,
       confirmText: "删除",
       tone: "destructive",
@@ -289,18 +289,13 @@ export default function ProxyInboundsSection() {
               <Plus className="mr-1 h-4 w-4" />
               新建
             </Button>
-            <p className="w-full text-xs text-muted-foreground">
-              在自己的主机上开节点，自动进订阅。流量按端口计数，和转发规则走同一个套餐额度。
-              一台机器可以开多个端口分给不同用户，各自扣各自的额度、各自只看得到自己的用量。
-              租来的线路机装不了 Agent，那种去上面的「落地节点」粘链接。
-            </p>
           </CardHeader>
           <CardContent hidden={collapsed} className="pt-0">
             {inboundsQuery.isLoading ? (
               <DataSectionLoading />
             ) : rows.length === 0 ? (
-              <p className="py-8 text-center text-xs text-muted-foreground">
-                还没有落地节点。新建一个 REALITY 节点即可，它不需要域名和证书。
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                还没有节点。REALITY 不需要域名和证书，建完就能用。
               </p>
             ) : (
               <div className="space-y-1.5">
@@ -346,7 +341,7 @@ export default function ProxyInboundsSection() {
             )}
             {hosts.length === 0 ? (
               <p className="mt-3 text-xs text-amber-600 dark:text-amber-500">
-                还没有可用主机。落地节点要靠 Agent 下发配置，先去「主机管理」装一台。
+                还没有可用主机。自建节点要靠 Agent 下发配置，先去「主机管理」装一台。
               </p>
             ) : null}
           </CardContent>
@@ -356,7 +351,7 @@ export default function ProxyInboundsSection() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="flex max-h-[92svh] flex-col overflow-hidden sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{form.id > 0 ? "编辑落地节点" : "新建落地节点"}</DialogTitle>
+            <DialogTitle>{form.id > 0 ? "编辑节点" : "新建节点"}</DialogTitle>
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             <div className="grid gap-3 sm:grid-cols-2">
