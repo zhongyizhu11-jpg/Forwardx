@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.3.321] - 2026-09-11
+
+### 修复
+
+- **链接弹窗里的复制图标点了没反应**。上一版给 iOS 加的分支自己是坏的：把 `contentEditable` 设在了 `<textarea>` 上，然后用 `Range.selectNodeContents` 去选 —— 而 textarea 的内容在 `value` 里、没有子节点，这么选出来的**选区是空的**。Chromium 上还照样返回 `true`（其实复制了个空），iOS 直接失败。
+- 现在弹窗里的复制按钮**直接选中屏幕上那段链接文字**再复制，等同于用户自己长按选中，不依赖任何隐藏元素的技巧。复制不成时选区留着不清，用系统菜单接着复制就行。
+- 通用的兜底路径也一并改对：换成带真实文本节点的 `contenteditable` div。
+
+### 说明
+
+- 两条路都用真实模块在非安全上下文（`http://192.0.2.2:8899`）下用 Chromium 实测过：`copyTextFromElement` 选中的是可见的链接文字并返回 `true`，重写后的 `copyTextToClipboard` 也返回 `true`。
+- 隐藏元素的几条规矩写进注释了：`display:none` / `visibility:hidden` 的元素选不中；不用 `opacity:0` 和负 `z-index`（iOS 上会让选中失败）；字号给 16px，否则 Safari 会因为小字号可编辑元素获得焦点而把整页放大。
+
+### 版本
+
+- 面板与 APK Release `2.3.321`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
 ## [2.3.320] - 2026-09-11
 
 ### 修复

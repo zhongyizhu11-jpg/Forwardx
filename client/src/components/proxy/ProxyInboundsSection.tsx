@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { ProxyNodeRow, proxyNodeMetaText } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog, type ProxyNodeShareTarget } from "@/components/proxy/ProxyNodeShareDialog";
-import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
+import { clipboardNeedsManualCopy, copyTextFromElement, copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import {
   PROXY_INBOUND_PROTOCOLS,
@@ -28,7 +28,7 @@ import {
 } from "@shared/proxyInbound";
 import { PROXY_NODE_PROTOCOL_LABELS, type ProxyNodeProtocol, type ProxyNodeTransport } from "@shared/proxyNode";
 import { ChevronDown, Copy, KeyRound, Link2, Pencil, Plus, Radio, RefreshCw, Share2, Trash2, UserPlus, UserRound, Users } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const TRANSPORT_LABELS: Record<string, string> = {
@@ -172,6 +172,13 @@ export default function ProxyInboundsSection() {
   const [linkRows, setLinkRows] = useState<Array<{ userId: number; userName: string; name: string; link: string }>>([]);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [linkLoadingId, setLinkLoadingId] = useState(0);
+  /**
+   * 弹窗里每条链接对应的那个 <p>。
+   *
+   * 复制按钮直接选中它里面的文字 —— 等同于用户自己长按选中再复制，不依赖任何
+   * 隐藏元素的技巧，是 iOS 上最稳的一条路。
+   */
+  const linkTextRefs = useRef<Record<number, HTMLParagraphElement | null>>({});
 
   /**
    * 从节点这边发起分享。多用户入站派生出好几行节点，每一行是一份独立凭据，
@@ -794,7 +801,10 @@ export default function ProxyInboundsSection() {
                   <p className="truncate text-sm font-medium leading-tight">{item.userName || item.name}</p>
                   {/* select-all + break-all：复制不了的时候要能一下选中整条，
                       truncate 会把后半截藏起来，选也选不全。 */}
-                  <p className="select-all break-all font-mono text-[11px] leading-tight text-muted-foreground">
+                  <p
+                    ref={(node) => { linkTextRefs.current[item.userId] = node; }}
+                    className="select-all break-all font-mono text-[11px] leading-tight text-muted-foreground"
+                  >
                     {item.link}
                   </p>
                 </div>
@@ -803,7 +813,12 @@ export default function ProxyInboundsSection() {
                   size="icon"
                   className="h-7 w-7 shrink-0"
                   title="复制"
-                  onClick={() => void copyLink(item.link)}
+                  onClick={async () => {
+                    const ok = await copyTextFromElement(linkTextRefs.current[item.userId] || null, item.link);
+                    if (ok) toast.success("链接已复制，粘进客户端即可");
+                    // 失败时选区还留着，用户直接用系统菜单复制就行。
+                    else toast.error("浏览器拒绝了复制，链接已选中，用系统菜单复制即可");
+                  }}
                 >
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
