@@ -126,3 +126,46 @@ test("派生节点带着 inboundId，界面据此把它排除出「落地节点�
     assert.ok(!derived.sourceLink, "派生节点不该有 sourceLink");
   `);
 });
+
+test("分享链接一个用户一条，凭据互不相同", () => {
+  /**
+   * 多用户入站的每个人拿到的必须是自己那份凭据。串了的话两个人共用一条身份 ——
+   * 吊销其中一个会把另一个也踢下线，而界面上两行看着是独立的。
+   */
+  runInDatabase(String.raw`
+    const shared = await import(url("shared/proxyInbound.ts"));
+    const node = await import(url("shared/proxyNode.ts"));
+
+    const id = Number(await repo.createProxyInbound({
+      userId: 1, hostId: 1, name: "多用户", protocol: "vless", port: 10443,
+      transport: "tcp", security: "reality", serverName: "dl.google.com",
+      realityPrivateKey: "cHJpdmF0ZS1rZXktMzItYnl0ZXMtZm9yLXRlc3Rpbmc",
+      realityPublicKey: "cHVibGljLWtleS0zMi1ieXRlcy1mb3ItdGVzdGluZzEy",
+      realityShortId: "a1b2c3d4", isEnabled: true,
+    }));
+    await repo.replaceProxyInboundUsers(id, [
+      { id: 0, name: "小王", uuid: "11111111-1111-1111-1111-111111111111", password: "" },
+      { id: 0, name: "小李", uuid: "22222222-2222-2222-2222-222222222222", password: "" },
+    ]);
+
+    const inbound = await repo.loadProxyInbound(id);
+    const address = await repo.getProxyInboundAddress(1);
+    assert.ok(address, "主机应当有可用地址");
+
+    const links = shared.proxyNodesFromInbound(inbound, { address }).map(({ user, node: n }) => ({
+      userName: user ? user.name : "",
+      link: node.formatProxyNodeLink(n),
+    }));
+    assert.equal(links.length, 2, "两个用户应当各得一条链接");
+
+    const uuids = new Set();
+    for (const item of links) {
+      const back = node.parseProxyNodeLink(item.link);
+      assert.ok(back.ok, item.userName + " 的链接应当能回读");
+      uuids.add(back.node.uuid);
+      // 公钥要在链接里，否则客户端握手必失败。
+      assert.equal(back.node.realityPublicKey, "cHVibGljLWtleS0zMi1ieXRlcy1mb3ItdGVzdGluZzEy");
+    }
+    assert.equal(uuids.size, 2, "两个用户的凭据必须互不相同");
+  `);
+});

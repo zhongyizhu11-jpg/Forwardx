@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import {
   PROXY_INBOUND_PROTOCOLS,
@@ -24,7 +25,7 @@ import {
   type ProxyInboundSecurity,
 } from "@shared/proxyInbound";
 import { PROXY_NODE_PROTOCOL_LABELS, type ProxyNodeProtocol, type ProxyNodeTransport } from "@shared/proxyNode";
-import { ChevronDown, KeyRound, Pencil, Plus, Radio, RefreshCw, Server, Trash2, UserPlus, UserRound, Users } from "lucide-react";
+import { ChevronDown, Copy, KeyRound, Link2, Pencil, Plus, Radio, RefreshCw, Server, Trash2, UserPlus, UserRound, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -158,6 +159,43 @@ export default function ProxyInboundsSection() {
     void utils.proxyInbounds.list.invalidate();
     void utils.proxySubscriptions.listNodes.invalidate();
     void utils.proxySubscriptions.preview.invalidate();
+  };
+
+  /**
+   * 复制分享链接。一个用户一条，所以多用户入站要先让人挑一个。
+   *
+   * 链接是按需拉的（proxyInbounds.links），不跟着列表走：里面带着完整凭据，
+   * 而列表是每次进页面都会拉的。
+   */
+  const [linkRows, setLinkRows] = useState<Array<{ userId: number; userName: string; name: string; link: string }>>([]);
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [linkLoadingId, setLinkLoadingId] = useState(0);
+
+  const copyLink = async (link: string) => {
+    if (await copyTextToClipboard(link)) toast.success("链接已复制，粘进客户端即可");
+    else toast.error("复制失败，请长按选中链接复制");
+  };
+
+  const openLinks = async (row: any) => {
+    setLinkLoadingId(Number(row.id));
+    try {
+      const rows = await utils.proxyInbounds.links.fetch({ id: Number(row.id) });
+      if (rows.length === 0) {
+        toast.error("这个节点还没生成出链接");
+        return;
+      }
+      // 只有一条就别弹窗了 —— 单用户节点点一下就该到剪贴板。
+      if (rows.length === 1) {
+        await copyLink(rows[0].link);
+        return;
+      }
+      setLinkRows(rows);
+      setLinkDialogOpen(true);
+    } catch (error: any) {
+      toast.error(error?.message || "取链接失败");
+    } finally {
+      setLinkLoadingId(0);
+    }
   };
 
   const deleteInbound = trpc.proxyInbounds.delete.useMutation({
@@ -354,6 +392,16 @@ export default function ProxyInboundsSection() {
                         title={row.includeDirect ? "已在订阅里，关掉就不出现" : "加进订阅"}
                         onCheckedChange={(checked) => void setInSubscription(row, checked)}
                       />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        disabled={linkLoadingId === Number(row.id)}
+                        onClick={() => void openLinks(row)}
+                        title="复制节点链接"
+                      >
+                        <Link2 className="h-3.5 w-3.5" />
+                      </Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(row)} title="编辑">
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
@@ -698,6 +746,40 @@ export default function ProxyInboundsSection() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button>
             <Button onClick={submit} disabled={saving}>保存</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 多用户入站一个用户一条链接，得先挑一个 —— 复制错了等于把别人的凭据发出去。 */}
+      <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
+        <DialogContent className="flex max-h-[92svh] flex-col overflow-hidden sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>复制节点链接</DialogTitle>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+            {linkRows.map((item) => (
+              <div key={item.userId} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium leading-tight">{item.userName || item.name}</p>
+                  <p className="truncate text-[11px] leading-tight text-muted-foreground">{item.link}</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  title="复制"
+                  onClick={() => void copyLink(item.link)}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
+            <p className="pt-1 text-xs text-amber-600 dark:text-amber-500">
+              链接里带着这个用户的完整凭据，发给谁，谁就能用这个节点。
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLinkDialogOpen(false)}>关闭</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -27,13 +27,14 @@ import {
   PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
   isProxyInboundShadowsocksMethod,
   proxyInboundSupportsMultiUser,
+  proxyNodesFromInbound,
   proxyInboundUserCredentialKinds,
   validateProxyInbound,
   type ProxyInboundUser,
   type ProxyInbound,
   type ProxyInboundProtocol,
 } from "../../shared/proxyInbound";
-import { PROXY_NODE_TRANSPORTS } from "../../shared/proxyNode";
+import { formatProxyNodeLink, PROXY_NODE_TRANSPORTS } from "../../shared/proxyNode";
 import {
   generateProxyInboundPassword,
   generateProxyInboundPsk,
@@ -291,6 +292,35 @@ export const proxyInboundsRouter = router({
       includeDirect: derived.get(Number(row.id))?.includeDirect ?? false,
     })));
   }),
+
+  /**
+   * 这个自建节点的分享链接，一个用户一条。
+   *
+   * 单独一个查询而不是塞进 list：链接里带着完整凭据，而 list 是每次进页面都会拉、
+   * 还在轮询的。凭据只在用户主动要的时候才发出去，少一条泄漏路径。
+   */
+  links: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await assertAllowed(ctx);
+      const row = await assertOwnedInbound(input.id, ctx);
+      const inbound = await db.loadProxyInbound(input.id);
+      if (!inbound) throw new Error("落地节点不存在");
+
+      const address = await db.getProxyInboundAddress(Number((row as any).hostId));
+      if (!address) {
+        // 主机还没有可用地址时，链接里的 host 会是空的 —— 给不出能用的链接，
+        // 不如直说，免得用户复制走一条连不上的。
+        throw new Error("这台主机还没有可用地址，生成不出能连的链接");
+      }
+
+      return proxyNodesFromInbound(inbound, { address }).map(({ user, node }) => ({
+        userId: Number(user?.id || 0),
+        userName: String(user?.name || ""),
+        name: node.name,
+        link: formatProxyNodeLink(node),
+      }));
+    }),
 
   create: protectedProcedure
     .input(inboundInput)
