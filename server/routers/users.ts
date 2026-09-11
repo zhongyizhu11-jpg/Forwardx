@@ -319,6 +319,8 @@ export const usersRouter = router({
         canAddRules: z.boolean().optional(),
         displayRemark: z.string().trim().max(24).nullable().optional(),
         maxRules: z.number().min(0).optional(),
+        /** 自建落地节点数上限，0 = 不限。与 maxRules 一样走 manual 那一列。 */
+        maxProxyInbounds: z.number().min(0).optional(),
         maxPorts: z.number().min(0).optional(),
         maxConnections: z.number().min(0).optional(),
         maxIPs: z.number().min(0).optional(),
@@ -341,6 +343,10 @@ export const usersRouter = router({
         if (data.gostRateLimitOut !== undefined) {
           data.manualGostRateLimitOut = Math.max(0, Math.floor(Number(data.gostRateLimitOut) || 0));
           delete data.gostRateLimitOut;
+        }
+        if (data.maxProxyInbounds !== undefined) {
+          data.manualMaxProxyInbounds = Math.max(0, Math.floor(Number(data.maxProxyInbounds) || 0));
+          delete data.maxProxyInbounds;
         }
         if (data.maxRules !== undefined) {
           data.manualMaxRules = Math.max(0, Math.floor(Number(data.maxRules) || 0));

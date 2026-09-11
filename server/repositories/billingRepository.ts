@@ -1518,6 +1518,7 @@ export async function getEffectiveUserPlanLimits(userId: number) {
       allowProxySubscription: false,
       maxPorts: 0,
       maxRules: 0,
+      maxProxyInbounds: 0,
       maxConnections: 0,
       maxIPs: 0,
       baseTrafficLimit: 0,
@@ -1557,6 +1558,7 @@ export async function getEffectiveUserPlanLimits(userId: number) {
     allowProxySubscription: (active as any[]).some((sub: any) => !!sub.allowProxySubscription),
     maxPorts: sumWithUnlimited("portCount"),
     maxRules: sumWithUnlimited("maxRules"),
+    maxProxyInbounds: sumWithUnlimited("maxProxyInbounds"),
     maxConnections: sumWithUnlimited("maxConnections"),
     maxIPs: sumWithUnlimited("maxIPs"),
     baseTrafficLimit,
@@ -1623,6 +1625,7 @@ export function mergeManualAndPlanLimits(user: any, planLimits: any) {
   const planAllowProxySubscription = !!planLimits?.allowProxySubscription;
   const manualDefaultActive = manualCanAddRules && !planCanAddRules;
   const manualMaxRules = positiveInt(user?.manualMaxRules);
+  const manualMaxProxyInbounds = positiveInt(user?.manualMaxProxyInbounds);
   const manualMaxPorts = positiveInt(user?.manualMaxPorts);
   const manualMaxConnections = positiveInt(user?.manualMaxConnections);
   const manualMaxIPs = positiveInt(user?.manualMaxIPs);
@@ -1650,6 +1653,16 @@ export function mergeManualAndPlanLimits(user: any, planLimits: any) {
     maxRules: mergeLimitValue([
       { active: planCanAddRules, value: planLimits?.maxRules },
       { active: manualDefaultActive || manualMaxRules > 0, value: manualMaxRules },
+    ]),
+    /**
+     * 自建落地节点数。套餐那一侧按**订阅权限**开闸，不是按转发权限 ——
+     * 这是订阅那一套的配额，一个只买了转发、没买订阅的套餐不该顺带给出落地节点额度。
+     *
+     * 手动那一侧沿用其他配额的规矩：管理员填了数就算数。
+     */
+    maxProxyInbounds: mergeLimitValue([
+      { active: planAllowProxySubscription, value: planLimits?.maxProxyInbounds },
+      { active: manualMaxProxyInbounds > 0, value: manualMaxProxyInbounds },
     ]),
     maxConnections: mergeLimitValue([
       { active: planCanAddRules, value: planLimits?.maxConnections },

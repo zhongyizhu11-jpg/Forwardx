@@ -65,6 +65,28 @@ async function assertOwnedInbound(id: number, ctx: any) {
 }
 
 /**
+ * 这个用户还能不能再开一个落地节点。
+ *
+ * 主机授权只管「能在哪台机器上开」，管不住「开几个」—— 一个拿到主机授权的租户
+ * 可以把那台机器的端口占满。配额是那道刹车。
+ *
+ * 检查的是**归属者**的额度而不是操作者的：管理员替租户开节点时，占的是租户的份额。
+ * 管理员自己不受限 —— 他要是想开满，配额也拦不住他，拦了反而碍事。
+ */
+async function assertInboundQuota(ownerId: number, ctx: any) {
+  if (ctx.user.role === "admin" && ownerId === ctx.user.id) return;
+  const owner = await db.getUserById(ownerId);
+  const limit = Number((owner as any)?.maxProxyInbounds || 0);
+  // 0 = 不限，与 maxRules / maxPorts 一致。
+  if (limit <= 0) return;
+  const used = await db.countProxyInboundsByUser(ownerId);
+  if (used >= limit) {
+    const who = ctx.user.id === ownerId ? "你" : `用户「${(owner as any)?.username || ownerId}」`;
+    throw new Error(`${who}的落地节点已达上限（${used}/${limit}）。删掉一个，或让管理员调高上限。`);
+  }
+}
+
+/**
  * 落地节点只能开在装了 Agent 的主机上 —— 面板要靠 Agent 把配置推下去。
  * 租来的线路机上装不了 Agent，那种落地仍然走「粘链接」那条路。
  */
@@ -329,6 +351,8 @@ export const proxyInboundsRouter = router({
       await assertUsableHost(input.hostId, ctx);
       const ownerId = await resolveOwnerId(ctx, input.userId);
 
+      await assertInboundQuota(ownerId, ctx);
+
       const conflict = await db.findProxyInboundPortConflict(input.hostId, input.port);
       if (conflict) throw new Error(`该主机的 ${input.port} 端口已被落地节点「${conflict.name}」占用`);
 
@@ -390,6 +414,11 @@ export const proxyInboundsRouter = router({
       const ownerId = input.userId !== undefined
         ? await resolveOwnerId(ctx, input.userId)
         : Number(row.userId);
+      /**
+       * 换归属时也要看新主人的额度，否则「建不了就先建给自己再转过去」能绕开上限。
+       * 没换归属时不查：那会让一个已经超额的用户连改名字都改不了。
+       */
+      if (ownerId !== Number(row.userId)) await assertInboundQuota(ownerId, ctx);
 
       await db.updateProxyInbound(input.id, {
         hostId,

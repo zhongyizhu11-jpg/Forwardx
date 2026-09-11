@@ -20,6 +20,8 @@ const planInput = z.object({
   trafficLimit: z.number().int().min(0).default(0),
   rateLimitMbps: z.number().int().min(0).max(1_000_000).default(0),
   maxRules: z.number().int().min(0).default(20),
+  /** 套餐附带的自建落地节点数，0 = 不限。 */
+  maxProxyInbounds: z.number().int().min(0).default(0),
   maxConnections: z.number().int().min(0).max(1_000_000).default(2000),
   maxIPs: z.number().int().min(0).max(100_000).default(10),
   allowProxySubscription: z.boolean().default(false),

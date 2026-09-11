@@ -109,6 +109,17 @@ export function proxyInboundToRow(inbound: ProxyInbound): Partial<InsertProxyInb
 
 // ==================== 读 ====================
 
+/** 某个用户名下有几个自建落地节点。配额检查用。 */
+export async function countProxyInboundsByUser(userId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db
+    .select({ id: proxyInbounds.id })
+    .from(proxyInbounds)
+    .where(eq(proxyInbounds.userId, Number(userId)));
+  return rows.length;
+}
+
 export async function getProxyInboundsByUser(userId: number) {
   const db = await getDb();
   if (!db) return [];

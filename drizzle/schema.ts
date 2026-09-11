@@ -148,6 +148,9 @@ export const users = table("users", {
   forwardAccessPauseReason: varchar("forwardAccessPauseReason", { length: 64 }),
   maxRules: int("maxRules").notNull().default(0),       // 最大规则条数，0 = 不限制
   maxPorts: int("maxPorts").notNull().default(0),       // 最大端口数，0 = 不限制（与 maxRules 相同概念，但可独立控制）
+  // 自己能开几个落地节点（proxy_inbounds），0 = 不限制。
+  // 与 maxRules 分开：转发和自建落地是两件事，租两个落地的人不一定只配两条转发。
+  maxProxyInbounds: int("maxProxyInbounds").notNull().default(0),
   // 允许使用的转发方式，逗号分隔，如 "iptables,realm,socat"；null 或空串 = 全部允许
   allowedForwardTypes: text("allowedForwardTypes"),
   allowForwardXTunnel: boolean("allowForwardXTunnel").notNull().default(false),
@@ -159,6 +162,7 @@ export const users = table("users", {
   maxIPs: int("maxIPs").notNull().default(0),
   manualCanAddRules: boolean("manualCanAddRules").notNull().default(false),
   manualMaxRules: int("manualMaxRules").notNull().default(0),
+  manualMaxProxyInbounds: int("manualMaxProxyInbounds").notNull().default(0),
   manualMaxPorts: int("manualMaxPorts").notNull().default(0),
   manualMaxConnections: int("manualMaxConnections").notNull().default(0),
   manualMaxIPs: int("manualMaxIPs").notNull().default(0),
@@ -1037,6 +1041,8 @@ export const subscriptionPlans = table("subscription_plans", {
   trafficLimit: bigint("trafficLimit", { mode: "number" }).notNull().default(0),
   rateLimitMbps: int("rateLimitMbps").notNull().default(0),
   maxRules: int("maxRules").notNull().default(20),
+  // 套餐附带的自建落地节点数，0 = 不限制。只在套餐开了客户端订阅时才有意义。
+  maxProxyInbounds: int("maxProxyInbounds").notNull().default(0),
   maxConnections: int("maxConnections").notNull().default(2000),
   maxIPs: int("maxIPs").notNull().default(10),
   // 该套餐是否附带客户端订阅权限

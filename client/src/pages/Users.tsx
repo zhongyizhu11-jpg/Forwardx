@@ -296,6 +296,8 @@ function UsersContent() {
   const [cancelSubscriptionPlanLabel, setCancelSubscriptionPlanLabel] = useState("");
   const [hiddenCancelledSubscriptionIds, setHiddenCancelledSubscriptionIds] = useState<number[]>([]);
   const [maxRules, setMaxRules] = useState(0);
+  /** 自建落地节点数上限。0 = 不限，与其他配额一致。 */
+  const [maxProxyInbounds, setMaxProxyInbounds] = useState(0);
   const [maxPorts, setMaxPorts] = useState(0);
   const [maxConnections, setMaxConnections] = useState(0);
   const [allowProxySubscription, setAllowProxySubscription] = useState(false);
@@ -519,6 +521,7 @@ function UsersContent() {
         trafficAutoReset: variables.trafficAutoReset,
         trafficResetDay: variables.trafficResetDay,
         manualMaxRules: variables.maxRules,
+        manualMaxProxyInbounds: variables.maxProxyInbounds,
         manualMaxPorts: variables.maxPorts,
         manualMaxConnections: variables.maxConnections,
         manualMaxIPs: variables.maxIPs,
@@ -886,6 +889,7 @@ function UsersContent() {
     setGostRateLimitInInput(unifiedRateLimit > 0 ? String(unifiedRateLimit) : "0");
     setGostRateLimitOutInput(unifiedRateLimit > 0 ? String(unifiedRateLimit) : "0");
     setMaxRules(u.manualMaxRules || 0);
+    setMaxProxyInbounds(u.manualMaxProxyInbounds || 0);
     setMaxPorts(u.manualMaxPorts || 0);
     setMaxConnections(u.manualMaxConnections || 0);
     setAllowProxySubscription(!!u.manualAllowProxySubscription);
@@ -941,6 +945,7 @@ function UsersContent() {
       trafficAutoReset,
       trafficResetDay,
       maxRules,
+      maxProxyInbounds,
       maxPorts,
       maxConnections,
       maxIPs,
@@ -2205,6 +2210,18 @@ function UsersContent() {
                     placeholder="0=不限制"
                   />
                   <p className="text-xs text-muted-foreground">0 或留空表示不限制</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>最大落地节点数</Label>
+                  <Input
+                    type="number"
+                    value={maxProxyInbounds || ""}
+                    onChange={(e) => setMaxProxyInbounds(parseInt(e.target.value) || 0)}
+                    placeholder="0=不限制"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    他自己能在被授权的主机上开几个落地节点。管理员替他开的也算在内。0 或留空表示不限制。
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label>最大端口数</Label>
