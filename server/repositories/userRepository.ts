@@ -583,6 +583,8 @@ export async function getUserOptions() {
       avatar: users.avatar,
       role: users.role,
       accountEnabled: users.accountEnabled,
+      // 落地节点分租要用：没有订阅权限的人开给他也拿不到节点，下拉里要标出来。
+      allowProxySubscription: users.allowProxySubscription,
     })
     .from(users)
     .orderBy(desc(users.createdAt));

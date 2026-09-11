@@ -94,6 +94,25 @@ function fillUserCredentials(user: ProxyInboundUser, protocol: ProxyInbound["pro
   };
 }
 
+/**
+ * 解析这个入站该归谁，并确认那个人拿得到它。
+ *
+ * 关键的一条：被指定的人必须有客户端订阅权限。没有的话入站会正常建起来、流量也
+ * 会照扣，但他在面板上看不到节点、也拉不到订阅 —— 一个「建好了却用不上」的节点，
+ * 而管理员从界面上看不出哪里不对。所以在这里当场拦住并说清要去开什么。
+ */
+async function resolveOwnerId(ctx: any, requested?: number): Promise<number> {
+  const ownerId = Number(requested || 0);
+  if (!ownerId || ownerId === ctx.user.id) return ctx.user.id;
+  if (ctx.user.role !== "admin") throw new Error("只有管理员能把落地节点开给其他用户");
+  const owner = await db.getUserById(ownerId);
+  if (!owner) throw new Error("指定的用户不存在");
+  if (!owner.allowProxySubscription) {
+    throw new Error(`用户「${owner.username}」没有客户端订阅权限，开给他也拿不到节点 —— 请先在「用户管理」里开通`);
+  }
+  return ownerId;
+}
+
 /** 按协议与安全层补齐这一份入站需要的随机凭据。 */
 function fillGeneratedCredentials(inbound: ProxyInbound): ProxyInbound {
   const filled = { ...inbound };
@@ -144,6 +163,12 @@ async function applyInbound(inboundId: number, hostId: number) {
 
 const inboundInput = z.object({
   hostId: z.number().int().positive(),
+  /**
+   * 这个入站归谁。只有管理员能指定别人 —— 这是「把一台机器上的多个端口分租给
+   * 不同用户」的关键：归属决定了节点进谁的订阅、流量扣谁的套餐。
+   * 不传就是操作者自己。
+   */
+  userId: z.number().int().positive().optional(),
   name: z.string().trim().min(1).max(64),
   remark: z.string().trim().max(200).optional(),
   protocol: z.enum(PROXY_INBOUND_PROTOCOLS),
@@ -249,7 +274,10 @@ export const proxyInboundsRouter = router({
       const user = await db.getUserById(ctx.user.id);
       if (!user?.allowProxySubscription) return [];
     }
-    const rows = await db.getProxyInboundsByUser(ctx.user.id);
+    // 管理员看全量：分租场景里要能看到一台机器上所有端口分给了谁。
+    const rows = ctx.user.role === "admin"
+      ? await db.getAllProxyInbounds()
+      : await db.getProxyInboundsByUser(ctx.user.id);
     return Promise.all(rows.map(async (row: any) => ({
       ...row,
       // 私钥不出接口：前端没有任何用得上它的地方，多送一次就多一条泄漏路径。
@@ -264,6 +292,7 @@ export const proxyInboundsRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertAllowed(ctx);
       await assertUsableHost(input.hostId, ctx);
+      const ownerId = await resolveOwnerId(ctx, input.userId);
 
       const conflict = await db.findProxyInboundPortConflict(input.hostId, input.port);
       if (conflict) throw new Error(`该主机的 ${input.port} 端口已被落地节点「${conflict.name}」占用`);
@@ -273,7 +302,7 @@ export const proxyInboundsRouter = router({
       if (reason) throw new Error(reason);
 
       const id = await db.createProxyInbound({
-        userId: ctx.user.id,
+        userId: ownerId,
         hostId: input.hostId,
         name: input.name,
         remark: input.remark || null,
@@ -318,8 +347,18 @@ export const proxyInboundsRouter = router({
       const reason = validateProxyInbound(inbound);
       if (reason) throw new Error(reason);
 
+      /**
+       * 换归属时派生节点会跟着换主人（syncProxyNodeFromInbound 按入站行的 userId
+       * 写），所以旧主人的订阅里那条会消失、新主人的订阅里出现 —— 这是预期行为，
+       * 但要提醒：旧主人已经导入的客户端会失去这个节点。
+       */
+      const ownerId = input.userId !== undefined
+        ? await resolveOwnerId(ctx, input.userId)
+        : Number(row.userId);
+
       await db.updateProxyInbound(input.id, {
         hostId,
+        userId: ownerId,
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.remark !== undefined ? { remark: input.remark || null } : {}),
         ...(input.isEnabled !== undefined ? { isEnabled: input.isEnabled } : {}),

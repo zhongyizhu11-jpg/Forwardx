@@ -1,3 +1,4 @@
+import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +22,7 @@ import {
   type ProxyInboundSecurity,
 } from "@shared/proxyInbound";
 import { PROXY_NODE_PROTOCOL_LABELS, type ProxyNodeProtocol, type ProxyNodeTransport } from "@shared/proxyNode";
-import { KeyRound, Pencil, Plus, RefreshCw, Server, Trash2, UserPlus, Users } from "lucide-react";
+import { KeyRound, Pencil, Plus, RefreshCw, Server, Trash2, UserPlus, UserRound, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -36,6 +37,8 @@ const TRANSPORT_LABELS: Record<string, string> = {
 type InboundForm = {
   id: number;
   hostId: number;
+  /** 这个入站归谁。归属决定节点进谁的订阅、流量扣谁的套餐；只有管理员改得动。 */
+  userId: number;
   name: string;
   protocol: ProxyInboundProtocol;
   port: number;
@@ -60,6 +63,7 @@ function emptyForm(): InboundForm {
   return {
     id: 0,
     hostId: 0,
+    userId: 0,
     name: "",
     protocol: "vless",
     port: 443,
@@ -81,6 +85,8 @@ function emptyForm(): InboundForm {
 }
 
 export default function ProxyInbounds() {
+  const { user: me } = useAuth();
+  const isAdmin = me?.role === "admin";
   const utils = trpc.useUtils();
   const confirm = useConfirmDialog();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -89,6 +95,12 @@ export default function ProxyInbounds() {
   const inboundsQuery = trpc.proxyInbounds.list.useQuery();
   const optionsQuery = trpc.proxyInbounds.options.useQuery();
   const hostsQuery = trpc.hosts.list.useQuery();
+  // 分租要用：管理员建入站时要能指定归属用户。普通用户只能开给自己，不必拉这份名单。
+  const usersQuery = trpc.users.options.useQuery(undefined, {
+    enabled: isAdmin,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
 
   const refresh = () => {
     void utils.proxyInbounds.list.invalidate();
@@ -131,6 +143,13 @@ export default function ProxyInbounds() {
   const hosts = (hostsQuery.data || []) as any[];
   const hostName = (hostId: number) => hosts.find((item) => Number(item.id) === Number(hostId))?.name || `主机 #${hostId}`;
 
+  const userOptions = (usersQuery.data || []) as any[];
+  const ownerLabel = (userId: number) => {
+    const found = userOptions.find((item) => Number(item.id) === Number(userId));
+    if (!found) return `用户 #${userId}`;
+    return String(found.username || found.name || `用户 #${userId}`);
+  };
+
   // 协议一变，能选的传输与安全层就变了，选项要跟着收窄而不是让用户选完再报错。
   const transports = useMemo(() => proxyInboundTransports(form.protocol), [form.protocol]);
   const securities = useMemo(() => proxyInboundSecurities(form.protocol), [form.protocol]);
@@ -150,7 +169,7 @@ export default function ProxyInbounds() {
 
   const openCreate = () => {
     const first = hosts[0];
-    setForm({ ...emptyForm(), hostId: first ? Number(first.id) : 0 });
+    setForm({ ...emptyForm(), hostId: first ? Number(first.id) : 0, userId: Number(me?.id || 0) });
     setDialogOpen(true);
   };
 
@@ -158,6 +177,7 @@ export default function ProxyInbounds() {
     setForm({
       id: Number(row.id),
       hostId: Number(row.hostId),
+      userId: Number(row.userId || 0),
       name: String(row.name || ""),
       protocol: String(row.protocol || "vless") as ProxyInboundProtocol,
       port: Number(row.port || 0),
@@ -186,6 +206,8 @@ export default function ProxyInbounds() {
     if (!form.name.trim()) return toast.error("请填写名称");
     const payload = {
       hostId: form.hostId,
+      // 只有管理员能改归属；普通用户不传，后端按操作者自己算。
+      ...(isAdmin && form.userId > 0 ? { userId: form.userId } : {}),
       name: form.name.trim(),
       protocol: form.protocol,
       port: form.port,
@@ -245,7 +267,9 @@ export default function ProxyInbounds() {
             <div>
               <CardTitle className="text-base">落地节点</CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">
-                在自己的主机上开节点，自动进订阅。流量按端口计数，和转发规则走同一个套餐额度。租来的线路机装不了 Agent，那种仍然去「客户端订阅」粘链接。
+                在自己的主机上开节点，自动进订阅。流量按端口计数，和转发规则走同一个套餐额度。
+                一台机器可以开多个端口分给不同用户，各自扣各自的额度、各自只看得到自己的用量。
+                租来的线路机装不了 Agent，那种仍然去「客户端订阅」粘链接。
               </p>
             </div>
             <Button size="sm" onClick={openCreate} disabled={hosts.length === 0}>
@@ -282,6 +306,7 @@ export default function ProxyInbounds() {
                       <p className="mt-1 truncate text-xs text-muted-foreground">
                         <Server className="mr-1 inline h-3 w-3" />
                         {hostName(Number(row.hostId))} · 端口 {row.port}
+                        {isAdmin ? ` · 归 ${ownerLabel(Number(row.userId))}` : ""}
                         {row.transport && row.transport !== "tcp" ? ` · ${TRANSPORT_LABELS[row.transport] || row.transport}` : ""}
                         {Array.isArray(row.users) && row.users.length > 1 ? ` · ${row.users.length} 个用户` : ""}
                       </p>
@@ -332,6 +357,30 @@ export default function ProxyInbounds() {
                 <Label className="text-xs">名称</Label>
                 <Input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} placeholder="HK 落地" />
               </div>
+              {isAdmin ? (
+                <div className="min-w-0 space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs">
+                    <UserRound className="mr-1 inline h-3 w-3" />
+                    归属用户
+                  </Label>
+                  <Select value={String(form.userId || "")} onValueChange={(value) => setForm((prev) => ({ ...prev, userId: Number(value) }))}>
+                    <SelectTrigger><SelectValue placeholder="选择用户" /></SelectTrigger>
+                    <SelectContent>
+                      {userOptions.map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)} disabled={!item.allowProxySubscription && item.role !== "admin"}>
+                          {item.username || item.name}
+                          {!item.allowProxySubscription && item.role !== "admin" ? "（无订阅权限）" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    节点会进这个人的订阅，这个端口的流量也扣他的套餐额度、超额自动停。
+                    一台机器上开多个端口分给不同人，各自只看得到自己那份用量。
+                    灰掉的用户还没有客户端订阅权限，去「用户管理」里开通后才能选。
+                  </p>
+                </div>
+              ) : null}
               <div className="min-w-0 space-y-1.5">
                 <Label className="text-xs">协议</Label>
                 <Select value={form.protocol} onValueChange={(value) => setProtocol(value as ProxyInboundProtocol)}>
@@ -573,6 +622,7 @@ export default function ProxyInbounds() {
               <p className="text-xs text-amber-600 dark:text-amber-500">
                 <RefreshCw className="mr-1 inline h-3 w-3" />
                 改协议、安全层或加密方式会重新生成凭据，客户端要重新拉一次订阅。
+                {isAdmin ? "换归属用户会把节点从原主人的订阅里移走，他已导入的客户端会少掉这个节点。" : ""}
               </p>
             ) : null}
           </div>

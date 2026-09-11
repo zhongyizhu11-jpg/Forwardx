@@ -119,6 +119,19 @@ export async function getProxyInboundsByUser(userId: number) {
     .orderBy(asc(proxyInbounds.sortOrder), asc(proxyInbounds.id));
 }
 
+/**
+ * 全部入站。只给管理员用 —— 把一台机器上的多个端口分租给不同用户时，
+ * 管理员要能看到全量，否则只看得见自己名下那几个。
+ */
+export async function getAllProxyInbounds() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(proxyInbounds)
+    .orderBy(asc(proxyInbounds.hostId), asc(proxyInbounds.sortOrder), asc(proxyInbounds.id));
+}
+
 /** 连用户一起读出来的入站模型。生成配置与派生节点都要用这个，而不是只读行。 */
 export async function loadProxyInbound(id: number): Promise<ProxyInbound | null> {
   const row = await getProxyInboundById(id);
