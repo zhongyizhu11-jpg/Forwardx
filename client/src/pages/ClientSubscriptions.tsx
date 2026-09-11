@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import ProxyInboundsSection from "@/components/proxy/ProxyInboundsSection";
+import { ProxyNodeRow, proxyNodeMetaText } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +67,7 @@ import {
   normalizeProxyNodeGroupMode,
   PROXY_NODE_GROUP_MODES,
   PROXY_NODE_GROUP_MODE_LABELS,
+  resolveProxyNodeGroupMode,
   type ProxyNodeGroupMode,
 } from "@shared/proxyNodeGrouping";
 import {
@@ -542,10 +544,17 @@ export default function ClientSubscriptionsPage() {
    * 只有一个节点时一律不分组：分组下拉这时是藏起来的，若还按上次选的方式分，
    * 就会出现一个改不掉的分组标题。
    */
-  const effectiveGroupMode: ProxyNodeGroupMode = pastedNodes.length > 1 ? nodeGroupMode : "none";
+  /**
+   * 「自动」这一档由节点数量和协议种类自己决定分不分组，所以这里要拿到落实之后的
+   * 那个值 —— 组标题显不显示看的是它，不是用户选的那一档。
+   */
+  const effectiveGroupMode = useMemo(
+    () => resolveProxyNodeGroupMode(nodeGroupMode, pastedNodes),
+    [nodeGroupMode, pastedNodes],
+  );
   const nodeGroups = useMemo(
-    () => groupProxyNodes(pastedNodes, effectiveGroupMode),
-    [pastedNodes, effectiveGroupMode],
+    () => groupProxyNodes(pastedNodes, nodeGroupMode),
+    [pastedNodes, nodeGroupMode],
   );
   const onlineNodeCount = useMemo(
     () => pastedNodes.filter((node) => node?.health?.state === "online").length,
@@ -773,92 +782,65 @@ export default function ClientSubscriptionsPage() {
                           {group.nodes.map((node: any) => {
                             const quotaExpanded = expandedQuotaIds.includes(Number(node.id));
                             return (
-                            <div
+                            <ProxyNodeRow
                               key={node.id}
-                              className="flex items-center gap-2 rounded-md border px-2.5 py-1.5"
-                            >
-                              <ProxyNodeHealthDot health={node.health} />
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="truncate text-sm font-medium leading-tight">{node.name}</span>
-                                  <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] font-normal">
-                                    {PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol}
-                                  </Badge>
-                                  {!node.isEnabled && (
-                                    <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">停用</Badge>
-                                  )}
-                                  {node.sharedFrom ? (
-                                    <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">
-                                      {node.sharedFrom.name} 分享
-                                    </Badge>
-                                  ) : null}
-                                  {node.sharedToUserIds?.length ? (
-                                    <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">
-                                      已分享 {node.sharedToUserIds.length}
-                                    </Badge>
-                                  ) : null}
-                                </div>
-                                <p className="truncate text-[11px] leading-tight text-muted-foreground">
-                                  {node.address}:{node.port}
-                                  {node.sharedFrom
-                                    ? " · 由管理员分享，不可修改"
-                                    : node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
-                                </p>
-                                {quotaExpanded ? <ProxyNodeQuotaDetail node={node} /> : null}
-                              </div>
-                              <ProxyNodeQuotaToggle
-                                node={node}
-                                expanded={quotaExpanded}
-                                onToggle={() => toggleQuota(Number(node.id))}
-                              />
-                              {node.sharedFrom ? null : (
-                              <>
-                              <Switch
-                                className="shrink-0 scale-90"
-                                checked={!!node.isEnabled}
-                                onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
-                              />
-                              {isAdmin ? (
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-7 w-7 shrink-0"
-                                  title="分享给用户"
-                                  onClick={() => setShareNode({ id: Number(node.id), name: String(node.name || "") })}
-                                >
-                                  <Share2 className="h-3.5 w-3.5" />
-                                </Button>
-                              ) : null}
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 shrink-0"
-                                title="编辑"
-                                onClick={() => openEditNode(node)}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 shrink-0"
-                                title="删除"
-                                onClick={async () => {
-                                  const ok = await confirm({
-                                    title: "删除这个客户端节点？",
-                                    description: node.ruleCount > 0
-                                      ? `${node.ruleCount} 条转发会被解绑，不再出现在订阅里。转发本身继续运行，不受影响。`
-                                      : "该节点没有被任何转发绑定。",
-                                    confirmText: "删除",
-                                  });
-                                  if (ok) deleteNode.mutate({ id: node.id });
-                                }}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                              </>
+                              leading={<ProxyNodeHealthDot health={node.health} />}
+                              name={node.name}
+                              muted={!node.isEnabled}
+                              meta={proxyNodeMetaText([
+                                PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol,
+                                `${node.address}:${node.port}`,
+                                node.sharedFrom
+                                  ? `${node.sharedFrom.name} 分享，不可修改`
+                                  : node.ruleCount > 0 ? `${node.ruleCount} 条转发` : "无转发绑定",
+                                node.sharedToUserIds?.length ? `已分享 ${node.sharedToUserIds.length} 人` : "",
+                                !node.isEnabled ? "已停用" : "",
+                              ])}
+                              detail={quotaExpanded ? <ProxyNodeQuotaDetail node={node} /> : null}
+                              inline={(
+                                <ProxyNodeQuotaToggle
+                                  node={node}
+                                  expanded={quotaExpanded}
+                                  onToggle={() => toggleQuota(Number(node.id))}
+                                />
                               )}
-                            </div>
+                              toggle={node.sharedFrom ? null : (
+                                <Switch
+                                  className="shrink-0 scale-90"
+                                  checked={!!node.isEnabled}
+                                  onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
+                                />
+                              )}
+                              /* 分享进来的节点对收方是只读的：服务端本来就按 userId 挡着，
+                                 这里把入口一并收起来，别让人点进去才发现改不了。 */
+                              actions={node.sharedFrom ? [] : [
+                                ...(isAdmin
+                                  ? [{
+                                      key: "share",
+                                      label: "分享给用户",
+                                      icon: Share2,
+                                      onSelect: () => setShareNode({ id: Number(node.id), name: String(node.name || "") }),
+                                    }]
+                                  : []),
+                                { key: "edit", label: "编辑", icon: Pencil, onSelect: () => openEditNode(node) },
+                                {
+                                  key: "delete",
+                                  label: "删除",
+                                  icon: Trash2,
+                                  destructive: true,
+                                  onSelect: async () => {
+                                    const ok = await confirm({
+                                      title: "删除这个客户端节点？",
+                                      description: node.ruleCount > 0
+                                        ? `${node.ruleCount} 条转发会被解绑，不再出现在订阅里。转发本身继续运行，不受影响。`
+                                        : "该节点没有被任何转发绑定。",
+                                      confirmText: "删除",
+                                    });
+                                    if (ok) deleteNode.mutate({ id: node.id });
+                                  },
+                                },
+                              ]}
+                            />
                             );
                           })}
                         </div>

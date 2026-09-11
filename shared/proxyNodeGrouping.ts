@@ -10,11 +10,12 @@
 import { PROXY_NODE_PROTOCOLS, PROXY_NODE_PROTOCOL_LABELS, type ProxyNodeProtocol } from "./proxyNode";
 import type { ProxyNodeHealthState } from "./proxyNodeHealth";
 
-export const PROXY_NODE_GROUP_MODES = ["none", "protocol", "health"] as const;
+export const PROXY_NODE_GROUP_MODES = ["auto", "none", "protocol", "health"] as const;
 
 export type ProxyNodeGroupMode = (typeof PROXY_NODE_GROUP_MODES)[number];
 
 export const PROXY_NODE_GROUP_MODE_LABELS: Record<ProxyNodeGroupMode, string> = {
+  auto: "自动",
   none: "不分组",
   protocol: "按协议",
   health: "按状态",
@@ -52,7 +53,34 @@ export function normalizeProxyNodeGroupMode(value: unknown): ProxyNodeGroupMode 
   const raw = String(value ?? "").trim().toLowerCase();
   return (PROXY_NODE_GROUP_MODES as readonly string[]).includes(raw)
     ? raw as ProxyNodeGroupMode
-    : "none";
+    : "auto";
+}
+
+/**
+ * 「自动」开始分组的节点数。
+ *
+ * 少于这个数时一眼扫得完，分组只是多出几行标题；多了就该按协议归拢。
+ * 选 7 是因为再多一个就翻屏了 —— 手机上一屏大概就这些。
+ */
+export const PROXY_NODE_AUTO_GROUP_MIN = 7;
+
+/**
+ * 把「自动」落实成一个具体的分组方式。
+ *
+ * 这件事本来是要用户自己去下拉里选的：节点少时选了分组是白占地方，多了又得自己
+ * 想起来回去改。数量是现成的判据，没有理由让人代劳。
+ *
+ * 只在协议确实不止一种时才分 —— 清一色 Shadowsocks 的十个节点分出一个组来，
+ * 那个标题下面就是原来的整张列表，什么也没帮上。
+ */
+export function resolveProxyNodeGroupMode(
+  mode: ProxyNodeGroupMode,
+  nodes: readonly GroupableProxyNode[],
+): Exclude<ProxyNodeGroupMode, "auto"> {
+  if (mode !== "auto") return mode;
+  if (nodes.length < PROXY_NODE_AUTO_GROUP_MIN) return "none";
+  const protocols = new Set(nodes.map((node) => String(node.protocol || "").toLowerCase()));
+  return protocols.size > 1 ? "protocol" : "none";
 }
 
 /**
@@ -65,7 +93,8 @@ export function groupProxyNodes<T extends GroupableProxyNode>(
   nodes: readonly T[],
   mode: ProxyNodeGroupMode,
 ): ProxyNodeGroup<T>[] {
-  if (mode === "none" || nodes.length === 0) {
+  const resolved = resolveProxyNodeGroupMode(mode, nodes);
+  if (resolved === "none" || nodes.length === 0) {
     return [{ key: "all", label: "全部", nodes: [...nodes] }];
   }
 
@@ -76,7 +105,7 @@ export function groupProxyNodes<T extends GroupableProxyNode>(
     else buckets.set(key, [node]);
   };
 
-  if (mode === "protocol") {
+  if (resolved === "protocol") {
     for (const node of nodes) push(String(node.protocol || "").toLowerCase() || "unknown", node);
     const groups: ProxyNodeGroup<T>[] = [];
     // 先按协议表的固定顺序排，列表才不会因为增删节点而跳来跳去。

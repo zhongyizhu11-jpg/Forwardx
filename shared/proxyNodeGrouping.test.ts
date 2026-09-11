@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   groupProxyNodes,
   normalizeProxyNodeGroupMode,
+  resolveProxyNodeGroupMode,
+  PROXY_NODE_AUTO_GROUP_MIN,
   type GroupableProxyNode,
 } from "./proxyNodeGrouping";
 
@@ -79,12 +81,50 @@ test("分组键稳定，不随标签变化", () => {
   assert.equal(groupProxyNodes([node(1, "vless", "offline")], "health")[0].key, "health:offline");
 });
 
-test("分组方式的取值被收敛，脏数据退回不分组", () => {
+test("分组方式的取值被收敛，脏数据退回自动", () => {
   assert.equal(normalizeProxyNodeGroupMode("protocol"), "protocol");
   assert.equal(normalizeProxyNodeGroupMode("HEALTH"), "health");
-  assert.equal(normalizeProxyNodeGroupMode("乱写的"), "none");
-  assert.equal(normalizeProxyNodeGroupMode(undefined), "none");
-  assert.equal(normalizeProxyNodeGroupMode(null), "none");
+  // 兜底值是「自动」而不是「不分组」：没存过偏好的人（以及 localStorage 被清掉的人）
+  // 应当直接得到按数量自己调整的那一档，而不是一个节点上到二十个也不分组的列表。
+  assert.equal(normalizeProxyNodeGroupMode("乱写的"), "auto");
+  assert.equal(normalizeProxyNodeGroupMode(undefined), "auto");
+  assert.equal(normalizeProxyNodeGroupMode(null), "auto");
+});
+
+test("自动分组：节点少时不分组", () => {
+  // 一眼扫得完的列表，分组只是多出几行标题。
+  const nodes = [node(1, "vless", "online"), node(2, "trojan", "offline")];
+  assert.equal(resolveProxyNodeGroupMode("auto", nodes), "none");
+  assert.equal(groupProxyNodes(nodes, "auto").length, 1);
+});
+
+test("自动分组：节点多且协议不止一种时按协议分", () => {
+  const nodes = Array.from({ length: PROXY_NODE_AUTO_GROUP_MIN }, (_, index) =>
+    node(index + 1, index % 2 === 0 ? "vless" : "trojan", "online"));
+  assert.equal(resolveProxyNodeGroupMode("auto", nodes), "protocol");
+  assert.equal(groupProxyNodes(nodes, "auto").length, 2);
+});
+
+test("自动分组：清一色同协议就算再多也不分", () => {
+  /**
+   * 十个节点全是 Shadowsocks 时分出一个组来，那个标题下面就是原来的整张列表 ——
+   * 多一行标题，一点忙没帮上。
+   */
+  const nodes = Array.from({ length: PROXY_NODE_AUTO_GROUP_MIN + 3 }, (_, index) =>
+    node(index + 1, "shadowsocks", "online"));
+  assert.equal(resolveProxyNodeGroupMode("auto", nodes), "none");
+  assert.equal(groupProxyNodes(nodes, "auto").length, 1);
+});
+
+test("手动选过的分组方式不被自动覆盖", () => {
+  // 「自动」只是默认值，不是强制 —— 选了按状态就该一直按状态。
+  const nodes = [node(1, "vless", "online"), node(2, "vless", "offline")];
+  assert.equal(resolveProxyNodeGroupMode("health", nodes), "health");
+  assert.equal(resolveProxyNodeGroupMode("none", nodes), "none");
+  assert.deepEqual(
+    groupProxyNodes(nodes, "health").map((group) => group.key),
+    ["health:offline", "health:online"],
+  );
 });
 
 test("分组不会漏掉或复制任何节点", () => {
