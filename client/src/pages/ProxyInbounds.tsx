@@ -285,25 +285,25 @@ export default function ProxyInbounds() {
                 还没有落地节点。新建一个 REALITY 节点即可，它不需要域名和证书。
               </p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {rows.map((row) => (
-                  <div key={row.id} className="flex flex-wrap items-center gap-2 rounded-md border p-3">
+                  <div key={row.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5">
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-medium">{row.name}</span>
-                        <Badge variant="secondary" className="text-[10px]">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-medium leading-tight">{row.name}</span>
+                        <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] font-normal">
                           {PROXY_NODE_PROTOCOL_LABELS[row.protocol as ProxyNodeProtocol] || row.protocol}
                         </Badge>
                         {row.security !== "none" ? (
-                          <Badge variant="outline" className="text-[10px]">
+                          <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">
                             {PROXY_INBOUND_SECURITY_LABELS[row.security as ProxyInboundSecurity] || row.security}
                           </Badge>
                         ) : null}
                         {!row.isEnabled ? (
-                          <Badge variant="outline" className="text-[10px] text-muted-foreground">已停用</Badge>
+                          <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal text-muted-foreground">停用</Badge>
                         ) : null}
                       </div>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                      <p className="truncate text-[11px] leading-tight text-muted-foreground">
                         <Server className="mr-1 inline h-3 w-3" />
                         {hostName(Number(row.hostId))} · 端口 {row.port}
                         {isAdmin ? ` · 归 ${ownerLabel(Number(row.userId))}` : ""}
@@ -311,15 +311,15 @@ export default function ProxyInbounds() {
                         {Array.isArray(row.users) && row.users.length > 1 ? ` · ${row.users.length} 个用户` : ""}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(row)} title="编辑">
-                        <Pencil className="h-4 w-4" />
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(row)} title="编辑">
+                        <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => void askRotate(row)} title="重新生成凭据">
-                        <KeyRound className="h-4 w-4" />
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void askRotate(row)} title="重新生成凭据">
+                        <KeyRound className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => void askDelete(row)} title="删除">
-                        <Trash2 className="h-4 w-4" />
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void askDelete(row)} title="删除">
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                   </div>

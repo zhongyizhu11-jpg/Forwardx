@@ -57,6 +57,13 @@ import {
   type ProxyNodeHealth,
 } from "@shared/proxyNodeHealth";
 import {
+  groupProxyNodes,
+  normalizeProxyNodeGroupMode,
+  PROXY_NODE_GROUP_MODES,
+  PROXY_NODE_GROUP_MODE_LABELS,
+  type ProxyNodeGroupMode,
+} from "@shared/proxyNodeGrouping";
+import {
   Atom,
   AudioLines,
   Cat,
@@ -159,6 +166,38 @@ async function copyText(value: string, message: string) {
   }
 }
 
+const NODE_GROUP_MODE_STORAGE_KEY = "forwardx.proxyNodes.groupMode";
+const NODE_COLLAPSED_STORAGE_KEY = "forwardx.proxyNodes.collapsed";
+
+function readStoredGroupMode(): ProxyNodeGroupMode {
+  if (typeof window === "undefined") return "none";
+  try {
+    return normalizeProxyNodeGroupMode(window.localStorage.getItem(NODE_GROUP_MODE_STORAGE_KEY));
+  } catch {
+    return "none";
+  }
+}
+
+/** 折叠起来的分组键。存不上也不影响用，只是下次进来又是展开的。 */
+function readStoredCollapsed(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(NODE_COLLAPSED_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStored(key: string, value: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // 隐私模式下写不进去，忽略即可 —— 这只是个记住偏好的便利。
+  }
+}
+
 const NODE_HEALTH_STYLES: Record<ProxyNodeHealth["state"], string> = {
   online: "bg-emerald-500",
   offline: "bg-red-500",
@@ -204,6 +243,10 @@ export default function ClientSubscriptionsPage() {
   });
   const tokensQuery = trpc.proxySubscriptions.listTokens.useQuery();
   const previewQuery = trpc.proxySubscriptions.preview.useQuery();
+
+  const [nodeGroupMode, setNodeGroupMode] = useState<ProxyNodeGroupMode>(readStoredGroupMode);
+  const [collapsedGroups, setCollapsedGroups] = useState<string[]>(readStoredCollapsed);
+  const [nodesCollapsed, setNodesCollapsed] = useState(false);
 
   const [nodeDialogOpen, setNodeDialogOpen] = useState(false);
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null);
@@ -354,6 +397,37 @@ export default function ClientSubscriptionsPage() {
 
   const nodes = nodesQuery.data ?? [];
   const tokens = tokensQuery.data ?? [];
+
+  /**
+   * 只有一个节点时一律不分组：分组下拉这时是藏起来的，若还按上次选的方式分，
+   * 就会出现一个改不掉的分组标题。
+   */
+  const effectiveGroupMode: ProxyNodeGroupMode = nodes.length > 1 ? nodeGroupMode : "none";
+  const nodeGroups = useMemo(
+    () => groupProxyNodes(nodes as any[], effectiveGroupMode),
+    [nodes, effectiveGroupMode],
+  );
+  const onlineNodeCount = useMemo(
+    () => (nodes as any[]).filter((node) => node?.health?.state === "online").length,
+    [nodes],
+  );
+  const offlineNodeCount = useMemo(
+    () => (nodes as any[]).filter((node) => node?.health?.state === "offline").length,
+    [nodes],
+  );
+
+  const isGroupCollapsed = (key: string) => collapsedGroups.includes(key);
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key];
+      writeStored(NODE_COLLAPSED_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+  const changeGroupMode = (mode: ProxyNodeGroupMode) => {
+    setNodeGroupMode(mode);
+    writeStored(NODE_GROUP_MODE_STORAGE_KEY, mode);
+  };
   const preview = previewQuery.data;
 
   // 只有「已隐藏」需要一键恢复，其他原因要用户自己去改转发或模板。
@@ -450,17 +524,45 @@ export default function ClientSubscriptionsPage() {
         <h1 className="text-2xl font-semibold">客户端订阅</h1>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Server className="h-4 w-4" />
-              落地节点
-            </CardTitle>
-            <Button size="sm" className="shrink-0" onClick={openCreateNode}>
-              <Plus className="mr-1 h-4 w-4" />
-              添加节点
-            </Button>
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
+            {/* 整块可折叠：节点多的时候要能一把收起来，好翻到下面的订阅内容。 */}
+            <button
+              type="button"
+              className="flex min-w-0 items-center gap-2 text-left"
+              onClick={() => setNodesCollapsed((prev) => !prev)}
+              aria-expanded={!nodesCollapsed}
+            >
+              <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${nodesCollapsed ? "-rotate-90" : ""}`} />
+              <Server className="h-4 w-4 shrink-0" />
+              <CardTitle className="text-base">落地节点</CardTitle>
+              {nodes.length > 0 ? (
+                <span className="truncate text-xs text-muted-foreground">
+                  {nodes.length} 个
+                  {onlineNodeCount > 0 ? ` · ${onlineNodeCount} 在线` : ""}
+                  {offlineNodeCount > 0 ? ` · ${offlineNodeCount} 离线` : ""}
+                </span>
+              ) : null}
+            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {nodes.length > 1 ? (
+                <Select value={nodeGroupMode} onValueChange={(value) => changeGroupMode(value as ProxyNodeGroupMode)}>
+                  <SelectTrigger className="h-8 w-24 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROXY_NODE_GROUP_MODES.map((mode) => (
+                      <SelectItem key={mode} value={mode}>{PROXY_NODE_GROUP_MODE_LABELS[mode]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+              <Button size="sm" onClick={openCreateNode}>
+                <Plus className="mr-1 h-4 w-4" />
+                添加节点
+              </Button>
+            </div>
           </CardHeader>
-          <CardContent>
+          <CardContent hidden={nodesCollapsed} className="pt-0">
             {nodesQuery.isLoading ? (
               <DataSectionLoading />
             ) : nodes.length === 0 ? (
@@ -468,61 +570,94 @@ export default function ClientSubscriptionsPage() {
                 还没有登记节点。先从落地机复制一条节点链接粘进来，VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS / Snell 都行。
               </p>
             ) : (
-              <div className="space-y-2">
-                {nodes.map((node: any) => (
-                  <div
-                    key={node.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <ProxyNodeHealthDot health={node.health} />
-                        <span className="font-medium">{node.name}</span>
-                        <Badge variant="secondary">
-                          {PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol}
-                        </Badge>
-                        {!node.isEnabled && <Badge variant="outline">已停用</Badge>}
-                      </div>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
-                        {node.address}:{node.port}
-                        {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发在用` : " · 暂无转发绑定"}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-28 shrink-0 text-right" title={`近 ${PROXY_NODE_TRAFFIC_WINDOW_HOURS} 小时经这个落地的流量，按绑定的转发汇总（上行 + 下行）`}>
-                        <div className="text-sm font-medium tabular-nums">
-                          {node.ruleCount > 0 ? formatBytes(node.trafficBytes) : "—"}
+              <div className="space-y-3">
+                {nodeGroups.map((group) => {
+                  // 不分组时只有一组，没必要给它加个「全部」标题占一行。
+                  const showHeader = effectiveGroupMode !== "none";
+                  const collapsed = showHeader && isGroupCollapsed(group.key);
+                  return (
+                    <div key={group.key} className="space-y-1.5">
+                      {showHeader ? (
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground"
+                          onClick={() => toggleGroup(group.key)}
+                          aria-expanded={!collapsed}
+                        >
+                          <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
+                          <span>{group.label}</span>
+                          <span className="tabular-nums">({group.nodes.length})</span>
+                          <span className="h-px flex-1 bg-border" />
+                        </button>
+                      ) : null}
+                      {collapsed ? null : (
+                        <div className="space-y-1.5">
+                          {group.nodes.map((node: any) => (
+                            <div
+                              key={node.id}
+                              className="flex items-center gap-2 rounded-md border px-2.5 py-1.5"
+                            >
+                              <ProxyNodeHealthDot health={node.health} />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate text-sm font-medium leading-tight">{node.name}</span>
+                                  <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+                                    {PROXY_NODE_PROTOCOL_LABELS[node.protocol as ProxyNodeProtocol] || node.protocol}
+                                  </Badge>
+                                  {!node.isEnabled && (
+                                    <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">停用</Badge>
+                                  )}
+                                </div>
+                                <p className="truncate text-[11px] leading-tight text-muted-foreground">
+                                  {node.address}:{node.port}
+                                  {node.ruleCount > 0 ? ` · ${node.ruleCount} 条转发` : " · 无转发绑定"}
+                                </p>
+                              </div>
+                              <span
+                                className="shrink-0 text-xs tabular-nums text-muted-foreground"
+                                title={`近 ${PROXY_NODE_TRAFFIC_WINDOW_HOURS} 小时经这个落地的流量，按绑定的转发汇总（上行 + 下行）`}
+                              >
+                                {node.ruleCount > 0 ? formatBytes(node.trafficBytes) : "—"}
+                              </span>
+                              <Switch
+                                className="shrink-0 scale-90"
+                                checked={!!node.isEnabled}
+                                onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
+                              />
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 shrink-0"
+                                title="编辑"
+                                onClick={() => openEditNode(node)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 shrink-0"
+                                title="删除"
+                                onClick={async () => {
+                                  const ok = await confirm({
+                                    title: "删除这个客户端节点？",
+                                    description: node.ruleCount > 0
+                                      ? `${node.ruleCount} 条转发会被解绑，不再出现在订阅里。转发本身继续运行，不受影响。`
+                                      : "该节点没有被任何转发绑定。",
+                                    confirmText: "删除",
+                                  });
+                                  if (ok) deleteNode.mutate({ id: node.id });
+                                }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          ))}
                         </div>
-                        <div className="text-[10px] text-muted-foreground">
-                          {node.ruleCount > 0 ? `近 ${PROXY_NODE_TRAFFIC_WINDOW_HOURS} 小时` : "无转发绑定"}
-                        </div>
-                      </div>
-                      <Switch
-                        checked={!!node.isEnabled}
-                        onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
-                      />
-                      <Button size="sm" variant="outline" onClick={() => openEditNode(node)}>
-                        编辑
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={async () => {
-                          const ok = await confirm({
-                            title: "删除这个客户端节点？",
-                            description: node.ruleCount > 0
-                              ? `${node.ruleCount} 条转发会被解绑，不再出现在订阅里。转发本身继续运行，不受影响。`
-                              : "该节点没有被任何转发绑定。",
-                            confirmText: "删除",
-                          });
-                          if (ok) deleteNode.mutate({ id: node.id });
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -552,22 +687,25 @@ export default function ClientSubscriptionsPage() {
                       return (
                       <div
                         key={direct ? `direct-${node.templateId}` : `rule-${node.ruleId}`}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+                        className="flex items-center gap-2 rounded-md border px-2.5 py-1.5"
                       >
+                        <Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
-                            <span className="truncate font-medium">{node.name}</span>
-                            {direct && <Badge variant="outline" className="shrink-0">直连</Badge>}
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-sm font-medium leading-tight">{node.name}</span>
+                            {direct && (
+                              <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">直连</Badge>
+                            )}
                           </div>
-                          <p className="mt-1 truncate text-xs text-muted-foreground">
+                          <p className="truncate text-[11px] leading-tight text-muted-foreground">
                             {node.address}:{node.port}
                           </p>
                         </div>
-                        <div className="flex shrink-0 items-center gap-2">
+                        <div className="flex shrink-0 items-center gap-1">
                           <Button
-                            size="sm"
+                            size="icon"
                             variant="ghost"
+                            className="h-7 w-7"
                             title="改这个节点在订阅里显示的名字"
                             onClick={() => {
                               setRenaming({
@@ -579,11 +717,12 @@ export default function ClientSubscriptionsPage() {
                               setRenameValue(node.name);
                             }}
                           >
-                            <Pencil className="h-4 w-4" />
+                            <Pencil className="h-3.5 w-3.5" />
                           </Button>
                           {/* 直连条目的显隐在节点模板上，这里不给开关，免得点了没反应。 */}
                           {!direct && (
                             <Switch
+                              className="scale-90"
                               checked
                               onCheckedChange={() => setRuleVisible.mutate({ ruleId: node.ruleId, visible: false })}
                             />
@@ -601,13 +740,12 @@ export default function ClientSubscriptionsPage() {
                     {hiddenRules.map((item) => (
                       <div
                         key={item.ruleId}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed p-3"
+                        className="flex items-center gap-2 rounded-md border border-dashed px-2.5 py-1.5"
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <EyeOff className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="truncate text-sm text-muted-foreground">{item.ruleName}</span>
-                        </div>
+                        <EyeOff className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{item.ruleName}</span>
                         <Switch
+                          className="shrink-0 scale-90"
                           checked={false}
                           onCheckedChange={() => setRuleVisible.mutate({ ruleId: item.ruleId, visible: true })}
                         />
