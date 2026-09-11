@@ -12,6 +12,9 @@ import {
   proxyInboundRealityDest,
   proxyInboundNeedsCertificate,
   proxyInboundSecurities,
+  proxyInboundSupportsMultiUser,
+  proxyInboundUserCredentialKinds,
+  proxyNodesFromInbound,
   proxyInboundTransports,
   proxyNodeFromInbound,
   validateProxyInbound,
@@ -27,7 +30,8 @@ const VLESS_REALITY = inbound({
   name: "HK 落地",
   port: 443,
   security: "reality",
-  uuid: "8f1c-uuid",
+  // VLESS 是多用户协议，凭据在 users 上而不在入站行上。
+  users: [{ id: 1, name: "默认", uuid: "8f1c-uuid", password: "" }],
   flow: "xtls-rprx-vision",
   serverName: "dl.google.com",
   realityPrivateKey: "PRIV",
@@ -52,7 +56,8 @@ test("REALITY 只对 TCP 系协议开放", () => {
 
 test("不成立的协议与安全层组合会被挡住，并说清为什么", () => {
   const quic = validateProxyInbound(inbound({
-    protocol: "hysteria2", port: 8443, security: "reality", password: "pw",
+    protocol: "hysteria2", port: 8443, security: "reality",
+    users: [{ id: 1, name: "默认", uuid: "", password: "pw" }],
     realityPrivateKey: "PRIV", realityPublicKey: "PUB", serverName: "a.com",
   }));
   assert.match(quic, /REALITY 只能架在 TCP/);
@@ -63,7 +68,8 @@ test("不成立的协议与安全层组合会被挡住，并说清为什么", ()
   assert.match(ss, /没有 TLS 层/);
 
   const trojan = validateProxyInbound(inbound({
-    protocol: "trojan", port: 443, security: "none", password: "pw",
+    protocol: "trojan", port: 443, security: "none",
+    users: [{ id: 1, name: "默认", uuid: "", password: "pw" }],
   }));
   assert.match(trojan, /自带 TLS/);
 });
@@ -77,11 +83,17 @@ test("XHTTP 开不出来，但要说清「能中转」和「能自建」是两�
 });
 
 test("缺凭据、缺密钥、缺证书路径都当场报错", () => {
-  assert.match(validateProxyInbound({ ...VLESS_REALITY, uuid: "" }), /缺少 UUID/);
+  assert.match(
+    validateProxyInbound({ ...VLESS_REALITY, users: [{ id: 1, name: "小王", uuid: "", password: "" }] }),
+    /小王.*缺少 UUID/,
+  );
   assert.match(validateProxyInbound({ ...VLESS_REALITY, realityPrivateKey: "" }), /缺少 REALITY 私钥/);
   assert.match(validateProxyInbound({ ...VLESS_REALITY, serverName: "" }), /握手域名/);
   assert.match(
-    validateProxyInbound(inbound({ protocol: "trojan", port: 443, security: "tls", password: "pw" })),
+    validateProxyInbound(inbound({
+      protocol: "trojan", port: 443, security: "tls",
+      users: [{ id: 1, name: "默认", uuid: "", password: "pw" }],
+    })),
     /证书和私钥的路径/,
   );
   assert.match(
@@ -114,7 +126,7 @@ test("VLESS + REALITY 的入站按官方字段名生成", () => {
 
   assert.equal(json.type, "vless");
   assert.equal(json.listen_port, 443);
-  assert.deepEqual(json.users, [{ name: "forwardx", uuid: "8f1c-uuid", flow: "xtls-rprx-vision" }]);
+  assert.deepEqual(json.users, [{ name: "u1", uuid: "8f1c-uuid", flow: "xtls-rprx-vision" }]);
   assert.deepEqual(json.tls, {
     enabled: true,
     server_name: "dl.google.com",
@@ -197,7 +209,8 @@ test("Snell 的 psk 在顶层，版本决定是 obfs_mode 还是 mode", () => {
 test("Hysteria2 的混淆是对象，TUIC 的用户带 uuid + password", () => {
   const hy2 = buildSingboxInbound(
     inbound({
-      protocol: "hysteria2", port: 8443, security: "tls", password: "pw",
+      protocol: "hysteria2", port: 8443, security: "tls",
+      users: [{ id: 1, name: "默认", uuid: "", password: "pw" }],
       obfs: "salamander", obfsPassword: "ob", upMbps: 100, downMbps: 200,
       serverName: "a.com", certPath: "/c.pem", keyPath: "/k.pem",
     }),
@@ -212,12 +225,13 @@ test("Hysteria2 的混淆是对象，TUIC 的用户带 uuid + password", () => {
 
   const tuic = buildSingboxInbound(
     inbound({
-      protocol: "tuic", port: 443, security: "tls", uuid: "u", password: "pw",
+      protocol: "tuic", port: 443, security: "tls",
+      users: [{ id: 1, name: "默认", uuid: "u", password: "pw" }],
       congestionControl: "bbr", serverName: "a.com", certPath: "/c.pem", keyPath: "/k.pem",
     }),
     "tuic",
   );
-  assert.deepEqual(tuic.users, [{ name: "forwardx", uuid: "u", password: "pw" }]);
+  assert.deepEqual(tuic.users, [{ name: "u1", uuid: "u", password: "pw" }]);
   assert.equal(tuic.congestion_control, "bbr");
 });
 
@@ -301,7 +315,7 @@ const ACME_TROJAN = inbound({
   name: "HK TLS",
   port: 443,
   security: "acme",
-  password: "pw",
+  users: [{ id: 1, name: "默认", uuid: "", password: "pw" }],
   serverName: "a.example.com",
   acmeEmail: "me@example.com",
 });
@@ -373,4 +387,127 @@ test("自动签的证书是公信的，派生节点不跳过证书校验", () =>
   assert.equal(node.tls, true);
   assert.equal(node.sni, "a.example.com");
   assert.equal(node.allowInsecure, false);
+});
+
+// ==================== 多用户入站 ====================
+
+function users(...names: string[]) {
+  return names.map((name, index) => ({
+    id: index + 1,
+    name,
+    uuid: `7c1b5f2a-0000-4000-8000-00000000000${index + 1}`,
+    password: `pw${index + 1}`,
+  }));
+}
+
+test("只有六个协议支持多用户，另两个刻意不做", () => {
+  /**
+   * 这两个不做的理由是拿真二进制验出来的，不是偷懒：
+   *   Shadowsocks  SS2022 多用户的客户端密码是「服务端PSK:用户PSK」组合，而
+   *                sing-box 的 check 对「只填用户 PSK」和「填组合」都放行 ——
+   *                写错了配置层看不出来，只在连接时失败。
+   *   Snell        sing-box 用「共享 psk + 每用户 userkey」，而 Surge 与 mihomo
+   *                的节点配置里没有 userkey 这个位置，开了多用户全连不上。
+   */
+  for (const protocol of ["vless", "vmess", "trojan", "hysteria2", "tuic", "anytls"] as const) {
+    assert.equal(proxyInboundSupportsMultiUser(protocol), true, protocol);
+  }
+  assert.equal(proxyInboundSupportsMultiUser("shadowsocks"), false);
+  assert.equal(proxyInboundSupportsMultiUser("snell"), false);
+});
+
+test("每用户凭据的种类按协议区分", () => {
+  assert.deepEqual(proxyInboundUserCredentialKinds("vless"), ["uuid"]);
+  assert.deepEqual(proxyInboundUserCredentialKinds("vmess"), ["uuid"]);
+  // TUIC 两样都要。
+  assert.deepEqual(proxyInboundUserCredentialKinds("tuic"), ["uuid", "password"]);
+  assert.deepEqual(proxyInboundUserCredentialKinds("trojan"), ["password"]);
+  // 单用户协议没有「每用户凭据」这回事。
+  assert.deepEqual(proxyInboundUserCredentialKinds("shadowsocks"), []);
+});
+
+test("多用户协议没有用户、或用户缺凭据都当场报错", () => {
+  const base = inbound({ protocol: "trojan", port: 443, security: "reality", serverName: "dl.google.com", realityPrivateKey: "P", realityPublicKey: "U", realityShortId: "ab12" });
+  assert.match(validateProxyInbound({ ...base, users: [] }), /至少要有一个用户/);
+  assert.match(
+    validateProxyInbound({ ...base, users: [{ id: 1, name: "小王", uuid: "", password: "" }] }),
+    /小王.*缺少密码/,
+  );
+  assert.equal(validateProxyInbound({ ...base, users: users("小王", "小李") }), "");
+});
+
+test("同一个入站里凭据重复要挡住", () => {
+  /**
+   * 重了的后果不是报错，而是两个人共用一条身份 —— 吊销其中一个会把另一个也踢
+   * 下线，而界面上两行看着是独立的。
+   */
+  const dup = [
+    { id: 1, name: "小王", uuid: "", password: "same" },
+    { id: 2, name: "小李", uuid: "", password: "same" },
+  ];
+  const reason = validateProxyInbound(inbound({
+    protocol: "trojan", port: 443, security: "tls", certPath: "/c", keyPath: "/k", serverName: "a.com", users: dup,
+  }));
+  assert.match(reason, /小李.*凭据和另一个用户重复/);
+});
+
+test("所有用户都写进 sing-box 的 users 数组", () => {
+  const json = buildSingboxInbound(
+    { ...VLESS_REALITY, uuid: "", users: users("小王", "小李", "小张"), flow: "xtls-rprx-vision" },
+    "in-1",
+  );
+  const list = json.users as any[];
+  assert.equal(list.length, 3);
+  // name 用行 id，改名不该让 sing-box 认为换了一个人。
+  assert.deepEqual(list.map((item) => item.name), ["u1", "u2", "u3"]);
+  assert.deepEqual(list.map((item) => item.uuid), users("小王", "小李", "小张").map((u) => u.uuid));
+  // flow 是入站级的，所有人一样。
+  assert.ok(list.every((item) => item.flow === "xtls-rprx-vision"));
+});
+
+test("TUIC 的每个用户都带 uuid 与 password", () => {
+  const json = buildSingboxInbound(
+    inbound({
+      protocol: "tuic", port: 443, security: "tls", serverName: "a.com", certPath: "/c", keyPath: "/k",
+      users: users("甲", "乙"),
+    }),
+    "in-1",
+  );
+  const list = json.users as any[];
+  assert.equal(list.length, 2);
+  assert.ok(list.every((item) => item.uuid && item.password));
+});
+
+test("一个用户派生一条客户端节点，名字带用户标签", () => {
+  const derived = proxyNodesFromInbound(
+    { ...VLESS_REALITY, name: "HK 落地", uuid: "", users: users("小王", "小李") },
+    { address: "1.2.3.4" },
+  );
+
+  assert.equal(derived.length, 2);
+  assert.deepEqual(derived.map((item) => item.node.name), ["HK 落地 · 小王", "HK 落地 · 小李"]);
+  // 每个人拿到的是自己的凭据，不是别人的。
+  assert.notEqual(derived[0].node.uuid, derived[1].node.uuid);
+  assert.equal(derived[0].user?.id, 1);
+  assert.equal(derived[1].user?.id, 2);
+});
+
+test("只有一个用户时节点名不加后缀", () => {
+  // 「HK 落地 · 默认」这种后缀没有信息量，只是噪音。
+  const derived = proxyNodesFromInbound(
+    { ...VLESS_REALITY, name: "HK 落地", uuid: "", users: users("默认") },
+    { address: "1.2.3.4" },
+  );
+  assert.equal(derived.length, 1);
+  assert.equal(derived[0].node.name, "HK 落地");
+});
+
+test("单用户协议仍然派生一条节点，凭据来自入站本身", () => {
+  const derived = proxyNodesFromInbound(
+    inbound({ protocol: "shadowsocks", name: "SS", port: 8388, security: "none", method: "aes-256-gcm", password: "pw" }),
+    { address: "1.2.3.4" },
+  );
+  assert.equal(derived.length, 1);
+  assert.equal(derived[0].user, null);
+  assert.equal(derived[0].node.password, "pw");
 });

@@ -48,7 +48,8 @@ test("生成出来的凭据能直接通过入站校验", () => {
     protocol: "vless",
     port: 443,
     security: "reality",
-    uuid: generateProxyInboundUuid(),
+    // VLESS 的凭据在 users 上 —— 入站行上的 uuid 不再参与鉴权。
+    users: [{ id: 1, name: "默认", uuid: generateProxyInboundUuid(), password: "" }],
     serverName: "dl.google.com",
     realityPrivateKey: pair.privateKey,
     realityPublicKey: pair.publicKey,

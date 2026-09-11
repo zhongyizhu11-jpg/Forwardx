@@ -14,15 +14,19 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import {
   hosts,
   proxyInbounds,
+  proxyInboundUsers,
   proxyNodes,
   type InsertProxyInbound,
+  type InsertProxyInboundUser,
 } from "../../drizzle/schema";
 import { getDb, insertAndGetId, nowDate } from "../dbRuntime";
 import { getHostEntryAddress } from "../../shared/hostEntryAddress";
 import {
   createEmptyProxyInbound,
-  proxyNodeFromInbound,
+  proxyInboundSupportsMultiUser,
+  proxyNodesFromInbound,
   type ProxyInbound,
+  type ProxyInboundUser,
 } from "../../shared/proxyInbound";
 import { PROXY_NODE_TRANSPORTS, type ProxyNodeTransport } from "../../shared/proxyNode";
 
@@ -115,6 +119,15 @@ export async function getProxyInboundsByUser(userId: number) {
     .orderBy(asc(proxyInbounds.sortOrder), asc(proxyInbounds.id));
 }
 
+/** 连用户一起读出来的入站模型。生成配置与派生节点都要用这个，而不是只读行。 */
+export async function loadProxyInbound(id: number): Promise<ProxyInbound | null> {
+  const row = await getProxyInboundById(id);
+  if (!row) return null;
+  const inbound = proxyInboundFromRow(row as any);
+  inbound.users = proxyInboundSupportsMultiUser(inbound.protocol) ? await getProxyInboundUsers(id) : [];
+  return inbound;
+}
+
 export async function getProxyInboundById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -200,6 +213,107 @@ export async function getProxyInboundOwnersByIds(ids: readonly number[]): Promis
   return owners;
 }
 
+/**
+ * 一台主机上启用中的入站，连用户一起读出来。
+ *
+ * 心跳每半分钟一次、每台主机一次，所以用户是一次 inArray 查完再分组，而不是
+ * 每个入站查一次 —— 那样一台机器上十几个入站就是十几次往返。
+ *
+ * 心跳侧必须用这个而不是 getEnabledProxyInboundsByHost + proxyInboundFromRow：
+ * 后者不带 users，多用户协议会生成一个「零用户」的入站，sing-box 直接拒绝整份配置。
+ */
+export async function getEnabledProxyInboundsWithUsersByHost(
+  hostId: number,
+): Promise<Array<{ id: number; port: number; protocol: string; inbound: ProxyInbound }>> {
+  const rows = await getEnabledProxyInboundsByHost(hostId);
+  if (rows.length === 0) return [];
+  const db = await getDb();
+  if (!db) return [];
+
+  const ids = (rows as any[]).map((row) => Number(row.id));
+  const userRows = await db
+    .select()
+    .from(proxyInboundUsers)
+    .where(inArray(proxyInboundUsers.inboundId, ids))
+    .orderBy(asc(proxyInboundUsers.sortOrder), asc(proxyInboundUsers.id));
+  const usersByInbound = new Map<number, ProxyInboundUser[]>();
+  for (const row of userRows as any[]) {
+    const key = Number(row.inboundId);
+    const list = usersByInbound.get(key) || [];
+    list.push({ id: Number(row.id), name: text(row.name), uuid: text(row.uuid), password: text(row.password) });
+    usersByInbound.set(key, list);
+  }
+
+  return (rows as any[]).map((row) => {
+    const inbound = proxyInboundFromRow(row);
+    inbound.users = proxyInboundSupportsMultiUser(inbound.protocol) ? (usersByInbound.get(Number(row.id)) || []) : [];
+    return { id: Number(row.id), port: Number(row.port) || 0, protocol: String(row.protocol || ""), inbound };
+  });
+}
+
+// ==================== 入站上的用户 ====================
+
+export async function getProxyInboundUsers(inboundId: number): Promise<ProxyInboundUser[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select()
+    .from(proxyInboundUsers)
+    .where(eq(proxyInboundUsers.inboundId, inboundId))
+    .orderBy(asc(proxyInboundUsers.sortOrder), asc(proxyInboundUsers.id));
+  return (rows as any[]).map((row) => ({
+    id: Number(row.id),
+    name: text(row.name),
+    uuid: text(row.uuid),
+    password: text(row.password),
+  }));
+}
+
+/**
+ * 用给定的清单替换这个入站的用户。
+ *
+ * 带 id 的行按 id 更新，不带 id 的插入，清单里没出现的删掉。**不是整表删了重建**：
+ * 重建会换掉所有行的 id，而派生节点是按用户 id 对齐的 —— 那样每次保存都会把全部
+ * 客户端节点删掉再新建，订阅里的节点名、转发规则上的绑定、显隐设置全部丢失。
+ */
+export async function replaceProxyInboundUsers(
+  inboundId: number,
+  users: readonly ProxyInboundUser[],
+): Promise<ProxyInboundUser[]> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await getProxyInboundUsers(inboundId);
+  const keep = new Set<number>();
+  const result: ProxyInboundUser[] = [];
+
+  for (const [index, user] of users.entries()) {
+    const data = {
+      inboundId,
+      name: text(user.name),
+      uuid: text(user.uuid) || null,
+      password: text(user.password) || null,
+      sortOrder: index,
+    } as Partial<InsertProxyInboundUser>;
+    const id = Number(user.id) || 0;
+    if (id > 0 && existing.some((item) => item.id === id)) {
+      await db.update(proxyInboundUsers).set({ ...data, updatedAt: nowDate() } as any).where(eq(proxyInboundUsers.id, id));
+      keep.add(id);
+      result.push({ ...user, id });
+    } else {
+      const created = await insertAndGetId("proxy_inbound_users", data as any);
+      keep.add(Number(created));
+      result.push({ ...user, id: Number(created) });
+    }
+  }
+
+  for (const item of existing) {
+    if (!keep.has(item.id)) {
+      await db.delete(proxyInboundUsers).where(eq(proxyInboundUsers.id, item.id));
+    }
+  }
+  return result;
+}
+
 // ==================== 派生客户端节点 ====================
 
 /**
@@ -221,61 +335,95 @@ export async function getProxyInboundAddress(hostId: number): Promise<string> {
  * 主机还没有可用地址时不生成节点：地址为空的节点在订阅里是一条连不上的记录，
  * 不如先不出现，等主机地址就绪后下一次保存再补上。
  */
-export async function syncProxyNodeFromInbound(inboundId: number): Promise<number> {
+/**
+ * 把入站派生成 proxy_nodes 里的一到多行，订阅那一套原样接上。
+ *
+ * 多用户协议下一个用户一条节点，按 inboundUserId 对齐：清单里没有的用户，
+ * 它那条节点要一起删掉 —— 留着的话订阅里会多出一条凭据已经失效的节点，
+ * 客户端只看到连不上，而界面上看不出原因。
+ *
+ * 主机还没有可用地址时不生成节点：地址为空的节点在订阅里是一条连不上的记录。
+ */
+export async function syncProxyNodeFromInbound(inboundId: number): Promise<number[]> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const row = await getProxyInboundById(inboundId);
-  if (!row) return 0;
+  if (!row) return [];
+  const inbound = await loadProxyInbound(inboundId);
+  if (!inbound) return [];
 
-  const inbound = proxyInboundFromRow(row as any);
   const address = await getProxyInboundAddress(Number((row as any).hostId));
-  const existing = (await db.select().from(proxyNodes).where(eq(proxyNodes.inboundId, inboundId)))[0] as any;
+  const existing = (await db.select().from(proxyNodes).where(eq(proxyNodes.inboundId, inboundId))) as any[];
 
   if (!address) {
-    // 地址没了（主机被改成无地址）时，把已有的派生节点停用而不是删掉：
-    // 用户在转发规则上的绑定和改过的节点名都还留着，地址回来就能复用。
-    if (existing) await db.update(proxyNodes).set({ isEnabled: false, updatedAt: nowDate() } as any).where(eq(proxyNodes.id, existing.id));
-    return existing ? Number(existing.id) : 0;
+    /**
+     * 地址没了（主机被改成无地址）时把已有的派生节点停用而不是删掉：
+     * 用户在转发规则上的绑定和改过的节点名都还留着，地址回来就能复用。
+     */
+    for (const node of existing) {
+      await db.update(proxyNodes).set({ isEnabled: false, updatedAt: nowDate() } as any).where(eq(proxyNodes.id, node.id));
+    }
+    return existing.map((node) => Number(node.id));
   }
 
-  const node = proxyNodeFromInbound(inbound, { address, name: text((row as any).name) });
-  const data = {
-    userId: Number((row as any).userId),
-    inboundId,
-    name: node.name,
-    protocol: node.protocol,
-    address: node.address,
-    port: node.port,
-    uuid: node.uuid || null,
-    password: node.password || null,
-    method: node.method || null,
-    alterId: node.alterId,
-    flow: node.flow || null,
-    transport: node.transport,
-    path: node.path || null,
-    host: node.host || null,
-    tls: node.tls,
-    sni: node.sni || null,
-    alpn: node.alpn.length ? node.alpn.join(",") : null,
-    fingerprint: node.fingerprint || null,
-    allowInsecure: node.allowInsecure,
-    realityPublicKey: node.realityPublicKey || null,
-    realityShortId: node.realityShortId || null,
-    udp: node.udp,
-    obfs: node.obfs || null,
-    obfsPassword: node.obfsPassword || null,
-    congestionControl: node.congestionControl || null,
-    udpRelayMode: node.udpRelayMode || null,
-    disableSni: node.disableSni,
-    snellVersion: node.snellVersion,
-    snellMode: node.snellMode || null,
-    xhttpMode: node.xhttpMode || null,
-    isEnabled: !!(row as any).isEnabled,
-  };
+  const derived = proxyNodesFromInbound(inbound, { address });
+  const byUserId = new Map<number, any>();
+  for (const node of existing) byUserId.set(Number(node.inboundUserId || 0), node);
 
-  if (existing) {
-    await db.update(proxyNodes).set({ ...data, updatedAt: nowDate() } as any).where(eq(proxyNodes.id, existing.id));
-    return Number(existing.id);
+  const kept = new Set<number>();
+  const ids: number[] = [];
+  for (const { user, node } of derived) {
+    const inboundUserId = Number(user?.id || 0);
+    const data = {
+      userId: Number((row as any).userId),
+      inboundId,
+      inboundUserId,
+      name: node.name,
+      protocol: node.protocol,
+      address: node.address,
+      port: node.port,
+      uuid: node.uuid || null,
+      password: node.password || null,
+      method: node.method || null,
+      alterId: node.alterId,
+      flow: node.flow || null,
+      transport: node.transport,
+      path: node.path || null,
+      host: node.host || null,
+      tls: node.tls,
+      sni: node.sni || null,
+      alpn: node.alpn.length ? node.alpn.join(",") : null,
+      fingerprint: node.fingerprint || null,
+      allowInsecure: node.allowInsecure,
+      realityPublicKey: node.realityPublicKey || null,
+      realityShortId: node.realityShortId || null,
+      udp: node.udp,
+      obfs: node.obfs || null,
+      obfsPassword: node.obfsPassword || null,
+      congestionControl: node.congestionControl || null,
+      udpRelayMode: node.udpRelayMode || null,
+      disableSni: node.disableSni,
+      snellVersion: node.snellVersion,
+      snellMode: node.snellMode || null,
+      xhttpMode: node.xhttpMode || null,
+      isEnabled: !!(row as any).isEnabled,
+    };
+    const current = byUserId.get(inboundUserId);
+    if (current) {
+      await db.update(proxyNodes).set({ ...data, updatedAt: nowDate() } as any).where(eq(proxyNodes.id, current.id));
+      kept.add(Number(current.id));
+      ids.push(Number(current.id));
+    } else {
+      const created = Number(await insertAndGetId("proxy_nodes", data as any));
+      kept.add(created);
+      ids.push(created);
+    }
   }
-  return insertAndGetId("proxy_nodes", data as any);
+
+  // 用户被删掉之后，他那条节点也要走 deleteProxyNode —— 它会顺手解绑引用该节点的转发。
+  const { deleteProxyNode } = await import("./proxySubscriptionRepository");
+  for (const node of existing) {
+    if (!kept.has(Number(node.id))) await deleteProxyNode(Number(node.id));
+  }
+  return ids;
 }

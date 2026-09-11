@@ -24,11 +24,19 @@ test("落地入站已登记进面板迁移，升级面板不会丢配置", () =>
   assert.ok(MIGRATION_TABLES.includes("proxy_inbounds" as never));
 });
 
+test("入站用户表已登记进面板迁移", () => {
+  // 用户凭据丢了就再也生成不出同一个节点，那一个人的所有客户端都要重新导入。
+  assert.ok(MIGRATION_TABLES.includes("proxy_inbound_users" as never));
+});
+
 test("派生标记在 proxy_nodes 上", () => {
   const nodes = getDatabaseTableDefs().find((table) => table.name === "proxy_nodes");
   assert.ok(nodes);
+  const columns = new Set(nodes!.columns.map((column) => column.name));
   // inboundId 非 0 表示这一行是入站派生出来的，手工改会在下次保存时被覆盖。
-  assert.ok(new Set(nodes!.columns.map((column) => column.name)).has("inboundId"));
+  assert.ok(columns.has("inboundId"));
+  // inboundUserId 让派生节点跟用户对齐 —— 没有它，用户删掉后不知道该删哪条节点。
+  assert.ok(columns.has("inboundUserId"));
 });
 
 test("全新数据库会建出落地入站需要的表和列", () => {
@@ -60,6 +68,12 @@ test("全新数据库会建出落地入站需要的表和列", () => {
       }
 
       assert.ok(columnsOf("proxy_nodes").has("inboundId"), "proxy_nodes 缺列: inboundId");
+      assert.ok(columnsOf("proxy_nodes").has("inboundUserId"), "proxy_nodes 缺列: inboundUserId");
+
+      const inboundUser = columnsOf("proxy_inbound_users");
+      for (const name of ["inboundId", "name", "uuid", "password", "sortOrder"]) {
+        assert.ok(inboundUser.has(name), "proxy_inbound_users 缺列: " + name);
+      }
 
       console.log("OK");
     `;
@@ -95,6 +109,7 @@ test("已有数据库升级时会补出新表和新列", () => {
       const columnsOf = (table) => new Set(db.prepare("PRAGMA table_info(" + table + ")").all().map((row) => row.name));
       assert.ok(columnsOf("proxy_nodes").has("inboundId"), "升级后 proxy_nodes 仍缺 inboundId");
       assert.ok(columnsOf("proxy_inbounds").has("realityPrivateKey"), "升级后没有建出 proxy_inbounds");
+      assert.ok(columnsOf("proxy_inbound_users").has("password"), "升级后没有建出 proxy_inbound_users");
 
       // 老数据要原样还在，并且默认不是派生节点。
       const kept = db.prepare("SELECT name, inboundId FROM proxy_nodes WHERE userId = 1").get();

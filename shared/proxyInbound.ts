@@ -95,6 +95,62 @@ export function proxyInboundSecurities(protocol: ProxyInboundProtocol): ProxyInb
   return securities;
 }
 
+/**
+ * 能配多个用户（每人一份凭据）的协议。
+ *
+ * 这六个的「每用户凭据」与客户端字段是一对一的：uuid 或 password，各家客户端都有
+ * 那个位置。另外两个刻意不做，理由是拿 sing-box 1.14.0 的真二进制验出来的：
+ *
+ *   Shadowsocks  SS2022 多用户要求顶层仍有服务端 PSK（少了报 missing psk），
+ *                客户端密码则变成「服务端PSK:用户PSK」的组合。而 check 对
+ *                「只填用户 PSK」和「填组合」两种写法都放行 —— 写错了在配置层
+ *                看不出来，只在连接时失败。各家客户端怎么处理这个组合无法逐个核实。
+ *   Snell        sing-box 用「共享 psk + 每用户 userkey」，而 Surge 与 mihomo 的
+ *                节点配置里没有 userkey 这个位置，只有 sing-box 自己的出站有。
+ *                开了多用户，除 sing-box 外的客户端都连不上。
+ *
+ * 与其给出一个「能保存、能下发、就是连不上」的功能，不如这两个明确只支持单用户。
+ */
+export const PROXY_INBOUND_MULTI_USER_PROTOCOLS: readonly ProxyInboundProtocol[] = [
+  "vless",
+  "vmess",
+  "trojan",
+  "hysteria2",
+  "tuic",
+  "anytls",
+];
+
+export function proxyInboundSupportsMultiUser(protocol: unknown): boolean {
+  return PROXY_INBOUND_MULTI_USER_PROTOCOLS.includes(String(protocol ?? "") as ProxyInboundProtocol);
+}
+
+/**
+ * 入站上的一个用户。多用户协议下凭据的唯一真相就在这里 ——
+ * 入站自己的 uuid / password 只服务于单用户协议（Shadowsocks 的 PSK、Snell 的 PSK）。
+ */
+export type ProxyInboundUser = {
+  /** 数据库行 id；0 表示还没存过。派生节点靠它跟用户对齐。 */
+  id: number;
+  /** 给人看的标签，会拼进派生出来的节点名，例如「HK 落地 · 小王」。 */
+  name: string;
+  /** vless / vmess / tuic 用 */
+  uuid: string;
+  /** trojan / hysteria2 / tuic / anytls 用 */
+  password: string;
+};
+
+export function createEmptyProxyInboundUser(): ProxyInboundUser {
+  return { id: 0, name: "", uuid: "", password: "" };
+}
+
+/** 这个协议的每用户凭据是哪一种。决定要生成 UUID 还是密码。 */
+export function proxyInboundUserCredentialKinds(protocol: ProxyInboundProtocol): Array<"uuid" | "password"> {
+  if (protocol === "vless" || protocol === "vmess") return ["uuid"];
+  if (protocol === "tuic") return ["uuid", "password"];
+  if (proxyInboundSupportsMultiUser(protocol)) return ["password"];
+  return [];
+}
+
 /** 需要真证书的安全层。REALITY 不在其列 —— 它正是拿来绕开证书的。 */
 export function proxyInboundNeedsCertificate(security: ProxyInboundSecurity): boolean {
   return security === "tls" || security === "acme";
@@ -162,6 +218,11 @@ export type ProxyInbound = {
   downMbps: number;
   /** TUIC 的拥塞控制：cubic / new_reno / bbr */
   congestionControl: string;
+  /**
+   * 入站上的用户。多用户协议下这里是凭据的唯一真相，一个用户派生一个客户端节点。
+   * 单用户协议（Shadowsocks / Snell）不用它，凭据在入站自己的 password 上。
+   */
+  users: ProxyInboundUser[];
   /** Snell 的版本与 v6 的整形模式。入站只能是 5 或 6，见 PROXY_INBOUND_SNELL_VERSIONS。 */
   snellVersion: number;
   snellMode: string;
@@ -195,6 +256,7 @@ export function createEmptyProxyInbound(): ProxyInbound {
     upMbps: 0,
     downMbps: 0,
     congestionControl: "",
+    users: [],
     snellVersion: 0,
     snellMode: "",
   };
@@ -242,13 +304,28 @@ export function validateProxyInbound(inbound: ProxyInbound): string {
   }
 
   // 凭据：缺了就是一个谁都连不上的节点。
-  if (inbound.protocol === "vless" || inbound.protocol === "vmess" || inbound.protocol === "tuic") {
-    if (!text(inbound.uuid)) return "缺少 UUID";
-  }
-  if (inbound.protocol !== "vless" && inbound.protocol !== "vmess") {
+  if (proxyInboundSupportsMultiUser(inbound.protocol)) {
+    if (inbound.users.length === 0) return "至少要有一个用户";
+    const kinds = proxyInboundUserCredentialKinds(inbound.protocol);
+    const seen = new Set<string>();
+    for (const user of inbound.users) {
+      const who = text(user.name) || "未命名用户";
+      for (const kind of kinds) {
+        const value = kind === "uuid" ? text(user.uuid) : text(user.password);
+        if (!value) return `用户「${who}」缺少${kind === "uuid" ? " UUID" : "密码"}`;
+      }
+      /**
+       * 同一个入站里凭据不能重复。重了的后果不是报错，而是两个人共用一条身份 ——
+       * 吊销其中一个会把另一个也踢下线，而界面上两行看着是独立的。
+       */
+      const key = kinds.map((kind) => (kind === "uuid" ? text(user.uuid) : text(user.password))).join("|");
+      if (seen.has(key)) return `用户「${who}」的凭据和另一个用户重复了`;
+      seen.add(key);
+    }
+  } else {
     if (!text(inbound.password)) return inbound.protocol === "snell" ? "缺少 PSK" : "缺少密码";
+    if (inbound.protocol === "shadowsocks" && !text(inbound.method)) return "缺少加密方式";
   }
-  if (inbound.protocol === "shadowsocks" && !text(inbound.method)) return "缺少加密方式";
 
   if (inbound.security === "reality") {
     if (!text(inbound.realityPrivateKey)) return "缺少 REALITY 私钥";
@@ -355,8 +432,21 @@ function singboxTransport(inbound: ProxyInbound): Record<string, unknown> | null
   return null;
 }
 
-/** 派生节点用的用户名，只是 sing-box 日志里的标识，不参与鉴权。 */
-const SINGBOX_USER_NAME = "forwardx";
+/** sing-box 日志里的用户标识，不参与鉴权。行 id 保证唯一，改名不影响它。 */
+function singboxUserName(user: ProxyInboundUser, index: number): string {
+  return user.id > 0 ? `u${user.id}` : `u-${index + 1}`;
+}
+
+/** 把入站上的用户摊成 sing-box 的 users 数组，凭据部分按协议由调用方给出。 */
+function singboxUsers(
+  inbound: ProxyInbound,
+  credential: (user: ProxyInboundUser) => Record<string, unknown>,
+): Record<string, unknown>[] {
+  return inbound.users.map((user, index) => ({
+    name: singboxUserName(user, index),
+    ...credential(user),
+  }));
+}
 
 /**
  * 生成一个 sing-box 入站。
@@ -373,27 +463,32 @@ export function buildSingboxInbound(inbound: ProxyInbound, tag: string): Record<
   };
 
   if (inbound.protocol === "vless") {
-    base.users = [{ name: SINGBOX_USER_NAME, uuid: inbound.uuid, ...(inbound.flow ? { flow: inbound.flow } : {}) }];
+    base.users = singboxUsers(inbound, (user) => ({
+      uuid: user.uuid,
+      // flow 是入站级的：同一个入站上让不同人用不同流控没有实际用途，
+      // 只会多出一种「两个人里只有一个连得上」的排查场面。
+      ...(inbound.flow ? { flow: inbound.flow } : {}),
+    }));
   } else if (inbound.protocol === "vmess") {
-    base.users = [{ name: SINGBOX_USER_NAME, uuid: inbound.uuid }];
+    base.users = singboxUsers(inbound, (user) => ({ uuid: user.uuid }));
   } else if (inbound.protocol === "trojan") {
-    base.users = [{ name: SINGBOX_USER_NAME, password: inbound.password }];
+    base.users = singboxUsers(inbound, (user) => ({ password: user.password }));
   } else if (inbound.protocol === "shadowsocks") {
     // 单用户形态：method 与 password 都在顶层，没有 users 数组。
     base.method = inbound.method;
     base.password = inbound.password;
   } else if (inbound.protocol === "hysteria2") {
-    base.users = [{ name: SINGBOX_USER_NAME, password: inbound.password }];
+    base.users = singboxUsers(inbound, (user) => ({ password: user.password }));
     if (inbound.obfs) {
       base.obfs = { type: inbound.obfs, ...(inbound.obfsPassword ? { password: inbound.obfsPassword } : {}) };
     }
     if (inbound.upMbps > 0) base.up_mbps = inbound.upMbps;
     if (inbound.downMbps > 0) base.down_mbps = inbound.downMbps;
   } else if (inbound.protocol === "tuic") {
-    base.users = [{ name: SINGBOX_USER_NAME, uuid: inbound.uuid, password: inbound.password }];
+    base.users = singboxUsers(inbound, (user) => ({ uuid: user.uuid, password: user.password }));
     if (inbound.congestionControl) base.congestion_control = inbound.congestionControl;
   } else if (inbound.protocol === "anytls") {
-    base.users = [{ name: SINGBOX_USER_NAME, password: inbound.password }];
+    base.users = singboxUsers(inbound, (user) => ({ password: user.password }));
   } else {
     // Snell：psk 在顶层，版本决定是 obfs_mode 还是 mode。
     base.version = inbound.snellVersion || PROXY_INBOUND_SNELL_DEFAULT_VERSION;
@@ -451,6 +546,38 @@ export function buildSingboxConfig(inbounds: readonly { inbound: ProxyInbound; t
   return `${JSON.stringify(config, null, 2)}\n`;
 }
 
+/**
+ * 派生节点的名字。
+ *
+ * 只有一个用户时不加后缀 —— 「HK 落地 · 默认」这种噪音没有信息量。用户有名字才拼，
+ * 因为订阅里的节点名是用户唯一能分辨「这条是谁的」的东西。
+ */
+export function proxyInboundNodeName(inbound: ProxyInbound, user?: ProxyInboundUser): string {
+  const base = text(inbound.name);
+  const label = text(user?.name);
+  if (!label || inbound.users.length <= 1) return base;
+  return base ? `${base} · ${label}` : label;
+}
+
+/**
+ * 一个入站派生出的全部客户端节点：多用户协议下一个用户一条，单用户协议下一条。
+ *
+ * 返回里带上 user 是给调用方对齐用的 —— 派生节点要按用户增删，光有节点数组的话
+ * 没法知道哪一条对应哪个用户，用户删掉之后就会留下一个连不上的孤儿节点。
+ */
+export function proxyNodesFromInbound(
+  inbound: ProxyInbound,
+  options: ProxyNodeFromInboundOptions,
+): Array<{ user: ProxyInboundUser | null; node: ProxyNode }> {
+  if (!proxyInboundSupportsMultiUser(inbound.protocol)) {
+    return [{ user: null, node: proxyNodeFromInbound(inbound, options) }];
+  }
+  return inbound.users.map((user) => ({
+    user,
+    node: proxyNodeFromInbound(inbound, { ...options, name: "" }, user),
+  }));
+}
+
 export type ProxyNodeFromInboundOptions = {
   /** 落地机的公网地址。入站自己只知道监听地址（::），不知道对外是哪个 IP。 */
   address: string;
@@ -464,14 +591,25 @@ export type ProxyNodeFromInboundOptions = {
  * 这是「服务端配置」到「客户端配置」的唯一转换点：私钥留在入站侧，客户端拿到的是
  * 公钥。派生结果直接存进 proxy_nodes，之后中转改写与订阅渲染都走既有那一套。
  */
-export function proxyNodeFromInbound(inbound: ProxyInbound, options: ProxyNodeFromInboundOptions): ProxyNode {
+export function proxyNodeFromInbound(
+  inbound: ProxyInbound,
+  options: ProxyNodeFromInboundOptions,
+  user?: ProxyInboundUser,
+): ProxyNode {
+  /**
+   * 没显式给用户时，多用户协议取第一个 —— 这个函数的单数形态仍然要可用（预览、
+   * 只有一个用户的常见情形）。取不到就是一份没有凭据的节点，由 validateProxyInbound
+   * 在保存前拦住。
+   */
+  const target = user ?? (proxyInboundSupportsMultiUser(inbound.protocol) ? inbound.users[0] : undefined);
   const node = createEmptyProxyNode();
   node.protocol = inbound.protocol as ProxyNodeProtocol;
-  node.name = text(options.name) || text(inbound.name);
+  node.name = text(options.name) || proxyInboundNodeName(inbound, target);
   node.address = text(options.address);
   node.port = inbound.port;
-  node.uuid = inbound.uuid;
-  node.password = inbound.password;
+  // 多用户协议下凭据来自用户；单用户协议（Shadowsocks / Snell）来自入站本身。
+  node.uuid = target ? text(target.uuid) : inbound.uuid;
+  node.password = target ? text(target.password) : inbound.password;
   node.method = inbound.method;
   node.flow = inbound.flow;
   node.transport = inbound.transport;

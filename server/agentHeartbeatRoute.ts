@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import * as db from "./db";
 import { AGENT_VERSION } from "./_core/systemRouter";
 import { clearHostTcpingRequest, hasHostTcpingRequest, isHostMetricsWatching, pushAgentDesiredState } from "./agentEvents";
-import { getEnabledProxyInboundsByHost, proxyInboundFromRow } from "./repositories/proxyInboundRepository";
+import { getEnabledProxyInboundsWithUsersByHost } from "./repositories/proxyInboundRepository";
 import { buildSingboxRuntimePlan } from "./singboxRuntimePlan";
 import {
   PROXY_INBOUND_TRAFFIC_FORWARD_TYPE,
@@ -5815,11 +5815,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
      * 必须放在下面那个 expectedRulePorts 循环之前：那里算的是「这台机器上应该
      * 存在哪些端口」，漏掉的话 Agent 会把落地端口的计数链当孤儿清掉。
      */
-    const hostProxyInbounds = await getEnabledProxyInboundsByHost(Number(host.id));
-    for (const row of hostProxyInbounds as any[]) {
+    const hostProxyInbounds = await getEnabledProxyInboundsWithUsersByHost(Number(host.id));
+    for (const row of hostProxyInbounds) {
       addRunningRule({
-        ruleId: proxyInboundTrafficRuleId(Number(row.id)),
-        sourcePort: Number(row.port) || 0,
+        ruleId: proxyInboundTrafficRuleId(row.id),
+        sourcePort: row.port,
         // 只计数，没有转发目标。
         targetIp: "",
         targetPort: 0,
@@ -6319,10 +6319,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
      */
     if (!deferActionsForLocalState) {
       const singboxPlan = buildSingboxRuntimePlan({
-        inbounds: (hostProxyInbounds as any[]).map((row: any) => ({
-          inbound: proxyInboundFromRow(row),
+        inbounds: hostProxyInbounds.map((row) => ({
+          inbound: row.inbound,
           // 用行 id 做 tag：改名不该让 sing-box 认为这是另一个入站。
-          tag: `inbound-${Number(row.id)}`,
+          tag: `inbound-${row.id}`,
         })),
         accelerator: await getSingboxAccelerator(),
       });

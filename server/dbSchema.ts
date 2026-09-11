@@ -37,6 +37,7 @@ export const MIGRATION_TABLES = [
   "forward_group_events",
   "proxy_nodes",
   "proxy_inbounds",
+  "proxy_inbound_users",
   "proxy_sub_tokens",
   "host_metrics",
   "host_traffic_counters",
@@ -286,7 +287,7 @@ const tables: TableDef[] = [
       c("disableSni", "bool", { notNull: true, default: false }),
       c("snellVersion", "int", { notNull: true, default: 0 }), c("snellMode", "text"), c("xhttpMode", "text"),
       c("autoGroup", "varchar", { length: 16, notNull: true, default: "url-test" }), c("includeDirect", "bool", { notNull: true, default: false }), c("frontProxyId", "int", { notNull: true, default: 0 }),
-      c("inboundId", "int", { notNull: true, default: 0 }),
+      c("inboundId", "int", { notNull: true, default: 0 }), c("inboundUserId", "int", { notNull: true, default: 0 }),
       c("isEnabled", "bool", { notNull: true, default: true }), c("sortOrder", "int", { notNull: true, default: 0 }),
       c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],
@@ -315,6 +316,17 @@ const tables: TableDef[] = [
       c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],
     indexes: [["userId"], ["hostId"], ["userId", "sortOrder"], ["hostId", "isEnabled"]],
+  },
+  {
+    // 落地入站上的用户：一个入站给多个人各发一份凭据。
+    name: "proxy_inbound_users",
+    columns: [
+      c("id", "id"), c("inboundId", "int", { notNull: true }),
+      c("name", "text", { notNull: true }), c("uuid", "text"), c("password", "text"),
+      c("sortOrder", "int", { notNull: true, default: 0 }),
+      c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
+    ],
+    indexes: [["inboundId"], ["inboundId", "sortOrder"]],
   },
   {
     // 订阅令牌：地址里带着全部节点凭据，所以令牌可单独吊销。

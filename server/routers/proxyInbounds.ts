@@ -22,7 +22,10 @@ import {
   PROXY_INBOUND_SECURITIES,
   PROXY_INBOUND_SNELL_DEFAULT_VERSION,
   PROXY_INBOUND_SNELL_VERSIONS,
+  proxyInboundSupportsMultiUser,
+  proxyInboundUserCredentialKinds,
   validateProxyInbound,
+  type ProxyInboundUser,
   type ProxyInbound,
   type ProxyInboundProtocol,
 } from "../../shared/proxyInbound";
@@ -81,21 +84,36 @@ async function assertUsableHost(hostId: number, ctx: any) {
   return host;
 }
 
+/** 给一个用户补齐它这个协议需要的凭据。已有值不动 —— 编辑时不该把别人的凭据换掉。 */
+function fillUserCredentials(user: ProxyInboundUser, protocol: ProxyInbound["protocol"]): ProxyInboundUser {
+  const kinds = proxyInboundUserCredentialKinds(protocol);
+  return {
+    ...user,
+    uuid: kinds.includes("uuid") ? (user.uuid || generateProxyInboundUuid()) : "",
+    password: kinds.includes("password") ? (user.password || generateProxyInboundPassword()) : "",
+  };
+}
+
 /** 按协议与安全层补齐这一份入站需要的随机凭据。 */
 function fillGeneratedCredentials(inbound: ProxyInbound): ProxyInbound {
   const filled = { ...inbound };
-  if (filled.protocol === "vless" || filled.protocol === "vmess" || filled.protocol === "tuic") {
-    filled.uuid = filled.uuid || generateProxyInboundUuid();
+  if (proxyInboundSupportsMultiUser(filled.protocol)) {
+    // 一个用户都没有时补一个默认的：新建时用户不必先去想「给谁用」。
+    const users = filled.users.length > 0 ? filled.users : [{ id: 0, name: "默认", uuid: "", password: "" }];
+    filled.users = users.map((user) => fillUserCredentials(user, filled.protocol));
+    // 多用户协议的凭据只在用户身上，入站行上的那两列不再参与鉴权，清掉免得看着像还有用。
+    filled.uuid = "";
+    filled.password = "";
+  } else {
+    filled.users = [];
   }
   if (filled.protocol === "shadowsocks") {
     filled.method = filled.method || DEFAULT_SHADOWSOCKS_METHOD;
     const bytes = SHADOWSOCKS_2022_KEY_BYTES[filled.method];
     // SS2022 的密码必须是定长 base64；长度不对 sing-box 会整份拒绝加载。
     filled.password = filled.password || (bytes ? generateProxyInboundPsk(bytes) : generateProxyInboundPassword());
-  } else if (filled.protocol === "anytls" || filled.protocol === "snell") {
+  } else if (filled.protocol === "snell") {
     filled.password = filled.password || generateProxyInboundPsk(16);
-  } else if (filled.protocol !== "vless" && filled.protocol !== "vmess") {
-    filled.password = filled.password || generateProxyInboundPassword();
   }
   if (filled.protocol === "snell" && !filled.snellVersion) {
     filled.snellVersion = PROXY_INBOUND_SNELL_DEFAULT_VERSION;
@@ -149,6 +167,15 @@ const inboundInput = z.object({
   snellVersion: z.number().int().optional(),
   snellMode: z.string().trim().max(32).optional(),
   isEnabled: z.boolean().optional(),
+  /**
+   * 入站上的用户。只有多用户协议用得上，且只收 id 与 name ——
+   * 凭据一律服务端生成，不让前端指定（经过浏览器就多一条泄漏路径）。
+   * 不传表示不改动现有用户；传空数组会被当成「补一个默认用户」。
+   */
+  users: z.array(z.object({
+    id: z.number().int().nonnegative().default(0),
+    name: z.string().trim().max(64),
+  })).max(200).optional(),
 });
 
 type InboundInput = z.infer<typeof inboundInput>;
@@ -177,6 +204,22 @@ function mergeInbound(base: ProxyInbound, input: Partial<InboundInput>): ProxyIn
   if (input.congestionControl !== undefined) merged.congestionControl = input.congestionControl;
   if (input.snellVersion !== undefined) merged.snellVersion = input.snellVersion;
   if (input.snellMode !== undefined) merged.snellMode = input.snellMode;
+  if (input.users !== undefined) {
+    /**
+     * 按 id 对上已有用户，把凭据带过来 —— 前端不传凭据，这里若不保留，
+     * 每次改个名字都会给所有人换一遍凭据，客户端全体掉线。
+     */
+    const byId = new Map(base.users.map((user) => [user.id, user]));
+    merged.users = input.users.map((item) => {
+      const current = item.id > 0 ? byId.get(item.id) : undefined;
+      return {
+        id: current ? current.id : 0,
+        name: item.name,
+        uuid: current?.uuid || "",
+        password: current?.password || "",
+      };
+    });
+  }
 
   // 换协议时把不适用的传输与安全层收敛回该协议允许的第一项，
   // 否则会留下一个「VLESS 时选了 ws，改成 Hysteria2 后 ws 还在」的非法组合。
@@ -194,6 +237,7 @@ export const proxyInboundsRouter = router({
       protocol,
       transports: proxyInboundTransports(protocol),
       securities: proxyInboundSecurities(protocol),
+      multiUser: proxyInboundSupportsMultiUser(protocol),
     })),
     snellVersions: [...PROXY_INBOUND_SNELL_VERSIONS],
     defaultRealityServerName: DEFAULT_REALITY_SERVER_NAME,
@@ -206,8 +250,13 @@ export const proxyInboundsRouter = router({
       if (!user?.allowProxySubscription) return [];
     }
     const rows = await db.getProxyInboundsByUser(ctx.user.id);
-    // 私钥不出接口：前端没有任何用得上它的地方，多送一次就多一条泄漏路径。
-    return rows.map((row: any) => ({ ...row, realityPrivateKey: undefined }));
+    return Promise.all(rows.map(async (row: any) => ({
+      ...row,
+      // 私钥不出接口：前端没有任何用得上它的地方，多送一次就多一条泄漏路径。
+      realityPrivateKey: undefined,
+      // 同理用户凭据也不出去，只给 id 和名字，够界面显示和编辑了。
+      users: (await db.getProxyInboundUsers(Number(row.id))).map((user) => ({ id: user.id, name: user.name })),
+    })));
   }),
 
   create: protectedProcedure
@@ -231,7 +280,8 @@ export const proxyInboundsRouter = router({
         isEnabled: input.isEnabled ?? true,
         ...db.proxyInboundToRow(inbound),
       } as any);
-      await applyInbound(id, input.hostId);
+      await db.replaceProxyInboundUsers(Number(id), inbound.users);
+      await applyInbound(Number(id), input.hostId);
       return { id };
     }),
 
@@ -247,7 +297,9 @@ export const proxyInboundsRouter = router({
       const conflict = await db.findProxyInboundPortConflict(hostId, port, input.id);
       if (conflict) throw new Error(`该主机的 ${port} 端口已被落地节点「${conflict.name}」占用`);
 
-      const merged = mergeInbound(db.proxyInboundFromRow(row as any), input);
+      const loaded = await db.loadProxyInbound(input.id);
+      if (!loaded) throw new Error("落地节点不存在");
+      const merged = mergeInbound(loaded, input);
       /**
        * 换了协议或安全层就重新生成凭据。
        *
@@ -273,6 +325,7 @@ export const proxyInboundsRouter = router({
         ...(input.isEnabled !== undefined ? { isEnabled: input.isEnabled } : {}),
         ...db.proxyInboundToRow(inbound),
       } as any);
+      await db.replaceProxyInboundUsers(input.id, inbound.users);
       await applyInbound(input.id, hostId);
       // 换过主机时旧主机也要重推一遍，否则那边的配置里还留着这个入站。
       if (input.hostId !== undefined && Number(row.hostId) !== hostId) {
@@ -287,16 +340,21 @@ export const proxyInboundsRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertAllowed(ctx);
       const row = await assertOwnedInbound(input.id, ctx);
-      const current = db.proxyInboundFromRow(row as any);
+      const current = await db.loadProxyInbound(input.id);
+      if (!current) throw new Error("落地节点不存在");
       const inbound = fillGeneratedCredentials({
         ...current,
         uuid: "",
         password: "",
+        // 每个用户的凭据都换掉，但保留 id 与名字 —— 派生节点要靠 id 对齐，
+        // 换 id 会让订阅里的节点被删掉重建，转发规则上的绑定跟着丢。
+        users: current.users.map((user) => ({ ...user, uuid: "", password: "" })),
         realityPrivateKey: "",
         realityPublicKey: "",
         realityShortId: "",
       });
       await db.updateProxyInbound(input.id, db.proxyInboundToRow(inbound) as any);
+      await db.replaceProxyInboundUsers(input.id, inbound.users);
       await applyInbound(input.id, Number(row.hostId));
       // 换了凭据，旧订阅立刻失效 —— 这是预期行为，界面上要讲清楚。
       return { success: true };

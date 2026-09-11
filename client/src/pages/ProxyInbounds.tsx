@@ -15,12 +15,13 @@ import {
   PROXY_INBOUND_SECURITY_LABELS,
   PROXY_INBOUND_SNELL_VERSIONS,
   proxyInboundSecurities,
+  proxyInboundSupportsMultiUser,
   proxyInboundTransports,
   type ProxyInboundProtocol,
   type ProxyInboundSecurity,
 } from "@shared/proxyInbound";
 import { PROXY_NODE_PROTOCOL_LABELS, type ProxyNodeProtocol, type ProxyNodeTransport } from "@shared/proxyNode";
-import { KeyRound, Pencil, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
+import { KeyRound, Pencil, Plus, RefreshCw, Server, Trash2, UserPlus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -51,6 +52,8 @@ type InboundForm = {
   obfsPassword: string;
   snellVersion: number;
   isEnabled: boolean;
+  /** 只有 id 与名字：凭据一律服务端生成，前端拿不到也不该传。 */
+  users: Array<{ id: number; name: string }>;
 };
 
 function emptyForm(): InboundForm {
@@ -73,6 +76,7 @@ function emptyForm(): InboundForm {
     obfsPassword: "",
     snellVersion: PROXY_INBOUND_SNELL_VERSIONS[0],
     isEnabled: true,
+    users: [{ id: 0, name: "默认" }],
   };
 }
 
@@ -170,6 +174,9 @@ export default function ProxyInbounds() {
       obfsPassword: String(row.obfsPassword || ""),
       snellVersion: Number(row.snellVersion || PROXY_INBOUND_SNELL_VERSIONS[0]),
       isEnabled: !!row.isEnabled,
+      users: Array.isArray(row.users) && row.users.length > 0
+        ? row.users.map((user: any) => ({ id: Number(user.id) || 0, name: String(user.name || "") }))
+        : [{ id: 0, name: "默认" }],
     });
     setDialogOpen(true);
   };
@@ -195,6 +202,7 @@ export default function ProxyInbounds() {
       obfsPassword: form.obfsPassword.trim(),
       snellVersion: form.snellVersion,
       isEnabled: form.isEnabled,
+      users: form.users.map((user, index) => ({ id: user.id, name: user.name.trim() || `用户 ${index + 1}` })),
     };
     if (form.id > 0) updateInbound.mutate({ id: form.id, ...payload });
     else createInbound.mutate(payload);
@@ -226,6 +234,7 @@ export default function ProxyInbounds() {
   const isTls = form.security === "tls";
   const isAcme = form.security === "acme";
   const hasTransportOptions = transports.length > 1;
+  const multiUser = proxyInboundSupportsMultiUser(form.protocol);
   const usesPath = form.transport === "ws" || form.transport === "grpc" || form.transport === "http";
 
   return (
@@ -274,6 +283,7 @@ export default function ProxyInbounds() {
                         <Server className="mr-1 inline h-3 w-3" />
                         {hostName(Number(row.hostId))} · 端口 {row.port}
                         {row.transport && row.transport !== "tcp" ? ` · ${TRANSPORT_LABELS[row.transport] || row.transport}` : ""}
+                        {Array.isArray(row.users) && row.users.length > 1 ? ` · ${row.users.length} 个用户` : ""}
                       </p>
                     </div>
                     <div className="flex items-center gap-1">
@@ -495,6 +505,61 @@ export default function ProxyInbounds() {
                 ) : null}
               </div>
             ) : null}
+
+            {multiUser ? (
+              <div className="space-y-2 rounded-md border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-xs">
+                    <Users className="mr-1 inline h-3 w-3" />
+                    用户（{form.users.length}）
+                  </Label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setForm((prev) => ({
+                      ...prev,
+                      users: [...prev.users, { id: 0, name: `用户 ${prev.users.length + 1}` }],
+                    }))}
+                  >
+                    <UserPlus className="mr-1 h-3 w-3" />
+                    加一个
+                  </Button>
+                </div>
+                {form.users.map((user, index) => (
+                  <div key={`${user.id}-${index}`} className="flex items-center gap-2">
+                    <Input
+                      value={user.name}
+                      onChange={(event) => setForm((prev) => ({
+                        ...prev,
+                        users: prev.users.map((item, at) => (at === index ? { ...item, name: event.target.value } : item)),
+                      }))}
+                      placeholder={`用户 ${index + 1}`}
+                      className="h-8 text-xs"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      // 至少留一个：零用户的入站 sing-box 会拒绝整份配置。
+                      disabled={form.users.length <= 1}
+                      onClick={() => setForm((prev) => ({ ...prev, users: prev.users.filter((_, at) => at !== index) }))}
+                      title={form.users.length <= 1 ? "至少要有一个用户" : "删除"}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+                <p className="text-xs text-muted-foreground">
+                  每个用户一份独立凭据，各自派生一个节点进订阅。删掉某个用户，只有他连不上，其他人不受影响。
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {PROXY_NODE_PROTOCOL_LABELS[form.protocol as ProxyNodeProtocol]} 只支持单用户。
+                要给多个人发不同凭据，改用 VLESS / VMess / Trojan / Hysteria2 / TUIC / AnyTLS。
+              </p>
+            )}
 
             <div className="flex items-center justify-between rounded-md border p-3">
               <div className="min-w-0">

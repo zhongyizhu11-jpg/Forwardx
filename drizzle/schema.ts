@@ -444,6 +444,9 @@ export const proxyNodes = table("proxy_nodes", {
   // 由哪个落地入站派生而来（proxy_inbounds.id）。0 表示是用户自己粘链接建的。
   // 派生出来的节点不该手工改：下次保存入站时会被整行覆盖。
   inboundId: int("inboundId").notNull().default(0),
+  // 对应入站上的哪个用户（proxy_inbound_users.id）。0 表示该协议只有单用户。
+  // 派生时靠它把节点与用户对齐，用户删掉时才知道该删哪一条节点。
+  inboundUserId: int("inboundUserId").notNull().default(0),
   isEnabled: boolean("isEnabled").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
@@ -503,6 +506,26 @@ export const proxyInbounds = table("proxy_inbounds", {
 });
 export type ProxyInbound = typeof proxyInbounds.$inferSelect;
 export type InsertProxyInbound = typeof proxyInbounds.$inferInsert;
+
+/**
+ * 落地入站上的用户：一个入站可以给多个人各发一份凭据。
+ *
+ * 只有支持多用户的协议用得上（见 shared/proxyInbound.ts 的
+ * PROXY_INBOUND_MULTI_USER_PROTOCOLS）。Shadowsocks 与 Snell 的凭据仍在入站行上。
+ */
+export const proxyInboundUsers = table("proxy_inbound_users", {
+  id: serial("id"),
+  inboundId: int("inboundId").notNull(),
+  // 给人看的标签，会拼进派生出来的节点名
+  name: text("name").notNull(),
+  uuid: text("uuid"),
+  password: text("password"),
+  sortOrder: int("sortOrder").notNull().default(0),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type ProxyInboundUser = typeof proxyInboundUsers.$inferSelect;
+export type InsertProxyInboundUser = typeof proxyInboundUsers.$inferInsert;
 
 /**
  * 订阅令牌。订阅地址里带着全部节点凭据，所以令牌必须不可猜且可单独吊销，
