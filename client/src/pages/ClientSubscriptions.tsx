@@ -259,6 +259,23 @@ const PREVIEW_GROUPS = [
   { key: "direct", label: "直连" },
 ] as const;
 
+/**
+ * 子块小标题：一行文字 + 一条细横线。
+ *
+ * 「订阅内容」这张卡里原本有五个子块，各用一种样式 —— 彩色框、虚线框、灰底框、
+ * 纯标题。样式不同会让人以为它们是不同性质的东西，其实都只是「订阅里的一部分」。
+ * 统一成同一条线之后，视觉重量交还给内容本身。
+ */
+function SectionLabel({ children, count }: { children: React.ReactNode; count?: number }) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+      <span>{children}</span>
+      {count !== undefined ? <span className="tabular-nums">({count})</span> : null}
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
 const QUOTA_STATE_STYLES = {
   none: "text-muted-foreground",
   normal: "text-muted-foreground",
@@ -821,9 +838,6 @@ export default function ClientSubscriptionsPage() {
                 </span>
               ) : null}
             </button>
-            <CardDescription className="w-full text-xs">
-              关掉开关只是不进订阅，转发照常运行。
-            </CardDescription>
           </CardHeader>
           <CardContent hidden={previewCollapsed} className="pt-0">
             {previewQuery.isLoading ? (
@@ -898,6 +912,7 @@ export default function ClientSubscriptionsPage() {
                             <Switch
                               className="scale-90"
                               checked
+                              title="关掉只是不进订阅，转发照常运行"
                               onCheckedChange={() => setRuleVisible.mutate({ ruleId: node.ruleId, visible: false })}
                             />
                           )}
@@ -915,7 +930,7 @@ export default function ClientSubscriptionsPage() {
 
                 {hiddenRules.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">已隐藏（不在订阅里）</p>
+                    <SectionLabel count={hiddenRules.length}>已隐藏</SectionLabel>
                     {hiddenRules.map((item) => (
                       <div
                         key={item.ruleId}
@@ -934,33 +949,28 @@ export default function ClientSubscriptionsPage() {
                 )}
 
                 {(preview?.groups.length ?? 0) > 0 && (
-                  <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
-                    <p className="flex items-center gap-1.5 text-xs font-medium">
-                      <Zap className="h-3.5 w-3.5" />
-                      自动选路组（Clash 与 sing-box 可用）
-                    </p>
+                  <div className="space-y-1.5">
+                    <SectionLabel>
+                      <Zap className="mr-1 inline h-3 w-3" />
+                      自动选路组（Clash 与 sing-box）
+                    </SectionLabel>
                     {preview!.groups.map((group) => (
-                      <div key={group.name} className="text-xs text-muted-foreground">
+                      <div key={group.name} className="truncate rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground">
                         <span className="font-medium text-foreground">{group.name}</span>
-                        {group.type === "url-test" ? " 自动选最快 · " : " 主备切换 · "}
+                        {group.type === "url-test" ? " · 自动选最快 · " : " · 主备切换 · "}
                         {group.members.join(" / ")}
                       </div>
                     ))}
-                    <p className="text-xs text-muted-foreground">
-                      选这个组，客户端自动挑最快的中转。
-                    </p>
                   </div>
                 )}
 
                 {unboundRules.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">
-                      还没加入订阅的转发（选一个落地节点即可加入）
-                    </p>
+                    <SectionLabel count={unboundRules.length}>还没加入订阅的转发</SectionLabel>
                     {unboundRules.map((item) => (
                       <div
                         key={item.ruleId}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed p-3"
+                        className="flex items-center gap-2 rounded-md border border-dashed px-2.5 py-1.5"
                       >
                         <span className="min-w-0 flex-1 truncate text-sm">{item.ruleName}</span>
                         <Select
@@ -971,7 +981,7 @@ export default function ClientSubscriptionsPage() {
                             proxyNodeId: Number(value),
                           })}
                         >
-                          <SelectTrigger className="w-48">
+                          <SelectTrigger className="h-8 w-36 shrink-0 text-xs">
                             <SelectValue
                               placeholder={enabledNodes.length === 0 ? "请先添加落地节点" : "选择落地节点"}
                             />
@@ -990,9 +1000,9 @@ export default function ClientSubscriptionsPage() {
                 )}
 
                 {otherSkipped.length > 0 && (
-                  <div className="rounded-lg bg-muted/50 p-3">
-                    <p className="text-xs font-medium text-muted-foreground">未进入订阅的转发</p>
-                    <ul className="mt-2 space-y-1">
+                  <div className="space-y-1.5">
+                    <SectionLabel count={otherSkipped.length}>未进入订阅的转发</SectionLabel>
+                    <ul className="space-y-1">
                       {otherSkipped.map((item) => (
                         <li key={item.ruleId} className="text-xs text-muted-foreground">
                           {item.ruleName} —— {item.label}
@@ -1105,7 +1115,9 @@ export default function ClientSubscriptionsPage() {
                     </Button>
 
                     {expanded && (
-                      <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                      /* 不再套一层边框：它已经被令牌那个框包着，而且只在展开时出现，
+                         归属关系本来就清楚。三层边框套在一起才是真的乱。 */
+                      <div className="space-y-3 border-t pt-3">
                         <div className="flex rounded-md border bg-background p-0.5">
                           {PROXY_SUBSCRIPTION_KINDS.map((item) => (
                             <button
