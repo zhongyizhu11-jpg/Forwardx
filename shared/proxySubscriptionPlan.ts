@@ -382,11 +382,20 @@ export const PROXY_NODE_AUTO_GROUP_HINTS: Record<ProxyNodeAutoGroup, string> = {
   fallback: "按列表顺序主备，前一条不通才切下一条，适合有明确主力线路时。",
 };
 
+/**
+ * 默认的选路方式。
+ *
+ * 单独拎出来是因为它有两个用处：新建节点时的初值，以及界面判断「这个节点改过
+ * 没有」的基准。两处各写一个字面量的话，将来改默认值会漏掉一处，表现是新建的
+ * 节点一打开就被当成「改过」。
+ */
+export const PROXY_NODE_DEFAULT_AUTO_GROUP: ProxyNodeAutoGroup = "url-test";
+
 export function normalizeProxyNodeAutoGroup(value: unknown): ProxyNodeAutoGroup {
   const raw = String(value ?? "").trim().toLowerCase();
   return (PROXY_NODE_AUTO_GROUPS as readonly string[]).includes(raw)
     ? raw as ProxyNodeAutoGroup
-    : "url-test";
+    : PROXY_NODE_DEFAULT_AUTO_GROUP;
 }
 
 export type ProxySubscriptionGroupType = "select" | "url-test" | "fallback";

@@ -755,7 +755,7 @@ export default function ProxyInboundsSection() {
               </p>
             ) : null}
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t pt-3">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button>
             <Button onClick={submit} disabled={saving}>保存</Button>
           </DialogFooter>
@@ -796,7 +796,7 @@ export default function ProxyInboundsSection() {
               链接里带着这个用户的完整凭据，发给谁，谁就能用这个节点。
             </p>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t pt-3">
             <Button variant="outline" onClick={() => setLinkDialogOpen(false)}>关闭</Button>
           </DialogFooter>
         </DialogContent>

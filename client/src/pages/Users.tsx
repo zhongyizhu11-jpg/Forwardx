@@ -727,7 +727,7 @@ function UsersContent() {
     { value: "accounts", label: "账户管理", icon: UsersIcon },
     {
       value: "subscriptions",
-      label: "用户订阅管理",
+      label: "用户套餐",
       icon: Package,
       badge: (summaryLoading || activeSubscriptionCount > 0) ? (
         <AnimatedStatValue
@@ -1694,7 +1694,7 @@ function UsersContent() {
               <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/30">
                 <Package className="h-7 w-7 opacity-40" />
               </div>
-              <p className="text-base font-medium">暂无用户订阅</p>
+              <p className="text-base font-medium">暂无用户套餐</p>
               <p className="mt-1 text-sm text-muted-foreground/60">分配或购买套餐后会显示在这里。</p>
             </div>
           ) : (
@@ -1855,8 +1855,7 @@ function UsersContent() {
               <div className="flex items-center justify-between rounded-lg border border-border/40 p-3">
                 <div className="min-w-0 pr-3">
                   <p className="text-xs text-muted-foreground">
-                    允许拉订阅地址导入客户端。与转发各给各的 —— 只给订阅也成立，
-                    那种用户零转发，订阅里是他自己主机上的落地节点。
+                    允许生成订阅地址导入客户端。与转发权限互不影响。
                   </p>
                 </div>
                 <Switch
@@ -2311,8 +2310,8 @@ function UsersContent() {
                 <div className="min-w-0">
                   <Label>客户端订阅</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    允许该用户拉订阅地址导入客户端。与转发权限各给各的，只给订阅也成立。
-                    套餐里已附带该权限的用户不受这里影响；流量用尽或账号被停时权限会自动收回。
+                    允许生成订阅地址导入客户端，与转发权限互不影响。
+                    套餐已附带该权限的用户不受这里影响；流量用尽或账号被停时自动收回。
                   </p>
                 </div>
                 <Switch

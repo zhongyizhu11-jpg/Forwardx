@@ -69,7 +69,7 @@ type ForwardGroupMode = "port" | "failover" | "chain" | "entry" | "exit";
 type PlanResourcePart = { label: string; count: number };
 const PLAN_MANAGE_TABS = ["plans", "billing"] as const;
 const PLAN_MANAGE_TAB_ITEMS = [
-  { value: "plans", label: "订阅套餐", icon: Package },
+  { value: "plans", label: "套餐", icon: Package },
   { value: "billing", label: "按量计费资源", icon: Coins },
 ] as const satisfies readonly SlidingTabItem<PlanManageTab>[];
 const PLAN_MANAGE_TAB_STORAGE_KEY = "forwardx.plans.tab";
@@ -1624,7 +1624,7 @@ export default function Plans() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <Label className="text-sm font-medium">附加流量包</Label>
-                <p className="mt-1 text-xs text-muted-foreground">用户在“我的订阅”内余额购买，仅当前流量周期有效。</p>
+                <p className="mt-1 text-xs text-muted-foreground">用户在“我的套餐”内余额购买，仅当前流量周期有效。</p>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={addTrafficAddon}>
                 <Plus className="mr-2 h-4 w-4" /> 添加档位

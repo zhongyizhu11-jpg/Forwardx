@@ -128,8 +128,10 @@ const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivEleme
 )
 DialogHeader.displayName = "DialogHeader"
 
+// gap-2 而不是 sm:space-x-2：原来的写法只在桌面端给间距，手机上按钮竖排时
+// 两个按钮之间一点缝都没有，糊成一整块。gap 横竖都管。
 const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", className)} {...props} />
+  <div className={cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)} {...props} />
 )
 DialogFooter.displayName = "DialogFooter"
 

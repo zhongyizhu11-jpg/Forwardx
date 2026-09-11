@@ -29,6 +29,7 @@ import {
 } from "@shared/proxySubscription";
 import {
   PROXY_NODE_AUTO_GROUPS,
+  PROXY_NODE_DEFAULT_AUTO_GROUP,
   PROXY_NODE_AUTO_GROUP_HINTS,
   PROXY_NODE_AUTO_GROUP_LABELS,
   normalizeProxyNodeAutoGroup,
@@ -523,6 +524,7 @@ export default function ClientSubscriptionsPage() {
 
   /** 从节点这边发起分享。粘进来的节点只有一份凭据，所以就是一个列表。 */
   const [shareNode, setShareNode] = useState<{ id: number; name: string } | null>(null);
+  const [nodeAdvancedOpen, setNodeAdvancedOpen] = useState(false);
 
   /**
    * 「落地节点」这一段只列粘进来的，不列自建节点派生出来的那些。
@@ -612,7 +614,7 @@ export default function ClientSubscriptionsPage() {
     setEditingNodeId(null);
     setNodeName("");
     setNodeLink("");
-    setNodeAutoGroup("url-test");
+    setNodeAutoGroup(PROXY_NODE_DEFAULT_AUTO_GROUP);
     setNodeIncludeDirect(false);
     setNodeFrontProxyId(0);
     setNodeBandwidthMbps("");
@@ -620,6 +622,7 @@ export default function ClientSubscriptionsPage() {
     setNodeTrafficUsedGb("");
     setNodeTrafficAutoReset(false);
     setNodeTrafficResetDay("1");
+    setNodeAdvancedOpen(false);
     setNodeDialogOpen(true);
   };
 
@@ -635,6 +638,17 @@ export default function ClientSubscriptionsPage() {
     setNodeTrafficUsedGb(gbFromBytes(node.trafficUsed));
     setNodeTrafficAutoReset(!!node.trafficAutoReset);
     setNodeTrafficResetDay(String(Number(node.trafficResetDay || 1)));
+    /**
+     * 高级项不是默认值就展开。
+     *
+     * 这两项收进折叠区是因为多数人用不上；但对配过的人，打开弹窗看不见自己设过的
+     * 选路方式或前置代理，第一反应是「我的配置丢了」—— 折叠可以省地方，不能省到
+     * 让人怀疑数据。
+     */
+    setNodeAdvancedOpen(
+      normalizeProxyNodeAutoGroup(node.autoGroup) !== PROXY_NODE_DEFAULT_AUTO_GROUP
+      || Number(node.frontProxyId || 0) > 0,
+    );
     setNodeDialogOpen(true);
   };
 
@@ -1415,25 +1429,6 @@ export default function ClientSubscriptionsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>多中转时的选路方式</Label>
-              <Select
-                value={nodeAutoGroup}
-                onValueChange={(value) => setNodeAutoGroup(value as ProxyNodeAutoGroup)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROXY_NODE_AUTO_GROUPS.map((mode) => (
-                    <SelectItem key={mode} value={mode}>
-                      {PROXY_NODE_AUTO_GROUP_LABELS[mode]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">{PROXY_NODE_AUTO_GROUP_HINTS[nodeAutoGroup]}</p>
-            </div>
-            <div className="space-y-2">
               <Label>加进订阅</Label>
               <div className="flex items-start justify-between gap-3 rounded-lg border p-3">
                 <p className="min-w-0 text-xs text-muted-foreground">
@@ -1523,34 +1518,77 @@ export default function ClientSubscriptionsPage() {
                 </div>
               </div>
             </div>
+            {/*
+              自动选路和前置代理都是少数人才用的东西，平铺在这里会把「改个名字、
+              换条链接」这种日常操作推到第二屏。收进折叠区，但只要它们不是默认值
+              就自动展开 —— 否则改过设置的人再打开会以为自己的配置没了。
+            */}
             <div className="space-y-2">
-              <Label>前置代理</Label>
-              <Select
-                value={String(nodeFrontProxyId)}
-                onValueChange={(value) => setNodeFrontProxyId(Number(value))}
+              <button
+                type="button"
+                className="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground"
+                onClick={() => setNodeAdvancedOpen((prev) => !prev)}
+                aria-expanded={nodeAdvancedOpen}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="不经由" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0">不经由</SelectItem>
-                  {nodes
-                    .filter((item: any) => Number(item.id) !== editingNodeId)
-                    .map((item: any) => (
-                      <SelectItem key={item.id} value={String(item.id)}>
-                        {item.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                连接先经由它建立。
-                {nodeFrontProxyId > 0 ? (
-                  <span className="mt-1 block text-amber-600 dark:text-amber-500">
-                    Loon 与 QX 需在客户端里手连一次。
-                  </span>
-                ) : null}
-              </p>
+                <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${nodeAdvancedOpen ? "" : "-rotate-90"}`} />
+                <span>高级</span>
+                <span className="h-px flex-1 bg-border" />
+              </button>
+              {nodeAdvancedOpen ? (
+                <div className="space-y-4 pt-1">
+                  <div className="space-y-2">
+                    <Label>自动选路</Label>
+                    <Select
+                      value={nodeAutoGroup}
+                      onValueChange={(value) => setNodeAutoGroup(value as ProxyNodeAutoGroup)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROXY_NODE_AUTO_GROUPS.map((mode) => (
+                          <SelectItem key={mode} value={mode}>
+                            {PROXY_NODE_AUTO_GROUP_LABELS[mode]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      多条中转指向这个落地时，订阅里额外生成一个选路组。
+                      {PROXY_NODE_AUTO_GROUP_HINTS[nodeAutoGroup]}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>前置代理</Label>
+                    <Select
+                      value={String(nodeFrontProxyId)}
+                      onValueChange={(value) => setNodeFrontProxyId(Number(value))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="不经由" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="0">不经由</SelectItem>
+                        {nodes
+                          .filter((item: any) => Number(item.id) !== editingNodeId)
+                          .map((item: any) => (
+                            <SelectItem key={item.id} value={String(item.id)}>
+                              {item.name}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      连接先经由它建立。
+                      {nodeFrontProxyId > 0 ? (
+                        <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                          Loon 与 QX 需在客户端里手连一次。
+                        </span>
+                      ) : null}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
             </div>
             <div className="space-y-2">
               <Label htmlFor="proxy-node-link">节点链接</Label>
@@ -1564,7 +1602,11 @@ export default function ClientSubscriptionsPage() {
               />
             </div>
           </div>
-          <DialogFooter>
+          {/*
+            footer 要自己占住位置：shrink-0 挡住被正文压扁，border-t 把它和可滚的
+            正文分开 —— 不然滚到底时按钮和最后一行字糊在一起，看着像叠上去的。
+          */}
+          <DialogFooter className="shrink-0 border-t pt-3">
             <Button variant="outline" onClick={() => setNodeDialogOpen(false)}>
               取消
             </Button>

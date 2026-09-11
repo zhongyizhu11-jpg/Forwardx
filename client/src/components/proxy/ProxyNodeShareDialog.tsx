@@ -174,7 +174,7 @@ export function ProxyNodeShareDialog({
           ))}
         </div>
 
-        <DialogFooter className="items-center gap-2 sm:justify-between">
+        <DialogFooter className="shrink-0 items-center border-t pt-3 sm:justify-between">
           <span className="text-xs text-muted-foreground">已选 {total} 人</span>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
