@@ -814,7 +814,7 @@ export default function ClientSubscriptionsPage() {
                               meta={proxyNodeMetaText([
                                 `${node.address}:${node.port}`,
                                 node.sharedFrom
-                                  ? `${node.sharedFrom.name} 分享，不可修改`
+                                  ? "管理员分享，不可修改"
                                   : node.ruleCount > 0 ? `${node.ruleCount} 条转发` : "无转发绑定",
                                 node.sharedToUserIds?.length ? `已分享 ${node.sharedToUserIds.length} 人` : "",
                                 !node.isEnabled ? "已停用" : "",
