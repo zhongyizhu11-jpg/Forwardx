@@ -217,6 +217,162 @@ export async function getProxyNodeShareUserIds(
 }
 
 /**
+ * 这个入站上「代表它」的那条节点：主人自己那份凭据派生的。
+ *
+ * 分享按端口算，但界面上挑的是节点。分享发出去的那些派生节点各自属于某个人，
+ * 不能拿来当选项 —— 所以对外一律用这一条代表整个端口。
+ */
+async function anchorNodeIdForInbound(inboundId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const { getProxyInboundUsers } = await import("./proxyInboundRepository");
+  const credentials = await getProxyInboundUsers(inboundId);
+  const ownIds = new Set(credentials.filter((user) => !Number(user.sharedUserId || 0)).map((user) => Number(user.id)));
+  const rows = await db
+    .select({ id: proxyNodes.id, inboundUserId: proxyNodes.inboundUserId })
+    .from(proxyNodes)
+    .where(eq(proxyNodes.inboundId, inboundId))
+    .orderBy(asc(proxyNodes.inboundUserId), asc(proxyNodes.id));
+  const own = (rows as any[]).find((row) => ownIds.has(Number(row.inboundUserId || 0)));
+  return Number(own?.id || (rows as any[])[0]?.id || 0);
+}
+
+/**
+ * 管理端「分享给这个人哪些节点」选择框里该勾上哪些。
+ *
+ * 不能直接用 getProxyNodeIdsSharedToUser：那给的是**他自己那条**派生节点，
+ * 而选项列表里放的是代表整个端口的那一条 —— 两边对不上，选择框就会显示成
+ * 一个都没选，管理员一保存，他的凭据就被静默收走了。
+ */
+export async function getProxyNodeShareSelectionForUser(userId: number): Promise<number[]> {
+  const ids = await getProxyNodeIdsSharedToUser(userId);
+  const result: number[] = [];
+  for (const id of ids) {
+    const scope = await resolveProxyNodeShareScope(id);
+    if (!scope) continue;
+    if (scope.kind === "node") {
+      result.push(scope.nodeId);
+      continue;
+    }
+    const anchor = await anchorNodeIdForInbound(scope.inboundId);
+    if (anchor) result.push(anchor);
+  }
+  return Array.from(new Set(result));
+}
+
+/**
+ * 这个人的有效套餐一共带了哪些落地节点。
+ *
+ * 只算还生效的订阅 —— 到期那一条带的节点不该再算数，否则「到期自动收回」
+ * 收完下一次同步又发回去了。
+ */
+export async function getPlanGrantedProxyNodeIdsForUser(userId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const { subscriptionPlanProxyNodes, userSubscriptions } = await import("../../drizzle/schema");
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = await db
+    .select({ nodeId: subscriptionPlanProxyNodes.nodeId })
+    .from(userSubscriptions)
+    .innerJoin(subscriptionPlanProxyNodes, eq(subscriptionPlanProxyNodes.planId, userSubscriptions.planId))
+    .where(and(
+      eq(userSubscriptions.userId, Number(userId)),
+      eq(userSubscriptions.status, "active"),
+      sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${nowSec})`,
+    ));
+  return Array.from(new Set((rows as any[]).map((row) => Number(row.nodeId)).filter((id) => id > 0)));
+}
+
+/**
+ * 把某个人的分享重算一遍，手工的和套餐带的各算各的。
+ *
+ * 只传其中一路时，另一路沿用库里现有的 —— 套餐同步不能顺手删掉管理员手工
+ * 分的，反过来也一样。
+ *
+ * 凭据的收发跟着这个并集走：并集里还有这个端口就留着，没有了才真收回。
+ * 一个端口同时被手工分和套餐带的情况下，撤掉其中一路不该让他断线。
+ */
+export async function reconcileProxyNodeSharesForUser(
+  userId: number,
+  input: { manualNodeIds?: readonly number[]; planNodeIds?: readonly number[]; label?: string },
+): Promise<{ hostIds: number[] }> {
+  const db = await getDb();
+  if (!db) return { hostIds: [] };
+  const recipient = Number(userId);
+  const label = String(input.label || "").trim() || `用户 #${recipient}`;
+  const hostIds = new Set<number>();
+
+  const current = await db
+    .select({ nodeId: proxyNodeShares.nodeId, source: proxyNodeShares.source })
+    .from(proxyNodeShares)
+    .where(eq(proxyNodeShares.userId, recipient));
+  const keepExisting = (want: "manual" | "plan") => (current as any[])
+    .filter((row) => String(row.source || "manual") === want)
+    .map((row) => Number(row.nodeId));
+
+  const wanted: Array<{ nodeId: number; source: "manual" | "plan" }> = [];
+  for (const nodeId of input.manualNodeIds ?? keepExisting("manual")) {
+    wanted.push({ nodeId: Number(nodeId), source: "manual" });
+  }
+  for (const nodeId of input.planNodeIds ?? keepExisting("plan")) {
+    wanted.push({ nodeId: Number(nodeId), source: "plan" });
+  }
+
+  const { ensureSharedInboundCredential, releaseSharedInboundCredential } = await import("./proxyInboundRepository");
+  const resolved = new Map<number, "manual" | "plan">();
+  const keepInboundIds = new Set<number>();
+  for (const item of wanted) {
+    if (!Number.isInteger(item.nodeId) || item.nodeId <= 0) continue;
+    const node = await getProxyNodeById(item.nodeId);
+    // 自己的节点不用分享：落进来的话订阅里会出现两份同名节点。
+    if (!node || Number((node as any).userId) === recipient) continue;
+    const scope = await resolveProxyNodeShareScope(item.nodeId);
+    if (!scope) continue;
+    let targetNodeId = scope.kind === "node" ? scope.nodeId : 0;
+    if (scope.kind === "inbound") {
+      keepInboundIds.add(scope.inboundId);
+      const provisioned = await ensureSharedInboundCredential(scope.inboundId, recipient, label);
+      if (!provisioned) continue;
+      hostIds.add(provisioned.hostId);
+      targetNodeId = provisioned.nodeId;
+    }
+    if (!targetNodeId) continue;
+    // 手工优先：同一条既手工分了又被套餐带上，记成手工，撤套餐不该把它撤掉。
+    if (resolved.get(targetNodeId) !== "manual") resolved.set(targetNodeId, item.source);
+  }
+
+  for (const inboundId of await getSharedInboundIdsForUser(recipient)) {
+    if (keepInboundIds.has(inboundId)) continue;
+    const released = await releaseSharedInboundCredential(inboundId, recipient);
+    if (released) {
+      const hostId = await getInboundHostId(inboundId);
+      if (hostId) hostIds.add(hostId);
+    }
+  }
+
+  await db.delete(proxyNodeShares).where(eq(proxyNodeShares.userId, recipient));
+  const values = Array.from(resolved.entries()).map(([nodeId, source]) => ({ nodeId, userId: recipient, source }));
+  if (values.length > 0) await db.insert(proxyNodeShares).values(values as any);
+  return { hostIds: Array.from(hostIds).filter((hostId) => hostId > 0) };
+}
+
+/**
+ * 套餐带的节点重算一遍：买了自动发，到期 / 换套餐 / 被停用自动收。
+ *
+ * allowed = false 时一律收回。订阅地址那边到期就拉不动了，可手上那份凭据是
+ * 落在落地机上的 —— 不主动收，它照连不误。
+ */
+export async function syncPlanProxyNodeSharesForUser(
+  userId: number,
+  label?: string,
+  options: { allowed?: boolean } = {},
+): Promise<{ hostIds: number[] }> {
+  const allowed = options.allowed !== false;
+  const planNodeIds = allowed ? await getPlanGrantedProxyNodeIdsForUser(userId) : [];
+  return reconcileProxyNodeSharesForUser(userId, { planNodeIds, label });
+}
+
+/**
  * 设定「这个用户能拿到哪些节点」（全量替换），和主机权限那套一个路数。
  *
  * 自己的节点不用分享，落进来的话对方订阅里会出现两份同名节点，客户端里就是
@@ -227,57 +383,8 @@ export async function setProxyNodeSharesForUser(
   nodeIds: readonly number[],
   options: { label?: string } = {},
 ): Promise<{ hostIds: number[] }> {
-  const db = await getDb();
-  if (!db) return { hostIds: [] };
-  const recipient = Number(userId);
-  const label = String(options.label || "").trim() || `用户 #${recipient}`;
-  const hostIds = new Set<number>();
-
-  const ids = Array.from(new Set(nodeIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
-  const owned = ids.length
-    ? await db
-      .select({ id: proxyNodes.id, userId: proxyNodes.userId })
-      .from(proxyNodes)
-      .where(inArray(proxyNodes.id, ids))
-    : [];
-  // 自己的节点不用分享：落进来的话对方订阅里会出现两份同名节点。
-  const wanted = (owned as any[]).filter((row) => Number(row.userId) !== recipient).map((row) => Number(row.id));
-
-  const { ensureSharedInboundCredential, releaseSharedInboundCredential } = await import("./proxyInboundRepository");
-  const targetNodeIds: number[] = [];
-  const keepInboundIds = new Set<number>();
-  for (const id of wanted) {
-    const scope = await resolveProxyNodeShareScope(id);
-    if (!scope) continue;
-    if (scope.kind === "node") {
-      targetNodeIds.push(scope.nodeId);
-      continue;
-    }
-    keepInboundIds.add(scope.inboundId);
-    const provisioned = await ensureSharedInboundCredential(scope.inboundId, recipient, label);
-    if (!provisioned) continue;
-    hostIds.add(provisioned.hostId);
-    targetNodeIds.push(provisioned.nodeId);
-  }
-
-  /**
-   * 这次没留下的入站，要把他那份凭据收回来 —— 只删分享记录的话，凭据还在
-   * 那个端口上活着，他把订阅存下来照样能连，「取消分享」就成了句空话。
-   */
-  const previous = await getSharedInboundIdsForUser(recipient);
-  for (const inboundId of previous) {
-    if (keepInboundIds.has(inboundId)) continue;
-    const released = await releaseSharedInboundCredential(inboundId, recipient);
-    if (released) {
-      const hostId = await getInboundHostId(inboundId);
-      if (hostId) hostIds.add(hostId);
-    }
-  }
-
-  await db.delete(proxyNodeShares).where(eq(proxyNodeShares.userId, recipient));
-  const values = Array.from(new Set(targetNodeIds)).map((nodeId) => ({ nodeId, userId: recipient }));
-  if (values.length > 0) await db.insert(proxyNodeShares).values(values as any);
-  return { hostIds: Array.from(hostIds) };
+  // 手工那一路走同一个对账函数，套餐带的那些原样留着。
+  return reconcileProxyNodeSharesForUser(userId, { manualNodeIds: nodeIds, label: options.label });
 }
 
 /** 这个人在哪些入站上有单独发的凭据。 */
@@ -564,6 +671,38 @@ export async function createProxySubToken(data: InsertProxySubToken) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   return insertAndGetId("proxy_sub_tokens", data as any);
+}
+
+/**
+ * 订阅令牌的长度。地址里带着全部节点凭据，短了能被猜到。
+ * 自动开的那条和手工建的那条必须一样长 —— 两处各写一个数字迟早会分叉。
+ */
+export const PROXY_SUB_TOKEN_LENGTH = 40;
+
+/**
+ * 没有订阅地址就自动开一条。
+ *
+ * 「买了套餐 → 进面板 → 还得自己点一下新建链接 → 才拿得到地址」，中间这一步
+ * 对用户没有任何意义：他要的就是那条地址。开通即可用，才叫开通。
+ *
+ * 已经有地址（哪怕是停用的）就不动，免得他删掉之后又被自动加回来。
+ */
+export async function ensureDefaultProxySubToken(
+  userId: number,
+  name = "默认订阅",
+): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const existing = await countProxySubTokensByUser(userId);
+  if (existing > 0) return 0;
+  const { nanoid } = await import("nanoid");
+  return Number(await insertAndGetId("proxy_sub_tokens", {
+    userId,
+    name,
+    token: nanoid(PROXY_SUB_TOKEN_LENGTH),
+    defaultFormat: "base64",
+    rulePreset: "balanced",
+  } as any));
 }
 
 export async function updateProxySubToken(id: number, data: Partial<InsertProxySubToken>) {

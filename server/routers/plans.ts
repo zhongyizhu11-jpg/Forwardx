@@ -33,6 +33,11 @@ const planInput = z.object({
   hostIds: z.array(z.number().int().positive()).default([]),
   tunnelIds: z.array(z.number().int().positive()).default([]),
   forwardGroupIds: z.array(z.number().int().positive()).default([]),
+  /**
+   * 套餐附带的落地节点。买了（或被分配）自动在这些节点上发一份独立凭据，
+   * 到期、取消、换套餐自动收回 —— 不必每来一个客户手工分一次。
+   */
+  proxyNodeIds: z.array(z.number().int().positive()).max(200).default([]),
   trafficAddons: z.array(z.object({
     trafficBytes: z.number().int().positive(),
     priceCents: z.number().int().min(0).max(100_000_000),
@@ -55,6 +60,10 @@ export const plansRouter = router({
   list: adminProcedure.query(async () => {
     return db.listSubscriptionPlans(true);
   }),
+  /** 套餐能挂哪些落地节点。跟分享用的是同一份清单，不含任何凭据。 */
+  proxyNodeOptions: adminProcedure.query(async () => {
+    return db.getProxyNodeShareOptions();
+  }),
   options: adminProcedure.query(async () => {
     return db.listSubscriptionPlanOptions(true);
   }),
@@ -76,7 +85,7 @@ export const plansRouter = router({
   create: adminProcedure
     .input(planInput)
     .mutation(async ({ input }) => {
-      const { hostIds, tunnelIds, forwardGroupIds, trafficAddons, ...data } = input;
+      const { hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds, ...data } = input;
       if (hostIds.length === 0 && tunnelIds.length === 0 && forwardGroupIds.length === 0) {
         throw new Error("套餐至少需要绑定一个端口转发、隧道、转发链或转发组");
       }
@@ -84,7 +93,7 @@ export const plansRouter = router({
         ...data,
         description: data.description || null,
         currency: data.currency.toUpperCase(),
-      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons);
+      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds);
     }),
   update: adminProcedure
     .input(planInput.extend({
@@ -92,7 +101,7 @@ export const plansRouter = router({
       syncExistingSubscribers: z.boolean().default(true),
     }))
     .mutation(async ({ input, ctx }) => {
-      const { id, hostIds, tunnelIds, forwardGroupIds, trafficAddons, syncExistingSubscribers, ...data } = input;
+      const { id, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds, syncExistingSubscribers, ...data } = input;
       if (hostIds.length === 0 && tunnelIds.length === 0 && forwardGroupIds.length === 0) {
         throw new Error("套餐至少需要绑定一个端口转发、隧道、转发链或转发组");
       }
@@ -103,7 +112,7 @@ export const plansRouter = router({
         ...data,
         description: data.description || null,
         currency: data.currency.toUpperCase(),
-      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons);
+      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds);
       if (syncExistingSubscribers) {
         const userIds = await db.syncPlanSubscribers(id);
         for (const userId of userIds) {

@@ -596,6 +596,13 @@ export const proxyNodeShares = table("proxy_node_shares", {
   nodeId: int("nodeId").notNull(),
   // 分享给谁。这个人的订阅里会多出这个节点。
   userId: int("userId").notNull(),
+  /**
+   * 这条分享是怎么来的：manual = 管理员手工分的，plan = 套餐带的。
+   *
+   * 两种要分开管：套餐那份随订阅生灭（买了自动给、到期自动收），手工那份
+   * 是管理员的决定，不能被套餐同步顺手删掉 —— 反过来也一样。
+   */
+  source: varchar("source", { length: 16 }).notNull().default("manual"),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
 });
 export type ProxyNodeShare = typeof proxyNodeShares.$inferSelect;
@@ -1108,6 +1115,21 @@ export const subscriptionPlanTunnels = table("subscription_plan_tunnels", {
 });
 export type SubscriptionPlanTunnel = typeof subscriptionPlanTunnels.$inferSelect;
 export type InsertSubscriptionPlanTunnel = typeof subscriptionPlanTunnels.$inferInsert;
+
+/**
+ * 套餐附带哪些落地节点。
+ *
+ * 买了这个套餐（或被管理员分配），面板自动在这些节点上给他发一份独立凭据，
+ * 到期、取消、换套餐就自动收回 —— 商家不必每来一个客户手工分一次节点。
+ */
+export const subscriptionPlanProxyNodes = table("subscription_plan_proxy_nodes", {
+  id: serial("id"),
+  planId: int("planId").notNull(),
+  nodeId: int("nodeId").notNull(),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+});
+export type SubscriptionPlanProxyNode = typeof subscriptionPlanProxyNodes.$inferSelect;
+export type InsertSubscriptionPlanProxyNode = typeof subscriptionPlanProxyNodes.$inferInsert;
 
 export const subscriptionPlanForwardGroups = table("subscription_plan_forward_groups", {
   id: serial("id"),

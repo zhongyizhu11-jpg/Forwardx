@@ -12,6 +12,7 @@ import {
   subscriptionPlanForwardGroups,
   subscriptionPlanHosts,
   subscriptionPlanTrafficAddons,
+  subscriptionPlanProxyNodes,
   subscriptionPlanTunnels,
   userTrafficAddons,
   userSubscriptions, InsertUserSubscription,
@@ -287,6 +288,17 @@ async function getPlanTunnelIds(planId: number): Promise<number[]> {
   return rows.map((r: any) => r.tunnelId);
 }
 
+/** 套餐附带的落地节点。买了自动发凭据，到期自动收 —— 见 syncPlanProxyNodeSharesForUser。 */
+async function getPlanProxyNodeIds(planId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ nodeId: subscriptionPlanProxyNodes.nodeId })
+    .from(subscriptionPlanProxyNodes)
+    .where(eq(subscriptionPlanProxyNodes.planId, planId));
+  return rows.map((r: any) => Number(r.nodeId)).filter(Boolean);
+}
+
 async function getPlanForwardGroupIds(planId: number): Promise<number[]> {
   const db = await getDb();
   if (!db) return [];
@@ -401,11 +413,12 @@ async function attachPlanResources<T extends { id: number }>(plans: T[]) {
       tunnelIds: [] as number[],
       forwardGroupIds: [] as number[],
       forwardGroupRefs: [] as Array<{ id: number; groupMode: string | null; groupType: string | null }>,
+      proxyNodeIds: [] as number[],
       trafficAddons: [] as any[],
     }));
   }
   const planIds = Array.from(new Set(plans.map((plan) => Number(plan.id)).filter((id) => id > 0)));
-  const [hostRows, tunnelRows, groupRows, addonRows] = await Promise.all([
+  const [hostRows, tunnelRows, groupRows, proxyNodeRows, addonRows] = await Promise.all([
     db.select({
       planId: subscriptionPlanHosts.planId,
       hostId: subscriptionPlanHosts.hostId,
@@ -423,6 +436,10 @@ async function attachPlanResources<T extends { id: number }>(plans: T[]) {
       .from(subscriptionPlanForwardGroups)
       .leftJoin(forwardGroups, eq(forwardGroups.id, subscriptionPlanForwardGroups.forwardGroupId))
       .where(inArray(subscriptionPlanForwardGroups.planId, planIds)),
+    db.select({
+      planId: subscriptionPlanProxyNodes.planId,
+      nodeId: subscriptionPlanProxyNodes.nodeId,
+    }).from(subscriptionPlanProxyNodes).where(inArray(subscriptionPlanProxyNodes.planId, planIds)),
     db.select()
       .from(subscriptionPlanTrafficAddons)
       .where(inArray(subscriptionPlanTrafficAddons.planId, planIds))
@@ -435,6 +452,7 @@ async function attachPlanResources<T extends { id: number }>(plans: T[]) {
   const hostIdsByPlan = new Map<number, number[]>();
   const tunnelIdsByPlan = new Map<number, number[]>();
   const groupRefsByPlan = new Map<number, Array<{ id: number; groupMode: string | null; groupType: string | null }>>();
+  const proxyNodeIdsByPlan = new Map<number, number[]>();
   const addonsByPlan = new Map<number, any[]>();
   for (const row of hostRows as any[]) {
     const planId = Number(row.planId);
@@ -458,6 +476,12 @@ async function attachPlanResources<T extends { id: number }>(plans: T[]) {
     });
     groupRefsByPlan.set(planId, values);
   }
+  for (const row of proxyNodeRows as any[]) {
+    const planId = Number(row.planId);
+    const values = proxyNodeIdsByPlan.get(planId) || [];
+    values.push(Number(row.nodeId));
+    proxyNodeIdsByPlan.set(planId, values);
+  }
   for (const row of addonRows as any[]) {
     const planId = Number(row.planId);
     const values = addonsByPlan.get(planId) || [];
@@ -472,6 +496,7 @@ async function attachPlanResources<T extends { id: number }>(plans: T[]) {
       tunnelIds: tunnelIdsByPlan.get(Number(plan.id)) || [],
       forwardGroupIds: refs.map((ref) => ref.id),
       forwardGroupRefs: refs,
+      proxyNodeIds: proxyNodeIdsByPlan.get(Number(plan.id)) || [],
       trafficAddons: addonsByPlan.get(Number(plan.id)) || [],
     };
   });
@@ -598,25 +623,26 @@ export async function getSubscriptionPlanById(id: number) {
   return (await attachPlanResources([rows[0]]))[0];
 }
 
-export async function createSubscriptionPlan(data: InsertSubscriptionPlan, hostIds: number[], tunnelIds: number[], forwardGroupIds: number[] = [], trafficAddons: any[] = []) {
+export async function createSubscriptionPlan(data: InsertSubscriptionPlan, hostIds: number[], tunnelIds: number[], forwardGroupIds: number[] = [], trafficAddons: any[] = [], proxyNodeIds: number[] = []) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const id = await insertAndGetId("subscription_plans", data as any);
-  await setSubscriptionPlanResources(id, hostIds, tunnelIds, forwardGroupIds);
+  await setSubscriptionPlanResources(id, hostIds, tunnelIds, forwardGroupIds, proxyNodeIds);
   await setSubscriptionPlanTrafficAddons(id, trafficAddons);
   return getSubscriptionPlanById(id);
 }
 
-export async function updateSubscriptionPlan(id: number, data: Partial<InsertSubscriptionPlan>, hostIds?: number[], tunnelIds?: number[], forwardGroupIds?: number[], trafficAddons?: any[]) {
+export async function updateSubscriptionPlan(id: number, data: Partial<InsertSubscriptionPlan>, hostIds?: number[], tunnelIds?: number[], forwardGroupIds?: number[], trafficAddons?: any[], proxyNodeIds?: number[]) {
   const db = await getDb();
   if (!db) return undefined;
   await db.update(subscriptionPlans).set({ ...data, updatedAt: nowDate() } as any).where(eq(subscriptionPlans.id, id));
-  if (hostIds || tunnelIds || forwardGroupIds) {
+  if (hostIds || tunnelIds || forwardGroupIds || proxyNodeIds) {
     await setSubscriptionPlanResources(
       id,
       hostIds ?? await getPlanHostIds(id),
       tunnelIds ?? await getPlanTunnelIds(id),
       forwardGroupIds ?? await getPlanForwardGroupIds(id),
+      proxyNodeIds ?? await getPlanProxyNodeIds(id),
     );
   }
   if (trafficAddons) await setSubscriptionPlanTrafficAddons(id, trafficAddons);
@@ -708,23 +734,33 @@ export async function deleteSubscriptionPlan(id: number) {
     await db.delete(subscriptionPlanHosts).where(eq(subscriptionPlanHosts.planId, id));
     await db.delete(subscriptionPlanTunnels).where(eq(subscriptionPlanTunnels.planId, id));
     await db.delete(subscriptionPlanForwardGroups).where(eq(subscriptionPlanForwardGroups.planId, id));
+    await db.delete(subscriptionPlanProxyNodes).where(eq(subscriptionPlanProxyNodes.planId, id));
     await db.delete(subscriptionPlanTrafficAddons).where(eq(subscriptionPlanTrafficAddons.planId, id));
     await db.delete(subscriptionPlans).where(eq(subscriptionPlans.id, id));
   });
 }
 
-export async function setSubscriptionPlanResources(planId: number, hostIds: number[], tunnelIds: number[], forwardGroupIds: number[] = []) {
+export async function setSubscriptionPlanResources(
+  planId: number,
+  hostIds: number[],
+  tunnelIds: number[],
+  forwardGroupIds: number[] = [],
+  proxyNodeIds: number[] = [],
+) {
   const db = await getDb();
   if (!db) return;
   await db.delete(subscriptionPlanHosts).where(eq(subscriptionPlanHosts.planId, planId));
   await db.delete(subscriptionPlanTunnels).where(eq(subscriptionPlanTunnels.planId, planId));
   await db.delete(subscriptionPlanForwardGroups).where(eq(subscriptionPlanForwardGroups.planId, planId));
+  await db.delete(subscriptionPlanProxyNodes).where(eq(subscriptionPlanProxyNodes.planId, planId));
   const uniqueHostIds = Array.from(new Set(hostIds.filter(id => id > 0)));
   const uniqueTunnelIds = Array.from(new Set(tunnelIds.filter(id => id > 0)));
   const uniqueForwardGroupIds = Array.from(new Set(forwardGroupIds.filter(id => id > 0)));
+  const uniqueProxyNodeIds = Array.from(new Set(proxyNodeIds.filter(id => id > 0)));
   if (uniqueHostIds.length > 0) await db.insert(subscriptionPlanHosts).values(uniqueHostIds.map(hostId => ({ planId, hostId })));
   if (uniqueTunnelIds.length > 0) await db.insert(subscriptionPlanTunnels).values(uniqueTunnelIds.map(tunnelId => ({ planId, tunnelId })));
   if (uniqueForwardGroupIds.length > 0) await db.insert(subscriptionPlanForwardGroups).values(uniqueForwardGroupIds.map(forwardGroupId => ({ planId, forwardGroupId })));
+  if (uniqueProxyNodeIds.length > 0) await db.insert(subscriptionPlanProxyNodes).values(uniqueProxyNodeIds.map(nodeId => ({ planId, nodeId })));
 }
 
 export async function setSubscriptionPlanTrafficAddons(planId: number, addons: any[] = []) {
@@ -1949,6 +1985,19 @@ async function syncUserSubscriptionEntitlementsUnlocked(
       : pauseReason) as ForwardAccessPauseReason,
   };
   await updateUserTrafficSettings(userId, nextLimits);
+  /**
+   * 套餐附带的落地节点在这里对账 —— 这个函数是「重算这个人的权益」的总入口，
+   * 下单、后台分配、改套餐、到期清扫都会走到，挂在这里就不必每条路各记一遍。
+   *
+   * 只有还有客户端订阅权限的人才发凭据：权限没了（到期、超流量、管理员收回）
+   * 就一并收回，省得订阅地址已经拉不动了，手上那份凭据还连得上。
+   */
+  const { syncPlanProxyNodeSharesForUser } = await import("./proxySubscriptionRepository");
+  await syncPlanProxyNodeSharesForUser(
+    userId,
+    String((user as any)?.username || (user as any)?.name || "") || undefined,
+    { allowed: !!nextLimits.allowProxySubscription },
+  );
   let restoredRuleIds: number[] = [];
   if (!nextLimits.canAddRules) {
     await disableAllUserRules(userId);
@@ -2455,7 +2504,20 @@ export async function applySubscriptionToUser(
       overrideDurationDays,
       targetSubscriptionId,
     )),
-  ));
+  )).then(async (result) => {
+    /**
+     * 开通即可用：买了（或被分配）套餐还没有订阅地址的话，自动开一条。
+     *
+     * 只挂在「开通」这一刻，不挂在通用的权益重算上 —— 那个每次到期清扫、每次
+     * 改套餐都会跑，用户自己删掉的地址会被一次次加回来，删不掉。
+     */
+    const user = await getUserById(userId);
+    if ((user as any)?.allowProxySubscription || String((user as any)?.role || "") === "admin") {
+      const { ensureDefaultProxySubToken } = await import("./proxySubscriptionRepository");
+      await ensureDefaultProxySubToken(userId);
+    }
+    return result;
+  });
 }
 
 function getTrafficAddonCycleEnd(subscription: any) {

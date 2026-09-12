@@ -24,7 +24,7 @@ import { pushAgentRefresh } from "../agentEvents";
 /**
  * 订阅令牌够长才安全：地址里带着全部节点凭据，一旦可猜就等于把节点送人。
  */
-const SUBSCRIPTION_TOKEN_LENGTH = 40;
+const SUBSCRIPTION_TOKEN_LENGTH = db.PROXY_SUB_TOKEN_LENGTH;
 
 function nodeToRow(node: ProxyNode, sourceLink: string) {
   return {

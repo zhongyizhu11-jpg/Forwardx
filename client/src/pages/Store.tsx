@@ -95,6 +95,10 @@ function planBenefitItems(plan: any) {
     "计数范围：端口转发按主机，隧道转发按隧道",
     `可用资源 ${planResourceText(plan)}`,
   ];
+  // 附带节点是买点，得写在卡片上 —— 买之前看不到，买完才发现订阅里有节点，
+  // 等于白送了个卖点。
+  const proxyNodeCount = Array.isArray(plan.proxyNodeIds) ? plan.proxyNodeIds.length : 0;
+  if (proxyNodeCount > 0) items.splice(1, 0, `附带落地节点 ${proxyNodeCount} 个（自动进订阅）`);
   if (Number(plan.durationDays || 0) > 30 && Number(plan.trafficLimit || 0) > 0) {
     items.splice(2, 0, "购买日起按月重置套餐流量");
   }

@@ -235,7 +235,13 @@ export const usersRouter = router({
     getProxyNodeShares: adminProcedure
       .input(z.object({ userId: z.number() }))
       .query(async ({ input }) => {
-        return db.getProxyNodeIdsSharedToUser(input.userId);
+        /**
+         * 要的是「选项列表里该勾上哪几条」，不是他实际拿到的那几条 —— 多凭据
+         * 入站上他拿的是自己那条派生节点，而列表里放的是代表整个端口的那条。
+         * 直接返回前者的话选择框显示成一个都没选，管理员一保存就把他的凭据
+         * 静默收走了。
+         */
+        return db.getProxyNodeShareSelectionForUser(input.userId);
       }),
     setProxyNodeShares: adminProcedure
       .input(z.object({ userId: z.number(), nodeIds: z.array(z.number()) }))
