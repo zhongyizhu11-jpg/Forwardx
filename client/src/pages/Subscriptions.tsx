@@ -250,6 +250,11 @@ export default function Subscriptions() {
             <p className="text-sm text-muted-foreground">已购买和已分配的套餐。</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {storeStatus?.enabled && (
+              <Button type="button" size="sm" onClick={() => setLocation("/store")}>
+                <ShoppingBag className="mr-2 h-3.5 w-3.5" /> 去商店
+              </Button>
+            )}
             {cancelledCount > 0 && (
               <Button type="button" size="sm" variant="outline" onClick={() => setShowCancelled((value) => !value)}>
                 {showCancelled ? <EyeOff className="mr-2 h-3.5 w-3.5" /> : <Eye className="mr-2 h-3.5 w-3.5" />}
@@ -290,12 +295,18 @@ export default function Subscriptions() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Package className="h-5 w-5" /> 暂无可显示订阅</CardTitle>
-              <CardDescription>{cancelledCount > 0 ? "已取消记录当前处于隐藏状态。" : "当前账户还没有套餐记录。"}</CardDescription>
+              <CardDescription>
+                {cancelledCount > 0
+                  ? "已取消记录当前处于隐藏状态。"
+                  : storeStatus?.enabled
+                    ? "当前账户还没有套餐记录，可以去商店自助下单。"
+                    : "当前账户还没有套餐记录。商店暂未开放，请联系管理员为你分配套餐。"}
+              </CardDescription>
             </CardHeader>
             {storeStatus?.enabled && (
               <CardFooter>
                 <Button onClick={() => setLocation("/store")}>
-                  <ShoppingBag className="mr-2 h-4 w-4" /> 去商店购买
+                  <ShoppingBag className="mr-2 h-4 w-4" /> 去商店下单
                 </Button>
               </CardFooter>
             )}
