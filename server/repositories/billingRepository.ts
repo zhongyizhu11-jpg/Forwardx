@@ -515,6 +515,7 @@ export async function getSubscriptionPlanSummary() {
     return {
       totalItems: 0,
       activeItems: 0,
+      storeVisibleItems: 0,
       resources: {
         legacyHosts: 0,
         tunnels: 0,
@@ -529,6 +530,7 @@ export async function getSubscriptionPlanSummary() {
     db.select({
       totalItems: sql<number>`COUNT(*)`,
       activeItems: sql<number>`COALESCE(SUM(CASE WHEN ${subscriptionPlans.isActive} = ${sqlBool(true)} THEN 1 ELSE 0 END), 0)`,
+      storeVisibleItems: sql<number>`COALESCE(SUM(CASE WHEN ${subscriptionPlans.isActive} = ${sqlBool(true)} AND ${subscriptionPlans.isStoreVisible} = ${sqlBool(true)} THEN 1 ELSE 0 END), 0)`,
     }).from(subscriptionPlans),
     db.select({ count: sql<number>`COUNT(*)` }).from(subscriptionPlanHosts),
     db.select({ count: sql<number>`COUNT(*)` }).from(subscriptionPlanTunnels),
@@ -559,6 +561,7 @@ export async function getSubscriptionPlanSummary() {
   return {
     totalItems: Number(planRows[0]?.totalItems || 0),
     activeItems: Number(planRows[0]?.activeItems || 0),
+    storeVisibleItems: Number(planRows[0]?.storeVisibleItems || 0),
     resources,
   };
 }
