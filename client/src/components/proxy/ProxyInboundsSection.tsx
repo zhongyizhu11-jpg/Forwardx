@@ -450,7 +450,13 @@ export default function ProxyInboundsSection() {
             )}
             {hosts.length === 0 ? (
               <p className="mt-3 text-xs text-amber-600 dark:text-amber-500">
-                还没有可用主机。自建节点要靠 Agent 下发配置，先去「主机管理」装一台。
+                {/*
+                  「主机管理」对普通用户是关着的（侧边栏藏了，路由也是 AdminRoute），
+                  所以不能对所有人都说「先去主机管理装一台」—— 那是一句他做不到的指示。
+                */}
+                {isAdmin
+                  ? "还没有可用主机。自建节点要靠 Agent 下发配置，先去「主机管理」装一台。"
+                  : "还没有可用主机。自建节点要在装了 Agent 的机器上开，请联系管理员给你授权一台。"}
               </p>
             ) : null}
           </CardContent>
