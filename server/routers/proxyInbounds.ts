@@ -90,13 +90,43 @@ async function assertInboundQuota(ownerId: number, ctx: any) {
  * 落地节点只能开在装了 Agent 的主机上 —— 面板要靠 Agent 把配置推下去。
  * 租来的线路机上装不了 Agent，那种落地仍然走「粘链接」那条路。
  */
+/**
+ * 能不能在这台主机上开落地节点。
+ *
+ * 抽成纯函数是为了能单独测 —— 这条判定错一次的后果是「租户加了自己的机器却用
+ * 不了」或者「能在别人的机器上开端口」，两头都不该靠肉眼看。
+ *
+ * 三档，顺序要紧：
+ *   1. 管理员：都行
+ *   2. 自己的机器：直接放行 —— 与 helpers.ts 的 requireHostAccess 一致。
+ *      原来漏了这一档，于是租户能在「主机管理」里加自己的 VPS（hosts.create
+ *      本来就不是管理员专属）、能在列表里看见、能装上 Agent，一点「新建节点」
+ *      却撞上「无权」。而那一段的空状态还写着「先去主机管理装一台」，
+ *      等于把人往墙上引。放开它没有多出风险：机器是他自己的，Agent 装在他
+ *      自己那台上，maxProxyInbounds 照样管着他能开几个。
+ *   3. 别人的机器：要有授权（用有效授权而不是直接授权，套餐附带的也算数）
+ */
+export function canOpenInboundOnHost(
+  user: { id: number; role: string },
+  host: { userId?: unknown } | null | undefined,
+  effectiveAllowedHostIds: readonly number[],
+  hostId: number,
+): boolean {
+  if (!host) return false;
+  if (user.role === "admin") return true;
+  if (Number(host.userId) === Number(user.id)) return true;
+  return effectiveAllowedHostIds.map(Number).includes(Number(hostId));
+}
+
 async function assertUsableHost(hostId: number, ctx: any) {
   const host = await db.getHostById(hostId);
   if (!host) throw new Error("主机不存在");
-  if (ctx.user.role !== "admin") {
-    // 用有效授权而不是直接授权：套餐附带的主机也算数。
-    const allowed = await db.getUserEffectiveAllowedHostIds(ctx.user.id);
-    if (!allowed.includes(hostId)) throw new Error("无权在该主机上开落地节点");
+  // 只有轮到第三档才需要查库，管理员和自己的机器不必多跑一次查询。
+  const allowed = ctx.user.role === "admin" || Number(host.userId) === Number(ctx.user.id)
+    ? []
+    : await db.getUserEffectiveAllowedHostIds(ctx.user.id);
+  if (!canOpenInboundOnHost(ctx.user, host, allowed, hostId)) {
+    throw new Error("无权在该主机上开落地节点");
   }
   return host;
 }
