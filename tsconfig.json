@@ -19,6 +19,7 @@
   "include": [
     "client/src/**/*",
     "server/**/*",
+    "scripts/**/*",
     "shared/**/*",
     "drizzle/**/*"
   ]
