@@ -443,6 +443,8 @@ export default function ProxyInboundsSection() {
                       isAdmin ? `归 ${ownerLabel(Number(row.userId))}` : "",
                       Array.isArray(row.users) && row.users.length > 1 ? `${row.users.length} 份凭据` : "",
                       Number(row.sharedUserCount || 0) > 0 ? `分享给 ${row.sharedUserCount} 人` : "",
+                      // 套餐附带的专属端口是面板托管的，标出来，免得人以为是自己建的。
+                      Number(row.clonedFromInboundId || 0) > 0 ? "套餐附带 · 面板托管" : "",
                       !row.isEnabled ? "已停用" : "",
                     ])}
                     toggle={(
@@ -464,9 +466,20 @@ export default function ProxyInboundsSection() {
                       ...(isAdmin
                         ? [{ key: "share", label: "分享给用户", icon: Share2, onSelect: () => openShare(row) }]
                         : []),
-                      { key: "edit", label: "编辑", icon: Pencil, onSelect: () => openEdit(row) },
-                      { key: "rotate", label: "重置凭据", icon: KeyRound, onSelect: () => void askRotate(row) },
-                      { key: "delete", label: "删除", icon: Trash2, destructive: true, onSelect: () => void askDelete(row) },
+                      /**
+                       * 面板托管的专属端口不给编辑和删除。
+                       *
+                       * 删了下一次权益重算又会建回来 —— 中间那段时间他自己连不上，
+                       * 而界面上看不出是自己删的。改也一样：源入站一变就被覆盖。
+                       * 要停就去改套餐，那才是它的来源。
+                       */
+                      ...(Number(row.clonedFromInboundId || 0) > 0
+                        ? []
+                        : [
+                          { key: "edit", label: "编辑", icon: Pencil, onSelect: () => openEdit(row) },
+                          { key: "rotate", label: "重置凭据", icon: KeyRound, onSelect: () => void askRotate(row) },
+                          { key: "delete", label: "删除", icon: Trash2, destructive: true, onSelect: () => void askDelete(row) },
+                        ]),
                     ]}
                   />
                 ))}

@@ -11,7 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 import {
@@ -116,13 +116,20 @@ export function proxyInboundToRow(inbound: ProxyInbound): Partial<InsertProxyInb
 // ==================== 读 ====================
 
 /** 某个用户名下有几个自建落地节点。配额检查用。 */
+/**
+ * 他自己开了几个落地节点。
+ *
+ * 面板托管的专属端口（套餐带的那种）不算 —— 那不是他建的，配额是用来管「他能
+ * 自己开几个」的。算进去的话，买个带三个节点的套餐就把自建额度占满了，而他从
+ * 界面上完全看不出是谁占的。
+ */
 export async function countProxyInboundsByUser(userId: number): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
   const rows = await db
     .select({ id: proxyInbounds.id })
     .from(proxyInbounds)
-    .where(eq(proxyInbounds.userId, Number(userId)));
+    .where(and(eq(proxyInbounds.userId, Number(userId)), eq(proxyInbounds.clonedFromInboundId, 0)));
   return rows.length;
 }
 
@@ -437,6 +444,193 @@ export async function replaceProxyInboundUsers(
     await db.delete(proxyInboundUsers).where(eq(proxyInboundUsers.id, item.id));
   }
   return result;
+}
+
+// ==================== 独享端口（按人计量） ====================
+
+/**
+ * 自动分配的端口从这里往上找。
+ *
+ * 挑一万以上：一万以下多半被系统服务和人手配置占着；上限留在 60000 以内，
+ * 避开 Linux 默认的本地端口范围（32768-60999 里高段常被临时端口占用，选低段
+ * 更稳）。
+ */
+export const DEDICATED_INBOUND_PORT_MIN = 20000;
+export const DEDICATED_INBOUND_PORT_MAX = 30000;
+
+/**
+ * 在这台机器上挑一个没人用的端口。
+ *
+ * 要同时避开三类占用：这台机器上别的落地入站、转发规则（含隧道出口）、以及
+ * 调用方点名要避开的那些。撞了端口的后果是 sing-box 整份配置起不来 —— 一个
+ * 租户开通失败，连带这台机器上所有人的节点一起掉线。
+ */
+export async function pickFreeInboundPort(
+  hostId: number,
+  options: { avoid?: Iterable<number> } = {},
+): Promise<number> {
+  const { getUsedPortsOnHost } = await import("./tunnelRepository");
+  const used = new Set<number>();
+  for (const port of await getUsedPortsOnHost(hostId)) used.add(Number(port));
+  for (const port of options.avoid || []) used.add(Number(port));
+
+  const db = await getDb();
+  if (db) {
+    const rows = await db
+      .select({ port: proxyInbounds.port })
+      .from(proxyInbounds)
+      .where(eq(proxyInbounds.hostId, Number(hostId)));
+    for (const row of rows as any[]) used.add(Number(row.port));
+  }
+
+  for (let port = DEDICATED_INBOUND_PORT_MIN; port <= DEDICATED_INBOUND_PORT_MAX; port += 1) {
+    if (!used.has(port)) return port;
+  }
+  throw new Error(`主机 #${hostId} 在 ${DEDICATED_INBOUND_PORT_MIN}-${DEDICATED_INBOUND_PORT_MAX} 之间已经没有空闲端口了`);
+}
+
+/** 这个人在这个源入站下的专属入站。没有就返回 null。 */
+export async function getDedicatedInboundForUser(sourceInboundId: number, userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(proxyInbounds)
+    .where(and(
+      eq(proxyInbounds.clonedFromInboundId, Number(sourceInboundId)),
+      eq(proxyInbounds.userId, Number(userId)),
+    ))
+    .limit(1);
+  return rows[0];
+}
+
+/**
+ * 给某人在同一台机器上克隆一个专属入站（已有就直接返回）。
+ *
+ * 为什么要单开一个端口，而不是在原端口上多发一份凭据：**计量**。
+ * 这套面板的落地流量是按监听端口数的（Agent 在端口上挂计数链）。而 sing-box
+ * 这边给不出 per-user 数字 —— 官方发布的二进制没编进 v2ray API（`sing-box
+ * check` 直接报 "v2ray api is not included in this build"），clash API 的连接
+ * 列表里也没有用户字段，两条都实测过。所以「一人一个端口」是目前唯一能把流量
+ * 算到人头上的做法，而且它不需要任何新机制：端口归他，现有计费链路自然就把量
+ * 记到他名下。
+ *
+ * 凭据全部重新生成，跟源入站不共用；REALITY 也另生成一对密钥 —— 私钥漏一处就
+ * 是全部端口一起漏。
+ */
+export async function ensureDedicatedInboundForUser(
+  sourceInboundId: number,
+  userId: number,
+  label: string,
+): Promise<{ inboundId: number; hostId: number; port: number; created: boolean } | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const source = await getProxyInboundById(sourceInboundId);
+  if (!source) return null;
+  const hostId = Number((source as any).hostId);
+
+  const existing = await getDedicatedInboundForUser(sourceInboundId, userId);
+  if (existing) {
+    return { inboundId: Number((existing as any).id), hostId, port: Number((existing as any).port), created: false };
+  }
+
+  const port = await pickFreeInboundPort(hostId);
+  const clone: Record<string, unknown> = { ...(source as any) };
+  delete clone.id;
+  delete clone.createdAt;
+  delete clone.updatedAt;
+  clone.userId = Number(userId);
+  clone.port = port;
+  clone.clonedFromInboundId = Number(sourceInboundId);
+  clone.name = `${String((source as any).name || "落地")} · ${label}`;
+  clone.sortOrder = 0;
+
+  // 凭据不共用：源入站的 UUID / 密码泄漏一处就等于全部端口一起泄漏。
+  const protocol = String((source as any).protocol || "");
+  clone.uuid = randomUUID();
+  clone.password = nanoid(24);
+  if (String((source as any).security || "") === "reality") {
+    const { generateRealityKeyPair, generateRealityShortId } = await import("../proxyRealityKeys");
+    const pair = generateRealityKeyPair();
+    clone.realityPrivateKey = pair.privateKey;
+    clone.realityPublicKey = pair.publicKey;
+    clone.realityShortId = generateRealityShortId();
+  }
+
+  const inboundId = Number(await insertAndGetId("proxy_inbounds", clone as any));
+  if (proxyInboundSupportsMultiUser(protocol as any)) {
+    const credential = createEmptyProxyInboundUser();
+    credential.name = label;
+    for (const kind of proxyInboundUserCredentialKinds(protocol as any)) {
+      if (kind === "uuid") credential.uuid = randomUUID();
+      else credential.password = nanoid(24);
+    }
+    /**
+     * sharedUserId 留 0：这个端口本来就是他的，这份凭据不是「分给别人的」。
+     *
+     * 标成分享的话会被 getProxyNodesForSubscription 那条「为别人发的凭据不进
+     * 主人自己的订阅」过滤掉 —— 端口开好了、节点也建了，他的订阅里却是空的。
+     */
+    await insertAndGetId("proxy_inbound_users", {
+      inboundId,
+      name: credential.name,
+      uuid: credential.uuid || null,
+      password: credential.password || null,
+      sharedUserId: 0,
+      sortOrder: 0,
+    } as any);
+  }
+  await syncProxyNodeFromInbound(inboundId);
+  return { inboundId, hostId, port, created: true };
+}
+
+/** 收回某人的专属入站：端口一起收掉，派生节点跟着删。返回受影响的主机 id。 */
+export async function releaseDedicatedInboundForUser(
+  sourceInboundId: number,
+  userId: number,
+): Promise<number> {
+  const existing = await getDedicatedInboundForUser(sourceInboundId, userId);
+  if (!existing) return 0;
+  const hostId = Number((existing as any).hostId || 0);
+  await deleteProxyInbound(Number((existing as any).id));
+  return hostId;
+}
+
+/** 这个人手上的专属入站，以及各自是从哪个源入站克隆来的。 */
+export async function getDedicatedInboundIdsForUser(
+  userId: number,
+): Promise<Array<{ inboundId: number; sourceInboundId: number; hostId: number }>> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({
+      id: proxyInbounds.id,
+      hostId: proxyInbounds.hostId,
+      clonedFromInboundId: proxyInbounds.clonedFromInboundId,
+    })
+    .from(proxyInbounds)
+    .where(and(eq(proxyInbounds.userId, Number(userId)), sql`${proxyInbounds.clonedFromInboundId} > 0`));
+  return (rows as any[]).map((row) => ({
+    inboundId: Number(row.id),
+    sourceInboundId: Number(row.clonedFromInboundId),
+    hostId: Number(row.hostId),
+  }));
+}
+
+/** 这个人手上所有专属入站，全部收回。返回受影响的主机 id。 */
+export async function releaseAllDedicatedInboundsForUser(userId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ id: proxyInbounds.id, hostId: proxyInbounds.hostId })
+    .from(proxyInbounds)
+    .where(and(eq(proxyInbounds.userId, Number(userId)), sql`${proxyInbounds.clonedFromInboundId} > 0`));
+  const hostIds = new Set<number>();
+  for (const row of rows as any[]) {
+    await deleteProxyInbound(Number(row.id));
+    if (Number(row.hostId) > 0) hostIds.add(Number(row.hostId));
+  }
+  return Array.from(hostIds);
 }
 
 // ==================== 分享用的独立凭据 ====================

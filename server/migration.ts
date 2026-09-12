@@ -1172,6 +1172,9 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
     case "proxy_inbounds":
       row.userId = mapRequiredId(maps, "users", source.userId);
       row.hostId = mapRequiredId(maps, "hosts", source.hostId);
+      // 克隆来源指向同一张表的另一行；源没被导进来就退回成「人手建的」，
+      // 而不是指向一个不存在的入站 —— 那会让回收逻辑找不到北。
+      row.clonedFromInboundId = mapOptionalId(maps, "proxy_inbounds", source.clonedFromInboundId) || 0;
       return { row };
 
     case "proxy_inbound_users":

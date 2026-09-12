@@ -266,21 +266,36 @@ export async function getProxyNodeShareSelectionForUser(userId: number): Promise
  * 只算还生效的订阅 —— 到期那一条带的节点不该再算数，否则「到期自动收回」
  * 收完下一次同步又发回去了。
  */
-export async function getPlanGrantedProxyNodeIdsForUser(userId: number): Promise<number[]> {
+export async function getPlanGrantedProxyNodeIdsForUser(
+  userId: number,
+): Promise<Array<{ nodeId: number; dedicated: boolean }>> {
   const db = await getDb();
   if (!db) return [];
-  const { subscriptionPlanProxyNodes, userSubscriptions } = await import("../../drizzle/schema");
+  const { subscriptionPlanProxyNodes, subscriptionPlans, userSubscriptions } = await import("../../drizzle/schema");
   const nowSec = Math.floor(Date.now() / 1000);
   const rows = await db
-    .select({ nodeId: subscriptionPlanProxyNodes.nodeId })
+    .select({
+      nodeId: subscriptionPlanProxyNodes.nodeId,
+      dedicated: subscriptionPlans.dedicatedProxyPort,
+    })
     .from(userSubscriptions)
     .innerJoin(subscriptionPlanProxyNodes, eq(subscriptionPlanProxyNodes.planId, userSubscriptions.planId))
+    .innerJoin(subscriptionPlans, eq(subscriptionPlans.id, userSubscriptions.planId))
     .where(and(
       eq(userSubscriptions.userId, Number(userId)),
       eq(userSubscriptions.status, "active"),
       sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${nowSec})`,
     ));
-  return Array.from(new Set((rows as any[]).map((row) => Number(row.nodeId)).filter((id) => id > 0)));
+  const byNode = new Map<number, boolean>();
+  for (const row of rows as any[]) {
+    const nodeId = Number(row.nodeId);
+    if (!(nodeId > 0)) continue;
+    const dedicated = row.dedicated === true || row.dedicated === 1;
+    // 两个套餐给了同一个节点、口径不同时按「独享」算：能分账的那种是花了钱的，
+    // 降级成共享等于把已经卖出去的计量能力收回去。
+    byNode.set(nodeId, (byNode.get(nodeId) || false) || dedicated);
+  }
+  return Array.from(byNode.entries()).map(([nodeId, dedicated]) => ({ nodeId, dedicated }));
 }
 
 /**
@@ -294,7 +309,12 @@ export async function getPlanGrantedProxyNodeIdsForUser(userId: number): Promise
  */
 export async function reconcileProxyNodeSharesForUser(
   userId: number,
-  input: { manualNodeIds?: readonly number[]; planNodeIds?: readonly number[]; label?: string },
+  input: {
+    manualNodeIds?: readonly number[];
+    /** 套餐给的那一路。dedicated = 给他单开一个端口（能按人计量）。 */
+    planNodeIds?: readonly (number | { nodeId: number; dedicated?: boolean })[];
+    label?: string;
+  },
 ): Promise<{ hostIds: number[] }> {
   const db = await getDb();
   if (!db) return { hostIds: [] };
@@ -310,17 +330,26 @@ export async function reconcileProxyNodeSharesForUser(
     .filter((row) => String(row.source || "manual") === want)
     .map((row) => Number(row.nodeId));
 
-  const wanted: Array<{ nodeId: number; source: "manual" | "plan" }> = [];
+  const wanted: Array<{ nodeId: number; source: "manual" | "plan"; dedicated: boolean }> = [];
   for (const nodeId of input.manualNodeIds ?? keepExisting("manual")) {
-    wanted.push({ nodeId: Number(nodeId), source: "manual" });
+    wanted.push({ nodeId: Number(nodeId), source: "manual", dedicated: false });
   }
-  for (const nodeId of input.planNodeIds ?? keepExisting("plan")) {
-    wanted.push({ nodeId: Number(nodeId), source: "plan" });
+  for (const item of input.planNodeIds ?? keepExisting("plan")) {
+    const nodeId = typeof item === "number" ? item : Number(item.nodeId);
+    const dedicated = typeof item === "number" ? false : !!item.dedicated;
+    wanted.push({ nodeId, source: "plan", dedicated });
   }
 
-  const { ensureSharedInboundCredential, releaseSharedInboundCredential } = await import("./proxyInboundRepository");
+  const {
+    ensureDedicatedInboundForUser,
+    ensureSharedInboundCredential,
+    getDedicatedInboundIdsForUser,
+    releaseDedicatedInboundForUser,
+    releaseSharedInboundCredential,
+  } = await import("./proxyInboundRepository");
   const resolved = new Map<number, "manual" | "plan">();
   const keepInboundIds = new Set<number>();
+  const keepDedicatedSourceIds = new Set<number>();
   for (const item of wanted) {
     if (!Number.isInteger(item.nodeId) || item.nodeId <= 0) continue;
     const node = await getProxyNodeById(item.nodeId);
@@ -328,6 +357,23 @@ export async function reconcileProxyNodeSharesForUser(
     if (!node || Number((node as any).userId) === recipient) continue;
     const scope = await resolveProxyNodeShareScope(item.nodeId);
     if (!scope) continue;
+
+    /**
+     * 独享端口：给他在同一台机器上克隆一个入站，归属直接落到他名下。
+     *
+     * 这条路不写 proxy_node_shares —— 那个端口本来就是他的，派生节点也归他，
+     * 走「自己的节点」那条线进订阅。流量也因此自然算到他头上（面板按端口计数）。
+     */
+    if (item.dedicated && scope.kind === "inbound") {
+      const dedicated = await ensureDedicatedInboundForUser(scope.inboundId, recipient, label);
+      if (dedicated) {
+        keepDedicatedSourceIds.add(scope.inboundId);
+        hostIds.add(dedicated.hostId);
+        continue;
+      }
+      // 克隆不成（比如源入站没了）就退回共享凭据，总比一点都拿不到强。
+    }
+
     let targetNodeId = scope.kind === "node" ? scope.nodeId : 0;
     if (scope.kind === "inbound") {
       keepInboundIds.add(scope.inboundId);
@@ -350,6 +396,13 @@ export async function reconcileProxyNodeSharesForUser(
     }
   }
 
+  // 不再授权的专属端口要连端口一起收掉，否则他的订阅里那条节点还在、还能连。
+  for (const { sourceInboundId } of await getDedicatedInboundIdsForUser(recipient)) {
+    if (keepDedicatedSourceIds.has(sourceInboundId)) continue;
+    const hostId = await releaseDedicatedInboundForUser(sourceInboundId, recipient);
+    if (hostId) hostIds.add(hostId);
+  }
+
   await db.delete(proxyNodeShares).where(eq(proxyNodeShares.userId, recipient));
   const values = Array.from(resolved.entries()).map(([nodeId, source]) => ({ nodeId, userId: recipient, source }));
   if (values.length > 0) await db.insert(proxyNodeShares).values(values as any);
@@ -369,6 +422,7 @@ export async function syncPlanProxyNodeSharesForUser(
 ): Promise<{ hostIds: number[] }> {
   const allowed = options.allowed !== false;
   const planNodeIds = allowed ? await getPlanGrantedProxyNodeIdsForUser(userId) : [];
+  // allowed=false 时传空数组，独享端口也会在对账里被一起收掉。
   return reconcileProxyNodeSharesForUser(userId, { planNodeIds, label });
 }
 

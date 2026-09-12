@@ -30,6 +30,8 @@ const planInput = z.object({
   allowProxySubscription: z.boolean().default(false),
   isActive: z.boolean().default(true),
   isStoreVisible: z.boolean().default(true),
+  /** true = 附带节点给每人单开一个端口（能按人计量）；false = 共用端口各发一份凭据。 */
+  dedicatedProxyPort: z.boolean().default(false),
   sortOrder: z.number().int().min(0).max(9999).default(0),
   hostIds: z.array(z.number().int().positive()).default([]),
   tunnelIds: z.array(z.number().int().positive()).default([]),

@@ -520,6 +520,18 @@ export const proxyInbounds = table("proxy_inbounds", {
   congestionControl: text("congestionControl"),
   snellVersion: int("snellVersion").notNull().default(0),
   snellMode: text("snellMode"),
+  /**
+   * 这个入站是从哪个入站克隆出来的（0 = 人手建的）。
+   *
+   * 「给租户独享一个端口」用的：面板照着源入站在同一台机器上另开一个端口，
+   * 归属直接落到租户名下 —— 这样现有的**按端口**计费链路就把流量算到他头上，
+   * 不必等 sing-box 给出 per-user 统计（官方发布的二进制根本没编进 v2ray API，
+   * clash API 的连接列表里也没有用户字段，都实测过）。
+   *
+   * 有了这一列才知道哪些入站是面板托管的：界面上只读、租户的自建配额不算它、
+   * 取消授权时连端口一起收掉。
+   */
+  clonedFromInboundId: int("clonedFromInboundId").notNull().default(0),
   isEnabled: boolean("isEnabled").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
@@ -1091,6 +1103,16 @@ export const subscriptionPlans = table("subscription_plans", {
   allowProxySubscription: boolean("allowProxySubscription").notNull().default(false),
   isActive: boolean("isActive").notNull().default(true),
   isStoreVisible: boolean("isStoreVisible").notNull().default(true),
+  /**
+   * 套餐附带的节点怎么给：false = 共用一个端口各发一份凭据（省端口，流量按端口
+   * 统计、分不到人头上）；true = 每人在同一台机器上单开一个端口（能按人计量、
+   * 能单独限速，代价是一人一个端口）。
+   *
+   * 之所以有这个二选一：sing-box 给不出 per-user 流量（官方二进制没编进 v2ray
+   * API，clash API 的连接列表也没有用户字段，都实测过），而这套面板本来就按
+   * 监听端口计数。想按量收费就只能一人一个端口。
+   */
+  dedicatedProxyPort: boolean("dedicatedProxyPort").notNull().default(false),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
   updatedAt: epoch("updatedAt").notNull().default(nowDefault()),

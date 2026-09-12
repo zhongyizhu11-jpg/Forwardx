@@ -76,7 +76,7 @@ function runInDatabase(body: string) {
       env: { ...process.env, DATABASE_TYPE: "sqlite", FORWARDX_TEST_DB: path.join(directory, "plan.db") },
       timeout: 120_000,
     });
-    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, /OK/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -226,5 +226,133 @@ test("开通订阅权限就自动有一条订阅地址，删掉了不会被偷�
     await exec("DELETE FROM proxy_sub_tokens WHERE userId = 2");
     await billing.syncPlanSubscribers(planId);
     assert.equal((await query("SELECT id FROM proxy_sub_tokens WHERE userId = 2")).length, 0);
+  `);
+});
+
+/**
+ * 独享端口：给每位用户单开一个端口，流量才算得到人头上。
+ *
+ * 为什么不是「一个端口多份凭据 + 读 sing-box 的 per-user 统计」：官方发布的
+ * sing-box 二进制没编进 v2ray API（`sing-box check` 会直接报
+ * "v2ray api is not included in this build"），clash API 的连接列表里也没有
+ * 用户字段 —— 两条都在这台机器上拿真二进制试过。而这套面板本来就按监听端口
+ * 计数，所以「一人一个端口」是目前唯一能分账的做法。
+ */
+test("独享端口套餐：给他克隆一个自己的端口，节点归他自己", () => {
+  runInDatabase(String.raw`
+    const hk = await makeNode(443, "HK");
+    const plan = await billing.createSubscriptionPlan({
+      name: "独享", priceCents: 2000, currency: "CNY", durationDays: 30,
+      portCount: 10, maxRules: 10, allowProxySubscription: true, isActive: true,
+      dedicatedProxyPort: true,
+    }, [10], [], [], [], [hk.nodeId]);
+
+    await billing.applySubscriptionToUser(2, Number(plan.id), "admin");
+
+    const clones = await query("SELECT id, userId, port, clonedFromInboundId FROM proxy_inbounds WHERE clonedFromInboundId = ?", [hk.inboundId]);
+    assert.equal(clones.length, 1, "该给他克隆一个入站");
+    assert.equal(Number(clones[0].userId), 2, "端口要归他 —— 流量就是靠这个算到他头上的");
+    assert.notEqual(Number(clones[0].port), 443, "端口必须换一个，撞了整台机器的配置都起不来");
+
+    // 节点归他自己，不走分享表。
+    const nodes = await shares.getProxyNodesForSubscription(2);
+    assert.equal(nodes.length, 1);
+    assert.equal(Number(nodes[0].userId), 2);
+    assert.equal((await query("SELECT id FROM proxy_node_shares WHERE userId = 2")).length, 0);
+
+    // 凭据不能跟源入站共用：漏一处等于所有端口一起漏。
+    const source = await query("SELECT uuid FROM proxy_inbounds WHERE id = ?", [hk.inboundId]);
+    assert.notEqual(String(clones[0].uuid || ""), String(source[0].uuid || ""));
+  `);
+});
+
+test("独享端口：到期连端口一起收掉", () => {
+  runInDatabase(String.raw`
+    const hk = await makeNode(443, "HK");
+    const plan = await billing.createSubscriptionPlan({
+      name: "独享", priceCents: 2000, currency: "CNY", durationDays: 30,
+      portCount: 10, maxRules: 10, allowProxySubscription: true, isActive: true,
+      dedicatedProxyPort: true,
+    }, [10], [], [], [], [hk.nodeId]);
+    await billing.applySubscriptionToUser(2, Number(plan.id), "admin");
+    assert.equal((await query("SELECT id FROM proxy_inbounds WHERE clonedFromInboundId = ?", [hk.inboundId])).length, 1);
+
+    await exec("UPDATE user_subscriptions SET expiresAt = ? WHERE userId = 2", [Math.floor(Date.now() / 1000) - 3600]);
+    await billing.expireUserSubscriptions();
+
+    assert.equal((await query("SELECT id FROM proxy_inbounds WHERE clonedFromInboundId = ?", [hk.inboundId])).length, 0, "端口要一起收，否则他照样能连");
+    assert.equal((await shares.getProxyNodesForSubscription(2)).length, 0);
+  `);
+});
+
+test("专属端口不占他的自建配额", () => {
+  runInDatabase(String.raw`
+    const hk = await makeNode(443, "HK");
+    const plan = await billing.createSubscriptionPlan({
+      name: "独享", priceCents: 2000, currency: "CNY", durationDays: 30,
+      portCount: 10, maxRules: 10, allowProxySubscription: true, isActive: true,
+      dedicatedProxyPort: true,
+    }, [10], [], [], [], [hk.nodeId]);
+    await billing.applySubscriptionToUser(2, Number(plan.id), "admin");
+
+    // 面板给的端口不是他建的；算进配额的话，买个带节点的套餐就把自建额度占满，
+    // 而他从界面上看不出是谁占的。
+    assert.equal(await inbounds.countProxyInboundsByUser(2), 0);
+  `);
+});
+
+test("换成共享口径：专属端口收回，改发共享凭据", () => {
+  runInDatabase(String.raw`
+    const hk = await makeNode(443, "HK");
+    const plan = await billing.createSubscriptionPlan({
+      name: "独享", priceCents: 2000, currency: "CNY", durationDays: 30,
+      portCount: 10, maxRules: 10, allowProxySubscription: true, isActive: true,
+      dedicatedProxyPort: true,
+    }, [10], [], [], [], [hk.nodeId]);
+    const planId = Number(plan.id);
+    await billing.applySubscriptionToUser(2, planId, "admin");
+    assert.equal((await query("SELECT id FROM proxy_inbounds WHERE clonedFromInboundId = ?", [hk.inboundId])).length, 1);
+
+    await billing.updateSubscriptionPlan(planId, { dedicatedProxyPort: false });
+    await billing.syncPlanSubscribers(planId);
+
+    assert.equal((await query("SELECT id FROM proxy_inbounds WHERE clonedFromInboundId = ?", [hk.inboundId])).length, 0, "旧的专属端口要收掉");
+    assert.equal((await credentialsFor(hk.inboundId, 2)).length, 1, "改走共享凭据");
+  `);
+});
+
+test("端口自动挑没人用的那个，不会撞已有入站", () => {
+  runInDatabase(String.raw`
+    const hk = await makeNode(443, "HK");
+    // 先把自动分配区间的头几个端口占掉，逼它往后找。
+    for (const port of [20000, 20001, 20002]) {
+      await inbounds.createProxyInbound({
+        userId: 1, hostId: 10, name: "占位" + port, protocol: "vless", port,
+        transport: "tcp", security: "reality", uuid: "33333333-4444-5555-6666-777777777777", isEnabled: true,
+      });
+    }
+    const picked = await inbounds.pickFreeInboundPort(10);
+    assert.equal(picked, 20003);
+
+    const used = await query("SELECT port FROM proxy_inbounds WHERE hostId = 10");
+    assert.ok(!used.some((row) => Number(row.port) === picked));
+  `);
+});
+
+test("删账号，他的专属端口也收掉", () => {
+  runInDatabase(String.raw`
+    const hk = await makeNode(443, "HK");
+    const plan = await billing.createSubscriptionPlan({
+      name: "独享", priceCents: 2000, currency: "CNY", durationDays: 30,
+      portCount: 10, maxRules: 10, allowProxySubscription: true, isActive: true,
+      dedicatedProxyPort: true,
+    }, [10], [], [], [], [hk.nodeId]);
+    await billing.applySubscriptionToUser(2, Number(plan.id), "admin");
+    assert.equal((await query("SELECT id FROM proxy_inbounds WHERE clonedFromInboundId = ?", [hk.inboundId])).length, 1);
+
+    const hostIds = await inbounds.releaseAllDedicatedInboundsForUser(2);
+    assert.deepEqual(hostIds, [10]);
+    assert.equal((await query("SELECT id FROM proxy_inbounds WHERE clonedFromInboundId = ?", [hk.inboundId])).length, 0,
+      "人删了端口还留着监听，就是一个谁也管不着的口子");
   `);
 });

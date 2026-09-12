@@ -51,6 +51,8 @@ type PlanForm = {
   forwardGroupIds: number[];
   /** 套餐附带的落地节点：买了自动发一份独立凭据，到期自动收回。 */
   proxyNodeIds: number[];
+  /** 附带节点怎么给：true = 每人单开一个端口（能按人计量）。 */
+  dedicatedProxyPort: boolean;
   trafficAddons: TrafficAddonForm[];
 };
 
@@ -100,6 +102,7 @@ const emptyForm: PlanForm = {
   tunnelIds: [],
   forwardGroupIds: [],
   proxyNodeIds: [],
+  dedicatedProxyPort: false,
   trafficAddons: [],
 };
 
@@ -595,6 +598,7 @@ function toForm(plan: any): PlanForm {
     tunnelIds: plan.tunnelIds || [],
     forwardGroupIds: plan.forwardGroupIds || [],
     proxyNodeIds: plan.proxyNodeIds || [],
+    dedicatedProxyPort: !!plan.dedicatedProxyPort,
     trafficAddons: (plan.trafficAddons || []).map((addon: any, index: number) => ({
       trafficGB: String(Number(addon.trafficBytes || 0) / 1024 / 1024 / 1024 || 0),
       price: String((Number(addon.priceCents || 0) / 100).toFixed(2)),
@@ -628,6 +632,7 @@ function payload(form: PlanForm) {
     tunnelIds: form.tunnelIds,
     forwardGroupIds: form.forwardGroupIds,
     proxyNodeIds: form.proxyNodeIds,
+    dedicatedProxyPort: form.dedicatedProxyPort,
     trafficAddons: form.trafficAddons
       .map((addon, index) => ({
         trafficBytes: Math.max(0, Math.floor(Number(addon.trafficGB || 0) * 1024 * 1024 * 1024)),
@@ -1707,6 +1712,23 @@ export default function Plans() {
                       </div>
                     )}
                   />
+                  {form.proxyNodeIds.length > 0 ? (
+                    <div className="flex items-center justify-between gap-3 rounded-md bg-muted/20 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">给每人单开一个端口</p>
+                        <p className="text-xs text-muted-foreground">
+                          开：面板照着节点在同一台机器上给每位用户克隆一个端口，
+                          <span className="font-medium text-foreground">流量能算到人头上</span>，可单独限速，代价是一人占一个端口。
+                          关：大家共用原端口、各发一份凭据，省端口，但流量按端口统计、分不开。
+                        </p>
+                      </div>
+                      <Switch
+                        className="shrink-0"
+                        checked={form.dedicatedProxyPort}
+                        onCheckedChange={(dedicatedProxyPort) => setForm({ ...form, dedicatedProxyPort })}
+                      />
+                    </div>
+                  ) : null}
                   <p className="text-xs text-muted-foreground">
                     买了（或被分配）这个套餐的人，会在这些节点上<span className="font-medium text-foreground">各拿一份独立凭据</span>，直接出现在他的订阅里；
                     到期、取消、换套餐自动收回，不必手工分。支持一人一份凭据的协议才发得出来
