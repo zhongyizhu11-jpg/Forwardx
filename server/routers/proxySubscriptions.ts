@@ -222,7 +222,8 @@ export const proxySubscriptionsRouter = router({
   createNode: protectedProcedure
     .input(z.object({
       name: z.string().trim().min(1).max(64),
-      remark: z.string().trim().max(200).optional(),
+      // 与 updateNode 一致收 null：界面上清空备注就是 null，两个入口用同一份 payload。
+      remark: z.string().trim().max(200).nullable().optional(),
       link: z.string().min(1).max(8192),
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
       includeDirect: z.boolean().optional(),
