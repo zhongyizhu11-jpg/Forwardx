@@ -128,6 +128,16 @@ async function runMonthlyTrafficReset() {
 
 async function runSubscriptionExpirationCheck() {
   try {
+    /**
+     * 先试自动续费，再做到期清扫。
+     *
+     * 顺序反了的话，开了自动续费、余额也够的人会先被断一下服再续回来 ——
+     * 中间那几分钟他的客户端全是红的，而他什么也没做错。
+     */
+    const autoRenew = await db.runSubscriptionAutoRenew();
+    if (autoRenew.renewed > 0 || autoRenew.failed > 0) {
+      console.log(`[Scheduler] Subscription auto-renew: ${autoRenew.renewed} renewed, ${autoRenew.failed} skipped`);
+    }
     const expired = await db.expireUserSubscriptions();
     if (expired > 0) {
       console.log(`[Scheduler] Subscription expiration check: ${expired} subscription(s) expired`);

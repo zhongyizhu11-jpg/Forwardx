@@ -311,3 +311,44 @@ test("主人自己那份凭据不受收件人状态影响", () => {
     assert.equal(own.length, 1, "端口是主人的，不该因为租户被停用而少掉自己那份");
   `);
 });
+
+test("主人自己到期 / 被停用，他的端口也从下发配置里消失", () => {
+  runInDatabase(String.raw`
+    // bob 名下的一个自建入站 —— 套餐给的专属端口也是这个形状。
+    const id = Number(await inbounds.createProxyInbound({
+      userId: 2, hostId: 10, name: "bob 的端口", protocol: "vless", port: 8443,
+      transport: "tcp", security: "reality",
+      uuid: "99999999-8888-7777-6666-555555555555", isEnabled: true,
+    }));
+    await inbounds.replaceProxyInboundUsers(id, [{ id: 0, name: "自己", uuid: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", password: "" }]);
+    await inbounds.syncProxyNodeFromInbound(id);
+
+    const ports = async () => (await inbounds.getEnabledProxyInboundsWithUsersByHost(10)).map((row) => row.port).sort();
+    assert.deepEqual(await ports(), [8443]);
+
+    // 面板那边拦住的只是页面和订阅地址；端口不从配置里拿掉，他手上那份配置照连。
+    await exec("UPDATE users SET accountEnabled = 0 WHERE id = 2");
+    assert.deepEqual(await ports(), []);
+
+    await exec("UPDATE users SET accountEnabled = 1 WHERE id = 2");
+    assert.deepEqual(await ports(), [8443], "恢复账号就该恢复监听");
+
+    await exec("UPDATE users SET expiresAt = ? WHERE id = 2", [Math.floor(Date.now() / 1000) - 60]);
+    assert.deepEqual(await ports(), []);
+    await exec("UPDATE users SET expiresAt = NULL WHERE id = 2");
+
+    await exec("UPDATE users SET allowProxySubscription = 0 WHERE id = 2");
+    assert.deepEqual(await ports(), []);
+  `);
+});
+
+test("管理员的端口不受这条影响", () => {
+  runInDatabase(String.raw`
+    const { inboundId } = await makeInbound("vless", 443);
+    // alice 是管理员：她没有「订阅权限」这一说，端口该一直在。
+    await exec("UPDATE users SET allowProxySubscription = 0 WHERE id = 1");
+    const list = await inbounds.getEnabledProxyInboundsWithUsersByHost(10);
+    assert.equal(list.length, 1);
+    assert.equal(Number(list[0].id), inboundId);
+  `);
+});

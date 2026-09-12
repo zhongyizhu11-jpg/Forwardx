@@ -1191,6 +1191,14 @@ export const userSubscriptions = table("user_subscriptions", {
   adminDismissedAt: epoch("adminDismissedAt"),
   startedAt: epoch("startedAt").notNull().default(nowDefault()),
   expiresAt: epoch("expiresAt"),
+  /**
+   * 到期时用余额自动续一期。
+   *
+   * 商家系统里「到期 → 断服 → 客户发现 → 手工去付 → 等回调」这一串每一步都在
+   * 掉人。余额够就自动续，是把这一串砍成零步。默认关：从用户余额里扣钱这件事
+   * 得他自己点头。
+   */
+  autoRenew: boolean("autoRenew").notNull().default(false),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
   updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
 });

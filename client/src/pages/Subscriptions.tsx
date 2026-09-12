@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { planResourceText } from "@/lib/planDisplay";
@@ -85,6 +86,17 @@ export default function Subscriptions() {
   const { user } = useAuth();
   const confirmDialog = useConfirmDialog();
   const [, setLocation] = useLocation();
+  /**
+   * 到期前一天用余额自动续一期。余额不够就安静跳过，照常到期 ——
+   * 不会反复扣、也不会扣成负数。
+   */
+  const setAutoRenew = trpc.plans.setAutoRenew.useMutation({
+    onSuccess: (_result, variables) => {
+      utils.plans.mySubscriptions.invalidate();
+      toast.success(variables.autoRenew ? "已开启自动续费，到期前用余额自动续一期" : "已关闭自动续费");
+    },
+    onError: (error) => toast.error(error.message || "设置失败"),
+  });
   const { data: storeStatus } = trpc.plans.storeStatus.useQuery();
   const { data: wallet, isLoading: walletLoading } = trpc.billing.me.useQuery();
   const { data: billingFeatures } = trpc.billing.featureStatus.useQuery();
@@ -367,6 +379,21 @@ export default function Subscriptions() {
                       )}
                       {requiresAdminRenewal && (
                         <span className="text-xs text-muted-foreground">请联系管理员续期</span>
+                      )}
+                      {canRenew && (
+                        /*
+                          自动续费开在这里而不是设置页：决定要不要自动扣钱的时候，
+                          人正看着这条订阅的价格和到期时间。
+                        */
+                        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Switch
+                            className="scale-90"
+                            checked={!!sub.autoRenew}
+                            disabled={setAutoRenew.isPending}
+                            onCheckedChange={(checked) => setAutoRenew.mutate({ id: Number(sub.id), autoRenew: checked })}
+                          />
+                          自动续费
+                        </label>
                       )}
                     </div>
                   </div>

@@ -798,6 +798,7 @@ function userSubscriptionsListQuery(db: any) {
       maxIPs: subscriptionPlans.maxIPs,
       status: userSubscriptions.status,
       source: userSubscriptions.source,
+      autoRenew: userSubscriptions.autoRenew,
       paymentOrderNo: userSubscriptions.paymentOrderNo,
       planSnapshot: userSubscriptions.planSnapshot,
       portRangeStart: userSubscriptions.portRangeStart,
@@ -960,6 +961,7 @@ export async function getActiveUserSubscriptions(userId?: number) {
         planId: userSubscriptions.planId,
         status: userSubscriptions.status,
         source: userSubscriptions.source,
+        autoRenew: userSubscriptions.autoRenew,
         paymentOrderNo: userSubscriptions.paymentOrderNo,
         planSnapshot: userSubscriptions.planSnapshot,
         portRangeStart: userSubscriptions.portRangeStart,
@@ -1426,6 +1428,88 @@ async function extendUserSubscriptionUnlocked(id: number, days: number) {
     nextTrafficResetAt,
     trafficLimit: limits.trafficLimit,
   };
+}
+
+/**
+ * 到期前用余额自动续一期。
+ *
+ * 「到期 → 断服 → 客户发现 → 手工去付 → 等回调」这一串每一步都在掉人，而余额
+ * 本来就躺在账上。所以在到期清扫**之前**跑这一遍：开了自动续费、余额够、套餐
+ * 还在上架的，直接扣款续期。
+ *
+ * 三条自我约束：
+ * - 只提前一天内续，不提前太多 —— 提前半个月扣钱，客户会觉得是乱扣。
+ * - 扣不动就安静跳过，让它照常到期；不重试、不写日志刷屏。失败本身会被到期
+ *   提醒兜住（那条提醒已经发过了）。
+ * - 每天每条订阅只试一次，靠 system_settings 里的日键去重 —— 调度器是几分钟
+ *   一轮，不去重就会在余额不足时每轮都撞一次数据库。
+ */
+export async function runSubscriptionAutoRenew(): Promise<{ renewed: number; failed: number }> {
+  const db = await getDb();
+  if (!db) return { renewed: 0, failed: 0 };
+  const now = Date.now();
+  const horizonSec = Math.floor((now + 24 * 60 * 60 * 1000) / 1000);
+  const rows = await db
+    .select({
+      id: userSubscriptions.id,
+      userId: userSubscriptions.userId,
+      planId: userSubscriptions.planId,
+      expiresAt: userSubscriptions.expiresAt,
+    })
+    .from(userSubscriptions)
+    .where(and(
+      eq(userSubscriptions.status, "active"),
+      eq(userSubscriptions.autoRenew, true),
+      isNotNull(userSubscriptions.expiresAt),
+      sql`${userSubscriptions.expiresAt} <= ${horizonSec}`,
+    ));
+
+  let renewed = 0;
+  let failed = 0;
+  for (const row of rows as any[]) {
+    const subscriptionId = Number(row.id);
+    const dayKey = `autoRenew:${subscriptionId}:${new Date(now).toISOString().slice(0, 10)}`;
+    if (await getSetting(dayKey)) continue;
+    await setSetting(dayKey, "tried");
+    try {
+      const plan = await getSubscriptionPlanById(Number(row.planId));
+      if (!plan || !plan.isActive || !plan.isStoreVisible) continue;
+      const user = await getUserById(Number(row.userId));
+      const balance = Number((user as any)?.balanceCents || 0);
+      if (balance < Number(plan.priceCents || 0)) {
+        failed += 1;
+        continue;
+      }
+      await purchasePlanWithBalance(Number(row.userId), Number(row.planId), null, subscriptionId);
+      renewed += 1;
+      console.log(`[Billing] Auto-renewed subscription=${subscriptionId} user=${row.userId} plan=${row.planId}`);
+    } catch (error) {
+      failed += 1;
+      console.warn(`[Billing] Auto-renew failed subscription=${subscriptionId}:`, error instanceof Error ? error.message : error);
+    }
+  }
+  return { renewed, failed };
+}
+
+/** 用户自己开关自动续费。只能改自己的那条。 */
+export async function setUserSubscriptionAutoRenew(
+  subscriptionId: number,
+  userId: number,
+  autoRenew: boolean,
+): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const rows = await db
+    .select({ id: userSubscriptions.id })
+    .from(userSubscriptions)
+    .where(and(eq(userSubscriptions.id, Number(subscriptionId)), eq(userSubscriptions.userId, Number(userId))))
+    .limit(1);
+  if (!rows[0]) return false;
+  await db
+    .update(userSubscriptions)
+    .set({ autoRenew: !!autoRenew, updatedAt: nowDate() } as any)
+    .where(eq(userSubscriptions.id, Number(subscriptionId)));
+  return true;
 }
 
 export async function expireUserSubscriptions() {

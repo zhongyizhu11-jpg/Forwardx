@@ -267,7 +267,40 @@ export async function getEnabledProxyInboundsWithUsersByHost(
   const db = await getDb();
   if (!db) return [];
 
-  const ids = (rows as any[]).map((row) => Number(row.id));
+  /**
+   * 主人自己没资格了，这个端口也不该再监听。
+   *
+   * 到期 / 停用 / 超流量 / 被收回订阅权限，面板那边拦住的都只是「进不进得了
+   * 页面、拉不拉得动订阅」；端口是落在落地机上的，不从配置里拿掉，他手上那份
+   * 配置照连不误 —— 尤其是套餐给的专属端口，那本来就是按人计费的东西，停不掉
+   * 等于白送。
+   *
+   * 管理员不受这条影响（proxyCredentialRecipientActive 里对 admin 放行）。
+   */
+  const ownerIds = Array.from(new Set((rows as any[]).map((row) => Number(row.userId || 0)).filter((id) => id > 0)));
+  const blockedOwners = new Set<number>();
+  if (ownerIds.length > 0) {
+    const owners = await db
+      .select({
+        id: users.id,
+        role: users.role,
+        accountEnabled: users.accountEnabled,
+        allowProxySubscription: users.allowProxySubscription,
+        expiresAt: users.expiresAt,
+      })
+      .from(users)
+      .where(inArray(users.id, ownerIds));
+    const found = new Set<number>();
+    for (const row of owners as any[]) {
+      found.add(Number(row.id));
+      if (!proxyCredentialRecipientActive(row)) blockedOwners.add(Number(row.id));
+    }
+    for (const id of ownerIds) if (!found.has(id)) blockedOwners.add(id);
+  }
+  const activeRows = (rows as any[]).filter((row) => !blockedOwners.has(Number(row.userId || 0)));
+  if (activeRows.length === 0) return [];
+
+  const ids = activeRows.map((row) => Number(row.id));
   const userRows = await db
     .select()
     .from(proxyInboundUsers)
@@ -325,7 +358,7 @@ export async function getEnabledProxyInboundsWithUsersByHost(
     usersByInbound.set(key, list);
   }
 
-  return (rows as any[]).map((row) => {
+  return activeRows.map((row) => {
     const inbound = proxyInboundFromRow(row);
     inbound.users = proxyInboundSupportsMultiUser(inbound.protocol) ? (usersByInbound.get(Number(row.id)) || []) : [];
     return { id: Number(row.id), port: Number(row.port) || 0, protocol: String(row.protocol || ""), inbound };

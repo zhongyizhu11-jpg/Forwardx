@@ -186,6 +186,15 @@ export const plansRouter = router({
       reminderDays: parseExpiryReminderDays(await db.getSetting("expiryReminderDays")),
     };
   }),
+  /** 自己开关这条订阅的自动续费。 */
+  setAutoRenew: protectedProcedure
+    .input(z.object({ id: z.number().int().positive(), autoRenew: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const ok = await db.setUserSubscriptionAutoRenew(input.id, ctx.user.id, input.autoRenew);
+      if (!ok) throw new Error("订阅不存在");
+      appendPanelLog("info", `[Plan] auto-renew ${input.autoRenew ? "on" : "off"} subscription=${input.id} user=${ctx.user.id}`);
+      return { success: true };
+    }),
   mySubscriptions: protectedProcedure.query(async ({ ctx }) => {
     await db.expireUserSubscriptions();
     return db.listUserSubscriptions(ctx.user.id, { visibility: "user" });
