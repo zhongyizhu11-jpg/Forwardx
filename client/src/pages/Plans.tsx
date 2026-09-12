@@ -1296,7 +1296,9 @@ export default function Plans() {
           </DialogHeader>
 
           <Tabs value={planDialogTab} onValueChange={(value) => setPlanDialogTab(value as PlanDialogTab)} className="flex min-h-0 flex-1 flex-col px-4 sm:px-5">
-            <TabsList className="grid h-auto w-full grid-cols-2">
+            {/* shrink-0 同理：它和下面那块可滚区域是同一列的兄弟，不钉住会被压扁，
+                压扁之后标签自己溢出来，盖在上面的说明文字上。 */}
+            <TabsList className="grid h-auto w-full shrink-0 grid-cols-2">
               <TabsTrigger value="settings">套餐设置</TabsTrigger>
               <TabsTrigger value="resources">资源绑定</TabsTrigger>
             </TabsList>

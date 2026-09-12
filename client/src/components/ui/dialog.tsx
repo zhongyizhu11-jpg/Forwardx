@@ -123,15 +123,18 @@ const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive
 ))
 DialogContent.displayName = DialogPrimitive.Content.displayName
 
+// shrink-0：DialogContent 是 flex 列，内容一超高，浏览器会连页头页脚一起压扁 ——
+// 压到比自身内容还矮时，里面的东西就溢出自己的盒子、画到相邻内容上。表现是
+// 标签行盖住说明文字、保存按钮压在正文上。页头页脚本来就不该被压。
 const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col space-y-1.5 text-center sm:text-left", className)} {...props} />
+  <div className={cn("flex shrink-0 flex-col space-y-1.5 text-center sm:text-left", className)} {...props} />
 )
 DialogHeader.displayName = "DialogHeader"
 
 // gap-2 而不是 sm:space-x-2：原来的写法只在桌面端给间距，手机上按钮竖排时
 // 两个按钮之间一点缝都没有，糊成一整块。gap 横竖都管。
 const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)} {...props} />
+  <div className={cn("flex shrink-0 flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)} {...props} />
 )
 DialogFooter.displayName = "DialogFooter"
 
