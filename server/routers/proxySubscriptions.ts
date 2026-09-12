@@ -19,6 +19,7 @@ import {
 import { resolveProxyNodeHealth, type ProxyNodeProbeSample } from "../../shared/proxyNodeHealth";
 import { normalizeProxyNodeResetDay } from "../../shared/proxyNodeQuota";
 import { redactSharedProxyNodeRow } from "../../shared/proxyNodeShare";
+import { pushAgentRefresh } from "../agentEvents";
 
 /**
  * 订阅令牌够长才安全：地址里带着全部节点凭据，一旦可猜就等于把节点送人。
@@ -214,8 +215,20 @@ export const proxySubscriptionsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const node = await db.getProxyNodeById(input.nodeId);
       if (!node) throw new Error("客户端节点不存在");
-      await db.setProxyNodeShareUsers(input.nodeId, input.userIds);
-      console.info(`[ProxyNode] Updated shares nodeId=${input.nodeId} count=${input.userIds.length} by=${ctx.user.id}`);
+      /**
+       * 凭据的名字用收件人的用户名：派生出来的节点叫「入站名 · 小王」，主人
+       * 一眼看得出这份是给谁的。取不到就退到 #id，不阻断分享。
+       */
+      const labels = new Map<number, string>();
+      for (const userId of input.userIds) {
+        const target = await db.getUserById(userId);
+        const label = String((target as any)?.username || (target as any)?.name || "").trim();
+        if (label) labels.set(Number(userId), label);
+      }
+      const { hostIds } = await db.setProxyNodeShareUsers(input.nodeId, input.userIds, { labels });
+      // 多凭据入站上分享等于改了那个端口的用户表，要重下发，否则新凭据连不上。
+      for (const hostId of hostIds) pushAgentRefresh(hostId, `proxy-node-share-${input.nodeId}`, { urgent: true });
+      console.info(`[ProxyNode] Updated shares nodeId=${input.nodeId} count=${input.userIds.length} hosts=${hostIds.length} by=${ctx.user.id}`);
       return { success: true };
     }),
 

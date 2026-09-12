@@ -541,6 +541,14 @@ export const proxyInboundUsers = table("proxy_inbound_users", {
   name: text("name").notNull(),
   uuid: text("uuid"),
   password: text("password"),
+  /**
+   * 这份凭据是为哪个面板用户单独发的（分享用），0 = 管理员在弹窗里手工加的。
+   *
+   * 有了它，取消分享才有得可删 —— 删掉这一行，只有那个人连不上，同一个端口上
+   * 别人的凭据照旧。也正因为它不是从弹窗里加的，保存入站时不能被表单的全量
+   * 替换顺手删掉（见 replaceProxyInboundUsers）。
+   */
+  sharedUserId: int("sharedUserId").notNull().default(0),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
   updatedAt: epoch("updatedAt").notNull().default(nowDefault()),

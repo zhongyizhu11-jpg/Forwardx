@@ -333,6 +333,7 @@ const tables: TableDef[] = [
     columns: [
       c("id", "id"), c("inboundId", "int", { notNull: true }),
       c("name", "text", { notNull: true }), c("uuid", "text"), c("password", "text"),
+      c("sharedUserId", "int", { notNull: true, default: 0 }),
       c("sortOrder", "int", { notNull: true, default: 0 }),
       c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],

@@ -64,7 +64,8 @@ type InboundForm = {
   method: string;
   isEnabled: boolean;
   /** 只有 id 与名字：凭据一律服务端生成，前端拿不到也不该传。 */
-  users: Array<{ id: number; name: string }>;
+  /** sharedUserId > 0 = 分享时自动发的凭据，界面上只读：它的生死跟着分享走。 */
+  users: Array<{ id: number; name: string; sharedUserId?: number }>;
 };
 
 function emptyForm(): InboundForm {
@@ -181,23 +182,42 @@ export default function ProxyInboundsSection() {
   const linkTextRefs = useRef<Record<number, HTMLParagraphElement | null>>({});
 
   /**
-   * 从节点这边发起分享。多用户入站派生出好几行节点，每一行是一份独立凭据，
-   * 所以是按凭据分别选人 —— 把两份凭据混成一个列表，就分不清谁拿到了哪一份。
+   * 从节点这边发起分享。
+   *
+   * 多凭据协议下分享是按**端口**算的：选中谁，面板就在这个端口上给谁单独发一
+   * 份凭据，取消时只吊销他那一份。所以这里只给一个选人列表 —— 原来是「每份
+   * 凭据各选各的人」，那是把「谁拿到了哪一份」交给管理员手工维护，而现在这
+   * 件事由分享自己管。
    */
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [shareTargets, setShareTargets] = useState<ProxyNodeShareTarget[]>([]);
+  const [shareCredentialMode, setShareCredentialMode] = useState<"per-recipient" | "shared">("shared");
 
   const openShare = (row: any) => {
+    const derived: Array<{ id: number; inboundUserId: number }> = Array.isArray(row.derivedNodes) ? row.derivedNodes : [];
     const ids: number[] = (row.derivedNodeIds || []).map((id: any) => Number(id)).filter(Boolean);
     if (ids.length === 0) {
       toast.error("这个节点还没生成出客户端节点，保存一次再试");
       return;
     }
-    const users = Array.isArray(row.users) ? row.users : [];
-    setShareTargets(ids.map((id, index) => ({
-      id,
-      label: users[index]?.name ? `凭据：${users[index].name}` : `凭据 ${index + 1}`,
-    })));
+    const users: Array<{ id: number; name: string; sharedUserId?: number }> = Array.isArray(row.users) ? row.users : [];
+    const multi = proxyInboundSupportsMultiUser(row.protocol);
+    if (multi) {
+      /**
+       * 多凭据协议：分享是按**端口**来的 —— 选谁，就在这个端口上给谁单独发一份。
+       * 所以只给一个选人列表，落点挑主人自己那份凭据派生的节点（分享发出去的
+       * 那些本身已经是某个人的了，不该再拿去分享给第二个人）。
+       */
+      const ownIds = new Set(users.filter((user) => !Number(user.sharedUserId || 0)).map((user) => Number(user.id)));
+      const anchor = derived.find((node) => ownIds.has(Number(node.inboundUserId)))?.id
+        ?? derived[0]?.id
+        ?? ids[0];
+      setShareTargets([{ id: Number(anchor), label: "这个端口" }]);
+    } else {
+      // 单凭据协议：一个端口一份，分享出去的就是这一份。
+      setShareTargets([{ id: ids[0], label: "这份凭据" }]);
+    }
+    setShareCredentialMode(multi ? "per-recipient" : "shared");
     setShareDialogOpen(true);
   };
 
@@ -298,7 +318,11 @@ export default function ProxyInboundsSection() {
       method: String(row.method || PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD),
       isEnabled: !!row.isEnabled,
       users: Array.isArray(row.users) && row.users.length > 0
-        ? row.users.map((user: any) => ({ id: Number(user.id) || 0, name: String(user.name || "") }))
+        ? row.users.map((user: any) => ({
+          id: Number(user.id) || 0,
+          name: String(user.name || ""),
+          sharedUserId: Number(user.sharedUserId || 0),
+        }))
         : [{ id: 0, name: "默认" }],
     });
     setDialogOpen(true);
@@ -730,30 +754,44 @@ export default function ProxyInboundsSection() {
                     再发一份
                   </Button>
                 </div>
-                {form.users.map((user, index) => (
-                  <div key={`${user.id}-${index}`} className="flex items-center gap-2">
-                    <Input
-                      value={user.name}
-                      onChange={(event) => setForm((prev) => ({
-                        ...prev,
-                        users: prev.users.map((item, at) => (at === index ? { ...item, name: event.target.value } : item)),
-                      }))}
-                      placeholder={`给谁用，例如 小王 / 备用机`}
-                      className="h-8 text-xs"
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      // 至少留一份：零用户的入站 sing-box 会拒绝整份配置。
-                      disabled={form.users.length <= 1}
-                      onClick={() => setForm((prev) => ({ ...prev, users: prev.users.filter((_, at) => at !== index) }))}
-                      title={form.users.length <= 1 ? "至少要留一份凭据" : "删除"}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
+                {form.users.map((user, index) => {
+                  /**
+                   * 分享自动发的凭据在这里是只读的：它的生死跟着「分享给谁」走。
+                   * 在这个弹窗里删掉它并不会取消分享，只会让对方莫名其妙连不上，
+                   * 而分享名单上他还在。
+                   */
+                  const fromShare = Number(user.sharedUserId || 0) > 0;
+                  return (
+                    <div key={`${user.id}-${index}`} className="flex items-center gap-2">
+                      <Input
+                        value={user.name}
+                        readOnly={fromShare}
+                        onChange={(event) => setForm((prev) => ({
+                          ...prev,
+                          users: prev.users.map((item, at) => (at === index ? { ...item, name: event.target.value } : item)),
+                        }))}
+                        placeholder={`给谁用，例如 小王 / 备用机`}
+                        className={`h-8 text-xs ${fromShare ? "text-muted-foreground" : ""}`}
+                        title={fromShare ? "分享给这个用户时自动发的凭据，改名或删除都请去分享那边操作" : undefined}
+                      />
+                      {fromShare ? (
+                        <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground">分享发出</span>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0"
+                          // 至少留一份：零用户的入站 sing-box 会拒绝整份配置。
+                          disabled={form.users.length <= 1}
+                          onClick={() => setForm((prev) => ({ ...prev, users: prev.users.filter((_, at) => at !== index) }))}
+                          title={form.users.length <= 1 ? "至少要留一份凭据" : "删除"}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
                 <p className="text-xs text-muted-foreground">
                   同一个端口、同一份配置，只是凭据不同：一份凭据在订阅里是一条单独的节点，名字叫「入站名 · 这里填的标签」。
                   删掉一份，只有拿那份的人连不上，别人照常。
@@ -791,11 +829,11 @@ export default function ProxyInboundsSection() {
         </DialogContent>
       </Dialog>
 
-      {/* 多用户入站一个用户一条链接，得先挑一个 —— 复制错了等于把别人的凭据发出去。 */}
       <ProxyNodeShareDialog
         open={shareDialogOpen}
         onOpenChange={setShareDialogOpen}
         targets={shareTargets}
+        credentialMode={shareCredentialMode}
       />
 
       <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>

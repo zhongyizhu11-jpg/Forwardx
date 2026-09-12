@@ -102,7 +102,12 @@ test("派生节点的订阅状态查得到，供「新建节点」那一段给�
 
     // 没派生出节点的入站也要给一个空条目，调用方直接遍历。
     const empty = await repo.getProxyInboundDerivedNodes([999]);
-    assert.deepEqual(empty.get(999), { ids: [], includeDirect: false });
+    assert.deepEqual(empty.get(999), { ids: [], nodes: [], includeDirect: false });
+
+    // nodes 里带着 inboundUserId：界面靠它把「哪条节点是哪份凭据」对上号，
+    // 光有一串 id 的话，凭据一增一删就会对错人。
+    assert.deepEqual(map.get(a).nodes.map((node) => Number(node.id)), map.get(a).ids);
+    assert.ok(map.get(a).nodes.every((node) => Number.isInteger(Number(node.inboundUserId))));
   `);
 });
 

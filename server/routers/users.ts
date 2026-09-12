@@ -13,6 +13,7 @@ import {
 } from "../services/userCommandService";
 import { withKeyedTaskLock } from "../keyedTaskLock";
 import { reconcileUserRuleResourceAuthorization } from "../ruleResourceAuthorization";
+import { pushAgentRefresh } from "../agentEvents";
 
 const DISPLAY_NAME_MAX_LENGTH = 24;
 
@@ -229,8 +230,12 @@ export const usersRouter = router({
     setProxyNodeShares: adminProcedure
       .input(z.object({ userId: z.number(), nodeIds: z.array(z.number()) }))
       .mutation(async ({ input, ctx }) => {
+        const target = await db.getUserById(input.userId);
+        const label = String((target as any)?.username || (target as any)?.name || "").trim();
         await withKeyedTaskLock(`user-resource-permissions:${input.userId}`, async () => {
-          await db.setProxyNodeSharesForUser(input.userId, input.nodeIds);
+          const { hostIds } = await db.setProxyNodeSharesForUser(input.userId, input.nodeIds, { label });
+          // 多凭据入站上分享/取消分享都改了那个端口的用户表，要重下发。
+          for (const hostId of hostIds) pushAgentRefresh(hostId, `proxy-node-share-user-${input.userId}`, { urgent: true });
         });
         console.info(`[Users] Updated proxy node shares userId=${input.userId} count=${input.nodeIds.length} ${actorLabel(ctx)}`);
         return { success: true };

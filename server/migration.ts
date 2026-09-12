@@ -1175,6 +1175,9 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
 
     case "proxy_inbound_users":
       row.inboundId = mapRequiredId(maps, "proxy_inbounds", source.inboundId);
+      // 为分享单独发的凭据要跟着收件人走；那个人没被导进来就退回成手工凭据，
+      // 而不是指向一个不存在的用户 id。
+      row.sharedUserId = mapOptionalId(maps, "users", source.sharedUserId) || 0;
       return { row };
 
     case "proxy_nodes":

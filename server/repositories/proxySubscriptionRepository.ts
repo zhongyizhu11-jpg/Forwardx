@@ -19,6 +19,7 @@ import {
 import { PROXY_SUBSCRIPTION_GROUP_NAME } from "../../shared/proxySubscription";
 import { normalizeProxyRulePreset } from "../../shared/proxyRuleset";
 import { shareProxyNodeRow } from "../../shared/proxyNodeShare";
+import { proxyInboundSupportsMultiUser } from "../../shared/proxyInbound";
 
 // ==================== 客户端订阅：节点模板 ====================
 
@@ -111,6 +112,74 @@ export async function getRuleIdsUsingProxyNodes(
 // ==================== 节点分享 ====================
 
 /**
+ * 分享的落点。
+ *
+ * 派生自「一个端口多份凭据」协议的节点，分享要按**入站**算：给某人分享
+ * 不是把自己那份凭据抄给他，而是在那个端口上单独给他开一份。所以这类节点
+ * 上的「分享给谁」其实是「这个入站上有谁的凭据」。
+ *
+ * 粘进来的节点、以及 Shadowsocks / Snell 这种一个端口只有一份 PSK 的，
+ * 只能按节点算 —— 分享出去的就是同一份凭据，收回的唯一办法是换掉它，
+ * 而那会把已经发出去的配置全部作废。界面上要把这个差别说清楚。
+ */
+type ProxyNodeShareScope =
+  | { kind: "node"; nodeId: number }
+  | { kind: "inbound"; nodeId: number; inboundId: number; ownerUserId: number };
+
+async function resolveProxyNodeShareScope(nodeId: number): Promise<ProxyNodeShareScope | null> {
+  const node = await getProxyNodeById(nodeId);
+  if (!node) return null;
+  const inboundId = Number((node as any).inboundId || 0);
+  const ownerUserId = Number((node as any).userId || 0);
+  if (inboundId <= 0) return { kind: "node", nodeId };
+  const { loadProxyInbound } = await import("./proxyInboundRepository");
+  const inbound = await loadProxyInbound(inboundId);
+  if (!inbound || !proxyInboundSupportsMultiUser(inbound.protocol)) return { kind: "node", nodeId };
+  return { kind: "inbound", nodeId, inboundId, ownerUserId };
+}
+
+/**
+ * 所有「为分享单独发的」凭据行 id。
+ *
+ * 用来把这类凭据派生出的节点从**主人自己**的订阅里摘掉：它们只为某个租户而
+ * 存在，留在主人订阅里就是每多一个租户多一条垃圾节点。
+ */
+async function getSharedCredentialUserIds(): Promise<Set<number>> {
+  const db = await getDb();
+  if (!db) return new Set();
+  const { proxyInboundUsers } = await import("../../drizzle/schema");
+  const rows = await db
+    .select({ id: proxyInboundUsers.id })
+    .from(proxyInboundUsers)
+    .where(sql`${proxyInboundUsers.sharedUserId} > 0`);
+  return new Set((rows as any[]).map((row) => Number(row.id)).filter((id) => id > 0));
+}
+
+/** 这个入站上，各人各自那份凭据派生出来的节点：收件人 → 节点 id。 */
+async function getSharedNodeIdsByInbound(inboundId: number): Promise<Map<number, number>> {
+  const result = new Map<number, number>();
+  const db = await getDb();
+  if (!db) return result;
+  const { getProxyInboundUsers } = await import("./proxyInboundRepository");
+  const users = await getProxyInboundUsers(inboundId);
+  const shared = users.filter((user) => Number(user.sharedUserId || 0) > 0);
+  if (shared.length === 0) return result;
+  const rows = await db
+    .select({ id: proxyNodes.id, inboundUserId: proxyNodes.inboundUserId })
+    .from(proxyNodes)
+    .where(and(
+      eq(proxyNodes.inboundId, inboundId),
+      inArray(proxyNodes.inboundUserId, shared.map((user) => Number(user.id))),
+    ));
+  const nodeByUser = new Map((rows as any[]).map((row) => [Number(row.inboundUserId), Number(row.id)]));
+  for (const user of shared) {
+    const derived = nodeByUser.get(Number(user.id));
+    if (derived) result.set(Number(user.sharedUserId), derived);
+  }
+  return result;
+}
+
+/**
  * 分享给某个用户的节点 id。
  */
 export async function getProxyNodeIdsSharedToUser(userId: number): Promise<number[]> {
@@ -153,22 +222,80 @@ export async function getProxyNodeShareUserIds(
  * 自己的节点不用分享，落进来的话对方订阅里会出现两份同名节点，客户端里就是
  * 两条一模一样的线路 —— 这里直接滤掉。
  */
-export async function setProxyNodeSharesForUser(userId: number, nodeIds: readonly number[]) {
+export async function setProxyNodeSharesForUser(
+  userId: number,
+  nodeIds: readonly number[],
+  options: { label?: string } = {},
+): Promise<{ hostIds: number[] }> {
   const db = await getDb();
-  if (!db) return;
+  if (!db) return { hostIds: [] };
   const recipient = Number(userId);
-  await db.delete(proxyNodeShares).where(eq(proxyNodeShares.userId, recipient));
+  const label = String(options.label || "").trim() || `用户 #${recipient}`;
+  const hostIds = new Set<number>();
 
   const ids = Array.from(new Set(nodeIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
-  if (ids.length === 0) return;
-  const owned = await db
-    .select({ id: proxyNodes.id, userId: proxyNodes.userId })
-    .from(proxyNodes)
-    .where(inArray(proxyNodes.id, ids));
-  const values = (owned as any[])
-    .filter((row) => Number(row.userId) !== recipient)
-    .map((row) => ({ nodeId: Number(row.id), userId: recipient }));
+  const owned = ids.length
+    ? await db
+      .select({ id: proxyNodes.id, userId: proxyNodes.userId })
+      .from(proxyNodes)
+      .where(inArray(proxyNodes.id, ids))
+    : [];
+  // 自己的节点不用分享：落进来的话对方订阅里会出现两份同名节点。
+  const wanted = (owned as any[]).filter((row) => Number(row.userId) !== recipient).map((row) => Number(row.id));
+
+  const { ensureSharedInboundCredential, releaseSharedInboundCredential } = await import("./proxyInboundRepository");
+  const targetNodeIds: number[] = [];
+  const keepInboundIds = new Set<number>();
+  for (const id of wanted) {
+    const scope = await resolveProxyNodeShareScope(id);
+    if (!scope) continue;
+    if (scope.kind === "node") {
+      targetNodeIds.push(scope.nodeId);
+      continue;
+    }
+    keepInboundIds.add(scope.inboundId);
+    const provisioned = await ensureSharedInboundCredential(scope.inboundId, recipient, label);
+    if (!provisioned) continue;
+    hostIds.add(provisioned.hostId);
+    targetNodeIds.push(provisioned.nodeId);
+  }
+
+  /**
+   * 这次没留下的入站，要把他那份凭据收回来 —— 只删分享记录的话，凭据还在
+   * 那个端口上活着，他把订阅存下来照样能连，「取消分享」就成了句空话。
+   */
+  const previous = await getSharedInboundIdsForUser(recipient);
+  for (const inboundId of previous) {
+    if (keepInboundIds.has(inboundId)) continue;
+    const released = await releaseSharedInboundCredential(inboundId, recipient);
+    if (released) {
+      const hostId = await getInboundHostId(inboundId);
+      if (hostId) hostIds.add(hostId);
+    }
+  }
+
+  await db.delete(proxyNodeShares).where(eq(proxyNodeShares.userId, recipient));
+  const values = Array.from(new Set(targetNodeIds)).map((nodeId) => ({ nodeId, userId: recipient }));
   if (values.length > 0) await db.insert(proxyNodeShares).values(values as any);
+  return { hostIds: Array.from(hostIds) };
+}
+
+/** 这个人在哪些入站上有单独发的凭据。 */
+async function getSharedInboundIdsForUser(userId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const { proxyInboundUsers } = await import("../../drizzle/schema");
+  const rows = await db
+    .select({ inboundId: proxyInboundUsers.inboundId })
+    .from(proxyInboundUsers)
+    .where(eq(proxyInboundUsers.sharedUserId, Number(userId)));
+  return Array.from(new Set((rows as any[]).map((row) => Number(row.inboundId)).filter((id) => id > 0)));
+}
+
+async function getInboundHostId(inboundId: number): Promise<number> {
+  const { getProxyInboundById } = await import("./proxyInboundRepository");
+  const row = await getProxyInboundById(inboundId);
+  return Number((row as any)?.hostId || 0);
 }
 
 /**
@@ -180,7 +307,13 @@ export async function setProxyNodeSharesForUser(userId: number, nodeIds: readonl
 export async function getProxyNodeShareOptions() {
   const db = await getDb();
   if (!db) return [];
-  return db
+  /**
+   * 为分享单独发出去的那些凭据不进清单：它们已经是某个人的了，再拿去分享给
+   * 第二个人，等于两个人共用一份凭据，取消其中一个就把另一个也断了。要给第
+   * 二个人，挑原来那条节点即可 —— 系统会另发一份。
+   */
+  const excludedSet = await getSharedCredentialUserIds();
+  const rows = await db
     .select({
       id: proxyNodes.id,
       userId: proxyNodes.userId,
@@ -190,9 +323,12 @@ export async function getProxyNodeShareOptions() {
       port: proxyNodes.port,
       inboundId: proxyNodes.inboundId,
       isEnabled: proxyNodes.isEnabled,
+      inboundUserId: proxyNodes.inboundUserId,
     })
     .from(proxyNodes)
     .orderBy(asc(proxyNodes.sortOrder), asc(proxyNodes.id));
+  if (excludedSet.size === 0) return rows;
+  return (rows as any[]).filter((row) => !excludedSet.has(Number(row.inboundUserId || 0)));
 }
 
 /**
@@ -202,23 +338,78 @@ export async function getProxyNodeShareOptions() {
  * 这个从节点出发挑人。站在节点这边想把它租出去时，绕到用户页去一个个找人
  * 是件很别扭的事。
  */
-export async function setProxyNodeShareUsers(nodeId: number, userIds: readonly number[]) {
+export async function setProxyNodeShareUsers(
+  nodeId: number,
+  userIds: readonly number[],
+  options: { labels?: ReadonlyMap<number, string> } = {},
+): Promise<{ hostIds: number[] }> {
   const db = await getDb();
-  if (!db) return;
+  if (!db) return { hostIds: [] };
   const id = Number(nodeId);
-  if (!Number.isInteger(id) || id <= 0) return;
-  await db.delete(proxyNodeShares).where(eq(proxyNodeShares.nodeId, id));
+  if (!Number.isInteger(id) || id <= 0) return { hostIds: [] };
+  const scope = await resolveProxyNodeShareScope(id);
+  if (!scope) return { hostIds: [] };
 
   const node = await getProxyNodeById(id);
-  if (!node) return;
-  const ids = Array.from(new Set(userIds.map((value) => Number(value))))
-    .filter((value) => Number.isInteger(value) && value > 0 && value !== Number(node.userId));
-  if (ids.length === 0) return;
-  await db.insert(proxyNodeShares).values(ids.map((userId) => ({ nodeId: id, userId })) as any);
+  if (!node) return { hostIds: [] };
+  const wanted = Array.from(new Set(userIds.map((value) => Number(value))))
+    .filter((value) => Number.isInteger(value) && value > 0 && value !== Number((node as any).userId));
+
+  if (scope.kind === "node") {
+    await db.delete(proxyNodeShares).where(eq(proxyNodeShares.nodeId, id));
+    if (wanted.length > 0) {
+      await db.insert(proxyNodeShares).values(wanted.map((userId) => ({ nodeId: id, userId })) as any);
+    }
+    return { hostIds: [] };
+  }
+
+  /**
+   * 多凭据入站：这里管的是「这个端口上有谁的凭据」，一人一份，各自派生一条
+   * 节点。所以要按人增删凭据，而不是把当前这条节点的分享名单改一改。
+   */
+  const { ensureSharedInboundCredential, releaseSharedInboundCredential } = await import("./proxyInboundRepository");
+  const hostIds = new Set<number>();
+  const current = await getSharedNodeIdsByInbound(scope.inboundId);
+  const target = new Set(wanted);
+
+  for (const [recipient, sharedNodeId] of current) {
+    if (target.has(recipient)) continue;
+    await db.delete(proxyNodeShares).where(eq(proxyNodeShares.nodeId, sharedNodeId));
+    const released = await releaseSharedInboundCredential(scope.inboundId, recipient);
+    if (released) hostIds.add(await getInboundHostId(scope.inboundId));
+  }
+
+  for (const recipient of target) {
+    const label = options.labels?.get(recipient) || `用户 #${recipient}`;
+    const provisioned = await ensureSharedInboundCredential(scope.inboundId, recipient, label);
+    if (!provisioned) continue;
+    hostIds.add(provisioned.hostId);
+    // 幂等：同一个人再点一次保存，不该多出一条分享记录。
+    await db
+      .delete(proxyNodeShares)
+      .where(and(eq(proxyNodeShares.nodeId, provisioned.nodeId), eq(proxyNodeShares.userId, recipient)));
+    await db.insert(proxyNodeShares).values([{ nodeId: provisioned.nodeId, userId: recipient }] as any);
+  }
+
+  /**
+   * 这条节点本身上的分享记录一律清掉：多凭据入站上，任何人都该拿自己那份，
+   * 而不是主人这一份。老版本留下的记录也在这里被顺手纠正。
+   */
+  await db.delete(proxyNodeShares).where(eq(proxyNodeShares.nodeId, id));
+  return { hostIds: Array.from(hostIds).filter((hostId) => hostId > 0) };
 }
 
-/** 节点被分享给的那些人。管理端展示用。 */
+/**
+ * 节点被分享给的那些人。管理端展示用。
+ *
+ * 多凭据入站上，各人拿的是自己那条派生节点，所以要问的是「这个入站上有谁的
+ * 凭据」——只查当前这条节点的分享记录会永远返回空，界面上就成了「谁都没分享」。
+ */
 export async function getProxyNodeShareRecipients(nodeId: number): Promise<number[]> {
+  const scope = await resolveProxyNodeShareScope(Number(nodeId));
+  if (scope?.kind === "inbound") {
+    return Array.from((await getSharedNodeIdsByInbound(scope.inboundId)).keys());
+  }
   const map = await getProxyNodeShareUserIds([Number(nodeId)]);
   return map.get(Number(nodeId)) || [];
 }
@@ -244,11 +435,22 @@ export async function getProxyNodesSharedToUser(userId: number) {
  * 或者策略组指向不存在的节点这种坏配置。
  */
 export async function getProxyNodesForSubscription(userId: number) {
-  const [owned, shared] = await Promise.all([
+  const [owned, shared, sharedCredentialIds] = await Promise.all([
     getProxyNodesByUser(userId),
     getProxyNodesSharedToUser(userId),
+    getSharedCredentialUserIds(),
   ]);
-  return [...owned, ...shared.map((row: any) => shareProxyNodeRow(row))];
+  /**
+   * 为别人单独发的凭据不进主人自己的订阅。
+   *
+   * 那条节点归属确实是主人（凭据长在他的端口上），但它只为某个租户而存在 ——
+   * 留着的话，主人的客户端里每多一个租户就多一条一模一样、只有凭据不同的
+   * 线路，十个租户就是十条垃圾。
+   */
+  const own = sharedCredentialIds.size === 0
+    ? owned
+    : (owned as any[]).filter((row) => !sharedCredentialIds.has(Number(row.inboundUserId || 0)));
+  return [...own, ...shared.map((row: any) => shareProxyNodeRow(row))];
 }
 
 // ==================== 落地机的套餐用量 ====================
