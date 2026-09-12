@@ -3,6 +3,7 @@ import { pushAgentRefresh } from "./agentEvents";
 import { appendPanelLog } from "./_core/panelLogger";
 import { parseSelfTestMeta } from "./agentRouteUtils";
 import { getEmailConfig, sendMail } from "./email";
+import { parseExpiryReminderDays, shouldSendExpiryReminder } from "../shared/expiryReminder";
 import { sendTelegramMessage } from "./telegramBot";
 import { recordTunnelHopTestResult } from "./tunnelHopTestState";
 import { recordHopTestResult } from "./hopTestState";
@@ -22,7 +23,7 @@ import {
 } from "./selfTestTiming";
 import { billingMonthlyBoundary, billingStartOfCalendarDay } from "@shared/billingTime";
 import { normalizeProxyNodeResetDay } from "@shared/proxyNodeQuota";
-import { expireStalePendingOrders, recoverStaleProcessingPaymentOrders } from "./payment";
+import { expireStalePendingOrders, recoverStaleProcessingPaymentOrders, reconcilePendingPaymentOrders } from "./payment";
 
 type TimedOutForwardTest = {
   id: number;
@@ -127,6 +128,16 @@ async function runMonthlyTrafficReset() {
 
 async function runSubscriptionExpirationCheck() {
   try {
+    /**
+     * 先试自动续费，再做到期清扫。
+     *
+     * 顺序反了的话，开了自动续费、余额也够的人会先被断一下服再续回来 ——
+     * 中间那几分钟他的客户端全是红的，而他什么也没做错。
+     */
+    const autoRenew = await db.runSubscriptionAutoRenew();
+    if (autoRenew.renewed > 0 || autoRenew.failed > 0) {
+      console.log(`[Scheduler] Subscription auto-renew: ${autoRenew.renewed} renewed, ${autoRenew.failed} skipped`);
+    }
     const expired = await db.expireUserSubscriptions();
     if (expired > 0) {
       console.log(`[Scheduler] Subscription expiration check: ${expired} subscription(s) expired`);
@@ -364,6 +375,7 @@ async function runEmailReminders() {
     if (!config.enabled) return;
     const users = await db.getUserTrafficSummaries();
     const now = Date.now();
+    const reminderDays = parseExpiryReminderDays(await db.getSetting("expiryReminderDays"));
 
     for (const user of users as any[]) {
       if (!user.email) continue;
@@ -372,11 +384,13 @@ async function runEmailReminders() {
         const expiresAt = new Date(user.expiresAt).getTime();
         const daysLeft = Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000));
         const key = dayKey(`emailReminder:expiry:${daysLeft}`, user.id);
-        if (daysLeft >= 0 && daysLeft <= 3 && !(await db.getSetting(key))) {
+        if (shouldSendExpiryReminder(daysLeft, reminderDays) && !(await db.getSetting(key))) {
           await sendMail({
             to: user.email,
             subject: "ForwardX 套餐到期提醒",
-            text: `你的 ForwardX 套餐将在 ${daysLeft} 天后到期，请及时续费或联系管理员。`,
+            text: daysLeft === 0
+              ? "你的 ForwardX 套餐今天到期，到期后订阅与转发都会停止，请及时续费或联系管理员。"
+              : `你的 ForwardX 套餐将在 ${daysLeft} 天后到期，请及时续费或联系管理员。`,
           });
           await db.setSetting(key, "sent");
         }
@@ -421,6 +435,7 @@ async function runTelegramReminders() {
     const users = await db.getUserTrafficSummaries();
     const usersById = new Map((users as any[]).map((user) => [Number(user.id), user]));
     const now = Date.now();
+    const reminderDays = parseExpiryReminderDays(settings.expiryReminderDays);
 
     for (const user of users as any[]) {
       if (!user.telegramId) continue;
@@ -429,13 +444,13 @@ async function runTelegramReminders() {
         const expiresAt = new Date(user.expiresAt).getTime();
         const daysLeft = Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000));
         const key = dayKey(`telegramReminder:expiry:${daysLeft}`, user.id);
-        if (daysLeft >= 0 && daysLeft <= 3 && !(await db.getSetting(key))) {
+        if (shouldSendExpiryReminder(daysLeft, reminderDays) && !(await db.getSetting(key))) {
           await sendTelegramMessage(
             user.telegramId,
             [
               "ForwardX 到期提醒",
               "",
-              `你的套餐将在 ${daysLeft} 天后到期。`,
+              daysLeft === 0 ? "你的套餐今天到期。" : `你的套餐将在 ${daysLeft} 天后到期。`,
               `到期时间：${new Date(user.expiresAt).toLocaleDateString("zh-CN")}`,
               "请及时续费或联系管理员。",
             ].join("\n"),
@@ -666,6 +681,16 @@ export function startScheduler() {
     await db.refreshDatabasePoolSettings();
   });
   const paymentMaintenance = createNonOverlappingScheduledTask("payment order maintenance", async () => {
+    /**
+     * 先主动查单，再关过期的。
+     *
+     * 顺序反了的话，一笔「付了但回调没到」的订单会先被判过期关掉 —— 钱收了，
+     * 服务没发，而系统里看起来一切正常。
+     */
+    const reconciled = await reconcilePendingPaymentOrders();
+    if (reconciled.paid > 0) {
+      console.log(`[Scheduler] Payment reconcile: ${reconciled.paid} paid order(s) recovered out of ${reconciled.checked} checked`);
+    }
     await expireStalePendingOrders();
     await recoverStaleProcessingPaymentOrders();
   });

@@ -727,6 +727,7 @@ const IMPORT_TABLE_ORDER = [
   "forward_group_events",
   "ip_geo_cache",
   "subscription_plans",
+  "subscription_plan_proxy_nodes",
   "subscription_plan_hosts",
   "subscription_plan_tunnels",
   "subscription_plan_forward_groups",
@@ -1171,10 +1172,16 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
     case "proxy_inbounds":
       row.userId = mapRequiredId(maps, "users", source.userId);
       row.hostId = mapRequiredId(maps, "hosts", source.hostId);
+      // 克隆来源指向同一张表的另一行；源没被导进来就退回成「人手建的」，
+      // 而不是指向一个不存在的入站 —— 那会让回收逻辑找不到北。
+      row.clonedFromInboundId = mapOptionalId(maps, "proxy_inbounds", source.clonedFromInboundId) || 0;
       return { row };
 
     case "proxy_inbound_users":
       row.inboundId = mapRequiredId(maps, "proxy_inbounds", source.inboundId);
+      // 为分享单独发的凭据要跟着收件人走；那个人没被导进来就退回成手工凭据，
+      // 而不是指向一个不存在的用户 id。
+      row.sharedUserId = mapOptionalId(maps, "users", source.sharedUserId) || 0;
       return { row };
 
     case "proxy_nodes":
@@ -1307,6 +1314,12 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
       row.groupId = mapRequiredId(maps, "forward_groups", source.groupId);
       row.memberId = mapOptionalId(maps, "forward_group_members", source.memberId);
       return { row };
+
+    case "subscription_plan_proxy_nodes":
+      row.planId = mapRequiredId(maps, "subscription_plans", source.planId);
+      row.nodeId = mapRequiredId(maps, "proxy_nodes", source.nodeId);
+      // 同一个套餐对同一个节点只该有一条。
+      return { row, existingWhere: { planId: row.planId, nodeId: row.nodeId } };
 
     case "subscription_plan_hosts":
       row.planId = mapRequiredId(maps, "subscription_plans", source.planId);

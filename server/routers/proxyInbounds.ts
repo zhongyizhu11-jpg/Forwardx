@@ -339,18 +339,27 @@ export const proxyInboundsRouter = router({
     const shareUserIds = await db.getProxyNodeShareUserIds(
       Array.from(derived.values()).flatMap((entry: any) => entry.ids as number[]),
     );
-    return Promise.all(rows.map(async (row: any) => ({
+    // 用户清单一次查完：一行一次的话，管理员那边五十个端口就是五十次往返。
+    const usersByInbound = await db.getProxyInboundUsersByInbounds(rows.map((row: any) => Number(row.id)));
+    return rows.map((row: any) => ({
       ...row,
       // 私钥不出接口：前端没有任何用得上它的地方，多送一次就多一条泄漏路径。
       realityPrivateKey: undefined,
       // 同理用户凭据也不出去，只给 id 和名字，够界面显示和编辑了。
-      users: (await db.getProxyInboundUsers(Number(row.id))).map((user) => ({ id: user.id, name: user.name })),
+      // sharedUserId 要出去：界面据此把「为分享自动发的凭据」标成只读 —— 在这个
+      // 弹窗里删掉它并不会取消分享，只会让对方莫名其妙连不上。
+      users: (usersByInbound.get(Number(row.id)) || []).map((user) => ({
+        id: user.id,
+        name: user.name,
+        sharedUserId: Number(user.sharedUserId || 0),
+      })),
       derivedNodeIds: derived.get(Number(row.id))?.ids || [],
+      derivedNodes: derived.get(Number(row.id))?.nodes || [],
       includeDirect: derived.get(Number(row.id))?.includeDirect ?? false,
       sharedUserCount: new Set(
         (derived.get(Number(row.id))?.ids || []).flatMap((id: number) => shareUserIds.get(Number(id)) || []),
       ).size,
-    })));
+    }));
   }),
 
   /**

@@ -43,6 +43,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { isTokenHostOnline } from "@/lib/agentTokenStatus";
+import { buildAgentScriptCommand, type AgentScriptAction } from "@shared/agentInstallCommand";
 
 type AgentTokenManagerProps = {
   createSignal?: number;
@@ -94,10 +95,6 @@ function storeAgentTokenViewMode(viewMode: AgentTokenViewMode) {
   } catch {
     // Ignore storage failures so the token manager remains usable.
   }
-}
-
-function shellQuote(value: string) {
-  return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
 function isLoopbackPanelUrl(value: string) {
@@ -654,28 +651,22 @@ export default function AgentTokenManager({
     }
   };
 
-  const getAgentScriptCommand = (args: string, targetPanelUrl = commandPanelUrl) => {
-    const installPanelUrl = normalizeConfigUrl(targetPanelUrl) || panelUrl;
-    const env = [
-      githubAcceleratorActive ? "GITHUB_ACCELERATOR_ENABLED=true" : "",
-      githubAcceleratorActive ? `GITHUB_ACCELERATOR_URL=${shellQuote(githubAcceleratorUrl)}` : "",
-      agentPreferPanelInstall ? "FORWARDX_AGENT_PANEL_FIRST=true" : "",
-    ].filter(Boolean).join(" ");
-    const bashPrefix = env ? `${env} bash` : "bash";
-    const withPipefail = (pipeline: string) => `bash -c ${shellQuote(`set -o pipefail; ${pipeline}`)}`;
-    const curlScriptArgs = "--connect-timeout 15 --speed-limit 1024 --speed-time 60";
-    const panelCommand = withPipefail(`curl -fsSL ${curlScriptArgs} "${installPanelUrl}/api/agent/install.sh" | PANEL_URL=${shellQuote(installPanelUrl)} ${bashPrefix} -s -- ${args}`);
-    const githubScriptUrl = githubAcceleratorActive
-      ? `${githubAcceleratorUrl}/https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-agent.sh`
-      : "https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-agent.sh";
-    const githubCommand = withPipefail(`curl -fsSL ${curlScriptArgs} "${githubScriptUrl}" | PANEL_URL=${shellQuote(installPanelUrl)} ${bashPrefix} -s -- ${args}`);
-    if (agentPreferPanelInstall) {
-      return `${panelCommand} || ${githubCommand}`;
-    }
-    return `${githubCommand} || ${panelCommand}`;
-  };
+  /**
+   * 命令怎么拼在 shared/agentInstallCommand.ts 里，服务端给租户拼的是同一份 ——
+   * 这里再抄一遍的话，改了一边忘了另一边，谁也不会发现，直到有人拿着过时的
+   * 命令去装机器。
+   */
+  const getAgentScriptCommand = (action: AgentScriptAction, token?: string, targetPanelUrl = commandPanelUrl) =>
+    buildAgentScriptCommand({
+      panelUrl: normalizeConfigUrl(targetPanelUrl) || panelUrl,
+      action,
+      token,
+      githubAcceleratorUrl,
+      githubAcceleratorEnabled: githubAcceleratorActive,
+      preferPanelInstall: agentPreferPanelInstall,
+    });
 
-  const getInstallCommand = (token: string) => getAgentScriptCommand(`install ${token}`);
+  const getInstallCommand = (token: string) => getAgentScriptCommand("install", token);
   const getUninstallCommand = () => getAgentScriptCommand("uninstall");
   const getUpgradeCommand = () => getAgentScriptCommand("upgrade");
   const openEditToken = (tokenItem: any) => {

@@ -49,6 +49,10 @@ type PlanForm = {
   hostIds: number[];
   tunnelIds: number[];
   forwardGroupIds: number[];
+  /** 套餐附带的落地节点：买了自动发一份独立凭据，到期自动收回。 */
+  proxyNodeIds: number[];
+  /** 附带节点怎么给：true = 每人单开一个端口（能按人计量）。 */
+  dedicatedProxyPort: boolean;
   trafficAddons: TrafficAddonForm[];
 };
 
@@ -64,7 +68,7 @@ type AssignDurationDays = 0 | 30 | 90 | 180;
 type PlanManageTab = "plans" | "billing";
 type PlanDialogTab = "settings" | "resources";
 type PlanListViewMode = "card" | "table";
-type PlanResourceKey = "hostIds" | "tunnelIds" | "forwardGroupIds";
+type PlanResourceKey = "hostIds" | "tunnelIds" | "forwardGroupIds" | "proxyNodeIds";
 type ForwardGroupMode = "port" | "failover" | "chain" | "entry" | "exit";
 type PlanResourcePart = { label: string; count: number };
 const PLAN_MANAGE_TABS = ["plans", "billing"] as const;
@@ -97,6 +101,8 @@ const emptyForm: PlanForm = {
   hostIds: [],
   tunnelIds: [],
   forwardGroupIds: [],
+  proxyNodeIds: [],
+  dedicatedProxyPort: false,
   trafficAddons: [],
 };
 
@@ -353,6 +359,9 @@ function planResourcePartsForDisplay(plan: any, forwardGroupMap: Map<number, any
     { label: "转发组", count: counts.groups },
     { label: "历史主机", count: counts.legacyHosts },
     { label: "转发资源", count: counts.otherForwardResources },
+    // 附带节点跟转发资源一样是套餐的内容，列表上要看得见 —— 否则哪些套餐带
+    // 节点、哪些不带，只能一个个点开弹窗看。
+    { label: "落地节点", count: Number(plan?.proxyNodeIds?.length || 0) },
   ].filter((item) => item.count > 0);
 }
 
@@ -588,6 +597,8 @@ function toForm(plan: any): PlanForm {
     hostIds: plan.hostIds || [],
     tunnelIds: plan.tunnelIds || [],
     forwardGroupIds: plan.forwardGroupIds || [],
+    proxyNodeIds: plan.proxyNodeIds || [],
+    dedicatedProxyPort: !!plan.dedicatedProxyPort,
     trafficAddons: (plan.trafficAddons || []).map((addon: any, index: number) => ({
       trafficGB: String(Number(addon.trafficBytes || 0) / 1024 / 1024 / 1024 || 0),
       price: String((Number(addon.priceCents || 0) / 100).toFixed(2)),
@@ -620,6 +631,8 @@ function payload(form: PlanForm) {
     hostIds: form.hostIds,
     tunnelIds: form.tunnelIds,
     forwardGroupIds: form.forwardGroupIds,
+    proxyNodeIds: form.proxyNodeIds,
+    dedicatedProxyPort: form.dedicatedProxyPort,
     trafficAddons: form.trafficAddons
       .map((addon, index) => ({
         trafficBytes: Math.max(0, Math.floor(Number(addon.trafficGB || 0) * 1024 * 1024 * 1024)),
@@ -834,6 +847,13 @@ export default function Plans() {
 
   const activePlans = Number(planSummary?.activeItems ?? planPageQuery.data?.activeItems ?? 0);
   const storeEnabled = !!storeStatus?.enabled;
+  /**
+   * 套餐能挂的落地节点。跟「分享」用的是同一份清单 —— 挂上之后，用户一买
+   * （或被分配）面板就在这些节点上给他发一份独立凭据，到期自动收回。
+   */
+  const { data: proxyNodeOptions = [], isLoading: proxyNodeOptionsLoading } = trpc.plans.proxyNodeOptions.useQuery(undefined, {
+    staleTime: 30_000,
+  });
   const storeVisiblePlans = Number(planSummary?.storeVisibleItems ?? 0);
   const storeGateBlocking = !storeStatusLoading && !storeEnabled && storeVisiblePlans > 0;
   const trafficBillingEnabled = !!trafficBillingData?.enabled;
@@ -870,6 +890,18 @@ export default function Plans() {
   const portForwardGroups = useMemo(() => forwardGroups.filter((group: any) => isPortForwardGroup(group)), [forwardGroups]);
   const chainForwardGroups = useMemo(() => forwardGroups.filter((group: any) => isChainForwardGroup(group)), [forwardGroups]);
   const standardForwardGroups = useMemo(() => forwardGroups.filter((group: any) => isStandardForwardGroup(group)), [forwardGroups]);
+  const proxyNodeById = useMemo<Map<number, any>>(
+    () => new Map((proxyNodeOptions as any[]).map((node) => [Number(node.id), node])),
+    [proxyNodeOptions],
+  );
+  const selectedProxyNodes = useMemo(
+    () => form.proxyNodeIds.map(Number).map((id) => proxyNodeById.get(id) || { id, name: `节点 #${id}` }),
+    [form.proxyNodeIds, proxyNodeById],
+  );
+  const availableProxyNodes = useMemo(
+    () => (proxyNodeOptions as any[]).filter((node) => !form.proxyNodeIds.map(Number).includes(Number(node.id))),
+    [proxyNodeOptions, form.proxyNodeIds],
+  );
   const selectedHosts = useMemo(() => selectedResourceItems(form.hostIds, hosts, "主机"), [form.hostIds, hosts]);
   const selectedTunnels = useMemo(() => selectedResourceItems(form.tunnelIds, tunnels, "隧道"), [form.tunnelIds, tunnels]);
   const selectedAssignPlan = useMemo(
@@ -1649,6 +1681,60 @@ export default function Plans() {
                   ) : (
                     <></>
                   )}
+
+                  <PlanResourcePicker
+                    title="附带落地节点"
+                    countText={`${selectedProxyNodes.length} 个`}
+                    loading={proxyNodeOptionsLoading}
+                    loadingLabel="正在加载落地节点"
+                    selectedItems={selectedProxyNodes}
+                    availableItems={availableProxyNodes}
+                    addPlaceholder="选择要附带的落地节点"
+                    emptyText="不附带节点。买了这个套餐的人只拿到转发权益，订阅里没有节点。"
+                    allAddedText={(proxyNodeOptions as any[]).length > 0 ? "节点已全部附带" : "暂无可附带的节点"}
+                    onAdd={(id) => addPlanResource("proxyNodeIds", id)}
+                    onRemove={(id) => removePlanResource("proxyNodeIds", id)}
+                    getId={(node) => Number(node.id)}
+                    renderOption={(node) => (
+                      <div className="min-w-0">
+                        <p className="truncate text-sm">{node.name || `节点 #${node.id}`}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {[node.protocol, node.address ? `${node.address}:${node.port}` : ""].filter(Boolean).join(" · ")}
+                        </p>
+                      </div>
+                    )}
+                    renderSelected={(node) => (
+                      <div className="min-w-0">
+                        <p className="truncate text-sm">{node.name || `节点 #${node.id}`}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {[node.protocol, node.address ? `${node.address}:${node.port}` : ""].filter(Boolean).join(" · ")}
+                        </p>
+                      </div>
+                    )}
+                  />
+                  {form.proxyNodeIds.length > 0 ? (
+                    <div className="flex items-center justify-between gap-3 rounded-md bg-muted/20 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">给每人单开一个端口</p>
+                        <p className="text-xs text-muted-foreground">
+                          开：面板照着节点在同一台机器上给每位用户克隆一个端口，
+                          <span className="font-medium text-foreground">流量能算到人头上</span>，可单独限速，代价是一人占一个端口。
+                          关：大家共用原端口、各发一份凭据，省端口，但流量按端口统计、分不开。
+                        </p>
+                      </div>
+                      <Switch
+                        className="shrink-0"
+                        checked={form.dedicatedProxyPort}
+                        onCheckedChange={(dedicatedProxyPort) => setForm({ ...form, dedicatedProxyPort })}
+                      />
+                    </div>
+                  ) : null}
+                  <p className="text-xs text-muted-foreground">
+                    买了（或被分配）这个套餐的人，会在这些节点上<span className="font-medium text-foreground">各拿一份独立凭据</span>，直接出现在他的订阅里；
+                    到期、取消、换套餐自动收回，不必手工分。支持一人一份凭据的协议才发得出来
+                    （VLESS / VMess / Trojan / Hysteria2 / TUIC / AnyTLS）；
+                    Shadowsocks / Snell 一个端口只有一份 PSK，挂上去等于大家共用同一份。
+                  </p>
           </div>
 
           <div className="space-y-3 rounded-lg border border-border/60 p-3">

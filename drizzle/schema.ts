@@ -520,6 +520,18 @@ export const proxyInbounds = table("proxy_inbounds", {
   congestionControl: text("congestionControl"),
   snellVersion: int("snellVersion").notNull().default(0),
   snellMode: text("snellMode"),
+  /**
+   * 这个入站是从哪个入站克隆出来的（0 = 人手建的）。
+   *
+   * 「给租户独享一个端口」用的：面板照着源入站在同一台机器上另开一个端口，
+   * 归属直接落到租户名下 —— 这样现有的**按端口**计费链路就把流量算到他头上，
+   * 不必等 sing-box 给出 per-user 统计（官方发布的二进制根本没编进 v2ray API，
+   * clash API 的连接列表里也没有用户字段，都实测过）。
+   *
+   * 有了这一列才知道哪些入站是面板托管的：界面上只读、租户的自建配额不算它、
+   * 取消授权时连端口一起收掉。
+   */
+  clonedFromInboundId: int("clonedFromInboundId").notNull().default(0),
   isEnabled: boolean("isEnabled").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
@@ -541,6 +553,14 @@ export const proxyInboundUsers = table("proxy_inbound_users", {
   name: text("name").notNull(),
   uuid: text("uuid"),
   password: text("password"),
+  /**
+   * 这份凭据是为哪个面板用户单独发的（分享用），0 = 管理员在弹窗里手工加的。
+   *
+   * 有了它，取消分享才有得可删 —— 删掉这一行，只有那个人连不上，同一个端口上
+   * 别人的凭据照旧。也正因为它不是从弹窗里加的，保存入站时不能被表单的全量
+   * 替换顺手删掉（见 replaceProxyInboundUsers）。
+   */
+  sharedUserId: int("sharedUserId").notNull().default(0),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
   updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
@@ -588,6 +608,13 @@ export const proxyNodeShares = table("proxy_node_shares", {
   nodeId: int("nodeId").notNull(),
   // 分享给谁。这个人的订阅里会多出这个节点。
   userId: int("userId").notNull(),
+  /**
+   * 这条分享是怎么来的：manual = 管理员手工分的，plan = 套餐带的。
+   *
+   * 两种要分开管：套餐那份随订阅生灭（买了自动给、到期自动收），手工那份
+   * 是管理员的决定，不能被套餐同步顺手删掉 —— 反过来也一样。
+   */
+  source: varchar("source", { length: 16 }).notNull().default("manual"),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
 });
 export type ProxyNodeShare = typeof proxyNodeShares.$inferSelect;
@@ -1076,6 +1103,16 @@ export const subscriptionPlans = table("subscription_plans", {
   allowProxySubscription: boolean("allowProxySubscription").notNull().default(false),
   isActive: boolean("isActive").notNull().default(true),
   isStoreVisible: boolean("isStoreVisible").notNull().default(true),
+  /**
+   * 套餐附带的节点怎么给：false = 共用一个端口各发一份凭据（省端口，流量按端口
+   * 统计、分不到人头上）；true = 每人在同一台机器上单开一个端口（能按人计量、
+   * 能单独限速，代价是一人一个端口）。
+   *
+   * 之所以有这个二选一：sing-box 给不出 per-user 流量（官方二进制没编进 v2ray
+   * API，clash API 的连接列表也没有用户字段，都实测过），而这套面板本来就按
+   * 监听端口计数。想按量收费就只能一人一个端口。
+   */
+  dedicatedProxyPort: boolean("dedicatedProxyPort").notNull().default(false),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
   updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
@@ -1100,6 +1137,21 @@ export const subscriptionPlanTunnels = table("subscription_plan_tunnels", {
 });
 export type SubscriptionPlanTunnel = typeof subscriptionPlanTunnels.$inferSelect;
 export type InsertSubscriptionPlanTunnel = typeof subscriptionPlanTunnels.$inferInsert;
+
+/**
+ * 套餐附带哪些落地节点。
+ *
+ * 买了这个套餐（或被管理员分配），面板自动在这些节点上给他发一份独立凭据，
+ * 到期、取消、换套餐就自动收回 —— 商家不必每来一个客户手工分一次节点。
+ */
+export const subscriptionPlanProxyNodes = table("subscription_plan_proxy_nodes", {
+  id: serial("id"),
+  planId: int("planId").notNull(),
+  nodeId: int("nodeId").notNull(),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+});
+export type SubscriptionPlanProxyNode = typeof subscriptionPlanProxyNodes.$inferSelect;
+export type InsertSubscriptionPlanProxyNode = typeof subscriptionPlanProxyNodes.$inferInsert;
 
 export const subscriptionPlanForwardGroups = table("subscription_plan_forward_groups", {
   id: serial("id"),
@@ -1139,6 +1191,14 @@ export const userSubscriptions = table("user_subscriptions", {
   adminDismissedAt: epoch("adminDismissedAt"),
   startedAt: epoch("startedAt").notNull().default(nowDefault()),
   expiresAt: epoch("expiresAt"),
+  /**
+   * 到期时用余额自动续一期。
+   *
+   * 商家系统里「到期 → 断服 → 客户发现 → 手工去付 → 等回调」这一串每一步都在
+   * 掉人。余额够就自动续，是把这一串砍成零步。默认关：从用户余额里扣钱这件事
+   * 得他自己点头。
+   */
+  autoRenew: boolean("autoRenew").notNull().default(false),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
   updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
 });

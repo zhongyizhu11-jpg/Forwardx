@@ -7,6 +7,12 @@ import { getConfiguredPanelUrl, resolvePanelUrl } from "./agentPanelUrl";
 import * as db from "./db";
 import { withTrafficBillingUserLock } from "./keyedTaskLock";
 import {
+  parseEasyPayOrderQuery,
+  parseStripeSessionQuery,
+  shouldQueryPendingOrder,
+  type PaymentQueryResult,
+} from "../shared/paymentReconcile";
+import {
   createGmPayOrder,
   getGmPayGatewayInfo,
   GM_PAY_NETWORKS,
@@ -859,6 +865,98 @@ async function finalizePaidOrder(outTradeNo: string) {
     appendPanelLog("error", `[Payment] finalize failed order=${outTradeNo}: ${error instanceof Error ? error.message : String(error)}`);
     throw error;
   }
+}
+
+/**
+ * 主动查单：把「钱付了但回调没到」的订单捞回来。
+ *
+ * 整条收款链路原本只靠网关回调。回调丢一次 —— 网关那边网络抖、面板正好在重启、
+ * 反代把那个 POST 拦了 —— 订单就一直挂在 pending 直到过期，而客户那边钱已经扣
+ * 了。这是收款系统最常见的一类事故（俗称掉单），标准解法就是面板自己隔一会儿
+ * 去问网关一句「这单付了没」。
+ *
+ * 三条自我约束：
+ * - 太新的不问：用户可能还停在收银台，回调本来也就几秒的事。
+ * - 过期的不问：那时该做的是关单。
+ * - 每轮最多问 50 单，且问出「已付」之后一律走回调那条既有路径 —— 那条路是
+ *   幂等的（processing / completed 都有判断），不会因为回调随后又到了而发两次货。
+ */
+const RECONCILE_MAX_ORDERS_PER_RUN = 50;
+
+async function queryPaymentOrderAtGateway(
+  config: PaymentConfig,
+  order: any,
+): Promise<PaymentQueryResult | null> {
+  const provider = String(order.provider || "");
+  const outTradeNo = String(order.outTradeNo || "");
+  if (!outTradeNo) return null;
+
+  if (provider === "easypay" || provider === "alipay" || provider === "wxpay") {
+    const ep = config.easypay;
+    const apiBase = normalizeEasyPayBase(ep.apiBase);
+    if (!ep.enabled || !apiBase || !ep.pid || !ep.pkey) return null;
+    const url = `${apiBase}/api.php?${new URLSearchParams({
+      act: "order",
+      pid: ep.pid,
+      key: ep.pkey,
+      out_trade_no: outTradeNo,
+    }).toString()}`;
+    const res = await fetch(url, { method: "GET" });
+    if (!res.ok) return null;
+    return parseEasyPayOrderQuery(await res.json().catch(() => null));
+  }
+
+  if (provider === "stripe") {
+    const stripe = config.stripe;
+    // Stripe 要用会话 id 查，创建时存在 tradeNo 里；没有就查不了。
+    const sessionId = String(order.tradeNo || "");
+    if (!stripe.enabled || !stripe.secretKey || !sessionId.startsWith("cs_")) return null;
+    const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
+      headers: { Authorization: `Bearer ${stripe.secretKey}` },
+    });
+    if (!res.ok) return null;
+    return parseStripeSessionQuery(await res.json().catch(() => null));
+  }
+
+  // gmpay 等其余网关暂时没有查单接口可用：宁可不查，也不要拿一个猜出来的
+  // 「已付」去发货。
+  return null;
+}
+
+export async function reconcilePendingPaymentOrders(): Promise<{ checked: number; paid: number }> {
+  const orders = await db.listPaymentOrdersForMaintenance(["pending"], 1000);
+  if (orders.length === 0) return { checked: 0, paid: 0 };
+  const config = await getPaymentConfig();
+  const now = Date.now();
+  let checked = 0;
+  let paid = 0;
+
+  for (const order of orders as any[]) {
+    if (checked >= RECONCILE_MAX_ORDERS_PER_RUN) break;
+    if (!shouldQueryPendingOrder(order, now)) continue;
+    checked += 1;
+    try {
+      const result = await queryPaymentOrderAtGateway(config, order);
+      if (!result) continue;
+      if (result.closed) {
+        await closePaymentOrderAndReleaseDiscount(String(order.outTradeNo), "cancelled");
+        continue;
+      }
+      if (!result.paid) continue;
+      appendPanelLog("info", `[Payment] reconcile found paid order=${order.outTradeNo} provider=${order.provider}`);
+      await processPaidNotification(String(order.outTradeNo), {
+        provider: String(order.provider || ""),
+        tradeNo: result.tradeNo,
+        amountCents: Number(order.amountCents || 0),
+        currency: String(order.currency || ""),
+        rawNotify: JSON.stringify({ source: "reconcile", tradeNo: result.tradeNo }),
+      });
+      paid += 1;
+    } catch (error) {
+      appendPanelLog("warn", `[Payment] reconcile failed order=${order.outTradeNo}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { checked, paid };
 }
 
 export async function recoverStaleProcessingPaymentOrders() {

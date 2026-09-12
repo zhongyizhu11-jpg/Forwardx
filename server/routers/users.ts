@@ -13,6 +13,7 @@ import {
 } from "../services/userCommandService";
 import { withKeyedTaskLock } from "../keyedTaskLock";
 import { reconcileUserRuleResourceAuthorization } from "../ruleResourceAuthorization";
+import { pushAgentRefresh } from "../agentEvents";
 
 const DISPLAY_NAME_MAX_LENGTH = 24;
 
@@ -177,6 +178,21 @@ export const usersRouter = router({
       .input(z.object({ userId: z.number() }))
       .mutation(async ({ input, ctx }) => {
         if (input.userId === ctx.user.id) throw new Error("不能删除当前登录账户");
+        /**
+         * 先收回分享给他的凭据，再删人。
+         *
+         * 顺序不能反：凭据是按 sharedUserId 找的，人删了就找不着了，那些凭据
+         * 会永远留在各个端口上 —— 界面上再没有入口能收回，而它照样能连。
+         */
+        const releasedHostIds = [
+          ...await db.releaseAllSharedCredentialsForUser(input.userId),
+          // 专属端口是面板替他开的，人没了端口也要收 —— 留着就是一台机器上
+          // 一个谁也管不着、却还在监听的端口。
+          ...await db.releaseAllDedicatedInboundsForUser(input.userId),
+        ];
+        for (const hostId of releasedHostIds) {
+          pushAgentRefresh(hostId, `proxy-share-user-deleted-${input.userId}`, { urgent: true });
+        }
         await db.deleteUserPermissions(input.userId);
         clearLinkAccessScopeCache();
         await db.deleteUser(input.userId);
@@ -224,13 +240,23 @@ export const usersRouter = router({
     getProxyNodeShares: adminProcedure
       .input(z.object({ userId: z.number() }))
       .query(async ({ input }) => {
-        return db.getProxyNodeIdsSharedToUser(input.userId);
+        /**
+         * 要的是「选项列表里该勾上哪几条」，不是他实际拿到的那几条 —— 多凭据
+         * 入站上他拿的是自己那条派生节点，而列表里放的是代表整个端口的那条。
+         * 直接返回前者的话选择框显示成一个都没选，管理员一保存就把他的凭据
+         * 静默收走了。
+         */
+        return db.getProxyNodeShareSelectionForUser(input.userId);
       }),
     setProxyNodeShares: adminProcedure
       .input(z.object({ userId: z.number(), nodeIds: z.array(z.number()) }))
       .mutation(async ({ input, ctx }) => {
+        const target = await db.getUserById(input.userId);
+        const label = String((target as any)?.username || (target as any)?.name || "").trim();
         await withKeyedTaskLock(`user-resource-permissions:${input.userId}`, async () => {
-          await db.setProxyNodeSharesForUser(input.userId, input.nodeIds);
+          const { hostIds } = await db.setProxyNodeSharesForUser(input.userId, input.nodeIds, { label });
+          // 多凭据入站上分享/取消分享都改了那个端口的用户表，要重下发。
+          for (const hostId of hostIds) pushAgentRefresh(hostId, `proxy-node-share-user-${input.userId}`, { urgent: true });
         });
         console.info(`[Users] Updated proxy node shares userId=${input.userId} count=${input.nodeIds.length} ${actorLabel(ctx)}`);
         return { success: true };

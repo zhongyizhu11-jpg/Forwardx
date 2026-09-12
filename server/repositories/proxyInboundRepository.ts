@@ -9,13 +9,17 @@
  * 消失 —— 与其让两边悄悄分叉，不如让它明确地不可编辑（inboundId 非 0 即为派生）。
  */
 
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { nanoid } from "nanoid";
 
 import {
   hosts,
   proxyInbounds,
   proxyInboundUsers,
   proxyNodes,
+  users,
   type InsertProxyInbound,
   type InsertProxyInboundUser,
 } from "../../drizzle/schema";
@@ -23,7 +27,9 @@ import { getDb, insertAndGetId, nowDate } from "../dbRuntime";
 import { getHostEntryAddress } from "../../shared/hostEntryAddress";
 import {
   createEmptyProxyInbound,
+  createEmptyProxyInboundUser,
   proxyInboundSupportsMultiUser,
+  proxyInboundUserCredentialKinds,
   proxyNodesFromInbound,
   type ProxyInbound,
   type ProxyInboundUser,
@@ -110,13 +116,20 @@ export function proxyInboundToRow(inbound: ProxyInbound): Partial<InsertProxyInb
 // ==================== 读 ====================
 
 /** 某个用户名下有几个自建落地节点。配额检查用。 */
+/**
+ * 他自己开了几个落地节点。
+ *
+ * 面板托管的专属端口（套餐带的那种）不算 —— 那不是他建的，配额是用来管「他能
+ * 自己开几个」的。算进去的话，买个带三个节点的套餐就把自建额度占满了，而他从
+ * 界面上完全看不出是谁占的。
+ */
 export async function countProxyInboundsByUser(userId: number): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
   const rows = await db
     .select({ id: proxyInbounds.id })
     .from(proxyInbounds)
-    .where(eq(proxyInbounds.userId, Number(userId)));
+    .where(and(eq(proxyInbounds.userId, Number(userId)), eq(proxyInbounds.clonedFromInboundId, 0)));
   return rows.length;
 }
 
@@ -254,21 +267,98 @@ export async function getEnabledProxyInboundsWithUsersByHost(
   const db = await getDb();
   if (!db) return [];
 
-  const ids = (rows as any[]).map((row) => Number(row.id));
+  /**
+   * 主人自己没资格了，这个端口也不该再监听。
+   *
+   * 到期 / 停用 / 超流量 / 被收回订阅权限，面板那边拦住的都只是「进不进得了
+   * 页面、拉不拉得动订阅」；端口是落在落地机上的，不从配置里拿掉，他手上那份
+   * 配置照连不误 —— 尤其是套餐给的专属端口，那本来就是按人计费的东西，停不掉
+   * 等于白送。
+   *
+   * 管理员不受这条影响（proxyCredentialRecipientActive 里对 admin 放行）。
+   */
+  const ownerIds = Array.from(new Set((rows as any[]).map((row) => Number(row.userId || 0)).filter((id) => id > 0)));
+  const blockedOwners = new Set<number>();
+  if (ownerIds.length > 0) {
+    const owners = await db
+      .select({
+        id: users.id,
+        role: users.role,
+        accountEnabled: users.accountEnabled,
+        allowProxySubscription: users.allowProxySubscription,
+        expiresAt: users.expiresAt,
+      })
+      .from(users)
+      .where(inArray(users.id, ownerIds));
+    const found = new Set<number>();
+    for (const row of owners as any[]) {
+      found.add(Number(row.id));
+      if (!proxyCredentialRecipientActive(row)) blockedOwners.add(Number(row.id));
+    }
+    for (const id of ownerIds) if (!found.has(id)) blockedOwners.add(id);
+  }
+  const activeRows = (rows as any[]).filter((row) => !blockedOwners.has(Number(row.userId || 0)));
+  if (activeRows.length === 0) return [];
+
+  const ids = activeRows.map((row) => Number(row.id));
   const userRows = await db
     .select()
     .from(proxyInboundUsers)
     .where(inArray(proxyInboundUsers.inboundId, ids))
     .orderBy(asc(proxyInboundUsers.sortOrder), asc(proxyInboundUsers.id));
+
+  /**
+   * 分享发出去的凭据要跟着收件人的状态走。
+   *
+   * 面板那边到期/停用/收回订阅权限，拦住的只是订阅地址 —— 客户端里已经存下的
+   * 那份配置照连不误，因为凭据是落在这台机器的 sing-box 上的，没人去删。
+   * 「到期就停服」这句话得由这里兑现：算配置时把已经没资格的人剔掉，下一次
+   * 心跳（或者一次催下发）他就连不上了。
+   *
+   * 主人自己那份不在此列 —— 端口本来就是他的，那是另一档策略，不在这里顺手改。
+   */
+  const recipientIds = Array.from(new Set(
+    (userRows as any[]).map((row) => Number(row.sharedUserId || 0)).filter((id) => id > 0),
+  ));
+  const blockedRecipients = new Set<number>();
+  if (recipientIds.length > 0) {
+    const recipients = await db
+      .select({
+        id: users.id,
+        role: users.role,
+        accountEnabled: users.accountEnabled,
+        allowProxySubscription: users.allowProxySubscription,
+        expiresAt: users.expiresAt,
+      })
+      .from(users)
+      .where(inArray(users.id, recipientIds));
+    const found = new Set<number>();
+    for (const row of recipients as any[]) {
+      const id = Number(row.id);
+      found.add(id);
+      if (!proxyCredentialRecipientActive(row)) blockedRecipients.add(id);
+    }
+    // 人没了（账号被删）凭据也不该活着。
+    for (const id of recipientIds) if (!found.has(id)) blockedRecipients.add(id);
+  }
+
   const usersByInbound = new Map<number, ProxyInboundUser[]>();
   for (const row of userRows as any[]) {
+    const sharedUserId = Number(row.sharedUserId || 0);
+    if (sharedUserId > 0 && blockedRecipients.has(sharedUserId)) continue;
     const key = Number(row.inboundId);
     const list = usersByInbound.get(key) || [];
-    list.push({ id: Number(row.id), name: text(row.name), uuid: text(row.uuid), password: text(row.password) });
+    list.push({
+      id: Number(row.id),
+      name: text(row.name),
+      uuid: text(row.uuid),
+      password: text(row.password),
+      sharedUserId,
+    });
     usersByInbound.set(key, list);
   }
 
-  return (rows as any[]).map((row) => {
+  return activeRows.map((row) => {
     const inbound = proxyInboundFromRow(row);
     inbound.users = proxyInboundSupportsMultiUser(inbound.protocol) ? (usersByInbound.get(Number(row.id)) || []) : [];
     return { id: Number(row.id), port: Number(row.port) || 0, protocol: String(row.protocol || ""), inbound };
@@ -290,7 +380,41 @@ export async function getProxyInboundUsers(inboundId: number): Promise<ProxyInbo
     name: text(row.name),
     uuid: text(row.uuid),
     password: text(row.password),
+    sharedUserId: Number(row.sharedUserId || 0),
   }));
+}
+
+/**
+ * 一批入站各自的用户，一次查完。
+ *
+ * 列表接口原来是一行一次 getProxyInboundUsers —— 管理员那边是全量入站，
+ * 五十个端口就是五十次往返，页面越用越慢，而慢在哪里从界面上看不出来。
+ */
+export async function getProxyInboundUsersByInbounds(
+  inboundIds: readonly number[],
+): Promise<Map<number, ProxyInboundUser[]>> {
+  const result = new Map<number, ProxyInboundUser[]>();
+  const ids = Array.from(new Set(inboundIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)));
+  for (const id of ids) result.set(id, []);
+  if (ids.length === 0) return result;
+
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db
+    .select()
+    .from(proxyInboundUsers)
+    .where(inArray(proxyInboundUsers.inboundId, ids))
+    .orderBy(asc(proxyInboundUsers.sortOrder), asc(proxyInboundUsers.id));
+  for (const row of rows as any[]) {
+    result.get(Number(row.inboundId))?.push({
+      id: Number(row.id),
+      name: text(row.name),
+      uuid: text(row.uuid),
+      password: text(row.password),
+      sharedUserId: Number(row.sharedUserId || 0),
+    });
+  }
+  return result;
 }
 
 /**
@@ -309,13 +433,26 @@ export async function replaceProxyInboundUsers(
   const existing = await getProxyInboundUsers(inboundId);
   const keep = new Set<number>();
   const result: ProxyInboundUser[] = [];
+  /**
+   * 为分享自动开的凭据不归这张表单管：它是「分享给某人」的产物，取消分享才该
+   * 删。表单是全量替换，而旧版前端、或者管理员改别的字段时提交的清单里根本
+   * 没有这些行 —— 照单全收的话，管理员随手保存一次入站，租户就集体连不上，
+   * 而界面上什么都看不出来。
+   */
+  const sharedById = new Map(existing.filter((item) => Number(item.sharedUserId || 0) > 0).map((item) => [item.id, item]));
 
   for (const [index, user] of users.entries()) {
+    const id0 = Number(user.id) || 0;
+    // 收件人不能被表单改写：来的是几就存几，没提供就沿用库里那一行的值。
+    const sharedUserId = id0 > 0 && sharedById.has(id0)
+      ? Number(sharedById.get(id0)!.sharedUserId || 0)
+      : Number(user.sharedUserId || 0);
     const data = {
       inboundId,
       name: text(user.name),
       uuid: text(user.uuid) || null,
       password: text(user.password) || null,
+      sharedUserId,
       sortOrder: index,
     } as Partial<InsertProxyInboundUser>;
     const id = Number(user.id) || 0;
@@ -331,11 +468,333 @@ export async function replaceProxyInboundUsers(
   }
 
   for (const item of existing) {
-    if (!keep.has(item.id)) {
-      await db.delete(proxyInboundUsers).where(eq(proxyInboundUsers.id, item.id));
+    if (keep.has(item.id)) continue;
+    // 分享发出去的凭据清单里没出现，当作「这次保存没带上」，留着。
+    if (Number(item.sharedUserId || 0) > 0) {
+      result.push(item);
+      continue;
     }
+    await db.delete(proxyInboundUsers).where(eq(proxyInboundUsers.id, item.id));
   }
   return result;
+}
+
+// ==================== 独享端口（按人计量） ====================
+
+/**
+ * 自动分配的端口从这里往上找。
+ *
+ * 挑一万以上：一万以下多半被系统服务和人手配置占着；上限留在 60000 以内，
+ * 避开 Linux 默认的本地端口范围（32768-60999 里高段常被临时端口占用，选低段
+ * 更稳）。
+ */
+export const DEDICATED_INBOUND_PORT_MIN = 20000;
+export const DEDICATED_INBOUND_PORT_MAX = 30000;
+
+/**
+ * 在这台机器上挑一个没人用的端口。
+ *
+ * 要同时避开三类占用：这台机器上别的落地入站、转发规则（含隧道出口）、以及
+ * 调用方点名要避开的那些。撞了端口的后果是 sing-box 整份配置起不来 —— 一个
+ * 租户开通失败，连带这台机器上所有人的节点一起掉线。
+ */
+export async function pickFreeInboundPort(
+  hostId: number,
+  options: { avoid?: Iterable<number> } = {},
+): Promise<number> {
+  const { getUsedPortsOnHost } = await import("./tunnelRepository");
+  const used = new Set<number>();
+  for (const port of await getUsedPortsOnHost(hostId)) used.add(Number(port));
+  for (const port of options.avoid || []) used.add(Number(port));
+
+  const db = await getDb();
+  if (db) {
+    const rows = await db
+      .select({ port: proxyInbounds.port })
+      .from(proxyInbounds)
+      .where(eq(proxyInbounds.hostId, Number(hostId)));
+    for (const row of rows as any[]) used.add(Number(row.port));
+  }
+
+  for (let port = DEDICATED_INBOUND_PORT_MIN; port <= DEDICATED_INBOUND_PORT_MAX; port += 1) {
+    if (!used.has(port)) return port;
+  }
+  throw new Error(`主机 #${hostId} 在 ${DEDICATED_INBOUND_PORT_MIN}-${DEDICATED_INBOUND_PORT_MAX} 之间已经没有空闲端口了`);
+}
+
+/** 这个人在这个源入站下的专属入站。没有就返回 null。 */
+export async function getDedicatedInboundForUser(sourceInboundId: number, userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(proxyInbounds)
+    .where(and(
+      eq(proxyInbounds.clonedFromInboundId, Number(sourceInboundId)),
+      eq(proxyInbounds.userId, Number(userId)),
+    ))
+    .limit(1);
+  return rows[0];
+}
+
+/**
+ * 给某人在同一台机器上克隆一个专属入站（已有就直接返回）。
+ *
+ * 为什么要单开一个端口，而不是在原端口上多发一份凭据：**计量**。
+ * 这套面板的落地流量是按监听端口数的（Agent 在端口上挂计数链）。而 sing-box
+ * 这边给不出 per-user 数字 —— 官方发布的二进制没编进 v2ray API（`sing-box
+ * check` 直接报 "v2ray api is not included in this build"），clash API 的连接
+ * 列表里也没有用户字段，两条都实测过。所以「一人一个端口」是目前唯一能把流量
+ * 算到人头上的做法，而且它不需要任何新机制：端口归他，现有计费链路自然就把量
+ * 记到他名下。
+ *
+ * 凭据全部重新生成，跟源入站不共用；REALITY 也另生成一对密钥 —— 私钥漏一处就
+ * 是全部端口一起漏。
+ */
+export async function ensureDedicatedInboundForUser(
+  sourceInboundId: number,
+  userId: number,
+  label: string,
+): Promise<{ inboundId: number; hostId: number; port: number; created: boolean } | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const source = await getProxyInboundById(sourceInboundId);
+  if (!source) return null;
+  const hostId = Number((source as any).hostId);
+
+  const existing = await getDedicatedInboundForUser(sourceInboundId, userId);
+  if (existing) {
+    return { inboundId: Number((existing as any).id), hostId, port: Number((existing as any).port), created: false };
+  }
+
+  const port = await pickFreeInboundPort(hostId);
+  const clone: Record<string, unknown> = { ...(source as any) };
+  delete clone.id;
+  delete clone.createdAt;
+  delete clone.updatedAt;
+  clone.userId = Number(userId);
+  clone.port = port;
+  clone.clonedFromInboundId = Number(sourceInboundId);
+  clone.name = `${String((source as any).name || "落地")} · ${label}`;
+  clone.sortOrder = 0;
+
+  // 凭据不共用：源入站的 UUID / 密码泄漏一处就等于全部端口一起泄漏。
+  const protocol = String((source as any).protocol || "");
+  clone.uuid = randomUUID();
+  clone.password = nanoid(24);
+  if (String((source as any).security || "") === "reality") {
+    const { generateRealityKeyPair, generateRealityShortId } = await import("../proxyRealityKeys");
+    const pair = generateRealityKeyPair();
+    clone.realityPrivateKey = pair.privateKey;
+    clone.realityPublicKey = pair.publicKey;
+    clone.realityShortId = generateRealityShortId();
+  }
+
+  const inboundId = Number(await insertAndGetId("proxy_inbounds", clone as any));
+  if (proxyInboundSupportsMultiUser(protocol as any)) {
+    const credential = createEmptyProxyInboundUser();
+    credential.name = label;
+    for (const kind of proxyInboundUserCredentialKinds(protocol as any)) {
+      if (kind === "uuid") credential.uuid = randomUUID();
+      else credential.password = nanoid(24);
+    }
+    /**
+     * sharedUserId 留 0：这个端口本来就是他的，这份凭据不是「分给别人的」。
+     *
+     * 标成分享的话会被 getProxyNodesForSubscription 那条「为别人发的凭据不进
+     * 主人自己的订阅」过滤掉 —— 端口开好了、节点也建了，他的订阅里却是空的。
+     */
+    await insertAndGetId("proxy_inbound_users", {
+      inboundId,
+      name: credential.name,
+      uuid: credential.uuid || null,
+      password: credential.password || null,
+      sharedUserId: 0,
+      sortOrder: 0,
+    } as any);
+  }
+  await syncProxyNodeFromInbound(inboundId);
+  return { inboundId, hostId, port, created: true };
+}
+
+/** 收回某人的专属入站：端口一起收掉，派生节点跟着删。返回受影响的主机 id。 */
+export async function releaseDedicatedInboundForUser(
+  sourceInboundId: number,
+  userId: number,
+): Promise<number> {
+  const existing = await getDedicatedInboundForUser(sourceInboundId, userId);
+  if (!existing) return 0;
+  const hostId = Number((existing as any).hostId || 0);
+  await deleteProxyInbound(Number((existing as any).id));
+  return hostId;
+}
+
+/** 这个人手上的专属入站，以及各自是从哪个源入站克隆来的。 */
+export async function getDedicatedInboundIdsForUser(
+  userId: number,
+): Promise<Array<{ inboundId: number; sourceInboundId: number; hostId: number }>> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({
+      id: proxyInbounds.id,
+      hostId: proxyInbounds.hostId,
+      clonedFromInboundId: proxyInbounds.clonedFromInboundId,
+    })
+    .from(proxyInbounds)
+    .where(and(eq(proxyInbounds.userId, Number(userId)), sql`${proxyInbounds.clonedFromInboundId} > 0`));
+  return (rows as any[]).map((row) => ({
+    inboundId: Number(row.id),
+    sourceInboundId: Number(row.clonedFromInboundId),
+    hostId: Number(row.hostId),
+  }));
+}
+
+/** 这个人手上所有专属入站，全部收回。返回受影响的主机 id。 */
+export async function releaseAllDedicatedInboundsForUser(userId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ id: proxyInbounds.id, hostId: proxyInbounds.hostId })
+    .from(proxyInbounds)
+    .where(and(eq(proxyInbounds.userId, Number(userId)), sql`${proxyInbounds.clonedFromInboundId} > 0`));
+  const hostIds = new Set<number>();
+  for (const row of rows as any[]) {
+    await deleteProxyInbound(Number(row.id));
+    if (Number(row.hostId) > 0) hostIds.add(Number(row.hostId));
+  }
+  return Array.from(hostIds);
+}
+
+// ==================== 分享用的独立凭据 ====================
+
+/**
+ * 拿着别人分享来的凭据的人，现在还有没有资格连。
+ *
+ * 三条都要过：账号还开着、还有客户端订阅权限、还没到期。管理员不受订阅权限
+ * 那条约束 —— 他本来就绕过那个开关。
+ */
+export function proxyCredentialRecipientActive(user: {
+  role?: unknown;
+  accountEnabled?: unknown;
+  allowProxySubscription?: unknown;
+  expiresAt?: unknown;
+} | null | undefined, now = Date.now()): boolean {
+  if (!user) return false;
+  if (user.accountEnabled === false || user.accountEnabled === 0) return false;
+  const isAdmin = String(user.role || "") === "admin";
+  if (!isAdmin && !(user.allowProxySubscription === true || user.allowProxySubscription === 1)) return false;
+  const expiresAt = user.expiresAt ? new Date(user.expiresAt as any).getTime() : 0;
+  if (expiresAt && expiresAt <= now) return false;
+  return true;
+}
+
+/** 这个入站上为某人单独发的那份凭据。没有就返回 null。 */
+export async function getSharedInboundUser(
+  inboundId: number,
+  sharedUserId: number,
+): Promise<ProxyInboundUser | null> {
+  const users = await getProxyInboundUsers(inboundId);
+  return users.find((user) => Number(user.sharedUserId || 0) === Number(sharedUserId)) || null;
+}
+
+/**
+ * 给某人在这个入站上开一份独立凭据（已有就直接返回），并同步派生节点。
+ *
+ * 返回他该拿到的那条 proxy_nodes 行 id —— 分享记的是这一条，而不是原来那条。
+ * 这样「取消分享」删掉的是他自己那份凭据，同一个端口上别人的照旧。
+ *
+ * 只对天然支持多凭据的协议成立。Shadowsocks / Snell 一个端口只有一份 PSK，
+ * 硬开多用户会让**已经发出去的所有配置立刻失效**（sing-box 里 users 一存在，
+ * 顶层 password 就会被拒），那是另一件事，不在这里偷偷做。
+ */
+export async function ensureSharedInboundCredential(
+  inboundId: number,
+  sharedUserId: number,
+  label: string,
+): Promise<{ nodeId: number; hostId: number; created: boolean } | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const row = await getProxyInboundById(inboundId);
+  if (!row) return null;
+  const inbound = await loadProxyInbound(inboundId);
+  if (!inbound) return null;
+  if (!proxyInboundSupportsMultiUser(inbound.protocol)) return null;
+
+  const hostId = Number((row as any).hostId);
+  const existing = await getSharedInboundUser(inboundId, sharedUserId);
+  if (!existing) {
+    const credential = createEmptyProxyInboundUser();
+    credential.name = label;
+    credential.sharedUserId = Number(sharedUserId);
+    for (const kind of proxyInboundUserCredentialKinds(inbound.protocol)) {
+      if (kind === "uuid") credential.uuid = randomUUID();
+      else credential.password = nanoid(24);
+    }
+    await insertAndGetId("proxy_inbound_users", {
+      inboundId,
+      name: credential.name,
+      uuid: credential.uuid || null,
+      password: credential.password || null,
+      sharedUserId: credential.sharedUserId,
+      sortOrder: inbound.users.length,
+    } as any);
+  }
+
+  await syncProxyNodeFromInbound(inboundId);
+  const user = await getSharedInboundUser(inboundId, sharedUserId);
+  if (!user) return null;
+  const nodes = await db
+    .select({ id: proxyNodes.id })
+    .from(proxyNodes)
+    .where(and(eq(proxyNodes.inboundId, inboundId), eq(proxyNodes.inboundUserId, user.id)));
+  const nodeId = Number((nodes as any[])[0]?.id || 0);
+  if (!nodeId) return null;
+  return { nodeId, hostId, created: !existing };
+}
+
+/**
+ * 收回某人在这个入站上的独立凭据。返回是否真的删了东西。
+ *
+ * 派生节点由 syncProxyNodeFromInbound 顺带删掉（它按用户对齐，清单里没有的
+ * 就走 deleteProxyNode，分享记录也跟着清）。
+ */
+/**
+ * 这个人手上所有分享来的凭据，全部收回。返回受影响的主机 id，调用方催下发。
+ *
+ * 删账号时必须走一遭：只删 proxy_node_shares 的话，凭据还留在各个端口上活着，
+ * 而那个人已经从用户列表里消失了 —— 界面上再也没有入口能收回它，等于留下
+ * 一份谁也管不着、却照样能连的身份。
+ */
+export async function releaseAllSharedCredentialsForUser(userId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ inboundId: proxyInboundUsers.inboundId })
+    .from(proxyInboundUsers)
+    .where(eq(proxyInboundUsers.sharedUserId, Number(userId)));
+  const inboundIds = Array.from(new Set((rows as any[]).map((row) => Number(row.inboundId)).filter((id) => id > 0)));
+  const hostIds = new Set<number>();
+  for (const inboundId of inboundIds) {
+    const inbound = await getProxyInboundById(inboundId);
+    const released = await releaseSharedInboundCredential(inboundId, Number(userId));
+    const hostId = Number((inbound as any)?.hostId || 0);
+    if (released && hostId > 0) hostIds.add(hostId);
+  }
+  return Array.from(hostIds);
+}
+
+export async function releaseSharedInboundCredential(
+  inboundId: number,
+  sharedUserId: number,
+): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const user = await getSharedInboundUser(inboundId, sharedUserId);
+  if (!user) return false;
+  await db.delete(proxyInboundUsers).where(eq(proxyInboundUsers.id, user.id));
+  await syncProxyNodeFromInbound(inboundId);
+  return true;
 }
 
 // ==================== 派生客户端节点 ====================
@@ -355,23 +814,35 @@ export async function replaceProxyInboundUsers(
  */
 export async function getProxyInboundDerivedNodes(
   inboundIds: readonly number[],
-): Promise<Map<number, { ids: number[]; includeDirect: boolean }>> {
-  const result = new Map<number, { ids: number[]; includeDirect: boolean }>();
+): Promise<Map<number, { ids: number[]; nodes: Array<{ id: number; inboundUserId: number }>; includeDirect: boolean }>> {
+  const result = new Map<number, { ids: number[]; nodes: Array<{ id: number; inboundUserId: number }>; includeDirect: boolean }>();
   const ids = Array.from(new Set(inboundIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)));
-  for (const id of ids) result.set(id, { ids: [], includeDirect: false });
+  for (const id of ids) result.set(id, { ids: [], nodes: [], includeDirect: false });
   if (ids.length === 0) return result;
 
   const db = await getDb();
   if (!db) return result;
   const rows = await db
-    .select({ id: proxyNodes.id, inboundId: proxyNodes.inboundId, includeDirect: proxyNodes.includeDirect })
+    .select({
+      id: proxyNodes.id,
+      inboundId: proxyNodes.inboundId,
+      inboundUserId: proxyNodes.inboundUserId,
+      includeDirect: proxyNodes.includeDirect,
+    })
     .from(proxyNodes)
-    .where(inArray(proxyNodes.inboundId, ids));
+    .where(inArray(proxyNodes.inboundId, ids))
+    .orderBy(asc(proxyNodes.inboundUserId), asc(proxyNodes.id));
 
   for (const row of rows as any[]) {
     const entry = result.get(Number(row.inboundId));
     if (!entry) continue;
     entry.ids.push(Number(row.id));
+    /**
+     * 带上 inboundUserId：界面要把「哪条节点是哪份凭据」对上号。原来只给一串
+     * id，靠它跟用户清单的下标对齐 —— 查询本来就没保证顺序，凭据一增一删就会
+     * 对错人，而对错的后果是把 A 的链接当成 B 的发出去。
+     */
+    entry.nodes.push({ id: Number(row.id), inboundUserId: Number(row.inboundUserId || 0) });
     // 多用户入站有好几条派生节点，只要有一条进了订阅就算开着。
     if (row.includeDirect === true || row.includeDirect === 1) entry.includeDirect = true;
   }

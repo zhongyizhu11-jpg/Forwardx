@@ -20,6 +20,8 @@ import { isValidHostOrIp as isValidNetworkHostOrIp } from "../networkAddress";
 import { planAgentUpgradeWaves } from "../agentUpgradeRollout";
 import { billingCalendarParts } from "@shared/billingTime";
 import { normalizeAgentProbeCounts } from "@shared/agentDtos";
+import { buildAgentScriptCommand } from "@shared/agentInstallCommand";
+import { getConfiguredPanelUrl } from "../agentPanelUrl";
 
 const HOST_UPGRADE_CLEANUP_INTERVAL_MS = 60 * 1000;
 const GITHUB_API_LIMIT_STATUSES = new Set([403, 429]);
@@ -399,6 +401,56 @@ async function getVisibleHostsForUser(user: { id: number; role: string }, option
   const visibleHosts = allHosts.filter((h: any) => allowedSet.has(h.id) || h.userId === user.id);
   if (shouldScheduleGeoRefresh) scheduleHostGeoRefresh(visibleHosts);
   return db.orderVisibleHostsForUser(visibleHosts, user.id);
+}
+
+/**
+ * 谁能看某台主机的 Agent 安装命令。
+ *
+ * 命令里带着 agentToken，谁拿到谁就能把一台机器接进面板并冒充它上报 —— 所以
+ * 这条判定跟 canOpenInboundOnHost 一样，宁可单独拎出来测：被授权用这台主机
+ * （管理员授权或套餐附带）不等于可以拿它的令牌，只有主人和管理员可以。
+ *
+ * userId 从不同数据库回来有时是字符串，用 Number() 归一 —— 用 === 比的话，
+ * 主人会被判成外人。
+ */
+/** 普通用户自己能加几台机器。0 = 不限；没配就是这个数。 */
+export const DEFAULT_SELF_SERVICE_HOST_LIMIT = 10;
+
+/**
+ * 自助加机器的额度检查。
+ *
+ * 「我的机器」把 hosts.create 摆到了界面上（在那之前它虽然也是
+ * protectedProcedure，但没有入口）。机器行本身不消耗资源 —— Agent 没连上就是
+ * 条死记录 —— 可它会进管理员的主机列表、进仪表盘统计，一个人灌几千条就把
+ * 那些页面淹了。所以给一道刹车，默认 10 台，管理员可在系统设置里改。
+ *
+ * 管理员不受限：他要开满，拦了反而碍事。
+ */
+export function selfServiceHostLimitFrom(raw: string | null | undefined): number {
+  const text = String(raw ?? "").trim();
+  if (!text) return DEFAULT_SELF_SERVICE_HOST_LIMIT;
+  const value = Number(text);
+  if (!Number.isFinite(value) || value < 0) return DEFAULT_SELF_SERVICE_HOST_LIMIT;
+  return Math.floor(value);
+}
+
+export function canAddSelfServiceHost(
+  user: { role: string },
+  ownedCount: number,
+  limit: number,
+): boolean {
+  if (user.role === "admin") return true;
+  if (limit <= 0) return true;
+  return ownedCount < limit;
+}
+
+export function canReadHostInstallCommand(
+  user: { id: number; role: string },
+  host: { userId?: unknown } | null | undefined,
+): boolean {
+  if (!host) return false;
+  if (user.role === "admin") return true;
+  return Number((host as any).userId) === Number(user.id);
 }
 
 function compactHostForList(host: any) {
@@ -1047,6 +1099,13 @@ export const hostsRouter = router({
         blockTls: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "admin") {
+          const limit = selfServiceHostLimitFrom(await db.getSetting("selfServiceHostLimit"));
+          const owned = (await db.getHosts(ctx.user.id)).length;
+          if (!canAddSelfServiceHost(ctx.user, owned, limit)) {
+            throw new Error(`你自己添加的机器已达上限（${owned}/${limit}）。删掉一台，或让管理员调高上限。`);
+          }
+        }
         // 验证端口区间
         if ((input.portRangeStart != null && input.portRangeEnd == null) || (input.portRangeStart == null && input.portRangeEnd != null)) {
           throw new Error("请同时填写端口区间的起始和结束值，或同时留空");
@@ -1086,6 +1145,54 @@ export const hostsRouter = router({
         });
         return { id, agentToken };
       }),
+    /**
+     * 自己那台机器的 Agent 安装命令。
+     *
+     * 「主机管理」整页对普通用户是关着的，可 hosts.create 本来就允许他建自己的
+     * 主机 —— 建完却拿不到安装命令，机器就永远连不上，等于建了个空壳。
+     *
+     * 命令由服务端拼：拼它要读 panelPublicUrl、GitHub 加速、agentPreferPanelInstall
+     * 三个系统设置，那是管理员接口，租户读不到。顺带 agentToken 也不必再单独
+     * 发一趟 —— 列表接口是特意把它摘掉的（compactHostForList）。
+     */
+    agentInstallCommand: protectedProcedure
+      .input(z.object({ hostId: z.number().int().positive() }))
+      .query(async ({ input, ctx }) => {
+        const host = await db.getHostById(input.hostId);
+        if (!host) throw new Error("主机不存在");
+        if (!canReadHostInstallCommand(ctx.user, host)) throw new Error("无权查看此主机的安装命令");
+        const token = String((host as any).agentToken || "");
+        if (!token) throw new Error("这台主机还没有 Agent 令牌");
+        const settings = await db.getAllSettings();
+        const panelUrl = await getConfiguredPanelUrl();
+        return {
+          /** 面板公开地址没配时为空 —— 界面要据此提示去配，而不是给一条装不上的命令。 */
+          panelUrl,
+          command: panelUrl
+            ? buildAgentScriptCommand({
+              panelUrl,
+              action: "install",
+              token,
+              githubAcceleratorUrl: settings.githubAcceleratorUrl || "",
+              githubAcceleratorEnabled: settings.githubAcceleratorEnabled === "true",
+              preferPanelInstall: settings.agentPreferPanelInstall === "true",
+            })
+            : "",
+        };
+      }),
+    /**
+     * 自助加机器还能加几台。界面要把「2/10」摆出来 —— 到了上限才弹一句错误
+     * 提示，等于让人白填一遍表单。
+     */
+    selfServiceQuota: protectedProcedure.query(async ({ ctx }) => {
+      const limit = selfServiceHostLimitFrom(await db.getSetting("selfServiceHostLimit"));
+      const used = (await db.getHosts(ctx.user.id)).length;
+      return {
+        used,
+        limit: ctx.user.role === "admin" ? 0 : limit,
+        canAdd: canAddSelfServiceHost(ctx.user, used, limit),
+      };
+    }),
     reorder: protectedProcedure
       .input(z.object({
         ids: reorderIdsSchema,

@@ -193,10 +193,17 @@ export type ProxyInboundUser = {
   uuid: string;
   /** trojan / hysteria2 / tuic / anytls 用 */
   password: string;
+  /**
+   * 这份凭据是为哪个面板用户单独发的（分享时自动开的），0 = 手工加的。
+   *
+   * 界面据此把它标成只读：它的生死跟着分享走，在入站弹窗里删掉它并不会取消
+   * 分享，只会让对方莫名其妙连不上。
+   */
+  sharedUserId?: number;
 };
 
 export function createEmptyProxyInboundUser(): ProxyInboundUser {
-  return { id: 0, name: "", uuid: "", password: "" };
+  return { id: 0, name: "", uuid: "", password: "", sharedUserId: 0 };
 }
 
 /** 这个协议的每用户凭据是哪一种。决定要生成 UUID 还是密码。 */

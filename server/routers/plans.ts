@@ -3,6 +3,7 @@ import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { appendPanelLog } from "../_core/panelLogger";
 import * as db from "../db";
 import { refreshUserForwardEndpoints } from "./helpers";
+import { parseExpiryReminderDays } from "@shared/expiryReminder";
 
 const planInput = z.object({
   name: z.string().min(1).max(80),
@@ -29,10 +30,17 @@ const planInput = z.object({
   allowProxySubscription: z.boolean().default(false),
   isActive: z.boolean().default(true),
   isStoreVisible: z.boolean().default(true),
+  /** true = 附带节点给每人单开一个端口（能按人计量）；false = 共用端口各发一份凭据。 */
+  dedicatedProxyPort: z.boolean().default(false),
   sortOrder: z.number().int().min(0).max(9999).default(0),
   hostIds: z.array(z.number().int().positive()).default([]),
   tunnelIds: z.array(z.number().int().positive()).default([]),
   forwardGroupIds: z.array(z.number().int().positive()).default([]),
+  /**
+   * 套餐附带的落地节点。买了（或被分配）自动在这些节点上发一份独立凭据，
+   * 到期、取消、换套餐自动收回 —— 不必每来一个客户手工分一次。
+   */
+  proxyNodeIds: z.array(z.number().int().positive()).max(200).default([]),
   trafficAddons: z.array(z.object({
     trafficBytes: z.number().int().positive(),
     priceCents: z.number().int().min(0).max(100_000_000),
@@ -55,6 +63,10 @@ export const plansRouter = router({
   list: adminProcedure.query(async () => {
     return db.listSubscriptionPlans(true);
   }),
+  /** 套餐能挂哪些落地节点。跟分享用的是同一份清单，不含任何凭据。 */
+  proxyNodeOptions: adminProcedure.query(async () => {
+    return db.getProxyNodeShareOptions();
+  }),
   options: adminProcedure.query(async () => {
     return db.listSubscriptionPlanOptions(true);
   }),
@@ -76,7 +88,7 @@ export const plansRouter = router({
   create: adminProcedure
     .input(planInput)
     .mutation(async ({ input }) => {
-      const { hostIds, tunnelIds, forwardGroupIds, trafficAddons, ...data } = input;
+      const { hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds, ...data } = input;
       if (hostIds.length === 0 && tunnelIds.length === 0 && forwardGroupIds.length === 0) {
         throw new Error("套餐至少需要绑定一个端口转发、隧道、转发链或转发组");
       }
@@ -84,7 +96,7 @@ export const plansRouter = router({
         ...data,
         description: data.description || null,
         currency: data.currency.toUpperCase(),
-      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons);
+      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds);
     }),
   update: adminProcedure
     .input(planInput.extend({
@@ -92,7 +104,7 @@ export const plansRouter = router({
       syncExistingSubscribers: z.boolean().default(true),
     }))
     .mutation(async ({ input, ctx }) => {
-      const { id, hostIds, tunnelIds, forwardGroupIds, trafficAddons, syncExistingSubscribers, ...data } = input;
+      const { id, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds, syncExistingSubscribers, ...data } = input;
       if (hostIds.length === 0 && tunnelIds.length === 0 && forwardGroupIds.length === 0) {
         throw new Error("套餐至少需要绑定一个端口转发、隧道、转发链或转发组");
       }
@@ -103,7 +115,7 @@ export const plansRouter = router({
         ...data,
         description: data.description || null,
         currency: data.currency.toUpperCase(),
-      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons);
+      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds);
       if (syncExistingSubscribers) {
         const userIds = await db.syncPlanSubscribers(id);
         for (const userId of userIds) {
@@ -152,6 +164,36 @@ export const plansRouter = router({
         excludeCancelled: true,
         visibility: "admin",
       });
+    }),
+  /**
+   * 快到期了没有 —— 给面板顶上那条横幅用。
+   *
+   * 邮件和 Telegram 提醒都要求用户先绑定；没绑的人（多数）在到期前收不到任何
+   * 消息，断了才发现。这条谁都看得见，成本也只是一次很轻的查询。
+   */
+  myExpiryNotice: protectedProcedure.query(async ({ ctx }) => {
+    const subscriptions = await db.listUserSubscriptions(ctx.user.id, { visibility: "user" });
+    const now = Date.now();
+    const soonest = (subscriptions as any[])
+      .filter((row) => row.status === "active" && row.expiresAt && new Date(row.expiresAt).getTime() > now)
+      .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime())[0];
+    if (!soonest) return { daysLeft: null as number | null, expiresAt: null as string | null, planName: "" };
+    const daysLeft = Math.ceil((new Date(soonest.expiresAt).getTime() - now) / (24 * 60 * 60 * 1000));
+    return {
+      daysLeft,
+      expiresAt: String(soonest.expiresAt),
+      planName: String(soonest.planName || ""),
+      reminderDays: parseExpiryReminderDays(await db.getSetting("expiryReminderDays")),
+    };
+  }),
+  /** 自己开关这条订阅的自动续费。 */
+  setAutoRenew: protectedProcedure
+    .input(z.object({ id: z.number().int().positive(), autoRenew: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const ok = await db.setUserSubscriptionAutoRenew(input.id, ctx.user.id, input.autoRenew);
+      if (!ok) throw new Error("订阅不存在");
+      appendPanelLog("info", `[Plan] auto-renew ${input.autoRenew ? "on" : "off"} subscription=${input.id} user=${ctx.user.id}`);
+      return { success: true };
     }),
   mySubscriptions: protectedProcedure.query(async ({ ctx }) => {
     await db.expireUserSubscriptions();

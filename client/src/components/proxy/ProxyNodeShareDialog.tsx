@@ -21,11 +21,18 @@ export function ProxyNodeShareDialog({
   onOpenChange,
   targets,
   title = "分享这个节点",
+  credentialMode = "shared",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   targets: ProxyNodeShareTarget[];
   title?: string;
+  /**
+   * 这个节点分享出去的是哪种凭据。两种的后果差得很远，说明必须跟着变：
+   * per-recipient 一人一份，取消只断他一个；shared 是同一份抄给大家，收回
+   * 的唯一办法是换掉它，届时所有人都要重拉订阅。
+   */
+  credentialMode?: "per-recipient" | "shared";
 }) {
   const utils = trpc.useUtils();
   /**
@@ -111,8 +118,19 @@ export function ProxyNodeShareDialog({
         </DialogHeader>
 
         <p className="text-xs text-muted-foreground">
-          选中的人，订阅里会直接多出这个节点。节点仍然是你的，他改不了也删不掉；
-          流量记在你名下 —— 同一个端口分给几个人用，面板按端口计量，拆不开。
+          {credentialMode === "per-recipient" ? (
+            <>
+              选中的人，订阅里会直接多出这个节点，<span className="font-medium text-foreground">每人一份独立凭据</span>：
+              取消分享时只吊销他那一份，同一个端口上别人照常。节点仍然是你的，他改不了也删不掉；
+              流量记在你名下 —— 面板按端口计量，几个人的量混在一起，拆不开。
+            </>
+          ) : (
+            <>
+              选中的人，订阅里会直接多出这个节点。<span className="font-medium text-foreground">这个端口只有一份凭据</span>，
+              分给几个人就是几个人共用同一份，想收回只能把它换掉，届时所有人都要重拉订阅。
+              节点仍然是你的；流量记在你名下，按端口计量，拆不开。
+            </>
+          )}
         </p>
 
         <div className="relative">
