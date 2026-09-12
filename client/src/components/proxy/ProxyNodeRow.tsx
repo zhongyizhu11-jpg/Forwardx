@@ -22,6 +22,33 @@ export type ProxyNodeRowAction = {
 };
 
 /**
+ * 一行的全部内容，做成数据。
+ *
+ * 「我的节点」那张卡把自建、粘贴、分享来的三类节点合成了一个列表，而这三类的
+ * 开关和动作各写各的字段（自建行的开关写派生节点的 includeDirect，粘贴行写自己
+ * 那条记录）。**所以行是由各自的 owner 组装好之后传下来的，不是在列表里按类型
+ * 分支** —— 接错线的后果是用户点了开关、界面变了，写下去的却是另一条记录。
+ *
+ * protocol / sortName 给列表用来分组和排序。
+ */
+export type ProxyNodeRowSpec = {
+  key: string;
+  leading?: ReactNode;
+  name: ReactNode;
+  tag?: ReactNode;
+  meta: ReactNode;
+  detail?: ReactNode;
+  inline?: ReactNode;
+  toggle?: ReactNode;
+  actions?: ProxyNodeRowAction[];
+  muted?: boolean;
+  /** 分组用。空串表示未知，会落进「其他」。 */
+  protocol?: string;
+  /** 组内排序用的纯文本名字。 */
+  sortName?: string;
+};
+
+/**
  * 节点行的统一骨架，「新建节点」与「落地节点」两段共用。
  *
  * 第一行的规矩：名字 + 最多一个徽章，别的一律放第二行。

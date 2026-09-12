@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { ProxyNodeRow, proxyNodeMetaText } from "@/components/proxy/ProxyNodeRow";
+import { ProxyNodeRow, proxyNodeMetaText, type ProxyNodeRowSpec } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog, type ProxyNodeShareTarget } from "@/components/proxy/ProxyNodeShareDialog";
 import { clipboardNeedsManualCopy, copyTextFromElement, copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
@@ -27,8 +27,28 @@ import {
   type ProxyInboundSecurity,
 } from "@shared/proxyInbound";
 import { PROXY_NODE_PROTOCOL_LABELS, type ProxyNodeProtocol, type ProxyNodeTransport } from "@shared/proxyNode";
-import { ChevronDown, Copy, KeyRound, Link2, Pencil, Plus, Radio, RefreshCw, Share2, Trash2, UserRound } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { groupProxyNodes, resolveProxyNodeGroupMode, type ProxyNodeGroupMode } from "@shared/proxyNodeGrouping";
+import {
+  ChevronDown,
+  Copy,
+  Eye,
+  KeyRound,
+  Link2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Server,
+  Share2,
+  Trash2,
+  UserRound,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 const TRANSPORT_LABELS: Record<string, string> = {
@@ -94,7 +114,56 @@ function emptyForm(): InboundForm {
   };
 }
 
-export default function ProxyInboundsSection() {
+/**
+ * 「我的节点」这张卡。
+ *
+ * 自建、粘贴、别人分享来的三类节点合成**一个**列表 —— 租户脑子里它们本来就是
+ * 同一件事（「我有哪些线路」），分成三张卡是我们的实现细节漏到了界面上。
+ *
+ * 三类的开关和动作写的是不同字段，所以**行由各自的 owner 组装成 ProxyNodeRowSpec
+ * 之后传进来**（粘贴/分享那两类走 extraRows），这里只负责分组和排版。这样不存在
+ * 「在列表里按类型分支、结果接错线」的可能。
+ */
+export default function ProxyInboundsSection({
+  extraRows = [],
+  extraLoading = false,
+  groupMode,
+  onGroupModeChange,
+  groupModeOptions,
+  onPasteNode,
+  inboundLeading,
+  onOpenPreview,
+  previewAlertCount = 0,
+  onOpenHosts,
+  onlineCount = 0,
+  offlineCount = 0,
+}: {
+  /** 粘贴进来的、以及别人分享来的节点，由「订阅管理」那一页组装。 */
+  extraRows?: ProxyNodeRowSpec[];
+  extraLoading?: boolean;
+  groupMode?: ProxyNodeGroupMode;
+  onGroupModeChange?: (mode: ProxyNodeGroupMode) => void;
+  groupModeOptions?: ReadonlyArray<{ value: ProxyNodeGroupMode; label: string }>;
+  /** 「粘一条链接」走这条 —— 那个弹窗归「订阅管理」那一页管。 */
+  onPasteNode?: () => void;
+  /**
+   * 自建行左边那个状态点。探测结果挂在派生节点上，是「订阅管理」那一页的数据，
+   * 所以由它渲染再传进来 —— 合并之后两类行都得有这个点，否则一半有一半没有，
+   * 看起来像自建节点永远查不出状态。
+   */
+  inboundLeading?: (inboundId: number) => ReactNode;
+  onOpenPreview?: () => void;
+  /**
+   * 预览里等着处理的条数（现在是「还没加入订阅的转发」）。收进弹窗之后这个信号
+   * 就看不见了 —— 转发建好了却没进订阅，用户只会以为订阅坏了，所以在按钮上留一个
+   * 角标把它顶出来。
+   */
+  previewAlertCount?: number;
+  /** 非管理员才有：「我的机器」降级成这里的一个入口。 */
+  onOpenHosts?: () => void;
+  onlineCount?: number;
+  offlineCount?: number;
+} = {}) {
   const { user: me } = useAuth();
   const isAdmin = me?.role === "admin";
   const utils = trpc.useUtils();
@@ -379,6 +448,100 @@ export default function ProxyInboundsSection() {
   };
 
   const rows = (inboundsQuery.data || []) as any[];
+  /**
+   * 自建节点这一路的行规格。
+   *
+   * 组装在这里而不是在列表里：它的开关写的是派生节点的 includeDirect，跟粘贴那一
+   * 路写的完全不是一个字段。各自组装好再汇到一个列表，接错线这件事就不可能发生。
+   */
+  const inboundRowSpecs = useMemo<ProxyNodeRowSpec[]>(() => rows.map((row) => ({
+    key: `inbound-${row.id}`,
+    leading: inboundLeading?.(Number(row.id)),
+    name: row.name,
+    protocol: String(row.protocol || ""),
+    sortName: String(row.name || ""),
+    tag: (
+      <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+        {PROXY_NODE_PROTOCOL_LABELS[row.protocol as ProxyNodeProtocol] || row.protocol}
+      </Badge>
+    ),
+    muted: !row.isEnabled,
+    // 地址排最前：它是这一行里最常要看的，排后面就会被前面的安全层、归属挤到
+    // 省略号里去。来源（自建）紧跟其后 —— 合成一个列表之后，那是认出这行是什么
+    // 的第一眼信息。
+    meta: proxyNodeMetaText([
+      "自建",
+      `${hostName(Number(row.hostId))}:${row.port}`,
+      row.security !== "none"
+        ? PROXY_INBOUND_SECURITY_LABELS[row.security as ProxyInboundSecurity] || row.security
+        : "",
+      row.transport && row.transport !== "tcp" ? TRANSPORT_LABELS[row.transport] || row.transport : "",
+      isAdmin ? `归 ${ownerLabel(Number(row.userId))}` : "",
+      Array.isArray(row.users) && row.users.length > 1 ? `${row.users.length} 份凭据` : "",
+      Number(row.sharedUserCount || 0) > 0 ? `分享给 ${row.sharedUserCount} 人` : "",
+      // 套餐附带的专属端口是面板托管的，标出来，免得人以为是自己建的。
+      Number(row.clonedFromInboundId || 0) > 0 ? "套餐附带 · 面板托管" : "",
+      !row.isEnabled ? "已停用" : "",
+    ]),
+    toggle: (
+      <Switch
+        className="shrink-0 scale-90"
+        checked={!!row.includeDirect}
+        title={row.includeDirect ? "已在订阅里，关掉就不出现" : "加进订阅"}
+        onCheckedChange={(checked) => void setInSubscription(row, checked)}
+      />
+    ),
+    actions: [
+      {
+        key: "link",
+        label: "复制链接",
+        icon: Link2,
+        disabled: linkLoadingId === Number(row.id),
+        onSelect: () => void openLinks(row),
+      },
+      ...(isAdmin
+        ? [{ key: "share", label: "分享给用户", icon: Share2, onSelect: () => openShare(row) }]
+        : []),
+      /**
+       * 面板托管的专属端口不给编辑和删除。
+       *
+       * 删了下一次权益重算又会建回来 —— 中间那段时间他自己连不上，而界面上看不出
+       * 是自己删的。改也一样：源入站一变就被覆盖。要停就去改套餐，那才是它的来源。
+       */
+      ...(Number(row.clonedFromInboundId || 0) > 0
+        ? []
+        : [
+          { key: "edit", label: "编辑", icon: Pencil, onSelect: () => openEdit(row) },
+          { key: "rotate", label: "重置凭据", icon: KeyRound, onSelect: () => void askRotate(row) },
+          { key: "delete", label: "删除", icon: Trash2, destructive: true, onSelect: () => void askDelete(row) },
+        ]),
+    ],
+  })), [rows, hosts, userOptions, isAdmin, linkLoadingId, inboundLeading]);
+
+  /** 三类合成一个列表：自建在前（它们是这一页的起点），然后是粘贴和分享来的。 */
+  const allRowSpecs = useMemo(() => [...inboundRowSpecs, ...extraRows], [inboundRowSpecs, extraRows]);
+  const totalRowCount = allRowSpecs.length;
+  /**
+   * 分组沿用订阅那一套（按协议 / 自动），只是现在作用在合并后的整张列表上。
+   * 传 protocol 进去就够 —— groupProxyNodes 只看这一个字段。
+   */
+  /**
+   * groupProxyNodes 要的是 { id, protocol, health }，而行规格里没有 id ——
+   * 给它一个稳定的序号就行：分组只按协议看，id 只用来做键。
+   */
+  const groupableRows = useMemo(
+    () => allRowSpecs.map((spec, index) => ({ ...spec, id: index + 1, protocol: spec.protocol || "" })),
+    [allRowSpecs],
+  );
+  const effectiveGroupMode = useMemo(
+    () => resolveProxyNodeGroupMode(groupMode || "none", groupableRows as any),
+    [groupMode, groupableRows],
+  );
+  const nodeGroups = useMemo(
+    () => groupProxyNodes(groupableRows, groupMode || "none"),
+    [groupableRows, groupMode],
+  );
+
   const saving = createInbound.isPending || updateInbound.isPending;
   const isReality = form.security === "reality";
   const isTls = form.security === "tls";
@@ -392,7 +555,6 @@ export default function ProxyInboundsSection() {
       <div className="space-y-4">
         <Card>
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
-            {/* 与「落地节点」「订阅内容」同一套折叠交互：这一页现在有好几段，都要能收起来。 */}
             <button
               type="button"
               className="flex min-w-0 items-center gap-2 text-left"
@@ -400,89 +562,114 @@ export default function ProxyInboundsSection() {
               aria-expanded={!collapsed}
             >
               <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
-              <Radio className="h-4 w-4 shrink-0" />
-              <CardTitle className="text-base">新建节点</CardTitle>
-              {rows.length > 0 ? (
-                <span className="truncate text-xs text-muted-foreground">{rows.length} 个</span>
+              <Server className="h-4 w-4 shrink-0" />
+              <CardTitle className="text-base">我的节点</CardTitle>
+              {totalRowCount > 0 ? (
+                <span className="truncate text-xs text-muted-foreground">
+                  {totalRowCount} 个
+                  {onlineCount > 0 ? ` · ${onlineCount} 在线` : ""}
+                  {offlineCount > 0 ? ` · ${offlineCount} 离线` : ""}
+                </span>
               ) : null}
             </button>
-            <Button size="sm" onClick={openCreate} disabled={hosts.length === 0}>
-              <Plus className="mr-1 h-4 w-4" />
-              新建
-            </Button>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {/* 分组只在真的有好几条时才给 —— 两条节点摆个分组下拉是噪音。 */}
+              {groupMode && onGroupModeChange && groupModeOptions && totalRowCount > 1 ? (
+                <Select value={groupMode} onValueChange={(value) => onGroupModeChange(value as ProxyNodeGroupMode)}>
+                  <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {groupModeOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+              {onOpenHosts ? (
+                <Button size="sm" variant="outline" onClick={onOpenHosts}>
+                  <Server className="mr-1 h-4 w-4" />
+                  我的机器
+                </Button>
+              ) : null}
+              {onOpenPreview ? (
+                /* 「订阅内容」本来就是预览，不该常驻一张卡 —— 收成一个按钮。 */
+                <Button size="sm" variant="outline" className="relative" onClick={onOpenPreview}>
+                  <Eye className="mr-1 h-4 w-4" />
+                  预览订阅
+                  {previewAlertCount > 0 ? (
+                    <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-medium tabular-nums text-amber-600 dark:text-amber-400">
+                      {previewAlertCount}
+                    </span>
+                  ) : null}
+                </Button>
+              ) : null}
+              {onPasteNode ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm">
+                      <Plus className="mr-1 h-4 w-4" />
+                      新建
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {/*
+                      两种来源都在这一个入口里：一个是让面板去自己的机器上开端口，
+                      一个是把别处的链接粘进来。没有可用主机时前者是灰的，并在下面
+                      给出原因 —— 不能只给个灰按钮让人猜。
+                    */}
+                    <DropdownMenuItem disabled={hosts.length === 0} onSelect={() => openCreate()}>
+                      在我的机器上开一个
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => onPasteNode()}>
+                      粘一条节点链接
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <Button size="sm" onClick={openCreate} disabled={hosts.length === 0}>
+                  <Plus className="mr-1 h-4 w-4" />
+                  新建
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent hidden={collapsed} className="pt-0">
-            {inboundsQuery.isLoading ? (
+            {inboundsQuery.isLoading || extraLoading ? (
               <DataSectionLoading />
-            ) : rows.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                还没有节点。REALITY 不需要域名和证书，建完就能用。
+            ) : totalRowCount === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                还没有节点。可以让面板在你自己的机器上开一个（REALITY 不需要域名和证书），
+                也可以把别处的节点链接粘进来。
               </p>
             ) : (
-              <div className="space-y-1.5">
-                {rows.map((row) => (
-                  <ProxyNodeRow
-                    key={row.id}
-                    name={row.name}
-                    tag={(
-                      <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] font-normal">
-                        {PROXY_NODE_PROTOCOL_LABELS[row.protocol as ProxyNodeProtocol] || row.protocol}
-                      </Badge>
-                    )}
-                    muted={!row.isEnabled}
-                    // 地址排最前：它是这一行里最常要看的，排后面就会被前面的
-                    // 安全层、归属挤到省略号里去。
-                    meta={proxyNodeMetaText([
-                      `${hostName(Number(row.hostId))}:${row.port}`,
-                      row.security !== "none"
-                        ? PROXY_INBOUND_SECURITY_LABELS[row.security as ProxyInboundSecurity] || row.security
-                        : "",
-                      row.transport && row.transport !== "tcp"
-                        ? TRANSPORT_LABELS[row.transport] || row.transport
-                        : "",
-                      isAdmin ? `归 ${ownerLabel(Number(row.userId))}` : "",
-                      Array.isArray(row.users) && row.users.length > 1 ? `${row.users.length} 份凭据` : "",
-                      Number(row.sharedUserCount || 0) > 0 ? `分享给 ${row.sharedUserCount} 人` : "",
-                      // 套餐附带的专属端口是面板托管的，标出来，免得人以为是自己建的。
-                      Number(row.clonedFromInboundId || 0) > 0 ? "套餐附带 · 面板托管" : "",
-                      !row.isEnabled ? "已停用" : "",
-                    ])}
-                    toggle={(
-                      <Switch
-                        className="shrink-0 scale-90"
-                        checked={!!row.includeDirect}
-                        title={row.includeDirect ? "已在订阅里，关掉就不出现" : "加进订阅"}
-                        onCheckedChange={(checked) => void setInSubscription(row, checked)}
-                      />
-                    )}
-                    actions={[
-                      {
-                        key: "link",
-                        label: "复制链接",
-                        icon: Link2,
-                        disabled: linkLoadingId === Number(row.id),
-                        onSelect: () => void openLinks(row),
-                      },
-                      ...(isAdmin
-                        ? [{ key: "share", label: "分享给用户", icon: Share2, onSelect: () => openShare(row) }]
-                        : []),
-                      /**
-                       * 面板托管的专属端口不给编辑和删除。
-                       *
-                       * 删了下一次权益重算又会建回来 —— 中间那段时间他自己连不上，
-                       * 而界面上看不出是自己删的。改也一样：源入站一变就被覆盖。
-                       * 要停就去改套餐，那才是它的来源。
-                       */
-                      ...(Number(row.clonedFromInboundId || 0) > 0
-                        ? []
-                        : [
-                          { key: "edit", label: "编辑", icon: Pencil, onSelect: () => openEdit(row) },
-                          { key: "rotate", label: "重置凭据", icon: KeyRound, onSelect: () => void askRotate(row) },
-                          { key: "delete", label: "删除", icon: Trash2, destructive: true, onSelect: () => void askDelete(row) },
-                        ]),
-                    ]}
-                  />
-                ))}
+              <div className="space-y-3">
+                {nodeGroups.map((group) => {
+                  // 不分组时只有一组，没必要给它加个「全部」标题占一行。
+                  const showHeader = effectiveGroupMode !== "none";
+                  return (
+                    <div key={group.key} className="space-y-1.5">
+                      {showHeader ? (
+                        <p className="px-1 text-[11px] font-medium text-muted-foreground">
+                          {group.label}
+                          <span className="ml-1 tabular-nums">({group.nodes.length})</span>
+                        </p>
+                      ) : null}
+                      {group.nodes.map((spec) => (
+                        <ProxyNodeRow
+                          key={spec.key}
+                          leading={spec.leading}
+                          name={spec.name}
+                          tag={spec.tag}
+                          meta={spec.meta}
+                          detail={spec.detail}
+                          inline={spec.inline}
+                          toggle={spec.toggle}
+                          actions={spec.actions}
+                          muted={spec.muted}
+                        />
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
             )}
             {hosts.length === 0 ? (
@@ -492,8 +679,8 @@ export default function ProxyInboundsSection() {
                   所以不能对所有人都说「先去主机管理装一台」—— 那是一句他做不到的指示。
                 */}
                 {isAdmin
-                  ? "还没有可用主机。自建节点要靠 Agent 下发配置，先去「主机管理」装一台。"
-                  : "还没有可用主机。自建节点要开在装了 Agent 的机器上：可以在上面的「我的机器」里加一台自己的，也可以让管理员授权一台。"}
+                  ? "没有可用主机，所以不能让面板替你开端口。自建节点要靠 Agent 下发配置，先去「主机管理」装一台。"
+                  : "没有可用主机，所以不能让面板替你开端口。可以在「我的机器」里加一台自己的，也可以让管理员授权一台；粘贴别处的节点链接不受影响。"}
               </p>
             ) : null}
           </CardContent>

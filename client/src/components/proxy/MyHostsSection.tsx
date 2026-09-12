@@ -1,7 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -9,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { ProxyNodeRow, proxyNodeMetaText } from "@/components/proxy/ProxyNodeRow";
 import { clipboardNeedsManualCopy, copyTextFromElement } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
-import { ChevronDown, Plus, Server, Terminal, Trash2 } from "lucide-react";
+import { Plus, Terminal, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -34,7 +33,6 @@ export default function MyHostsSection() {
   const utils = trpc.useUtils();
   const confirm = useConfirmDialog();
 
-  const [collapsed, setCollapsed] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ name: "", ip: "" });
   const [commandHostId, setCommandHostId] = useState(0);
@@ -107,84 +105,9 @@ export default function MyHostsSection() {
   const commandText = commandQuery.data?.command || "";
   const panelUrlMissing = !!commandQuery.data && !commandQuery.data.panelUrl;
 
-  return (
+  /** 两个弹窗（加机器 / 安装命令）两种布局都要用，所以拎出来。 */
+  const dialogs = (
     <>
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
-          <button
-            type="button"
-            className="flex min-w-0 items-center gap-2 text-left"
-            onClick={() => setCollapsed((prev) => !prev)}
-            aria-expanded={!collapsed}
-          >
-            <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
-            <Server className="h-4 w-4 shrink-0" />
-            <CardTitle className="text-base">我的机器</CardTitle>
-            {myHosts.length > 0 ? (
-              <span className="truncate text-xs text-muted-foreground">
-                {quotaLimit > 0 ? `${myHosts.length}/${quotaLimit} 台` : `${myHosts.length} 台`}
-                {onlineCount > 0 ? ` · ${onlineCount} 在线` : ""}
-              </span>
-            ) : null}
-          </button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!canAddHost}
-            title={canAddHost ? undefined : `自己添加的机器已达上限（${quotaLimit} 台），删掉一台，或让管理员调高上限`}
-            onClick={() => setAddOpen(true)}
-          >
-            <Plus className="mr-1 h-4 w-4" />
-            加一台
-          </Button>
-        </CardHeader>
-        <CardContent hidden={collapsed} className="pt-0">
-          {hostsQuery.isLoading ? (
-            <DataSectionLoading />
-          ) : myHosts.length === 0 ? (
-            <p className="py-4 text-center text-xs text-muted-foreground">
-              还没有自己的机器。加一台之后，把它给出的命令粘进那台机器的 SSH 装上 Agent，就能在上面开自己的节点。
-            </p>
-          ) : (
-            <div className="space-y-1.5">
-              {myHosts.map((host) => (
-                <ProxyNodeRow
-                  key={host.id}
-                  leading={
-                    <span
-                      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${host.isOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
-                      title={host.isOnline ? "Agent 已连上面板" : "Agent 还没连上面板"}
-                      aria-label={host.isOnline ? "在线" : "离线"}
-                    />
-                  }
-                  name={host.name}
-                  meta={proxyNodeMetaText([
-                    host.ip,
-                    host.isOnline ? "在线" : "离线",
-                    host.agentVersion ? `Agent ${host.agentVersion}` : "还没装 Agent",
-                  ])}
-                  actions={[
-                    {
-                      key: "command",
-                      label: "安装命令",
-                      icon: Terminal,
-                      onSelect: () => setCommandHostId(Number(host.id)),
-                    },
-                    {
-                      key: "delete",
-                      label: "删除",
-                      icon: Trash2,
-                      destructive: true,
-                      onSelect: () => void askDelete(host),
-                    },
-                  ]}
-                />
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -270,6 +193,83 @@ export default function MyHostsSection() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </>
+  );
+
+  /**
+   * 这一段现在长在「我的节点」那张卡的「我的机器」弹窗里，不再是页面上并列的
+   * 一张卡 —— 它是自建节点的前置条件，不是跟节点平级的东西。
+   */
+  const body = (
+    <>
+      {hostsQuery.isLoading ? (
+        <DataSectionLoading />
+      ) : myHosts.length === 0 ? (
+        <p className="py-4 text-center text-xs text-muted-foreground">
+          还没有自己的机器。加一台之后，把它给出的命令粘进那台机器的 SSH 装上 Agent，就能在上面开自己的节点。
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {myHosts.map((host) => (
+            <ProxyNodeRow
+              key={host.id}
+              leading={
+                <span
+                  className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${host.isOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+                  title={host.isOnline ? "Agent 已连上面板" : "Agent 还没连上面板"}
+                  aria-label={host.isOnline ? "在线" : "离线"}
+                />
+              }
+              name={host.name}
+              meta={proxyNodeMetaText([
+                host.ip,
+                host.isOnline ? "在线" : "离线",
+                host.agentVersion ? `Agent ${host.agentVersion}` : "还没装 Agent",
+              ])}
+              actions={[
+                {
+                  key: "command",
+                  label: "安装命令",
+                  icon: Terminal,
+                  onSelect: () => setCommandHostId(Number(host.id)),
+                },
+                {
+                  key: "delete",
+                  label: "删除",
+                  icon: Trash2,
+                  destructive: true,
+                  onSelect: () => void askDelete(host),
+                },
+              ]}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">
+            {quotaLimit > 0 ? `${myHosts.length}/${quotaLimit} 台` : `${myHosts.length} 台`}
+            {onlineCount > 0 ? ` · ${onlineCount} 在线` : ""}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canAddHost}
+            title={canAddHost ? undefined : `自己添加的机器已达上限（${quotaLimit} 台），删掉一台，或让管理员调高上限`}
+            onClick={() => setAddOpen(true)}
+          >
+            <Plus className="mr-1 h-4 w-4" />
+            加一台
+          </Button>
+        </div>
+        {body}
+      </div>
+      {dialogs}
     </>
   );
 }
