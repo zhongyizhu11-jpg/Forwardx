@@ -100,6 +100,7 @@ import {
   type GithubAcceleratorConfig,
   type GithubAcceleratorSettings,
 } from "../../shared/githubAccelerator";
+import { DEFAULT_EXPIRY_REMINDER_DAYS, parseExpiryReminderDays } from "../../shared/expiryReminder";
 
 export {
   AGENT_VERSION,
@@ -1747,6 +1748,7 @@ function publicSystemSettings(all: Record<string, string | null>, activeProtocol
       trafficReminder: false,
       trafficReminderThreshold: 20,
       hostStatusNotify: false,
+      expiryReminderDays: DEFAULT_EXPIRY_REMINDER_DAYS.join(","),
     },
     deepseek: {
       provider: aiProvider,
@@ -1927,6 +1929,11 @@ export const systemRouter = router({
         trafficReminder: all.telegramTrafficReminder === "true",
         trafficReminderThreshold: Number(all.telegramTrafficReminderThreshold || 20),
         hostStatusNotify: all.telegramHostStatusNotify === "true",
+        /**
+         * 提前几天提醒。邮件和 Telegram 共用这一个值 —— 两处各配一套的话，
+         * 同一个用户会在不同的日子收到两种说法。面板顶上那条横幅也读它。
+         */
+        expiryReminderDays: (all.expiryReminderDays || "").trim() || DEFAULT_EXPIRY_REMINDER_DAYS.join(","),
       },
       deepseek: {
         provider: aiProvider,
@@ -2092,6 +2099,8 @@ export const systemRouter = router({
           trafficReminder: z.boolean().optional(),
           trafficReminderThreshold: z.number().int().min(1).max(99).optional(),
           hostStatusNotify: z.boolean().optional(),
+          /** 「7,3,1」这种。邮件、Telegram、站内横幅共用。 */
+          expiryReminderDays: z.string().max(64).optional(),
         }).optional(),
         deepseek: z.object({
           provider: aiProviderSchema.optional(),
@@ -2330,6 +2339,10 @@ export const systemRouter = router({
         }
         if (input.telegram.enabled !== undefined) next.telegramBotEnabled = input.telegram.enabled ? "true" : "false";
         if (input.telegram.expiryReminder !== undefined) next.telegramExpiryReminder = input.telegram.expiryReminder && nextEnabled && !!effectiveToken ? "true" : "false";
+        if (input.telegram.expiryReminderDays !== undefined) {
+          // 存归一化后的值：填错了立刻退回默认，而不是留着一串脏字符串让人以为生效了。
+          next.expiryReminderDays = parseExpiryReminderDays(input.telegram.expiryReminderDays).join(",");
+        }
         if (input.telegram.trafficReminder !== undefined) next.telegramTrafficReminder = input.telegram.trafficReminder && nextEnabled && !!effectiveToken ? "true" : "false";
         if (input.telegram.trafficReminderThreshold !== undefined) next.telegramTrafficReminderThreshold = String(input.telegram.trafficReminderThreshold);
         if (input.telegram.hostStatusNotify !== undefined) next.telegramHostStatusNotify = input.telegram.hostStatusNotify && nextEnabled && !!effectiveToken ? "true" : "false";

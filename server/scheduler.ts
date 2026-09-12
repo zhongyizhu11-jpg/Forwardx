@@ -3,6 +3,7 @@ import { pushAgentRefresh } from "./agentEvents";
 import { appendPanelLog } from "./_core/panelLogger";
 import { parseSelfTestMeta } from "./agentRouteUtils";
 import { getEmailConfig, sendMail } from "./email";
+import { parseExpiryReminderDays, shouldSendExpiryReminder } from "../shared/expiryReminder";
 import { sendTelegramMessage } from "./telegramBot";
 import { recordTunnelHopTestResult } from "./tunnelHopTestState";
 import { recordHopTestResult } from "./hopTestState";
@@ -364,6 +365,7 @@ async function runEmailReminders() {
     if (!config.enabled) return;
     const users = await db.getUserTrafficSummaries();
     const now = Date.now();
+    const reminderDays = parseExpiryReminderDays(await db.getSetting("expiryReminderDays"));
 
     for (const user of users as any[]) {
       if (!user.email) continue;
@@ -372,11 +374,13 @@ async function runEmailReminders() {
         const expiresAt = new Date(user.expiresAt).getTime();
         const daysLeft = Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000));
         const key = dayKey(`emailReminder:expiry:${daysLeft}`, user.id);
-        if (daysLeft >= 0 && daysLeft <= 3 && !(await db.getSetting(key))) {
+        if (shouldSendExpiryReminder(daysLeft, reminderDays) && !(await db.getSetting(key))) {
           await sendMail({
             to: user.email,
             subject: "ForwardX 套餐到期提醒",
-            text: `你的 ForwardX 套餐将在 ${daysLeft} 天后到期，请及时续费或联系管理员。`,
+            text: daysLeft === 0
+              ? "你的 ForwardX 套餐今天到期，到期后订阅与转发都会停止，请及时续费或联系管理员。"
+              : `你的 ForwardX 套餐将在 ${daysLeft} 天后到期，请及时续费或联系管理员。`,
           });
           await db.setSetting(key, "sent");
         }
@@ -421,6 +425,7 @@ async function runTelegramReminders() {
     const users = await db.getUserTrafficSummaries();
     const usersById = new Map((users as any[]).map((user) => [Number(user.id), user]));
     const now = Date.now();
+    const reminderDays = parseExpiryReminderDays(settings.expiryReminderDays);
 
     for (const user of users as any[]) {
       if (!user.telegramId) continue;
@@ -429,13 +434,13 @@ async function runTelegramReminders() {
         const expiresAt = new Date(user.expiresAt).getTime();
         const daysLeft = Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000));
         const key = dayKey(`telegramReminder:expiry:${daysLeft}`, user.id);
-        if (daysLeft >= 0 && daysLeft <= 3 && !(await db.getSetting(key))) {
+        if (shouldSendExpiryReminder(daysLeft, reminderDays) && !(await db.getSetting(key))) {
           await sendTelegramMessage(
             user.telegramId,
             [
               "ForwardX 到期提醒",
               "",
-              `你的套餐将在 ${daysLeft} 天后到期。`,
+              daysLeft === 0 ? "你的套餐今天到期。" : `你的套餐将在 ${daysLeft} 天后到期。`,
               `到期时间：${new Date(user.expiresAt).toLocaleDateString("zh-CN")}`,
               "请及时续费或联系管理员。",
             ].join("\n"),

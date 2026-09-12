@@ -3,6 +3,7 @@ import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { appendPanelLog } from "../_core/panelLogger";
 import * as db from "../db";
 import { refreshUserForwardEndpoints } from "./helpers";
+import { parseExpiryReminderDays } from "@shared/expiryReminder";
 
 const planInput = z.object({
   name: z.string().min(1).max(80),
@@ -162,6 +163,27 @@ export const plansRouter = router({
         visibility: "admin",
       });
     }),
+  /**
+   * 快到期了没有 —— 给面板顶上那条横幅用。
+   *
+   * 邮件和 Telegram 提醒都要求用户先绑定；没绑的人（多数）在到期前收不到任何
+   * 消息，断了才发现。这条谁都看得见，成本也只是一次很轻的查询。
+   */
+  myExpiryNotice: protectedProcedure.query(async ({ ctx }) => {
+    const subscriptions = await db.listUserSubscriptions(ctx.user.id, { visibility: "user" });
+    const now = Date.now();
+    const soonest = (subscriptions as any[])
+      .filter((row) => row.status === "active" && row.expiresAt && new Date(row.expiresAt).getTime() > now)
+      .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime())[0];
+    if (!soonest) return { daysLeft: null as number | null, expiresAt: null as string | null, planName: "" };
+    const daysLeft = Math.ceil((new Date(soonest.expiresAt).getTime() - now) / (24 * 60 * 60 * 1000));
+    return {
+      daysLeft,
+      expiresAt: String(soonest.expiresAt),
+      planName: String(soonest.planName || ""),
+      reminderDays: parseExpiryReminderDays(await db.getSetting("expiryReminderDays")),
+    };
+  }),
   mySubscriptions: protectedProcedure.query(async ({ ctx }) => {
     await db.expireUserSubscriptions();
     return db.listUserSubscriptions(ctx.user.id, { visibility: "user" });

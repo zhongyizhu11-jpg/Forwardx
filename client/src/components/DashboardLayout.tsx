@@ -425,6 +425,26 @@ function DashboardLayoutContent({
     refetchOnWindowFocus: false,
     retry: false,
   });
+  /**
+   * 快到期的提示。
+   *
+   * 邮件和 Telegram 提醒都要先绑定，没绑的人在到期前收不到任何消息 —— 断了才
+   * 发现，而那时续费还要走一遍支付。这条谁都看得见。
+   */
+  const { data: expiryNotice } = trpc.plans.myExpiryNotice.useQuery(undefined, {
+    enabled: !!user && !isAdmin,
+    refetchOnWindowFocus: false,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+  /**
+   * 只在提醒档位覆盖到的天数里显示，跟邮件 / TG 用的是同一份配置 —— 三处各有
+   * 一套阈值的话，用户会收到互相矛盾的说法。
+   */
+  const expiryDaysLeft = expiryNotice?.daysLeft ?? null;
+  const expiryNoticeVisible = expiryDaysLeft !== null
+    && expiryDaysLeft >= 0
+    && expiryDaysLeft <= Math.max(0, ...(expiryNotice?.reminderDays || [7]));
   const { data: popupAnnouncement } = trpc.announcements.popup.useQuery(undefined, {
     enabled: !!user,
     refetchOnWindowFocus: false,
@@ -1632,6 +1652,18 @@ function DashboardLayoutContent({
           </div>
         )}
         <main data-mobile-main="true" className="flex-1 px-3 pb-3 pt-3 sm:p-6">
+          {expiryNoticeVisible ? (
+            <div className="mb-4 flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-w-0">
+                {expiryDaysLeft === 0
+                  ? `「${expiryNotice?.planName || "你的套餐"}」今天到期，到期后订阅和转发都会停。`
+                  : `「${expiryNotice?.planName || "你的套餐"}」还有 ${expiryDaysLeft} 天到期。`}
+              </p>
+              <Button size="sm" className="shrink-0" onClick={() => setLocation("/subscriptions")}>
+                去续费
+              </Button>
+            </div>
+          ) : null}
           <div key={location} className="route-content-enter">
             {children}
           </div>

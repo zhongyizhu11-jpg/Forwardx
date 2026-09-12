@@ -2301,6 +2301,8 @@ function TelegramBotSettingsCard() {
   const [telegramTrafficReminder, setTelegramTrafficReminder] = useState(false);
   const [telegramHostStatusNotify, setTelegramHostStatusNotify] = useState(false);
   const [telegramTrafficThreshold, setTelegramTrafficThreshold] = useState(20);
+  /** 提前几天提醒。邮件、Telegram、面板顶上那条横幅共用这一个值。 */
+  const [expiryReminderDays, setExpiryReminderDays] = useState("7,3,1");
   const [showDeleteTelegramBot, setShowDeleteTelegramBot] = useState(false);
 
   useEffect(() => {
@@ -2311,6 +2313,7 @@ function TelegramBotSettingsCard() {
       setTelegramTrafficReminder(telegramReady && !!settings.telegram?.trafficReminder);
       setTelegramHostStatusNotify(telegramReady && !!settings.telegram?.hostStatusNotify);
       setTelegramTrafficThreshold(Number(settings.telegram?.trafficReminderThreshold || 20));
+      setExpiryReminderDays(String(settings.telegram?.expiryReminderDays || "7,3,1"));
     }
   }, [settings]);
 
@@ -2347,6 +2350,7 @@ function TelegramBotSettingsCard() {
         trafficReminder: remindersReady ? telegramTrafficReminder : false,
         hostStatusNotify: remindersReady ? telegramHostStatusNotify : false,
         trafficReminderThreshold: telegramTrafficThreshold,
+        expiryReminderDays,
       },
     });
     setTelegramBotTokenInput("");
@@ -2460,13 +2464,28 @@ function TelegramBotSettingsCard() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium">到期提醒</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || "到期前 3 天提醒。"}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || `到期前第 ${expiryReminderDays} 天各提醒一次。`}</p>
                   </div>
                   <Switch
                     checked={telegramRemindersReady && telegramExpiryReminder}
                     disabled={!telegramRemindersReady}
                     onCheckedChange={setTelegramExpiryReminder}
                   />
+                </div>
+                <div className="mt-3 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Label className="shrink-0 text-xs text-muted-foreground">提前天数</Label>
+                    <Input
+                      className="h-8"
+                      value={expiryReminderDays}
+                      onChange={(event) => setExpiryReminderDays(event.target.value)}
+                      placeholder="7,3,1"
+                    />
+                  </div>
+                  {/* 说清这个值管着三处，免得有人以为它只影响 Telegram。 */}
+                  <p className="text-xs text-muted-foreground">
+                    逗号分隔，在这几天各发一次。邮件提醒和面板顶上的到期横幅共用这个值；填 0 表示当天也发。
+                  </p>
                 </div>
               </div>
               <div className="rounded-lg border border-border/40 bg-background/50 p-3">
