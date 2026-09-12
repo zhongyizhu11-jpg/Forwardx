@@ -1,0 +1,85 @@
+/**
+ * Agent 安装/卸载/升级命令，一处真身。
+ *
+ * 这段拼装原来只长在「主机管理」的 AgentTokenManager 里，纯前端。租户自助
+ * 加机器那条路走不通同一份代码 —— 拼命令要的 panelPublicUrl、GitHub 加速、
+ * agentPreferPanelInstall 都在管理员才能读的系统设置里，普通用户拿不到，
+ * 只能由服务端拼好再给他。
+ *
+ * 两边各抄一份的话，改了一边忘了另一边，租户拿到的就是一条过时的命令 ——
+ * 而这种错要等到有人真去装机器才会发现。所以抽到这里，两边共用。
+ */
+
+export type AgentScriptAction = "install" | "uninstall" | "upgrade";
+
+export interface AgentScriptCommandOptions {
+  /** 面板地址，Agent 回连用。空串会让命令里出现 `/api/agent/install.sh` 这种半截地址，调用方要先兜住。 */
+  panelUrl: string;
+  action: AgentScriptAction;
+  /** install 时必填；其余动作忽略。 */
+  token?: string;
+  githubAcceleratorUrl?: string;
+  githubAcceleratorEnabled?: boolean;
+  /** true = 先试面板自带的脚本，失败再回落 GitHub；false = 反过来。 */
+  preferPanelInstall?: boolean;
+}
+
+/** 脚本在 fork 里的原始地址。加速器是拼在它前面的前缀，不是替换。 */
+export const AGENT_INSTALL_SCRIPT_RAW_URL =
+  "https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-agent.sh";
+
+/** 单引号包起来，内部的单引号按 shell 的老办法断开再拼。 */
+export function shellQuoteSingle(value: string) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+/** 去掉尾部斜杠，避免拼出 `https://panel//api/...`。 */
+export function normalizeAgentCommandUrl(value: string) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+/**
+ * 拼出可以直接粘进 SSH 的一整行。
+ *
+ * 两条管线（面板自带脚本、GitHub 原始脚本）用 `||` 串起来：前一条整体失败
+ * 才走后一条。每条都套一层 `bash -c 'set -o pipefail; …'` —— 不套的话
+ * `curl … | bash` 在 curl 失败时管道仍然返回 0，命令看着成功，机器上什么
+ * 都没装。
+ */
+export function buildAgentScriptCommand(options: AgentScriptCommandOptions): string {
+  const panelUrl = normalizeAgentCommandUrl(options.panelUrl);
+  const acceleratorUrl = normalizeAgentCommandUrl(options.githubAcceleratorUrl || "");
+  const acceleratorActive = !!options.githubAcceleratorEnabled && !!acceleratorUrl;
+  /**
+   * token 也要引起来。现在的 token 是 nanoid(32)，只有字母数字和 _-，引不引
+   * 都一样；但这条命令以后要由服务端拼给租户，token 一旦换了生成方式（或者
+   * 有人手工塞一个），没引号的那份会直接从外层单引号里跑出去，变成粘进 SSH
+   * 就执行的另一条命令。
+   */
+  const args = options.action === "install"
+    ? `install ${shellQuoteSingle(String(options.token || "").trim())}`
+    : options.action;
+
+  const env = [
+    acceleratorActive ? "GITHUB_ACCELERATOR_ENABLED=true" : "",
+    acceleratorActive ? `GITHUB_ACCELERATOR_URL=${shellQuoteSingle(acceleratorUrl)}` : "",
+    options.preferPanelInstall ? "FORWARDX_AGENT_PANEL_FIRST=true" : "",
+  ].filter(Boolean).join(" ");
+  const bashPrefix = env ? `${env} bash` : "bash";
+  const withPipefail = (pipeline: string) => `bash -c ${shellQuoteSingle(`set -o pipefail; ${pipeline}`)}`;
+  const curlScriptArgs = "--connect-timeout 15 --speed-limit 1024 --speed-time 60";
+
+  const panelCommand = withPipefail(
+    `curl -fsSL ${curlScriptArgs} "${panelUrl}/api/agent/install.sh" | PANEL_URL=${shellQuoteSingle(panelUrl)} ${bashPrefix} -s -- ${args}`,
+  );
+  const githubScriptUrl = acceleratorActive
+    ? `${acceleratorUrl}/${AGENT_INSTALL_SCRIPT_RAW_URL}`
+    : AGENT_INSTALL_SCRIPT_RAW_URL;
+  const githubCommand = withPipefail(
+    `curl -fsSL ${curlScriptArgs} "${githubScriptUrl}" | PANEL_URL=${shellQuoteSingle(panelUrl)} ${bashPrefix} -s -- ${args}`,
+  );
+
+  return options.preferPanelInstall
+    ? `${panelCommand} || ${githubCommand}`
+    : `${githubCommand} || ${panelCommand}`;
+}

@@ -456,7 +456,7 @@ export default function ProxyInboundsSection() {
                 */}
                 {isAdmin
                   ? "还没有可用主机。自建节点要靠 Agent 下发配置，先去「主机管理」装一台。"
-                  : "还没有可用主机。自建节点要在装了 Agent 的机器上开，请联系管理员给你授权一台。"}
+                  : "还没有可用主机。自建节点要开在装了 Agent 的机器上：可以在上面的「我的机器」里加一台自己的，也可以让管理员授权一台。"}
               </p>
             ) : null}
           </CardContent>

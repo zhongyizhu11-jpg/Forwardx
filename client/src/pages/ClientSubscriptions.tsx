@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
+import MyHostsSection from "@/components/proxy/MyHostsSection";
 import ProxyInboundsSection from "@/components/proxy/ProxyInboundsSection";
 import { ProxyNodeRow, proxyNodeMetaText } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
@@ -741,6 +742,12 @@ export default function ClientSubscriptionsPage() {
           「新建节点」放在最前面：自建落地是这一页的起点 —— 先在自己的机器上开出节点，
           再把别处租来的粘进下面的「落地节点」，两类汇合成订阅内容。
         */}
+        {/*
+          「我的机器」排在「新建节点」前面：节点要开在机器上，没机器时那一段的
+          「新建」是灰的，得先在这里加一台。管理员不显示 —— 他有整页的主机管理。
+        */}
+        <MyHostsSection />
+
         <ProxyInboundsSection />
 
         <Card>
