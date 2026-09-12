@@ -364,7 +364,7 @@ export default function Store() {
                     <Card className="col-span-full">
                       <CardHeader>
                         <CardTitle>暂无可购买套餐</CardTitle>
-                        <CardDescription>暂无可用套餐。</CardDescription>
+                        <CardDescription>管理员还没有把套餐放上商店，需要的话可以联系他分配。</CardDescription>
                       </CardHeader>
                     </Card>
                   )}

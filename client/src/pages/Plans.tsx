@@ -834,6 +834,8 @@ export default function Plans() {
 
   const activePlans = Number(planSummary?.activeItems ?? planPageQuery.data?.activeItems ?? 0);
   const storeEnabled = !!storeStatus?.enabled;
+  const storeVisiblePlans = Number(planSummary?.storeVisibleItems ?? 0);
+  const storeGateBlocking = !storeStatusLoading && !storeEnabled && storeVisiblePlans > 0;
   const trafficBillingEnabled = !!trafficBillingData?.enabled;
   const trafficBillingConfigs = trafficBillingData?.configs || [];
   const trafficBillingCharged = Number(trafficBillingSummary?.totalAmountCents || 0);
@@ -1078,7 +1080,13 @@ export default function Plans() {
                 />
               </CardTitle>
             </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">开启后用户可自助购买。</CardContent>
+            <CardContent className="text-sm text-muted-foreground">
+              {storeEnabled
+                ? "开启后用户可自助购买。"
+                : storeVisiblePlans > 0
+                  ? `关着的时候，${storeVisiblePlans} 个套餐的「购买入口」都不生效。`
+                  : "关着的时候，用户面板里没有商店。"}
+            </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
@@ -1157,6 +1165,23 @@ export default function Plans() {
             <CardContent className="text-sm text-muted-foreground">已配置资源。</CardContent>
           </Card>
         </div>
+
+        {storeGateBlocking && (
+          <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <p className="min-w-0">
+              商店总开关是关的：{storeVisiblePlans} 个套餐开了「购买入口」，但用户面板里没有商店，只能管理员后台分配。
+            </p>
+            <Button
+              size="sm"
+              className="shrink-0"
+              disabled={setStoreEnabled.isPending}
+              onClick={() => setStoreEnabled.mutate({ enabled: true })}
+            >
+              {setStoreEnabled.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <ShoppingBag className="mr-2 h-4 w-4" />}
+              开启商店
+            </Button>
+          </div>
+        )}
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as PlanManageTab)} className="space-y-4">
           <SlidingTabsList items={PLAN_MANAGE_TAB_ITEMS} activeValue={activeTab} ariaLabel="套餐管理" minItemWidthRem={9.5} />
@@ -1296,7 +1321,9 @@ export default function Plans() {
           </DialogHeader>
 
           <Tabs value={planDialogTab} onValueChange={(value) => setPlanDialogTab(value as PlanDialogTab)} className="flex min-h-0 flex-1 flex-col px-4 sm:px-5">
-            <TabsList className="grid h-auto w-full grid-cols-2">
+            {/* shrink-0 同理：它和下面那块可滚区域是同一列的兄弟，不钉住会被压扁，
+                压扁之后标签自己溢出来，盖在上面的说明文字上。 */}
+            <TabsList className="grid h-auto w-full shrink-0 grid-cols-2">
               <TabsTrigger value="settings">套餐设置</TabsTrigger>
               <TabsTrigger value="resources">资源绑定</TabsTrigger>
             </TabsList>
@@ -1400,7 +1427,11 @@ export default function Plans() {
                   <div className={`flex items-center justify-between gap-3 rounded-md bg-muted/20 px-3 py-2 ${form.isActive ? "" : "opacity-60"}`}>
                     <div className="min-w-0">
                       <p className="text-sm font-medium">购买入口</p>
-                      <p className="text-xs text-muted-foreground">开启后普通用户可在商店自助购买。</p>
+                      <p className="text-xs text-muted-foreground">
+                        {storeEnabled
+                          ? "开启后普通用户可在商店自助购买。"
+                          : "商店总开关是关的，这里开了用户也看不到，得先去上面的「商店状态」打开。"}
+                      </p>
                     </div>
                     <Switch
                       className="shrink-0"

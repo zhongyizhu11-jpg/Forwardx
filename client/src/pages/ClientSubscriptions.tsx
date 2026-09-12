@@ -530,6 +530,7 @@ export default function ClientSubscriptionsPage() {
   /** 从节点这边发起分享。粘进来的节点只有一份凭据，所以就是一个列表。 */
   const [shareNode, setShareNode] = useState<{ id: number; name: string } | null>(null);
   const [nodeAdvancedOpen, setNodeAdvancedOpen] = useState(false);
+  const [nodeRemark, setNodeRemark] = useState("");
 
   /**
    * 「落地节点」这一段只列粘进来的，不列自建节点派生出来的那些。
@@ -555,6 +556,16 @@ export default function ClientSubscriptionsPage() {
    * 「自动」这一档由节点数量和协议种类自己决定分不分组，所以这里要拿到落实之后的
    * 那个值 —— 组标题显不显示看的是它，不是用户选的那一档。
    */
+  /** 模板 id → 备注。订阅内容那边只有 templateId，备注在节点行上。 */
+  const remarkByTemplateId = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const node of nodes as any[]) {
+      const remark = String(node?.remark || "").trim();
+      if (remark) map.set(Number(node.id), remark);
+    }
+    return map;
+  }, [nodes]);
+
   const effectiveGroupMode = useMemo(
     () => resolveProxyNodeGroupMode(nodeGroupMode, pastedNodes),
     [nodeGroupMode, pastedNodes],
@@ -618,6 +629,7 @@ export default function ClientSubscriptionsPage() {
   const openCreateNode = () => {
     setEditingNodeId(null);
     setNodeName("");
+    setNodeRemark("");
     setNodeLink("");
     setNodeAutoGroup(PROXY_NODE_DEFAULT_AUTO_GROUP);
     setNodeIncludeDirect(false);
@@ -634,6 +646,7 @@ export default function ClientSubscriptionsPage() {
   const openEditNode = (node: any) => {
     setEditingNodeId(node.id);
     setNodeName(String(node.name || ""));
+    setNodeRemark(String(node.remark || ""));
     setNodeLink(String(node.sourceLink || ""));
     setNodeAutoGroup(normalizeProxyNodeAutoGroup(node.autoGroup));
     setNodeIncludeDirect(!!node.includeDirect);
@@ -670,6 +683,7 @@ export default function ClientSubscriptionsPage() {
     }
     const payload = {
       name,
+      remark: nodeRemark.trim() || null,
       link,
       autoGroup: nodeAutoGroup,
       includeDirect: nodeIncludeDirect,
@@ -813,8 +827,9 @@ export default function ClientSubscriptionsPage() {
                               muted={!node.isEnabled}
                               meta={proxyNodeMetaText([
                                 `${node.address}:${node.port}`,
+                                String(node.remark || "").trim(),
                                 node.sharedFrom
-                                  ? `${node.sharedFrom.name} 分享，不可修改`
+                                  ? "管理员分享，不可修改"
                                   : node.ruleCount > 0 ? `${node.ruleCount} 条转发` : "无转发绑定",
                                 node.sharedToUserIds?.length ? `已分享 ${node.sharedToUserIds.length} 人` : "",
                                 !node.isEnabled ? "已停用" : "",
@@ -937,8 +952,14 @@ export default function ClientSubscriptionsPage() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <span className="truncate text-sm font-medium leading-tight">{node.name}</span>
+                            {/*
+                              有备注就显示备注。原来一律标「直连」—— 这一段本来就叫
+                              「直连」，每条都写一遍等于没说，还占着唯一能放信息的位置。
+                            */}
                             {direct && (
-                              <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">直连</Badge>
+                              <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal">
+                                {remarkByTemplateId.get(Number(node.templateId)) || "直连"}
+                              </Badge>
                             )}
                           </div>
                           <p className="truncate text-[11px] leading-tight text-muted-foreground">
@@ -1436,6 +1457,24 @@ export default function ClientSubscriptionsPage() {
                 onChange={(event) => setNodeName(event.target.value)}
                 placeholder="例如 HKT 落地"
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="proxy-node-remark">备注</Label>
+              <Input
+                id="proxy-node-remark"
+                value={nodeRemark}
+                onChange={(event) => setNodeRemark(event.target.value)}
+                placeholder="例如 落地 / 家宽 / 备用"
+                maxLength={12}
+              />
+              {/*
+                备注只在面板上显示，不进订阅 —— 订阅里节点叫什么由上面的名称决定。
+                「订阅内容」里的直连条目原来一律标「直连」，那句话对每一条都成立，
+                等于没说；填了备注就用备注顶掉它。
+              */}
+              <p className="text-xs text-muted-foreground">
+                只在面板上显示，会顶掉「订阅内容」里那个「直连」标签。不进订阅。
+              </p>
             </div>
             <div className="space-y-2">
               <Label>加进订阅</Label>

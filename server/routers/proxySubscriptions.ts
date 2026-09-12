@@ -161,7 +161,7 @@ export const proxySubscriptionsRouter = router({
         ruleCount: ruleIds.length,
         health: resolveProxyNodeHealth(samples),
         sharedToUserIds: shareUserIds.get(Number(node.id)) || [],
-        sharedFrom: null as null | { userId: number; name: string },
+        sharedFrom: false,
       };
     });
 
@@ -172,12 +172,6 @@ export const proxySubscriptionsRouter = router({
      */
     const shared = await db.getProxyNodesSharedToUser(ctx.user.id);
     if (shared.length === 0) return owned;
-    const ownerIds = Array.from(new Set(shared.map((node: any) => Number(node.userId)))) as number[];
-    const owners = new Map<number, string>();
-    for (const ownerId of ownerIds) {
-      const owner = await db.getUserById(ownerId);
-      owners.set(ownerId, String(owner?.name || owner?.username || `用户 #${ownerId}`));
-    }
     const sharedRows = shared.map((node: any) => ({
       ...redactSharedProxyNodeRow(node),
       // 分享进来的节点只可能以直连形态出现：收方名下没有绑着它的转发。
@@ -186,7 +180,14 @@ export const proxySubscriptionsRouter = router({
       ruleCount: 0,
       health: resolveProxyNodeHealth([]),
       sharedToUserIds: [] as number[],
-      sharedFrom: { userId: Number(node.userId), name: owners.get(Number(node.userId)) || "" },
+      /**
+       * 只标「这是分享来的」，不带节点主人是谁。
+       *
+       * 原来带的是主人的显示名，而显示名没设时会退到 username —— 这个面板的
+       * username 就是邮箱，于是租户在自己的页面上看到了管理员的邮箱地址。
+       * 租户拿这个身份也做不了任何事，不该发出去。
+       */
+      sharedFrom: true,
     }));
     return [...owned, ...sharedRows];
   }),
@@ -221,7 +222,8 @@ export const proxySubscriptionsRouter = router({
   createNode: protectedProcedure
     .input(z.object({
       name: z.string().trim().min(1).max(64),
-      remark: z.string().trim().max(200).optional(),
+      // 与 updateNode 一致收 null：界面上清空备注就是 null，两个入口用同一份 payload。
+      remark: z.string().trim().max(200).nullable().optional(),
       link: z.string().min(1).max(8192),
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
       includeDirect: z.boolean().optional(),

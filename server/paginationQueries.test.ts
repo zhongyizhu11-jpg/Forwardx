@@ -593,6 +593,7 @@ test("database-backed list queries page, search, scope, and hydrate only request
       const planSummary = await billing.getSubscriptionPlanSummary();
       assert.equal(planSummary.totalItems, 3);
       assert.equal(planSummary.activeItems, 2);
+      assert.equal(planSummary.storeVisibleItems, 2);
       assert.deepEqual(planSummary.resources, {
         legacyHosts: 1,
         tunnels: 1,

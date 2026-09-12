@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { ProxyNodeRow, proxyNodeMetaText } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog, type ProxyNodeShareTarget } from "@/components/proxy/ProxyNodeShareDialog";
-import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
+import { clipboardNeedsManualCopy, copyTextFromElement, copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import {
   PROXY_INBOUND_PROTOCOLS,
@@ -27,8 +27,8 @@ import {
   type ProxyInboundSecurity,
 } from "@shared/proxyInbound";
 import { PROXY_NODE_PROTOCOL_LABELS, type ProxyNodeProtocol, type ProxyNodeTransport } from "@shared/proxyNode";
-import { ChevronDown, Copy, KeyRound, Link2, Pencil, Plus, Radio, RefreshCw, Share2, Trash2, UserPlus, UserRound, Users } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronDown, Copy, KeyRound, Link2, Pencil, Plus, Radio, RefreshCw, Share2, Trash2, UserRound } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const TRANSPORT_LABELS: Record<string, string> = {
@@ -172,6 +172,13 @@ export default function ProxyInboundsSection() {
   const [linkRows, setLinkRows] = useState<Array<{ userId: number; userName: string; name: string; link: string }>>([]);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [linkLoadingId, setLinkLoadingId] = useState(0);
+  /**
+   * 弹窗里每条链接对应的那个 <p>。
+   *
+   * 复制按钮直接选中它里面的文字 —— 等同于用户自己长按选中再复制，不依赖任何
+   * 隐藏元素的技巧，是 iOS 上最稳的一条路。
+   */
+  const linkTextRefs = useRef<Record<number, HTMLParagraphElement | null>>({});
 
   /**
    * 从节点这边发起分享。多用户入站派生出好几行节点，每一行是一份独立凭据，
@@ -321,7 +328,7 @@ export default function ProxyInboundsSection() {
       snellVersion: form.snellVersion,
       method: form.method,
       isEnabled: form.isEnabled,
-      users: form.users.map((user, index) => ({ id: user.id, name: user.name.trim() || `用户 ${index + 1}` })),
+      users: form.users.map((user, index) => ({ id: user.id, name: user.name.trim() || `凭据 ${index + 1}` })),
     };
     if (form.id > 0) updateInbound.mutate({ id: form.id, ...payload });
     else createInbound.mutate(payload);
@@ -410,7 +417,7 @@ export default function ProxyInboundsSection() {
                         ? TRANSPORT_LABELS[row.transport] || row.transport
                         : "",
                       isAdmin ? `归 ${ownerLabel(Number(row.userId))}` : "",
-                      Array.isArray(row.users) && row.users.length > 1 ? `${row.users.length} 个用户` : "",
+                      Array.isArray(row.users) && row.users.length > 1 ? `${row.users.length} 份凭据` : "",
                       Number(row.sharedUserCount || 0) > 0 ? `分享给 ${row.sharedUserCount} 人` : "",
                       !row.isEnabled ? "已停用" : "",
                     ])}
@@ -443,7 +450,13 @@ export default function ProxyInboundsSection() {
             )}
             {hosts.length === 0 ? (
               <p className="mt-3 text-xs text-amber-600 dark:text-amber-500">
-                还没有可用主机。自建节点要靠 Agent 下发配置，先去「主机管理」装一台。
+                {/*
+                  「主机管理」对普通用户是关着的（侧边栏藏了，路由也是 AdminRoute），
+                  所以不能对所有人都说「先去主机管理装一台」—— 那是一句他做不到的指示。
+                */}
+                {isAdmin
+                  ? "还没有可用主机。自建节点要靠 Agent 下发配置，先去「主机管理」装一台。"
+                  : "还没有可用主机。自建节点要在装了 Agent 的机器上开，请联系管理员给你授权一台。"}
               </p>
             ) : null}
           </CardContent>
@@ -701,8 +714,8 @@ export default function ProxyInboundsSection() {
               <div className="space-y-2 rounded-md border p-3">
                 <div className="flex items-center justify-between gap-2">
                   <Label className="text-xs">
-                    <Users className="mr-1 inline h-3 w-3" />
-                    用户（{form.users.length}）
+                    <KeyRound className="mr-1 inline h-3 w-3" />
+                    凭据（{form.users.length}）
                   </Label>
                   <Button
                     variant="outline"
@@ -710,11 +723,11 @@ export default function ProxyInboundsSection() {
                     className="h-7 text-xs"
                     onClick={() => setForm((prev) => ({
                       ...prev,
-                      users: [...prev.users, { id: 0, name: `用户 ${prev.users.length + 1}` }],
+                      users: [...prev.users, { id: 0, name: `凭据 ${prev.users.length + 1}` }],
                     }))}
                   >
-                    <UserPlus className="mr-1 h-3 w-3" />
-                    加一个
+                    <Plus className="mr-1 h-3 w-3" />
+                    再发一份
                   </Button>
                 </div>
                 {form.users.map((user, index) => (
@@ -725,30 +738,33 @@ export default function ProxyInboundsSection() {
                         ...prev,
                         users: prev.users.map((item, at) => (at === index ? { ...item, name: event.target.value } : item)),
                       }))}
-                      placeholder={`用户 ${index + 1}`}
+                      placeholder={`给谁用，例如 小王 / 备用机`}
                       className="h-8 text-xs"
                     />
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 shrink-0"
-                      // 至少留一个：零用户的入站 sing-box 会拒绝整份配置。
+                      // 至少留一份：零用户的入站 sing-box 会拒绝整份配置。
                       disabled={form.users.length <= 1}
                       onClick={() => setForm((prev) => ({ ...prev, users: prev.users.filter((_, at) => at !== index) }))}
-                      title={form.users.length <= 1 ? "至少要有一个用户" : "删除"}
+                      title={form.users.length <= 1 ? "至少要留一份凭据" : "删除"}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                 ))}
                 <p className="text-xs text-muted-foreground">
-                  每个用户一份独立凭据，各自派生一个节点进订阅。删掉某个用户，只有他连不上，其他人不受影响。
+                  同一个端口、同一份配置，只是凭据不同：一份凭据在订阅里是一条单独的节点，名字叫「入站名 · 这里填的标签」。
+                  删掉一份，只有拿那份的人连不上，别人照常。
+                  <br />
+                  这里的标签只是给你自己认人用的，跟上面的「归属用户」和面板账号没有绑定；流量按端口统计，分不到每一份头上。
                 </p>
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                {PROXY_NODE_PROTOCOL_LABELS[form.protocol as ProxyNodeProtocol]} 只支持单用户。
-                要给多个人发不同凭据，改用 VLESS / VMess / Trojan / Hysteria2 / TUIC / AnyTLS。
+                {PROXY_NODE_PROTOCOL_LABELS[form.protocol as ProxyNodeProtocol]} 这个端口只能发一份凭据，谁拿到都一样。
+                想一人一份、能单独吊销，改用 VLESS / VMess / Trojan / Hysteria2 / TUIC / AnyTLS。
               </p>
             )}
 
@@ -794,7 +810,10 @@ export default function ProxyInboundsSection() {
                   <p className="truncate text-sm font-medium leading-tight">{item.userName || item.name}</p>
                   {/* select-all + break-all：复制不了的时候要能一下选中整条，
                       truncate 会把后半截藏起来，选也选不全。 */}
-                  <p className="select-all break-all font-mono text-[11px] leading-tight text-muted-foreground">
+                  <p
+                    ref={(node) => { linkTextRefs.current[item.userId] = node; }}
+                    className="select-all break-all font-mono text-[11px] leading-tight text-muted-foreground"
+                  >
                     {item.link}
                   </p>
                 </div>
@@ -803,7 +822,12 @@ export default function ProxyInboundsSection() {
                   size="icon"
                   className="h-7 w-7 shrink-0"
                   title="复制"
-                  onClick={() => void copyLink(item.link)}
+                  onClick={async () => {
+                    const ok = await copyTextFromElement(linkTextRefs.current[item.userId] || null, item.link);
+                    if (ok) toast.success("链接已复制，粘进客户端即可");
+                    // 失败时选区还留着，用户直接用系统菜单复制就行。
+                    else toast.error("浏览器拒绝了复制，链接已选中，用系统菜单复制即可");
+                  }}
                 >
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
@@ -816,7 +840,7 @@ export default function ProxyInboundsSection() {
               </p>
             ) : null}
             <p className="pt-1 text-xs text-amber-600 dark:text-amber-500">
-              链接里带着这个用户的完整凭据，发给谁，谁就能用这个节点。
+              链接里带着这一份完整凭据，发给谁，谁就能用这个节点。
             </p>
           </div>
           <DialogFooter className="shrink-0 border-t pt-3">
