@@ -69,9 +69,26 @@ jobs:
           (cd agent && go test ./... && go vet ./...)
           (cd forwardx-fxp && go test ./... && go vet ./...)
 
+      - name: Resolve previously published release
+        id: previous
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          # 发布说明要覆盖「自上一次发布以来」的全部版本，而不是只有最后一次版本号
+          # 里写了什么 —— 连着合两个 PR 才发一次版是常态。
+          # 拿的是最新的正式 Release（跳过草稿、预发布，也跳过这次自己重跑时已经
+          # 建好的那一个）。取不到就留空，脚本会退回只取一节，不会挡住发布。
+          PREVIOUS="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=50" \
+            --jq "[.[] | select(.draft == false) | select(.prerelease == false) | .tag_name] | map(select(. != \"${RELEASE_VERSION}\")) | .[0] // empty" \
+            || true)"
+          echo "previous=${PREVIOUS#v}" >> "$GITHUB_OUTPUT"
+          echo "上一个已发布版本：${PREVIOUS:-(取不到)}"
+
       - name: Prepare release notes
         shell: bash
-        run: node scripts/extract-release-notes.mjs "${{ steps.release.outputs.version_no_v }}" > RELEASE_NOTES.md
+        run: node scripts/extract-release-notes.mjs "${{ steps.release.outputs.version_no_v }}" "${{ steps.previous.outputs.previous }}" > RELEASE_NOTES.md
 
       - name: Build panel assets
         run: pnpm build
