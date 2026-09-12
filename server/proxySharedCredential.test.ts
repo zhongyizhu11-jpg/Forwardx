@@ -255,3 +255,59 @@ test("为别人发的凭据不进主人自己的订阅", () => {
     assert.equal((await shares.getProxyNodesForSubscription(3)).length, 1);
   `);
 });
+
+test("到期 / 停用 / 收回订阅权限之后，那份凭据不再进下发配置", () => {
+  runInDatabase(String.raw`
+    const { inboundId, nodeId } = await makeInbound("vless", 443);
+    await shares.setProxyNodeShareUsers(nodeId, [2, 3], { labels: new Map([[2, "bob"], [3, "carol"]]) });
+
+    const namesInConfig = async () => {
+      const list = await inbounds.getEnabledProxyInboundsWithUsersByHost(10);
+      return list[0].inbound.users.map((user) => Number(user.sharedUserId || 0)).sort();
+    };
+    assert.deepEqual(await namesInConfig(), [0, 2, 3], "一开始三份凭据都在");
+
+    // 停用账号：面板那边拦住的只是订阅地址，客户端里存下的配置照连不误 ——
+    // 得让它从落地机的配置里消失，「停用就断」才是真的。
+    await exec("UPDATE users SET accountEnabled = 0 WHERE id = 2");
+    assert.deepEqual(await namesInConfig(), [0, 3]);
+
+    await exec("UPDATE users SET accountEnabled = 1 WHERE id = 2");
+    assert.deepEqual(await namesInConfig(), [0, 2, 3], "恢复账号就该恢复");
+
+    // 到期
+    await exec("UPDATE users SET expiresAt = ? WHERE id = 2", [Math.floor(Date.now() / 1000) - 60]);
+    assert.deepEqual(await namesInConfig(), [0, 3]);
+    await exec("UPDATE users SET expiresAt = NULL WHERE id = 2");
+
+    // 收回订阅权限
+    await exec("UPDATE users SET allowProxySubscription = 0 WHERE id = 2");
+    assert.deepEqual(await namesInConfig(), [0, 3]);
+  `);
+});
+
+test("删掉账号，他手上的凭据一起收回", () => {
+  runInDatabase(String.raw`
+    const { inboundId, nodeId } = await makeInbound("vless", 443);
+    await shares.setProxyNodeShareUsers(nodeId, [2, 3], { labels: new Map([[2, "bob"], [3, "carol"]]) });
+
+    const hostIds = await inbounds.releaseAllSharedCredentialsForUser(2);
+    assert.deepEqual(hostIds, [10], "要告诉调用方哪台机器需要重下发");
+
+    const left = await inbounds.getProxyInboundUsers(inboundId);
+    assert.equal(left.filter((user) => Number(user.sharedUserId) === 2).length, 0);
+    assert.equal(left.filter((user) => Number(user.sharedUserId) === 3).length, 1, "别人的不动");
+  `);
+});
+
+test("主人自己那份凭据不受收件人状态影响", () => {
+  runInDatabase(String.raw`
+    const { nodeId } = await makeInbound("vless", 443);
+    await shares.setProxyNodeShareUsers(nodeId, [2], { labels: new Map([[2, "bob"]]) });
+    await exec("UPDATE users SET accountEnabled = 0 WHERE id = 2");
+
+    const list = await inbounds.getEnabledProxyInboundsWithUsersByHost(10);
+    const own = list[0].inbound.users.filter((user) => !Number(user.sharedUserId || 0));
+    assert.equal(own.length, 1, "端口是主人的，不该因为租户被停用而少掉自己那份");
+  `);
+});

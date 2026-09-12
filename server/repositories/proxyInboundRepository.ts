@@ -19,6 +19,7 @@ import {
   proxyInbounds,
   proxyInboundUsers,
   proxyNodes,
+  users,
   type InsertProxyInbound,
   type InsertProxyInboundUser,
 } from "../../drizzle/schema";
@@ -265,11 +266,55 @@ export async function getEnabledProxyInboundsWithUsersByHost(
     .from(proxyInboundUsers)
     .where(inArray(proxyInboundUsers.inboundId, ids))
     .orderBy(asc(proxyInboundUsers.sortOrder), asc(proxyInboundUsers.id));
+
+  /**
+   * 分享发出去的凭据要跟着收件人的状态走。
+   *
+   * 面板那边到期/停用/收回订阅权限，拦住的只是订阅地址 —— 客户端里已经存下的
+   * 那份配置照连不误，因为凭据是落在这台机器的 sing-box 上的，没人去删。
+   * 「到期就停服」这句话得由这里兑现：算配置时把已经没资格的人剔掉，下一次
+   * 心跳（或者一次催下发）他就连不上了。
+   *
+   * 主人自己那份不在此列 —— 端口本来就是他的，那是另一档策略，不在这里顺手改。
+   */
+  const recipientIds = Array.from(new Set(
+    (userRows as any[]).map((row) => Number(row.sharedUserId || 0)).filter((id) => id > 0),
+  ));
+  const blockedRecipients = new Set<number>();
+  if (recipientIds.length > 0) {
+    const recipients = await db
+      .select({
+        id: users.id,
+        role: users.role,
+        accountEnabled: users.accountEnabled,
+        allowProxySubscription: users.allowProxySubscription,
+        expiresAt: users.expiresAt,
+      })
+      .from(users)
+      .where(inArray(users.id, recipientIds));
+    const found = new Set<number>();
+    for (const row of recipients as any[]) {
+      const id = Number(row.id);
+      found.add(id);
+      if (!proxyCredentialRecipientActive(row)) blockedRecipients.add(id);
+    }
+    // 人没了（账号被删）凭据也不该活着。
+    for (const id of recipientIds) if (!found.has(id)) blockedRecipients.add(id);
+  }
+
   const usersByInbound = new Map<number, ProxyInboundUser[]>();
   for (const row of userRows as any[]) {
+    const sharedUserId = Number(row.sharedUserId || 0);
+    if (sharedUserId > 0 && blockedRecipients.has(sharedUserId)) continue;
     const key = Number(row.inboundId);
     const list = usersByInbound.get(key) || [];
-    list.push({ id: Number(row.id), name: text(row.name), uuid: text(row.uuid), password: text(row.password) });
+    list.push({
+      id: Number(row.id),
+      name: text(row.name),
+      uuid: text(row.uuid),
+      password: text(row.password),
+      sharedUserId,
+    });
     usersByInbound.set(key, list);
   }
 
@@ -297,6 +342,39 @@ export async function getProxyInboundUsers(inboundId: number): Promise<ProxyInbo
     password: text(row.password),
     sharedUserId: Number(row.sharedUserId || 0),
   }));
+}
+
+/**
+ * 一批入站各自的用户，一次查完。
+ *
+ * 列表接口原来是一行一次 getProxyInboundUsers —— 管理员那边是全量入站，
+ * 五十个端口就是五十次往返，页面越用越慢，而慢在哪里从界面上看不出来。
+ */
+export async function getProxyInboundUsersByInbounds(
+  inboundIds: readonly number[],
+): Promise<Map<number, ProxyInboundUser[]>> {
+  const result = new Map<number, ProxyInboundUser[]>();
+  const ids = Array.from(new Set(inboundIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)));
+  for (const id of ids) result.set(id, []);
+  if (ids.length === 0) return result;
+
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db
+    .select()
+    .from(proxyInboundUsers)
+    .where(inArray(proxyInboundUsers.inboundId, ids))
+    .orderBy(asc(proxyInboundUsers.sortOrder), asc(proxyInboundUsers.id));
+  for (const row of rows as any[]) {
+    result.get(Number(row.inboundId))?.push({
+      id: Number(row.id),
+      name: text(row.name),
+      uuid: text(row.uuid),
+      password: text(row.password),
+      sharedUserId: Number(row.sharedUserId || 0),
+    });
+  }
+  return result;
 }
 
 /**
@@ -362,6 +440,27 @@ export async function replaceProxyInboundUsers(
 }
 
 // ==================== 分享用的独立凭据 ====================
+
+/**
+ * 拿着别人分享来的凭据的人，现在还有没有资格连。
+ *
+ * 三条都要过：账号还开着、还有客户端订阅权限、还没到期。管理员不受订阅权限
+ * 那条约束 —— 他本来就绕过那个开关。
+ */
+export function proxyCredentialRecipientActive(user: {
+  role?: unknown;
+  accountEnabled?: unknown;
+  allowProxySubscription?: unknown;
+  expiresAt?: unknown;
+} | null | undefined, now = Date.now()): boolean {
+  if (!user) return false;
+  if (user.accountEnabled === false || user.accountEnabled === 0) return false;
+  const isAdmin = String(user.role || "") === "admin";
+  if (!isAdmin && !(user.allowProxySubscription === true || user.allowProxySubscription === 1)) return false;
+  const expiresAt = user.expiresAt ? new Date(user.expiresAt as any).getTime() : 0;
+  if (expiresAt && expiresAt <= now) return false;
+  return true;
+}
 
 /** 这个入站上为某人单独发的那份凭据。没有就返回 null。 */
 export async function getSharedInboundUser(
@@ -433,6 +532,31 @@ export async function ensureSharedInboundCredential(
  * 派生节点由 syncProxyNodeFromInbound 顺带删掉（它按用户对齐，清单里没有的
  * 就走 deleteProxyNode，分享记录也跟着清）。
  */
+/**
+ * 这个人手上所有分享来的凭据，全部收回。返回受影响的主机 id，调用方催下发。
+ *
+ * 删账号时必须走一遭：只删 proxy_node_shares 的话，凭据还留在各个端口上活着，
+ * 而那个人已经从用户列表里消失了 —— 界面上再也没有入口能收回它，等于留下
+ * 一份谁也管不着、却照样能连的身份。
+ */
+export async function releaseAllSharedCredentialsForUser(userId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ inboundId: proxyInboundUsers.inboundId })
+    .from(proxyInboundUsers)
+    .where(eq(proxyInboundUsers.sharedUserId, Number(userId)));
+  const inboundIds = Array.from(new Set((rows as any[]).map((row) => Number(row.inboundId)).filter((id) => id > 0)));
+  const hostIds = new Set<number>();
+  for (const inboundId of inboundIds) {
+    const inbound = await getProxyInboundById(inboundId);
+    const released = await releaseSharedInboundCredential(inboundId, Number(userId));
+    const hostId = Number((inbound as any)?.hostId || 0);
+    if (released && hostId > 0) hostIds.add(hostId);
+  }
+  return Array.from(hostIds);
+}
+
 export async function releaseSharedInboundCredential(
   inboundId: number,
   sharedUserId: number,

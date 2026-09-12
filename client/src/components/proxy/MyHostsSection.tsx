@@ -42,6 +42,8 @@ export default function MyHostsSection() {
 
   const isAdmin = user?.role === "admin";
   const hostsQuery = trpc.hosts.list.useQuery(undefined, { enabled: !isAdmin });
+  // 额度先摆出来，别等人填完表单才弹一句「已达上限」。
+  const quotaQuery = trpc.hosts.selfServiceQuota.useQuery(undefined, { enabled: !isAdmin });
   const commandQuery = trpc.hosts.agentInstallCommand.useQuery(
     { hostId: commandHostId },
     { enabled: commandHostId > 0 },
@@ -49,6 +51,7 @@ export default function MyHostsSection() {
 
   const invalidate = () => {
     utils.hosts.list.invalidate();
+    utils.hosts.selfServiceQuota.invalidate();
     // 「新建节点」的主机下拉走的是 options，不刷的话新加的机器要等下次进页面才出现。
     utils.hosts.options.invalidate();
   };
@@ -80,6 +83,8 @@ export default function MyHostsSection() {
     (host) => Number(host?.userId || 0) === Number(user?.id || 0),
   );
   const onlineCount = myHosts.filter((host) => !!host.isOnline).length;
+  const quotaLimit = Number(quotaQuery.data?.limit || 0);
+  const canAddHost = quotaQuery.data ? !!quotaQuery.data.canAdd : true;
 
   const save = () => {
     const name = form.name.trim();
@@ -117,11 +122,18 @@ export default function MyHostsSection() {
             <CardTitle className="text-base">我的机器</CardTitle>
             {myHosts.length > 0 ? (
               <span className="truncate text-xs text-muted-foreground">
-                {myHosts.length} 台{onlineCount > 0 ? ` · ${onlineCount} 在线` : ""}
+                {quotaLimit > 0 ? `${myHosts.length}/${quotaLimit} 台` : `${myHosts.length} 台`}
+                {onlineCount > 0 ? ` · ${onlineCount} 在线` : ""}
               </span>
             ) : null}
           </button>
-          <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canAddHost}
+            title={canAddHost ? undefined : `自己添加的机器已达上限（${quotaLimit} 台），删掉一台，或让管理员调高上限`}
+            onClick={() => setAddOpen(true)}
+          >
             <Plus className="mr-1 h-4 w-4" />
             加一台
           </Button>

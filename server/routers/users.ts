@@ -178,6 +178,16 @@ export const usersRouter = router({
       .input(z.object({ userId: z.number() }))
       .mutation(async ({ input, ctx }) => {
         if (input.userId === ctx.user.id) throw new Error("不能删除当前登录账户");
+        /**
+         * 先收回分享给他的凭据，再删人。
+         *
+         * 顺序不能反：凭据是按 sharedUserId 找的，人删了就找不着了，那些凭据
+         * 会永远留在各个端口上 —— 界面上再没有入口能收回，而它照样能连。
+         */
+        const releasedHostIds = await db.releaseAllSharedCredentialsForUser(input.userId);
+        for (const hostId of releasedHostIds) {
+          pushAgentRefresh(hostId, `proxy-share-user-deleted-${input.userId}`, { urgent: true });
+        }
         await db.deleteUserPermissions(input.userId);
         clearLinkAccessScopeCache();
         await db.deleteUser(input.userId);

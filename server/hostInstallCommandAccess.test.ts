@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { canReadHostInstallCommand } from "./routers/hosts";
+import {
+  canAddSelfServiceHost,
+  canReadHostInstallCommand,
+  DEFAULT_SELF_SERVICE_HOST_LIMIT,
+  selfServiceHostLimitFrom,
+} from "./routers/hosts";
 
 /**
  * 「谁能看这台主机的 Agent 安装命令」。
@@ -41,4 +46,29 @@ test("数据库回来的 userId 是字符串时，主人仍然是主人", () => 
   // 用 === 比的话这条会判成外人，主人拿不到自己机器的命令。
   assert.equal(canReadHostInstallCommand(owner, { userId: String(owner.id) }), true);
   assert.equal(canReadHostInstallCommand(other, { userId: String(owner.id) }), false);
+});
+
+/**
+ * 自助加机器的额度。
+ *
+ * 「我的机器」把 hosts.create 摆到了界面上。机器行本身不消耗资源，但会进
+ * 管理员的主机列表和仪表盘统计 —— 一个人灌几千条就把那些页面淹了。
+ */
+
+test("没配的时候用默认额度，配了就按配的来", () => {
+  assert.equal(selfServiceHostLimitFrom(null), DEFAULT_SELF_SERVICE_HOST_LIMIT);
+  assert.equal(selfServiceHostLimitFrom(""), DEFAULT_SELF_SERVICE_HOST_LIMIT);
+  assert.equal(selfServiceHostLimitFrom("  "), DEFAULT_SELF_SERVICE_HOST_LIMIT);
+  assert.equal(selfServiceHostLimitFrom("3"), 3);
+  assert.equal(selfServiceHostLimitFrom("0"), 0);
+  // 脏数据不该变成「一台都不让加」，退回默认更安全。
+  assert.equal(selfServiceHostLimitFrom("abc"), DEFAULT_SELF_SERVICE_HOST_LIMIT);
+  assert.equal(selfServiceHostLimitFrom("-5"), DEFAULT_SELF_SERVICE_HOST_LIMIT);
+});
+
+test("到额度就拦住，管理员不受限，0 = 不限", () => {
+  assert.equal(canAddSelfServiceHost(owner, 2, 3), true);
+  assert.equal(canAddSelfServiceHost(owner, 3, 3), false);
+  assert.equal(canAddSelfServiceHost(owner, 99, 0), true);
+  assert.equal(canAddSelfServiceHost(admin, 999, 3), true);
 });

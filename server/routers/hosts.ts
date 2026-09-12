@@ -413,6 +413,37 @@ async function getVisibleHostsForUser(user: { id: number; role: string }, option
  * userId 从不同数据库回来有时是字符串，用 Number() 归一 —— 用 === 比的话，
  * 主人会被判成外人。
  */
+/** 普通用户自己能加几台机器。0 = 不限；没配就是这个数。 */
+export const DEFAULT_SELF_SERVICE_HOST_LIMIT = 10;
+
+/**
+ * 自助加机器的额度检查。
+ *
+ * 「我的机器」把 hosts.create 摆到了界面上（在那之前它虽然也是
+ * protectedProcedure，但没有入口）。机器行本身不消耗资源 —— Agent 没连上就是
+ * 条死记录 —— 可它会进管理员的主机列表、进仪表盘统计，一个人灌几千条就把
+ * 那些页面淹了。所以给一道刹车，默认 10 台，管理员可在系统设置里改。
+ *
+ * 管理员不受限：他要开满，拦了反而碍事。
+ */
+export function selfServiceHostLimitFrom(raw: string | null | undefined): number {
+  const text = String(raw ?? "").trim();
+  if (!text) return DEFAULT_SELF_SERVICE_HOST_LIMIT;
+  const value = Number(text);
+  if (!Number.isFinite(value) || value < 0) return DEFAULT_SELF_SERVICE_HOST_LIMIT;
+  return Math.floor(value);
+}
+
+export function canAddSelfServiceHost(
+  user: { role: string },
+  ownedCount: number,
+  limit: number,
+): boolean {
+  if (user.role === "admin") return true;
+  if (limit <= 0) return true;
+  return ownedCount < limit;
+}
+
 export function canReadHostInstallCommand(
   user: { id: number; role: string },
   host: { userId?: unknown } | null | undefined,
@@ -1068,6 +1099,13 @@ export const hostsRouter = router({
         blockTls: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "admin") {
+          const limit = selfServiceHostLimitFrom(await db.getSetting("selfServiceHostLimit"));
+          const owned = (await db.getHosts(ctx.user.id)).length;
+          if (!canAddSelfServiceHost(ctx.user, owned, limit)) {
+            throw new Error(`你自己添加的机器已达上限（${owned}/${limit}）。删掉一台，或让管理员调高上限。`);
+          }
+        }
         // 验证端口区间
         if ((input.portRangeStart != null && input.portRangeEnd == null) || (input.portRangeStart == null && input.portRangeEnd != null)) {
           throw new Error("请同时填写端口区间的起始和结束值，或同时留空");
@@ -1142,6 +1180,19 @@ export const hostsRouter = router({
             : "",
         };
       }),
+    /**
+     * 自助加机器还能加几台。界面要把「2/10」摆出来 —— 到了上限才弹一句错误
+     * 提示，等于让人白填一遍表单。
+     */
+    selfServiceQuota: protectedProcedure.query(async ({ ctx }) => {
+      const limit = selfServiceHostLimitFrom(await db.getSetting("selfServiceHostLimit"));
+      const used = (await db.getHosts(ctx.user.id)).length;
+      return {
+        used,
+        limit: ctx.user.role === "admin" ? 0 : limit,
+        canAdd: canAddSelfServiceHost(ctx.user, used, limit),
+      };
+    }),
     reorder: protectedProcedure
       .input(z.object({
         ids: reorderIdsSchema,

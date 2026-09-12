@@ -524,6 +524,8 @@ export default function ClientSubscriptionsPage() {
   }, [qrTarget]);
 
   const nodes = nodesQuery.data ?? [];
+  /** 一个节点都没有的时候，订阅链接那张卡要改口告诉他先去加节点。 */
+  const nodeCount = (nodes as any[]).length;
   const tokens = tokensQuery.data ?? [];
   const { user: me } = useAuth();
   const isAdmin = me?.role === "admin";
@@ -737,6 +739,355 @@ export default function ClientSubscriptionsPage() {
     <DashboardLayout>
       <div className="space-y-6">
         <h1 className="text-2xl font-semibold">订阅管理</h1>
+
+        {/*
+          订阅链接排在最前面。
+
+          回头客来这一页十次有九次只干一件事：把链接复制走或者重新导入 —— 原来它
+          压在五张卡片的最后，每次都要滚到底。第一次来的人也不吃亏：这时它是空的，
+          空状态里就写着「先在下面加节点，再回来建链接」，等于把顺序讲了一遍。
+        */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Link2 className="h-4 w-4" />
+              订阅链接
+            </CardTitle>
+            <Button
+              className="shrink-0"
+              size="sm"
+              onClick={() => {
+                setTokenName("");
+                setTokenDialogOpen(true);
+              }}
+            >
+              <Plus className="mr-1 h-4 w-4" />
+              新建链接
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {tokensQuery.isLoading ? (
+              <DataSectionLoading />
+            ) : tokens.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                还没有订阅链接。
+                {nodeCount > 0
+                  ? "新建一个，然后把地址导入客户端。"
+                  : "先在下面加节点 —— 自己机器上开一个，或者粘一条别处的链接 —— 再回来建链接。"}
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {tokens.map((token: any) => {
+                  const expanded = importOpenTokenId === token.id;
+                  const kind = importKind;
+                  const preset = normalizeProxyRulePreset(token.rulePreset);
+                  // 手动复制的地址刻意不带 format：让服务端按客户端标识协商，
+                  // 这样同一条地址粘到哪个客户端都能拿到对的格式。
+                  const manualUrl = subscriptionUrl(token.token, "base64", kind);
+                  return (
+                  <div key={token.id} className="space-y-3 rounded-lg border p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{token.name}</span>
+                        {!token.isEnabled && <Badge variant="outline">已停用</Badge>}
+                        <span className="text-xs text-muted-foreground">
+                          已拉取 {token.accessCount || 0} 次
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={!!token.isEnabled}
+                          onCheckedChange={(checked) => updateToken.mutate({ id: token.id, isEnabled: checked })}
+                        />
+                        {/* 光写"重置"配个刷新图标，在订阅面板里只会被读成"重置流量"。
+                            补上宾语并换成钥匙图标：这个按钮的代价是所有已导入的客户端都要重填。 */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          title="重置订阅地址（不会重置流量）"
+                          onClick={async () => {
+                            const ok = await confirm({
+                              title: "重置这个订阅地址？",
+                              description:
+                                "只更换订阅地址本身，不会重置流量。旧地址立即失效，已经导入过的客户端都要重新填写新地址。",
+                              confirmText: "重置地址",
+                            });
+                            if (ok) rotateToken.mutate({ id: token.id });
+                          }}
+                        >
+                          <KeyRound className="mr-1 h-4 w-4" />
+                          重置地址
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="删除订阅链接"
+                          onClick={async () => {
+                            const ok = await confirm({
+                              title: "删除这个订阅链接？",
+                              description: "使用该地址的客户端将立即无法更新节点。",
+                              confirmText: "删除",
+                            });
+                            if (ok) deleteToken.mutate({ id: token.id });
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <Button
+                      variant={expanded ? "secondary" : "default"}
+                      className="w-full"
+                      onClick={() => setImportOpenTokenId(expanded ? null : token.id)}
+                    >
+                      <Zap className="mr-1.5 h-4 w-4" />
+                      一键订阅
+                      <ChevronDown
+                        className={`ml-1.5 h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}
+                      />
+                    </Button>
+
+                    {expanded && (
+                      /* 不再套一层边框：它已经被令牌那个框包着，而且只在展开时出现，
+                         归属关系本来就清楚。三层边框套在一起才是真的乱。 */
+                      <div className="space-y-3 border-t pt-3">
+                        <div className="flex rounded-md border bg-background p-0.5">
+                          {PROXY_SUBSCRIPTION_KINDS.map((item) => (
+                            <button
+                              key={item}
+                              type="button"
+                              onClick={() => setImportKind(item)}
+                              className={`flex-1 rounded px-2 py-1.5 text-xs font-medium transition-colors ${
+                                kind === item
+                                  ? "bg-primary text-primary-foreground"
+                                  : "text-muted-foreground hover:text-foreground"
+                              }`}
+                            >
+                              {PROXY_SUBSCRIPTION_KIND_LABELS[item]}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {PROXY_SUBSCRIPTION_KIND_HINTS[kind]}
+                        </p>
+
+                        {kind === "rules" && (
+                          <div className="space-y-1.5 rounded-md border bg-background px-2 py-1.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs text-muted-foreground">
+                              分流规则：{PROXY_RULE_PRESET_LABELS[preset]}
+                            </span>
+                            <Select
+                              value={preset}
+                              onValueChange={(value) => updateToken.mutate({
+                                id: token.id,
+                                rulePreset: value as ProxyRulePreset,
+                              })}
+                            >
+                              <SelectTrigger className="h-7 w-24 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {PROXY_RULE_PRESETS.filter((item) => item !== "off").map((item) => (
+                                  <SelectItem key={item} value={item}>
+                                    {PROXY_RULE_PRESET_LABELS[item]}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            </div>
+                            {/* 光看"精简/均衡/完整"不知道差在哪，说明得跟着控件走。 */}
+                            <p className="text-xs text-muted-foreground">{PROXY_RULE_PRESET_HINTS[preset]}</p>
+                          </div>
+                        )}
+
+                        {/* 一键导入走 deep link，只有装了该客户端的设备点得动 ——
+                            在 Windows 上摆一格 loon:// 就是个死按钮。所以按当前设备筛，
+                            但留一个口子：识别错了或者想看别的平台，点开就是。 */}
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          {visibleTargets.map((target) => {
+                            const supported = proxySubscriptionKindSupported(target.format, kind);
+                            // 从客户端图标点进去时已经知道是哪个客户端了，钉死格式，
+                            // 不让它掉到令牌默认格式上。
+                            const url = subscriptionUrl(token.token, target.format, kind, true);
+                            const importName = `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`;
+                            const { icon: Icon, className: iconClass } = clientIcon(target);
+                            // 运行时的优先：放在服务器上就能换图，不必重新构建。
+                            const logo = runtimeLogos[target.id]
+                              ? `/api/client-logos/${target.id}`
+                              : CLIENT_LOGOS[target.id];
+                            const offPlatform = platform ? !target.platforms.includes(platform) : false;
+                            const usable = supported && !offPlatform;
+                            const tile = (
+                              <>
+                                <span
+                                  className={`flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg ${
+                                    logo ? "bg-transparent" : usable ? iconClass : "bg-muted text-muted-foreground"
+                                  }`}
+                                >
+                                  {logo ? (
+                                    // 置灰的格子连图标一起褪色，否则一格彩色 logo 配一行"本机没有"很矛盾。
+                                    <img
+                                      src={logo}
+                                      alt=""
+                                      className={`h-full w-full object-contain ${usable ? "" : "opacity-50 grayscale"}`}
+                                    />
+                                  ) : (
+                                    <Icon className="h-4 w-4" />
+                                  )}
+                                </span>
+                                <span className="w-full truncate text-center text-[11px] font-medium leading-tight">
+                                  {target.shortLabel}
+                                </span>
+                                <span className="w-full truncate text-center text-[10px] text-muted-foreground">
+                                  {!supported
+                                    ? "不支持规则"
+                                    : offPlatform
+                                      ? "本机没有"
+                                      : target.buildImportUrl
+                                        ? proxyClientPlatformsLabel(target)
+                                        : "手动添加"}
+                                </span>
+                              </>
+                            );
+                            const tileClass =
+                              "flex flex-col items-center gap-1.5 rounded-lg border bg-background p-2.5 text-inherit transition-colors hover:border-primary hover:bg-primary/5";
+                            const covers = target.covers ? `。同样适用于：${target.covers}` : "";
+
+                            // 不支持时置灰而不是隐藏：藏起来用户不知道为什么少了几个客户端。
+                            if (usable && !target.buildImportUrl) {
+                              // 没有官方 scheme 的客户端：点开给它对应格式的地址和二维码，
+                              // 外加一句粘到哪儿 —— 订阅地址本身对任何客户端都有效，
+                              // 少的只是自动跳转那一步，不是不支持。
+                              return (
+                                <button
+                                  key={target.id}
+                                  type="button"
+                                  title={`${target.label} 没有一键导入，点开取地址手动添加${covers}`}
+                                  onClick={() =>
+                                    setQrTarget({
+                                      title: `${target.label} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`,
+                                      url,
+                                      hint: target.manualHint,
+                                    })
+                                  }
+                                  className={tileClass}
+                                >
+                                  {tile}
+                                </button>
+                              );
+                            }
+
+                            return usable ? (
+                              <a
+                                key={target.id}
+                                href={target.buildImportUrl!(url, importName)}
+                                title={`在 ${target.label} 中打开${covers}`}
+                                className={tileClass}
+                              >
+                                {tile}
+                              </a>
+                            ) : (
+                              <div
+                                key={target.id}
+                                title={
+                                  !supported
+                                    ? `${target.label} 的订阅是节点列表，表达不了分流规则；改用「节点订阅」即可。`
+                                    : `${target.label} 不支持${platform ? PROXY_CLIENT_PLATFORM_LABELS[platform] : "当前系统"}，在这台设备上点了不会有反应。`
+                                }
+                                className="flex cursor-not-allowed flex-col items-center gap-1.5 rounded-lg border border-dashed bg-background/50 p-2.5 opacity-60"
+                              >
+                                {tile}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {platform && hiddenCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllClients((value) => !value)}
+                            className="w-full text-center text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                          >
+                            {showAllClients
+                              ? `只看 ${PROXY_CLIENT_PLATFORM_LABELS[platform]} 能用的`
+                              : `还有 ${hiddenCount} 个别的平台的客户端，显示全部`}
+                          </button>
+                        )}
+
+                        {/* 手机上一行放不下「地址 + 两个按钮」，挤到地址只剩几个字符，
+                            所以窄屏竖排、宽屏再并成一行。 */}
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1.5 text-xs">
+                            {manualUrl}
+                          </code>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {/* 上面的图标只在「面板和客户端同一台设备」时有用；
+                                在电脑上看面板、往手机里导入，走的是这个二维码。 */}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="flex-1 sm:flex-none"
+                              onClick={() =>
+                                setQrTarget({
+                                  title: `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`,
+                                  url: manualUrl,
+                                })
+                              }
+                            >
+                              <QrCode className="mr-1 h-3.5 w-3.5" />
+                              扫码
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="flex-1 sm:flex-none"
+                              onClick={() => copyText(manualUrl, "订阅地址已复制")}
+                            >
+                              <Copy className="mr-1 h-3.5 w-3.5" />
+                              复制
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <p className="text-xs text-muted-foreground">
+                            其他客户端用这条地址手动添加。
+                          </p>
+                          {/* 这个设置只在「客户端标识认不出来」时才生效，所以就放在那句话下面。
+                              上面图标点进去的地址都钉死了格式，走不到这里。 */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs text-muted-foreground">认不出来时按</span>
+                            <Select
+                              value={normalizeProxySubscriptionFormat(token.defaultFormat)}
+                              onValueChange={(value) => updateToken.mutate({
+                                id: token.id,
+                                defaultFormat: value as ProxySubscriptionFormat,
+                              })}
+                            >
+                              <SelectTrigger className="h-7 w-auto gap-1 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {PROXY_SUBSCRIPTION_FORMATS.map((format) => (
+                                  <SelectItem key={format} value={format}>
+                                    {PROXY_SUBSCRIPTION_FORMAT_LABELS[format]}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <span className="text-xs text-muted-foreground">返回</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/*
           「新建节点」放在最前面：自建落地是这一页的起点 —— 先在自己的机器上开出节点，
@@ -1100,344 +1451,6 @@ export default function ClientSubscriptionsPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Link2 className="h-4 w-4" />
-              订阅链接
-            </CardTitle>
-            <Button
-              className="shrink-0"
-              size="sm"
-              onClick={() => {
-                setTokenName("");
-                setTokenDialogOpen(true);
-              }}
-            >
-              <Plus className="mr-1 h-4 w-4" />
-              新建链接
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {tokensQuery.isLoading ? (
-              <DataSectionLoading />
-            ) : tokens.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                还没有订阅链接。新建一个，然后把地址导入客户端。
-              </p>
-            ) : (
-              <div className="space-y-4">
-                {tokens.map((token: any) => {
-                  const expanded = importOpenTokenId === token.id;
-                  const kind = importKind;
-                  const preset = normalizeProxyRulePreset(token.rulePreset);
-                  // 手动复制的地址刻意不带 format：让服务端按客户端标识协商，
-                  // 这样同一条地址粘到哪个客户端都能拿到对的格式。
-                  const manualUrl = subscriptionUrl(token.token, "base64", kind);
-                  return (
-                  <div key={token.id} className="space-y-3 rounded-lg border p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{token.name}</span>
-                        {!token.isEnabled && <Badge variant="outline">已停用</Badge>}
-                        <span className="text-xs text-muted-foreground">
-                          已拉取 {token.accessCount || 0} 次
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={!!token.isEnabled}
-                          onCheckedChange={(checked) => updateToken.mutate({ id: token.id, isEnabled: checked })}
-                        />
-                        {/* 光写"重置"配个刷新图标，在订阅面板里只会被读成"重置流量"。
-                            补上宾语并换成钥匙图标：这个按钮的代价是所有已导入的客户端都要重填。 */}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          title="重置订阅地址（不会重置流量）"
-                          onClick={async () => {
-                            const ok = await confirm({
-                              title: "重置这个订阅地址？",
-                              description:
-                                "只更换订阅地址本身，不会重置流量。旧地址立即失效，已经导入过的客户端都要重新填写新地址。",
-                              confirmText: "重置地址",
-                            });
-                            if (ok) rotateToken.mutate({ id: token.id });
-                          }}
-                        >
-                          <KeyRound className="mr-1 h-4 w-4" />
-                          重置地址
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          title="删除订阅链接"
-                          onClick={async () => {
-                            const ok = await confirm({
-                              title: "删除这个订阅链接？",
-                              description: "使用该地址的客户端将立即无法更新节点。",
-                              confirmText: "删除",
-                            });
-                            if (ok) deleteToken.mutate({ id: token.id });
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    <Button
-                      variant={expanded ? "secondary" : "default"}
-                      className="w-full"
-                      onClick={() => setImportOpenTokenId(expanded ? null : token.id)}
-                    >
-                      <Zap className="mr-1.5 h-4 w-4" />
-                      一键订阅
-                      <ChevronDown
-                        className={`ml-1.5 h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}
-                      />
-                    </Button>
-
-                    {expanded && (
-                      /* 不再套一层边框：它已经被令牌那个框包着，而且只在展开时出现，
-                         归属关系本来就清楚。三层边框套在一起才是真的乱。 */
-                      <div className="space-y-3 border-t pt-3">
-                        <div className="flex rounded-md border bg-background p-0.5">
-                          {PROXY_SUBSCRIPTION_KINDS.map((item) => (
-                            <button
-                              key={item}
-                              type="button"
-                              onClick={() => setImportKind(item)}
-                              className={`flex-1 rounded px-2 py-1.5 text-xs font-medium transition-colors ${
-                                kind === item
-                                  ? "bg-primary text-primary-foreground"
-                                  : "text-muted-foreground hover:text-foreground"
-                              }`}
-                            >
-                              {PROXY_SUBSCRIPTION_KIND_LABELS[item]}
-                            </button>
-                          ))}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {PROXY_SUBSCRIPTION_KIND_HINTS[kind]}
-                        </p>
-
-                        {kind === "rules" && (
-                          <div className="space-y-1.5 rounded-md border bg-background px-2 py-1.5">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-xs text-muted-foreground">
-                              分流规则：{PROXY_RULE_PRESET_LABELS[preset]}
-                            </span>
-                            <Select
-                              value={preset}
-                              onValueChange={(value) => updateToken.mutate({
-                                id: token.id,
-                                rulePreset: value as ProxyRulePreset,
-                              })}
-                            >
-                              <SelectTrigger className="h-7 w-24 text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {PROXY_RULE_PRESETS.filter((item) => item !== "off").map((item) => (
-                                  <SelectItem key={item} value={item}>
-                                    {PROXY_RULE_PRESET_LABELS[item]}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            </div>
-                            {/* 光看"精简/均衡/完整"不知道差在哪，说明得跟着控件走。 */}
-                            <p className="text-xs text-muted-foreground">{PROXY_RULE_PRESET_HINTS[preset]}</p>
-                          </div>
-                        )}
-
-                        {/* 一键导入走 deep link，只有装了该客户端的设备点得动 ——
-                            在 Windows 上摆一格 loon:// 就是个死按钮。所以按当前设备筛，
-                            但留一个口子：识别错了或者想看别的平台，点开就是。 */}
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                          {visibleTargets.map((target) => {
-                            const supported = proxySubscriptionKindSupported(target.format, kind);
-                            // 从客户端图标点进去时已经知道是哪个客户端了，钉死格式，
-                            // 不让它掉到令牌默认格式上。
-                            const url = subscriptionUrl(token.token, target.format, kind, true);
-                            const importName = `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`;
-                            const { icon: Icon, className: iconClass } = clientIcon(target);
-                            // 运行时的优先：放在服务器上就能换图，不必重新构建。
-                            const logo = runtimeLogos[target.id]
-                              ? `/api/client-logos/${target.id}`
-                              : CLIENT_LOGOS[target.id];
-                            const offPlatform = platform ? !target.platforms.includes(platform) : false;
-                            const usable = supported && !offPlatform;
-                            const tile = (
-                              <>
-                                <span
-                                  className={`flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg ${
-                                    logo ? "bg-transparent" : usable ? iconClass : "bg-muted text-muted-foreground"
-                                  }`}
-                                >
-                                  {logo ? (
-                                    // 置灰的格子连图标一起褪色，否则一格彩色 logo 配一行"本机没有"很矛盾。
-                                    <img
-                                      src={logo}
-                                      alt=""
-                                      className={`h-full w-full object-contain ${usable ? "" : "opacity-50 grayscale"}`}
-                                    />
-                                  ) : (
-                                    <Icon className="h-4 w-4" />
-                                  )}
-                                </span>
-                                <span className="w-full truncate text-center text-[11px] font-medium leading-tight">
-                                  {target.shortLabel}
-                                </span>
-                                <span className="w-full truncate text-center text-[10px] text-muted-foreground">
-                                  {!supported
-                                    ? "不支持规则"
-                                    : offPlatform
-                                      ? "本机没有"
-                                      : target.buildImportUrl
-                                        ? proxyClientPlatformsLabel(target)
-                                        : "手动添加"}
-                                </span>
-                              </>
-                            );
-                            const tileClass =
-                              "flex flex-col items-center gap-1.5 rounded-lg border bg-background p-2.5 text-inherit transition-colors hover:border-primary hover:bg-primary/5";
-                            const covers = target.covers ? `。同样适用于：${target.covers}` : "";
-
-                            // 不支持时置灰而不是隐藏：藏起来用户不知道为什么少了几个客户端。
-                            if (usable && !target.buildImportUrl) {
-                              // 没有官方 scheme 的客户端：点开给它对应格式的地址和二维码，
-                              // 外加一句粘到哪儿 —— 订阅地址本身对任何客户端都有效，
-                              // 少的只是自动跳转那一步，不是不支持。
-                              return (
-                                <button
-                                  key={target.id}
-                                  type="button"
-                                  title={`${target.label} 没有一键导入，点开取地址手动添加${covers}`}
-                                  onClick={() =>
-                                    setQrTarget({
-                                      title: `${target.label} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`,
-                                      url,
-                                      hint: target.manualHint,
-                                    })
-                                  }
-                                  className={tileClass}
-                                >
-                                  {tile}
-                                </button>
-                              );
-                            }
-
-                            return usable ? (
-                              <a
-                                key={target.id}
-                                href={target.buildImportUrl!(url, importName)}
-                                title={`在 ${target.label} 中打开${covers}`}
-                                className={tileClass}
-                              >
-                                {tile}
-                              </a>
-                            ) : (
-                              <div
-                                key={target.id}
-                                title={
-                                  !supported
-                                    ? `${target.label} 的订阅是节点列表，表达不了分流规则；改用「节点订阅」即可。`
-                                    : `${target.label} 不支持${platform ? PROXY_CLIENT_PLATFORM_LABELS[platform] : "当前系统"}，在这台设备上点了不会有反应。`
-                                }
-                                className="flex cursor-not-allowed flex-col items-center gap-1.5 rounded-lg border border-dashed bg-background/50 p-2.5 opacity-60"
-                              >
-                                {tile}
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {platform && hiddenCount > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setShowAllClients((value) => !value)}
-                            className="w-full text-center text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                          >
-                            {showAllClients
-                              ? `只看 ${PROXY_CLIENT_PLATFORM_LABELS[platform]} 能用的`
-                              : `还有 ${hiddenCount} 个别的平台的客户端，显示全部`}
-                          </button>
-                        )}
-
-                        {/* 手机上一行放不下「地址 + 两个按钮」，挤到地址只剩几个字符，
-                            所以窄屏竖排、宽屏再并成一行。 */}
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                          <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1.5 text-xs">
-                            {manualUrl}
-                          </code>
-                          <div className="flex shrink-0 items-center gap-2">
-                            {/* 上面的图标只在「面板和客户端同一台设备」时有用；
-                                在电脑上看面板、往手机里导入，走的是这个二维码。 */}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="flex-1 sm:flex-none"
-                              onClick={() =>
-                                setQrTarget({
-                                  title: `${token.name} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`,
-                                  url: manualUrl,
-                                })
-                              }
-                            >
-                              <QrCode className="mr-1 h-3.5 w-3.5" />
-                              扫码
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="flex-1 sm:flex-none"
-                              onClick={() => copyText(manualUrl, "订阅地址已复制")}
-                            >
-                              <Copy className="mr-1 h-3.5 w-3.5" />
-                              复制
-                            </Button>
-                          </div>
-                        </div>
-                        <div className="space-y-1.5">
-                          <p className="text-xs text-muted-foreground">
-                            其他客户端用这条地址手动添加。
-                          </p>
-                          {/* 这个设置只在「客户端标识认不出来」时才生效，所以就放在那句话下面。
-                              上面图标点进去的地址都钉死了格式，走不到这里。 */}
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs text-muted-foreground">认不出来时按</span>
-                            <Select
-                              value={normalizeProxySubscriptionFormat(token.defaultFormat)}
-                              onValueChange={(value) => updateToken.mutate({
-                                id: token.id,
-                                defaultFormat: value as ProxySubscriptionFormat,
-                              })}
-                            >
-                              <SelectTrigger className="h-7 w-auto gap-1 text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {PROXY_SUBSCRIPTION_FORMATS.map((format) => (
-                                  <SelectItem key={format} value={format}>
-                                    {PROXY_SUBSCRIPTION_FORMAT_LABELS[format]}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <span className="text-xs text-muted-foreground">返回</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
       </div>
 
       <ProxyNodeShareDialog
