@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
+import StatCard from "@/components/StatCard";
 import DashboardLayout from "@/components/DashboardLayout";
 import MobileAppSettings from "@/components/MobileAppSettings";
 import { Badge } from "@/components/ui/badge";
@@ -98,72 +99,6 @@ function getExpiryStatus(value: string | Date | null | undefined) {
   if (diffDays < 0) return { label: "已到期", tone: "danger" as const };
   if (diffDays <= 7) return { label: diffDays === 0 ? "今日到期" : `剩余 ${diffDays} 天`, tone: "warning" as const };
   return { label: `剩余 ${diffDays} 天`, tone: "normal" as const };
-}
-
-function StatCard({
-  title,
-  value,
-  subtitle,
-  icon: Icon,
-  tone,
-  loading,
-  cacheKey,
-  fallbackValue,
-  className,
-  index = 0,
-}: {
-  title: string;
-  value: string | number;
-  subtitle?: string;
-  icon: React.ElementType;
-  tone: string;
-  loading?: boolean;
-  cacheKey: string;
-  fallbackValue?: string | number;
-  className?: string;
-  index?: number;
-}) {
-  return (
-    <motion.div
-      className={className}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      whileHover={{ y: -2 }}
-      transition={{ duration: 0.28, delay: index * 0.04, ease: [0.22, 1, 0.36, 1] }}
-    >
-      <Card className="group relative h-full overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-        <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
-        <CardContent className="relative p-3 sm:p-5">
-          <div className="flex items-start justify-between gap-2 sm:gap-4">
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
-              <AnimatedStatValue
-                as="p"
-                value={value}
-                loading={loading}
-                cacheKey={cacheKey}
-                fallbackValue={fallbackValue}
-                className="break-words text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl"
-              />
-              {subtitle && (
-                <AnimatedStatValue
-                  as="p"
-                  value={subtitle}
-                  loading={loading}
-                  cacheKey={`${cacheKey}.subtitle`}
-                  fallbackValue=""
-                  className="break-words text-xs text-muted-foreground/80"
-                />
-              )}
-            </div>
-            <div className={`hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone} shadow-sm sm:flex`}>
-              <Icon className="h-5 w-5 text-white" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
 }
 
 function CircularProgress({ value, color }: { value: number; color: string }) {

@@ -566,7 +566,9 @@ export default function ProxyInboundsSection({
   return (
     <>
       <div className="space-y-4">
-        <Card>
+        {/* 和订阅链接那张卡、以及仪表盘上那几张，用同一种玻璃卡 + 顶部高光。 */}
+        <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md">
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
             <button
               type="button"
@@ -576,7 +578,7 @@ export default function ProxyInboundsSection({
             >
               <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
               <Server className="h-4 w-4 shrink-0" />
-              <CardTitle className="text-base">我的节点</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">我的节点</CardTitle>
               {totalRowCount > 0 ? (
                 <span className="truncate text-xs text-muted-foreground">
                   {totalRowCount} 个
