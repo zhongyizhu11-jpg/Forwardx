@@ -174,3 +174,32 @@ test("分享链接一个用户一条，凭据互不相同", () => {
     assert.equal(uuids.size, 2, "两个用户的凭据必须互不相同");
   `);
 });
+
+test("入站的备注跟着派生节点走 —— 填了要看得见，改了要跟着改", () => {
+  runInDatabase(String.raw`
+    const id = Number(await repo.createProxyInbound({
+      userId: 1, hostId: 1, name: "TW", remark: "给张三的", protocol: "shadowsocks", port: 4433,
+      transport: "tcp", security: "none",
+      method: "2022-blake3-aes-128-gcm", password: "T0FXbmVkNVZuZ1E9PT0wMQ==",
+      isEnabled: true,
+    }));
+    await repo.syncProxyNodeFromInbound(id);
+
+    const remarkOf = async () =>
+      (await query("SELECT remark FROM proxy_nodes WHERE inboundId = ?", [id]))[0].remark;
+    // 派生节点在界面上没有编辑入口，备注只可能来自入站；不带过来就等于填了没用。
+    assert.equal(await remarkOf(), "给张三的");
+
+    await repo.updateProxyInbound(id, { remark: "退租了，先留着" });
+    await repo.syncProxyNodeFromInbound(id);
+    assert.equal(await remarkOf(), "退租了，先留着", "改了备注要跟着改");
+
+    // 清空也要真的清掉，不能留着上一次的字样。
+    await repo.updateProxyInbound(id, { remark: null });
+    await repo.syncProxyNodeFromInbound(id);
+    assert.equal(await remarkOf(), null);
+
+    // 名称不受影响：那是客户端里显示的节点名，跟备注是两回事。
+    assert.equal((await query("SELECT name FROM proxy_nodes WHERE inboundId = ?", [id]))[0].name, "TW");
+  `);
+});
