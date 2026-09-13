@@ -316,6 +316,29 @@ test("没有客户端订阅权限时订阅地址一律 404", () => {
     await exec("UPDATE users SET allowProxySubscription = 0 WHERE id = 1");
     assert.equal(await status("token-1"), 404, "收回权限后订阅应立即失效");
 
+    /**
+     * 到期与停用也要立刻失效 —— 和落地机那边同一把尺子。
+     *
+     * 原来这里只看订阅权限：到期的租户照样拉得到一份列着全部节点的订阅，页头还
+     * 老老实实写着他已经过期。落地机那边早把他的凭据拿掉了，于是他看到的是一排
+     * 连不上的节点，界面上还看不出为什么 ——「到期就停服」只兑现了一半。
+     */
+    await exec("UPDATE users SET allowProxySubscription = 1 WHERE id = 1");
+    assert.equal(await status("token-1"), 200, "恢复权限后应当又能拉到");
+
+    await exec("UPDATE users SET expiresAt = ? WHERE id = 1", [Math.floor(Date.now() / 1000) - 3600]);
+    assert.equal(await status("token-1"), 404, "账号到期后订阅应立即失效");
+    await exec("UPDATE users SET expiresAt = NULL WHERE id = 1");
+    assert.equal(await status("token-1"), 200, "续期之后要自己回来");
+
+    await exec("UPDATE users SET accountEnabled = 0 WHERE id = 1");
+    assert.equal(await status("token-1"), 404, "账号被停用后订阅应立即失效");
+    await exec("UPDATE users SET accountEnabled = 1 WHERE id = 1");
+
+    // 管理员同样受停用影响（资格判定里只对「订阅权限」这一条放行）。
+    await exec("UPDATE users SET accountEnabled = 0 WHERE id = 3");
+    assert.equal(await status("token-3"), 404, "被停用的管理员也不该再拉到订阅");
+
     await new Promise((resolve) => server.close(resolve));
     console.log("ok");
   `;

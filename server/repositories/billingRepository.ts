@@ -353,6 +353,14 @@ function buildPlanSnapshot(plan: any) {
     trafficLimit: Number(plan?.trafficLimit || 0),
     rateLimitMbps: Number(plan?.rateLimitMbps || 0),
     maxRules: Number(plan?.maxRules ?? 20),
+    /**
+     * 订阅那一套的两个上限也要冻进快照。
+     *
+     * 漏了它们的后果不是「按套餐算」，而是**当成不限**：0 在配额合并那边表示
+     * 不限，于是卖「2 个自建节点」的套餐，租户能开无限个。
+     */
+    maxProxyInbounds: Number(plan?.maxProxyInbounds || 0),
+    maxProxySubTokens: Number(plan?.maxProxySubTokens || 0),
     maxConnections: Number(plan?.maxConnections ?? 2000),
     maxIPs: Number(plan?.maxIPs ?? 10),
     hostIds: normalizeNumericIds(plan?.hostIds || []),
@@ -372,6 +380,12 @@ function parsePlanSnapshot(value: unknown) {
       trafficLimit: Number(parsed.trafficLimit || 0),
       rateLimitMbps: Number(parsed.rateLimitMbps || 0),
       maxRules: Number(parsed.maxRules ?? 20),
+      /**
+       * 这两项是后加的，老快照里没有 —— 缺就返回 undefined，让叠加那边退回
+       * 套餐当前值。默认成 0 会把老订阅一律变成「不限」，正好是要修的那个 bug。
+       */
+      maxProxyInbounds: parsed.maxProxyInbounds === undefined ? undefined : Number(parsed.maxProxyInbounds || 0),
+      maxProxySubTokens: parsed.maxProxySubTokens === undefined ? undefined : Number(parsed.maxProxySubTokens || 0),
       maxConnections: Number(parsed.maxConnections ?? 2000),
       maxIPs: Number(parsed.maxIPs ?? 10),
       hostIds: normalizeNumericIds(Array.isArray(parsed.hostIds) ? parsed.hostIds : []),
@@ -399,6 +413,8 @@ async function attachSubscriptionSnapshots<T extends { planId: number; planSnaps
       trafficLimit: snapshot?.trafficLimit ?? subscription.trafficLimit,
       rateLimitMbps: snapshot?.rateLimitMbps ?? subscription.rateLimitMbps,
       maxRules: snapshot?.maxRules ?? subscription.maxRules,
+      maxProxyInbounds: snapshot?.maxProxyInbounds ?? subscription.maxProxyInbounds,
+      maxProxySubTokens: snapshot?.maxProxySubTokens ?? subscription.maxProxySubTokens,
       maxConnections: snapshot?.maxConnections ?? subscription.maxConnections,
       maxIPs: snapshot?.maxIPs ?? subscription.maxIPs,
       hostIds: snapshot ? snapshot.hostIds : await getPlanHostIds(Number(subscription.planId)),
@@ -917,6 +933,8 @@ function userSubscriptionsListQuery(db: any) {
       trafficLimit: subscriptionPlans.trafficLimit,
       rateLimitMbps: subscriptionPlans.rateLimitMbps,
       maxRules: subscriptionPlans.maxRules,
+      maxProxyInbounds: subscriptionPlans.maxProxyInbounds,
+      maxProxySubTokens: subscriptionPlans.maxProxySubTokens,
       maxConnections: subscriptionPlans.maxConnections,
       maxIPs: subscriptionPlans.maxIPs,
       status: userSubscriptions.status,
@@ -1141,6 +1159,10 @@ export async function getActiveUserSubscriptions(userId?: number) {
         trafficLimit: subscriptionPlans.trafficLimit,
         rateLimitMbps: subscriptionPlans.rateLimitMbps,
         maxRules: subscriptionPlans.maxRules,
+        // 这两列以前没查出来，于是配额合并那边看到 undefined、当成 0 =「不限」——
+        // 套餐上填的自建节点数和订阅地址数等于白填。
+        maxProxyInbounds: subscriptionPlans.maxProxyInbounds,
+        maxProxySubTokens: subscriptionPlans.maxProxySubTokens,
         maxConnections: subscriptionPlans.maxConnections,
         maxIPs: subscriptionPlans.maxIPs,
         allowProxySubscription: subscriptionPlans.allowProxySubscription,

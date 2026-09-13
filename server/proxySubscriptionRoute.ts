@@ -9,6 +9,7 @@ import {
   type ProxySubscriptionFormat,
 } from "../shared/proxySubscription";
 import { normalizeProxyRulePreset } from "../shared/proxyRuleset";
+import { proxyCredentialRecipientActive } from "./repositories/proxyInboundRepository";
 
 export const proxySubscriptionRouter = express.Router();
 
@@ -81,10 +82,18 @@ proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Respons
         ? normalizeProxyRulePreset(record.rulePreset)
         : normalizeProxyRulePreset(rulesParam));
 
-    // 权限是订阅本身的前提：管理员随时可能收回，或者用户超了流量被自动回收。
-    // 与令牌无效同样返回 404，不泄露「这个令牌存在但没权限」。
+    /**
+     * 订阅本身的资格：和落地机那边用**同一把尺子**（proxyCredentialRecipientActive）。
+     *
+     * 原来这里只看「有没有订阅权限」，不看账号有没有停用、有没有到期 —— 于是
+     * 到期的租户照样拉得到一份列着全部节点的订阅，页头还老老实实写着他已经过期。
+     * 落地机那边早就把他的凭据拿掉了，所以他看到的是一排连不上的节点，而界面上
+     * 看不出为什么。两处判定必须一致，否则「到期就停服」这句话只兑现了一半。
+     *
+     * 与令牌无效同样返回 404，不泄露「这个令牌存在但没资格」。
+     */
     const owner = await db.getUserById(Number(record.userId));
-    if (!owner || (owner.role !== "admin" && !owner.allowProxySubscription)) {
+    if (!proxyCredentialRecipientActive(owner as any)) {
       res.status(404).type("text/plain").send("订阅不存在");
       return;
     }

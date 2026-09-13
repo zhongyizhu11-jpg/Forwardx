@@ -356,3 +356,67 @@ test("删账号，他的专属端口也收掉", () => {
       "人删了端口还留着监听，就是一个谁也管不着的口子");
   `);
 });
+
+test("套餐上填的自建节点数与订阅地址数真的落到用户身上 —— 不能当成「不限」", () => {
+  runInDatabase(String.raw`
+    const planId = Number((await billing.createSubscriptionPlan({
+      name: "两个节点", priceCents: 0, currency: "CNY", durationDays: 30,
+      portCount: 5, maxRules: 3, maxProxyInbounds: 2, maxProxySubTokens: 1,
+      allowProxySubscription: true, isActive: true, isStoreVisible: true,
+    }, [10], [], [], [], [])).id);
+    await billing.applySubscriptionToUser(2, planId, "admin");
+
+    const row = (await query("SELECT maxProxyInbounds, maxProxySubTokens, maxRules FROM users WHERE id = 2"))[0];
+    /**
+     * 这两列原来没被查出来，配额合并那边看到 undefined 就当成 0 —— 而 0 在那套
+     * 规矩里是「不限」。于是卖「2 个自建节点」的套餐，租户能开无限个。
+     */
+    assert.equal(Number(row.maxProxyInbounds), 2, "套餐说 2 个就是 2 个，不是不限");
+    assert.equal(Number(row.maxProxySubTokens), 1);
+    assert.equal(Number(row.maxRules), 3, "本来就对的那几项不能被带坏");
+  `);
+});
+
+test("冻结快照的订阅，这两个上限也要冻住", () => {
+  runInDatabase(String.raw`
+    const planId = Number((await billing.createSubscriptionPlan({
+      name: "两个节点", priceCents: 0, currency: "CNY", durationDays: 30,
+      portCount: 5, maxRules: 3, maxProxyInbounds: 2, maxProxySubTokens: 1,
+      allowProxySubscription: true, isActive: true, isStoreVisible: true,
+    }, [10], [], [], [], [])).id);
+    await billing.applySubscriptionToUser(2, planId, "admin");
+    await billing.freezePlanSubscriberSnapshots(planId);
+
+    // 冻结之后管理员把套餐改成 9 个：已冻结的订阅应当还是 2 个。
+    await billing.updateSubscriptionPlan(planId, { maxProxyInbounds: 9 });
+    await billing.syncUserSubscriptionEntitlements(2);
+    const row = (await query("SELECT maxProxyInbounds FROM users WHERE id = 2"))[0];
+    assert.equal(Number(row.maxProxyInbounds), 2, "冻结的就该是买的时候那个数");
+  `);
+});
+
+test("升级前就存在的订阅：快照里没有这两项，也要按套餐算，而不是当成不限", () => {
+  runInDatabase(String.raw`
+    const planId = Number((await billing.createSubscriptionPlan({
+      name: "两个节点", priceCents: 0, currency: "CNY", durationDays: 30,
+      portCount: 5, maxRules: 3, maxProxyInbounds: 2, maxProxySubTokens: 1,
+      allowProxySubscription: true, isActive: true, isStoreVisible: true,
+    }, [10], [], [], [], [])).id);
+    await billing.applySubscriptionToUser(2, planId, "admin");
+
+    /**
+     * 把快照改回升级前的样子（没有这两个键）—— 你面板上现有的订阅全是这样。
+     * 解析时不能给它默认 0：0 在配额合并那边是「不限」，那正是这次要修的 bug。
+     * 缺了就退回套餐当前值。
+     */
+    await exec(
+      "UPDATE user_subscriptions SET planSnapshot = ? WHERE userId = 2",
+      [JSON.stringify({ name: "两个节点", portCount: 5, trafficLimit: 0, rateLimitMbps: 0, maxRules: 3, maxConnections: 2000, maxIPs: 10, hostIds: [10], tunnelIds: [], forwardGroupIds: [] })],
+    );
+    await billing.syncUserSubscriptionEntitlements(2);
+
+    const row = (await query("SELECT maxProxyInbounds, maxProxySubTokens FROM users WHERE id = 2"))[0];
+    assert.equal(Number(row.maxProxyInbounds), 2, "老快照要退回套餐当前值，不是不限");
+    assert.equal(Number(row.maxProxySubTokens), 1);
+  `);
+});
