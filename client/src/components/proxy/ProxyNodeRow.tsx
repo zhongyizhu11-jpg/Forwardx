@@ -46,6 +46,30 @@ export type ProxyNodeRowSpec = {
   protocol?: string;
   /** 组内排序用的纯文本名字。 */
   sortName?: string;
+  /**
+   * 这条线路是哪来的。左边一道很淡的色条。
+   *
+   * 三类节点合成一个列表之后，「这是我自己机器上开的、还是粘来的、还是别人给我的」
+   * 成了最常要分辨的一件事 —— 它决定了这行能不能改、凭据归谁。原来只写在第二行的
+   * 文字里，一眼扫过去全是一样的灰。
+   *
+   * 只做色条，不把文字也染色：颜色是辅助，文字仍然是那个说清楚的人。色盲、截图转灰、
+   * 深色模式下对比度不够，这一行都还能读。
+   */
+  accent?: ProxyNodeRowAccent;
+};
+
+/** own = 自己机器上开的；pasted = 粘进来的；shared = 别人分享给我的。 */
+export type ProxyNodeRowAccent = "own" | "pasted" | "shared";
+
+const ACCENT_BORDERS: Record<ProxyNodeRowAccent, string> = {
+  // 青：和「我的节点」那段的色章、「落地节点」那张概览卡同色 —— 自建的才是真正属于
+  // 这个面板的那一类。
+  own: "border-l-[3px] border-l-teal-500/50",
+  // 天蓝：从别处粘来的，凭据不是面板生成的。
+  pasted: "border-l-[3px] border-l-sky-500/50",
+  // 紫：别人给的，只能用不能改。
+  shared: "border-l-[3px] border-l-violet-500/50",
 };
 
 /**
@@ -74,6 +98,7 @@ export function ProxyNodeRow({
   toggle,
   actions = [],
   muted = false,
+  accent,
 }: {
   /** 状态点之类的前置标记。 */
   leading?: ReactNode;
@@ -87,6 +112,8 @@ export function ProxyNodeRow({
   /** 开关之前的一个小按钮，留给最常用的那一个。 */
   inline?: ReactNode;
   toggle?: ReactNode;
+  /** 来源色条，见 ProxyNodeRowAccent。 */
+  accent?: ProxyNodeRowAccent;
   actions?: ProxyNodeRowAction[];
   /** 停用的行整体压暗，不另外占一个徽章的位置。 */
   muted?: boolean;
@@ -106,7 +133,11 @@ export function ProxyNodeRow({
   const pending = useRef<null | (() => void)>(null);
 
   return (
-    <div className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${muted ? "opacity-60" : ""}`}>
+    <div
+      className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${
+        accent ? ACCENT_BORDERS[accent] : ""
+      } ${muted ? "opacity-60" : ""}`}
+    >
       {leading}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">

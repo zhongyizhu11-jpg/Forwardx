@@ -647,10 +647,34 @@ export default function ClientSubscriptionsPage() {
    * 开关写的是这条 proxy_nodes 记录自己的 isEnabled，跟自建那一路写派生节点的
    * includeDirect 是两回事 —— 所以两路各自组装，列表只负责排版。
    */
+  /**
+   * 客户端里根本看不到的那些节点（服务端算的，它才知道谁被引用了）。
+   *
+   * 放在这里是因为下面的行规格要用它 —— 要动手的人就在那一行：行上原来只写
+   * 「无转发绑定」，那是**机制**；「不在订阅里」才是后果，而且两者不等价 ——
+   * 粘来的节点开了直连，没有转发照样在订阅里。
+   */
+  const unusedNodeIds = useMemo(
+    () => new Set(((previewQuery.data?.warnings ?? []) as any[])
+      .filter((item) => item?.reason === "node-unused")
+      .map((item) => Number(item.nodeId))),
+    [previewQuery.data],
+  );
+  const unusedInboundIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const node of nodes as any[]) {
+      const inboundId = Number(node?.inboundId || 0);
+      if (inboundId > 0 && unusedNodeIds.has(Number(node.id))) ids.add(inboundId);
+    }
+    return ids;
+  }, [nodes, unusedNodeIds]);
+
   const pastedRowSpecs = useMemo<ProxyNodeRowSpec[]>(() => pastedNodes.map((node: any) => {
     const quotaExpanded = expandedQuotaIds.includes(Number(node.id));
     return {
       key: `node-${node.id}`,
+      // 粘来的和别人分享来的，左边色条不同：能不能改、凭据归谁，是这两类最大的差别。
+      accent: node.sharedFrom ? ("shared" as const) : ("pasted" as const),
       protocol: String(node.protocol || ""),
       sortName: String(node.name || ""),
       leading: <ProxyNodeHealthDot health={node.health} />,
@@ -669,6 +693,8 @@ export default function ClientSubscriptionsPage() {
         node.sharedFrom
           ? "不可修改"
           : node.ruleCount > 0 ? `${node.ruleCount} 条转发` : "无转发绑定",
+        // 后果放在机制后面：没转发不等于不在订阅里（开了直连照样在）。
+        unusedNodeIds.has(Number(node.id)) ? "不在订阅里" : "",
         node.sharedToUserIds?.length ? `已分享 ${node.sharedToUserIds.length} 人` : "",
         !node.isEnabled ? "已停用" : "",
       ]),
@@ -717,7 +743,7 @@ export default function ClientSubscriptionsPage() {
         },
       ],
     };
-  }), [pastedNodes, expandedQuotaIds, isAdmin]);
+  }), [pastedNodes, unusedNodeIds, expandedQuotaIds, isAdmin]);
 
   const changeGroupMode = (mode: ProxyNodeGroupMode) => {
     setNodeGroupMode(mode);
@@ -1383,6 +1409,7 @@ export default function ClientSubscriptionsPage() {
           groupModeOptions={groupModeOptions}
           onPasteNode={openCreateNode}
           inboundLeading={inboundLeading}
+          notInSubscriptionInboundIds={unusedInboundIds}
           onOpenPreview={() => setPreviewOpen(true)}
           previewAlertCount={unboundRules.length + driftedRules.length + unusedNodes.length}
           onOpenHosts={isAdmin ? undefined : () => setHostsOpen(true)}
