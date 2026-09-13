@@ -19,6 +19,7 @@ import { getSetting, setSetting } from "./settingsRepository";
 import { appendPanelLog } from "../_core/panelLogger";
 import { notifyTunnelLatencyRefresh } from "../tunnelLatencyRefresh";
 import { normalizeAgentProbeCounts } from "../../shared/agentDtos";
+import { normalizeTrafficCounterBytes } from "../../shared/trafficCounterBytes";
 
 const TRAFFIC_BUCKET_MINUTES = 30;
 const TRAFFIC_BUCKET_SECONDS = TRAFFIC_BUCKET_MINUTES * 60;
@@ -399,11 +400,8 @@ export type HostTrafficMeasureMode = "outbound" | "both" | "max";
 
 const hostTrafficBaselineCache = new Map<number, { bytesIn: number; bytesOut: number }>();
 
-function nonNegativeCounter(value: unknown) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.min(Math.floor(n), Number.MAX_SAFE_INTEGER);
-}
+/** 洗上报值的规矩只有一份，见 shared/trafficCounterBytes：计费那一路也得用同一份。 */
+const nonNegativeCounter = normalizeTrafficCounterBytes;
 
 export function allocateHostTrafficCorrection(
   current: { bytesIn?: unknown; bytesOut?: unknown },

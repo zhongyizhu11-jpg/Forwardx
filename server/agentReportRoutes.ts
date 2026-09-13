@@ -28,6 +28,7 @@ import { completeIperf3AgentTask } from "./iperf3AgentTasks";
 import { completePluginAgentTask } from "./pluginAgentTasks";
 import { getAgentHostIdentityFromRequest } from "./agentAuth";
 import { applyTrafficMultiplier, normalizeTrafficMultiplier } from "../shared/trafficMultiplier";
+import { normalizeTrafficCounterBytes, normalizeTrafficCounterConnections } from "../shared/trafficCounterBytes";
 import { mapWithConcurrency } from "./asyncPool";
 import { forwardGroupProbeTopologyKey, tunnelProbeTopologyKey } from "./probeTopology";
 import { trafficBillingUserLockKey, withKeyedTaskLock } from "./keyedTaskLock";
@@ -704,8 +705,8 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
         }
         if (hostTraffic) {
           await db.recordHostTrafficSample(host.id, {
-            bytesIn: Number(hostTraffic.bytesIn) || 0,
-            bytesOut: Number(hostTraffic.bytesOut) || 0,
+            bytesIn: normalizeTrafficCounterBytes(hostTraffic.bytesIn),
+            bytesOut: normalizeTrafficCounterBytes(hostTraffic.bytesOut),
           });
         }
       });
@@ -760,8 +761,8 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     const inboundStats = stats.filter((stat) => isProxyInboundTrafficRuleId(stat.ruleId));
     const ruleStats = stats.filter((stat) => !isProxyInboundTrafficRuleId(stat.ruleId));
     const inboundOwners = inboundStats.length > 0
-      ? await db.getProxyInboundOwnersByIds(inboundStats.map((stat) => proxyInboundIdFromTrafficRuleId(stat.ruleId)))
-      : new Map<number, number>();
+      ? await db.getProxyInboundTrafficOwnersByIds(inboundStats.map((stat) => proxyInboundIdFromTrafficRuleId(stat.ruleId)))
+      : new Map<number, db.ProxyInboundTrafficOwner>();
 
     const preliminaryTrafficContexts = await db.getForwardRuleTrafficContextsByIds(
       ruleStats.map((stat) => Number(stat.ruleId)),
@@ -770,7 +771,8 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       ...(preliminaryTrafficContexts as any[])
         .map((context) => Number(context?.rule?.userId || 0)),
       // 入站的所有者也要一起上锁，否则同一个用户的两条计费路径可能并发写配额。
-      ...Array.from(inboundOwners.values()).map((userId) => Number(userId)),
+      // 这里宁可多锁一个人：非本机的入站待会儿会被丢掉，锁了也只是白锁。
+      ...Array.from(inboundOwners.values()).map((owner) => Number(owner.userId)),
     ])).filter((userId) => userId > 0);
     await withTrafficAccountingUserLocks(accountingUserIds, () => db.withDatabaseTransaction(async () => {
       // Lock database rows in the same deterministic order as the in-process
@@ -783,8 +785,8 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       }
       if (hostTraffic) {
         await db.recordHostTrafficSample(host.id, {
-          bytesIn: Number(hostTraffic.bytesIn) || 0,
-          bytesOut: Number(hostTraffic.bytesOut) || 0,
+          bytesIn: normalizeTrafficCounterBytes(hostTraffic.bytesIn),
+          bytesOut: normalizeTrafficCounterBytes(hostTraffic.bytesOut),
         });
       }
 
@@ -832,7 +834,7 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       extraExitHostsByTunnelId.set(tunnelId, hosts);
     }
     const rulesWithBytes = new Set(stats
-      .filter((stat) => (Number(stat.bytesIn) || 0) + (Number(stat.bytesOut) || 0) > 0)
+      .filter((stat) => normalizeTrafficCounterBytes(stat.bytesIn) + normalizeTrafficCounterBytes(stat.bytesOut) > 0)
       .map((stat) => Number(stat.ruleId)));
     const billingResourcesByRuleId = trafficBillingEnabled
       ? await db.findTrafficBillingResourcesForRules((trafficContexts as any[])
@@ -848,21 +850,51 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
      */
     for (const stat of inboundStats) {
       const inboundId = proxyInboundIdFromTrafficRuleId(stat.ruleId);
-      const userId = Number(inboundOwners.get(inboundId) || 0);
-      const bytes = (Number(stat.bytesIn) || 0) + (Number(stat.bytesOut) || 0);
+      const owner = inboundOwners.get(inboundId);
+      const userId = Number(owner?.userId || 0);
+      const bytes = normalizeTrafficCounterBytes(stat.bytesIn) + normalizeTrafficCounterBytes(stat.bytesOut);
       if (userId <= 0 || bytes <= 0) {
         ignoredStatCount += 1;
         continue;
       }
+      /**
+       * 这个入站得真的开在这台机器上。
+       *
+       * token 认的是「哪台机器」，不是「哪个入站的主人」—— 而入站号是连号的，猜得到。
+       * 少了这一比，任何一台装了 Agent 的机器（包括租户自己加的那台）都能报别人机器上
+       * 的入站号：字节数会记到那个租户的配额上，记满了面板就自动停掉他名下所有转发。
+       * 转发那条路早就按 accountingHostIds 比过一次了，落地这条不能是个例外。
+       *
+       * 入站迁到别的机器、或者原机器上的 sing-box 还没收到新配置时，也会走到这里：
+       * 那是过时的上报，同样不该计费。
+       */
+      if (Number(owner?.hostId || 0) !== Number(host.id)) {
+        routedAwayStatCount += 1;
+        logTrafficReportSample(
+          `inbound-foreign:${host.id}:${inboundId}`,
+          `[ProxyInboundTraffic] 丢弃非本机上报 host=${host.id} inbound=${inboundId} owner-host=${Number(owner?.hostId || 0)}`,
+          normalizeTrafficCounterBytes(stat.bytesIn),
+          normalizeTrafficCounterBytes(stat.bytesOut),
+          normalizeTrafficCounterConnections(stat.connections),
+        );
+        continue;
+      }
+      // 停用的入站不该还在跑；还在报说明是停用前的存量，不计费（转发那条路同样跳过停用规则）。
+      if (!owner?.isEnabled) {
+        ignoredStatCount += 1;
+        continue;
+      }
       acceptedStatCount += 1;
-      acceptedBytesIn += Number(stat.bytesIn) || 0;
-      acceptedBytesOut += Number(stat.bytesOut) || 0;
+      acceptedBytesIn += normalizeTrafficCounterBytes(stat.bytesIn);
+      acceptedBytesOut += normalizeTrafficCounterBytes(stat.bytesOut);
       quotaTrafficByUser.set(userId, (quotaTrafficByUser.get(userId) || 0) + bytes);
     }
 
     for (const stat of ruleStats) {
-      const bytesIn = Number(stat.bytesIn) || 0;
-      const bytesOut = Number(stat.bytesOut) || 0;
+      // 先洗再用：入库那层本来就会洗一遍，这边不洗的话，同一次上报写进历史明细和
+      // 写进配额的会是两个数（见 shared/trafficCounterBytes）。
+      const bytesIn = normalizeTrafficCounterBytes(stat.bytesIn);
+      const bytesOut = normalizeTrafficCounterBytes(stat.bytesOut);
       const context = contextsByRuleId.get(Number(stat.ruleId)) as any;
       if (!context) {
         ignoredStatCount += 1;
@@ -893,7 +925,7 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
             `[TunnelTraffic] host=${host.id} tunnel=${tunnelId} rule=${rule.id}`,
             bytesIn,
             bytesOut,
-            stat.connections || 0,
+            normalizeTrafficCounterConnections(stat.connections),
           );
         }
         continue;
@@ -904,7 +936,7 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
           hostId: host.id,
           bytesIn,
           bytesOut,
-          connections: stat.connections || 0,
+          connections: normalizeTrafficCounterConnections(stat.connections),
         },
         userId: Number(rule.userId),
       });
@@ -919,7 +951,7 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
           `[Traffic] host=${host.id} rule=${rule.id}`,
           bytesIn,
           bytesOut,
-          stat.connections || 0,
+          normalizeTrafficCounterConnections(stat.connections),
         );
         const proxyNodeId = Number((rule as any).proxyNodeId || 0);
         if (proxyNodeId > 0) {
