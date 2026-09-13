@@ -22,6 +22,13 @@ import { getTunnelRouteText } from "@/lib/tunnelDisplay";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { formatTrafficMultiplier } from "@shared/trafficMultiplier";
+import {
+  defaultPricingOption,
+  planDurationLabel,
+  planPricingOptions,
+  PLAN_DURATION_PRESETS,
+  PLAN_PRICE_TIER_LIMIT,
+} from "@shared/planPricing";
 import { CheckCircle2, Coins, LayoutGrid, List, Package, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -53,7 +60,19 @@ type PlanForm = {
   proxyNodeIds: number[];
   /** 附带节点怎么给：true = 每人单开一个端口（能按人计量）。 */
   dedicatedProxyPort: boolean;
+  /**
+   * 多周期定价。留空 = 只卖上面那一档（存量套餐全是这样）。
+   *
+   * 填了的话上面的「价格 / 有效期」退化成默认档，由后端按总价最低那一档回填 ——
+   * 两处各填一遍再互相打架，是这种表最容易出的错。
+   */
+  priceTiers: PriceTierForm[];
   trafficAddons: TrafficAddonForm[];
+};
+
+type PriceTierForm = {
+  durationDays: string;
+  price: string;
 };
 
 type TrafficAddonForm = {
@@ -103,6 +122,7 @@ const emptyForm: PlanForm = {
   forwardGroupIds: [],
   proxyNodeIds: [],
   dedicatedProxyPort: false,
+  priceTiers: [],
   trafficAddons: [],
 };
 
@@ -147,13 +167,9 @@ function speed(value?: number | null) {
   return num > 0 ? `${parseFloat(num.toFixed(2))} Mbps` : "不限";
 }
 
-const durationOptions = [
-  { value: "30", label: "一个月" },
-  { value: "90", label: "三个月" },
-  { value: "180", label: "半年" },
-  { value: "365", label: "一年" },
-  { value: "730", label: "两年" },
-];
+// 常用周期与中文名共用 shared/planPricing 那一份 —— 商店和这里各写一遍的话，
+// 改了一边忘另一边就会出现「同一个 90 天，一处叫季付一处叫三个月」。
+const durationOptions = PLAN_DURATION_PRESETS.map((item) => ({ value: String(item.days), label: item.label }));
 
 const assignMonthlyDurationOptions = [
   { value: "30", label: "一个月" },
@@ -163,8 +179,28 @@ const assignMonthlyDurationOptions = [
 ];
 
 function durationLabel(days?: number | null) {
-  if (Number(days) === 0) return "永久";
-  return durationOptions.find((item) => Number(item.value) === Number(days))?.label || `${days || 30} 天`;
+  return planDurationLabel(days);
+}
+
+/** 这张表当前的档位预览（含每天单价和折扣），用来在每一行后面标「省 N%」。 */
+function tierPreview(form: PlanForm) {
+  return planPricingOptions({}, form.priceTiers.map((tier) => ({
+    durationDays: Number(tier.durationDays || 0),
+    priceCents: Math.round(Number(tier.price || 0) * 100),
+  })));
+}
+
+/** 默认档（总价最低那一档）—— 上面那个只读的「价格」框显示的就是它。 */
+function tierDefault(form: PlanForm) {
+  const option = defaultPricingOption(tierPreview(form));
+  return option ? { price: (option.priceCents / 100).toFixed(2), durationDays: String(option.durationDays) } : null;
+}
+
+/** 「加一档」默认填哪个周期：按预设顺序挑第一个还没被占用的。 */
+function nextTierDraft(form: PlanForm): PriceTierForm {
+  const used = new Set(form.priceTiers.map((tier) => Number(tier.durationDays || 0)));
+  const preset = PLAN_DURATION_PRESETS.find((item) => !used.has(item.days));
+  return { durationDays: String(preset?.days ?? 30), price: form.price || "0" };
 }
 
 function MobileInfoRow({
@@ -599,6 +635,10 @@ function toForm(plan: any): PlanForm {
     forwardGroupIds: plan.forwardGroupIds || [],
     proxyNodeIds: plan.proxyNodeIds || [],
     dedicatedProxyPort: !!plan.dedicatedProxyPort,
+    priceTiers: (plan.priceTiers || []).map((tier: any) => ({
+      durationDays: String(tier.durationDays ?? 30),
+      price: String((Number(tier.priceCents || 0) / 100).toFixed(2)),
+    })),
     trafficAddons: (plan.trafficAddons || []).map((addon: any, index: number) => ({
       trafficGB: String(Number(addon.trafficBytes || 0) / 1024 / 1024 / 1024 || 0),
       price: String((Number(addon.priceCents || 0) / 100).toFixed(2)),
@@ -615,7 +655,7 @@ function payload(form: PlanForm) {
     description: form.description.trim() || null,
     priceCents: Math.round(Number(form.price || 0) * 100),
     currency: (form.currency || "CNY").toUpperCase(),
-    durationDays: ([30, 90, 180, 365, 730].includes(durationDays) ? durationDays : 30) as PlanDurationDays,
+    durationDays: Math.min(3650, Math.max(1, Math.floor(durationDays || 30))),
     portCount: Math.max(1, Math.floor(Number(form.portCount || 1))),
     trafficLimit: Math.max(0, Math.floor(Number(form.trafficGB || 0) * 1024 * 1024 * 1024)),
     rateLimitMbps: Math.max(0, Math.floor(Number(form.rateLimitMbps || 0))),
@@ -633,6 +673,12 @@ function payload(form: PlanForm) {
     forwardGroupIds: form.forwardGroupIds,
     proxyNodeIds: form.proxyNodeIds,
     dedicatedProxyPort: form.dedicatedProxyPort,
+    priceTiers: form.priceTiers
+      .map((tier) => ({
+        durationDays: Math.min(3650, Math.max(1, Math.floor(Number(tier.durationDays || 0)))),
+        priceCents: Math.max(0, Math.round(Number(tier.price || 0) * 100)),
+      }))
+      .filter((tier) => Number.isFinite(tier.durationDays) && tier.durationDays > 0),
     trafficAddons: form.trafficAddons
       .map((addon, index) => ({
         trafficBytes: Math.max(0, Math.floor(Number(addon.trafficGB || 0) * 1024 * 1024 * 1024)),
@@ -1369,11 +1415,25 @@ export default function Plans() {
             </div>
             <div className="space-y-2">
               <Label>价格</Label>
-              <Input type="number" min={0} step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                disabled={form.priceTiers.length > 0}
+                value={form.priceTiers.length > 0 ? tierDefault(form)?.price ?? form.price : form.price}
+                onChange={(e) => setForm({ ...form, price: e.target.value })}
+              />
+              {form.priceTiers.length > 0 ? (
+                <p className="text-xs text-muted-foreground">下面配了多个周期，这里由最便宜那一档决定。</p>
+              ) : null}
             </div>
             <div className="space-y-2">
               <Label>有效期</Label>
-              <Select value={form.durationDays} onValueChange={(durationDays) => setForm({ ...form, durationDays })}>
+              <Select
+                value={form.durationDays}
+                disabled={form.priceTiers.length > 0}
+                onValueChange={(durationDays) => setForm({ ...form, durationDays })}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {durationOptions.map((item) => (
@@ -1381,7 +1441,88 @@ export default function Plans() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">超过一个月按月重置流量。</p>
+              <p className="text-xs text-muted-foreground">
+                {form.priceTiers.length > 0 ? "同上：由下面的周期表决定。" : "超过一个月按月重置流量。"}
+              </p>
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label>购买周期（选填）</Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={form.priceTiers.length >= PLAN_PRICE_TIER_LIMIT}
+                  onClick={() => setForm({
+                    ...form,
+                    priceTiers: [...form.priceTiers, nextTierDraft(form)],
+                  })}
+                >
+                  <Plus className="mr-1 h-4 w-4" />
+                  加一档
+                </Button>
+              </div>
+              {/*
+                不填就是老样子：只卖上面那一档。填了之后商店里这张卡会出现周期切换，
+                并按最短那一档的每天单价算出「省 N%」—— 客户心里的参照物是「按月买
+                要多少钱」，所以基准取最短档而不是最贵档。
+              */}
+              <p className="text-xs text-muted-foreground">
+                不填 = 只卖上面那一档。填了之后商店里可以让客户自己选月付 / 季付 / 年付，长周期会自动标出省了多少。
+              </p>
+              {form.priceTiers.length > 0 ? (
+                <div className="space-y-2">
+                  {form.priceTiers.map((tier, index) => {
+                    const preview = tierPreview(form);
+                    const info = preview.find((item) => item.durationDays === Number(tier.durationDays || 0));
+                    return (
+                      <div key={index} className="flex flex-wrap items-end gap-2 rounded-md border p-2">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <Label className="text-xs">周期（天）</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={3650}
+                            value={tier.durationDays}
+                            onChange={(e) => setForm({
+                              ...form,
+                              priceTiers: form.priceTiers.map((item, i) => i === index ? { ...item, durationDays: e.target.value } : item),
+                            })}
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <Label className="text-xs">价格</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={tier.price}
+                            onChange={(e) => setForm({
+                              ...form,
+                              priceTiers: form.priceTiers.map((item, i) => i === index ? { ...item, price: e.target.value } : item),
+                            })}
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 pb-1">
+                          <span className="whitespace-nowrap text-xs text-muted-foreground">
+                            {planDurationLabel(Number(tier.durationDays || 0))}
+                            {info && info.discountPercent > 0 ? ` · 省 ${info.discountPercent}%` : ""}
+                          </span>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={() => setForm({ ...form, priceTiers: form.priceTiers.filter((_, i) => i !== index) })}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
             <div className="space-y-2">
               <Label>连续端口数</Label>

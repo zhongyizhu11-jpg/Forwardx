@@ -12,8 +12,15 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 import { planResourceText } from "@/lib/planDisplay";
 import { trpc } from "@/lib/trpc";
 import { formatTrafficMultiplier } from "@shared/trafficMultiplier";
+import {
+  defaultPricingOption,
+  findPricingOption,
+  planDurationLabel,
+  planPricingOptions,
+  type PlanPricingOption,
+} from "@shared/planPricing";
 import { CheckCircle2, Coins, CreditCard, Lock, Package, RefreshCw, Route, Server, ShoppingBag, TicketPercent, WalletCards } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
 
@@ -58,20 +65,14 @@ function speed(value?: number | null) {
   return num > 0 ? `${parseFloat(num.toFixed(2))} Mbps` : "不限";
 }
 
-const durationOptions = [
-  { value: 30, label: "一个月" },
-  { value: 90, label: "三个月" },
-  { value: 180, label: "半年" },
-  { value: 365, label: "一年" },
-  { value: 730, label: "两年" },
-];
+// 周期名称与管理端共用 shared/planPricing 那一份，免得两处各写一遍。
 
 type StoreTab = "plans" | "billing";
 const STORE_TABS = ["plans", "billing"] as const;
 const STORE_TAB_STORAGE_KEY = "forwardx.store.tab";
 
 function durationLabel(days?: number | null) {
-  return durationOptions.find((item) => item.value === Number(days))?.label || `${days || 30} 天`;
+  return planDurationLabel(days);
 }
 
 function planDescription(plan: any) {
@@ -112,10 +113,18 @@ function StorePlanCard({
 }: {
   plan: any;
   purchasing?: boolean;
-  onBuy: () => void;
+  /** 买的是哪一档 —— 卡片上选的那一档要一路带到收银台，不能到那儿又变回默认。 */
+  onBuy: (option: PlanPricingOption) => void;
 }) {
   const description = planDescription(plan) || "订阅后自动开通端口段和可用资源。";
   const benefits = planBenefitItems(plan);
+  const options = useMemo(() => planPricingOptions(plan, plan?.priceTiers), [plan]);
+  /**
+   * 默认选总价最低那一档，不是每天最划算的那档（通常是年付）—— 一进商店就默认
+   * 选中金额最大的那个，点错一下就是一年的钱。省多少用角标标出来就够了。
+   */
+  const [selectedDays, setSelectedDays] = useState<number>(() => defaultPricingOption(options)?.durationDays ?? 30);
+  const active = findPricingOption(options, selectedDays) || defaultPricingOption(options) || options[0];
 
   return (
     <div className="flex min-h-[29rem] flex-col overflow-hidden rounded-lg border border-border/40 bg-card/60 shadow-sm backdrop-blur-md transition-colors hover:border-primary/35">
@@ -133,14 +142,45 @@ function StorePlanCard({
             </p>
           </div>
           <Badge variant="outline" className="shrink-0 border-primary/25 bg-primary/5 text-primary">
-            {durationLabel(plan.durationDays)}
+            {durationLabel(active?.durationDays)}
           </Badge>
         </div>
+
+        {/*
+          多档时才出现这一排。只有一档的套餐（存量全是这样）看起来跟以前一模一样 ——
+          一个按钮的切换器是纯噪音。
+        */}
+        {options.length > 1 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {options.map((option) => {
+              const isActive = option.durationDays === active?.durationDays;
+              return (
+                <button
+                  key={option.durationDays}
+                  type="button"
+                  onClick={() => setSelectedDays(option.durationDays)}
+                  className={`relative rounded-md border px-2.5 py-1.5 text-xs transition-colors ${
+                    isActive
+                      ? "border-primary bg-primary/10 font-medium text-primary"
+                      : "border-border/60 text-muted-foreground hover:border-primary/40"
+                  }`}
+                >
+                  {durationLabel(option.durationDays)}
+                  {option.discountPercent > 0 ? (
+                    <span className="ml-1 rounded-sm bg-emerald-500/15 px-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                      省 {option.discountPercent}%
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-2 gap-2 rounded-md border border-border/50 bg-muted/25 p-1">
           <div className="rounded-[6px] bg-background/80 px-3 py-2 shadow-sm">
             <div className="text-[11px] font-medium text-muted-foreground">周期</div>
-            <div className="mt-1 truncate text-sm font-semibold text-foreground">{durationLabel(plan.durationDays)}</div>
+            <div className="mt-1 truncate text-sm font-semibold text-foreground">{durationLabel(active?.durationDays)}</div>
           </div>
           <div className="rounded-[6px] px-3 py-2">
             <div className="text-[11px] font-medium text-muted-foreground">端口</div>
@@ -165,16 +205,20 @@ function StorePlanCard({
         <div className="flex flex-col gap-3 border-t border-border/40 pt-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div className="break-words text-2xl font-semibold tracking-tight text-foreground">
-              {money(plan.priceCents, plan.currency)}
+              {money(active?.priceCents ?? plan.priceCents, plan.currency)}
             </div>
             <div className="mt-0.5 text-[11px] font-medium text-muted-foreground">
-              / {durationLabel(plan.durationDays)}
+              / {durationLabel(active?.durationDays)}
+              {/* 长周期总价更大，换算成每月多少钱才好跟月付比。 */}
+              {options.length > 1 && active && active.durationDays >= 60
+                ? ` · 约 ${money(Math.round(active.perDayCents * 30), plan.currency)} / 月`
+                : ""}
             </div>
           </div>
           <Button
             className="h-9 shrink-0 px-4"
-            onClick={onBuy}
-            disabled={purchasing}
+            onClick={() => active && onBuy(active)}
+            disabled={purchasing || !active}
           >
             <ShoppingBag className="mr-2 h-4 w-4" />
             购买套餐
@@ -200,6 +244,8 @@ export default function Store() {
     placeholderData: (previousData) => previousData,
   });
   const [selectedPlan, setSelectedPlan] = useState<any | null>(null);
+  /** 卡片上选中的那一档。只有一档的套餐也会带上，省得后面到处判空。 */
+  const [selectedOption, setSelectedOption] = useState<PlanPricingOption | null>(null);
   const [paymentType, setPaymentType] = useState<"alipay" | "wxpay" | "stripe" | "usdt">("stripe");
   const [payMode, setPayMode] = useState<"gateway" | "balance">("gateway");
   const [discountCode, setDiscountCode] = useState("");
@@ -293,31 +339,41 @@ export default function Store() {
     },
   });
 
-  const buy = (plan: any) => {
+  const buy = (plan: any, option: PlanPricingOption) => {
     const firstMethod = paymentMethods[0]?.value as "alipay" | "wxpay" | "stripe" | "usdt" | undefined;
     if (firstMethod) setPaymentType(firstMethod);
     setPayMode(firstMethod ? "gateway" : "balance");
     setDiscountCode("");
     setDiscountPreview(null);
+    // 卡片上选的那一档要带进弹窗：收银台里显示的金额、扣的钱、开的天数都按它。
+    setSelectedOption(option);
     setSelectedPlan(plan);
   };
 
   const confirmBuy = () => {
     if (!selectedPlan) return;
+    const durationDays = selectedOption?.durationDays;
     if (payMode === "balance") {
-      buyWithBalance.mutate({ planId: selectedPlan.id, discountCode: billingFeatures?.discountEnabled ? discountCode.trim() || undefined : undefined });
+      buyWithBalance.mutate({
+        planId: selectedPlan.id,
+        durationDays,
+        discountCode: billingFeatures?.discountEnabled ? discountCode.trim() || undefined : undefined,
+      });
       return;
     }
     createOrder.mutate({
-      amount: Number(selectedPlan.priceCents || 0) / 100,
+      amount: listPriceCents / 100,
       paymentType,
       planId: selectedPlan.id,
+      planDurationDays: durationDays,
       discountCode: billingFeatures?.discountEnabled ? discountCode.trim() || undefined : undefined,
       returnPath: "/store",
     });
   };
 
-  const finalAmountCents = discountPreview?.finalAmountCents ?? selectedPlan?.priceCents ?? 0;
+  /** 这一单的原价：选了档就按那一档，没选（只有一档的套餐）按套餐主表价。 */
+  const listPriceCents = Number(selectedOption?.priceCents ?? selectedPlan?.priceCents ?? 0);
+  const finalAmountCents = discountPreview?.finalAmountCents ?? listPriceCents;
 
   return (
     <DashboardLayout>
@@ -361,7 +417,7 @@ export default function Store() {
                       key={plan.id}
                       plan={plan}
                       purchasing={createOrder.isPending || buyWithBalance.isPending}
-                      onBuy={() => buy(plan)}
+                      onBuy={(option) => buy(plan, option)}
                     />
                   ))}
                   {!isLoading && plans.length === 0 && (
@@ -465,7 +521,12 @@ export default function Store() {
           </DialogContent>
         </Dialog>
 
-        <Dialog open={!!selectedPlan} onOpenChange={(open) => !open && setSelectedPlan(null)}>
+        <Dialog open={!!selectedPlan} onOpenChange={(open) => {
+          if (open) return;
+          setSelectedPlan(null);
+          // 档位也一起清掉：留着的话，下次点另一张只有一档的卡会拿上一次的档去下单。
+          setSelectedOption(null);
+        }}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
@@ -473,14 +534,16 @@ export default function Store() {
                 选择支付方式
               </DialogTitle>
               <DialogDescription>
-                购买 {selectedPlan?.name || "套餐"}，金额 {selectedPlan ? money(finalAmountCents, selectedPlan.currency) : "-"}
+                购买 {selectedPlan?.name || "套餐"}
+                {selectedOption ? `（${durationLabel(selectedOption.durationDays)}）` : ""}
+                ，金额 {selectedPlan ? money(finalAmountCents, selectedPlan.currency) : "-"}
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4">
               <div className="rounded-lg border bg-muted/20 p-3 text-sm">
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">原价</span>
-                  <span>{selectedPlan ? money(selectedPlan.priceCents, selectedPlan.currency) : "-"}</span>
+                  <span>{selectedPlan ? money(listPriceCents, selectedPlan.currency) : "-"}</span>
                 </div>
                 {discountPreview && (
                   <div className="mt-1 flex items-center justify-between text-emerald-600">
@@ -498,7 +561,7 @@ export default function Store() {
                 <Input value={discountCode} onChange={(e) => setDiscountCode(e.target.value.toUpperCase())} placeholder="折扣码（可选）" />
                 <Button
                   variant="outline"
-                  onClick={() => selectedPlan && previewDiscount.mutate({ code: discountCode, amountCents: Number(selectedPlan.priceCents || 0), planId: selectedPlan.id })}
+                  onClick={() => selectedPlan && previewDiscount.mutate({ code: discountCode, amountCents: listPriceCents, planId: selectedPlan.id })}
                   disabled={!discountCode.trim() || previewDiscount.isPending}
                 >
                   <TicketPercent className="mr-2 h-4 w-4" /> 应用

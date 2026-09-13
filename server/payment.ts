@@ -222,6 +222,8 @@ const createOrderInput = z.object({
   amount: z.number().min(0.01).max(1_000_000),
   paymentType: z.enum(["alipay", "wxpay", "stripe", "usdt"]),
   planId: z.number().int().positive().optional(),
+  /** 买哪一档周期。不传 = 默认档，老客户端照旧能下单。 */
+  planDurationDays: z.number().int().positive().max(3650).optional(),
   subscriptionId: z.number().int().positive().optional(),
   discountCode: z.string().trim().max(64).optional(),
   orderType: z.enum(["balance", "test"]).optional(),
@@ -833,7 +835,9 @@ async function finalizePaidOrder(outTradeNo: string) {
           "payment",
           outTradeNo,
           undefined,
-          null,
+          // 按下单时选的那一档开。老订单（这个字段之前不存在）是 null，走默认档，
+          // 跟改动前的行为一致。
+          Number((order as any).planDurationDays || 0) > 0 ? Number((order as any).planDurationDays) : null,
           order.subscriptionId ? Number(order.subscriptionId) : null,
         );
         await db.recoverUserForwardAccessIfEligible(order.userId);
@@ -1156,6 +1160,8 @@ export const paymentRouter = router({
       let subjectSuffix = ctx.user.username;
       let discountCodeId: number | null = null;
       let discountAmountCents = 0;
+      /** 套餐单买的是哪一档；充值单没有这回事，留 null。 */
+      let planDurationDays: number | null = null;
       if (input.subscriptionId && !input.planId) {
         throw new Error("renewal order requires a plan");
       }
@@ -1179,7 +1185,15 @@ export const paymentRouter = router({
           }
         }
         if (!plan || !plan.isActive || !plan.isStoreVisible) throw new Error("套餐不可购买");
-        let amountCentsForPlan = Number(plan.priceCents || 0);
+        /**
+         * 价格取**选中那一档**，不是套餐主表上的默认价。
+         *
+         * 认不出的周期在这里就报错 —— 收了钱再发现「这一档已经不卖了」，那时要么
+         * 退款要么白送，两条都难看。
+         */
+        const pricing = await db.resolvePlanPricing(input.planId, input.planDurationDays ?? null);
+        planDurationDays = pricing.option.durationDays;
+        let amountCentsForPlan = Number(pricing.option.priceCents || 0);
         if (input.discountCode) {
           if ((await db.getSetting("discountEnabled")) === "false") throw new Error("折扣码功能已关闭");
           const discount = await db.previewDiscount(input.discountCode, amountCentsForPlan, input.planId);
@@ -1188,7 +1202,7 @@ export const paymentRouter = router({
           amountCentsForPlan = discount.finalAmountCents;
         }
         amount = amountCentsForPlan / 100;
-        subjectSuffix = `${plan.name} - ${ctx.user.username}`;
+        subjectSuffix = `${plan.name}（${pricing.option.durationDays} 天） - ${ctx.user.username}`;
       }
       if (amount < config.minAmount) throw new Error(`最低支付金额为 ${config.minAmount}`);
       if (config.maxAmount > 0 && amount > config.maxAmount) throw new Error(`最高支付金额为 ${config.maxAmount}`);
@@ -1247,6 +1261,8 @@ export const paymentRouter = router({
           currency: provider === "stripe" ? config.stripe.currency.toUpperCase() : "CNY",
           orderType: input.planId ? "plan" : input.orderType || "balance",
           planId: input.planId ?? null,
+          // 存下买的档：下单和收款之间隔着一次跳转，不存就只剩「买了这个套餐」。
+          planDurationDays,
           subscriptionId: input.subscriptionId ?? null,
           discountCodeId,
           discountConsumed: !!discountCodeId,

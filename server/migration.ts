@@ -727,6 +727,7 @@ const IMPORT_TABLE_ORDER = [
   "forward_group_events",
   "ip_geo_cache",
   "subscription_plans",
+  "subscription_plan_prices",
   "subscription_plan_proxy_nodes",
   "subscription_plan_hosts",
   "subscription_plan_tunnels",
@@ -1314,6 +1315,11 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
       row.groupId = mapRequiredId(maps, "forward_groups", source.groupId);
       row.memberId = mapOptionalId(maps, "forward_group_members", source.memberId);
       return { row };
+
+    case "subscription_plan_prices":
+      row.planId = mapRequiredId(maps, "subscription_plans", source.planId);
+      // 同一个套餐同一个周期只该有一条。
+      return { row, existingWhere: { planId: row.planId, durationDays: row.durationDays } };
 
     case "subscription_plan_proxy_nodes":
       row.planId = mapRequiredId(maps, "subscription_plans", source.planId);

@@ -18,6 +18,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { BILLING_DATE_TIME_FORMAT_OPTIONS } from "@shared/billingTime";
+import { planDurationLabel } from "@shared/planPricing";
 
 function money(cents?: number | null, currency = "CNY") {
   return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((Number(cents) || 0) / 100);
@@ -226,30 +227,43 @@ export default function Subscriptions() {
     if (!renewingSub?.planId) return;
     const planId = Number(renewingSub.planId);
     const code = billingFeatures?.discountEnabled ? discountCode.trim() || undefined : undefined;
+    /**
+     * 续**当初买的那一档**。
+     *
+     * 不传的话服务端按默认档算：买年付的人点一下「续费」就变成了续一个月。
+     * renewDurationDays / renewPriceCents 都由服务端算好（那一档被下架时它会自己
+     * 退回默认档），前端不重算 —— 这是要扣钱的数。
+     */
+    const durationDays = Number(renewingSub.renewDurationDays || 0) || undefined;
     if (payMode === "balance") {
       renewWithBalance.mutate({
         planId,
         subscriptionId: Number(renewingSub.id),
+        durationDays,
         discountCode: code,
       });
       return;
     }
     createOrder.mutate({
-      amount: Number(renewingSub.priceCents || 0) / 100,
+      amount: renewPriceCents / 100,
       paymentType,
       planId,
+      planDurationDays: durationDays,
       subscriptionId: Number(renewingSub.id),
       discountCode: code,
       returnPath: "/subscriptions",
     });
   };
 
+
   const selectedPrice = Number(selected?.addon?.priceCents || 0);
   const balanceCents = wallet?.balanceCents == null ? null : Number(wallet.balanceCents);
   const balanceReady = !walletLoading && balanceCents !== null;
   const balance = balanceCents ?? 0;
   const balanceEnough = balanceReady && balance >= selectedPrice;
-  const renewingPrice = Number(renewingSub?.priceCents || 0);
+  /** 续费原价：按当初买的那一档，不是套餐主表的默认价。 */
+  const renewPriceCents = Number(renewingSub?.renewPriceCents ?? renewingSub?.priceCents ?? 0);
+  const renewingPrice = renewPriceCents;
   const renewFinalAmountCents = Number(discountPreview?.finalAmountCents ?? renewingPrice);
   const renewBalanceEnough = balanceReady && balance >= renewFinalAmountCents;
 
@@ -487,6 +501,10 @@ export default function Subscriptions() {
               </DialogTitle>
               <DialogDescription>
                 再次购买 {renewingSub?.planName || "当前套餐"} 会延长当前订阅有效期。
+                {/* 说清楚续的是哪一档：买年付的人得看得见这次续的还是一年。 */}
+                {renewingSub?.renewDurationDays
+                  ? `本次续期 ${planDurationLabel(Number(renewingSub.renewDurationDays))}。`
+                  : ""}
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4">
