@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { matchProxyNodeForTarget, rulesMatchingProxyNode, shouldAutoBindProxyNode } from "./proxyNodeAutoBind";
+import {
+  matchProxyNodeForTarget,
+  planProxyNodeBinding,
+  proxyNodeBindingTruth,
+  rulesMatchingProxyNode,
+  shouldAutoBindProxyNode,
+} from "./proxyNodeAutoBind";
 
 /**
  * 认错的后果是把**别人的线路**塞进订阅 —— 客户端里那条中转指向一台不该指的落地机。
@@ -90,4 +96,171 @@ test("反向匹配同样不猜：地址或端口不成立就是空", () => {
   assert.deepEqual(rulesMatchingProxyNode(rules, { address: "", port: 443 }), []);
   assert.deepEqual(rulesMatchingProxyNode(rules, { address: "hk.example.com", port: 0 }), []);
   assert.deepEqual(rulesMatchingProxyNode([], { address: "hk.example.com", port: 443 }), []);
+});
+
+/**
+ * 绑定是否还成立。判错的两个方向都有代价：
+ * 判成坏的 → 好好的线路被标成有问题；判成好的 → 客户端把落地的凭据递给别的机器。
+ */
+
+test("目标就是这个节点：成立", () => {
+  assert.equal(
+    proxyNodeBindingTruth({ targetIp: "198.51.100.5", targetPort: 443 }, { address: "198.51.100.5", port: 443 }),
+    "matches",
+  );
+  // IPv6 带方括号是转发那边的写法，节点那边不一定带。
+  assert.equal(
+    proxyNodeBindingTruth({ targetIp: "[2001:db8::1]", targetPort: 443 }, { address: "2001:db8::1", port: 443 }),
+    "matches",
+  );
+});
+
+test("端口不一样一定不通 —— 中转要成立，目标端口就得是节点监听的端口", () => {
+  assert.equal(
+    proxyNodeBindingTruth({ targetIp: "198.51.100.5", targetPort: 8443 }, { address: "198.51.100.5", port: 443 }),
+    "mismatch",
+  );
+});
+
+test("两边都是 IP 且不同：一定不是同一台机器", () => {
+  assert.equal(
+    proxyNodeBindingTruth({ targetIp: "203.0.113.250", targetPort: 443 }, { address: "198.51.100.5", port: 443 }),
+    "mismatch",
+  );
+});
+
+test("有一边是域名就不下结论 —— 同一台机器可以一边写 IP 一边写 DDNS 域名", () => {
+  assert.equal(
+    proxyNodeBindingTruth({ targetIp: "198.51.100.5", targetPort: 443 }, { address: "node.example.com", port: 443 }),
+    "unknown",
+  );
+  assert.equal(
+    proxyNodeBindingTruth({ targetIp: "a.example.com", targetPort: 443 }, { address: "b.example.com", port: 443 }),
+    "unknown",
+  );
+});
+
+test("字段缺了也不下结论", () => {
+  assert.equal(proxyNodeBindingTruth({}, { address: "198.51.100.5", port: 443 }), "unknown");
+  assert.equal(proxyNodeBindingTruth({ targetIp: "198.51.100.5", targetPort: 0 }, { address: "198.51.100.5", port: 443 }), "unknown");
+  assert.equal(proxyNodeBindingTruth({ targetIp: "198.51.100.5", targetPort: 443 }, {}), "unknown");
+});
+
+/**
+ * 保存之后绑定怎么动。判错的两个方向：把一条好线路解掉（客户端里线路消失），
+ * 或者留着一条把落地凭据递给别人的线路。
+ */
+const twoNodes = [
+  { id: 1, address: "198.51.100.5", port: 443 },
+  { id: 2, address: "198.51.100.9", port: 443 },
+];
+
+test("没绑过的按原规矩认一次", () => {
+  assert.deepEqual(
+    planProxyNodeBinding({
+      isCreate: true,
+      nextTarget: { targetIp: "198.51.100.5", targetPort: 443 },
+      candidates: twoNodes,
+    }),
+    { action: "bind", nodeId: 1 },
+  );
+  // 目标没变、又不是新建：不认。
+  assert.deepEqual(
+    planProxyNodeBinding({
+      isCreate: false,
+      nextTarget: { targetIp: "198.51.100.5", targetPort: 443 },
+      candidates: twoNodes,
+    }),
+    { action: "none" },
+  );
+});
+
+test("改到另一个节点上就改绑", () => {
+  assert.deepEqual(
+    planProxyNodeBinding({
+      isCreate: false,
+      targetChanged: true,
+      boundNodeId: 1,
+      boundNodePlace: { address: "198.51.100.5", port: 443 },
+      previousTarget: { targetIp: "198.51.100.5", targetPort: 443 },
+      nextTarget: { targetIp: "198.51.100.9", targetPort: 443 },
+      candidates: twoNodes,
+    }),
+    { action: "rebind", nodeId: 2 },
+  );
+});
+
+test("改到谁都不是的地方就解绑 —— 否则订阅里那条会把落地凭据递给新目标", () => {
+  assert.deepEqual(
+    planProxyNodeBinding({
+      isCreate: false,
+      targetChanged: true,
+      boundNodeId: 1,
+      boundNodePlace: { address: "198.51.100.5", port: 443 },
+      previousTarget: { targetIp: "198.51.100.5", targetPort: 443 },
+      nextTarget: { targetIp: "203.0.113.250", targetPort: 8443 },
+      candidates: twoNodes,
+    }),
+    { action: "release" },
+  );
+});
+
+test("原来就不是字面相符的，一个字都不动", () => {
+  // 串两跳：这条转发的目标是另一条转发的入口，绑定挂在这条上。不是我们能判的。
+  assert.deepEqual(
+    planProxyNodeBinding({
+      isCreate: false,
+      targetChanged: true,
+      boundNodeId: 1,
+      boundNodePlace: { address: "198.51.100.5", port: 443 },
+      previousTarget: { targetIp: "203.0.113.10", targetPort: 20001 },
+      nextTarget: { targetIp: "203.0.113.10", targetPort: 20002 },
+      candidates: twoNodes,
+    }),
+    { action: "none" },
+  );
+});
+
+test("目标只是换了个写法、仍然指着同一处：不动", () => {
+  assert.deepEqual(
+    planProxyNodeBinding({
+      isCreate: false,
+      targetChanged: true,
+      boundNodeId: 1,
+      boundNodePlace: { address: "198.51.100.5", port: 443 },
+      previousTarget: { targetIp: "198.51.100.5", targetPort: 443 },
+      nextTarget: { targetIp: "198.51.100.5", targetPort: 443 },
+      candidates: twoNodes,
+    }),
+    { action: "none" },
+  );
+});
+
+test("绑的节点已经不在了：不掺和，那是删除流程的事", () => {
+  assert.deepEqual(
+    planProxyNodeBinding({
+      isCreate: false,
+      targetChanged: true,
+      boundNodeId: 7,
+      boundNodePlace: null,
+      previousTarget: { targetIp: "198.51.100.5", targetPort: 443 },
+      nextTarget: { targetIp: "203.0.113.250", targetPort: 8443 },
+      candidates: twoNodes,
+    }),
+    { action: "none" },
+  );
+});
+
+test("解绑之后再改回来还能自己认回去", () => {
+  assert.deepEqual(
+    planProxyNodeBinding({
+      isCreate: false,
+      targetChanged: true,
+      boundNodeId: 0,
+      previousTarget: { targetIp: "203.0.113.250", targetPort: 8443 },
+      nextTarget: { targetIp: "198.51.100.5", targetPort: 443 },
+      candidates: twoNodes,
+    }),
+    { action: "bind", nodeId: 1 },
+  );
 });

@@ -16,6 +16,7 @@ import { PROXY_RULE_PRESETS } from "../../shared/proxyRuleset";
 import {
   PROXY_NODE_AUTO_GROUPS,
   PROXY_SUBSCRIPTION_SKIP_LABELS,
+  PROXY_SUBSCRIPTION_WARNING_LABELS,
 } from "../../shared/proxySubscriptionPlan";
 import { resolveProxyNodeHealth, type ProxyNodeProbeSample } from "../../shared/proxyNodeHealth";
 import { normalizeProxyNodeResetDay } from "../../shared/proxyNodeQuota";
@@ -451,7 +452,7 @@ export const proxySubscriptionsRouter = router({
 
   /** 预览订阅内容：进订阅的节点，以及每条被排除的转发和原因。 */
   preview: protectedProcedure.query(async ({ ctx }) => {
-    if (!await hasProxySubscriptionPermission(ctx)) return { groups: [], nodes: [], skipped: [] };
+    if (!await hasProxySubscriptionPermission(ctx)) return { groups: [], nodes: [], skipped: [], warnings: [] };
     const plan = await db.buildProxySubscriptionPlanForUser(ctx.user.id);
     const document = await db.getProxySubscriptionDocumentForUser(ctx.user.id);
     return {
@@ -467,10 +468,16 @@ export const proxySubscriptionsRouter = router({
         protocol: entry.node.protocol,
         address: entry.node.address,
         port: entry.node.port,
+        // 绑定已经对不上了：这条照发，但界面上要标出来。
+        targetMismatch: entry.targetMismatch === true,
       })),
       skipped: plan.skipped.map((item) => ({
         ...item,
         label: PROXY_SUBSCRIPTION_SKIP_LABELS[item.reason],
+      })),
+      warnings: plan.warnings.map((item) => ({
+        ...item,
+        label: PROXY_SUBSCRIPTION_WARNING_LABELS[item.reason],
       })),
     };
   }),

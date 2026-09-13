@@ -72,6 +72,7 @@ import {
   type ProxyNodeGroupMode,
 } from "@shared/proxyNodeGrouping";
 import {
+  AlertTriangle,
   Atom,
   AudioLines,
   Cat,
@@ -735,6 +736,14 @@ export default function ClientSubscriptionsPage() {
     () => (preview?.skipped ?? []).filter((item) => item.reason === "hidden"),
     [preview],
   );
+  /**
+   * 绑定已经对不上的那些：转发的目标不再是它绑的那个节点。
+   *
+   * 这条节点仍然在订阅里 —— 静默少一条是这套面板反复踩过的坑，而这类判断也不可能
+   * 百分之百准。但它必须显眼：订阅里那条带的是这个落地的凭据，地址却写的是转发入口，
+   * 入口通向别处时，客户端就会把凭据递给那台别的机器。
+   */
+  const driftedRules = useMemo(() => preview?.warnings ?? [], [preview]);
   const unboundRules = useMemo(
     () => (preview?.skipped ?? []).filter((item) => item.reason === "unbound"),
     [preview],
@@ -1240,7 +1249,7 @@ export default function ClientSubscriptionsPage() {
           onPasteNode={openCreateNode}
           inboundLeading={inboundLeading}
           onOpenPreview={() => setPreviewOpen(true)}
-          previewAlertCount={unboundRules.length}
+          previewAlertCount={unboundRules.length + driftedRules.length}
           onOpenHosts={isAdmin ? undefined : () => setHostsOpen(true)}
           onlineCount={onlineNodeCount}
           offlineCount={offlineNodeCount}
@@ -1370,6 +1379,30 @@ export default function ClientSubscriptionsPage() {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {driftedRules.length > 0 && (
+                  <div className="space-y-2">
+                    <SectionLabel count={driftedRules.length}>指向已经变了</SectionLabel>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      这几条转发的目标已经不是它绑的那个节点了。线路还在订阅里，但客户端连过去是
+                      拿着原来那个落地的凭据去连新目标 —— 要么把目标改回去，要么在转发页上重新选节点。
+                    </p>
+                    {driftedRules.map((item) => (
+                      <div
+                        key={`drift-${item.ruleId}`}
+                        className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.ruleName}</span>
+                        </div>
+                        <p className="break-all text-xs text-muted-foreground">
+                          绑的是「{item.nodeName}」（{item.nodeText}），现在指向 {item.targetText}
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 )}
 

@@ -8,6 +8,7 @@
  */
 
 import { getHostEntryAddress, type HostEntryAddressSource } from "./hostEntryAddress";
+import { proxyNodeBindingTruth } from "./proxyNodeAutoBind";
 import {
   buildProxyRulePlan,
   normalizeProxyRulePreset,
@@ -79,6 +80,11 @@ export type ProxySubscriptionRuleRow = {
   proxyNodeName?: unknown;
   isEnabled?: unknown;
   pendingDelete?: unknown;
+  /**
+   * 转发的目标。用来核对「绑定还算不算真的」—— 调用方没查这两列时不做判断。
+   */
+  targetIp?: unknown;
+  targetPort?: unknown;
 };
 
 export type ProxySubscriptionHostRow = HostEntryAddressSource & {
@@ -118,6 +124,8 @@ export type ProxySubscriptionEntry = {
    * 存在的名字 —— Clash 会拒绝整份配置，报的还是「订阅导入失败」这种毫无线索的错。
    */
   frontTemplateId: number;
+  /** 绑定已经对不上了（见 warnings）。仍然发出去，但界面上要标出来。 */
+  targetMismatch?: boolean;
   node: ProxyNode;
 };
 
@@ -127,9 +135,35 @@ export type ProxySubscriptionSkip = {
   reason: ProxySubscriptionSkipReason;
 };
 
+/**
+ * 「这条还在订阅里，但有件事你得知道」。
+ *
+ * 和 skipped 分开：那边是**没发出去**的，这边是**发出去了但可能不是你以为的那样**。
+ * 刻意不做成 skip —— 静默少一条节点正是这套面板反复踩过的坑，而这类判断又不可能
+ * 百分之百准（见 proxyNodeBindingTruth），所以宁可发出去 + 明确告警，让人自己判。
+ */
+export type ProxySubscriptionWarningReason = "target-mismatch";
+
+export const PROXY_SUBSCRIPTION_WARNING_LABELS: Record<ProxySubscriptionWarningReason, string> = {
+  "target-mismatch": "这条转发的目标已经不是它绑的那个节点了",
+};
+
+export type ProxySubscriptionWarning = {
+  ruleId: number;
+  ruleName: string;
+  reason: ProxySubscriptionWarningReason;
+  /** 现在指向哪里，便于界面直接说清楚。 */
+  targetText: string;
+  /** 绑的那个节点在哪里。 */
+  nodeText: string;
+  nodeName: string;
+};
+
 export type ProxySubscriptionPlan = {
   entries: ProxySubscriptionEntry[];
   skipped: ProxySubscriptionSkip[];
+  /** 老调用方可能不读这个字段，所以给默认空数组而不是可选。 */
+  warnings: ProxySubscriptionWarning[];
 };
 
 function text(value: unknown): string {
@@ -221,6 +255,23 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
 
   const entries: ProxySubscriptionEntry[] = [];
   const skipped: ProxySubscriptionSkip[] = [];
+  const warnings: ProxySubscriptionWarning[] = [];
+
+  /**
+   * 这个用户自己的转发入口都有哪些 `地址:端口`。
+   *
+   * 用来认出「串起来的两跳」：第一条转发的目标是第二条转发的入口，而绑定挂在第一条
+   * 上。这种拓扑下目标当然不等于节点地址，却是正常的 —— 不认出来就会对着一条好线路
+   * 报警。数据本来就都在手上，顺手算一遍。
+   */
+  const ownForwardEntries = new Set<string>();
+  for (const rule of input.rules) {
+    if (bool(rule.pendingDelete)) continue;
+    const host = hostsById.get(Number(rule.hostId || 0));
+    const address = getHostEntryAddress(host);
+    const port = toPort(rule.sourcePort);
+    if (address && port) ownForwardEntries.add(`${address.trim().toLowerCase()}:${port}`);
+  }
 
   /**
    * 落地机自己的直连地址。
@@ -323,11 +374,41 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
       ruleName,
     });
 
+    /**
+     * 绑定还算不算真的。
+     *
+     * 对不上时**照发**，只是标出来 —— 静默少一条节点是这套面板反复踩过的坑，而这类
+     * 判断不可能百分之百准（串两跳、域名写法不同都会看起来像对不上）。但也不能不说：
+     * 订阅里这条节点带的是这个落地的凭据，而地址写的是转发入口；入口通向别处时，
+     * 客户端就会把这套凭据递给那台别的机器。
+     */
+    let targetMismatch = false;
+    const targetText = `${text(rule.targetIp)}:${toPort(rule.targetPort) || "-"}`;
+    const pointsAtOwnForwardEntry = ownForwardEntries.has(
+      `${text(rule.targetIp).toLowerCase()}:${toPort(rule.targetPort)}`,
+    );
+    if (!pointsAtOwnForwardEntry
+      && proxyNodeBindingTruth(
+        { targetIp: rule.targetIp, targetPort: rule.targetPort },
+        { address: templateNode.address, port: templateNode.port },
+      ) === "mismatch") {
+      targetMismatch = true;
+      warnings.push({
+        ruleId,
+        ruleName,
+        reason: "target-mismatch",
+        targetText,
+        nodeText: `${templateNode.address}:${templateNode.port}`,
+        nodeName: templateNode.name || `节点 #${templateId}`,
+      });
+    }
+
     entries.push({
       ruleId,
       templateId,
       kind: "relay",
       frontTemplateId: frontIdOf(template),
+      ...(targetMismatch ? { targetMismatch: true } : {}),
       node: relayProxyNode(templateNode, { address, port, name }),
     });
   }
@@ -338,7 +419,7 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
     return { ...entry, frontTemplateId: template ? frontIdOf(template) : 0 };
   });
 
-  return { entries: [...directWithFront, ...entries], skipped };
+  return { entries: [...directWithFront, ...entries], skipped, warnings };
 }
 
 /**

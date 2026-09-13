@@ -831,7 +831,7 @@ export async function recordProxySubTokenAccess(id: number, info: { ip?: string;
  */
 export async function buildProxySubscriptionPlanForUser(userId: number): Promise<ProxySubscriptionPlan> {
   const db = await getDb();
-  if (!db) return { entries: [], skipped: [] };
+  if (!db) return { entries: [], skipped: [], warnings: [] };
 
   const rules = await db
     .select({
@@ -847,6 +847,9 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
       isEnabled: forwardRules.isEnabled,
       pendingDelete: forwardRules.pendingDelete,
       sortOrder: forwardRules.sortOrder,
+      // 核对「绑定还算不算真的」：目标已经不指向那个节点时要告警，见 proxyNodeBindingTruth。
+      targetIp: forwardRules.targetIp,
+      targetPort: forwardRules.targetPort,
     })
     .from(forwardRules)
     .where(and(eq(forwardRules.userId, userId), eq(forwardRules.pendingDelete, false)))

@@ -100,3 +100,107 @@ export function rulesMatchingProxyNode<T extends {
     && Number(rule.targetPort) === port
     && normalizeAddress(rule.targetIp) === address);
 }
+
+/**
+ * 绑定还算不算真的。
+ *
+ * 绑定这件事声明的是「这条转发通向那个落地节点」。可它只在保存那一刻成立过 ——
+ * 之后目标地址能改、节点自己的地址端口也能改，而绑定关系一直留着。留错了不只是
+ * 少一条线路：订阅里那条节点**带着这个落地的凭据**（uuid、Reality 公钥、SNI），
+ * 地址却写的是转发入口；入口现在通向别处，客户端就会把这套凭据递给那台别的机器。
+ *
+ * 所以要能判断，但**判不准时必须说判不准**，而不是猜：
+ *
+ * - 端口不一样 → 一定不通。中转要成立，转发的目标端口就得是节点监听的那个端口。
+ * - 两边都是 IP 字面量且不同 → 一定不是同一台机器。
+ * - 有一边是域名 → 不下结论。同一台机器完全可以一边写 IP、一边写 DDNS 域名，
+ *   这里没有 DNS 可查，硬判会把好好的线路判成坏的。
+ * - 少了字段（调用方没查那几列）→ 不下结论。
+ */
+export type ProxyNodeBindingTruth = "matches" | "mismatch" | "unknown";
+
+function isLiteralIp(value: string): boolean {
+  if (!value) return false;
+  // IPv4 点分十进制
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) return true;
+  // IPv6：只要出现两个及以上冒号就当字面量（域名里不会有冒号）
+  return (value.match(/:/g) || []).length >= 2;
+}
+
+export function proxyNodeBindingTruth(
+  rule: { targetIp?: unknown; targetPort?: unknown },
+  node: { address?: unknown; port?: unknown },
+): ProxyNodeBindingTruth {
+  const target = normalizeAddress(rule?.targetIp);
+  const nodeAddress = normalizeAddress(node?.address);
+  const targetPort = Number(rule?.targetPort);
+  const nodePort = Number(node?.port);
+  if (!target || !nodeAddress) return "unknown";
+  if (!Number.isInteger(targetPort) || targetPort <= 0) return "unknown";
+  if (!Number.isInteger(nodePort) || nodePort <= 0) return "unknown";
+
+  if (target === nodeAddress) return targetPort === nodePort ? "matches" : "mismatch";
+  if (targetPort !== nodePort) return "mismatch";
+  // 地址不同、端口相同：只有两边都是 IP 字面量才敢说不是同一台机器。
+  return isLiteralIp(target) && isLiteralIp(nodeAddress) ? "mismatch" : "unknown";
+}
+
+/**
+ * 这次保存之后，绑定该怎么动。
+ *
+ * 决策全在这里，写库留给调用方 —— 这样「什么情况下动、动成什么」可以单独测，
+ * 而它判错的代价不小：把订阅里一条好线路解掉，或者留着一条把凭据递给别人的线路。
+ *
+ * 规矩：
+ *
+ * - 没绑过的，按 shouldAutoBindProxyNode 认一次。
+ * - 绑过的，**只在原来字面相符时**才重新对。字面相符说明这个绑定是面板自己认出来
+ *   的（或者等价于认出来的），面板有责任让它继续为真；不相符的那些是他自己搭的
+ *   拓扑（串两跳、一边域名一边 IP），我们没有判断权，一个字都不动。
+ * - 重新对的结果：新目标正好是另一个节点 → 改绑；谁都不是 → 解绑。
+ */
+export type ProxyNodeBindingAction =
+  | { action: "none" }
+  | { action: "bind"; nodeId: number }
+  | { action: "rebind"; nodeId: number }
+  | { action: "release" };
+
+export function planProxyNodeBinding(input: {
+  isCreate: boolean;
+  targetChanged?: boolean;
+  boundNodeId?: number | null;
+  /** 绑着的那个节点现在在哪。查不到（删了、分享撤了）就给 null。 */
+  boundNodePlace?: { address?: unknown; port?: unknown } | null;
+  previousTarget?: { targetIp?: unknown; targetPort?: unknown };
+  nextTarget: { targetIp?: unknown; targetPort?: unknown };
+  candidates: readonly AutoBindCandidate[];
+}): ProxyNodeBindingAction {
+  const boundNodeId = Number(input.boundNodeId || 0);
+  if (boundNodeId > 0) {
+    if (!input.targetChanged) return { action: "none" };
+    // 绑的节点已经不在了：解绑那条路由删除流程负责，这里不掺和。
+    if (!input.boundNodePlace) return { action: "none" };
+    const wasLiteral = proxyNodeBindingTruth(input.previousTarget || {}, input.boundNodePlace) === "matches";
+    if (!wasLiteral) return { action: "none" };
+    if (proxyNodeBindingTruth(input.nextTarget, input.boundNodePlace) === "matches") return { action: "none" };
+    const rematched = matchProxyNodeForTarget(
+      input.candidates,
+      input.nextTarget.targetIp,
+      input.nextTarget.targetPort,
+    );
+    if (rematched && rematched.id !== boundNodeId) return { action: "rebind", nodeId: rematched.id };
+    return { action: "release" };
+  }
+
+  if (!shouldAutoBindProxyNode({
+    isCreate: input.isCreate,
+    boundNodeId,
+    targetChanged: input.targetChanged,
+  })) return { action: "none" };
+  const matched = matchProxyNodeForTarget(
+    input.candidates,
+    input.nextTarget.targetIp,
+    input.nextTarget.targetPort,
+  );
+  return matched ? { action: "bind", nodeId: matched.id } : { action: "none" };
+}

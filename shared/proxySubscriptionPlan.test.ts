@@ -310,7 +310,7 @@ test("分组引用的是去重后的节点名", () => {
 });
 
 test("没有节点时不产出任何策略组", () => {
-  const doc = buildProxySubscriptionDocument({ entries: [], skipped: [] }, [HKT_TEMPLATE], {
+  const doc = buildProxySubscriptionDocument({ entries: [], skipped: [], warnings: [] }, [HKT_TEMPLATE], {
     mainGroupName: "ForwardX",
   });
 
