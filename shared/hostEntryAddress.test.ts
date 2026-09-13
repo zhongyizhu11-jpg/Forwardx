@@ -6,6 +6,7 @@ import {
   getEntryAddressFamily,
   getHostEntryAddress,
   getHostEntryAddresses,
+  hostNeverConnected,
 } from "./hostEntryAddress";
 
 test("自定义域名优先于 DDNS 与自动探测的 IP", () => {
@@ -78,4 +79,27 @@ test("地址族判定区分 IPv4、IPv6 和域名", () => {
   assert.equal(getEntryAddressFamily("gz1.example.com"), "hostname");
   assert.equal(getEntryAddressFamily("999.1.1.1"), "hostname");
   assert.equal(getEntryAddressFamily(""), "unknown");
+});
+
+/**
+ * 「从没连上过」和「掉线了」必须分开：前者是一步没做完（Agent 还没装），
+ * 后者是暂时的。混为一谈的话，要么天天报警，要么漏掉真正装不上的那台。
+ */
+
+test("从没收过心跳 = Agent 还没装上", () => {
+  assert.equal(hostNeverConnected({}), true);
+  assert.equal(hostNeverConnected({ lastHeartbeat: null }), true);
+  assert.equal(hostNeverConnected({ lastHeartbeat: "" }), true);
+});
+
+test("收过心跳就不算 —— 之后掉线归状态点管，不在这里报", () => {
+  assert.equal(hostNeverConnected({ lastHeartbeat: new Date("2020-01-01T00:00:00Z") }), false);
+  assert.equal(hostNeverConnected({ lastHeartbeat: "2020-01-01T00:00:00Z" }), false);
+  assert.equal(hostNeverConnected({ lastHeartbeat: 1700000000000 }), false);
+});
+
+test("时间戳认不出来时不报警 —— 宁可漏一句，也别对着好机器喊", () => {
+  assert.equal(hostNeverConnected({ lastHeartbeat: "不是时间" }), false);
+  assert.equal(hostNeverConnected(null), false);
+  assert.equal(hostNeverConnected(undefined), false);
 });

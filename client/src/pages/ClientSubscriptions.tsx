@@ -669,6 +669,28 @@ export default function ClientSubscriptionsPage() {
     return ids;
   }, [nodes, unusedNodeIds]);
 
+  /**
+   * 机器的 Agent 从没连上过的那些节点。
+   *
+   * 这种机器上开的端口，配置根本下发不下去 —— 节点照样在订阅里（机器可能下一分钟
+   * 就连上了，悄悄拿掉比发出去更糟），但得在行上说出来。掉线不算：那是暂时的，
+   * 状态点已经在说了。
+   */
+  const hostOfflineNodeIds = useMemo(
+    () => new Set(((previewQuery.data?.warnings ?? []) as any[])
+      .filter((item) => item?.reason === "host-never-online")
+      .map((item) => Number(item.nodeId))),
+    [previewQuery.data],
+  );
+  const hostOfflineInboundIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const node of nodes as any[]) {
+      const inboundId = Number(node?.inboundId || 0);
+      if (inboundId > 0 && hostOfflineNodeIds.has(Number(node.id))) ids.add(inboundId);
+    }
+    return ids;
+  }, [nodes, hostOfflineNodeIds]);
+
   const pastedRowSpecs = useMemo<ProxyNodeRowSpec[]>(() => pastedNodes.map((node: any) => {
     const quotaExpanded = expandedQuotaIds.includes(Number(node.id));
     return {
@@ -787,6 +809,11 @@ export default function ClientSubscriptionsPage() {
     () => (preview?.warnings ?? []).filter((item: any) => item.reason === "node-unused"),
     [preview],
   );
+  /** 机器还没连上面板的那些节点 —— 发出去了，但现在连不上。 */
+  const hostOfflineNodes = useMemo(
+    () => (preview?.warnings ?? []).filter((item: any) => item.reason === "host-never-online"),
+    [preview],
+  );
   const unboundRules = useMemo(
     () => (preview?.skipped ?? []).filter((item) => item.reason === "unbound"),
     [preview],
@@ -809,13 +836,14 @@ export default function ClientSubscriptionsPage() {
     () => summarizeProxyNodeHealthCounts({ total: nodeCount, online: onlineNodeCount, offline: offlineNodeCount }),
     [nodeCount, onlineNodeCount, offlineNodeCount],
   );
-  const pendingCount = unboundRules.length + driftedRules.length + unusedNodes.length;
+  const pendingCount = unboundRules.length + driftedRules.length + unusedNodes.length + hostOfflineNodes.length;
   const pendingSubtitle = pendingCount === 0
     ? "都对上了"
     : [
       unboundRules.length > 0 ? `${unboundRules.length} 条差节点` : "",
       driftedRules.length > 0 ? `${driftedRules.length} 条指向已变` : "",
       unusedNodes.length > 0 ? `${unusedNodes.length} 个没进订阅` : "",
+      hostOfflineNodes.length > 0 ? `${hostOfflineNodes.length} 个机器没连上` : "",
     ].filter(Boolean).join(" · ");
 
   const enabledNodes = useMemo(() => nodes.filter((node: any) => node.isEnabled), [nodes]);
@@ -1410,8 +1438,9 @@ export default function ClientSubscriptionsPage() {
           onPasteNode={openCreateNode}
           inboundLeading={inboundLeading}
           notInSubscriptionInboundIds={unusedInboundIds}
+          hostNeverOnlineInboundIds={hostOfflineInboundIds}
           onOpenPreview={() => setPreviewOpen(true)}
-          previewAlertCount={unboundRules.length + driftedRules.length + unusedNodes.length}
+          previewAlertCount={pendingCount}
           onOpenHosts={isAdmin ? undefined : () => setHostsOpen(true)}
           onlineCount={onlineNodeCount}
           offlineCount={offlineNodeCount}
@@ -1541,6 +1570,30 @@ export default function ClientSubscriptionsPage() {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {hostOfflineNodes.length > 0 && (
+                  <div className="space-y-2">
+                    <SectionLabel count={hostOfflineNodes.length}>机器还没连上面板</SectionLabel>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      这几台机器的 Agent 从没连上过 —— 配置下发不下去，节点虽然在订阅里，客户端现在连不上。
+                      去「我的机器」拿安装命令，在那台机器上装好 Agent 就行。
+                    </p>
+                    {hostOfflineNodes.map((item: any) => (
+                      <div
+                        key={`host-offline-${item.nodeId}`}
+                        className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.nodeName}</span>
+                        </div>
+                        <p className="break-all text-xs text-muted-foreground">
+                          开在「{item.targetText}」上，这台机器的 Agent 还没装
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 )}
 

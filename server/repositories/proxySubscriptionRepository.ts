@@ -3,6 +3,7 @@ import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import {
   forwardRules,
   hosts,
+  proxyInbounds,
   proxyNodes,
   proxyNodeShares,
   proxySubTokens,
@@ -880,7 +881,28 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
     .where(and(eq(forwardRules.userId, userId), eq(forwardRules.pendingDelete, false)))
     .orderBy(asc(forwardRules.sortOrder), asc(forwardRules.id));
 
-  const templates = await getProxyNodesForSubscription(userId);
+  const templates = await getProxyNodesForSubscription(userId) as any[];
+  /**
+   * 自建节点开在哪台机器上。
+   *
+   * proxy_nodes 上没有 hostId —— 它只记了自己是从哪个入站派生的。想知道「这条线路
+   * 的机器连上没有」，得再走一步。粘来的、别人分享的没有 inboundId，也就没有机器，
+   * 面板对那些机器的状态本来就无话可说。
+   */
+  const inboundIds = Array.from(new Set(templates
+    .map((template) => Number(template?.inboundId || 0))
+    .filter((id) => id > 0)));
+  if (inboundIds.length > 0) {
+    const inboundHosts = await db
+      .select({ id: proxyInbounds.id, hostId: proxyInbounds.hostId })
+      .from(proxyInbounds)
+      .where(inArray(proxyInbounds.id, inboundIds));
+    const hostIdByInbound = new Map((inboundHosts as any[]).map((row) => [Number(row.id), Number(row.hostId)]));
+    for (const template of templates) {
+      const hostId = hostIdByInbound.get(Number(template?.inboundId || 0));
+      if (hostId) (template as any).hostId = hostId;
+    }
+  }
   const hostRows = await db
     .select({
       id: hosts.id,
@@ -891,6 +913,8 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
       entryIp: hosts.entryIp,
       ddnsEnabled: hosts.ddnsEnabled,
       ddnsDomain: hosts.ddnsDomain,
+      // 从没收过心跳 = Agent 还没装上，见 hostNeverConnected。
+      lastHeartbeat: hosts.lastHeartbeat,
     })
     .from(hosts);
 

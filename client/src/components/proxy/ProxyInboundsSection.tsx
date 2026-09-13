@@ -142,6 +142,7 @@ export default function ProxyInboundsSection({
   onPasteNode,
   inboundLeading,
   notInSubscriptionInboundIds,
+  hostNeverOnlineInboundIds,
   onOpenPreview,
   previewAlertCount = 0,
   onOpenHosts,
@@ -169,6 +170,13 @@ export default function ProxyInboundsSection({
    * 也不该有那份数据。行上要写的是**后果**（不在订阅里），而不是机制（没转发绑定）。
    */
   notInSubscriptionInboundIds?: ReadonlySet<number>;
+  /**
+   * Agent 从没连上过的那些机器上的入站。
+   *
+   * 和「掉线」分开：掉线是暂时的，行首那个状态点已经在说了；这里说的是「机器加进来了，
+   * Agent 还没装」—— 配置下发不下去，这个端口根本没跑起来。
+   */
+  hostNeverOnlineInboundIds?: ReadonlySet<number>;
   onOpenPreview?: () => void;
   /**
    * 预览里等着处理的条数（现在是「还没加入订阅的转发」）。收进弹窗之后这个信号
@@ -506,6 +514,8 @@ export default function ProxyInboundsSection({
       Number(row.clonedFromInboundId || 0) > 0 ? "套餐附带 · 面板托管" : "",
       // 没开直连、又没有转发指向它 —— 这个端口跑得好好的，客户端里却没有它。
       notInSubscriptionInboundIds?.has(Number(row.id)) ? "不在订阅里" : "",
+      // 机器都没连上，这个端口就没跑起来 —— 比「不在订阅里」更靠前的一个问题。
+      hostNeverOnlineInboundIds?.has(Number(row.id)) ? "机器的 Agent 还没连上" : "",
       !row.isEnabled ? "已停用" : "",
     ]),
     toggle: (
@@ -541,7 +551,7 @@ export default function ProxyInboundsSection({
           { key: "delete", label: "删除", icon: Trash2, destructive: true, onSelect: () => void askDelete(row) },
         ]),
     ],
-  })), [rows, hosts, userOptions, isAdmin, linkLoadingId, inboundLeading, notInSubscriptionInboundIds]);
+  })), [rows, hosts, userOptions, isAdmin, linkLoadingId, inboundLeading, notInSubscriptionInboundIds, hostNeverOnlineInboundIds]);
 
   /** 三类合成一个列表：自建在前（它们是这一页的起点），然后是粘贴和分享来的。 */
   const allRowSpecs = useMemo(() => [...inboundRowSpecs, ...extraRows], [inboundRowSpecs, extraRows]);

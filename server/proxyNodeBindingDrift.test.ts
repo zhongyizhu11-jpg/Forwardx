@@ -154,6 +154,55 @@ test("SQLite 绑定过期时：能判定的改绑或解绑，判不定的照发�
       "停用的节点不该再报「没进订阅」—— 那是他自己关的",
     );
 
+    /**
+     * 7. 机器的 Agent 从没连上过。
+     *
+     * 这种机器上开的落地端口，配置根本下发不下去 —— 可面板照样把它当成一条好线路发进
+     * 订阅，客户端拉到手连不上，页面上一个字都没提过。仍然照发（机器可能下一分钟就连上
+     * 了，悄悄拿掉比发出去更糟），但必须告警。
+     *
+     * 关键是别把「掉线」也算进来：掉线是暂时的，节点行上那个状态点已经在说了，
+     * 拿它去告警就会天天报。
+     */
+    const inbounds = await import(url("server/repositories/proxyInboundRepository.ts"));
+    await exec(
+      'INSERT INTO hosts (id, name, ip, ipv4, agentToken, userId) VALUES (60, ?, ?, ?, ?, 2)',
+      ["刚加的机器", "203.0.113.60", "203.0.113.60", "tok60"],
+    );
+    const inboundId = Number(await inbounds.createProxyInbound({
+      userId: 2, hostId: 60, name: "新开的端口", protocol: "vless", port: 34567,
+      security: "reality", uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      realityPublicKey: "pk", realityShortId: "ab", serverName: "www.example.com",
+      realityPrivateKey: "sk", realityDest: "www.example.com:443", isEnabled: true,
+    }));
+    await inbounds.replaceProxyInboundUsers(inboundId, [{ userId: 2, uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", name: "默认" }]);
+    await inbounds.syncProxyNodeFromInbound(inboundId);
+
+    const neverPlan = await subs.buildProxySubscriptionPlanForUser(2);
+    const neverOnline = neverPlan.warnings.filter((item) => item.reason === "host-never-online");
+    assert.equal(neverOnline.length, 1, "Agent 从没连上的机器要告警");
+    assert.equal(neverOnline[0].nodeName, "新开的端口");
+    assert.equal(neverOnline[0].targetText, "刚加的机器");
+    assert.ok(
+      neverPlan.entries.some((entry) => entry.node.name === "新开的端口"),
+      "照样要发出去 —— 机器可能下一分钟就连上，悄悄拿掉比发出去更糟",
+    );
+
+    // 收过一次心跳之后就不该再报：之后掉不掉线归状态点管。
+    await exec('UPDATE hosts SET lastHeartbeat = ?, isOnline = 0 WHERE id = 60', [new Date().toISOString()]);
+    const afterBeat = await subs.buildProxySubscriptionPlanForUser(2);
+    assert.equal(
+      afterBeat.warnings.filter((item) => item.reason === "host-never-online").length,
+      0,
+      "装过 Agent 的机器只是掉线，不该按「还没装」告警",
+    );
+
+    // 粘来的节点没有机器，面板对它们的状态无话可说，任何时候都不该报。
+    assert.ok(
+      !neverPlan.warnings.some((item) => item.reason === "host-never-online" && Number(item.nodeId) === nodeA),
+      "粘来的节点不该报机器没连上",
+    );
+
     console.log("OK");
     await runtime.closeDatabase();
   `;
