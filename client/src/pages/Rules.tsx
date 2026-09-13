@@ -2442,6 +2442,19 @@ function RulesContent() {
       resetForm();
       const msg = data.sourcePort ? `规则创建成功，源端口: ${data.sourcePort}` : "规则创建成功";
       toast.success(msg);
+      /**
+       * 面板替人多做了一步，就得说出来。
+       *
+       * 目标正好是他自己的落地节点时会自动加进订阅 —— 不说的话，他下次在客户端里
+       * 看到一条没印象的线路，只会以为是别处出了错。
+       */
+      if ((data as any).autoBoundProxyNodeName) {
+        utils.proxySubscriptions.preview.invalidate();
+        utils.proxySubscriptions.listNodes.invalidate();
+        toast.info(`已顺手加进订阅：${(data as any).autoBoundProxyNodeName}`, {
+          description: "目标正好是你的落地节点。不想要的话，去订阅管理的「预览订阅」里关掉。",
+        });
+      }
     },
     onError: (err) => toast.error(err.message || "创建失败"),
   });
@@ -2859,6 +2872,30 @@ function RulesContent() {
     (tunnels || []).forEach((tunnel: any) => map.set(Number(tunnel.id), tunnel));
     return map;
   }, [tunnels]);
+  /**
+   * 这条转发在不在客户端订阅里。
+   *
+   * 订阅和转发是同一件事的两面，可是这一页原来完全不提订阅：一条转发被订阅引用着，
+   * 在这里看不出来 —— 改目标、停用、删掉，都会让别人客户端里的那条线路跟着变，
+   * 而操作的人毫不知情。所以在行上标一个字，并说清楚点它会去哪。
+   */
+  const subscriptionPermission = trpc.proxySubscriptions.permission.useQuery(undefined, {
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const subscriptionAllowed = !!subscriptionPermission.data?.allowed;
+  const proxyNodesQuery = trpc.proxySubscriptions.listNodes.useQuery(undefined, {
+    enabled: subscriptionAllowed,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const proxyNodeNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const node of (proxyNodesQuery.data || []) as any[]) {
+      map.set(Number(node.id), String(node.name || ""));
+    }
+    return map;
+  }, [proxyNodesQuery.data]);
   const hostById = useMemo(() => {
     const map = new Map<number, any>();
     (hosts || []).forEach((host: any) => map.set(Number(host.id), host));
@@ -5929,6 +5966,32 @@ function RulesContent() {
       </Badge>
     );
   };
+  /**
+   * 「在订阅里」这一小块。没绑就什么都不显示 —— 大多数转发跟订阅无关，
+   * 给每一行都挂个「未加入订阅」只是噪音。
+   */
+  const renderSubscriptionBadge = (rule: any) => {
+    if (!subscriptionAllowed) return null;
+    const nodeId = Number(rule?.proxyNodeId || 0);
+    if (!nodeId) return null;
+    const nodeName = proxyNodeNameById.get(nodeId) || "落地节点";
+    const visible = rule?.proxyNodeVisible !== false;
+    return (
+      <Badge
+        variant="outline"
+        className={`w-fit whitespace-nowrap text-[10px] ${
+          visible ? "border-sky-500/30 text-sky-600 dark:text-sky-400" : "border-muted-foreground/30 text-muted-foreground"
+        }`}
+        title={visible
+          ? `这条转发以「${nodeName}」的身份出现在你的订阅里。改目标、停用或删掉它，客户端里那条线路会跟着变。`
+          : `已绑定「${nodeName}」，但设成了不进订阅。转发照常跑，客户端里看不到它。`}
+      >
+        <Zap className="mr-1 h-3 w-3" />
+        {visible ? "订阅" : "订阅已隐藏"}
+      </Badge>
+    );
+  };
+
   const renderRouteBadge = (rule: any, compactRow = false) => {
     const tunnel = rule.forwardType === "gost" && rule.tunnelId ? tunnelById.get(Number(rule.tunnelId)) : null;
     const group = rule.forwardGroupId ? forwardGroupById.get(Number(rule.forwardGroupId)) : null;
@@ -5971,20 +6034,23 @@ function RulesContent() {
         )}
       </Badge>
     );
+    const subscriptionBadge = renderSubscriptionBadge(rule);
     if (rule.forwardGroupId) {
       return (
         <div className={`flex min-w-0 items-center gap-1 ${compactRow ? "overflow-hidden" : "flex-wrap"}`}>
           {badge}
           {renderForwardToolBadge(rule, group)}
           {warningBadge}
+          {subscriptionBadge}
         </div>
       );
     }
     if (!tunnel) {
-      return warningBadge ? (
+      return warningBadge || subscriptionBadge ? (
         <div className={`flex min-w-0 items-center gap-1 ${compactRow ? "overflow-hidden" : "flex-wrap"}`}>
           {badge}
           {warningBadge}
+          {subscriptionBadge}
         </div>
       ) : badge;
     }
