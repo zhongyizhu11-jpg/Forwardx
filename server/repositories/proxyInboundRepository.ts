@@ -172,6 +172,17 @@ export async function getProxyInboundById(id: number) {
   return rows[0];
 }
 
+/** 一台主机上的全部入站（含停用的）。删主机时要连它们一起清掉。 */
+export async function getProxyInboundsByHost(hostId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(proxyInbounds)
+    .where(eq(proxyInbounds.hostId, Number(hostId)))
+    .orderBy(asc(proxyInbounds.id));
+}
+
 /** 一台主机上启用中的入站，用来生成它的 sing-box 配置。 */
 export async function getEnabledProxyInboundsByHost(hostId: number) {
   const db = await getDb();

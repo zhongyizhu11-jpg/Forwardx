@@ -105,3 +105,32 @@ test("反过来也成立：给落地节点挑端口时躲开转发规则", () =>
     assert.ok(port >= 20000 && port <= 30000);
   `);
 });
+
+test("删主机时，它上面的落地节点、派生节点、分享一起清掉", () => {
+  runInDatabase(String.raw`
+    const hosts = await import(url("server/repositories/hostRepository.ts"));
+    const shares = await import(url("server/repositories/proxySubscriptionRepository.ts"));
+    await exec("INSERT INTO users (id, username, password, role, allowProxySubscription) VALUES (2, 'bob', 'hash', 'user', 1)");
+
+    const inboundId = await makeInbound(443);
+    await inbounds.replaceProxyInboundUsers(inboundId, [
+      { id: 0, name: "自己", uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", password: "" },
+    ]);
+    await inbounds.syncProxyNodeFromInbound(inboundId);
+    const anchorId = Number((await query("SELECT id FROM proxy_nodes WHERE inboundId = ? ORDER BY id LIMIT 1", [inboundId]))[0].id);
+    await shares.setProxyNodeSharesForUser(2, [anchorId], { label: "bob" });
+    assert.equal((await shares.getProxyNodesForSubscription(2)).length, 1);
+
+    await hosts.deleteHost(10);
+
+    /**
+     * 不清的话：入站行指向一台已经不存在的主机（「新建节点」那一段还会列出来，
+     * 地址解析不出来），派生节点继续待在订阅里 —— 租户客户端里多一条永远连不上
+     * 的线路，而管理端看上去一切正常。
+     */
+    assert.equal(Number((await query("SELECT COUNT(*) AS n FROM proxy_inbounds"))[0].n), 0);
+    assert.equal(Number((await query("SELECT COUNT(*) AS n FROM proxy_nodes"))[0].n), 0);
+    assert.equal(Number((await query("SELECT COUNT(*) AS n FROM proxy_node_shares"))[0].n), 0);
+    assert.equal((await shares.getProxyNodesForSubscription(2)).length, 0, "租户订阅里也要跟着消失");
+  `);
+});
