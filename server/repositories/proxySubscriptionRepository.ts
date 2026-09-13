@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 
 import {
   forwardRules,
@@ -31,6 +31,31 @@ export async function getProxyNodesByUser(userId: number) {
     .from(proxyNodes)
     .where(eq(proxyNodes.userId, userId))
     .orderBy(asc(proxyNodes.sortOrder), asc(proxyNodes.id));
+}
+
+/**
+ * 所有设了总流量、并且已经到量的节点 —— 提醒用。
+ *
+ * 只查设了上限的：没填总量的节点谈不上「用了多少算多」，全查回来再过滤是白读一遍
+ * 整张表（一个商家几十上百个节点，这个函数每轮定时任务都会跑）。
+ */
+export async function getProxyNodesWithTrafficQuota() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      id: proxyNodes.id,
+      userId: proxyNodes.userId,
+      name: proxyNodes.name,
+      address: proxyNodes.address,
+      port: proxyNodes.port,
+      trafficLimit: proxyNodes.trafficLimit,
+      trafficUsed: proxyNodes.trafficUsed,
+      isEnabled: proxyNodes.isEnabled,
+    })
+    .from(proxyNodes)
+    .where(gt(proxyNodes.trafficLimit, 0))
+    .orderBy(asc(proxyNodes.id));
 }
 
 export async function getProxyNodeById(id: number) {

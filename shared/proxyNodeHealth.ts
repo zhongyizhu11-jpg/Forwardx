@@ -83,3 +83,47 @@ export function resolveProxyNodeHealth(
     : `可达（${rounded}ms）`;
   return { state: "online", latencyMs: rounded, title: label };
 }
+
+/**
+ * 一堆节点的在线情况怎么说给人听。
+ *
+ * 关键是**没探测过 ≠ 在线**。刚建好的节点还没有任何探测结果，它既不在线也不离线；
+ * 拿「离线数为 0」当成「全都在线」，页面就会在一个还没连通的面板上写着「节点全在线」，
+ * 或者写出「9 个节点：0 在线 · 0 离线」这种自相矛盾的话。
+ *
+ * 所以不知道就不说 —— 顶上那个徽标宁可不出现，也不替探测下结论。
+ */
+export type ProxyNodeHealthSummary = {
+  /** 顶上那个小徽标；不知道就是 null（不显示）。 */
+  badge: { text: string; tone: "ok" | "warn" } | null;
+  /** 概览卡副标题：只写数得清的那几类。 */
+  subtitle: string;
+  unknown: number;
+};
+
+export function summarizeProxyNodeHealthCounts(input: {
+  total: number;
+  online: number;
+  offline: number;
+}): ProxyNodeHealthSummary {
+  const total = Math.max(0, Math.floor(Number(input?.total) || 0));
+  const online = Math.max(0, Math.floor(Number(input?.online) || 0));
+  const offline = Math.max(0, Math.floor(Number(input?.offline) || 0));
+  const unknown = Math.max(0, total - online - offline);
+
+  if (total === 0) return { badge: null, subtitle: "还没有节点", unknown: 0 };
+
+  const parts = [
+    online > 0 ? `${online} 在线` : "",
+    offline > 0 ? `${offline} 离线` : "",
+    unknown > 0 ? `${unknown} 待探测` : "",
+  ].filter(Boolean);
+
+  const badge = offline > 0
+    ? { text: `${offline} 个节点离线`, tone: "warn" as const }
+    : online === total
+      ? { text: "节点全在线", tone: "ok" as const }
+      : null;
+
+  return { badge, subtitle: parts.join(" · ") || "等待探测", unknown };
+}

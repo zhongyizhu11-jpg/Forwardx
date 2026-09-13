@@ -5,6 +5,7 @@ import { parseSelfTestMeta } from "./agentRouteUtils";
 import { getEmailConfig, sendMail } from "./email";
 import { parseExpiryReminderDays, shouldSendExpiryReminder } from "../shared/expiryReminder";
 import { planHostRenewalReminder, planHostTrafficReminder } from "../shared/hostReminder";
+import { planProxyNodeTrafficReminder, proxyNodeTrafficReminderKey } from "../shared/proxyNodeReminder";
 import { sendTelegramMessage } from "./telegramBot";
 import { recordTunnelHopTestResult } from "./tunnelHopTestState";
 import { recordHopTestResult } from "./hopTestState";
@@ -414,6 +415,7 @@ async function runEmailReminders() {
     }
 
     await runHostEmailReminders(users as any[], now);
+    await runProxyNodeEmailReminders(users as any[]);
   } catch (error) {
     console.error("[Scheduler] Email reminder error:", error);
   }
@@ -488,6 +490,44 @@ async function runHostEmailReminders(users: any[], now: number) {
         `到期时间：${new Date(renewal.stoppedAtMs).toLocaleDateString("zh-CN")}`,
         "",
         "机器停了之后，它上面的转发和落地节点会一起断。",
+      ].join("\n"),
+    });
+    await db.setSetting(key, "sent");
+  }
+}
+
+/**
+ * 落地节点的流量提醒 —— 邮件这一路。
+ *
+ * 节点上那个「总流量」原来只是个仪表盘：填了 500G，用到 700G 也照常服务。而这个数字
+ * 通常来自机房 —— 跑超之后是机房把机器停掉，客户端里这条线路直接断，商家往往等客户
+ * 找上门才知道。这里不动服务（把它当机房规格填的人不该突然少线路），只把话说在前面。
+ *
+ * 「该不该提醒」和 Telegram 那一路共用 shared/proxyNodeReminder，也和界面上那个仪表盘
+ * 同一个阈值 —— 三处各算一套，迟早会出现「图标还是绿的、邮件说快满了」。
+ */
+async function runProxyNodeEmailReminders(users: any[]) {
+  const usersById = new Map(users.map((user) => [Number(user.id), user]));
+  const nodes = await db.getProxyNodesWithTrafficQuota() as any[];
+  for (const node of nodes) {
+    const owner = usersById.get(Number(node.userId));
+    if (!owner?.email) continue;
+    const plan = planProxyNodeTrafficReminder(node);
+    if (!plan.due) continue;
+    // 键里带状态：先发过「快满」，当天真跑满时那一封更要紧，不能被顶掉。
+    const key = dayKey(`emailReminder:${proxyNodeTrafficReminderKey(node.id, plan.state)}`, owner.id);
+    if (await db.getSetting(key)) continue;
+    await sendMail({
+      to: owner.email,
+      subject: plan.state === "exceeded" ? "ForwardX 落地节点流量已用完" : "ForwardX 落地节点流量提醒",
+      text: [
+        `节点：${node.name || `#${node.id}`}`,
+        `地址：${node.address || "-"}:${node.port || "-"}`,
+        `已用：${formatBytesLocal(plan.usedBytes)} / ${formatBytesLocal(plan.limitBytes)}（${plan.usedPercent}%）`,
+        "",
+        plan.state === "exceeded"
+          ? "面板不会因此停掉它，但机房通常会 —— 到时候客户端里这条线路会直接断。"
+          : "跑超之后机房通常会停机，客户端里这条线路会直接断，建议提前处理。",
       ].join("\n"),
     });
     await db.setSetting(key, "sent");
@@ -588,6 +628,36 @@ async function runTelegramReminders() {
           );
           await db.setSetting(key, "sent");
         }
+      }
+    }
+
+    /**
+     * 落地节点的流量提醒。判定与邮件那一路共用 shared/proxyNodeReminder，
+     * 日标记前缀不同，所以两个渠道各发一次，不会互相顶掉。
+     */
+    {
+      const quotaNodes = await db.getProxyNodesWithTrafficQuota() as any[];
+      for (const node of quotaNodes) {
+        const owner = usersById.get(Number(node.userId));
+        if (!owner?.telegramId) continue;
+        const plan = planProxyNodeTrafficReminder(node);
+        if (!plan.due) continue;
+        const key = dayKey(`telegramReminder:${proxyNodeTrafficReminderKey(node.id, plan.state)}`, owner.id);
+        if (await db.getSetting(key)) continue;
+        await sendTelegramMessage(
+          owner.telegramId,
+          [
+            plan.state === "exceeded" ? "ForwardX 落地节点流量已用完" : "ForwardX 落地节点流量提醒",
+            "",
+            `节点：${escapeHtmlLocal(node.name || `#${node.id}`)}`,
+            `已用：${formatBytesLocal(plan.usedBytes)} / ${formatBytesLocal(plan.limitBytes)}（${plan.usedPercent}%）`,
+            "",
+            plan.state === "exceeded"
+              ? "面板不会因此停掉它，但机房通常会 —— 到时候客户端里这条线路会直接断。"
+              : "跑超之后机房通常会停机，客户端里这条线路会直接断。",
+          ].join("\n"),
+        );
+        await db.setSetting(key, "sent");
       }
     }
 

@@ -1,6 +1,14 @@
 import { APP_VERSION } from "./_core/systemRouter";
 
-function getPreviousReleaseVersion(version: string) {
+/**
+ * 「上一个版本」的猜测值：补丁号减一。
+ *
+ * 这只是**最后的兜底**，因为它默认每个补丁号都发过版。而攒十几个版本发一次是常态
+ * （v2.3.341 → v2.3.353 中间那些从来没有 release），这时候减一算出来的版本根本不
+ * 存在，下载必然 404 —— 装 Agent 就地失败。所以真正的兜底是去查仓库里**真正发布过**
+ * 的版本（见脚本里的 resolve_fallback_release_version），查不到时才退回这个猜测值。
+ */
+function guessPreviousReleaseVersion(version: string) {
   const normalized = String(version || "").trim().replace(/^v/i, "");
   const match = normalized.match(/^(\d+)\.(\d+)\.(\d+)$/);
   if (!match) return "";
@@ -34,10 +42,9 @@ function shellQuote(value: string) {
  * @param defaultPanelUrl 面板地址（当用户未通过 PANEL_URL 环境变量指定时使用）
  */
 export function generateInstallScript(defaultPanelUrl: string, options: AgentInstallScriptOptions = {}): string {
-  const fallbackReleaseVersion = getPreviousReleaseVersion(APP_VERSION);
-  const fallbackReleaseLine = fallbackReleaseVersion
-    ? `FALLBACK_RELEASE_VERSION="\${FALLBACK_RELEASE_VERSION:-${fallbackReleaseVersion}}"`
-    : 'FALLBACK_RELEASE_VERSION="${FALLBACK_RELEASE_VERSION:-}"';
+  // 空着：真正的兜底版本在脚本里现查（查不到才用下面这个猜测值）。
+  const fallbackReleaseLine = 'FALLBACK_RELEASE_VERSION="${FALLBACK_RELEASE_VERSION:-}"';
+  const fallbackReleaseHintLine = `FALLBACK_RELEASE_VERSION_HINT="${guessPreviousReleaseVersion(APP_VERSION)}"`;
   const defaultGithubAcceleratorUrl = String(options.githubAcceleratorUrl || "").trim().replace(/\/+$/, "");
   const defaultGithubAcceleratorEnabled = !!options.githubAcceleratorEnabled && !!defaultGithubAcceleratorUrl;
   const defaultPreferPanelInstall = !!options.preferPanelInstall;
@@ -60,6 +67,8 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     `PANEL_URL="\${PANEL_URL:-${defaultPanelUrl}}"`,
     `RELEASE_VERSION="\${FORWARDX_AGENT_RELEASE_VERSION:-${APP_VERSION}}"`,
     fallbackReleaseLine,
+    fallbackReleaseHintLine,
+    'FALLBACK_RELEASE_RESOLVED=0',
     `GITHUB_ACCELERATOR_DEFAULT_ENABLED="${defaultGithubAcceleratorEnabled ? "true" : "false"}"`,
     `GITHUB_ACCELERATOR_DEFAULT_URL=${shellQuote(defaultGithubAcceleratorUrl)}`,
     `FORWARDX_AGENT_PANEL_FIRST_DEFAULT="${defaultPreferPanelInstall ? "true" : "false"}"`,
@@ -772,6 +781,32 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '  return 1',
     '}',
     '',
+    '# 兜底版本：查仓库里真正发布过的最新版本，而不是猜「补丁号减一」。',
+    '#',
+    '# 猜的那个默认每个补丁号都发过版；而攒十几个版本发一次是常态，中间那些从来没有',
+    '# release，猜出来的地址必然 404 —— 装 Agent 就地失败，而且失败得毫无线索。',
+    '# 只在真的要回退时才查一次，查不到就退回猜测值（总比什么都没有强）。',
+    'resolve_fallback_release_version() {',
+    '  if [ "$FALLBACK_RELEASE_RESOLVED" = "1" ]; then',
+    '    return 0',
+    '  fi',
+    '  FALLBACK_RELEASE_RESOLVED=1',
+    '  # 用户显式指定过就听他的，不去覆盖。',
+    '  if [ -n "$FALLBACK_RELEASE_VERSION" ]; then',
+    '    return 0',
+    '  fi',
+    '  local LATEST_TAG=""',
+    '  LATEST_TAG="$(curl -fsSL --max-time 10 -H "Accept: application/vnd.github+json" \\',
+    '    "https://api.github.com/repos/zhongyizhu11-jpg/Forwardx/releases/latest" 2>/dev/null \\',
+    '    | sed -n \'s/.*"tag_name"[[:space:]]*:[[:space:]]*"v\\{0,1\\}\\([0-9][^"]*\\)".*/\\1/p\' | head -n1)"',
+    '  if [ -n "$LATEST_TAG" ]; then',
+    '    FALLBACK_RELEASE_VERSION="$LATEST_TAG"',
+    '  else',
+    '    FALLBACK_RELEASE_VERSION="$FALLBACK_RELEASE_VERSION_HINT"',
+    '  fi',
+    '  return 0',
+    '}',
+    '',
     'download_release_binary() {',
     '  local ASSET="$1" DST="$2" LABEL="$3" ALLOW_FALLBACK="${4:-0}"',
     '  local CURRENT_RC=1 URL',
@@ -781,13 +816,16 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '  else',
     '    CURRENT_RC=$?',
     '  fi',
+    '  if [ "$CURRENT_RC" = "2" ] && [ "$ALLOW_FALLBACK" = "1" ]; then',
+    '    resolve_fallback_release_version',
+    '  fi',
     '  if [ "$CURRENT_RC" = "2" ] && [ "$ALLOW_FALLBACK" = "1" ] && [ -n "$FALLBACK_RELEASE_VERSION" ] && [ "$FALLBACK_RELEASE_VERSION" != "$RELEASE_VERSION" ]; then',
-    '    echo "[信息] v${RELEASE_VERSION} 的 $LABEL 资产暂未就绪，尝试回退到上一版本 v${FALLBACK_RELEASE_VERSION}..."',
+    '    echo "[信息] v${RELEASE_VERSION} 的 $LABEL 资产暂未就绪，尝试回退到最近发布过的 v${FALLBACK_RELEASE_VERSION}..."',
     '    if is_enabled_value "${FORWARDX_AGENT_PANEL_FIRST:-}"; then',
     '      URL="$(panel_asset_url "$FALLBACK_RELEASE_VERSION" "$ASSET")"',
     '      if download_panel_binary "$URL" "$DST" "$LABEL"; then',
     '        DOWNLOADED_RELEASE_VERSION="$FALLBACK_RELEASE_VERSION"',
-    '        echo "[信息] 临时使用上一版本 v${FALLBACK_RELEASE_VERSION} 的 $LABEL"',
+    '        echo "[信息] 临时使用 v${FALLBACK_RELEASE_VERSION} 的 $LABEL"',
     '        return 0',
     '      fi',
     '      echo "[信息] 面板端上一版本 $LABEL 不可用，尝试从 GitHub 下载..."',
@@ -795,14 +833,14 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '    URL="https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v${FALLBACK_RELEASE_VERSION}/${ASSET}"',
     '    if download_github_binary "$URL" "$DST" "$LABEL"; then',
     '      DOWNLOADED_RELEASE_VERSION="$FALLBACK_RELEASE_VERSION"',
-    '      echo "[信息] 临时使用上一版本 v${FALLBACK_RELEASE_VERSION} 的 $LABEL"',
+    '      echo "[信息] 临时使用 v${FALLBACK_RELEASE_VERSION} 的 $LABEL"',
     '      return 0',
     '    fi',
     '    if ! is_enabled_value "${FORWARDX_AGENT_PANEL_FIRST:-}"; then',
     '      URL="$(panel_asset_url "$FALLBACK_RELEASE_VERSION" "$ASSET")"',
     '      if download_panel_binary "$URL" "$DST" "$LABEL"; then',
     '        DOWNLOADED_RELEASE_VERSION="$FALLBACK_RELEASE_VERSION"',
-    '        echo "[信息] 临时使用上一版本 v${FALLBACK_RELEASE_VERSION} 的 $LABEL"',
+    '        echo "[信息] 临时使用 v${FALLBACK_RELEASE_VERSION} 的 $LABEL"',
     '        return 0',
     '      fi',
     '    fi',

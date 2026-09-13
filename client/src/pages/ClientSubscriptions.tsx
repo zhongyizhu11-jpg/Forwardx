@@ -6,6 +6,7 @@ import { proxyNodeMetaText, type ProxyNodeRowSpec } from "@/components/proxy/Pro
 import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import DataSectionError from "@/components/DataSectionError";
+import StatCard from "@/components/StatCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -58,7 +59,7 @@ import {
   type ProxyClientTarget,
   type ProxySubscriptionKind,
 } from "@shared/proxyClientImport";
-import { type ProxyNodeHealth } from "@shared/proxyNodeHealth";
+import { summarizeProxyNodeHealthCounts, type ProxyNodeHealth } from "@shared/proxyNodeHealth";
 import {
   formatProxyNodeQuotaDetail,
   formatProxyNodeQuotaLabeled,
@@ -76,6 +77,7 @@ import {
   Atom,
   AudioLines,
   Cat,
+  CheckCircle2,
   ChevronDown,
   Copy,
   Eye,
@@ -90,6 +92,7 @@ import {
   Plus,
   QrCode,
   Rocket,
+  Server,
   Share2,
   Shield,
   Boxes,
@@ -766,6 +769,29 @@ export default function ClientSubscriptionsPage() {
     () => (preview?.skipped ?? []).filter((item) => item.reason !== "hidden" && item.reason !== "unbound"),
     [preview],
   );
+  /**
+   * 「待处理」那张卡上的数字：这一页所有要你动手的事加起来。
+   *
+   * 三件事分别躺在预览弹窗的三段里，各自都不显眼。合成一个数摆到最上面，才回答得了
+   * 「我现在有没有东西要管」—— 进这一页时脑子里其实只有这一个问题。
+   */
+  /**
+   * 在线情况怎么说。规矩在 shared/proxyNodeHealth 里：**没探测过不是在线** ——
+   * 拿「离线为 0」当「全在线」，一个刚建好、一次都没探测过的面板会写着「节点全在线」。
+   */
+  const healthSummary = useMemo(
+    () => summarizeProxyNodeHealthCounts({ total: nodeCount, online: onlineNodeCount, offline: offlineNodeCount }),
+    [nodeCount, onlineNodeCount, offlineNodeCount],
+  );
+  const pendingCount = unboundRules.length + driftedRules.length + unusedNodes.length;
+  const pendingSubtitle = pendingCount === 0
+    ? "都对上了"
+    : [
+      unboundRules.length > 0 ? `${unboundRules.length} 条差节点` : "",
+      driftedRules.length > 0 ? `${driftedRules.length} 条指向已变` : "",
+      unusedNodes.length > 0 ? `${unusedNodes.length} 个没进订阅` : "",
+    ].filter(Boolean).join(" · ");
+
   const enabledNodes = useMemo(() => nodes.filter((node: any) => node.isEnabled), [nodes]);
 
   const openCreateNode = () => {
@@ -860,7 +886,8 @@ export default function ClientSubscriptionsPage() {
             <h1 className="text-2xl font-semibold tracking-tight">订阅管理</h1>
             <p className="text-sm text-muted-foreground">你有哪些线路，以及怎么把它们带进客户端。</p>
           </div>
-          <Card>
+          <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md">
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
             <CardContent className="py-10 text-center">
               {/*
                 原来只说「没有权限，联系管理员」—— 那等于把人挡在门外还不说门后是什么。
@@ -884,10 +911,87 @@ export default function ClientSubscriptionsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">订阅管理</h1>
-          {/* 一句话说清这一页是什么：上面是带走的东西，下面是你有的东西。 */}
-          <p className="text-sm text-muted-foreground">你有哪些线路，以及怎么把它们带进客户端。</p>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            {/* 排版跟仪表盘对齐：同一个面板里不该有两种页头气质。 */}
+            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">订阅管理</h1>
+            {/* 一句话说清这一页是什么：上面是带走的东西，下面是你有的东西。 */}
+            <p className="mt-1 text-xs text-muted-foreground sm:text-sm">你有哪些线路，以及怎么把它们带进客户端。</p>
+          </div>
+          {healthSummary.badge ? (
+            <Badge
+              variant="outline"
+              className={`shrink-0 gap-1.5 px-3 py-1.5 ${
+                healthSummary.badge.tone === "warn"
+                  ? "border-amber-500/30 text-amber-600"
+                  : "border-emerald-500/30 text-emerald-600"
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${healthSummary.badge.tone === "warn" ? "bg-amber-500" : "bg-emerald-500"}`} />
+              {healthSummary.badge.text}
+            </Badge>
+          ) : null}
+        </div>
+
+        {/*
+          顶上这一排概览。
+          原来一进来就是两张大卡片，得逐个展开才知道「我现在到底有几条线路、有没有
+          东西要处理」。这几个数就是这一页的全部问题，摆在最前面，和仪表盘同一种卡片。
+        */}
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+          <StatCard
+            title="客户端线路"
+            value={preview?.nodes.length ?? 0}
+            subtitle={`中转 ${relayPreviewNodes.length} · 直连 ${directPreviewNodes.length}`}
+            icon={Zap}
+            tone="bg-gradient-to-br from-sky-500 to-sky-600"
+            loading={previewQuery.isLoading}
+            cacheKey="subscriptions.stats.nodes"
+            fallbackValue={0}
+            index={0}
+            /*
+              「客户端线路」和「待处理」讲的是同一件事的两面 —— 订阅里有什么、还差什么。
+              所以两张卡都通向「订阅内容」那个弹窗：想看细节的人不必再去找那个按钮。
+            */
+            onClick={(preview?.nodes.length ?? 0) > 0 ? () => setPreviewOpen(true) : undefined}
+          />
+          <StatCard
+            title="落地节点"
+            value={nodeCount}
+            subtitle={healthSummary.subtitle}
+            icon={Server}
+            tone="bg-gradient-to-br from-teal-500 to-teal-600"
+            loading={nodesQuery.isLoading}
+            cacheKey="subscriptions.stats.landing"
+            fallbackValue={0}
+            index={1}
+          />
+          <StatCard
+            title="订阅链接"
+            value={tokens.length}
+            subtitle={tokens.length > 0 ? "导入客户端用的地址" : "还没建"}
+            icon={Link2}
+            tone="bg-gradient-to-br from-violet-500 to-violet-600"
+            loading={tokensQuery.isLoading}
+            cacheKey="subscriptions.stats.tokens"
+            fallbackValue={0}
+            index={2}
+          />
+          <StatCard
+            title="待处理"
+            value={pendingCount}
+            subtitle={pendingSubtitle}
+            icon={pendingCount > 0 ? AlertTriangle : CheckCircle2}
+            tone={pendingCount > 0
+              ? "bg-gradient-to-br from-amber-500 to-amber-600"
+              : "bg-gradient-to-br from-emerald-500 to-emerald-600"}
+            loading={previewQuery.isLoading}
+            cacheKey="subscriptions.stats.pending"
+            fallbackValue={0}
+            index={3}
+            // 写着「你有 N 件事要处理」的卡片，本来就该是点进去处理的入口。
+            onClick={pendingCount > 0 ? () => setPreviewOpen(true) : undefined}
+          />
         </div>
 
         {/*
@@ -897,11 +1001,28 @@ export default function ClientSubscriptionsPage() {
           压在五张卡片的最后，每次都要滚到底。第一次来的人也不吃亏：这时它是空的，
           空状态里就写着「先在下面加节点，再回来建链接」，等于把顺序讲了一遍。
         */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Link2 className="h-4 w-4" />
+        {/* 玻璃卡 + 顶部一道高光，和仪表盘那几张同一种做法。 */}
+        <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md">
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
+          {/*
+            手机上原来三层内边距叠着吃宽度：外层 main 12px + 卡片 24px + 每行自己的
+            12px，414 的屏幕先去掉 72。内容被挤成一条，看着就不饱满。卡片这一层在手机上
+            收到 12，桌面端照旧 24。
+          */}
+          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 px-3 pb-3 pt-4 sm:px-6 sm:pt-6">
+            {/*
+              小色章：颜色和上面那张概览卡是同一个。
+              「订阅链接」在概览里是紫的，往下这一段也是紫的 —— 眼睛能把上下两处对上，
+              不用再读一遍标题。图标散着放也能认，但认的是图标；带上颜色认的是「这一块」。
+            */}
+            <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400">
+                <Link2 className="h-3.5 w-3.5" />
+              </span>
               订阅链接
+              {tokens.length > 0 ? (
+                <span className="text-xs font-normal text-muted-foreground/70">{tokens.length} 条</span>
+              ) : null}
             </CardTitle>
             <Button
               className="shrink-0"
@@ -915,7 +1036,7 @@ export default function ClientSubscriptionsPage() {
               新建链接
             </Button>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-3 pb-4 sm:px-6 sm:pb-6">
             {tokensQuery.isLoading ? (
               <DataSectionLoading />
             ) : tokensQuery.error && tokens.length === 0 ? (

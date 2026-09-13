@@ -7,6 +7,7 @@ import {
   resolveProxyNodeHealth,
   PROXY_NODE_TRAFFIC_WINDOW_HOURS,
   type ProxyNodeProbeSample,
+  summarizeProxyNodeHealthCounts,
 } from "./proxyNodeHealth";
 
 const NOW = 1_700_000_000_000;
@@ -122,4 +123,41 @@ test("流量窗口不超过 traffic_stats 的保留期", async () => {
     PROXY_NODE_TRAFFIC_WINDOW_HOURS <= TRAFFIC_BUCKET_RETENTION_HOURS,
     `流量窗口 ${PROXY_NODE_TRAFFIC_WINDOW_HOURS}h 超过了保留期 ${TRAFFIC_BUCKET_RETENTION_HOURS}h`,
   );
+});
+
+/**
+ * 「没探测过」不是「在线」。判错的后果是页面在一个还没连通的面板上写「节点全在线」。
+ */
+
+test("刚建好还没探测：不说在线，也不说离线", () => {
+  const summary = summarizeProxyNodeHealthCounts({ total: 9, online: 0, offline: 0 });
+  assert.equal(summary.badge, null, "不知道就别出徽标");
+  assert.equal(summary.subtitle, "9 待探测");
+  assert.equal(summary.unknown, 9);
+});
+
+test("全部探测过且都通，才敢说全在线", () => {
+  assert.deepEqual(
+    summarizeProxyNodeHealthCounts({ total: 3, online: 3, offline: 0 }).badge,
+    { text: "节点全在线", tone: "ok" },
+  );
+  // 还有一个没探测：不能说全在线。
+  assert.equal(summarizeProxyNodeHealthCounts({ total: 3, online: 2, offline: 0 }).badge, null);
+});
+
+test("有离线的就直说几个离线", () => {
+  const summary = summarizeProxyNodeHealthCounts({ total: 5, online: 3, offline: 1 });
+  assert.deepEqual(summary.badge, { text: "1 个节点离线", tone: "warn" });
+  assert.equal(summary.subtitle, "3 在线 · 1 离线 · 1 待探测");
+});
+
+test("一个节点都没有的时候不谈在线", () => {
+  const summary = summarizeProxyNodeHealthCounts({ total: 0, online: 0, offline: 0 });
+  assert.equal(summary.badge, null);
+  assert.equal(summary.subtitle, "还没有节点");
+});
+
+test("数对不上时不写出负数", () => {
+  const summary = summarizeProxyNodeHealthCounts({ total: 2, online: 5, offline: 3 });
+  assert.equal(summary.unknown, 0);
 });

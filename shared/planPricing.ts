@@ -98,6 +98,16 @@ export function planPricingOptions(
 }
 
 /**
+ * 折算成「每月多少钱」。
+ *
+ * 客户比价时心里的单位是月，不是天也不是这一档的总价。商店卡片和管理端定价表都用
+ * 这一个换算 —— 各写一遍的话，同一档会在两个地方显示成两个数。
+ */
+export function planMonthlyEquivalentCents(option: { perDayCents: number }): number {
+  return Math.round(Number(option?.perDayCents || 0) * 30);
+}
+
+/**
  * 默认选哪一档。
  *
  * 取**总价最低**的那档，不是每天最划算的那档。后者通常是年付 —— 一进商店就默认
