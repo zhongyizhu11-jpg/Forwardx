@@ -29,8 +29,9 @@ import {
   planPricingOptions,
   PLAN_DURATION_PRESETS,
   PLAN_PRICE_TIER_LIMIT,
+  planMonthlyEquivalentCents,
 } from "@shared/planPricing";
-import { CheckCircle2, Coins, LayoutGrid, List, Package, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
+import { Check, CheckCircle2, Coins, LayoutGrid, List, Package, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -188,11 +189,32 @@ function tierDefault(form: PlanForm) {
   return option ? { price: (option.priceCents / 100).toFixed(2), durationDays: String(option.durationDays) } : null;
 }
 
-/** 「加一档」默认填哪个周期：按预设顺序挑第一个还没被占用的。 */
+/**
+ * 「自定义」新加一行默认填哪个周期：按预设顺序挑第一个还没被占用的。
+ *
+ * 价格**留空**，不给默认值：给了默认值（比如照抄月付那档）的人多半不会去改，
+ * 于是年付卖成月付价；留空则保存时会拦下来，让他必须自己填一个数。
+ */
 function nextTierDraft(form: PlanForm): PriceTierForm {
   const used = new Set(form.priceTiers.map((tier) => Number(tier.durationDays || 0)));
   const preset = PLAN_DURATION_PRESETS.find((item) => !used.has(item.days));
-  return { durationDays: String(preset?.days ?? 30), price: form.price || "0" };
+  return { durationDays: String(preset?.days ?? 30), price: "" };
+}
+
+/** 这一档是不是预设周期。是的话就不该让人再去填天数。 */
+function isPresetTierDays(days: unknown) {
+  return PLAN_DURATION_PRESETS.some((item) => item.days === Number(days || 0));
+}
+
+function sortTiersByDuration(tiers: PriceTierForm[]) {
+  return [...tiers].sort((a, b) => Number(a.durationDays || 0) - Number(b.durationDays || 0));
+}
+
+/** 还没填价格的那些档。0 是合法价（送的、内部用的），空着才是「没填」。 */
+function unpricedTierLabels(form: PlanForm): string[] {
+  return form.priceTiers
+    .filter((tier) => String(tier.price ?? "").trim() === "")
+    .map((tier) => planDurationLabel(Number(tier.durationDays || 0)));
 }
 
 function MobileInfoRow({
@@ -1054,6 +1076,18 @@ export default function Plans() {
       toast.error("至少选择一个端口转发、隧道、转发链或转发组");
       return;
     }
+    /*
+      开了一档却没填价，直接存下去就是 0 元 —— 商店里那一档立刻变成白送，
+      而管理端看上去一切正常。0 是合法价（送的、内部用的），所以只拦「空着」。
+    */
+    const unpriced = unpricedTierLabels(form);
+    if (unpriced.length > 0) {
+      setPlanDialogTab("settings");
+      toast.error(`「${unpriced.join("」「")}」还没填价格`, {
+        description: "留空会按 0 元卖出去。真要送就填 0。",
+      });
+      return;
+    }
     const data = payload(form);
     if (form.id) updatePlan.mutate({ id: form.id, syncExistingSubscribers: form.syncExistingSubscribers, ...data });
     else createPlan.mutate(data);
@@ -1452,7 +1486,7 @@ export default function Plans() {
                 onChange={(e) => setForm({ ...form, price: e.target.value })}
               />
               {form.priceTiers.length > 0 ? (
-                <p className="text-xs text-muted-foreground">下面配了多个周期，这里由最便宜那一档决定。</p>
+                <p className="text-xs text-muted-foreground">下面选了多种周期，这里由最便宜那一档决定。</p>
               ) : null}
             </div>
             <div className="space-y-2">
@@ -1470,60 +1504,98 @@ export default function Plans() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                {form.priceTiers.length > 0 ? "同上：由下面的周期表决定。" : "超过一个月按月重置流量。"}
+                {form.priceTiers.length > 0 ? "同上：由下面选的周期决定。" : "超过一个月按月重置流量。"}
               </p>
             </div>
-            <div className="space-y-2 sm:col-span-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <Label>购买周期（选填）</Label>
+            <div className="space-y-3 sm:col-span-2">
+              <Label>卖哪几种周期</Label>
+              {/*
+                原来这里是一个「加一档」按钮，加出来一行空的、要自己填天数 —— 而商家
+                心里想的从来不是「120 天」，是「月付、季付、年付」。让人把脑子里的词
+                翻译成天数，是把我们的存储格式摊给他看。
+
+                现在点一下就开卖。天数仍然存得下（下面「其他周期」那一栏），因为确实
+                有人卖 45 天、100 天这种，但那是少数人的事，不该挡在多数人前面。
+              */}
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                点一下就开卖，再点一下就下架。一种都不选，就只卖上面那一档。
+                选了多种，客户在商店里自己挑，长周期省了多少会自动算给他看。
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {PLAN_DURATION_PRESETS.map((preset) => {
+                  const active = form.priceTiers.some((tier) => Number(tier.durationDays || 0) === preset.days);
+                  const full = !active && form.priceTiers.length >= PLAN_PRICE_TIER_LIMIT;
+                  return (
+                    <Button
+                      key={preset.days}
+                      type="button"
+                      size="sm"
+                      variant={active ? "default" : "outline"}
+                      disabled={full}
+                      className="rounded-full"
+                      onClick={() => setForm({
+                        ...form,
+                        priceTiers: active
+                          ? form.priceTiers.filter((tier) => Number(tier.durationDays || 0) !== preset.days)
+                          : sortTiersByDuration([...form.priceTiers, { durationDays: String(preset.days), price: "" }]),
+                      })}
+                    >
+                      {active ? <Check className="mr-1 h-3.5 w-3.5" /> : <Plus className="mr-1 h-3.5 w-3.5" />}
+                      {preset.label}
+                    </Button>
+                  );
+                })}
                 <Button
                   type="button"
                   size="sm"
-                  variant="outline"
+                  variant="ghost"
+                  className="rounded-full text-muted-foreground"
                   disabled={form.priceTiers.length >= PLAN_PRICE_TIER_LIMIT}
                   onClick={() => setForm({
                     ...form,
-                    priceTiers: [...form.priceTiers, nextTierDraft(form)],
+                    priceTiers: sortTiersByDuration([...form.priceTiers, nextTierDraft(form)]),
                   })}
                 >
-                  <Plus className="mr-1 h-4 w-4" />
-                  加一档
+                  <Plus className="mr-1 h-3.5 w-3.5" />
+                  其他周期
                 </Button>
               </div>
-              {/*
-                不填就是老样子：只卖上面那一档。填了之后商店里这张卡会出现周期切换，
-                并按最短那一档的每天单价算出「省 N%」—— 客户心里的参照物是「按月买
-                要多少钱」，所以基准取最短档而不是最贵档。
-              */}
-              <p className="text-xs text-muted-foreground">
-                不填 = 只卖上面那一档。填了之后商店里可以让客户自己选月付 / 季付 / 年付，长周期会自动标出省了多少。
-              </p>
               {form.priceTiers.length > 0 ? (
                 <div className="space-y-2">
                   {form.priceTiers.map((tier, index) => {
+                    const days = Number(tier.durationDays || 0);
                     const preview = tierPreview(form);
-                    const info = preview.find((item) => item.durationDays === Number(tier.durationDays || 0));
+                    const info = preview.find((item) => item.durationDays === days);
+                    const isPreset = isPresetTierDays(days);
+                    const unpriced = String(tier.price ?? "").trim() === "";
                     return (
-                      <div key={index} className="flex flex-wrap items-end gap-2 rounded-md border p-2">
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <Label className="text-xs">周期（天）</Label>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={3650}
-                            value={tier.durationDays}
-                            onChange={(e) => setForm({
-                              ...form,
-                              priceTiers: form.priceTiers.map((item, i) => i === index ? { ...item, durationDays: e.target.value } : item),
-                            })}
-                          />
-                        </div>
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <Label className="text-xs">价格</Label>
+                      <div key={index} className="flex flex-wrap items-center gap-2 rounded-lg border p-2.5">
+                        {isPreset ? (
+                          <span className="w-16 shrink-0 text-sm font-medium">{planDurationLabel(days)}</span>
+                        ) : (
+                          <div className="flex w-24 shrink-0 items-center gap-1">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={3650}
+                              className="h-9"
+                              value={tier.durationDays}
+                              onChange={(e) => setForm({
+                                ...form,
+                                priceTiers: form.priceTiers.map((item, i) => i === index ? { ...item, durationDays: e.target.value } : item),
+                              })}
+                            />
+                            <span className="shrink-0 text-xs text-muted-foreground">天</span>
+                          </div>
+                        )}
+                        <div className="flex min-w-0 flex-1 items-center gap-1">
+                          <span className="shrink-0 text-xs text-muted-foreground">¥</span>
                           <Input
                             type="number"
                             min={0}
                             step="0.01"
+                            className="h-9"
+                            placeholder="填个价"
                             value={tier.price}
                             onChange={(e) => setForm({
                               ...form,
@@ -1531,21 +1603,23 @@ export default function Plans() {
                             })}
                           />
                         </div>
-                        <div className="flex items-center gap-2 pb-1">
-                          <span className="whitespace-nowrap text-xs text-muted-foreground">
-                            {planDurationLabel(Number(tier.durationDays || 0))}
-                            {info && info.discountPercent > 0 ? ` · 省 ${info.discountPercent}%` : ""}
-                          </span>
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8"
-                            onClick={() => setForm({ ...form, priceTiers: form.priceTiers.filter((_, i) => i !== index) })}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                        {/* 折成每月多少钱：商家自己也要一眼看出这几档之间划不划算。 */}
+                        <span className="whitespace-nowrap text-xs text-muted-foreground">
+                          {unpriced
+                            ? "还没定价"
+                            : info
+                              ? `约 ¥${(planMonthlyEquivalentCents(info) / 100).toFixed(2)}/月${info.discountPercent > 0 ? ` · 省 ${info.discountPercent}%` : ""}`
+                              : ""}
+                        </span>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 shrink-0"
+                          onClick={() => setForm({ ...form, priceTiers: form.priceTiers.filter((_, i) => i !== index) })}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     );
                   })}

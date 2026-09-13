@@ -19,6 +19,7 @@ import {
   planDurationLabel,
   planPricingOptions,
   type PlanPricingOption,
+  planMonthlyEquivalentCents,
 } from "@shared/planPricing";
 import { CheckCircle2, Coins, CreditCard, Lock, Package, RefreshCw, Route, Server, ShoppingBag, TicketPercent, WalletCards } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -212,7 +213,7 @@ function StorePlanCard({
               / {durationLabel(active?.durationDays)}
               {/* 长周期总价更大，换算成每月多少钱才好跟月付比。 */}
               {options.length > 1 && active && active.durationDays >= 60
-                ? ` · 约 ${money(Math.round(active.perDayCents * 30), plan.currency)} / 月`
+                ? ` · 约 ${money(planMonthlyEquivalentCents(active), plan.currency)} / 月`
                 : ""}
             </div>
           </div>

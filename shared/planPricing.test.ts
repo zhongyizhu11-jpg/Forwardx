@@ -6,6 +6,7 @@ import {
   findPricingOption,
   normalizePlanPriceTiers,
   planDurationLabel,
+  planMonthlyEquivalentCents,
   planPricingOptions,
   renewalPricingOption,
 } from "./planPricing";
@@ -127,4 +128,15 @@ test("周期名称：预设有中文名，其他按天显示", () => {
   assert.equal(planDurationLabel(90), "三个月");
   assert.equal(planDurationLabel(45), "45 天");
   assert.equal(planDurationLabel(0), "永久");
+});
+
+test("折成每月多少钱：商店和管理端用同一个换算", () => {
+  const options = planPricingOptions({}, [
+    { durationDays: 30, priceCents: 1000 },
+    { durationDays: 365, priceCents: 9600 },
+  ]);
+  assert.equal(planMonthlyEquivalentCents(options[0]), 1000, "月付那档折下来就是它自己");
+  // 年付 96 元 ≈ 每月 7.89 元。客户比价时心里的单位是月，不是天也不是总价。
+  assert.equal(planMonthlyEquivalentCents(options[1]), 789);
+  assert.equal(planMonthlyEquivalentCents({ perDayCents: 0 }), 0);
 });
