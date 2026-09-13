@@ -72,3 +72,31 @@ export function shouldAutoBindProxyNode(input: {
   if (Number(input.boundNodeId || 0) > 0) return false;
   return input.isCreate || input.targetChanged === true;
 }
+
+/**
+ * 反过来的一半：**刚建好一个落地节点**，把已经指向它的转发认出来。
+ *
+ * 先有转发、后加节点是很常见的顺序：机器先跑起来，过几天才想起来「这条其实可以
+ * 进订阅」。这时候如果只有正向自动绑定（建转发时认节点），这些早就存在的转发永远
+ * 不会自己进订阅 —— 而它们本来就是通往这个节点的。
+ *
+ * 这个方向反而更安全：节点是**刚建的**，在它存在之前谁也没机会「手动解绑」，
+ * 所以不存在「他解绑了、面板又绑回去」的问题。已经绑着别的节点的仍然不动。
+ */
+export function rulesMatchingProxyNode<T extends {
+  id: number;
+  targetIp?: unknown;
+  targetPort?: unknown;
+  proxyNodeId?: unknown;
+}>(
+  rules: readonly T[],
+  node: { address: unknown; port: unknown },
+): T[] {
+  const address = normalizeAddress(node.address);
+  const port = Number(node.port);
+  if (!address || !Number.isInteger(port) || port <= 0) return [];
+  return rules.filter((rule) =>
+    Number(rule.proxyNodeId || 0) === 0
+    && Number(rule.targetPort) === port
+    && normalizeAddress(rule.targetIp) === address);
+}

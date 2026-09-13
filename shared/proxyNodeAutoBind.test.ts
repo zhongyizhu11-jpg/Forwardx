@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { matchProxyNodeForTarget, shouldAutoBindProxyNode } from "./proxyNodeAutoBind";
+import { matchProxyNodeForTarget, rulesMatchingProxyNode, shouldAutoBindProxyNode } from "./proxyNodeAutoBind";
 
 /**
  * 认错的后果是把**别人的线路**塞进订阅 —— 客户端里那条中转指向一台不该指的落地机。
@@ -71,4 +71,23 @@ test("只在新建、或改了目标之后仍没绑定时才自动绑", () => {
   // 已经明确指定了节点的，更不能动。
   assert.equal(shouldAutoBindProxyNode({ isCreate: true, boundNodeId: 7 }), false);
   assert.equal(shouldAutoBindProxyNode({ isCreate: false, targetChanged: true, boundNodeId: 7 }), false);
+});
+
+test("反过来：新建节点时认出已经指向它的转发", () => {
+  const rules = [
+    { id: 1, targetIp: "hk.example.com", targetPort: 443, proxyNodeId: 0 },
+    { id: 2, targetIp: "HK.example.com", targetPort: 443, proxyNodeId: 0 },  // 大小写不影响
+    { id: 3, targetIp: "hk.example.com", targetPort: 8443, proxyNodeId: 0 }, // 端口不同
+    { id: 4, targetIp: "hk.example.com", targetPort: 443, proxyNodeId: 9 },  // 已经绑了别的
+    { id: 5, targetIp: "other.example.com", targetPort: 443, proxyNodeId: 0 },
+  ];
+  const matched = rulesMatchingProxyNode(rules, { address: "hk.example.com", port: 443 });
+  assert.deepEqual(matched.map((rule) => rule.id), [1, 2]);
+});
+
+test("反向匹配同样不猜：地址或端口不成立就是空", () => {
+  const rules = [{ id: 1, targetIp: "hk.example.com", targetPort: 443, proxyNodeId: 0 }];
+  assert.deepEqual(rulesMatchingProxyNode(rules, { address: "", port: 443 }), []);
+  assert.deepEqual(rulesMatchingProxyNode(rules, { address: "hk.example.com", port: 0 }), []);
+  assert.deepEqual(rulesMatchingProxyNode([], { address: "hk.example.com", port: 443 }), []);
 });
