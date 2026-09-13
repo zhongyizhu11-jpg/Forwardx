@@ -66,6 +66,13 @@ type InboundForm = {
   /** 这个入站归谁。归属决定节点进谁的订阅、流量扣谁的套餐；只有管理员改得动。 */
   userId: number;
   name: string;
+  /**
+   * 备注：给自己看的用途标签（「给张三的」「测试用」「香港家宽」）。
+   *
+   * 名称是**客户端里显示的节点名**，会随订阅发出去；备注只留在面板里。两者
+   * 混用的话，要么客户端里出现「给张三的」，要么你自己认不出这个端口是干嘛的。
+   */
+  remark: string;
   protocol: ProxyInboundProtocol;
   port: number;
   transport: ProxyNodeTransport;
@@ -94,6 +101,7 @@ function emptyForm(): InboundForm {
     hostId: 0,
     userId: 0,
     name: "",
+    remark: "",
     protocol: "vless",
     port: 443,
     transport: "tcp",
@@ -370,6 +378,7 @@ export default function ProxyInboundsSection({
       hostId: Number(row.hostId),
       userId: Number(row.userId || 0),
       name: String(row.name || ""),
+      remark: String(row.remark || ""),
       protocol: String(row.protocol || "vless") as ProxyInboundProtocol,
       port: Number(row.port || 0),
       transport: String(row.transport || "tcp") as ProxyNodeTransport,
@@ -405,6 +414,7 @@ export default function ProxyInboundsSection({
       // 只有管理员能改归属；普通用户不传，后端按操作者自己算。
       ...(isAdmin && form.userId > 0 ? { userId: form.userId } : {}),
       name: form.name.trim(),
+      remark: form.remark.trim(),
       protocol: form.protocol,
       port: form.port,
       transport: form.transport,
@@ -471,6 +481,8 @@ export default function ProxyInboundsSection({
     // 的第一眼信息。
     meta: proxyNodeMetaText([
       "自建",
+      // 备注排在地址前面：一排端口里，认出「哪个是给谁的」比看地址更常用。
+      String(row.remark || "").trim(),
       `${hostName(Number(row.hostId))}:${row.port}`,
       row.security !== "none"
         ? PROXY_INBOUND_SECURITY_LABELS[row.security as ProxyInboundSecurity] || row.security
@@ -708,6 +720,17 @@ export default function ProxyInboundsSection({
               <div className="min-w-0 space-y-1.5">
                 <Label className="text-xs">名称</Label>
                 <Input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} placeholder="HK 落地" />
+                <p className="text-xs text-muted-foreground">客户端里显示的节点名，会随订阅发出去。</p>
+              </div>
+              <div className="min-w-0 space-y-1.5">
+                <Label className="text-xs">备注</Label>
+                <Input
+                  value={form.remark}
+                  onChange={(event) => setForm((prev) => ({ ...prev, remark: event.target.value }))}
+                  placeholder="给张三的 / 测试用"
+                />
+                {/* 只留在面板里 —— 写进名称的话，客户端里就会出现「给张三的」。 */}
+                <p className="text-xs text-muted-foreground">这个端口是干嘛的，只给你自己看，不进订阅。</p>
               </div>
               {isAdmin ? (
                 <div className="min-w-0 space-y-1.5 sm:col-span-2">

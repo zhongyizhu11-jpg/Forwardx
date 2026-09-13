@@ -906,6 +906,14 @@ export async function syncProxyNodeFromInbound(inboundId: number): Promise<numbe
       inboundId,
       inboundUserId,
       name: node.name,
+      /**
+       * 备注跟着入站走。
+       *
+       * 派生节点在界面上没有编辑入口（「编辑」是按「换一条节点链接」设计的，
+       * 自建节点没有链接），所以这一列只可能来自入站；不带过来的话，入站上填了
+       * 备注、订阅内容里那一条却还标着「直连」—— 填了等于没填。
+       */
+      remark: String((row as any).remark || "").trim() || null,
       protocol: node.protocol,
       address: node.address,
       port: node.port,
