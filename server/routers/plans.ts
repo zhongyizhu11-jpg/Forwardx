@@ -4,7 +4,7 @@ import { appendPanelLog } from "../_core/panelLogger";
 import * as db from "../db";
 import { refreshUserForwardEndpoints } from "./helpers";
 import { parseExpiryReminderDays } from "@shared/expiryReminder";
-import { normalizePlanPriceTiers, PLAN_PRICE_TIER_LIMIT } from "@shared/planPricing";
+import { findPricingOption, normalizePlanPriceTiers, planPricingOptions, PLAN_PRICE_TIER_LIMIT } from "@shared/planPricing";
 
 const planInput = z.object({
   name: z.string().min(1).max(80),
@@ -219,14 +219,33 @@ export const plansRouter = router({
     .input(z.object({
       userId: z.number().int().positive(),
       planId: z.number().int().positive(),
-      durationDays: z.union([z.literal(0), z.literal(30), z.literal(90), z.literal(180)]).optional(),
+      /** 0 = 永久；其余要么是这个套餐挂着的某一档，要么是月付套餐的整月倍数。 */
+      durationDays: z.number().int().min(0).max(3650).optional(),
     }))
     .mutation(async ({ input }) => {
       const plan = await db.getSubscriptionPlanById(input.planId);
       if (!plan) throw new Error("套餐不存在");
-      const overrideDurationDays = input.durationDays !== undefined && Number(plan.durationDays) === 30
-        ? input.durationDays
-        : null;
+      /**
+       * 分配周期。
+       *
+       * 套餐挂了多档之后，原来那句「只有月付套餐能改周期」就把手动分配卡死了：
+       * 卖月付 / 年付的套餐，管理员想手动给一个年付都给不了。现在这个套餐上有的
+       * 档位都能选；月付套餐仍然保留 1/3/6 个月这几个整月倍数（老behavior）。
+       */
+      const options = planPricingOptions(plan as any, (plan as any).priceTiers || []);
+      let overrideDurationDays: number | null = null;
+      if (input.durationDays !== undefined) {
+        const days = Number(input.durationDays);
+        if (days === 0) {
+          overrideDurationDays = 0;
+        } else if (findPricingOption(options, days)) {
+          overrideDurationDays = days;
+        } else if (Number(plan.durationDays) === 30 && [30, 90, 180].includes(days)) {
+          overrideDurationDays = days;
+        } else {
+          throw new Error("这个套餐没有这个分配周期");
+        }
+      }
       const result = await db.applySubscriptionToUser(input.userId, input.planId, "admin", null, undefined, overrideDurationDays);
       await refreshUserForwardEndpoints(input.userId, "plan-assigned");
       appendPanelLog("info", `[Plan] assigned user=${input.userId} plan=${input.planId} duration=${overrideDurationDays ?? plan.durationDays} ports=${result.portRangeStart}-${result.portRangeEnd}`);

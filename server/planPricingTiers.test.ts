@@ -246,3 +246,33 @@ test("删套餐时把它的档位一起删掉，不留孤儿行", () => {
     assert.equal(Number(left[0].n), 0);
   `);
 });
+
+test("后台手动分配也能按档给：卖月付/年付的套餐，管理员给得了年付", () => {
+  runInDatabase(String.raw`
+    const planId = await makePlan(1000, 30, [
+      { durationDays: 30, priceCents: 1000 },
+      { durationDays: 365, priceCents: 9600 },
+    ]);
+
+    // 分配走的是 applySubscriptionToUser 的 override 参数（路由层校验档位是否存在）。
+    await billing.applySubscriptionToUser(2, planId, "admin", null, undefined, 365);
+    assert.equal(await daysLeft(), 365);
+    // 手动分配不扣钱。
+    assert.equal(await balanceOf(), 100000);
+  `);
+});
+
+test("多档套餐：兑换码按自己写的天数发，不受档位限制", () => {
+  runInDatabase(String.raw`
+    const planId = await makePlan(1000, 30, [
+      { durationDays: 30, priceCents: 1000 },
+      { durationDays: 365, priceCents: 9600 },
+    ]);
+    const codes = await billing.createRedemptionCodes({
+      type: "plan", planId, durationDays: 90, amountCents: 0, isActive: true, createdByUserId: 1,
+    }, 1);
+    await billing.redeemCode(2, codes[0]);
+    // 兑换码是另一套：它自带天数，不该被套餐档位改写。
+    assert.equal(await daysLeft(), 90);
+  `);
+});

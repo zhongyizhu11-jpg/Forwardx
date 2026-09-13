@@ -82,8 +82,6 @@ type TrafficAddonForm = {
   sortOrder: string;
 };
 
-type PlanDurationDays = 30 | 90 | 180 | 365 | 730;
-type AssignDurationDays = 0 | 30 | 90 | 180;
 type PlanManageTab = "plans" | "billing";
 type PlanDialogTab = "settings" | "resources";
 type PlanListViewMode = "card" | "table";
@@ -170,13 +168,6 @@ function speed(value?: number | null) {
 // 常用周期与中文名共用 shared/planPricing 那一份 —— 商店和这里各写一遍的话，
 // 改了一边忘另一边就会出现「同一个 90 天，一处叫季付一处叫三个月」。
 const durationOptions = PLAN_DURATION_PRESETS.map((item) => ({ value: String(item.days), label: item.label }));
-
-const assignMonthlyDurationOptions = [
-  { value: "30", label: "一个月" },
-  { value: "90", label: "三个月" },
-  { value: "180", label: "半年" },
-  { value: "0", label: "永久" },
-];
 
 function durationLabel(days?: number | null) {
   return planDurationLabel(days);
@@ -954,8 +945,28 @@ export default function Plans() {
     () => planOptions.find((plan: any) => Number(plan.id) === Number(assignPlanId)) || null,
     [assignPlanId, planOptions],
   );
-  const selectedAssignPlanDurationDays = Number((selectedAssignPlan as any)?.durationDays || 0);
-  const assignPlanIsMonthly = selectedAssignPlanDurationDays === 30;
+  /**
+   * 手动分配能选哪些周期。
+   *
+   * 套餐挂了多档之后，这里必须把那些档都列出来 —— 只给默认档的话，卖月付 / 年付
+   * 的套餐，管理员想手动给一个年付都给不了。月付套餐仍然保留 1/3/6 个月这几个
+   * 整月倍数（老behavior），再加一个「永久」。
+   */
+  const assignDurationChoices = useMemo(() => {
+    if (!selectedAssignPlan) return [] as Array<{ value: string; label: string }>;
+    const tiers = planPricingOptions(selectedAssignPlan as any, (selectedAssignPlan as any).priceTiers);
+    const seen = new Set<number>();
+    const out: Array<{ value: string; label: string }> = [];
+    const push = (days: number, label?: string) => {
+      if (seen.has(days)) return;
+      seen.add(days);
+      out.push({ value: String(days), label: label || durationLabel(days) });
+    };
+    for (const tier of tiers) push(tier.durationDays);
+    if (Number(selectedAssignPlan.durationDays) === 30) for (const days of [30, 90, 180]) push(days);
+    push(0, "永久");
+    return out;
+  }, [selectedAssignPlan]);
   const selectedPortForwardIds = useMemo(
     () => form.forwardGroupIds.map(Number).filter((id) => isPortForwardGroup(forwardGroupMap.get(id))),
     [form.forwardGroupIds, forwardGroupMap],
@@ -1067,9 +1078,7 @@ export default function Plans() {
   };
   const submitAssignPlan = () => {
     if (!assignUserId || !assignPlanId) return;
-    const durationDays = assignPlanIsMonthly
-      ? (Number(assignDurationDays) as AssignDurationDays)
-      : undefined;
+    const durationDays = assignDurationChoices.length > 0 ? Number(assignDurationDays) : undefined;
     assignPlan.mutate({
       userId: Number(assignUserId),
       planId: Number(assignPlanId),
@@ -1951,7 +1960,13 @@ export default function Plans() {
               <Label>套餐</Label>
               <Select value={assignPlanId} onValueChange={(value) => {
                 setAssignPlanId(value);
-                setAssignDurationDays("30");
+                // 默认选这个套餐自己的默认档，而不是写死「一个月」—— 写死的话，
+                // 一个只卖年付的套餐会默认分配成 30 天，而下拉里根本没有这一档。
+                const picked = planOptions.find((plan: any) => Number(plan.id) === Number(value));
+                const fallback = picked
+                  ? defaultPricingOption(planPricingOptions(picked as any, (picked as any).priceTiers))
+                  : null;
+                setAssignDurationDays(String(fallback?.durationDays ?? 30));
               }}>
                 <SelectTrigger><SelectValue placeholder="选择套餐" /></SelectTrigger>
                 <SelectContent>
@@ -1959,26 +1974,22 @@ export default function Plans() {
                 </SelectContent>
               </Select>
             </div>
-            {selectedAssignPlan && (
-              assignPlanIsMonthly ? (
-                <div className="space-y-2">
-                  <Label>分配周期</Label>
-                  <Select value={assignDurationDays} onValueChange={setAssignDurationDays}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {assignMonthlyDurationOptions.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">选择永久时不会设置到期时间。</p>
-                </div>
-              ) : (
-                <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                  当前套餐有效期为 {durationLabel(selectedAssignPlanDurationDays)}，将按套餐自身周期分配；如需其他周期，请先编辑套餐。
-                </div>
-              )
-            )}
+            {selectedAssignPlan && assignDurationChoices.length > 0 ? (
+              <div className="space-y-2">
+                <Label>分配周期</Label>
+                <Select value={assignDurationDays} onValueChange={setAssignDurationDays}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {assignDurationChoices.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  套餐挂着的周期都能选；选「永久」不设到期时间。手动分配不扣钱，也不走折扣。
+                </p>
+              </div>
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAssignOpen(false)}>取消</Button>

@@ -556,11 +556,34 @@ export async function listSubscriptionPlanOptions(includeHidden = true) {
       isStoreVisible: subscriptionPlans.isStoreVisible,
     })
     .from(subscriptionPlans);
-  return includeHidden
-    ? query.orderBy(asc(subscriptionPlans.sortOrder), desc(subscriptionPlans.createdAt))
-    : query
+  const rows = includeHidden
+    ? await query.orderBy(asc(subscriptionPlans.sortOrder), desc(subscriptionPlans.createdAt))
+    : await query
       .where(and(eq(subscriptionPlans.isActive, true), eq(subscriptionPlans.isStoreVisible, true)))
       .orderBy(asc(subscriptionPlans.sortOrder), desc(subscriptionPlans.createdAt));
+  /**
+   * 档位也带上：手动分配套餐时要按档选周期，不然卖月付 / 年付的套餐，管理员
+   * 想手动给一个年付都给不了（只能给默认档）。
+   */
+  const planIds = (rows as any[]).map((row) => Number(row.id)).filter((id) => id > 0);
+  if (planIds.length === 0) return rows;
+  const tierRows = await db
+    .select({
+      planId: subscriptionPlanPrices.planId,
+      durationDays: subscriptionPlanPrices.durationDays,
+      priceCents: subscriptionPlanPrices.priceCents,
+    })
+    .from(subscriptionPlanPrices)
+    .where(inArray(subscriptionPlanPrices.planId, planIds))
+    .orderBy(asc(subscriptionPlanPrices.planId), asc(subscriptionPlanPrices.durationDays));
+  const tiersByPlan = new Map<number, PlanPriceTier[]>();
+  for (const row of tierRows as any[]) {
+    const planId = Number(row.planId);
+    const values = tiersByPlan.get(planId) || [];
+    values.push({ durationDays: Number(row.durationDays), priceCents: Number(row.priceCents) });
+    tiersByPlan.set(planId, values);
+  }
+  return (rows as any[]).map((row) => ({ ...row, priceTiers: tiersByPlan.get(Number(row.id)) || [] }));
 }
 
 
