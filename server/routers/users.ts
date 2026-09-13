@@ -253,13 +253,22 @@ export const usersRouter = router({
       .mutation(async ({ input, ctx }) => {
         const target = await db.getUserById(input.userId);
         const label = String((target as any)?.username || (target as any)?.name || "").trim();
+        let skipped: Awaited<ReturnType<typeof db.setProxyNodeSharesForUser>>["skipped"] = [];
         await withKeyedTaskLock(`user-resource-permissions:${input.userId}`, async () => {
-          const { hostIds } = await db.setProxyNodeSharesForUser(input.userId, input.nodeIds, { label });
+          const result = await db.setProxyNodeSharesForUser(input.userId, input.nodeIds, { label });
+          skipped = result.skipped;
           // 多凭据入站上分享/取消分享都改了那个端口的用户表，要重下发。
-          for (const hostId of hostIds) pushAgentRefresh(hostId, `proxy-node-share-user-${input.userId}`, { urgent: true });
+          for (const hostId of result.hostIds) pushAgentRefresh(hostId, `proxy-node-share-user-${input.userId}`, { urgent: true });
         });
-        console.info(`[Users] Updated proxy node shares userId=${input.userId} count=${input.nodeIds.length} ${actorLabel(ctx)}`);
-        return { success: true };
+        /**
+         * 有没有订阅权限也一并告诉界面。
+         *
+         * 分享本身会写进去，但没有这个权限的人打不开订阅管理、也拿不到订阅地址 ——
+         * 分享了等于没分享，而管理员从这个弹窗上完全看不出来。
+         */
+        const recipientCanUse = !!(target as any)?.allowProxySubscription || (target as any)?.role === "admin";
+        console.info(`[Users] Updated proxy node shares userId=${input.userId} count=${input.nodeIds.length} skipped=${skipped.length} ${actorLabel(ctx)}`);
+        return { success: true, skipped, recipientCanUse };
       }),
     /** 可分享的节点清单。不含凭据，只够在选择框里认出是哪个节点。 */
     proxyNodeShareOptions: adminProcedure.query(async () => {

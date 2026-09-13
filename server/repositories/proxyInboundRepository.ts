@@ -210,7 +210,21 @@ export async function createProxyInbound(data: InsertProxyInbound) {
 export async function updateProxyInbound(id: number, data: Partial<InsertProxyInbound>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const previous = data.userId === undefined ? null : await getProxyInboundById(id);
   await db.update(proxyInbounds).set({ ...data, updatedAt: nowDate() } as any).where(eq(proxyInbounds.id, id));
+
+  /**
+   * 换归属时，把「原本分给新主人的那份共享凭据」收掉。
+   *
+   * 不收的话新主人的订阅里会出现**两条同一个端口的节点**：一条是端口本身的
+   * （现在归他了），一条是当初作为租户分给他的那份。客户端里就是两条一模一样、
+   * 只有凭据不同的线路，而界面上看不出哪条该留 —— 「自己的节点不用分享」这条
+   * 规矩在换归属之后就漏了。
+   */
+  const nextOwnerId = Number(data.userId || 0);
+  if (nextOwnerId > 0 && previous && Number((previous as any).userId) !== nextOwnerId) {
+    await releaseSharedInboundCredential(id, nextOwnerId);
+  }
 }
 
 /**

@@ -122,6 +122,14 @@ export async function getRuleIdsUsingProxyNodes(
  * 只能按节点算 —— 分享出去的就是同一份凭据，收回的唯一办法是换掉它，
  * 而那会把已经发出去的配置全部作废。界面上要把这个差别说清楚。
  */
+/** 一条没生效的分享，以及为什么。界面据此说明白，而不是笼统报「已保存」。 */
+export type ProxyNodeShareSkip = {
+  nodeId: number;
+  name?: string;
+  /** self = 那是他自己的节点；missing = 节点已经没了；credential = 发不出凭据。 */
+  reason: "self" | "missing" | "credential";
+};
+
 type ProxyNodeShareScope =
   | { kind: "node"; nodeId: number }
   | { kind: "inbound"; nodeId: number; inboundId: number; ownerUserId: number };
@@ -315,10 +323,17 @@ export async function reconcileProxyNodeSharesForUser(
     planNodeIds?: readonly (number | { nodeId: number; dedicated?: boolean })[];
     label?: string;
   },
-): Promise<{ hostIds: number[] }> {
+): Promise<{ hostIds: number[]; skipped: ProxyNodeShareSkip[] }> {
   const db = await getDb();
-  if (!db) return { hostIds: [] };
+  if (!db) return { hostIds: [], skipped: [] };
   const recipient = Number(userId);
+  /**
+   * 没生效的那些要报上去。
+   *
+   * 原来这里是静默 continue：管理员挑了几个节点、点保存、界面提示「已保存」，
+   * 而实际上一条都没写进去 —— 他只能等租户来说「我这儿没有」才发现。
+   */
+  const skipped: ProxyNodeShareSkip[] = [];
   const label = String(input.label || "").trim() || `用户 #${recipient}`;
   const hostIds = new Set<number>();
 
@@ -353,10 +368,20 @@ export async function reconcileProxyNodeSharesForUser(
   for (const item of wanted) {
     if (!Number.isInteger(item.nodeId) || item.nodeId <= 0) continue;
     const node = await getProxyNodeById(item.nodeId);
+    if (!node) {
+      skipped.push({ nodeId: item.nodeId, reason: "missing" });
+      continue;
+    }
     // 自己的节点不用分享：落进来的话订阅里会出现两份同名节点。
-    if (!node || Number((node as any).userId) === recipient) continue;
+    if (Number((node as any).userId) === recipient) {
+      skipped.push({ nodeId: item.nodeId, reason: "self", name: String((node as any).name || "") });
+      continue;
+    }
     const scope = await resolveProxyNodeShareScope(item.nodeId);
-    if (!scope) continue;
+    if (!scope) {
+      skipped.push({ nodeId: item.nodeId, reason: "missing", name: String((node as any).name || "") });
+      continue;
+    }
 
     /**
      * 独享端口：给他在同一台机器上克隆一个入站，归属直接落到他名下。
@@ -378,11 +403,17 @@ export async function reconcileProxyNodeSharesForUser(
     if (scope.kind === "inbound") {
       keepInboundIds.add(scope.inboundId);
       const provisioned = await ensureSharedInboundCredential(scope.inboundId, recipient, label);
-      if (!provisioned) continue;
+      if (!provisioned) {
+        skipped.push({ nodeId: item.nodeId, reason: "credential", name: String((node as any).name || "") });
+        continue;
+      }
       hostIds.add(provisioned.hostId);
       targetNodeId = provisioned.nodeId;
     }
-    if (!targetNodeId) continue;
+    if (!targetNodeId) {
+      skipped.push({ nodeId: item.nodeId, reason: "credential", name: String((node as any).name || "") });
+      continue;
+    }
     // 手工优先：同一条既手工分了又被套餐带上，记成手工，撤套餐不该把它撤掉。
     if (resolved.get(targetNodeId) !== "manual") resolved.set(targetNodeId, item.source);
   }
@@ -406,7 +437,7 @@ export async function reconcileProxyNodeSharesForUser(
   await db.delete(proxyNodeShares).where(eq(proxyNodeShares.userId, recipient));
   const values = Array.from(resolved.entries()).map(([nodeId, source]) => ({ nodeId, userId: recipient, source }));
   if (values.length > 0) await db.insert(proxyNodeShares).values(values as any);
-  return { hostIds: Array.from(hostIds).filter((hostId) => hostId > 0) };
+  return { hostIds: Array.from(hostIds).filter((hostId) => hostId > 0), skipped };
 }
 
 /**
@@ -436,7 +467,7 @@ export async function setProxyNodeSharesForUser(
   userId: number,
   nodeIds: readonly number[],
   options: { label?: string } = {},
-): Promise<{ hostIds: number[] }> {
+): Promise<{ hostIds: number[]; skipped: ProxyNodeShareSkip[] }> {
   // 手工那一路走同一个对账函数，套餐带的那些原样留着。
   return reconcileProxyNodeSharesForUser(userId, { manualNodeIds: nodeIds, label: options.label });
 }
