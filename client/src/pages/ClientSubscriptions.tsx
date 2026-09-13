@@ -5,6 +5,7 @@ import ProxyInboundsSection from "@/components/proxy/ProxyInboundsSection";
 import { proxyNodeMetaText, type ProxyNodeRowSpec } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import DataSectionError from "@/components/DataSectionError";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -71,6 +72,7 @@ import {
   type ProxyNodeGroupMode,
 } from "@shared/proxyNodeGrouping";
 import {
+  AlertTriangle,
   Atom,
   AudioLines,
   Cat,
@@ -84,6 +86,7 @@ import {
   Link2,
   Package,
   Pencil,
+  Plug,
   Plus,
   QrCode,
   Rocket,
@@ -414,8 +417,20 @@ export default function ClientSubscriptionsPage() {
   };
 
   const createNode = trpc.proxySubscriptions.createNode.useMutation({
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       toast.success("客户端节点已添加");
+      /**
+       * 顺手接上的那些转发要说出来。
+       *
+       * 先有转发、后加节点是很常见的顺序，这时面板会把已经指向它的转发一并加进
+       * 订阅 —— 不吭声的话，他下次打开订阅会发现凭空多了几条线路。
+       */
+      const adopted = Number(result?.adoptedRuleCount || 0);
+      if (adopted > 0) {
+        toast.info(`顺手把 ${adopted} 条指向它的转发加进了订阅`, {
+          description: "不想要的话，在「预览订阅」里逐条关掉。",
+        });
+      }
       setNodeDialogOpen(false);
       refresh();
     },
@@ -722,6 +737,27 @@ export default function ClientSubscriptionsPage() {
     () => (preview?.skipped ?? []).filter((item) => item.reason === "hidden"),
     [preview],
   );
+  /**
+   * 绑定已经对不上的那些：转发的目标不再是它绑的那个节点。
+   *
+   * 这条节点仍然在订阅里 —— 静默少一条是这套面板反复踩过的坑，而这类判断也不可能
+   * 百分之百准。但它必须显眼：订阅里那条带的是这个落地的凭据，地址却写的是转发入口，
+   * 入口通向别处时，客户端就会把凭据递给那台别的机器。
+   */
+  const driftedRules = useMemo(
+    () => (preview?.warnings ?? []).filter((item: any) => item.reason === "target-mismatch"),
+    [preview],
+  );
+  /**
+   * 谁都没用的节点：没开直连，也没有任何转发绑到它上面 —— 客户端里根本没有它。
+   *
+   * 「我的节点」那一列里它看着好好的，这是当初「转发不绑节点就不进订阅、页面上还看不出」
+   * 那个坑从节点这一侧再犯一次。
+   */
+  const unusedNodes = useMemo(
+    () => (preview?.warnings ?? []).filter((item: any) => item.reason === "node-unused"),
+    [preview],
+  );
   const unboundRules = useMemo(
     () => (preview?.skipped ?? []).filter((item) => item.reason === "unbound"),
     [preview],
@@ -820,16 +856,23 @@ export default function ClientSubscriptionsPage() {
     return (
       <DashboardLayout>
         <div className="space-y-6">
-          <div>
-            <h1 className="text-2xl font-semibold">订阅管理</h1>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight">订阅管理</h1>
+            <p className="text-sm text-muted-foreground">你有哪些线路，以及怎么把它们带进客户端。</p>
           </div>
           <Card>
             <CardContent className="py-10 text-center">
+              {/*
+                原来只说「没有权限，联系管理员」—— 那等于把人挡在门外还不说门后是什么。
+                说清楚开通之后能拿到什么，他才知道值不值得去要。
+              */}
               <p className="text-sm text-muted-foreground">
-                当前账号没有客户端订阅权限。
+                这个账号还没开通客户端订阅。
               </p>
-              <p className="mt-2 text-xs text-muted-foreground">
-                联系管理员开通。
+              <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-muted-foreground">
+                开通之后，你可以在自己的机器上开落地节点、把别处的节点粘进来，
+                再用一条订阅地址把它们一次导入客户端 —— 转发和节点会自动对上。
+                需要的话，找管理员开一下。
               </p>
             </CardContent>
           </Card>
@@ -841,7 +884,11 @@ export default function ClientSubscriptionsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <h1 className="text-2xl font-semibold">订阅管理</h1>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">订阅管理</h1>
+          {/* 一句话说清这一页是什么：上面是带走的东西，下面是你有的东西。 */}
+          <p className="text-sm text-muted-foreground">你有哪些线路，以及怎么把它们带进客户端。</p>
+        </div>
 
         {/*
           订阅链接排在最前面。
@@ -871,6 +918,14 @@ export default function ClientSubscriptionsPage() {
           <CardContent>
             {tokensQuery.isLoading ? (
               <DataSectionLoading />
+            ) : tokensQuery.error && tokens.length === 0 ? (
+              /* 「还没有订阅链接」得是真的没有。读失败还这么说，等于让人再建一条重复的。 */
+              <DataSectionError
+                label="订阅链接"
+                error={tokensQuery.error}
+                retrying={tokensQuery.isFetching}
+                onRetry={() => { void tokensQuery.refetch(); }}
+              />
             ) : tokens.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
                 还没有订阅链接。
@@ -1208,7 +1263,7 @@ export default function ClientSubscriptionsPage() {
           onPasteNode={openCreateNode}
           inboundLeading={inboundLeading}
           onOpenPreview={() => setPreviewOpen(true)}
-          previewAlertCount={unboundRules.length}
+          previewAlertCount={unboundRules.length + driftedRules.length + unusedNodes.length}
           onOpenHosts={isAdmin ? undefined : () => setHostsOpen(true)}
           onlineCount={onlineNodeCount}
           offlineCount={offlineNodeCount}
@@ -1241,11 +1296,19 @@ export default function ClientSubscriptionsPage() {
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             {previewQuery.isLoading ? (
               <DataSectionLoading />
+            ) : previewQuery.error && !preview ? (
+              <DataSectionError
+                label="订阅内容"
+                error={previewQuery.error}
+                retrying={previewQuery.isFetching}
+                onRetry={() => { void previewQuery.refetch(); }}
+              />
             ) : (
               <div className="space-y-4">
                 {(preview?.nodes.length ?? 0) === 0 ? (
                   <p className="py-4 text-center text-sm text-muted-foreground">
-                    订阅里还没有节点。先添加落地节点，再在下面把转发加进来。
+                    订阅里还没有节点。先在「我的节点」里加一个 —— 自己机器上开一个，或者粘一条别处的链接。
+                    指向它的转发会自动跟着进来。
                   </p>
                 ) : (
                   <div className="space-y-3">
@@ -1333,9 +1396,53 @@ export default function ClientSubscriptionsPage() {
                   </div>
                 )}
 
+                {unusedNodes.length > 0 && (
+                  <div className="space-y-2">
+                    <SectionLabel count={unusedNodes.length}>这些节点还没进订阅</SectionLabel>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      它们没开直连，也没有任何转发指向它们 —— 客户端里看不到。
+                      给它建一条转发（目标填它的地址端口，会自动认出来），或者在节点上打开「直连也放进订阅」。
+                    </p>
+                    {unusedNodes.map((item: any) => (
+                      <div
+                        key={`unused-${item.nodeId}`}
+                        className="flex items-center gap-2 rounded-md border border-dashed px-2.5 py-1.5"
+                      >
+                        <Plug className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate text-sm">{item.nodeName}</span>
+                        <span className="shrink-0 truncate font-mono text-[11px] text-muted-foreground">{item.nodeText}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {driftedRules.length > 0 && (
+                  <div className="space-y-2">
+                    <SectionLabel count={driftedRules.length}>指向已经变了</SectionLabel>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      这几条转发的目标已经不是它绑的那个节点了。线路还在订阅里，但客户端连过去是
+                      拿着原来那个落地的凭据去连新目标 —— 要么把目标改回去，要么在转发页上重新选节点。
+                    </p>
+                    {driftedRules.map((item) => (
+                      <div
+                        key={`drift-${item.ruleId}`}
+                        className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.ruleName}</span>
+                        </div>
+                        <p className="break-all text-xs text-muted-foreground">
+                          绑的是「{item.nodeName}」（{item.nodeText}），现在指向 {item.targetText}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {hiddenRules.length > 0 && (
                   <div className="space-y-2">
-                    <SectionLabel count={hiddenRules.length}>已隐藏</SectionLabel>
+                    <SectionLabel count={hiddenRules.length}>被你关掉的</SectionLabel>
                     {hiddenRules.map((item) => (
                       <div
                         key={item.ruleId}
@@ -1371,7 +1478,16 @@ export default function ClientSubscriptionsPage() {
 
                 {unboundRules.length > 0 && (
                   <div className="space-y-2">
-                    <SectionLabel count={unboundRules.length}>还没加入订阅的转发</SectionLabel>
+                    {/*
+                      这一段和下面那段原来叫「还没加入订阅的转发」和「未进入订阅的
+                      转发」—— 两个名字几乎一样，说的却是两件事：这一段**选个节点就能
+                      进来**，下面那段是**进不来**。名字要让人一眼分得出哪个该动手。
+                    */}
+                    <SectionLabel count={unboundRules.length}>差一个落地节点</SectionLabel>
+                    <p className="text-xs text-muted-foreground">
+                      这些转发还没说清楚通往哪个落地节点，所以进不了订阅。选一个就好；
+                      目标地址正好是你某个节点时，以后新建的转发会自动认出来。
+                    </p>
                     {unboundRules.map((item) => (
                       <div
                         key={item.ruleId}
@@ -1406,7 +1522,7 @@ export default function ClientSubscriptionsPage() {
 
                 {otherSkipped.length > 0 && (
                   <div className="space-y-1.5">
-                    <SectionLabel count={otherSkipped.length}>未进入订阅的转发</SectionLabel>
+                    <SectionLabel count={otherSkipped.length}>这些进不了订阅</SectionLabel>
                     <ul className="space-y-1">
                       {otherSkipped.map((item) => (
                         <li key={item.ruleId} className="text-xs text-muted-foreground">

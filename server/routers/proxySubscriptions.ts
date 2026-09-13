@@ -11,10 +11,12 @@ import {
   type ProxyNodeProtocol,
 } from "../../shared/proxyNode";
 import { PROXY_SUBSCRIPTION_FORMATS } from "../../shared/proxySubscription";
+import { rulesMatchingProxyNode } from "../../shared/proxyNodeAutoBind";
 import { PROXY_RULE_PRESETS } from "../../shared/proxyRuleset";
 import {
   PROXY_NODE_AUTO_GROUPS,
   PROXY_SUBSCRIPTION_SKIP_LABELS,
+  PROXY_SUBSCRIPTION_WARNING_LABELS,
 } from "../../shared/proxySubscriptionPlan";
 import { resolveProxyNodeHealth, type ProxyNodeProbeSample } from "../../shared/proxyNodeHealth";
 import { normalizeProxyNodeResetDay } from "../../shared/proxyNodeQuota";
@@ -95,6 +97,48 @@ async function assertOwnedToken(id: number, ctx: any) {
   if (!token) throw new Error("订阅链接不存在");
   if (ctx.user.role !== "admin" && token.userId !== ctx.user.id) throw new Error("无权操作该订阅链接");
   return token;
+}
+
+/**
+ * 刚建好一个落地节点，把已经指向它的转发接上。
+ *
+ * 先有转发、后加节点是很常见的顺序：机器先跑起来，过几天才想起来「这条其实可以
+ * 进订阅」。只有正向自动绑定（建转发时认节点）的话，这些早就存在的转发永远不会
+ * 自己进订阅 —— 而它们本来就是通往这个节点的，用户得一条条去预览弹窗里手动绑。
+ *
+ * 这个方向比正向更安全：节点是**刚建的**，在它存在之前谁也没机会「手动解绑」，
+ * 所以不存在「他解绑了、面板又给他绑回去」。已经绑着别的节点的仍然不动。
+ *
+ * 返回接上了几条，交给界面说出来 —— 面板替人做的事都要看得见。
+ */
+async function adoptRulesForNewProxyNode(
+  userId: number,
+  nodeId: number,
+  node: { address?: unknown; port?: unknown },
+): Promise<number> {
+  try {
+    const rules = await db.getForwardRules(Number(userId));
+    const matched = rulesMatchingProxyNode(
+      (rules as any[]).map((rule) => ({
+        id: Number(rule.id),
+        targetIp: rule.targetIp,
+        targetPort: rule.targetPort,
+        proxyNodeId: rule.proxyNodeId,
+      })),
+      { address: (node as any)?.address, port: (node as any)?.port },
+    );
+    for (const rule of matched) {
+      await db.updateForwardRule(rule.id, { proxyNodeId: Number(nodeId), proxyNodeVisible: true } as any);
+    }
+    if (matched.length > 0) {
+      console.info(`[Subscription] node=${nodeId} adopted ${matched.length} existing rule(s)`);
+    }
+    return matched.length;
+  } catch (error) {
+    // 锦上添花的一步，不能让它把「加节点」这件事整个搞失败。
+    console.warn("[Subscription] adopt rules failed:", error instanceof Error ? error.message : error);
+    return 0;
+  }
 }
 
 export const proxySubscriptionsRouter = router({
@@ -265,7 +309,8 @@ export const proxySubscriptionsRouter = router({
           : {}),
         ...nodeToRow(parsed.node, input.link),
       } as any);
-      return { id };
+      const adopted = await adoptRulesForNewProxyNode(ctx.user.id, Number(id), parsed.node);
+      return { id, adoptedRuleCount: adopted };
     }),
 
   updateNode: protectedProcedure
@@ -407,9 +452,10 @@ export const proxySubscriptionsRouter = router({
 
   /** 预览订阅内容：进订阅的节点，以及每条被排除的转发和原因。 */
   preview: protectedProcedure.query(async ({ ctx }) => {
-    if (!await hasProxySubscriptionPermission(ctx)) return { groups: [], nodes: [], skipped: [] };
+    if (!await hasProxySubscriptionPermission(ctx)) return { groups: [], nodes: [], skipped: [], warnings: [] };
     const plan = await db.buildProxySubscriptionPlanForUser(ctx.user.id);
-    const document = await db.getProxySubscriptionDocumentForUser(ctx.user.id);
+    // plan 传下去，免得把「全部规则 + 全部主机 + 全部节点」白算第二遍。
+    const document = await db.getProxySubscriptionDocumentForUser(ctx.user.id, { plan });
     return {
       groups: document.groups
         .filter((group) => group.type !== "select")
@@ -423,10 +469,16 @@ export const proxySubscriptionsRouter = router({
         protocol: entry.node.protocol,
         address: entry.node.address,
         port: entry.node.port,
+        // 绑定已经对不上了：这条照发，但界面上要标出来。
+        targetMismatch: entry.targetMismatch === true,
       })),
       skipped: plan.skipped.map((item) => ({
         ...item,
         label: PROXY_SUBSCRIPTION_SKIP_LABELS[item.reason],
+      })),
+      warnings: plan.warnings.map((item) => ({
+        ...item,
+        label: PROXY_SUBSCRIPTION_WARNING_LABELS[item.reason],
       })),
     };
   }),

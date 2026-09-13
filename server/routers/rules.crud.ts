@@ -1,5 +1,6 @@
 import { protectedProcedure, router } from "../_core/trpc";
 import { z } from "zod";
+import { planProxyNodeBinding } from "@shared/proxyNodeAutoBind";
 import { isIP } from "node:net";
 import * as db from "../db";
 import { pushAgentRefresh } from "../agentEvents";
@@ -689,6 +690,105 @@ async function markTemplateChildrenPendingDelete(
   return childRules;
 }
 
+/**
+ * 转发建好之后，认一认它是不是通往自己某个落地节点的 —— 是就直接进订阅。
+ *
+ * 订阅和转发本来就是同一件事的两面：一条转发把入口机的端口接到落地机上，订阅里
+ * 那条中转线路描述的就是这件事。原来这两件事要分两处做 —— 在转发页建规则，再去
+ * 订阅页的预览弹窗里把它绑到落地节点上。**不绑就不进订阅，而转发页上完全看不出
+ * 少了这一步**：转发跑得好好的，客户端里却没有这条线路。
+ *
+ * 认的规矩全在 shared/proxyNodeAutoBind.ts 里，核心是宁可不认：地址端口要完全
+ * 相同、停用的不认、认出多个一个都不认。认错的后果是订阅里那条中转指向了一台
+ * 不该指的落地机，比不认严重得多。
+ *
+ * 失败一律吞掉：这是锦上添花的一步，不能因为它让建转发这件事整个失败。
+ *
+ * 保存之后还要把绑定重新对一遍。
+ *
+ * 绑定声明的是「这条转发通向那个落地节点」。它只在保存那一刻成立过 —— 之后目标能改，
+ * 而绑定一直留着。留错了不只是少一条线路：订阅里那条节点**带着这个落地的凭据**
+ * （uuid、Reality 公钥、SNI），地址却写的是转发入口；入口现在通向别处，客户端就会把
+ * 这套凭据递给那台别的机器。
+ *
+ * 三件事：
+ *
+ * 1. 新建、或改了目标而这条还没绑 → 认一次（原来就有的行为）。
+ * 2. 已经绑着、又改了目标 → **只在原来是字面相符时**重新对：那种绑定是面板自己认出
+ *    来的，面板有责任让它继续为真。新目标正好是另一个节点就改绑，谁都不是就解绑。
+ * 3. 原来就不是字面相符（串两跳、一边域名一边 IP）→ 一个字都不动。那是他自己搭的
+ *    拓扑，我们没有判断权。
+ */
+type ProxyNodeBindingChange =
+  | { kind: "bound"; id: number; name: string }
+  | { kind: "rebound"; id: number; name: string; previousName: string }
+  | { kind: "released"; previousName: string }
+  | null;
+
+async function autoBindProxyNodeForRule(input: {
+  ruleId: number;
+  userId: number;
+  targetIp: unknown;
+  targetPort: number;
+  boundNodeId?: number;
+  isCreate: boolean;
+  targetChanged?: boolean;
+  /** 改动之前的目标。判断「原来是不是字面相符」要用它。 */
+  previousTargetIp?: unknown;
+  previousTargetPort?: unknown;
+}): Promise<ProxyNodeBindingChange> {
+  try {
+    const boundNodeId = Number(input.boundNodeId || 0);
+    // 自己的 + 别人分享给自己的，都算「我的线路」。
+    const candidates = await db.getProxyNodesForSubscription(Number(input.userId)) as any[];
+    const nameById = new Map<number, string>(
+      candidates.map((node) => [Number(node.id), String(node.name || "落地节点")]),
+    );
+    const bound = boundNodeId > 0
+      ? candidates.find((node) => Number(node.id) === boundNodeId)
+      : undefined;
+    const plan = planProxyNodeBinding({
+      isCreate: input.isCreate,
+      targetChanged: input.targetChanged,
+      boundNodeId,
+      boundNodePlace: bound ? { address: bound.address, port: bound.port } : null,
+      previousTarget: { targetIp: input.previousTargetIp, targetPort: input.previousTargetPort },
+      nextTarget: { targetIp: input.targetIp, targetPort: input.targetPort },
+      candidates: candidates.map((node) => ({
+        id: Number(node.id),
+        address: String(node.address || ""),
+        port: Number(node.port || 0),
+        isEnabled: node.isEnabled !== false,
+        sharedFrom: !!node.sharedFrom,
+      })),
+    });
+    const previousName = nameById.get(boundNodeId) || "落地节点";
+
+    if (plan.action === "none") return null;
+    if (plan.action === "release") {
+      // 留着的话订阅里这条会带着原来那个落地的凭据，指向已经换掉的新目标。
+      await db.updateForwardRule(Number(input.ruleId), { proxyNodeId: null } as any);
+      console.info(`[Subscription] released stale binding rule=${input.ruleId} node=${boundNodeId}`);
+      return { kind: "released", previousName };
+    }
+    await db.updateForwardRule(Number(input.ruleId), {
+      proxyNodeId: plan.nodeId,
+      // 自动认出来的默认就进订阅 —— 认出来却不放进去，等于什么也没做。
+      proxyNodeVisible: true,
+    } as any);
+    const name = nameById.get(plan.nodeId) || "落地节点";
+    if (plan.action === "rebind") {
+      console.info(`[Subscription] rebound rule=${input.ruleId} proxy node ${boundNodeId} -> ${plan.nodeId}`);
+      return { kind: "rebound", id: plan.nodeId, name, previousName };
+    }
+    console.info(`[Subscription] auto-bound rule=${input.ruleId} to proxy node=${plan.nodeId}`);
+    return { kind: "bound", id: plan.nodeId, name };
+  } catch (error) {
+    console.warn("[Subscription] binding reconcile failed:", error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 export async function deleteForwardRuleForActor(
   actor: { id: number; role: string },
   ruleId: number,
@@ -1012,6 +1112,14 @@ export async function createDirectForwardRuleForActor(
     });
     await quotaReservation.release();
     quotaReservation = null;
+    const autoBound = await autoBindProxyNodeForRule({
+      ruleId: Number(id),
+      userId: actor.id,
+      targetIp: input.targetIp,
+      targetPort: Number(input.targetPort),
+      boundNodeId: Number((input as any).proxyNodeId || 0),
+      isCreate: true,
+    });
     if (tunnelId) {
       const tunnel = await db.getTunnelById(tunnelId);
       // Mapping reconciliation has its own reservation scope. Release the
@@ -1025,7 +1133,18 @@ export async function createDirectForwardRuleForActor(
     } else {
       pushAgentRefresh(hostId, `${options.reasonPrefix || "forward-rule"}-created`);
     }
-    return { id, sourcePort };
+    /**
+     * 自动加进订阅这件事要说出来。
+     *
+     * 面板替人做了一步，就得让他知道做了什么 —— 否则下次他在客户端里看到一条
+     * 没印象的线路，只会以为是别的地方出了错。名字一并带回去，界面直接报出来。
+     */
+    return {
+      id,
+      sourcePort,
+      autoBoundProxyNodeId: autoBound?.kind === "bound" ? autoBound.id : null,
+      autoBoundProxyNodeName: autoBound?.kind === "bound" ? autoBound.name : null,
+    };
   } finally {
     await quotaReservation?.release();
     tunnelExitPortReservation?.release();
@@ -2208,6 +2327,24 @@ export const crudRulesRouter = router({
         }
       }
       await db.updateForwardRule(id, data);
+      /**
+       * 改完目标之后再认一次。
+       *
+       * 只在「改了目标、而且这条还没绑」时认 —— 手动解绑过的人不会顺手改目标，
+       * 所以不会被面板又绑回去；已经绑着别的节点的更不动，那是他明确选过的。
+       */
+      const bindingChange = await autoBindProxyNodeForRule({
+        ruleId: Number(id),
+        userId: Number((rule as any).userId || ctx.user.id),
+        targetIp: data.targetIp ?? (rule as any).targetIp,
+        targetPort: Number(data.targetPort ?? (rule as any).targetPort),
+        boundNodeId: Number((rule as any).proxyNodeId || 0),
+        isCreate: false,
+        previousTargetIp: (rule as any).targetIp,
+        previousTargetPort: (rule as any).targetPort,
+        targetChanged: String(data.targetIp ?? (rule as any).targetIp) !== String((rule as any).targetIp)
+          || Number(data.targetPort ?? (rule as any).targetPort) !== Number((rule as any).targetPort),
+      });
       // The mapping reconciler performs its own per-endpoint reservation. Do
       // not leave the primary reservation held while it runs; release is
       // idempotent and the finalizer below still covers error paths.
@@ -2241,7 +2378,19 @@ export const crudRulesRouter = router({
           else pushAgentRefresh(Number(nextHostIdForRule), "forward-rule-failover-hot-update");
         }
       }
-      return { success: true, reset: keyFieldChanged && !failoverHotUpdate, hotUpdated: failoverHotUpdate };
+      return {
+        success: true,
+        reset: keyFieldChanged && !failoverHotUpdate,
+        hotUpdated: failoverHotUpdate,
+        // 订阅那边的绑定跟着目标变了没有；界面据此说一句，别让它悄悄发生。
+        proxyNodeBinding: bindingChange
+          ? {
+            kind: bindingChange.kind,
+            name: bindingChange.kind === "released" ? "" : bindingChange.name,
+            previousName: bindingChange.kind === "bound" ? "" : bindingChange.previousName,
+          }
+          : null,
+      };
       } finally {
         tunnelExitPortReservationForUpdate?.release();
         tunnelExitPortReservationForConversion?.release();

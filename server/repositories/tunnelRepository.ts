@@ -1764,7 +1764,33 @@ export async function getUsedPortsOnHost(
     addPort(row.listenPort);
     addPort(row.mimicPort);
   });
+  for (const port of await getProxyInboundPortsOnHost(hostId)) addPort(port);
   return used;
+}
+
+/**
+ * 这台机器上，落地节点（sing-box 入站）正在听的端口。
+ *
+ * 转发规则和落地入站是两个进程，各自 bind 各自的端口 —— 谁也不知道对方的存在。
+ * 不把这些端口算成「已占用」，用户就能在同一台机器上建一条同端口的转发：面板
+ * 一路放行，到了机器上后起的那个 bind 失败，而界面上两边都显示正常。
+ *
+ * 不按协议区分：入站那边一个端口 TCP/UDP 都可能用（Hysteria2、TUIC 是 UDP，
+ * VLESS 是 TCP，XHTTP 两个都要），分不清就一律当占用 —— 少给一个端口是小事，
+ * 撞上了要人去机器上看日志才知道原因。
+ *
+ * 停用的入站不算：它没在听，挡着反而让人以为端口被莫名占了。
+ */
+async function getProxyInboundPortsOnHost(hostId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  // 动态导入：proxyInboundRepository 那边也会回头用这个文件里的函数，静态引会成环。
+  const { proxyInbounds } = await import("../../drizzle/schema");
+  const rows = await db
+    .select({ port: proxyInbounds.port })
+    .from(proxyInbounds)
+    .where(and(eq(proxyInbounds.hostId, Number(hostId)), eq(proxyInbounds.isEnabled, true)));
+  return (rows as any[]).map((row) => Number(row.port)).filter((port) => port > 0);
 }
 
 /** 检查某主机上的某端口是否已被占用 */
@@ -1802,6 +1828,8 @@ export async function isPortUsedOnHost(
   }
   const r = await db.select({ count: sqlCountAll() }).from(forwardRules).where(and(...conds));
   if ((Number(r[0]?.count) || 0) > 0) return true;
+  // 落地节点（sing-box 入站）也在这台机器上真实监听着 —— 见 getProxyInboundPortsOnHost。
+  if ((await getProxyInboundPortsOnHost(hostId)).includes(Number(sourcePort))) return true;
   const primaryExitConds: any[] = [
     eq(tunnels.exitHostId, hostId),
     eq(forwardRules.tunnelExitPort, sourcePort),

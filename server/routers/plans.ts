@@ -4,19 +4,20 @@ import { appendPanelLog } from "../_core/panelLogger";
 import * as db from "../db";
 import { refreshUserForwardEndpoints } from "./helpers";
 import { parseExpiryReminderDays } from "@shared/expiryReminder";
+import { findPricingOption, normalizePlanPriceTiers, planPricingOptions, PLAN_PRICE_TIER_LIMIT } from "@shared/planPricing";
 
 const planInput = z.object({
   name: z.string().min(1).max(80),
   description: z.string().max(500).nullable().optional(),
   priceCents: z.number().int().min(0).max(100_000_000),
   currency: z.string().trim().min(3).max(8).default("CNY"),
-  durationDays: z.union([
-    z.literal(30),
-    z.literal(90),
-    z.literal(180),
-    z.literal(365),
-    z.literal(730),
-  ]).default(30),
+  /**
+   * 默认档的周期。
+   *
+   * 原来是五档硬白名单，7 天体验、14 天促销这种只能绕路。改成 1..3650 的正整数：
+   * 界面上仍然给常用几档的下拉，但填别的也不会被服务端拒掉。
+   */
+  durationDays: z.number().int().min(1).max(3650).default(30),
   portCount: z.number().int().min(1).max(1024).default(20),
   trafficLimit: z.number().int().min(0).default(0),
   rateLimitMbps: z.number().int().min(0).max(1_000_000).default(0),
@@ -33,6 +34,16 @@ const planInput = z.object({
   /** true = 附带节点给每人单开一个端口（能按人计量）；false = 共用端口各发一份凭据。 */
   dedicatedProxyPort: z.boolean().default(false),
   sortOrder: z.number().int().min(0).max(9999).default(0),
+  /**
+   * 多周期定价：一个套餐挂一组「周期 → 价格」。
+   *
+   * 留空 = 只卖上面那一档（存量套餐全是这样）。填了的话第一档（总价最低那档）会被
+   * 同步回 durationDays / priceCents 当默认档，兑换码和后台分配读的还是那两列。
+   */
+  priceTiers: z.array(z.object({
+    durationDays: z.number().int().min(1).max(3650),
+    priceCents: z.number().int().min(0).max(100_000_000),
+  })).max(PLAN_PRICE_TIER_LIMIT).default([]),
   hostIds: z.array(z.number().int().positive()).default([]),
   tunnelIds: z.array(z.number().int().positive()).default([]),
   forwardGroupIds: z.array(z.number().int().positive()).default([]),
@@ -88,15 +99,18 @@ export const plansRouter = router({
   create: adminProcedure
     .input(planInput)
     .mutation(async ({ input }) => {
-      const { hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds, ...data } = input;
+      const { hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds, priceTiers, ...data } = input;
       if (hostIds.length === 0 && tunnelIds.length === 0 && forwardGroupIds.length === 0) {
         throw new Error("套餐至少需要绑定一个端口转发、隧道、转发链或转发组");
       }
+      // 洗一遍再判空：全填的是重复周期或负价时，剩下的可能是空的。
+      const tiers = normalizePlanPriceTiers(priceTiers);
+      if (priceTiers.length > 0 && tiers.length === 0) throw new Error("购买周期填写有误，请检查");
       return db.createSubscriptionPlan({
         ...data,
         description: data.description || null,
         currency: data.currency.toUpperCase(),
-      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds);
+      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds, tiers);
     }),
   update: adminProcedure
     .input(planInput.extend({
@@ -104,10 +118,12 @@ export const plansRouter = router({
       syncExistingSubscribers: z.boolean().default(true),
     }))
     .mutation(async ({ input, ctx }) => {
-      const { id, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds, syncExistingSubscribers, ...data } = input;
+      const { id, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds, priceTiers, syncExistingSubscribers, ...data } = input;
       if (hostIds.length === 0 && tunnelIds.length === 0 && forwardGroupIds.length === 0) {
         throw new Error("套餐至少需要绑定一个端口转发、隧道、转发链或转发组");
       }
+      const tiers = normalizePlanPriceTiers(priceTiers);
+      if (priceTiers.length > 0 && tiers.length === 0) throw new Error("购买周期填写有误，请检查");
       if (!syncExistingSubscribers) {
         await db.freezePlanSubscriberSnapshots(id);
       }
@@ -115,7 +131,7 @@ export const plansRouter = router({
         ...data,
         description: data.description || null,
         currency: data.currency.toUpperCase(),
-      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds);
+      } as any, hostIds, tunnelIds, forwardGroupIds, trafficAddons, proxyNodeIds, tiers);
       if (syncExistingSubscribers) {
         const userIds = await db.syncPlanSubscribers(id);
         for (const userId of userIds) {
@@ -203,14 +219,33 @@ export const plansRouter = router({
     .input(z.object({
       userId: z.number().int().positive(),
       planId: z.number().int().positive(),
-      durationDays: z.union([z.literal(0), z.literal(30), z.literal(90), z.literal(180)]).optional(),
+      /** 0 = 永久；其余要么是这个套餐挂着的某一档，要么是月付套餐的整月倍数。 */
+      durationDays: z.number().int().min(0).max(3650).optional(),
     }))
     .mutation(async ({ input }) => {
       const plan = await db.getSubscriptionPlanById(input.planId);
       if (!plan) throw new Error("套餐不存在");
-      const overrideDurationDays = input.durationDays !== undefined && Number(plan.durationDays) === 30
-        ? input.durationDays
-        : null;
+      /**
+       * 分配周期。
+       *
+       * 套餐挂了多档之后，原来那句「只有月付套餐能改周期」就把手动分配卡死了：
+       * 卖月付 / 年付的套餐，管理员想手动给一个年付都给不了。现在这个套餐上有的
+       * 档位都能选；月付套餐仍然保留 1/3/6 个月这几个整月倍数（老behavior）。
+       */
+      const options = planPricingOptions(plan as any, (plan as any).priceTiers || []);
+      let overrideDurationDays: number | null = null;
+      if (input.durationDays !== undefined) {
+        const days = Number(input.durationDays);
+        if (days === 0) {
+          overrideDurationDays = 0;
+        } else if (findPricingOption(options, days)) {
+          overrideDurationDays = days;
+        } else if (Number(plan.durationDays) === 30 && [30, 90, 180].includes(days)) {
+          overrideDurationDays = days;
+        } else {
+          throw new Error("这个套餐没有这个分配周期");
+        }
+      }
       const result = await db.applySubscriptionToUser(input.userId, input.planId, "admin", null, undefined, overrideDurationDays);
       await refreshUserForwardEndpoints(input.userId, "plan-assigned");
       appendPanelLog("info", `[Plan] assigned user=${input.userId} plan=${input.planId} duration=${overrideDurationDays ?? plan.durationDays} ports=${result.portRangeStart}-${result.portRangeEnd}`);

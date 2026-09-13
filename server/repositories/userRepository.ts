@@ -646,10 +646,30 @@ export async function updateUserRole(userId: number, role: "user" | "admin") {
   await db.update(users).set({ role, updatedAt: nowDate() }).where(eq(users.id, userId));
 }
 
-export async function deleteUser(userId: number) {
+/**
+ * 删账号。
+ *
+ * 收凭据这一步放在这里，而不是只放在删人那条路由上：凭据是按 sharedUserId 找的，
+ * 人删了就再也找不着 —— 那些凭据会永远留在各个端口上，界面上没有任何入口能收回，
+ * 而它照样能连。任何一条别的删人路径（自助注销、批量清理）漏掉这一步，都会留下
+ * 一个谁也管不着的活凭据，所以把它焊在这个函数里。
+ *
+ * 返回受影响的主机 id，调用方据此重下发配置。重复调用是安全的：释放函数本身
+ * 找不到就什么也不做。
+ */
+export async function deleteUser(userId: number): Promise<{ hostIds: number[] }> {
   const db = await getDb();
-  if (!db) return;
+  if (!db) return { hostIds: [] };
+  const { releaseAllSharedCredentialsForUser, releaseAllDedicatedInboundsForUser } =
+    await import("./proxyInboundRepository");
+  const hostIds = [
+    ...await releaseAllSharedCredentialsForUser(userId),
+    // 专属端口是面板替他开的，人没了端口也要收 —— 留着就是一台机器上一个
+    // 谁也管不着、却还在监听的端口。
+    ...await releaseAllDedicatedInboundsForUser(userId),
+  ];
   await db.delete(users).where(eq(users.id, userId));
+  return { hostIds: Array.from(new Set(hostIds.filter((id) => Number(id) > 0))) };
 }
 
 /** 更新用户流量管理设置（管理员操作） */

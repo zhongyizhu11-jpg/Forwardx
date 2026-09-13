@@ -178,24 +178,14 @@ export const usersRouter = router({
       .input(z.object({ userId: z.number() }))
       .mutation(async ({ input, ctx }) => {
         if (input.userId === ctx.user.id) throw new Error("不能删除当前登录账户");
-        /**
-         * 先收回分享给他的凭据，再删人。
-         *
-         * 顺序不能反：凭据是按 sharedUserId 找的，人删了就找不着了，那些凭据
-         * 会永远留在各个端口上 —— 界面上再没有入口能收回，而它照样能连。
-         */
-        const releasedHostIds = [
-          ...await db.releaseAllSharedCredentialsForUser(input.userId),
-          // 专属端口是面板替他开的，人没了端口也要收 —— 留着就是一台机器上
-          // 一个谁也管不着、却还在监听的端口。
-          ...await db.releaseAllDedicatedInboundsForUser(input.userId),
-        ];
+        await db.deleteUserPermissions(input.userId);
+        clearLinkAccessScopeCache();
+        // 收凭据、收专属端口这些都焊在 deleteUser 里了 —— 顺序不能反（凭据按
+        // sharedUserId 找，人删了就找不着），所以不该由每条删人路径各记一遍。
+        const { hostIds: releasedHostIds } = await db.deleteUser(input.userId);
         for (const hostId of releasedHostIds) {
           pushAgentRefresh(hostId, `proxy-share-user-deleted-${input.userId}`, { urgent: true });
         }
-        await db.deleteUserPermissions(input.userId);
-        clearLinkAccessScopeCache();
-        await db.deleteUser(input.userId);
         console.info(`[Users] Deleted user userId=${input.userId} ${actorLabel(ctx)}`);
         return { success: true };
       }),
@@ -253,13 +243,22 @@ export const usersRouter = router({
       .mutation(async ({ input, ctx }) => {
         const target = await db.getUserById(input.userId);
         const label = String((target as any)?.username || (target as any)?.name || "").trim();
+        let skipped: Awaited<ReturnType<typeof db.setProxyNodeSharesForUser>>["skipped"] = [];
         await withKeyedTaskLock(`user-resource-permissions:${input.userId}`, async () => {
-          const { hostIds } = await db.setProxyNodeSharesForUser(input.userId, input.nodeIds, { label });
+          const result = await db.setProxyNodeSharesForUser(input.userId, input.nodeIds, { label });
+          skipped = result.skipped;
           // 多凭据入站上分享/取消分享都改了那个端口的用户表，要重下发。
-          for (const hostId of hostIds) pushAgentRefresh(hostId, `proxy-node-share-user-${input.userId}`, { urgent: true });
+          for (const hostId of result.hostIds) pushAgentRefresh(hostId, `proxy-node-share-user-${input.userId}`, { urgent: true });
         });
-        console.info(`[Users] Updated proxy node shares userId=${input.userId} count=${input.nodeIds.length} ${actorLabel(ctx)}`);
-        return { success: true };
+        /**
+         * 有没有订阅权限也一并告诉界面。
+         *
+         * 分享本身会写进去，但没有这个权限的人打不开订阅管理、也拿不到订阅地址 ——
+         * 分享了等于没分享，而管理员从这个弹窗上完全看不出来。
+         */
+        const recipientCanUse = !!(target as any)?.allowProxySubscription || (target as any)?.role === "admin";
+        console.info(`[Users] Updated proxy node shares userId=${input.userId} count=${input.nodeIds.length} skipped=${skipped.length} ${actorLabel(ctx)}`);
+        return { success: true, skipped, recipientCanUse };
       }),
     /** 可分享的节点清单。不含凭据，只够在选择框里认出是哪个节点。 */
     proxyNodeShareOptions: adminProcedure.query(async () => {

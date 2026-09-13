@@ -1,0 +1,70 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import { shouldShowQueryFailureBanner } from "@/lib/queryFailureBanner";
+
+/**
+ * 这一页现在有几项数据没读到。
+ *
+ * 只数**页面上真的有人在看**的查询（observers > 0）：缓存里躺着的旧查询失败与否，
+ * 跟当前这一页没关系，数进来就会在别的页面弹出莫名其妙的提示。
+ *
+ * 登录失效那一类不在这里管 —— main.tsx 里已经直接跳登录页了，再提示一遍是多余的。
+ */
+export function useQueryFailureSignal() {
+  const queryClient = useQueryClient();
+  const [failureCount, setFailureCount] = useState(0);
+  const [failingSinceMs, setFailingSinceMs] = useState(0);
+  const [dismissedAtCount, setDismissedAtCount] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const sinceRef = useRef(0);
+
+  useEffect(() => {
+    const cache = queryClient.getQueryCache();
+    const recount = () => {
+      const count = cache.getAll().filter((query) => (
+        query.state.status === "error" && query.getObserversCount() > 0
+      )).length;
+      if (count <= 0) {
+        sinceRef.current = 0;
+        setFailingSinceMs(0);
+        setFailureCount(0);
+        // 恢复之后把「关过」也清掉：下一次是新的一批失败，该说还得说。
+        setDismissedAtCount(0);
+        return;
+      }
+      if (sinceRef.current === 0) {
+        sinceRef.current = Date.now();
+        setFailingSinceMs(sinceRef.current);
+      }
+      setFailureCount(count);
+    };
+    recount();
+    const unsubscribe = cache.subscribe(recount);
+    return unsubscribe;
+  }, [queryClient]);
+
+  // 失败要「持续一段时间」才提示，所以得有个心跳把时间推过那道门槛。
+  useEffect(() => {
+    if (failureCount <= 0) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    setNow(Date.now());
+    return () => window.clearInterval(timer);
+  }, [failureCount]);
+
+  const visible = useMemo(() => shouldShowQueryFailureBanner({
+    failureCount,
+    failingSinceMs,
+    dismissedAtCount,
+    now,
+  }), [failureCount, failingSinceMs, dismissedAtCount, now]);
+
+  return {
+    visible,
+    failureCount,
+    dismiss: () => setDismissedAtCount(failureCount),
+    retry: () => {
+      void queryClient.refetchQueries({ type: "active", stale: false });
+    },
+  };
+}

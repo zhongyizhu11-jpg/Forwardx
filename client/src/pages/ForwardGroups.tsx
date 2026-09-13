@@ -1,3 +1,4 @@
+import DataSectionError from "@/components/DataSectionError";
 import DashboardLayout from "@/components/DashboardLayout";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { LatencyRating } from "@/components/LatencyRating";
@@ -2294,6 +2295,20 @@ export function ForwardGroupsContent({
         )}
           <PersistentPagination pagination={groupPagination} itemName={paginationItemName} />
         </>
+      ) : groupPageQuery.error ? (
+        /* 这几类转发组读失败时都不能说「暂无」：照着它重建会和还在跑的那些撞端口。 */
+        <Card className="border-border/40 bg-card/60">
+          <CardContent className="p-0">
+            <DataSectionError
+              className="border-0 bg-transparent"
+              label={emptyTitle.replace(/^暂无/, "")}
+              error={groupPageQuery.error}
+              retrying={groupPageQuery.isFetching}
+              onRetry={() => { void groupPageQuery.refetch(); }}
+              minHeight="min-h-[260px]"
+            />
+          </CardContent>
+        </Card>
       ) : (
         <Card className="border-border/40 bg-card/60">
           <CardContent className="flex flex-col items-center justify-center py-20 text-muted-foreground">

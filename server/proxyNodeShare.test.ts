@@ -235,3 +235,36 @@ test("多个人可以拿到同一个节点", () => {
     }
   `);
 });
+
+test("挑到他自己的节点：不写进去，但要报上来，不能笼统说「已保存」", () => {
+  runInDatabase(String.raw`
+    const own = await makeNode(2, "bob 自己的", 443);
+    const other = await makeNode(1, "alice 的", 8443);
+
+    const result = await repo.setProxyNodeSharesForUser(2, [own, other]);
+    // 自己的节点本来就在他订阅里，再分享一遍客户端里会出现两条一模一样的线路。
+    assert.deepEqual(await repo.getProxyNodeIdsSharedToUser(2), [other]);
+    // 关键是这一条：原来这里是静默丢弃，管理员只能等租户来说「我这儿没有」才发现。
+    assert.equal(result.skipped.length, 1);
+    assert.equal(result.skipped[0].nodeId, own);
+    assert.equal(result.skipped[0].reason, "self");
+  `);
+});
+
+test("节点已经被删了：同样要报上来", () => {
+  runInDatabase(String.raw`
+    const nodeId = await makeNode(1, "HK-01", 443);
+    await repo.deleteProxyNode(nodeId);
+    const result = await repo.setProxyNodeSharesForUser(2, [nodeId]);
+    assert.equal(result.skipped.length, 1);
+    assert.equal(result.skipped[0].reason, "missing");
+  `);
+});
+
+test("全部生效时不报任何「没生效」", () => {
+  runInDatabase(String.raw`
+    const nodeId = await makeNode(1, "HK-01", 443);
+    const result = await repo.setProxyNodeSharesForUser(2, [nodeId]);
+    assert.deepEqual(result.skipped, []);
+  `);
+});

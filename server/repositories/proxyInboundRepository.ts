@@ -172,6 +172,17 @@ export async function getProxyInboundById(id: number) {
   return rows[0];
 }
 
+/** 一台主机上的全部入站（含停用的）。删主机时要连它们一起清掉。 */
+export async function getProxyInboundsByHost(hostId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(proxyInbounds)
+    .where(eq(proxyInbounds.hostId, Number(hostId)))
+    .orderBy(asc(proxyInbounds.id));
+}
+
 /** 一台主机上启用中的入站，用来生成它的 sing-box 配置。 */
 export async function getEnabledProxyInboundsByHost(hostId: number) {
   const db = await getDb();
@@ -210,7 +221,21 @@ export async function createProxyInbound(data: InsertProxyInbound) {
 export async function updateProxyInbound(id: number, data: Partial<InsertProxyInbound>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const previous = data.userId === undefined ? null : await getProxyInboundById(id);
   await db.update(proxyInbounds).set({ ...data, updatedAt: nowDate() } as any).where(eq(proxyInbounds.id, id));
+
+  /**
+   * 换归属时，把「原本分给新主人的那份共享凭据」收掉。
+   *
+   * 不收的话新主人的订阅里会出现**两条同一个端口的节点**：一条是端口本身的
+   * （现在归他了），一条是当初作为租户分给他的那份。客户端里就是两条一模一样、
+   * 只有凭据不同的线路，而界面上看不出哪条该留 —— 「自己的节点不用分享」这条
+   * 规矩在换归属之后就漏了。
+   */
+  const nextOwnerId = Number(data.userId || 0);
+  if (nextOwnerId > 0 && previous && Number((previous as any).userId) !== nextOwnerId) {
+    await releaseSharedInboundCredential(id, nextOwnerId);
+  }
 }
 
 /**
@@ -230,23 +255,48 @@ export async function deleteProxyInbound(id: number) {
   return { releasedNodes: derived.length };
 }
 
+/** 一个入站在流量归属上的全部依据：算谁的、该由哪台机器上报、还开着没有。 */
+export type ProxyInboundTrafficOwner = {
+  userId: number;
+  hostId: number;
+  isEnabled: boolean;
+};
+
 /**
- * 一批入站各自属于哪个用户。流量上报要靠它把字节数落到人头上。
+ * 一批入站的流量归属。上报进来的字节数要靠它落到人头上。
+ *
+ * 除了「是谁的」还要带上「在哪台机器上」：上报是拿 Agent token 认的，认的是**这
+ * 台机器**，而不是这个入站的主人。只查 userId 的话，任何一台装了 Agent 的机器都
+ * 能报别人机器上的入站号，把流量记到别的租户头上 —— 而租户的配额一旦记满，面板
+ * 会自动停掉他名下所有转发。所以调用方必须再比一次 hostId。
  *
  * 一次查完而不是逐条查：一台机器上可能有十几个入站，每次心跳都逐条查是白花的
  * 往返。查不到的 id 不出现在结果里，调用方按「无主流量」丢弃并计入 ignored。
  */
-export async function getProxyInboundOwnersByIds(ids: readonly number[]): Promise<Map<number, number>> {
-  const owners = new Map<number, number>();
+export async function getProxyInboundTrafficOwnersByIds(
+  ids: readonly number[],
+): Promise<Map<number, ProxyInboundTrafficOwner>> {
+  const owners = new Map<number, ProxyInboundTrafficOwner>();
   const wanted = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
   if (wanted.length === 0) return owners;
   const db = await getDb();
   if (!db) return owners;
   const rows = await db
-    .select({ id: proxyInbounds.id, userId: proxyInbounds.userId })
+    .select({
+      id: proxyInbounds.id,
+      userId: proxyInbounds.userId,
+      hostId: proxyInbounds.hostId,
+      isEnabled: proxyInbounds.isEnabled,
+    })
     .from(proxyInbounds)
     .where(inArray(proxyInbounds.id, wanted));
-  for (const row of rows as any[]) owners.set(Number(row.id), Number(row.userId));
+  for (const row of rows as any[]) {
+    owners.set(Number(row.id), {
+      userId: Number(row.userId),
+      hostId: Number(row.hostId),
+      isEnabled: (row as any).isEnabled !== false && Number((row as any).isEnabled) !== 0,
+    });
+  }
   return owners;
 }
 

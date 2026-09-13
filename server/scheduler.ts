@@ -4,6 +4,7 @@ import { appendPanelLog } from "./_core/panelLogger";
 import { parseSelfTestMeta } from "./agentRouteUtils";
 import { getEmailConfig, sendMail } from "./email";
 import { parseExpiryReminderDays, shouldSendExpiryReminder } from "../shared/expiryReminder";
+import { planHostRenewalReminder, planHostTrafficReminder } from "../shared/hostReminder";
 import { sendTelegramMessage } from "./telegramBot";
 import { recordTunnelHopTestResult } from "./tunnelHopTestState";
 import { recordHopTestResult } from "./hopTestState";
@@ -411,8 +412,85 @@ async function runEmailReminders() {
         }
       }
     }
+
+    await runHostEmailReminders(users as any[], now);
   } catch (error) {
     console.error("[Scheduler] Email reminder error:", error);
+  }
+}
+
+/**
+ * 主机的流量告警与续费提醒 —— 邮件这一路。
+ *
+ * 这两件事原来只走 Telegram，而界面上那两个开关又被绑死在「Telegram 机器人已配置」
+ * 上：没用 Telegram 的商家根本打不开，等于主机告警对他们不存在。机房流量跑超、
+ * 机器到期停机，他名下所有转发和落地节点会一起断，却没有任何人告诉他。
+ *
+ * 「该不该提醒」和 Telegram 那一路共用 shared/hostReminder，两个渠道不会算出不同的
+ * 结论；日标记前缀分开，所以两边各发一次，不会互相顶掉。
+ */
+async function runHostEmailReminders(users: any[], now: number) {
+  const usersById = new Map(users.map((user) => [Number(user.id), user]));
+  const hostRows = await db.getHosts();
+  const trafficHosts = (hostRows as any[]).filter((host) =>
+    !!host.telegramTrafficAlertEnabled && Number(host.trafficLimit || 0) > 0);
+  const renewalHosts = (hostRows as any[]).filter((host) => !!host.telegramRenewalReminderEnabled && !!host.stoppedAt);
+  if (trafficHosts.length === 0 && renewalHosts.length === 0) return;
+
+  if (trafficHosts.length > 0) {
+    const rows = await db.getHostTrafficSummary(trafficHosts.map((host) => Number(host.id)));
+    const trafficByHostId = new Map((rows as any[]).map((traffic) => [Number(traffic.hostId), traffic]));
+    for (const host of trafficHosts) {
+      const owner = usersById.get(Number(host.userId));
+      if (!owner?.email) continue;
+      const plan = planHostTrafficReminder(
+        host,
+        hostTrafficUsageBytes(trafficByHostId.get(Number(host.id)), host.trafficMeasureMode),
+      );
+      if (!plan.due) continue;
+      const key = dayKey(`emailReminder:hostTraffic:${host.id}`, owner.id);
+      if (await db.getSetting(key)) continue;
+      await sendMail({
+        to: owner.email,
+        subject: "ForwardX 主机流量提醒",
+        text: [
+          `主机：${host.name || `#${host.id}`}`,
+          `剩余约 ${plan.leftPercent}%`,
+          `已用：${formatBytesLocal(plan.usedBytes)} / ${formatBytesLocal(plan.limitBytes)}`,
+          `计算方式：${hostTrafficMeasureModeLabel(host.trafficMeasureMode)}`,
+          "",
+          "流量跑超之后这台机器上的转发和落地节点会一起受影响，请及时处理。",
+        ].join("\n"),
+      });
+      await db.setSetting(key, "sent");
+    }
+  }
+
+  for (const host of renewalHosts) {
+    const owner = usersById.get(Number(host.userId));
+    if (!owner?.email) continue;
+    const renewal = planHostRenewalReminder(host, now);
+    if (!renewal.due) continue;
+    // 带上到期时间戳：续了一期之后同样的提醒要能对新周期再发一次。
+    const key = dayKey(
+      `emailReminder:hostRenewal:${host.id}:${Math.floor(renewal.stoppedAtMs / 1000)}:${renewal.daysLeft}`,
+      owner.id,
+    );
+    if (await db.getSetting(key)) continue;
+    await sendMail({
+      to: owner.email,
+      subject: "ForwardX 主机续费提醒",
+      text: [
+        `主机：${host.name || `#${host.id}`}`,
+        renewal.daysLeft === 0
+          ? "今天到期停机。"
+          : `还有 ${renewal.daysLeft} 天到期停机。`,
+        `到期时间：${new Date(renewal.stoppedAtMs).toLocaleDateString("zh-CN")}`,
+        "",
+        "机器停了之后，它上面的转发和落地节点会一起断。",
+      ].join("\n"),
+    });
+    await db.setSetting(key, "sent");
   }
 }
 
@@ -490,13 +568,12 @@ async function runTelegramReminders() {
         const owner = usersById.get(Number(host.userId));
         if (!owner?.telegramId) continue;
 
-        const limit = Number(host.trafficLimit || 0);
         const traffic = trafficByHostId.get(Number(host.id));
-        const used = hostTrafficUsageBytes(traffic, host.trafficMeasureMode);
-        const leftPercent = Math.max(0, Math.round(((limit - used) / limit) * 100));
-        const hostTrafficReminderThreshold = Math.min(99, Math.max(1, Math.floor(Number(host.trafficAlertThresholdPercent || 20))));
+        // 「该不该提醒」统一由 shared/hostReminder 判定，邮件那一路用的是同一份。
+        const plan = planHostTrafficReminder(host, hostTrafficUsageBytes(traffic, host.trafficMeasureMode));
+        const { leftPercent, usedBytes: used, limitBytes: limit } = plan;
         const key = dayKey(`telegramReminder:hostTraffic:${host.id}`, owner.id);
-        if (leftPercent <= hostTrafficReminderThreshold && !(await db.getSetting(key))) {
+        if (plan.due && !(await db.getSetting(key))) {
           await sendTelegramMessage(
             owner.telegramId,
             [
@@ -517,11 +594,10 @@ async function runTelegramReminders() {
     for (const host of hostRenewalReminderHosts as any[]) {
       const owner = usersById.get(Number(host.userId));
       if (!owner?.telegramId) continue;
-      const stoppedAt = new Date(host.stoppedAt).getTime();
-      if (!Number.isFinite(stoppedAt)) continue;
-      const daysLeft = Math.ceil((stoppedAt - now) / (24 * 60 * 60 * 1000));
-      const reminderDays = Math.min(365, Math.max(1, Math.floor(Number(host.renewalReminderDays || 3))));
-      if (daysLeft < 0 || daysLeft > reminderDays) continue;
+      const renewal = planHostRenewalReminder(host, now);
+      if (!renewal.due) continue;
+      const stoppedAt = renewal.stoppedAtMs;
+      const daysLeft = renewal.daysLeft;
       // Include the expiry timestamp so a cycle extension can send the same
       // configured reminder again for the new billing period.
       const expiryKey = Math.floor(stoppedAt / 1000);
@@ -662,6 +738,19 @@ export function startScheduler() {
   });
   const historyCleanup = createNonOverlappingScheduledTask("history cleanup", async () => {
     await runTcpingCleanup();
+    /**
+     * 顺手清掉过期的「一天只做一次」标记。
+     *
+     * 到期提醒、流量提醒、主机续费提醒、余额自动续费都会往 system_settings 里写
+     * 一行日标记防重复，写完从来没人删 —— 五百人的面板跑一年能攒十万行，而
+     * getAllSettings() 是整表读，于是这些垃圾每次缓存过期都要重新加载一遍：
+     * 面板越用越慢，还找不到原因。去重窗口只有一天，留 7 天纯属保险。
+     */
+    const pruned = await db.pruneEphemeralSettings(7).catch((error) => {
+      console.warn("[Scheduler] Ephemeral settings prune failed:", error instanceof Error ? error.message : error);
+      return 0;
+    });
+    if (pruned > 0) console.log(`[Scheduler] Pruned ${pruned} stale reminder marker(s)`);
   }, { slowTaskMs: 15_000 });
   const forwardingMaintenance = createNonOverlappingScheduledTask("forward-group and DDNS maintenance", async () => {
     await runForwardGroupFailover();

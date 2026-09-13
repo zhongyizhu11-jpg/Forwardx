@@ -106,15 +106,26 @@ test("按归属分流：普通用户只看到自己的入站，管理员看到�
   `);
 });
 
-test("流量归属查得到每个端口是谁的", () => {
-  // 上报按端口进来，扣谁的套餐全靠这张映射 —— 错了就会扣到别人头上。
+test("流量归属带上机器和开关，不只是「是谁的」", () => {
+  /**
+   * 上报按端口进来，扣谁的套餐全靠这张映射 —— 错了就会扣到别人头上。
+   *
+   * 光有 userId 不够：上报是拿 Agent token 认的，认的是机器。调用方要拿 hostId
+   * 再比一次，才能挡住「别的机器报我的入站号」。
+   */
   runInDatabase(String.raw`
     const aliceInbound = await makeInbound(2, "alice 的端口", 10001);
     const bobInbound = await makeInbound(3, "bob 的端口", 10002);
 
-    const owners = await repo.getProxyInboundOwnersByIds([aliceInbound, bobInbound]);
-    assert.equal(owners.get(aliceInbound), 2);
-    assert.equal(owners.get(bobInbound), 3);
+    const owners = await repo.getProxyInboundTrafficOwnersByIds([aliceInbound, bobInbound]);
+    assert.equal(owners.get(aliceInbound).userId, 2);
+    assert.equal(owners.get(bobInbound).userId, 3);
+    assert.ok(Number(owners.get(aliceInbound).hostId) > 0, "得知道这个入站开在哪台机器上");
+    assert.equal(owners.get(aliceInbound).isEnabled, true);
+
+    await repo.updateProxyInbound(aliceInbound, { isEnabled: false });
+    const afterDisable = await repo.getProxyInboundTrafficOwnersByIds([aliceInbound]);
+    assert.equal(afterDisable.get(aliceInbound).isEnabled, false, "停用要看得出来，否则停用的端口还在计费");
   `);
 });
 

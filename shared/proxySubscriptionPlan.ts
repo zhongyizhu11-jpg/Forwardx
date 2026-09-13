@@ -8,6 +8,7 @@
  */
 
 import { getHostEntryAddress, type HostEntryAddressSource } from "./hostEntryAddress";
+import { proxyNodeBindingTruth } from "./proxyNodeAutoBind";
 import {
   buildProxyRulePlan,
   normalizeProxyRulePreset,
@@ -79,6 +80,11 @@ export type ProxySubscriptionRuleRow = {
   proxyNodeName?: unknown;
   isEnabled?: unknown;
   pendingDelete?: unknown;
+  /**
+   * 转发的目标。用来核对「绑定还算不算真的」—— 调用方没查这两列时不做判断。
+   */
+  targetIp?: unknown;
+  targetPort?: unknown;
 };
 
 export type ProxySubscriptionHostRow = HostEntryAddressSource & {
@@ -118,6 +124,8 @@ export type ProxySubscriptionEntry = {
    * 存在的名字 —— Clash 会拒绝整份配置，报的还是「订阅导入失败」这种毫无线索的错。
    */
   frontTemplateId: number;
+  /** 绑定已经对不上了（见 warnings）。仍然发出去，但界面上要标出来。 */
+  targetMismatch?: boolean;
   node: ProxyNode;
 };
 
@@ -127,9 +135,38 @@ export type ProxySubscriptionSkip = {
   reason: ProxySubscriptionSkipReason;
 };
 
+/**
+ * 「这条还在订阅里，但有件事你得知道」。
+ *
+ * 和 skipped 分开：那边是**没发出去**的，这边是**发出去了但可能不是你以为的那样**。
+ * 刻意不做成 skip —— 静默少一条节点正是这套面板反复踩过的坑，而这类判断又不可能
+ * 百分之百准（见 proxyNodeBindingTruth），所以宁可发出去 + 明确告警，让人自己判。
+ */
+export type ProxySubscriptionWarningReason = "target-mismatch" | "node-unused";
+
+export const PROXY_SUBSCRIPTION_WARNING_LABELS: Record<ProxySubscriptionWarningReason, string> = {
+  "target-mismatch": "这条转发的目标已经不是它绑的那个节点了",
+  "node-unused": "这个节点没进任何一份订阅",
+};
+
+export type ProxySubscriptionWarning = {
+  /** target-mismatch 是某条转发的问题；node-unused 跟转发无关，这里是 0。 */
+  ruleId: number;
+  ruleName: string;
+  reason: ProxySubscriptionWarningReason;
+  /** 这条转发现在指向哪里。node-unused 时为空。 */
+  targetText: string;
+  nodeId: number;
+  nodeName: string;
+  /** 节点自己的地址端口。 */
+  nodeText: string;
+};
+
 export type ProxySubscriptionPlan = {
   entries: ProxySubscriptionEntry[];
   skipped: ProxySubscriptionSkip[];
+  /** 老调用方可能不读这个字段，所以给默认空数组而不是可选。 */
+  warnings: ProxySubscriptionWarning[];
 };
 
 function text(value: unknown): string {
@@ -221,6 +258,26 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
 
   const entries: ProxySubscriptionEntry[] = [];
   const skipped: ProxySubscriptionSkip[] = [];
+  const warnings: ProxySubscriptionWarning[] = [];
+
+  /**
+   * 这个用户自己的转发入口都有哪些 `地址:端口`。
+   *
+   * 用来认出「串起来的两跳」：第一条转发的目标是第二条转发的入口，而绑定挂在第一条
+   * 上。这种拓扑下目标当然不等于节点地址，却是正常的 —— 不认出来就会对着一条好线路
+   * 报警。数据本来就都在手上，顺手算一遍。
+   */
+  // IPv6 字面量在转发那边可能带方括号、主机那边不一定带，两侧都去掉再比。
+  const entryKey = (address: unknown, port: unknown) =>
+    `${text(address).toLowerCase().replace(/^\[/, "").replace(/\]$/, "")}:${toPort(port)}`;
+  const ownForwardEntries = new Set<string>();
+  for (const rule of input.rules) {
+    if (bool(rule.pendingDelete)) continue;
+    const host = hostsById.get(Number(rule.hostId || 0));
+    const address = getHostEntryAddress(host);
+    const port = toPort(rule.sourcePort);
+    if (address && port) ownForwardEntries.add(entryKey(address, port));
+  }
 
   /**
    * 落地机自己的直连地址。
@@ -323,11 +380,40 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
       ruleName,
     });
 
+    /**
+     * 绑定还算不算真的。
+     *
+     * 对不上时**照发**，只是标出来 —— 静默少一条节点是这套面板反复踩过的坑，而这类
+     * 判断不可能百分之百准（串两跳、域名写法不同都会看起来像对不上）。但也不能不说：
+     * 订阅里这条节点带的是这个落地的凭据，而地址写的是转发入口；入口通向别处时，
+     * 客户端就会把这套凭据递给那台别的机器。
+     */
+    let targetMismatch = false;
+    const targetText = `${text(rule.targetIp)}:${toPort(rule.targetPort) || "-"}`;
+    const pointsAtOwnForwardEntry = ownForwardEntries.has(entryKey(rule.targetIp, rule.targetPort));
+    if (!pointsAtOwnForwardEntry
+      && proxyNodeBindingTruth(
+        { targetIp: rule.targetIp, targetPort: rule.targetPort },
+        { address: templateNode.address, port: templateNode.port },
+      ) === "mismatch") {
+      targetMismatch = true;
+      warnings.push({
+        ruleId,
+        ruleName,
+        reason: "target-mismatch",
+        targetText,
+        nodeId: templateId,
+        nodeText: `${templateNode.address}:${templateNode.port}`,
+        nodeName: templateNode.name || `节点 #${templateId}`,
+      });
+    }
+
     entries.push({
       ruleId,
       templateId,
       kind: "relay",
       frontTemplateId: frontIdOf(template),
+      ...(targetMismatch ? { targetMismatch: true } : {}),
       node: relayProxyNode(templateNode, { address, port, name }),
     });
   }
@@ -338,7 +424,34 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
     return { ...entry, frontTemplateId: template ? frontIdOf(template) : 0 };
   });
 
-  return { entries: [...directWithFront, ...entries], skipped };
+  /**
+   * 一个节点也可能**谁都没用它**：没开直连，又没有任何转发绑到它上面。
+   *
+   * 这种节点在「我的节点」里看着好好的，客户端里却根本不存在 —— 和当初「转发不绑节点
+   * 就不进订阅，而转发页上看不出」是同一个坑，只是从节点这一侧再犯一次。停用的不算：
+   * 那是他自己关的，行上本来就写着停用。
+   */
+  const emittedTemplates = new Set<number>([
+    ...directWithFront.map((entry) => Number(entry.templateId)),
+    ...entries.map((entry) => Number(entry.templateId)),
+  ]);
+  for (const template of input.templates) {
+    const templateId = Number(template.id);
+    if (emittedTemplates.has(templateId)) continue;
+    if (template.isEnabled !== undefined && !bool(template.isEnabled)) continue;
+    const node = proxyNodeFromTemplateRow(template);
+    warnings.push({
+      ruleId: 0,
+      ruleName: "",
+      reason: "node-unused",
+      targetText: "",
+      nodeId: templateId,
+      nodeName: node.name || `节点 #${templateId}`,
+      nodeText: node.address && node.port ? `${node.address}:${node.port}` : "",
+    });
+  }
+
+  return { entries: [...directWithFront, ...entries], skipped, warnings };
 }
 
 /**

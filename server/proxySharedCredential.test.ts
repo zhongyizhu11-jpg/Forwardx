@@ -352,3 +352,26 @@ test("管理员的端口不受这条影响", () => {
     assert.equal(Number(list[0].id), inboundId);
   `);
 });
+
+test("换归属之后，新主人订阅里不会出现两条同一个端口的节点", () => {
+  runInDatabase(String.raw`
+    // 先把 alice 的端口分给 bob，再把这个端口整个转给 bob。
+    const { inboundId, nodeId } = await makeInbound("vless", 443);
+    await shares.setProxyNodeSharesForUser(2, [nodeId], { label: "bob" });
+    assert.equal((await shares.getProxyNodesForSubscription(2)).length, 1);
+
+    await inbounds.updateProxyInbound(inboundId, { userId: 2 });
+    await inbounds.syncProxyNodeFromInbound(inboundId);
+
+    /**
+     * 不收掉那份共享凭据的话，bob 的客户端里会出现两条一模一样、只有凭据不同的
+     * 线路：一条是端口本身的（现在归他了），一条是当初作为租户分给他的那份。
+     * 界面上看不出哪条该留 —— 「自己的节点不用分享」这条规矩在换归属之后漏了。
+     */
+    const mine = await shares.getProxyNodesForSubscription(2);
+    assert.equal(mine.length, 1, "同一个端口只该有一条");
+    assert.equal((await shares.getProxyNodeIdsSharedToUser(2)).length, 0, "分享行也要一起清掉");
+    // 原主人那边已经没有这个端口了。
+    assert.equal((await shares.getProxyNodesForSubscription(1)).length, 0);
+  `);
+});

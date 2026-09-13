@@ -1067,6 +1067,9 @@ export const paymentOrders = table("payment_orders", {
   qrCode: text("qrCode"),
   orderType: varchar("orderType", { length: 32 }).notNull().default("balance"), // balance | plan | test
   planId: int("planId"),
+  // 买的是哪一档周期。下单和收款之间隔着一次跳转，不存下来这个选择就丢了 ——
+  // 回调回来只知道「买了这个套餐」，开出来的就会是默认档。
+  planDurationDays: int("planDurationDays"),
   subscriptionId: int("subscriptionId"),
   discountCodeId: int("discountCodeId"),
   discountConsumed: boolean("discountConsumed").notNull().default(false),
@@ -1119,6 +1122,25 @@ export const subscriptionPlans = table("subscription_plans", {
 });
 export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
 export type InsertSubscriptionPlan = typeof subscriptionPlans.$inferInsert;
+
+/**
+ * 套餐的多周期定价：一个套餐挂一组「周期 → 价格」。
+ *
+ * 空表示这个套餐只有它自己那一档（subscription_plans 上的 durationDays /
+ * priceCents），存量数据全是这样 —— 所以这张表加进来不需要迁移任何东西。
+ * 有行时以这张表为准，套餐主表上那两列退化成「默认档」，兑换码、后台分配、
+ * 自动续费这些老路径照旧读它。
+ */
+export const subscriptionPlanPrices = table("subscription_plan_prices", {
+  id: serial("id"),
+  planId: int("planId").notNull(),
+  durationDays: int("durationDays").notNull(),
+  priceCents: bigint("priceCents", { mode: "number" }).notNull().default(0),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type SubscriptionPlanPrice = typeof subscriptionPlanPrices.$inferSelect;
+export type InsertSubscriptionPlanPrice = typeof subscriptionPlanPrices.$inferInsert;
 
 export const subscriptionPlanHosts = table("subscription_plan_hosts", {
   id: serial("id"),
@@ -1183,6 +1205,9 @@ export const userSubscriptions = table("user_subscriptions", {
   source: varchar("source", { length: 32 }).notNull().default("admin"), // admin | payment | balance | redeem
   paymentOrderNo: text("paymentOrderNo"),
   planSnapshot: text("planSnapshot"),
+  // 这条订阅当初按哪一档买的。自动续费要按同一档续 —— 按月付的人不该某天
+  // 醒来发现被扣了一年的钱。
+  durationDays: int("durationDays"),
   portRangeStart: int("portRangeStart"),
   portRangeEnd: int("portRangeEnd"),
   nextTrafficResetAt: epoch("nextTrafficResetAt"),

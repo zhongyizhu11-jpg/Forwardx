@@ -610,6 +610,20 @@ export async function deleteHost(id: number) {
   if (!db) return;
   const before = await getHostById(id).catch(() => undefined);
   await repairPortForwardRuleHostReferences();
+  /**
+   * 这台机器上的落地入站要连同派生节点一起删。
+   *
+   * 不删的话它们全都留着：入站行指向一台已经不存在的主机（「新建节点」那一段还
+   * 会把它列出来，地址解析不出来），派生节点继续待在订阅里 —— 租户的客户端里多
+   * 一条永远连不上的线路，而分享记录还在，管理端看上去一切正常。
+   *
+   * 走 deleteProxyInbound 而不是直接 delete：它会顺带删掉派生节点，而删节点那一步
+   * 又会解绑引用它的转发规则、清掉分享行。这三件事漏一件都会留下一处对不上。
+   */
+  const { getProxyInboundsByHost, deleteProxyInbound } = await import("./proxyInboundRepository");
+  for (const inbound of await getProxyInboundsByHost(id)) {
+    await deleteProxyInbound(Number((inbound as any).id));
+  }
   await db.delete(forwardRules).where(eq(forwardRules.hostId, id));
   await db.delete(forwardRuleTunnelExits).where(eq(forwardRuleTunnelExits.exitHostId, id));
   await db.delete(agentTokens).where(eq(agentTokens.hostId, id));

@@ -71,6 +71,8 @@ import { Badge } from "./ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { useQueryFailureSignal } from "@/hooks/useQueryFailureSignal";
+import { queryFailureBannerText } from "@/lib/queryFailureBanner";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { renderMixedHtml } from "@/lib/htmlContent";
@@ -390,6 +392,7 @@ function DashboardLayoutContent({
   const isDesktopCollapsed = !isMobile && state === "collapsed";
   const isAdmin = user?.role === "admin";
   const utils = trpc.useUtils();
+  const queryFailure = useQueryFailureSignal();
   const { resolvedTheme, setTheme } = useTheme();
   const [deferBackgroundQueries, setDeferBackgroundQueries] = useState(true);
   useEffect(() => {
@@ -1652,6 +1655,25 @@ function DashboardLayoutContent({
           </div>
         )}
         <main data-mobile-main="true" className="flex-1 px-3 pb-3 pt-3 sm:p-6">
+          {/*
+            兜底的「没读到」提示。
+            各个列表自己会画失败态，但一页上挂着十几个查询，不可能每个都单独接一遍；
+            面板重启或者网络抖动时好几个会一起失败。这条横幅让人知道「现在看到的不完整」，
+            而不是把空白当成事实。只在持续失败几秒后才出现，免得轮询抖一下就闪。
+          */}
+          {queryFailure.visible ? (
+            <div className="mb-4 flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive/[0.06] px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-w-0">{queryFailureBannerText(queryFailure.failureCount)}</p>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button size="sm" variant="outline" onClick={queryFailure.retry}>
+                  全部重试
+                </Button>
+                <Button size="sm" variant="ghost" onClick={queryFailure.dismiss}>
+                  知道了
+                </Button>
+              </div>
+            </div>
+          ) : null}
           {expiryNoticeVisible ? (
             <div className="mb-4 flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
               <p className="min-w-0">

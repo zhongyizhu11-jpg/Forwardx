@@ -8,6 +8,7 @@ import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import DataSectionError from "@/components/DataSectionError";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { planResourceText } from "@/lib/planDisplay";
 import { pollingInterval } from "@/lib/polling";
@@ -18,6 +19,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { BILLING_DATE_TIME_FORMAT_OPTIONS } from "@shared/billingTime";
+import { planDurationLabel } from "@shared/planPricing";
 
 function money(cents?: number | null, currency = "CNY") {
   return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((Number(cents) || 0) / 100);
@@ -103,7 +105,13 @@ export default function Subscriptions() {
   const { data: paymentMethods = [] } = trpc.payment.availableMethods.useQuery(undefined, {
     enabled: !!storeStatus?.enabled,
   });
-  const { data: subscriptions = [], isLoading } = trpc.plans.mySubscriptions.useQuery();
+  const {
+    data: subscriptions = [],
+    isLoading,
+    error: subscriptionsError,
+    isFetching: subscriptionsFetching,
+    refetch: refetchSubscriptions,
+  } = trpc.plans.mySubscriptions.useQuery();
   const { data: userTraffic = [] } = trpc.dashboard.userTraffic.useQuery(undefined, {
     refetchInterval: pollingInterval("slow"),
     placeholderData: (previousData) => previousData,
@@ -226,30 +234,43 @@ export default function Subscriptions() {
     if (!renewingSub?.planId) return;
     const planId = Number(renewingSub.planId);
     const code = billingFeatures?.discountEnabled ? discountCode.trim() || undefined : undefined;
+    /**
+     * 续**当初买的那一档**。
+     *
+     * 不传的话服务端按默认档算：买年付的人点一下「续费」就变成了续一个月。
+     * renewDurationDays / renewPriceCents 都由服务端算好（那一档被下架时它会自己
+     * 退回默认档），前端不重算 —— 这是要扣钱的数。
+     */
+    const durationDays = Number(renewingSub.renewDurationDays || 0) || undefined;
     if (payMode === "balance") {
       renewWithBalance.mutate({
         planId,
         subscriptionId: Number(renewingSub.id),
+        durationDays,
         discountCode: code,
       });
       return;
     }
     createOrder.mutate({
-      amount: Number(renewingSub.priceCents || 0) / 100,
+      amount: renewPriceCents / 100,
       paymentType,
       planId,
+      planDurationDays: durationDays,
       subscriptionId: Number(renewingSub.id),
       discountCode: code,
       returnPath: "/subscriptions",
     });
   };
 
+
   const selectedPrice = Number(selected?.addon?.priceCents || 0);
   const balanceCents = wallet?.balanceCents == null ? null : Number(wallet.balanceCents);
   const balanceReady = !walletLoading && balanceCents !== null;
   const balance = balanceCents ?? 0;
   const balanceEnough = balanceReady && balance >= selectedPrice;
-  const renewingPrice = Number(renewingSub?.priceCents || 0);
+  /** 续费原价：按当初买的那一档，不是套餐主表的默认价。 */
+  const renewPriceCents = Number(renewingSub?.renewPriceCents ?? renewingSub?.priceCents ?? 0);
+  const renewingPrice = renewPriceCents;
   const renewFinalAmountCents = Number(discountPreview?.finalAmountCents ?? renewingPrice);
   const renewBalanceEnough = balanceReady && balance >= renewFinalAmountCents;
 
@@ -303,7 +324,20 @@ export default function Subscriptions() {
           <DataSectionLoading label="正在加载订阅数据" />
         )}
 
-        {!isLoading && visibleSubscriptions.length === 0 && (
+        {/*
+          「还没有套餐记录」是一个结论，读取失败时我们并不知道它成不成立 —— 而这句话会
+          让一个刚买过套餐的人以为订单丢了。
+        */}
+        {!isLoading && subscriptionsError && subscriptions.length === 0 && (
+          <DataSectionError
+            label="你的套餐"
+            error={subscriptionsError}
+            retrying={subscriptionsFetching}
+            onRetry={() => { void refetchSubscriptions(); }}
+          />
+        )}
+
+        {!isLoading && !subscriptionsError && visibleSubscriptions.length === 0 && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Package className="h-5 w-5" /> 暂无可显示订阅</CardTitle>
@@ -487,6 +521,10 @@ export default function Subscriptions() {
               </DialogTitle>
               <DialogDescription>
                 再次购买 {renewingSub?.planName || "当前套餐"} 会延长当前订阅有效期。
+                {/* 说清楚续的是哪一档：买年付的人得看得见这次续的还是一年。 */}
+                {renewingSub?.renewDurationDays
+                  ? `本次续期 ${planDurationLabel(Number(renewingSub.renewDurationDays))}。`
+                  : ""}
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4">

@@ -60,6 +60,7 @@ import { SlidingTabsList, type SlidingTabItem } from "@/components/ui/sliding-ta
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import DataSectionError from "@/components/DataSectionError";
 import { countryFeatureHasCode, normalizeCountryCode } from "@/lib/countryFeatures";
 import { normalizeForwardProtocolSettings } from "@shared/forwardTypes";
 import { useUrlTab } from "@/hooks/useUrlTab";
@@ -1456,7 +1457,15 @@ function HostsContent() {
   );
   const ddnsProviderEnabled = Boolean(systemSettings?.ddns?.enabled && systemSettings?.ddns?.provider && systemSettings.ddns.provider !== "disabled");
   const telegramBotReady = Boolean(systemSettings?.telegram?.enabled && systemSettings?.telegram?.configured);
-  const telegramBotSettingsLoaded = Boolean(systemSettings?.telegram);
+  /**
+   * 这两个提醒会从哪儿发出去。
+   *
+   * 按**实际配置了什么**说话：两个都没配就直说没有渠道，而不是让人开了开关之后
+   * 干等一条永远不会来的提醒。
+   */
+  const reminderChannelHint = telegramBotReady
+    ? "会通过 Telegram 和邮件发给这台机器的主人（按各自配置）。"
+    : "会通过邮件发给这台机器的主人；配好 Telegram 机器人后也会走 TG。";
   const upgradingHosts = useRef<Map<number, string | null>>(new Map());
 
   const [showDialog, setShowDialog] = useState(false);
@@ -1620,17 +1629,8 @@ function HostsContent() {
   const [form, setForm] = useState<HostFormData>(defaultFormData);
   const watchMetricsMutation = trpc.hosts.watchMetrics.useMutation();
 
-  useEffect(() => {
-    if (!telegramBotSettingsLoaded || telegramBotReady) return;
-    setForm((current) => {
-      if (!current.telegramTrafficAlertEnabled && !current.telegramRenewalReminderEnabled) return current;
-      return {
-        ...current,
-        telegramTrafficAlertEnabled: false,
-        telegramRenewalReminderEnabled: false,
-      };
-    });
-  }, [telegramBotSettingsLoaded, telegramBotReady]);
+  // 原来这里在「TG 没配好」时把两个提醒开关强制关掉 —— 那是把「没有 TG」当成了
+  // 「不需要提醒」。邮件那一路现在也会发，开关只表示这台机器要不要提醒。
 
   const handleViewModeChange = (mode: HostViewMode) => {
     setViewMode((current) => {
@@ -1820,9 +1820,9 @@ function HostsContent() {
       billingMonth: clampBillingMonth(host.billingMonth),
       billingDay: clampBillingDay(host.billingDay),
       expiryHandling: normalizeHostExpiryAction(host.expiryHandling),
-      telegramTrafficAlertEnabled: (!telegramBotSettingsLoaded || telegramBotReady) && !!host.telegramTrafficAlertEnabled,
+      telegramTrafficAlertEnabled: !!host.telegramTrafficAlertEnabled,
       trafficAlertThresholdPercent: clampTrafficAlertThresholdPercent(host.trafficAlertThresholdPercent),
-      telegramRenewalReminderEnabled: (!telegramBotSettingsLoaded || telegramBotReady) && !!host.telegramRenewalReminderEnabled,
+      telegramRenewalReminderEnabled: !!host.telegramRenewalReminderEnabled,
       renewalReminderDays: clampRenewalReminderDays(host.renewalReminderDays),
       trafficAutoReset: !!host.trafficAutoReset,
       trafficResetDay: clampMonthlyResetDay(host.trafficResetDay || 1),
@@ -1908,7 +1908,6 @@ function HostsContent() {
     const trafficLimitBytes = Math.round(trafficLimitGb * HOST_TRAFFIC_GB_BYTES);
     const trafficAlertThresholdPercent = clampTrafficAlertThresholdPercent(form.trafficAlertThresholdPercent);
     const renewalReminderDays = clampRenewalReminderDays(form.renewalReminderDays);
-    const canSaveTelegramReminder = telegramBotSettingsLoaded ? telegramBotReady : true;
     const trafficConfigPayload = user?.role === "admin"
       ? {
           purchasedAt: purchasedAt ? purchasedAt.toISOString() : null,
@@ -1919,9 +1918,9 @@ function HostsContent() {
           billingMonth: clampBillingMonth(form.billingMonth),
           billingDay: clampBillingDay(form.billingDay),
           expiryHandling: normalizeHostExpiryAction(form.expiryHandling),
-          telegramTrafficAlertEnabled: canSaveTelegramReminder && form.telegramTrafficAlertEnabled,
+          telegramTrafficAlertEnabled: form.telegramTrafficAlertEnabled,
           trafficAlertThresholdPercent,
-          telegramRenewalReminderEnabled: canSaveTelegramReminder && form.telegramRenewalReminderEnabled,
+          telegramRenewalReminderEnabled: form.telegramRenewalReminderEnabled,
           renewalReminderDays,
           trafficAutoReset: form.trafficAutoReset,
           trafficResetDay: clampMonthlyResetDay(form.trafficResetDay),
@@ -2811,6 +2810,17 @@ function HostsContent() {
       ) : (
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardContent className="p-0">
+            {/* 「暂无主机」是结论；读失败时我们并不知道。别让人以为机器掉没了。 */}
+            {hostPageQuery.error && !hostPageQuery.data ? (
+            <DataSectionError
+              className="border-0 bg-transparent"
+              label="主机列表"
+              error={hostPageQuery.error}
+              retrying={hostPageQuery.isFetching}
+              onRetry={() => { void hostPageQuery.refetch(); }}
+              minHeight="min-h-[260px]"
+            />
+            ) : (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <div className="h-16 w-16 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
                 <Server className="h-8 w-8 opacity-40" />
@@ -2820,6 +2830,7 @@ function HostsContent() {
                 {isHostTextFiltered ? "调整筛选内容或清空搜索" : isHostGroupFiltered ? "可以在分组管理中为该分组添加主机" : user?.role === "admin" ? "点击添加主机生成 Agent 安装命令" : "请联系管理员添加主机"}
               </p>
             </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -3388,9 +3399,13 @@ function HostsContent() {
                       <div className="mt-2.5 flex min-h-9 flex-col gap-2 rounded-md bg-muted/35 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0 space-y-0.5">
                           <Label className="text-sm font-medium">流量耗尽提醒</Label>
-                          <p className="text-xs text-muted-foreground">
-                            {telegramBotReady ? "开启后通过 TG 机器人发送提醒。" : "请先在系统设置内配置并启用 TG 机器人。"}
-                          </p>
+                          {/*
+                            原来这个开关被绑死在「TG 机器人已配置」上，没用 Telegram 的
+                            商家根本打不开 —— 机房流量跑超、机器停机，他名下所有转发和
+                            落地节点一起断，却没有任何人告诉他。现在邮件那一路也会发，
+                            开关只管「这台机器要不要提醒」，走哪个渠道看你配了什么。
+                          */}
+                          <p className="text-xs text-muted-foreground">{reminderChannelHint}</p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <div className="flex h-8 w-20 overflow-hidden rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
@@ -3406,8 +3421,7 @@ function HostsContent() {
                             <span className="flex h-8 shrink-0 items-center border-l border-border/60 bg-muted/50 px-1.5 text-sm text-muted-foreground">%</span>
                           </div>
                           <Switch
-                            checked={telegramBotReady && form.telegramTrafficAlertEnabled}
-                            disabled={!telegramBotReady}
+                            checked={form.telegramTrafficAlertEnabled}
                             onCheckedChange={(checked) => setForm({ ...form, telegramTrafficAlertEnabled: checked })}
                           />
                         </div>
@@ -3416,7 +3430,7 @@ function HostsContent() {
                         <div className="min-w-0 space-y-0.5">
                           <Label className="text-sm font-medium">续费提醒</Label>
                           <p className="text-xs text-muted-foreground">
-                            {telegramBotReady ? "机器剩余日期不足指定天数时通过 TG 机器人提醒。" : "请先在系统设置内配置并启用 TG 机器人。"}
+                            剩余天数不足时提醒。{reminderChannelHint}
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
@@ -3433,8 +3447,7 @@ function HostsContent() {
                             <span className="flex h-8 shrink-0 items-center border-l border-border/60 bg-muted/50 px-2 text-sm text-muted-foreground">天</span>
                           </div>
                           <Switch
-                            checked={telegramBotReady && form.telegramRenewalReminderEnabled}
-                            disabled={!telegramBotReady}
+                            checked={form.telegramRenewalReminderEnabled}
                             onCheckedChange={(checked) => setForm({ ...form, telegramRenewalReminderEnabled: checked })}
                           />
                         </div>

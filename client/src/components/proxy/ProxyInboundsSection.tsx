@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import DataSectionError from "@/components/DataSectionError";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -647,6 +648,17 @@ export default function ProxyInboundsSection({
           <CardContent hidden={collapsed} className="pt-0">
             {inboundsQuery.isLoading || extraLoading ? (
               <DataSectionLoading />
+            ) : inboundsQuery.error && totalRowCount === 0 ? (
+              /*
+                「还没有节点」是一句结论。读失败还说这句，人会照着去新建一个 ——
+                建出来才发现原来的那些一直都在。
+              */
+              <DataSectionError
+                label="你的节点"
+                error={inboundsQuery.error}
+                retrying={inboundsQuery.isFetching}
+                onRetry={() => { void inboundsQuery.refetch(); }}
+              />
             ) : totalRowCount === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
                 还没有节点。可以让面板在你自己的机器上开一个（REALITY 不需要域名和证书），

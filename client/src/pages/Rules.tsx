@@ -47,6 +47,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import DataSectionError from "@/components/DataSectionError";
 import { trpc } from "@/lib/trpc";
 import { pollingInterval } from "@/lib/polling";
 import { handoffManualTestResult } from "@/lib/manualTestCache";
@@ -98,6 +99,7 @@ import {
   Loader2,
   Shuffle,
   AlertCircle,
+  AlertTriangle,
   Copy,
   Download,
   Upload,
@@ -2442,12 +2444,25 @@ function RulesContent() {
       resetForm();
       const msg = data.sourcePort ? `规则创建成功，源端口: ${data.sourcePort}` : "规则创建成功";
       toast.success(msg);
+      /**
+       * 面板替人多做了一步，就得说出来。
+       *
+       * 目标正好是他自己的落地节点时会自动加进订阅 —— 不说的话，他下次在客户端里
+       * 看到一条没印象的线路，只会以为是别处出了错。
+       */
+      if ((data as any).autoBoundProxyNodeName) {
+        utils.proxySubscriptions.preview.invalidate();
+        utils.proxySubscriptions.listNodes.invalidate();
+        toast.info(`已顺手加进订阅：${(data as any).autoBoundProxyNodeName}`, {
+          description: "目标正好是你的落地节点。不想要的话，去订阅管理的「预览订阅」里关掉。",
+        });
+      }
     },
     onError: (err) => toast.error(err.message || "创建失败"),
   });
 
   const updateMutation = trpc.rules.update.useMutation({
-    onSuccess: (_data, variables) => {
+    onSuccess: (data, variables) => {
       invalidateRuleProbeStatuses([Number(variables.id)]);
       utils.rules.list.invalidate();
       utils.rules.listPage.invalidate();
@@ -2456,6 +2471,29 @@ function RulesContent() {
       setShowDialog(false);
       resetForm();
       toast.success("规则更新成功");
+      /**
+       * 改目标会连带改动订阅里那条线路 —— 这种事不能悄悄发生。
+       *
+       * 解绑那一条尤其要说：不说的话，客户端里一条线路就这么没了，而他只改了个目标。
+       */
+      const binding = (data as any)?.proxyNodeBinding;
+      if (binding) {
+        utils.proxySubscriptions.preview.invalidate();
+        utils.proxySubscriptions.listNodes.invalidate();
+        if (binding.kind === "released") {
+          toast.info(`已从订阅里摘掉「${binding.previousName}」这条线路`, {
+            description: "目标换了，不再通向那个落地节点。留着的话客户端会拿着它的凭据去连新目标。",
+          });
+        } else if (binding.kind === "rebound") {
+          toast.info(`订阅里这条线路已改成「${binding.name}」`, {
+            description: `新目标正好是它。原来绑的是「${binding.previousName}」。`,
+          });
+        } else if (binding.kind === "bound") {
+          toast.info(`已顺手加进订阅：${binding.name}`, {
+            description: "新目标正好是你的落地节点。不想要的话，去订阅管理的「订阅内容」里关掉。",
+          });
+        }
+      }
     },
     onError: (err) => toast.error(err.message || "更新失败"),
   });
@@ -2859,6 +2897,48 @@ function RulesContent() {
     (tunnels || []).forEach((tunnel: any) => map.set(Number(tunnel.id), tunnel));
     return map;
   }, [tunnels]);
+  /**
+   * 这条转发在不在客户端订阅里。
+   *
+   * 订阅和转发是同一件事的两面，可是这一页原来完全不提订阅：一条转发被订阅引用着，
+   * 在这里看不出来 —— 改目标、停用、删掉，都会让别人客户端里的那条线路跟着变，
+   * 而操作的人毫不知情。所以在行上标一个字，并说清楚点它会去哪。
+   */
+  const subscriptionPermission = trpc.proxySubscriptions.permission.useQuery(undefined, {
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const subscriptionAllowed = !!subscriptionPermission.data?.allowed;
+  const proxyNodesQuery = trpc.proxySubscriptions.listNodes.useQuery(undefined, {
+    enabled: subscriptionAllowed,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const proxyNodeNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const node of (proxyNodesQuery.data || []) as any[]) {
+      map.set(Number(node.id), String(node.name || ""));
+    }
+    return map;
+  }, [proxyNodesQuery.data]);
+  /**
+   * 绑定已经对不上的那些转发。
+   *
+   * 判断放在服务端（它才有全部规则和主机地址，能认出「串两跳」这种正常拓扑不误报），
+   * 这里只把结论标到行上 —— 要改目标或者换节点的人在这一页，提示也该在这一页。
+   */
+  const subscriptionPreviewQuery = trpc.proxySubscriptions.preview.useQuery(undefined, {
+    enabled: subscriptionAllowed,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const driftedRuleIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const item of (subscriptionPreviewQuery.data?.warnings || []) as any[]) {
+      if (item?.reason === "target-mismatch") ids.add(Number(item.ruleId));
+    }
+    return ids;
+  }, [subscriptionPreviewQuery.data]);
   const hostById = useMemo(() => {
     const map = new Map<number, any>();
     (hosts || []).forEach((host: any) => map.set(Number(host.id), host));
@@ -5929,6 +6009,48 @@ function RulesContent() {
       </Badge>
     );
   };
+  /**
+   * 「在订阅里」这一小块。没绑就什么都不显示 —— 大多数转发跟订阅无关，
+   * 给每一行都挂个「未加入订阅」只是噪音。
+   */
+  const renderSubscriptionBadge = (rule: any) => {
+    if (!subscriptionAllowed) return null;
+    const nodeId = Number(rule?.proxyNodeId || 0);
+    if (!nodeId) return null;
+    const nodeName = proxyNodeNameById.get(nodeId) || "落地节点";
+    const visible = rule?.proxyNodeVisible !== false;
+    /*
+      绑定和现实对不上了：这条线路还在订阅里，但客户端会拿着「nodeName」那个落地的
+      凭据去连现在这个目标。比「少一条线路」严重，所以用警示色，别混在正常的订阅角标里。
+    */
+    if (driftedRuleIds.has(Number(rule?.id || 0))) {
+      return (
+        <Badge
+          variant="outline"
+          className="w-fit whitespace-nowrap border-amber-500/40 text-[10px] text-amber-600 dark:text-amber-400"
+          title={`这条转发的目标已经不是它绑的「${nodeName}」了。订阅里那条线路还在，但客户端连过去是拿着「${nodeName}」的凭据去连新目标 —— 把目标改回去，或者在这里重新选节点。`}
+        >
+          <AlertTriangle className="mr-1 h-3 w-3" />
+          订阅·指向已变
+        </Badge>
+      );
+    }
+    return (
+      <Badge
+        variant="outline"
+        className={`w-fit whitespace-nowrap text-[10px] ${
+          visible ? "border-sky-500/30 text-sky-600 dark:text-sky-400" : "border-muted-foreground/30 text-muted-foreground"
+        }`}
+        title={visible
+          ? `这条转发以「${nodeName}」的身份出现在你的订阅里。改目标、停用或删掉它，客户端里那条线路会跟着变。`
+          : `已绑定「${nodeName}」，但设成了不进订阅。转发照常跑，客户端里看不到它。`}
+      >
+        <Zap className="mr-1 h-3 w-3" />
+        {visible ? "订阅" : "订阅已隐藏"}
+      </Badge>
+    );
+  };
+
   const renderRouteBadge = (rule: any, compactRow = false) => {
     const tunnel = rule.forwardType === "gost" && rule.tunnelId ? tunnelById.get(Number(rule.tunnelId)) : null;
     const group = rule.forwardGroupId ? forwardGroupById.get(Number(rule.forwardGroupId)) : null;
@@ -5971,20 +6093,23 @@ function RulesContent() {
         )}
       </Badge>
     );
+    const subscriptionBadge = renderSubscriptionBadge(rule);
     if (rule.forwardGroupId) {
       return (
         <div className={`flex min-w-0 items-center gap-1 ${compactRow ? "overflow-hidden" : "flex-wrap"}`}>
           {badge}
           {renderForwardToolBadge(rule, group)}
           {warningBadge}
+          {subscriptionBadge}
         </div>
       );
     }
     if (!tunnel) {
-      return warningBadge ? (
+      return warningBadge || subscriptionBadge ? (
         <div className={`flex min-w-0 items-center gap-1 ${compactRow ? "overflow-hidden" : "flex-wrap"}`}>
           {badge}
           {warningBadge}
+          {subscriptionBadge}
         </div>
       ) : badge;
     }
@@ -7109,7 +7234,20 @@ function RulesContent() {
       ) : (
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardContent className="p-0">
-            {(rules && rules.length > 0) || ruleScopeTotal > 0 || hasActiveRuleFilter ? (
+            {/*
+              列表没读到时不能画成「暂无转发规则」。转发页是这套面板的主页，那句话意味着
+              「你的转发全没了」—— 看到的人第一反应是去重建，而实际上一条都没少。
+            */}
+            {rulePageQuery.error && !rules ? (
+              <DataSectionError
+                className="border-0 bg-transparent"
+                label="转发规则"
+                error={rulePageQuery.error}
+                retrying={rulePageQuery.isFetching}
+                onRetry={() => { void rulePageQuery.refetch(); }}
+                minHeight="min-h-[260px]"
+              />
+            ) : (rules && rules.length > 0) || ruleScopeTotal > 0 || hasActiveRuleFilter ? (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <Filter className="h-10 w-10 mb-3 opacity-30" />
                 <p className="text-base font-medium">没有匹配的规则</p>

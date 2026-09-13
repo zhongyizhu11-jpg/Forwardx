@@ -111,19 +111,29 @@ export const billingRouter = router({
       planId: z.number().int().positive(),
       subscriptionId: z.number().int().positive().optional(),
       discountCode: z.string().trim().max(64).optional(),
+      /** 买哪一档周期。不传 = 默认档，老客户端照旧能用。 */
+      durationDays: z.number().int().positive().max(3650).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const plan = await db.getSubscriptionPlanById(input.planId);
       if (!plan || !plan.isActive || !plan.isStoreVisible) throw new Error("套餐不可购买");
+      // 折扣按**选中那一档**的价格预览，否则年付的单会按月付价算折扣。
+      const { option } = await db.resolvePlanPricing(input.planId, input.durationDays ?? null);
       let discountCodeId: number | null = null;
       if (input.discountCode) {
         if ((await db.getSetting("discountEnabled")) === "false") throw new Error("折扣码功能已关闭");
-        const preview = await db.previewDiscount(input.discountCode, Number(plan.priceCents || 0), input.planId);
+        const preview = await db.previewDiscount(input.discountCode, Number(option.priceCents || 0), input.planId);
         discountCodeId = preview.discountCodeId;
       }
-      const result = await db.purchasePlanWithBalance(ctx.user.id, input.planId, discountCodeId, input.subscriptionId);
+      const result = await db.purchasePlanWithBalance(
+        ctx.user.id,
+        input.planId,
+        discountCodeId,
+        input.subscriptionId,
+        option.durationDays,
+      );
       await refreshUserForwardEndpoints(ctx.user.id, "balance-plan-purchased");
-      appendPanelLog("info", `[Plan] balance purchase user=${ctx.user.id} plan=${input.planId}`);
+      appendPanelLog("info", `[Plan] balance purchase user=${ctx.user.id} plan=${input.planId} duration=${option.durationDays}`);
       return result;
     }),
 

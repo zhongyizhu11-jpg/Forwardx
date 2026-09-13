@@ -12,12 +12,21 @@ import {
   subscriptionPlanForwardGroups,
   subscriptionPlanHosts,
   subscriptionPlanTrafficAddons,
+  subscriptionPlanPrices,
   subscriptionPlanProxyNodes,
   subscriptionPlanTunnels,
   userTrafficAddons,
   userSubscriptions, InsertUserSubscription,
   users,
 } from "../../drizzle/schema";
+import {
+  defaultPricingOption,
+  findPricingOption,
+  normalizePlanPriceTiers,
+  planPricingOptions,
+  renewalPricingOption,
+  type PlanPriceTier,
+} from "../../shared/planPricing";
 import { executeRaw, getDatabaseKind, getDb, insertAndGetId, isDatabaseTransactionActive, nowDate, queryRaw, quoteDbIdentifier, rawAffectedRows, withDatabaseTransaction } from "../dbRuntime";
 import { getForwardRulesForUserSync, resetForwardRulesForUserSync } from "./forwardRuleRepository";
 import { getForwardGroupEntryPortRange } from "./forwardGroupRepository";
@@ -344,6 +353,14 @@ function buildPlanSnapshot(plan: any) {
     trafficLimit: Number(plan?.trafficLimit || 0),
     rateLimitMbps: Number(plan?.rateLimitMbps || 0),
     maxRules: Number(plan?.maxRules ?? 20),
+    /**
+     * 订阅那一套的两个上限也要冻进快照。
+     *
+     * 漏了它们的后果不是「按套餐算」，而是**当成不限**：0 在配额合并那边表示
+     * 不限，于是卖「2 个自建节点」的套餐，租户能开无限个。
+     */
+    maxProxyInbounds: Number(plan?.maxProxyInbounds || 0),
+    maxProxySubTokens: Number(plan?.maxProxySubTokens || 0),
     maxConnections: Number(plan?.maxConnections ?? 2000),
     maxIPs: Number(plan?.maxIPs ?? 10),
     hostIds: normalizeNumericIds(plan?.hostIds || []),
@@ -363,6 +380,12 @@ function parsePlanSnapshot(value: unknown) {
       trafficLimit: Number(parsed.trafficLimit || 0),
       rateLimitMbps: Number(parsed.rateLimitMbps || 0),
       maxRules: Number(parsed.maxRules ?? 20),
+      /**
+       * 这两项是后加的，老快照里没有 —— 缺就返回 undefined，让叠加那边退回
+       * 套餐当前值。默认成 0 会把老订阅一律变成「不限」，正好是要修的那个 bug。
+       */
+      maxProxyInbounds: parsed.maxProxyInbounds === undefined ? undefined : Number(parsed.maxProxyInbounds || 0),
+      maxProxySubTokens: parsed.maxProxySubTokens === undefined ? undefined : Number(parsed.maxProxySubTokens || 0),
       maxConnections: Number(parsed.maxConnections ?? 2000),
       maxIPs: Number(parsed.maxIPs ?? 10),
       hostIds: normalizeNumericIds(Array.isArray(parsed.hostIds) ? parsed.hostIds : []),
@@ -390,6 +413,8 @@ async function attachSubscriptionSnapshots<T extends { planId: number; planSnaps
       trafficLimit: snapshot?.trafficLimit ?? subscription.trafficLimit,
       rateLimitMbps: snapshot?.rateLimitMbps ?? subscription.rateLimitMbps,
       maxRules: snapshot?.maxRules ?? subscription.maxRules,
+      maxProxyInbounds: snapshot?.maxProxyInbounds ?? subscription.maxProxyInbounds,
+      maxProxySubTokens: snapshot?.maxProxySubTokens ?? subscription.maxProxySubTokens,
       maxConnections: snapshot?.maxConnections ?? subscription.maxConnections,
       maxIPs: snapshot?.maxIPs ?? subscription.maxIPs,
       hostIds: snapshot ? snapshot.hostIds : await getPlanHostIds(Number(subscription.planId)),
@@ -414,11 +439,12 @@ async function attachPlanResources<T extends { id: number }>(plans: T[]) {
       forwardGroupIds: [] as number[],
       forwardGroupRefs: [] as Array<{ id: number; groupMode: string | null; groupType: string | null }>,
       proxyNodeIds: [] as number[],
+      priceTiers: [] as PlanPriceTier[],
       trafficAddons: [] as any[],
     }));
   }
   const planIds = Array.from(new Set(plans.map((plan) => Number(plan.id)).filter((id) => id > 0)));
-  const [hostRows, tunnelRows, groupRows, proxyNodeRows, addonRows] = await Promise.all([
+  const [hostRows, tunnelRows, groupRows, proxyNodeRows, priceRows, addonRows] = await Promise.all([
     db.select({
       planId: subscriptionPlanHosts.planId,
       hostId: subscriptionPlanHosts.hostId,
@@ -440,6 +466,13 @@ async function attachPlanResources<T extends { id: number }>(plans: T[]) {
       planId: subscriptionPlanProxyNodes.planId,
       nodeId: subscriptionPlanProxyNodes.nodeId,
     }).from(subscriptionPlanProxyNodes).where(inArray(subscriptionPlanProxyNodes.planId, planIds)),
+    db.select({
+      planId: subscriptionPlanPrices.planId,
+      durationDays: subscriptionPlanPrices.durationDays,
+      priceCents: subscriptionPlanPrices.priceCents,
+    }).from(subscriptionPlanPrices)
+      .where(inArray(subscriptionPlanPrices.planId, planIds))
+      .orderBy(asc(subscriptionPlanPrices.planId), asc(subscriptionPlanPrices.durationDays)),
     db.select()
       .from(subscriptionPlanTrafficAddons)
       .where(inArray(subscriptionPlanTrafficAddons.planId, planIds))
@@ -482,6 +515,13 @@ async function attachPlanResources<T extends { id: number }>(plans: T[]) {
     values.push(Number(row.nodeId));
     proxyNodeIdsByPlan.set(planId, values);
   }
+  const priceTiersByPlan = new Map<number, PlanPriceTier[]>();
+  for (const row of priceRows as any[]) {
+    const planId = Number(row.planId);
+    const values = priceTiersByPlan.get(planId) || [];
+    values.push({ durationDays: Number(row.durationDays), priceCents: Number(row.priceCents) });
+    priceTiersByPlan.set(planId, values);
+  }
   for (const row of addonRows as any[]) {
     const planId = Number(row.planId);
     const values = addonsByPlan.get(planId) || [];
@@ -497,6 +537,12 @@ async function attachPlanResources<T extends { id: number }>(plans: T[]) {
       forwardGroupIds: refs.map((ref) => ref.id),
       forwardGroupRefs: refs,
       proxyNodeIds: proxyNodeIdsByPlan.get(Number(plan.id)) || [],
+      /**
+       * 多周期定价。空数组 = 这个套餐只有它自己那一档 —— 前端一律走
+       * planPricingOptions()，那边会退回套餐主表上的 durationDays / priceCents，
+       * 所以存量套餐在界面上跟以前一模一样。
+       */
+      priceTiers: priceTiersByPlan.get(Number(plan.id)) || [],
       trafficAddons: addonsByPlan.get(Number(plan.id)) || [],
     };
   });
@@ -526,11 +572,34 @@ export async function listSubscriptionPlanOptions(includeHidden = true) {
       isStoreVisible: subscriptionPlans.isStoreVisible,
     })
     .from(subscriptionPlans);
-  return includeHidden
-    ? query.orderBy(asc(subscriptionPlans.sortOrder), desc(subscriptionPlans.createdAt))
-    : query
+  const rows = includeHidden
+    ? await query.orderBy(asc(subscriptionPlans.sortOrder), desc(subscriptionPlans.createdAt))
+    : await query
       .where(and(eq(subscriptionPlans.isActive, true), eq(subscriptionPlans.isStoreVisible, true)))
       .orderBy(asc(subscriptionPlans.sortOrder), desc(subscriptionPlans.createdAt));
+  /**
+   * 档位也带上：手动分配套餐时要按档选周期，不然卖月付 / 年付的套餐，管理员
+   * 想手动给一个年付都给不了（只能给默认档）。
+   */
+  const planIds = (rows as any[]).map((row) => Number(row.id)).filter((id) => id > 0);
+  if (planIds.length === 0) return rows;
+  const tierRows = await db
+    .select({
+      planId: subscriptionPlanPrices.planId,
+      durationDays: subscriptionPlanPrices.durationDays,
+      priceCents: subscriptionPlanPrices.priceCents,
+    })
+    .from(subscriptionPlanPrices)
+    .where(inArray(subscriptionPlanPrices.planId, planIds))
+    .orderBy(asc(subscriptionPlanPrices.planId), asc(subscriptionPlanPrices.durationDays));
+  const tiersByPlan = new Map<number, PlanPriceTier[]>();
+  for (const row of tierRows as any[]) {
+    const planId = Number(row.planId);
+    const values = tiersByPlan.get(planId) || [];
+    values.push({ durationDays: Number(row.durationDays), priceCents: Number(row.priceCents) });
+    tiersByPlan.set(planId, values);
+  }
+  return (rows as any[]).map((row) => ({ ...row, priceTiers: tiersByPlan.get(Number(row.id)) || [] }));
 }
 
 
@@ -623,16 +692,17 @@ export async function getSubscriptionPlanById(id: number) {
   return (await attachPlanResources([rows[0]]))[0];
 }
 
-export async function createSubscriptionPlan(data: InsertSubscriptionPlan, hostIds: number[], tunnelIds: number[], forwardGroupIds: number[] = [], trafficAddons: any[] = [], proxyNodeIds: number[] = []) {
+export async function createSubscriptionPlan(data: InsertSubscriptionPlan, hostIds: number[], tunnelIds: number[], forwardGroupIds: number[] = [], trafficAddons: any[] = [], proxyNodeIds: number[] = [], priceTiers: Array<Partial<PlanPriceTier>> = []) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const id = await insertAndGetId("subscription_plans", data as any);
   await setSubscriptionPlanResources(id, hostIds, tunnelIds, forwardGroupIds, proxyNodeIds);
   await setSubscriptionPlanTrafficAddons(id, trafficAddons);
+  if (priceTiers.length > 0) await setSubscriptionPlanPrices(id, priceTiers);
   return getSubscriptionPlanById(id);
 }
 
-export async function updateSubscriptionPlan(id: number, data: Partial<InsertSubscriptionPlan>, hostIds?: number[], tunnelIds?: number[], forwardGroupIds?: number[], trafficAddons?: any[], proxyNodeIds?: number[]) {
+export async function updateSubscriptionPlan(id: number, data: Partial<InsertSubscriptionPlan>, hostIds?: number[], tunnelIds?: number[], forwardGroupIds?: number[], trafficAddons?: any[], proxyNodeIds?: number[], priceTiers?: Array<Partial<PlanPriceTier>>) {
   const db = await getDb();
   if (!db) return undefined;
   await db.update(subscriptionPlans).set({ ...data, updatedAt: nowDate() } as any).where(eq(subscriptionPlans.id, id));
@@ -646,6 +716,8 @@ export async function updateSubscriptionPlan(id: number, data: Partial<InsertSub
     );
   }
   if (trafficAddons) await setSubscriptionPlanTrafficAddons(id, trafficAddons);
+  // 定价放在最后：它会把默认档写回主表，不能被上面那次 update 覆盖掉。
+  if (priceTiers) await setSubscriptionPlanPrices(id, priceTiers);
   return getSubscriptionPlanById(id);
 }
 
@@ -736,6 +808,7 @@ export async function deleteSubscriptionPlan(id: number) {
     await db.delete(subscriptionPlanForwardGroups).where(eq(subscriptionPlanForwardGroups.planId, id));
     await db.delete(subscriptionPlanProxyNodes).where(eq(subscriptionPlanProxyNodes.planId, id));
     await db.delete(subscriptionPlanTrafficAddons).where(eq(subscriptionPlanTrafficAddons.planId, id));
+    await db.delete(subscriptionPlanPrices).where(eq(subscriptionPlanPrices.planId, id));
     await db.delete(subscriptionPlans).where(eq(subscriptionPlans.id, id));
   });
 }
@@ -761,6 +834,66 @@ export async function setSubscriptionPlanResources(
   if (uniqueTunnelIds.length > 0) await db.insert(subscriptionPlanTunnels).values(uniqueTunnelIds.map(tunnelId => ({ planId, tunnelId })));
   if (uniqueForwardGroupIds.length > 0) await db.insert(subscriptionPlanForwardGroups).values(uniqueForwardGroupIds.map(forwardGroupId => ({ planId, forwardGroupId })));
   if (uniqueProxyNodeIds.length > 0) await db.insert(subscriptionPlanProxyNodes).values(uniqueProxyNodeIds.map(nodeId => ({ planId, nodeId })));
+}
+
+/**
+ * 写这个套餐的多周期定价。
+ *
+ * 顺手把**默认档**（总价最低那一档）同步回套餐主表的 durationDays / priceCents：
+ * 兑换码、后台分配、老的下单路径读的都是那两列，不同步的话它们会拿着一个已经不
+ * 卖了的价格继续算。传空数组就等于「只有主表那一档」，退回改动前的形态。
+ */
+export async function setSubscriptionPlanPrices(planId: number, tiers: Array<Partial<PlanPriceTier>> = []) {
+  const db = await getDb();
+  if (!db) return;
+  const rows = normalizePlanPriceTiers(tiers);
+  await db.delete(subscriptionPlanPrices).where(eq(subscriptionPlanPrices.planId, planId));
+  if (rows.length === 0) return;
+  await db.insert(subscriptionPlanPrices).values(rows.map((tier) => ({
+    planId,
+    durationDays: tier.durationDays,
+    priceCents: tier.priceCents,
+  })));
+  const fallback = defaultPricingOption(planPricingOptions({}, rows));
+  if (fallback) {
+    await db.update(subscriptionPlans).set({
+      durationDays: fallback.durationDays,
+      priceCents: fallback.priceCents,
+      updatedAt: nowDate(),
+    } as any).where(eq(subscriptionPlans.id, planId));
+  }
+}
+
+/** 这个套餐挂着的周期档位，按天数升序。 */
+export async function getPlanPriceTiers(planId: number): Promise<PlanPriceTier[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ durationDays: subscriptionPlanPrices.durationDays, priceCents: subscriptionPlanPrices.priceCents })
+    .from(subscriptionPlanPrices)
+    .where(eq(subscriptionPlanPrices.planId, planId))
+    .orderBy(asc(subscriptionPlanPrices.durationDays));
+  return normalizePlanPriceTiers(rows as any[]);
+}
+
+/**
+ * 客户选的这一档到底卖不卖、卖多少钱 —— 收钱前的唯一裁判。
+ *
+ * 不传周期就是默认档（老客户端、兑换码、后台分配都走这条）。传了但认不出来就
+ * 报错，绝不拿默认档顶上：那会变成「我买的是年付，开出来是月付」。
+ */
+export async function resolvePlanPricing(planId: number, durationDays?: number | null) {
+  const plan = await getSubscriptionPlanById(planId);
+  if (!plan) throw new Error("套餐不存在");
+  const options = planPricingOptions(plan as any, (plan as any).priceTiers || []);
+  if (durationDays === null || durationDays === undefined) {
+    const fallback = defaultPricingOption(options);
+    if (!fallback) throw new Error("套餐没有可购买的周期");
+    return { plan, option: fallback, options };
+  }
+  const option = findPricingOption(options, durationDays);
+  if (!option) throw new Error("该套餐没有这个购买周期，请刷新后重试");
+  return { plan, option, options };
 }
 
 export async function setSubscriptionPlanTrafficAddons(planId: number, addons: any[] = []) {
@@ -790,10 +923,18 @@ function userSubscriptionsListQuery(db: any) {
       priceCents: subscriptionPlans.priceCents,
       currency: subscriptionPlans.currency,
       durationDays: subscriptionPlans.durationDays,
+      /**
+       * 这条订阅当初买的那一档。续费按它算 —— 拿套餐主表的默认档去续，买年付的
+       * 人点一下「续费」就变成了续一个月，而金额还是照年付显示的那个。
+       * 老数据（这一列之前不存在）是 null，调用方退回默认档。
+       */
+      purchasedDurationDays: userSubscriptions.durationDays,
       portCount: subscriptionPlans.portCount,
       trafficLimit: subscriptionPlans.trafficLimit,
       rateLimitMbps: subscriptionPlans.rateLimitMbps,
       maxRules: subscriptionPlans.maxRules,
+      maxProxyInbounds: subscriptionPlans.maxProxyInbounds,
+      maxProxySubTokens: subscriptionPlans.maxProxySubTokens,
       maxConnections: subscriptionPlans.maxConnections,
       maxIPs: subscriptionPlans.maxIPs,
       status: userSubscriptions.status,
@@ -897,7 +1038,50 @@ export async function listUserSubscriptionsPage(input: PageRequest & {
 }
 
 async function attachUserSubscriptionDetails<T extends { id: number; planId: number }>(subscriptions: T[]) {
-  return attachSubscriptionSnapshots(subscriptions as any);
+  const withSnapshots = await attachSubscriptionSnapshots(subscriptions as any);
+  return attachRenewalPricing(withSnapshots as any[]);
+}
+
+/**
+ * 给每条订阅算出「续费按哪一档、多少钱」。
+ *
+ * 放在服务端算而不是让前端自己拼：续费金额是要扣钱的数，前端各页面各算一遍迟早
+ * 会有一处忘了跟上。前端只管显示 renewPriceCents 和 renewDurationDays。
+ */
+async function attachRenewalPricing(rows: any[]) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return rows;
+  const planIds = Array.from(new Set(rows.map((row) => Number(row.planId)).filter((id) => id > 0)));
+  if (planIds.length === 0) return rows;
+  const tierRows = await db
+    .select({
+      planId: subscriptionPlanPrices.planId,
+      durationDays: subscriptionPlanPrices.durationDays,
+      priceCents: subscriptionPlanPrices.priceCents,
+    })
+    .from(subscriptionPlanPrices)
+    .where(inArray(subscriptionPlanPrices.planId, planIds))
+    .orderBy(asc(subscriptionPlanPrices.planId), asc(subscriptionPlanPrices.durationDays));
+  const tiersByPlan = new Map<number, PlanPriceTier[]>();
+  for (const row of tierRows as any[]) {
+    const planId = Number(row.planId);
+    const values = tiersByPlan.get(planId) || [];
+    values.push({ durationDays: Number(row.durationDays), priceCents: Number(row.priceCents) });
+    tiersByPlan.set(planId, values);
+  }
+  return rows.map((row) => {
+    const options = planPricingOptions(
+      { durationDays: row.durationDays, priceCents: row.priceCents },
+      tiersByPlan.get(Number(row.planId)) || [],
+    );
+    const { option } = renewalPricingOption(options, row.purchasedDurationDays);
+    return {
+      ...row,
+      priceTiers: tiersByPlan.get(Number(row.planId)) || [],
+      renewDurationDays: option?.durationDays ?? Number(row.durationDays || 0),
+      renewPriceCents: option?.priceCents ?? Number(row.priceCents || 0),
+    };
+  });
 }
 
 async function getActiveTrafficAddonBreakdownForSubscription(subscriptionId: number) {
@@ -975,6 +1159,10 @@ export async function getActiveUserSubscriptions(userId?: number) {
         trafficLimit: subscriptionPlans.trafficLimit,
         rateLimitMbps: subscriptionPlans.rateLimitMbps,
         maxRules: subscriptionPlans.maxRules,
+        // 这两列以前没查出来，于是配额合并那边看到 undefined、当成 0 =「不限」——
+        // 套餐上填的自建节点数和订阅地址数等于白填。
+        maxProxyInbounds: subscriptionPlans.maxProxyInbounds,
+        maxProxySubTokens: subscriptionPlans.maxProxySubTokens,
         maxConnections: subscriptionPlans.maxConnections,
         maxIPs: subscriptionPlans.maxIPs,
         allowProxySubscription: subscriptionPlans.allowProxySubscription,
@@ -1454,6 +1642,7 @@ export async function runSubscriptionAutoRenew(): Promise<{ renewed: number; fai
       id: userSubscriptions.id,
       userId: userSubscriptions.userId,
       planId: userSubscriptions.planId,
+      durationDays: userSubscriptions.durationDays,
       expiresAt: userSubscriptions.expiresAt,
     })
     .from(userSubscriptions)
@@ -1474,15 +1663,28 @@ export async function runSubscriptionAutoRenew(): Promise<{ renewed: number; fai
     try {
       const plan = await getSubscriptionPlanById(Number(row.planId));
       if (!plan || !plan.isActive || !plan.isStoreVisible) continue;
+      /**
+       * 续**上次买的那一档**。
+       *
+       * 按月付的人不该某天醒来发现被扣了一年的钱；反过来，按年付的人也不该被悄悄
+       * 降成月付。那一档被管理员下掉了才退回默认档，并且写一行日志说清楚 ——
+       * 否则「为什么这次扣的钱不一样」查无对证。
+       */
+      const options = planPricingOptions(plan as any, (plan as any).priceTiers || []);
+      const { option, fellBack } = renewalPricingOption(options, row.durationDays);
+      if (!option) continue;
+      if (fellBack) {
+        console.warn(`[Billing] Auto-renew tier ${row.durationDays} gone for plan=${row.planId}, falling back to ${option.durationDays}d`);
+      }
       const user = await getUserById(Number(row.userId));
       const balance = Number((user as any)?.balanceCents || 0);
-      if (balance < Number(plan.priceCents || 0)) {
+      if (balance < Number(option.priceCents || 0)) {
         failed += 1;
         continue;
       }
-      await purchasePlanWithBalance(Number(row.userId), Number(row.planId), null, subscriptionId);
+      await purchasePlanWithBalance(Number(row.userId), Number(row.planId), null, subscriptionId, option.durationDays);
       renewed += 1;
-      console.log(`[Billing] Auto-renewed subscription=${subscriptionId} user=${row.userId} plan=${row.planId}`);
+      console.log(`[Billing] Auto-renewed subscription=${subscriptionId} user=${row.userId} plan=${row.planId} duration=${option.durationDays}`);
     } catch (error) {
       failed += 1;
       console.warn(`[Billing] Auto-renew failed subscription=${subscriptionId}:`, error instanceof Error ? error.message : error);
@@ -2512,6 +2714,8 @@ async function applySubscriptionToUserUnlocked(
       expiresAt,
       nextTrafficResetAt,
       planSnapshot: JSON.stringify(buildPlanSnapshot(plan)),
+      // 续期时按这一次买的档记：从月付改成年付之后，下次自动续费要跟着变成年付。
+      durationDays,
     } as any;
     if (paymentOrderNo) {
       (updateData as any).paymentOrderNo = paymentOrderNo;
@@ -2551,6 +2755,8 @@ async function applySubscriptionToUserUnlocked(
     source,
     paymentOrderNo: paymentOrderNo ?? null,
     planSnapshot: JSON.stringify(buildPlanSnapshot(plan)),
+    // 买的是哪一档。自动续费按它续 —— 按月付的人不该某天醒来发现被扣了一年的钱。
+    durationDays,
     portRangeStart: block.start,
     portRangeEnd: block.end,
     nextTrafficResetAt,
@@ -3068,10 +3274,12 @@ export async function purchasePlanWithBalance(
   planId: number,
   discountCodeId?: number | null,
   subscriptionId?: number | null,
+  /** 买的是哪一档周期。不传 = 默认档（老客户端、自动续费回退时都走这条）。 */
+  durationDays?: number | null,
 ) {
   return withTrafficBillingUserLock(userId, () => withDatabaseTransaction(async () => {
-  const plan = await getSubscriptionPlanById(planId);
-  if (!plan || !plan.isActive || !plan.isStoreVisible) throw new Error("套餐不可购买");
+  const { plan, option } = await resolvePlanPricing(planId, durationDays ?? null);
+  if (!plan.isActive || !plan.isStoreVisible) throw new Error("套餐不可购买");
   const discount = discountCodeId ? await getDiscountCodeById(discountCodeId) : null;
   if (discount) {
     const allowedPlanIds = Array.isArray((discount as any).planIds) ? (discount as any).planIds.map(Number) : [];
@@ -3079,11 +3287,13 @@ export async function purchasePlanWithBalance(
       throw new Error("折扣码不适用于该套餐");
     }
   }
-  const amountCents = calculateDiscountedAmount(Number(plan.priceCents || 0), discount);
+  // 价格取**选中那一档**，不是套餐主表上的默认价 —— 拿主表价去扣年付的单，
+  // 等于按月付的钱卖了一年。
+  const amountCents = calculateDiscountedAmount(Number(option.priceCents || 0), discount);
   if (amountCents > 0) {
     await addUserBalance(userId, -amountCents, {
       type: "purchase",
-      description: `购买套餐：${plan.name}`,
+      description: `购买套餐：${plan.name}（${option.durationDays} 天）`,
     } as any);
   }
   if (discount) await consumeDiscountCode(discount.id);
@@ -3093,7 +3303,7 @@ export async function purchasePlanWithBalance(
     "balance",
     null,
     undefined,
-    null,
+    option.durationDays,
     subscriptionId || null,
   );
   return result;

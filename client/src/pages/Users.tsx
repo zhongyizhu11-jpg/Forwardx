@@ -1,3 +1,4 @@
+import DataSectionError from "@/components/DataSectionError";
 import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
@@ -396,6 +397,29 @@ function UsersContent() {
     onError: (err) => toast.error(err.message || "更新隧道权限失败"),
   });
   const updateProxyNodeSharesMutation = trpc.users.setProxyNodeShares.useMutation({
+    /**
+     * 没生效的要当场说出来。
+     *
+     * 原来这里只报「已保存」：挑了几个节点、点保存、一切正常，而实际上一条都没
+     * 写进去（比如挑到了他自己的节点）—— 只能等租户来说「我这儿没有」才发现。
+     */
+    onSuccess: (result: any) => {
+      const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
+      if (skipped.length > 0) {
+        const self = skipped.filter((item: any) => item.reason === "self");
+        const gone = skipped.filter((item: any) => item.reason === "missing");
+        const failed = skipped.filter((item: any) => item.reason === "credential");
+        const parts = [
+          self.length ? `${self.length} 个是他自己的节点（本来就在他订阅里）` : "",
+          gone.length ? `${gone.length} 个节点已不存在` : "",
+          failed.length ? `${failed.length} 个发不出凭据` : "",
+        ].filter(Boolean);
+        toast.warning(`有 ${skipped.length} 个没有生效：${parts.join("；")}`);
+      }
+      if (result?.recipientCanUse === false) {
+        toast.warning("这个用户还没有客户端订阅权限，分享了他也看不到 —— 在上面「权限」里打开后才生效");
+      }
+    },
     onError: (err) => toast.error(err.message || "更新节点分享失败"),
   });
   const updateTrafficBillingPermsMutation = trpc.users.setTrafficBillingPermissions.useMutation({
@@ -1458,7 +1482,19 @@ function UsersContent() {
         </AutoAnimateContainer>
       )}
 
-      {!isLoading && (!users || users.length === 0) && (
+      {/* 「暂无其他用户」读失败时是假话 —— 一屏的租户不会一起消失。 */}
+      {!isLoading && (!users || users.length === 0) && userPageQuery.error && (
+        <div className="sm:hidden">
+          <DataSectionError
+            label="用户列表"
+            error={userPageQuery.error}
+            retrying={userPageQuery.isFetching}
+            onRetry={() => { void userPageQuery.refetch(); }}
+          />
+        </div>
+      )}
+
+      {!isLoading && (!users || users.length === 0) && !userPageQuery.error && (
         <div className="flex flex-col items-center justify-center rounded-lg border border-border/50 bg-card/60 py-16 text-muted-foreground sm:hidden">
           <div className="h-14 w-14 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
             <UsersIcon className="h-7 w-7 opacity-40" />
@@ -1668,6 +1704,15 @@ function UsersContent() {
                 </AutoAnimateContainer>
               </Table>
             </div>
+          ) : userPageQuery.error ? (
+            <DataSectionError
+              className="border-0 bg-transparent"
+              label="用户列表"
+              error={userPageQuery.error}
+              retrying={userPageQuery.isFetching}
+              onRetry={() => { void userPageQuery.refetch(); }}
+              minHeight="min-h-[260px]"
+            />
           ) : (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <div className="h-16 w-16 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
@@ -2636,6 +2681,8 @@ function UsersContent() {
                 <p className="text-xs text-muted-foreground">
                   选中的节点会直接出现在他的订阅里，节点仍然是原主人的，他改不了也删不掉。
                   流量记在节点主人名下 —— 同一个端口分给几个人用，面板按端口计量，拆不开。
+                  {/* 找不到东西在哪儿，是这个功能最常见的「以为没生效」。 */}
+                  他在「订阅管理 → 我的节点」里看到它们，标着「管理员分享」；「我的套餐」那一页只管套餐，不列节点。
                 </p>
                 <Select value={addSharedProxyNodeId} onValueChange={addProxyNodeShare} disabled={!availableSharedProxyNodes.length}>
                   <SelectTrigger className="h-9 w-full">
