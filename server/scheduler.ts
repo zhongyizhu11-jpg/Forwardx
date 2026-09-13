@@ -662,6 +662,19 @@ export function startScheduler() {
   });
   const historyCleanup = createNonOverlappingScheduledTask("history cleanup", async () => {
     await runTcpingCleanup();
+    /**
+     * 顺手清掉过期的「一天只做一次」标记。
+     *
+     * 到期提醒、流量提醒、主机续费提醒、余额自动续费都会往 system_settings 里写
+     * 一行日标记防重复，写完从来没人删 —— 五百人的面板跑一年能攒十万行，而
+     * getAllSettings() 是整表读，于是这些垃圾每次缓存过期都要重新加载一遍：
+     * 面板越用越慢，还找不到原因。去重窗口只有一天，留 7 天纯属保险。
+     */
+    const pruned = await db.pruneEphemeralSettings(7).catch((error) => {
+      console.warn("[Scheduler] Ephemeral settings prune failed:", error instanceof Error ? error.message : error);
+      return 0;
+    });
+    if (pruned > 0) console.log(`[Scheduler] Pruned ${pruned} stale reminder marker(s)`);
   }, { slowTaskMs: 15_000 });
   const forwardingMaintenance = createNonOverlappingScheduledTask("forward-group and DDNS maintenance", async () => {
     await runForwardGroupFailover();
