@@ -86,6 +86,7 @@ import {
   Link2,
   Package,
   Pencil,
+  Plug,
   Plus,
   QrCode,
   Rocket,
@@ -743,7 +744,20 @@ export default function ClientSubscriptionsPage() {
    * 百分之百准。但它必须显眼：订阅里那条带的是这个落地的凭据，地址却写的是转发入口，
    * 入口通向别处时，客户端就会把凭据递给那台别的机器。
    */
-  const driftedRules = useMemo(() => preview?.warnings ?? [], [preview]);
+  const driftedRules = useMemo(
+    () => (preview?.warnings ?? []).filter((item: any) => item.reason === "target-mismatch"),
+    [preview],
+  );
+  /**
+   * 谁都没用的节点：没开直连，也没有任何转发绑到它上面 —— 客户端里根本没有它。
+   *
+   * 「我的节点」那一列里它看着好好的，这是当初「转发不绑节点就不进订阅、页面上还看不出」
+   * 那个坑从节点这一侧再犯一次。
+   */
+  const unusedNodes = useMemo(
+    () => (preview?.warnings ?? []).filter((item: any) => item.reason === "node-unused"),
+    [preview],
+  );
   const unboundRules = useMemo(
     () => (preview?.skipped ?? []).filter((item) => item.reason === "unbound"),
     [preview],
@@ -1249,7 +1263,7 @@ export default function ClientSubscriptionsPage() {
           onPasteNode={openCreateNode}
           inboundLeading={inboundLeading}
           onOpenPreview={() => setPreviewOpen(true)}
-          previewAlertCount={unboundRules.length + driftedRules.length}
+          previewAlertCount={unboundRules.length + driftedRules.length + unusedNodes.length}
           onOpenHosts={isAdmin ? undefined : () => setHostsOpen(true)}
           onlineCount={onlineNodeCount}
           offlineCount={offlineNodeCount}
@@ -1379,6 +1393,26 @@ export default function ClientSubscriptionsPage() {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {unusedNodes.length > 0 && (
+                  <div className="space-y-2">
+                    <SectionLabel count={unusedNodes.length}>这些节点还没进订阅</SectionLabel>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      它们没开直连，也没有任何转发指向它们 —— 客户端里看不到。
+                      给它建一条转发（目标填它的地址端口，会自动认出来），或者在节点上打开「直连也放进订阅」。
+                    </p>
+                    {unusedNodes.map((item: any) => (
+                      <div
+                        key={`unused-${item.nodeId}`}
+                        className="flex items-center gap-2 rounded-md border border-dashed px-2.5 py-1.5"
+                      >
+                        <Plug className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate text-sm">{item.nodeName}</span>
+                        <span className="shrink-0 truncate font-mono text-[11px] text-muted-foreground">{item.nodeText}</span>
+                      </div>
+                    ))}
                   </div>
                 )}
 

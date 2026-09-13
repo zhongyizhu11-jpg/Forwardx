@@ -131,6 +131,29 @@ test("SQLite 绑定过期时：能判定的改绑或解绑，判不定的照发�
       "目标指向自己另一条转发的入口，是正常的串联，不该报警",
     );
 
+    /**
+     * 6. 谁都没用的节点：没开直连、也没有任何转发绑到它 —— 客户端里根本没有它，
+     *    而「我的节点」里它看着好好的。这是当初「转发不绑节点就不进订阅、页面上还看不出」
+     *    从节点这一侧再犯一次。
+     */
+    const orphan = await makeNode("谁也没指向它", "198.51.100.77", 443);
+    const planWithOrphan = await subs.buildProxySubscriptionPlanForUser(2);
+    const unused = planWithOrphan.warnings.filter((item) => item.reason === "node-unused");
+    const unusedIds = unused.map((item) => Number(item.nodeId));
+    assert.ok(unusedIds.includes(orphan), "刚建的、谁也没指向的节点要报");
+    // 落地 B 这会儿也确实没人指向它了（上面第 2 步把那条转发解绑、第 3 步改回了落地 A）。
+    assert.deepEqual(unusedIds.sort((a, b) => a - b), [nodeB, orphan].sort((a, b) => a - b));
+    assert.ok(!unusedIds.includes(nodeA), "有转发指向的节点不该报");
+    assert.equal(unused.find((item) => Number(item.nodeId) === orphan).nodeText, "198.51.100.77:443");
+
+    // 停用的节点不算：那是他自己关的，行上本来就写着停用。
+    await subs.updateProxyNode(orphan, { isEnabled: false });
+    const planAfterDisable = await subs.buildProxySubscriptionPlanForUser(2);
+    assert.ok(
+      !planAfterDisable.warnings.some((item) => item.reason === "node-unused" && Number(item.nodeId) === orphan),
+      "停用的节点不该再报「没进订阅」—— 那是他自己关的",
+    );
+
     console.log("OK");
     await runtime.closeDatabase();
   `;

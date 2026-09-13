@@ -142,21 +142,24 @@ export type ProxySubscriptionSkip = {
  * 刻意不做成 skip —— 静默少一条节点正是这套面板反复踩过的坑，而这类判断又不可能
  * 百分之百准（见 proxyNodeBindingTruth），所以宁可发出去 + 明确告警，让人自己判。
  */
-export type ProxySubscriptionWarningReason = "target-mismatch";
+export type ProxySubscriptionWarningReason = "target-mismatch" | "node-unused";
 
 export const PROXY_SUBSCRIPTION_WARNING_LABELS: Record<ProxySubscriptionWarningReason, string> = {
   "target-mismatch": "这条转发的目标已经不是它绑的那个节点了",
+  "node-unused": "这个节点没进任何一份订阅",
 };
 
 export type ProxySubscriptionWarning = {
+  /** target-mismatch 是某条转发的问题；node-unused 跟转发无关，这里是 0。 */
   ruleId: number;
   ruleName: string;
   reason: ProxySubscriptionWarningReason;
-  /** 现在指向哪里，便于界面直接说清楚。 */
+  /** 这条转发现在指向哪里。node-unused 时为空。 */
   targetText: string;
-  /** 绑的那个节点在哪里。 */
-  nodeText: string;
+  nodeId: number;
   nodeName: string;
+  /** 节点自己的地址端口。 */
+  nodeText: string;
 };
 
 export type ProxySubscriptionPlan = {
@@ -398,6 +401,7 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
         ruleName,
         reason: "target-mismatch",
         targetText,
+        nodeId: templateId,
         nodeText: `${templateNode.address}:${templateNode.port}`,
         nodeName: templateNode.name || `节点 #${templateId}`,
       });
@@ -418,6 +422,33 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
     const template = templatesById.get(entry.templateId);
     return { ...entry, frontTemplateId: template ? frontIdOf(template) : 0 };
   });
+
+  /**
+   * 一个节点也可能**谁都没用它**：没开直连，又没有任何转发绑到它上面。
+   *
+   * 这种节点在「我的节点」里看着好好的，客户端里却根本不存在 —— 和当初「转发不绑节点
+   * 就不进订阅，而转发页上看不出」是同一个坑，只是从节点这一侧再犯一次。停用的不算：
+   * 那是他自己关的，行上本来就写着停用。
+   */
+  const emittedTemplates = new Set<number>([
+    ...directWithFront.map((entry) => Number(entry.templateId)),
+    ...entries.map((entry) => Number(entry.templateId)),
+  ]);
+  for (const template of input.templates) {
+    const templateId = Number(template.id);
+    if (emittedTemplates.has(templateId)) continue;
+    if (template.isEnabled !== undefined && !bool(template.isEnabled)) continue;
+    const node = proxyNodeFromTemplateRow(template);
+    warnings.push({
+      ruleId: 0,
+      ruleName: "",
+      reason: "node-unused",
+      targetText: "",
+      nodeId: templateId,
+      nodeName: node.name || `节点 #${templateId}`,
+      nodeText: node.address && node.port ? `${node.address}:${node.port}` : "",
+    });
+  }
 
   return { entries: [...directWithFront, ...entries], skipped, warnings };
 }
