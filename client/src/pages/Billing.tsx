@@ -1,3 +1,4 @@
+import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -268,11 +269,23 @@ export default function Billing() {
   });
   const subscriptions = (subscriptionPageQuery.data?.items || []) as any[];
   const subscriptionsLoading = subscriptionPageQuery.isLoading;
-  const { data: transactions = [], isLoading: transactionsLoading } = trpc.billing.listTransactions.useQuery(
+  const {
+    data: transactions = [],
+    isLoading: transactionsLoading,
+    error: transactionsError,
+    isFetching: transactionsFetching,
+    refetch: refetchTransactions,
+  } = trpc.billing.listTransactions.useQuery(
     { limit: 100 },
     { enabled: activeTab === "balance", staleTime: 10_000, refetchOnWindowFocus: false, placeholderData: (previousData) => previousData },
   );
-  const { data: ledger = [], isLoading: ledgerLoading } = trpc.billing.ledger.useQuery({
+  const {
+    data: ledger = [],
+    isLoading: ledgerLoading,
+    error: ledgerError,
+    isFetching: ledgerFetching,
+    refetch: refetchLedger,
+  } = trpc.billing.ledger.useQuery({
     limit: 200,
     userId: ledgerUserId === "all" ? undefined : Number(ledgerUserId),
     includeCancelledSubscriptions: showCancelledSubscriptions,
@@ -726,9 +739,12 @@ export default function Billing() {
                       </div>
                     );
                   })}
-                  {visibleLedger.length === 0 && (
+                  {/* 收款记录读不到时说「暂无」，等于告诉店主「没人付过钱」。 */}
+                  {visibleLedger.length === 0 && (ledgerError ? (
+                    <DataSectionError label="账单流水" error={ledgerError} retrying={ledgerFetching} onRetry={() => { void refetchLedger(); }} minHeight="min-h-[120px]" />
+                  ) : (
                     <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">暂无账单流水</div>
-                  )}
+                  ))}
                 </div>
                 <div className="hidden overflow-x-auto md:block">
                   <Table>
@@ -787,11 +803,13 @@ export default function Billing() {
                         </TableRow>
                       );
                     })}
-                    {visibleLedger.length === 0 && (
+                    {visibleLedger.length === 0 && (ledgerError ? (
+                      <DataTableErrorRow colSpan={8} label="账单流水" error={ledgerError} retrying={ledgerFetching} onRetry={() => { void refetchLedger(); }} />
+                    ) : (
                       <TableRow>
                         <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">暂无账单流水</TableCell>
                       </TableRow>
-                    )}
+                    ))}
                   </TableBody>
                 </Table>
                 </div>
@@ -896,9 +914,11 @@ export default function Billing() {
                       </div>
                     </div>
                   ))}
-                  {transactions.length === 0 && (
+                  {transactions.length === 0 && (transactionsError ? (
+                    <DataSectionError label="余额流水" error={transactionsError} retrying={transactionsFetching} onRetry={() => { void refetchTransactions(); }} minHeight="min-h-[120px]" />
+                  ) : (
                     <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">暂无余额流水</div>
-                  )}
+                  ))}
                 </div>
                 <div className="hidden overflow-x-auto md:block">
                   <Table>

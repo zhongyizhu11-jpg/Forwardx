@@ -1,3 +1,4 @@
+import DataSectionError from "@/components/DataSectionError";
 import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
@@ -1481,7 +1482,19 @@ function UsersContent() {
         </AutoAnimateContainer>
       )}
 
-      {!isLoading && (!users || users.length === 0) && (
+      {/* 「暂无其他用户」读失败时是假话 —— 一屏的租户不会一起消失。 */}
+      {!isLoading && (!users || users.length === 0) && userPageQuery.error && (
+        <div className="sm:hidden">
+          <DataSectionError
+            label="用户列表"
+            error={userPageQuery.error}
+            retrying={userPageQuery.isFetching}
+            onRetry={() => { void userPageQuery.refetch(); }}
+          />
+        </div>
+      )}
+
+      {!isLoading && (!users || users.length === 0) && !userPageQuery.error && (
         <div className="flex flex-col items-center justify-center rounded-lg border border-border/50 bg-card/60 py-16 text-muted-foreground sm:hidden">
           <div className="h-14 w-14 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
             <UsersIcon className="h-7 w-7 opacity-40" />
@@ -1691,6 +1704,15 @@ function UsersContent() {
                 </AutoAnimateContainer>
               </Table>
             </div>
+          ) : userPageQuery.error ? (
+            <DataSectionError
+              className="border-0 bg-transparent"
+              label="用户列表"
+              error={userPageQuery.error}
+              retrying={userPageQuery.isFetching}
+              onRetry={() => { void userPageQuery.refetch(); }}
+              minHeight="min-h-[260px]"
+            />
           ) : (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <div className="h-16 w-16 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">

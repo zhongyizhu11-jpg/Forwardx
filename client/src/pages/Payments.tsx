@@ -1,3 +1,4 @@
+import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import DashboardLayout from "@/components/DashboardLayout";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -303,7 +304,13 @@ export default function Payments() {
   const utils = trpc.useUtils();
   const { data: config, isLoading } = trpc.payment.getConfig.useQuery(undefined, { placeholderData: (previousData) => previousData });
   const { data: stats, isLoading: statsLoading } = trpc.payment.stats.useQuery(undefined, { refetchInterval: 30_000, placeholderData: (previousData) => previousData });
-  const { data: orders, isLoading: ordersLoading } = trpc.payment.listOrders.useQuery({ limit: 100 }, { refetchInterval: 30_000, placeholderData: (previousData: any) => previousData });
+  const {
+    data: orders,
+    isLoading: ordersLoading,
+    error: ordersError,
+    isFetching: ordersFetching,
+    refetch: refetchOrders,
+  } = trpc.payment.listOrders.useQuery({ limit: 100 }, { refetchInterval: 30_000, placeholderData: (previousData: any) => previousData });
   const { data: settings } = trpc.system.getSettings.useQuery();
   const [form, setForm] = useState<PaymentConfigForm>(emptyForm);
   const [amount, setAmount] = useState("10");
@@ -937,11 +944,20 @@ export default function Payments() {
                   </div>
                 </div>
               ))}
-              {(orders || []).length === 0 && (
+              {/* 「暂无支付订单」会让人以为客户没付。读失败时说这句最要命。 */}
+              {(orders || []).length === 0 && (ordersError ? (
+                <DataSectionError
+                  label="支付订单"
+                  error={ordersError}
+                  retrying={ordersFetching}
+                  onRetry={() => { void refetchOrders(); }}
+                  minHeight="min-h-[120px]"
+                />
+              ) : (
                 <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                   暂无支付订单
                 </div>
-              )}
+              ))}
             </div>
             <div className="hidden overflow-x-auto md:block">
               <Table>
@@ -975,13 +991,21 @@ export default function Payments() {
                       <TableCell>{formatDate(order.paidAt)}</TableCell>
                     </TableRow>
                   ))}
-                  {(orders || []).length === 0 && (
+                  {(orders || []).length === 0 && (ordersError ? (
+                    <DataTableErrorRow
+                      colSpan={8}
+                      label="支付订单"
+                      error={ordersError}
+                      retrying={ordersFetching}
+                      onRetry={() => { void refetchOrders(); }}
+                    />
+                  ) : (
                     <TableRow>
                       <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                         暂无支付订单
                       </TableCell>
                     </TableRow>
-                  )}
+                  ))}
                 </TableBody>
               </Table>
             </div>

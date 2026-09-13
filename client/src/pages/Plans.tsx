@@ -1,3 +1,4 @@
+import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -1320,9 +1321,19 @@ export default function Plans() {
                             onToggleStoreVisible={() => togglePlanStoreVisible(plan)}
                           />
                         ))}
-                        {plans.length === 0 && (
+                        {/* 读失败时说「还没有套餐」，管理员下一步就是重新建一遍。 */}
+                        {plans.length === 0 && (planPageQuery.error ? (
+                          <DataSectionError
+                            className="col-span-full"
+                            label="套餐列表"
+                            error={planPageQuery.error}
+                            retrying={planPageQuery.isFetching}
+                            onRetry={() => { void planPageQuery.refetch(); }}
+                            minHeight="min-h-[120px]"
+                          />
+                        ) : (
                           <div className="col-span-full rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">还没有套餐</div>
-                        )}
+                        ))}
                       </AutoAnimateContainer>
                     ) : (
                       <div key="plan-table-view" className="overflow-x-auto">
@@ -1374,9 +1385,17 @@ export default function Plans() {
                                 </TableCell>
                               </TableRow>
                             ))}
-                            {plans.length === 0 && (
+                            {plans.length === 0 && (planPageQuery.error ? (
+                              <DataTableErrorRow
+                                colSpan={6}
+                                label="套餐列表"
+                                error={planPageQuery.error}
+                                retrying={planPageQuery.isFetching}
+                                onRetry={() => { void planPageQuery.refetch(); }}
+                              />
+                            ) : (
                               <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">还没有套餐</TableCell></TableRow>
-                            )}
+                            ))}
                           </AutoAnimateContainer>
                         </Table>
                       </div>
