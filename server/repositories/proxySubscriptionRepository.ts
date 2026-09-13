@@ -21,6 +21,7 @@ import { PROXY_SUBSCRIPTION_GROUP_NAME } from "../../shared/proxySubscription";
 import { normalizeProxyRulePreset } from "../../shared/proxyRuleset";
 import { shareProxyNodeRow } from "../../shared/proxyNodeShare";
 import { proxyInboundSupportsMultiUser } from "../../shared/proxyInbound";
+import { type ProxySubTokenFailureReason } from "../../shared/proxySubTokenStatus";
 
 // ==================== 客户端订阅：节点模板 ====================
 
@@ -840,6 +841,43 @@ export async function recordProxySubTokenAccess(id: number, info: { ip?: string;
     .set({
       accessCount: Number(current?.accessCount || 0) + 1,
       lastAccessAt: nowDate(),
+      lastAccessIp: (info.ip || "").slice(0, 64) || null,
+      lastAccessUserAgent: (info.userAgent || "").slice(0, 200) || null,
+      /*
+        拉成功了就把上一次被拒清掉。
+        「现在到底行不行」是这一行要回答的唯一问题，而清掉比留着靠时间先后去比更准 ——
+        两列都是按秒存的，同一秒里先拒后成，比时间只会比出个平手。
+      */
+      lastFailureAt: null,
+      lastFailureReason: null,
+      updatedAt: nowDate(),
+    } as any)
+    .where(eq(proxySubTokens.id, id));
+}
+
+/**
+ * 记一笔被拒的拉取。
+ *
+ * 和成功那一笔一样是「顺手记」，失败了也不影响给客户端的回应 —— 这是给商家看的
+ * 线索，不是业务流程的一环。
+ *
+ * 令牌本身查不到（地址被改过、被重置过）时**记不了**：那时候没有任何一行能挂上
+ * 这笔记录。界面上也不该假装能分辨那一种。
+ */
+export async function recordProxySubTokenFailure(
+  id: number,
+  reason: ProxySubTokenFailureReason,
+  info: { ip?: string; userAgent?: string } = {},
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(proxySubTokens)
+    .set({
+      lastFailureAt: nowDate(),
+      lastFailureReason: reason,
+      // 失败这一次的来路也留下：同一条地址是被一个客户端反复拉，还是好几个人在拉，
+      // 排查时是两回事。
       lastAccessIp: (info.ip || "").slice(0, 64) || null,
       lastAccessUserAgent: (info.userAgent || "").slice(0, 200) || null,
       updatedAt: nowDate(),

@@ -60,6 +60,7 @@ import {
   type ProxySubscriptionKind,
 } from "@shared/proxyClientImport";
 import { summarizeProxyNodeHealthCounts, type ProxyNodeHealth } from "@shared/proxyNodeHealth";
+import { PROXY_SUB_TOKEN_FAILURE_LABELS, proxySubTokenStatus } from "@shared/proxySubTokenStatus";
 import {
   formatProxyNodeQuotaDetail,
   formatProxyNodeQuotaLabeled,
@@ -344,6 +345,26 @@ function ProxyNodeQuotaDetail({ node }: { node: any }) {
     <p className={`truncate text-[11px] leading-tight ${QUOTA_STATE_STYLES[state]}`}>
       {formatProxyNodeQuotaDetail(quota)}
     </p>
+  );
+}
+
+/**
+ * 令牌行上那句「最近一次被拒」。
+ *
+ * 只在**最近一次确实是失败**时出现（成功之后就不再挂着，见 proxySubTokenStatus）。
+ * 说不了的那一种也照实说不了：地址被改过或重置过时，请求根本落不到任何一行上。
+ */
+function renderTokenFailure(token: any) {
+  const status = proxySubTokenStatus(token);
+  if (status.kind !== "failed") return null;
+  return (
+    <span
+      className="inline-flex min-w-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400"
+      title={`客户端来拉过，被挡下了：${PROXY_SUB_TOKEN_FAILURE_LABELS[status.reason]}`}
+    >
+      <AlertTriangle className="h-3 w-3 shrink-0" />
+      <span className="truncate">最近一次没拉到：{PROXY_SUB_TOKEN_FAILURE_LABELS[status.reason]}</span>
+    </span>
   );
 }
 
@@ -1120,12 +1141,18 @@ export default function ClientSubscriptionsPage() {
                   return (
                   <div key={token.id} className="space-y-3 rounded-lg border p-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                         <span className="font-medium">{token.name}</span>
                         {!token.isEnabled && <Badge variant="outline">已停用</Badge>}
                         <span className="text-xs text-muted-foreground">
                           已拉取 {token.accessCount || 0} 次
                         </span>
+                        {/*
+                          最近一次是被拒的，就把原因摆在这。
+                          「客户说订阅更新不了」原来无从回答 —— 行上只有成功次数，
+                          分不出他到底试没试、被挡在哪一步。
+                        */}
+                        {renderTokenFailure(token)}
                       </div>
                       <div className="flex items-center gap-2">
                         <Switch

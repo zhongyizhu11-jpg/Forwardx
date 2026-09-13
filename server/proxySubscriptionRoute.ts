@@ -47,7 +47,14 @@ function clientIp(req: Request): string {
  * 这条路由不走登录态：订阅客户端只会带上地址里的令牌。因此令牌本身就是凭据，
  * 长度和随机性由签发处保证，用户可以随时重置。
  */
+/** 记一笔时要留的来路。成功和失败两条路共用，免得两边记的东西不一样。 */
+function clientInfo(req: Request) {
+  return { ip: clientIp(req), userAgent: String(req.headers["user-agent"] || "") };
+}
+
 proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Response) => {
+  // 出错时也要能记到那一行上，所以 id 提到 try 外面。
+  let tokenRowId = 0;
   try {
     const token = String(req.params.token || "").trim();
     if (!token) {
@@ -56,13 +63,22 @@ proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Respons
     }
 
     const record = await db.getProxySubTokenByToken(token);
-    // 令牌无效与被停用统一返回 404，避免把「这个令牌存在但停用了」的信息泄露出去。
+    tokenRowId = Number(record?.id || 0);
+    /**
+     * 令牌无效与被停用统一返回 404，避免把「这个令牌存在但停用了」的信息泄露出去。
+     *
+     * 但**面板这边要记下来**：给客户端的回应必须一样含糊，给商家的记录不必 ——
+     * 「客户说订阅更新不了」这句话，只有记下被拒的那一次和原因才回答得了。
+     * 令牌根本不存在的那一种记不了：没有任何一行能挂上这笔记录。
+     */
     if (!record || !record.isEnabled) {
+      if (record) void db.recordProxySubTokenFailure(Number(record.id), "disabled", clientInfo(req));
       res.status(404).type("text/plain").send("订阅不存在");
       return;
     }
     const expiresAt = record.expiresAt ? new Date(record.expiresAt as any).getTime() : 0;
     if (expiresAt && expiresAt <= Date.now()) {
+      void db.recordProxySubTokenFailure(Number(record.id), "token-expired", clientInfo(req));
       res.status(404).type("text/plain").send("订阅不存在");
       return;
     }
@@ -94,6 +110,8 @@ proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Respons
      */
     const owner = await db.getUserById(Number(record.userId));
     if (!proxyCredentialRecipientActive(owner as any)) {
+      // 商家最需要看到的就是这一条：客户在拉，被挡在「账号没资格」上（到期/超流量/权限收回）。
+      void db.recordProxySubTokenFailure(Number(record.id), "not-eligible", clientInfo(req));
       res.status(404).type("text/plain").send("订阅不存在");
       return;
     }
@@ -123,12 +141,14 @@ proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Respons
     res.status(200).send(body);
 
     // 记录访问失败不应该影响已经发出的订阅内容。
-    void db.recordProxySubTokenAccess(Number(record.id), {
-      ip: clientIp(req),
-      userAgent: String(req.headers["user-agent"] || ""),
-    }).catch(() => {});
+    void db.recordProxySubTokenAccess(Number(record.id), clientInfo(req)).catch(() => {});
   } catch (error) {
     console.error("[proxy-subscription] 生成订阅失败:", error);
+    /*
+      500 也要记：这一种在商家看来和「被停用」完全不同 —— 客户没做错任何事，
+      是面板自己出的问题。不记的话，他只会一遍遍让客户重新导入。
+    */
+    if (tokenRowId > 0) void db.recordProxySubTokenFailure(tokenRowId, "error", clientInfo(req)).catch(() => {});
     res.status(500).type("text/plain").send("订阅生成失败");
   }
 });

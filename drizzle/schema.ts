@@ -585,6 +585,14 @@ export const proxySubTokens = table("proxy_sub_tokens", {
   lastAccessAt: epoch("lastAccessAt"),
   lastAccessIp: text("lastAccessIp"),
   lastAccessUserAgent: text("lastAccessUserAgent"),
+  /**
+   * 最近一次**被拒**的拉取。
+   *
+   * 只记成功的话，「客户说订阅更新不了」就没法回答：到底是他没试，还是试了被挡了、
+   * 挡在哪一步。这两列专门回答后半句，见 shared/proxySubTokenStatus。
+   */
+  lastFailureAt: epoch("lastFailureAt"),
+  lastFailureReason: varchar("lastFailureReason", { length: 32 }),
   expiresAt: epoch("expiresAt"),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
   updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
