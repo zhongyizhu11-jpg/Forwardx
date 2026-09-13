@@ -5,6 +5,7 @@ import ProxyInboundsSection from "@/components/proxy/ProxyInboundsSection";
 import { proxyNodeMetaText, type ProxyNodeRowSpec } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import DataSectionError from "@/components/DataSectionError";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -894,6 +895,14 @@ export default function ClientSubscriptionsPage() {
           <CardContent>
             {tokensQuery.isLoading ? (
               <DataSectionLoading />
+            ) : tokensQuery.error && tokens.length === 0 ? (
+              /* 「还没有订阅链接」得是真的没有。读失败还这么说，等于让人再建一条重复的。 */
+              <DataSectionError
+                label="订阅链接"
+                error={tokensQuery.error}
+                retrying={tokensQuery.isFetching}
+                onRetry={() => { void tokensQuery.refetch(); }}
+              />
             ) : tokens.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
                 还没有订阅链接。
@@ -1264,6 +1273,13 @@ export default function ClientSubscriptionsPage() {
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             {previewQuery.isLoading ? (
               <DataSectionLoading />
+            ) : previewQuery.error && !preview ? (
+              <DataSectionError
+                label="订阅内容"
+                error={previewQuery.error}
+                retrying={previewQuery.isFetching}
+                onRetry={() => { void previewQuery.refetch(); }}
+              />
             ) : (
               <div className="space-y-4">
                 {(preview?.nodes.length ?? 0) === 0 ? (

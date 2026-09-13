@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import DataSectionError from "@/components/DataSectionError";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { planResourceText } from "@/lib/planDisplay";
 import { trpc } from "@/lib/trpc";
@@ -231,9 +232,27 @@ function StorePlanCard({
 
 export default function Store() {
   const utils = trpc.useUtils();
-  const { data: storeStatus, isLoading: storeStatusLoading } = trpc.plans.storeStatus.useQuery();
-  const { data: plans = [], isLoading } = trpc.plans.storeList.useQuery(undefined, { placeholderData: (previousData) => previousData });
-  const { data: trafficBillingStore, isLoading: trafficBillingLoading } = trpc.trafficBilling.storeResources.useQuery(undefined, {
+  const {
+    data: storeStatus,
+    isLoading: storeStatusLoading,
+    error: storeStatusError,
+    isFetching: storeStatusFetching,
+    refetch: refetchStoreStatus,
+  } = trpc.plans.storeStatus.useQuery();
+  const {
+    data: plans = [],
+    isLoading,
+    error: plansError,
+    isFetching: plansFetching,
+    refetch: refetchPlans,
+  } = trpc.plans.storeList.useQuery(undefined, { placeholderData: (previousData) => previousData });
+  const {
+    data: trafficBillingStore,
+    isLoading: trafficBillingLoading,
+    error: trafficBillingError,
+    isFetching: trafficBillingFetching,
+    refetch: refetchTrafficBilling,
+  } = trpc.trafficBilling.storeResources.useQuery(undefined, {
     enabled: !!storeStatus?.enabled,
     placeholderData: (previousData) => previousData,
   });
@@ -387,7 +406,17 @@ export default function Store() {
           <DataSectionLoading label="正在加载商店状态" />
         )}
 
-        {!storeStatusLoading && !storeStatus?.enabled && (
+        {/* 状态没读到就别替商店宣布关门 —— 那句话会让客户以为是管理员关的。 */}
+        {!storeStatusLoading && storeStatusError && !storeStatus && (
+          <DataSectionError
+            label="商店状态"
+            error={storeStatusError}
+            retrying={storeStatusFetching}
+            onRetry={() => { void refetchStoreStatus(); }}
+          />
+        )}
+
+        {!storeStatusLoading && !storeStatusError && !storeStatus?.enabled && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Lock className="h-5 w-5" /> 商店暂未开启</CardTitle>
@@ -420,14 +449,26 @@ export default function Store() {
                       onBuy={(option) => buy(plan, option)}
                     />
                   ))}
-                  {!isLoading && plans.length === 0 && (
+                  {/*
+                    读取失败不能画成「管理员还没上架」—— 那是在替后端下一个它自己都不知道的
+                    结论，客户会照着这句话去找管理员，而管理员那边什么问题都没有。
+                  */}
+                  {!isLoading && plans.length === 0 && (plansError ? (
+                    <DataSectionError
+                      className="col-span-full"
+                      label="商店套餐"
+                      error={plansError}
+                      retrying={plansFetching}
+                      onRetry={() => { void refetchPlans(); }}
+                    />
+                  ) : (
                     <Card className="col-span-full">
                       <CardHeader>
                         <CardTitle>暂无可购买套餐</CardTitle>
                         <CardDescription>管理员还没有把套餐放上商店，需要的话可以联系他分配。</CardDescription>
                       </CardHeader>
                     </Card>
-                  )}
+                  ))}
                 </AutoAnimateContainer>
               )}
             </TabsContent>
@@ -473,7 +514,16 @@ export default function Store() {
                       </CardContent>
                     </Card>
                   ))}
-                  {(trafficBillingStore?.configs || []).length === 0 && (
+                  {(trafficBillingStore?.configs || []).length === 0 && trafficBillingError && (
+                    <DataSectionError
+                      className="col-span-full"
+                      label="按量计费资源"
+                      error={trafficBillingError}
+                      retrying={trafficBillingFetching}
+                      onRetry={() => { void refetchTrafficBilling(); }}
+                    />
+                  )}
+                  {(trafficBillingStore?.configs || []).length === 0 && !trafficBillingError && (
                     <Card className="col-span-full">
                       <CardHeader>
                         <CardTitle>暂无公开按量计费资源</CardTitle>

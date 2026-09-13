@@ -60,6 +60,7 @@ import { SlidingTabsList, type SlidingTabItem } from "@/components/ui/sliding-ta
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import DataSectionError from "@/components/DataSectionError";
 import { countryFeatureHasCode, normalizeCountryCode } from "@/lib/countryFeatures";
 import { normalizeForwardProtocolSettings } from "@shared/forwardTypes";
 import { useUrlTab } from "@/hooks/useUrlTab";
@@ -2809,6 +2810,17 @@ function HostsContent() {
       ) : (
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardContent className="p-0">
+            {/* 「暂无主机」是结论；读失败时我们并不知道。别让人以为机器掉没了。 */}
+            {hostPageQuery.error && !hostPageQuery.data ? (
+            <DataSectionError
+              className="border-0 bg-transparent"
+              label="主机列表"
+              error={hostPageQuery.error}
+              retrying={hostPageQuery.isFetching}
+              onRetry={() => { void hostPageQuery.refetch(); }}
+              minHeight="min-h-[260px]"
+            />
+            ) : (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <div className="h-16 w-16 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
                 <Server className="h-8 w-8 opacity-40" />
@@ -2818,6 +2830,7 @@ function HostsContent() {
                 {isHostTextFiltered ? "调整筛选内容或清空搜索" : isHostGroupFiltered ? "可以在分组管理中为该分组添加主机" : user?.role === "admin" ? "点击添加主机生成 Agent 安装命令" : "请联系管理员添加主机"}
               </p>
             </div>
+            )}
           </CardContent>
         </Card>
       )}

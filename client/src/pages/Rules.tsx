@@ -47,6 +47,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import DataSectionError from "@/components/DataSectionError";
 import { trpc } from "@/lib/trpc";
 import { pollingInterval } from "@/lib/polling";
 import { handoffManualTestResult } from "@/lib/manualTestCache";
@@ -7175,7 +7176,20 @@ function RulesContent() {
       ) : (
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardContent className="p-0">
-            {(rules && rules.length > 0) || ruleScopeTotal > 0 || hasActiveRuleFilter ? (
+            {/*
+              列表没读到时不能画成「暂无转发规则」。转发页是这套面板的主页，那句话意味着
+              「你的转发全没了」—— 看到的人第一反应是去重建，而实际上一条都没少。
+            */}
+            {rulePageQuery.error && !rules ? (
+              <DataSectionError
+                className="border-0 bg-transparent"
+                label="转发规则"
+                error={rulePageQuery.error}
+                retrying={rulePageQuery.isFetching}
+                onRetry={() => { void rulePageQuery.refetch(); }}
+                minHeight="min-h-[260px]"
+              />
+            ) : (rules && rules.length > 0) || ruleScopeTotal > 0 || hasActiveRuleFilter ? (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <Filter className="h-10 w-10 mb-3 opacity-30" />
                 <p className="text-base font-medium">没有匹配的规则</p>

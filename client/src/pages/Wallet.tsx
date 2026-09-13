@@ -2,6 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DashboardLayout from "@/components/DashboardLayout";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import { DataTableErrorRow } from "@/components/DataSectionError";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { queryErrorHint } from "@/lib/queryErrorMessage";
 import { trpc } from "@/lib/trpc";
 import { CheckCircle2, CreditCard, Gift, Package, ReceiptText, RefreshCw, WalletCards } from "lucide-react";
 import { useState } from "react";
@@ -68,10 +70,28 @@ function ledgerIcon(item: any) {
 export default function Wallet() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
-  const { data: wallet, isLoading: walletLoading } = trpc.billing.me.useQuery(undefined, { placeholderData: (previousData) => previousData });
-  const { data: ledger = [], isLoading: ledgerLoading } = trpc.billing.ledger.useQuery({ limit: 150 }, { placeholderData: (previousData) => previousData });
+  const {
+    data: wallet,
+    isLoading: walletLoading,
+    error: walletError,
+    isFetching: walletFetching,
+    refetch: refetchWallet,
+  } = trpc.billing.me.useQuery(undefined, { placeholderData: (previousData) => previousData });
+  const {
+    data: ledger = [],
+    isLoading: ledgerLoading,
+    error: ledgerError,
+    isFetching: ledgerFetching,
+    refetch: refetchLedger,
+  } = trpc.billing.ledger.useQuery({ limit: 150 }, { placeholderData: (previousData) => previousData });
   const { data: billingFeatures } = trpc.billing.featureStatus.useQuery(undefined, { placeholderData: (previousData) => previousData });
-  const { data: paymentOrders = [], isLoading: paymentOrdersLoading } = trpc.payment.myOrders.useQuery({ limit: 50 }, { placeholderData: (previousData: any) => previousData });
+  const {
+    data: paymentOrders = [],
+    isLoading: paymentOrdersLoading,
+    error: paymentOrdersError,
+    isFetching: paymentOrdersFetching,
+    refetch: refetchPaymentOrders,
+  } = trpc.payment.myOrders.useQuery({ limit: 50 }, { placeholderData: (previousData: any) => previousData });
   const { data: paymentMethods = [] } = trpc.payment.availableMethods.useQuery(undefined, { placeholderData: (previousData) => previousData });
   const [rechargeOpen, setRechargeOpen] = useState(false);
   const [amount, setAmount] = useState("50");
@@ -124,14 +144,29 @@ export default function Wallet() {
           <Card>
             <CardHeader>
               <CardDescription>当前余额</CardDescription>
-              <AnimatedStatValue
-                as={CardTitle}
-                value={money(wallet?.balanceCents)}
-                loading={walletLoading}
-                cacheKey={`wallet.balance.${user?.id || "current"}`}
-                fallbackValue={money(0)}
-                className="text-4xl"
-              />
+              {/*
+                余额读不到时**不能**显示 ¥0.00。这一页上的每个数字都是钱：把「没取到」
+                画成「你没有钱」，看到的人下一步就是再充一次。
+              */}
+              {walletError && !wallet ? (
+                <div className="space-y-2">
+                  <CardTitle className="text-2xl text-muted-foreground">余额没读到</CardTitle>
+                  <p className="text-xs text-muted-foreground">{queryErrorHint(walletError) || "这一次没取到，不是余额为零。"}</p>
+                  <Button variant="outline" size="sm" onClick={() => { void refetchWallet(); }} disabled={walletFetching}>
+                    <RefreshCw className={`mr-2 h-3.5 w-3.5 ${walletFetching ? "forwardx-icon-spin" : ""}`} />
+                    重试
+                  </Button>
+                </div>
+              ) : (
+                <AnimatedStatValue
+                  as={CardTitle}
+                  value={money(wallet?.balanceCents)}
+                  loading={walletLoading}
+                  cacheKey={`wallet.balance.${user?.id || "current"}`}
+                  fallbackValue={money(0)}
+                  className="text-4xl"
+                />
+              )}
             </CardHeader>
           </Card>
 
@@ -214,13 +249,21 @@ export default function Wallet() {
                     </TableRow>
                   );
                 })}
-                {ledger.length === 0 && (
+                {ledger.length === 0 && (ledgerError ? (
+                  <DataTableErrorRow
+                    colSpan={6}
+                    label="账单流水"
+                    error={ledgerError}
+                    retrying={ledgerFetching}
+                    onRetry={() => { void refetchLedger(); }}
+                  />
+                ) : (
                   <TableRow>
                     <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                       暂无账单流水
                     </TableCell>
                   </TableRow>
-                )}
+                ))}
               </TableBody>
             </Table>
             )}
@@ -314,13 +357,21 @@ export default function Wallet() {
                     <TableCell>{dateText(order.createdAt)}</TableCell>
                   </TableRow>
                 ))}
-                {paymentOrders.length === 0 && (
+                {paymentOrders.length === 0 && (paymentOrdersError ? (
+                  <DataTableErrorRow
+                    colSpan={6}
+                    label="支付流水"
+                    error={paymentOrdersError}
+                    retrying={paymentOrdersFetching}
+                    onRetry={() => { void refetchPaymentOrders(); }}
+                  />
+                ) : (
                   <TableRow>
                     <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                       暂无支付流水
                     </TableCell>
                   </TableRow>
-                )}
+                ))}
               </TableBody>
             </Table>
             )}

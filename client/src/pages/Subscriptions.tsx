@@ -8,6 +8,7 @@ import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import DataSectionError from "@/components/DataSectionError";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { planResourceText } from "@/lib/planDisplay";
 import { pollingInterval } from "@/lib/polling";
@@ -104,7 +105,13 @@ export default function Subscriptions() {
   const { data: paymentMethods = [] } = trpc.payment.availableMethods.useQuery(undefined, {
     enabled: !!storeStatus?.enabled,
   });
-  const { data: subscriptions = [], isLoading } = trpc.plans.mySubscriptions.useQuery();
+  const {
+    data: subscriptions = [],
+    isLoading,
+    error: subscriptionsError,
+    isFetching: subscriptionsFetching,
+    refetch: refetchSubscriptions,
+  } = trpc.plans.mySubscriptions.useQuery();
   const { data: userTraffic = [] } = trpc.dashboard.userTraffic.useQuery(undefined, {
     refetchInterval: pollingInterval("slow"),
     placeholderData: (previousData) => previousData,
@@ -317,7 +324,20 @@ export default function Subscriptions() {
           <DataSectionLoading label="正在加载订阅数据" />
         )}
 
-        {!isLoading && visibleSubscriptions.length === 0 && (
+        {/*
+          「还没有套餐记录」是一个结论，读取失败时我们并不知道它成不成立 —— 而这句话会
+          让一个刚买过套餐的人以为订单丢了。
+        */}
+        {!isLoading && subscriptionsError && subscriptions.length === 0 && (
+          <DataSectionError
+            label="你的套餐"
+            error={subscriptionsError}
+            retrying={subscriptionsFetching}
+            onRetry={() => { void refetchSubscriptions(); }}
+          />
+        )}
+
+        {!isLoading && !subscriptionsError && visibleSubscriptions.length === 0 && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Package className="h-5 w-5" /> 暂无可显示订阅</CardTitle>
