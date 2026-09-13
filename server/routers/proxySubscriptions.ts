@@ -454,7 +454,8 @@ export const proxySubscriptionsRouter = router({
   preview: protectedProcedure.query(async ({ ctx }) => {
     if (!await hasProxySubscriptionPermission(ctx)) return { groups: [], nodes: [], skipped: [], warnings: [] };
     const plan = await db.buildProxySubscriptionPlanForUser(ctx.user.id);
-    const document = await db.getProxySubscriptionDocumentForUser(ctx.user.id);
+    // plan 传下去，免得把「全部规则 + 全部主机 + 全部节点」白算第二遍。
+    const document = await db.getProxySubscriptionDocumentForUser(ctx.user.id, { plan });
     return {
       groups: document.groups
         .filter((group) => group.type !== "select")

@@ -267,13 +267,16 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
    * 上。这种拓扑下目标当然不等于节点地址，却是正常的 —— 不认出来就会对着一条好线路
    * 报警。数据本来就都在手上，顺手算一遍。
    */
+  // IPv6 字面量在转发那边可能带方括号、主机那边不一定带，两侧都去掉再比。
+  const entryKey = (address: unknown, port: unknown) =>
+    `${text(address).toLowerCase().replace(/^\[/, "").replace(/\]$/, "")}:${toPort(port)}`;
   const ownForwardEntries = new Set<string>();
   for (const rule of input.rules) {
     if (bool(rule.pendingDelete)) continue;
     const host = hostsById.get(Number(rule.hostId || 0));
     const address = getHostEntryAddress(host);
     const port = toPort(rule.sourcePort);
-    if (address && port) ownForwardEntries.add(`${address.trim().toLowerCase()}:${port}`);
+    if (address && port) ownForwardEntries.add(entryKey(address, port));
   }
 
   /**
@@ -387,9 +390,7 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
      */
     let targetMismatch = false;
     const targetText = `${text(rule.targetIp)}:${toPort(rule.targetPort) || "-"}`;
-    const pointsAtOwnForwardEntry = ownForwardEntries.has(
-      `${text(rule.targetIp).toLowerCase()}:${toPort(rule.targetPort)}`,
-    );
+    const pointsAtOwnForwardEntry = ownForwardEntries.has(entryKey(rule.targetIp, rule.targetPort));
     if (!pointsAtOwnForwardEntry
       && proxyNodeBindingTruth(
         { targetIp: rule.targetIp, targetPort: rule.targetPort },

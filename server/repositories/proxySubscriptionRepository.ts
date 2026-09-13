@@ -883,9 +883,16 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
  */
 export async function getProxySubscriptionDocumentForUser(
   userId: number,
-  options: { rulePreset?: unknown } = {},
+  options: {
+    rulePreset?: unknown;
+    /**
+     * 已经算好的 plan。预览那条路要同时拿 plan 和 document，不传的话这一整套
+     * （全部规则 + 全部主机 + 全部节点）会白算第二遍。
+     */
+    plan?: ProxySubscriptionPlan;
+  } = {},
 ): Promise<ProxySubscriptionDocument> {
-  const plan = await buildProxySubscriptionPlanForUser(userId);
+  const plan = options.plan ?? await buildProxySubscriptionPlanForUser(userId);
   const templates = await getProxyNodesForSubscription(userId);
   return buildProxySubscriptionDocument(plan, templates as any, {
     mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
