@@ -949,6 +949,11 @@ export default function ClientSubscriptionsPage() {
             cacheKey="subscriptions.stats.nodes"
             fallbackValue={0}
             index={0}
+            /*
+              「客户端线路」和「待处理」讲的是同一件事的两面 —— 订阅里有什么、还差什么。
+              所以两张卡都通向「订阅内容」那个弹窗：想看细节的人不必再去找那个按钮。
+            */
+            onClick={(preview?.nodes.length ?? 0) > 0 ? () => setPreviewOpen(true) : undefined}
           />
           <StatCard
             title="落地节点"
@@ -984,6 +989,8 @@ export default function ClientSubscriptionsPage() {
             cacheKey="subscriptions.stats.pending"
             fallbackValue={0}
             index={3}
+            // 写着「你有 N 件事要处理」的卡片，本来就该是点进去处理的入口。
+            onClick={pendingCount > 0 ? () => setPreviewOpen(true) : undefined}
           />
         </div>
 
@@ -997,10 +1004,25 @@ export default function ClientSubscriptionsPage() {
         {/* 玻璃卡 + 顶部一道高光，和仪表盘那几张同一种做法。 */}
         <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md">
           <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
-          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-3">
+          {/*
+            手机上原来三层内边距叠着吃宽度：外层 main 12px + 卡片 24px + 每行自己的
+            12px，414 的屏幕先去掉 72。内容被挤成一条，看着就不饱满。卡片这一层在手机上
+            收到 12，桌面端照旧 24。
+          */}
+          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 px-3 pb-3 pt-4 sm:px-6 sm:pt-6">
+            {/*
+              小色章：颜色和上面那张概览卡是同一个。
+              「订阅链接」在概览里是紫的，往下这一段也是紫的 —— 眼睛能把上下两处对上，
+              不用再读一遍标题。图标散着放也能认，但认的是图标；带上颜色认的是「这一块」。
+            */}
             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Link2 className="h-4 w-4" />
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400">
+                <Link2 className="h-3.5 w-3.5" />
+              </span>
               订阅链接
+              {tokens.length > 0 ? (
+                <span className="text-xs font-normal text-muted-foreground/70">{tokens.length} 条</span>
+              ) : null}
             </CardTitle>
             <Button
               className="shrink-0"
@@ -1014,7 +1036,7 @@ export default function ClientSubscriptionsPage() {
               新建链接
             </Button>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-3 pb-4 sm:px-6 sm:pb-6">
             {tokensQuery.isLoading ? (
               <DataSectionLoading />
             ) : tokensQuery.error && tokens.length === 0 ? (

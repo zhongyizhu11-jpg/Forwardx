@@ -569,7 +569,8 @@ export default function ProxyInboundsSection({
         {/* 和订阅链接那张卡、以及仪表盘上那几张，用同一种玻璃卡 + 顶部高光。 */}
         <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md">
           <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
+          {/* 手机上收窄卡片自己的内边距，别让三层 padding 叠着把内容挤成一条。 */}
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 px-3 pb-3 pt-4 sm:px-6 sm:pt-6">
             <button
               type="button"
               className="flex min-w-0 items-center gap-2 text-left"
@@ -577,7 +578,10 @@ export default function ProxyInboundsSection({
               aria-expanded={!collapsed}
             >
               <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
-              <Server className="h-4 w-4 shrink-0" />
+              {/* 和「落地节点」那张概览卡同一个青色，上下两处对得上。 */}
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-teal-500/10 text-teal-600 dark:text-teal-400">
+                <Server className="h-3.5 w-3.5" />
+              </span>
               <CardTitle className="text-sm font-medium text-muted-foreground">我的节点</CardTitle>
               {totalRowCount > 0 ? (
                 <span className="truncate text-xs text-muted-foreground">
@@ -647,7 +651,7 @@ export default function ProxyInboundsSection({
               )}
             </div>
           </CardHeader>
-          <CardContent hidden={collapsed} className="pt-0">
+          <CardContent hidden={collapsed} className="px-3 pb-4 pt-0 sm:px-6 sm:pb-6">
             {inboundsQuery.isLoading || extraLoading ? (
               <DataSectionLoading />
             ) : inboundsQuery.error && totalRowCount === 0 ? (

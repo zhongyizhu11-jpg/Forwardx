@@ -1,8 +1,10 @@
+import { ChevronRight } from "lucide-react";
 import { motion } from "motion/react";
 import type { ElementType } from "react";
 
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 /**
  * 页面顶部那一排概览卡。
@@ -25,6 +27,14 @@ export type StatCardProps = {
   className?: string;
   /** 入场动画的次序，让一排卡片依次浮上来而不是一起弹出。 */
   index?: number;
+  /**
+   * 点这张卡去哪。
+   *
+   * 一张写着「你有 3 件事要处理」的卡片，本来就该是点进去处理的入口 —— 让人看完这个
+   * 数字再自己去别处找那三件事，是把已经走完的一半路又还给他。给了 onClick 才变成
+   * 可点，别的卡片照旧是纯展示。
+   */
+  onClick?: () => void;
 };
 
 export default function StatCard({
@@ -38,6 +48,7 @@ export default function StatCard({
   fallbackValue,
   className,
   index = 0,
+  onClick,
 }: StatCardProps) {
   return (
     <motion.div
@@ -47,12 +58,32 @@ export default function StatCard({
       whileHover={{ y: -2 }}
       transition={{ duration: 0.28, delay: index * 0.04, ease: [0.22, 1, 0.36, 1] }}
     >
-      <Card className="group relative h-full overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
+      <Card
+        onClick={onClick}
+        role={onClick ? "button" : undefined}
+        tabIndex={onClick ? 0 : undefined}
+        onKeyDown={onClick
+          ? (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onClick();
+            }
+          }
+          : undefined}
+        className={cn(
+          "group relative h-full overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5",
+          onClick && "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        )}
+      >
         <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
         <CardContent className="relative p-3 sm:p-5">
           <div className="flex items-start justify-between gap-2 sm:gap-4">
             <div className="min-w-0 flex-1 space-y-1.5">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
+              <p className="flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                {title}
+                {/* 可点的卡片给一个安静的记号：不喊「点我」，但让人知道这后面还有东西。 */}
+                {onClick ? <ChevronRight className="h-3 w-3 opacity-50 transition-transform group-hover:translate-x-0.5" /> : null}
+              </p>
               <AnimatedStatValue
                 as="p"
                 value={value}
