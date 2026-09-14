@@ -2,46 +2,72 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfirmDialogProvider } from "@/components/ui/confirm-dialog";
 import { useAuth } from "@/_core/hooks/useAuth";
-import type { ComponentType } from "react";
+import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc";
 import { mobileAuth } from "@/lib/mobileAuth";
 import NotFound from "@/pages/NotFound";
 import { Redirect, Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import RouteFallback from "./components/RouteFallback";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import PersonalizationLayer from "./components/PersonalizationLayer";
 import Live2DWidgetHost from "./components/plugins/Live2DWidgetHost";
 import Setup from "./pages/Setup";
-import AnnouncementsPage from "@/pages/Announcements";
-import BillingPage from "@/pages/Billing";
-import CustomSidebarPage from "@/pages/CustomSidebarPage";
-import EmailSettingsPage from "@/pages/EmailSettings";
-import ForwardGroupsPage from "@/pages/ForwardGroups";
 import HomePage from "@/pages/Home";
-import HomepagePreviewPage from "@/pages/HomepagePreview";
-import HostMonitorPage from "@/pages/HostMonitor";
-import HostsPage from "@/pages/Hosts";
 import LoginPage from "@/pages/Login";
-import LookingGlassPage from "@/pages/LookingGlass";
-import PaymentsPage from "@/pages/Payments";
-import PlansPage from "@/pages/Plans";
-import PluginsPage from "@/pages/Plugins";
-import ProfilePage from "@/pages/Profile";
-import RulesPage from "@/pages/Rules";
-import SettingsPage from "@/pages/Settings";
-import StorePage from "@/pages/Store";
-import SubscriptionsPage from "@/pages/Subscriptions";
-import ClientSubscriptionsPage from "@/pages/ClientSubscriptions";
-import ProxyInboundsPage from "@/pages/ProxyInbounds";
-import TrafficBillingPage from "@/pages/TrafficBilling";
-import TunnelsPage from "@/pages/Tunnels";
-import UsersPage from "@/pages/Users";
-import WalletPage from "@/pages/Wallet";
+
+/*
+  除了登录页和落地页，其余页面按路由拆包。
+
+  原来 26 个页面全是静态导入，打出来的主 chunk 有 3.48 MB：一个只想看
+  「我的套餐」的租户，手机上要先把 Settings（6460 行）、Rules（8778 行）、
+  Plugins 的全部代码下完才能看到第一屏。
+
+  Login 和 Home 刻意留同步 —— 它们是所有人的入口，拆了会在最常见的那两屏
+  上多一次往返、闪一下 fallback，省下来的字节反而不划算。
+*/
+const AnnouncementsPage = lazy(() => import("@/pages/Announcements"));
+const BillingPage = lazy(() => import("@/pages/Billing"));
+const CustomSidebarPage = lazy(() => import("@/pages/CustomSidebarPage"));
+const EmailSettingsPage = lazy(() => import("@/pages/EmailSettings"));
+const ForwardGroupsPage = lazy(() => import("@/pages/ForwardGroups"));
+const HomepagePreviewPage = lazy(() => import("@/pages/HomepagePreview"));
+const HostMonitorPage = lazy(() => import("@/pages/HostMonitor"));
+const HostsPage = lazy(() => import("@/pages/Hosts"));
+const LookingGlassPage = lazy(() => import("@/pages/LookingGlass"));
+const PaymentsPage = lazy(() => import("@/pages/Payments"));
+const PlansPage = lazy(() => import("@/pages/Plans"));
+const PluginsPage = lazy(() => import("@/pages/Plugins"));
+const ProfilePage = lazy(() => import("@/pages/Profile"));
+const RulesPage = lazy(() => import("@/pages/Rules"));
+const SettingsPage = lazy(() => import("@/pages/Settings"));
+const StorePage = lazy(() => import("@/pages/Store"));
+const SubscriptionsPage = lazy(() => import("@/pages/Subscriptions"));
+const ClientSubscriptionsPage = lazy(() => import("@/pages/ClientSubscriptions"));
+const ProxyInboundsPage = lazy(() => import("@/pages/ProxyInbounds"));
+const TrafficBillingPage = lazy(() => import("@/pages/TrafficBilling"));
+const TunnelsPage = lazy(() => import("@/pages/Tunnels"));
+const UsersPage = lazy(() => import("@/pages/Users"));
+const WalletPage = lazy(() => import("@/pages/Wallet"));
 
 type RoutableComponent = ComponentType<any>;
 
+/*
+  Suspense 边界要贴着页面本身，不能包在整个 <Switch> 外面。
+
+  包在外面的话，页面代码还在下载时整棵树都处于挂起状态，守卫（AdminRoute）会跟着
+  重新渲染 —— 而守卫在渲染期会返回 <Redirect>，那会同步改地址，进而更新所有
+  useLocation 的订阅者（侧边栏就是其中之一）。于是「渲染 A 的时候更新了 B」，
+  几个来回就撞上 React 的更新深度上限，整页掉进 ErrorBoundary。
+
+  放在守卫里面，挂起就只影响页面这一小块，守卫已经算完、不会被重来。
+*/
+function LazyBoundary({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<RouteFallback />}>{children}</Suspense>;
+}
+
 function routeComponent(Component: RoutableComponent) {
-  return () => <Component />;
+  return () => <LazyBoundary><Component /></LazyBoundary>;
 }
 
 function isLoginRoute(location: string) {
@@ -55,7 +81,7 @@ function AdminRoute({ component: Component }: { component: RoutableComponent }) 
   if (loading) return null;
   if (!user) return <Redirect to="/login" />;
   if (user.role !== "admin") return <Redirect to="/" />;
-  return <Component />;
+  return <LazyBoundary><Component /></LazyBoundary>;
 }
 
 function LookingGlassRoute() {
@@ -70,7 +96,7 @@ function LookingGlassRoute() {
   if (user && publicInfo.isLoading && !publicInfo.data) return null;
   if (!user) return <Redirect to="/login" />;
   if (user.role !== "admin" && publicInfo.data?.lookingGlassUserEnabled !== true) return <Redirect to="/" />;
-  return <LookingGlassPage />;
+  return <LazyBoundary><LookingGlassPage /></LazyBoundary>;
 }
 
 function PluginsRoute({ sidebarPluginId }: { sidebarPluginId?: string }) {
@@ -84,9 +110,9 @@ function PluginsRoute({ sidebarPluginId }: { sidebarPluginId?: string }) {
   if (loading) return null;
   if (!user) return <Redirect to="/login" />;
   if (user.role !== "admin") return <Redirect to="/" />;
-  if (publicInfo.isLoading && !publicInfo.data) return <PluginsPage sidebarPluginId={sidebarPluginId} />;
+  if (publicInfo.isLoading && !publicInfo.data) return <LazyBoundary><PluginsPage sidebarPluginId={sidebarPluginId} /></LazyBoundary>;
   if (publicInfo.data?.pluginsEnabled !== true) return <Redirect to="/settings" />;
-  return <PluginsPage sidebarPluginId={sidebarPluginId} />;
+  return <LazyBoundary><PluginsPage sidebarPluginId={sidebarPluginId} /></LazyBoundary>;
 }
 
 function Router() {
@@ -127,7 +153,7 @@ function Router() {
       <Route path="/announcements">{routeComponent(AnnouncementsPage)}</Route>
       <Route path="/settings">{() => <AdminRoute component={SettingsPage} />}</Route>
       <Route path="/custom-pages/:pageId">
-        {(params) => <CustomSidebarPage pageId={params.pageId} />}
+        {(params) => <LazyBoundary><CustomSidebarPage pageId={params.pageId} /></LazyBoundary>}
       </Route>
       <Route path="/404" component={NotFound} />
       <Route path="/:monitorPath">{routeComponent(HostMonitorPage)}</Route>
