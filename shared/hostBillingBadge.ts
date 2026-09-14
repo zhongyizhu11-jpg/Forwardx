@@ -18,6 +18,8 @@ export type HostTrafficBillingSummary = {
   totalRules?: unknown;
   /** 单价（毫分/GB）。0 = 不给看（非管理员），-1 = 这台上不止一种单价。 */
   pricePerGbMilliCents?: unknown;
+  /** 这台机器自己配了「整台兜底价」，并且还开着。 */
+  hostDefault?: unknown;
 };
 
 export type HostBillingBadge = {
@@ -50,11 +52,17 @@ export function hostBillingBadge(summary: HostTrafficBillingSummary | null | und
     ? `${billed}/${total} 条按量计费${priceSuffix}`
     : `按量计费${priceSuffix}`;
 
+  const hostDefault = !!summary?.hostDefault;
   const title = [
     partial
       ? `这台机器上 ${total} 条转发里有 ${billed} 条按 GB 扣用户余额，其余的记进用户自己的套餐流量额度`
       : "这台机器上的转发按 GB 扣用户余额，不记进用户的套餐流量额度",
-    "计费配置挂在转发所属的转发组 / 隧道上，不在主机上",
+    hostDefault
+      // 兜底价管着的时候要说清它是**最后一档**：转发组 / 隧道上单独配过价的转发
+      // 走它们自己的价，不是整台一个价。不点破的话，人改了兜底价却发现某几条
+      // 的账没变，只会以为面板算错了。
+      ? "这台机器配了整台兜底价：转发组 / 隧道上单独配过价的转发走它们自己的价，其余的按这台的价"
+      : "计费配置挂在转发所属的转发组 / 隧道上，不在主机上",
     mixedPrice ? "这台机器上不止一种单价，具体价钱看各条转发" : "",
     "余额扣完会自动停掉该用户名下的转发",
   ].filter(Boolean).join("\n");

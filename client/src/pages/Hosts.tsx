@@ -8,6 +8,7 @@ import DateTimePickerInput, {
   parseDateInputValue as parseDateTimeLocal,
 } from "@/components/DatePickerInput";
 import AddSelfServiceHostDialog from "@/components/hosts/AddSelfServiceHostDialog";
+import HostTrafficBillingDialog from "@/components/hosts/HostTrafficBillingDialog";
 import HostCard, { HostActionButtons } from "@/components/hosts/HostCard";
 import HostGroupManager, { compareHostGroupDisplayOrder, type HostGroupView, type HostGroupViewMode } from "@/components/hosts/HostGroupManager";
 import HostProbeServiceManager, { type HostProbeServiceViewMode } from "@/components/hosts/HostProbeServiceManager";
@@ -1366,6 +1367,8 @@ function HostsContent() {
     等于让人白填一遍表单。
   */
   const [selfServiceAddOpen, setSelfServiceAddOpen] = useState(false);
+  // 「这台机器怎么计费」的弹窗，只有管理员那边能打开。
+  const [billingHost, setBillingHost] = useState<any>(null);
   const selfServiceQuotaQuery = trpc.hosts.selfServiceQuota.useQuery(undefined, {
     enabled: user?.role !== "admin",
     staleTime: 30_000,
@@ -2153,6 +2156,7 @@ function HostsContent() {
       canUpgrade={user?.role === "admin"}
       onResetTraffic={user?.role === "admin" ? requestResetHostTraffic : undefined}
       onCorrectTraffic={user?.role === "admin" ? requestCorrectHostTraffic : undefined}
+      onEditBilling={user?.role === "admin" ? setBillingHost : undefined}
       onViewProbeLatency={setProbeLatencyHost}
       resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
       traffic={hostTrafficById.get(host.id)}
@@ -2840,6 +2844,7 @@ function HostsContent() {
                             onUpgrade={requestAgentUpgrade}
                             onResetTraffic={user?.role === "admin" ? requestResetHostTraffic : undefined}
                             onCorrectTraffic={user?.role === "admin" ? requestCorrectHostTraffic : undefined}
+                            onEditBilling={user?.role === "admin" ? setBillingHost : undefined}
                             onViewProbeLatency={setProbeLatencyHost}
                             resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
                             canUpgrade={user?.role === "admin"}
@@ -2962,6 +2967,13 @@ function HostsContent() {
           utils.hosts.summary.invalidate();
           utils.hosts.statusSummary.invalidate();
         }}
+      />
+
+      {/* 整台机器的按量计费 —— 底层就是转发找配置时的最后一档兜底。 */}
+      <HostTrafficBillingDialog
+        open={!!billingHost}
+        onOpenChange={(open) => !open && setBillingHost(null)}
+        host={billingHost}
       />
 
       <Dialog open={!!resetTrafficHost} onOpenChange={(open) => !open && !resetHostTrafficMutation.isPending && setResetTrafficHost(null)}>

@@ -73,7 +73,10 @@ export const trafficBillingRouter = router({
         reconciliation.failures.length > 0 ? "warn" : "info",
         `[TrafficBilling] config saved ${input.resourceType}=${input.resourceId} priceMilli=${input.pricePerGbMilliCents ?? 0} requiresPermission=${input.requiresPermission} affectedUsers=${reconciliation.affectedUsers} disabledRules=${reconciliation.disabledRules} failures=${reconciliation.failures.length}`,
       );
-      return config;
+      // 把「顺带停掉了几条转发」原样带回去。改计费资源会牵动授权：靠这个资源
+      // 才用得上某台机器的用户，资源一变就可能失去访问，他的转发被停。界面不说
+      // 的话，这件事只在服务端日志里 —— 而挨停的是别人的业务。
+      return { ...(config as any), disabledRules: reconciliation.disabledRules };
     }),
 
   deleteConfig: adminProcedure
@@ -87,7 +90,7 @@ export const trafficBillingRouter = router({
         reconciliation.failures.length > 0 ? "warn" : "info",
         `[TrafficBilling] config deleted id=${input.id} affectedUsers=${reconciliation.affectedUsers} disabledRules=${reconciliation.disabledRules} failures=${reconciliation.failures.length}`,
       );
-      return { success: true };
+      return { success: true, disabledRules: reconciliation.disabledRules };
     }),
 
   records: protectedProcedure

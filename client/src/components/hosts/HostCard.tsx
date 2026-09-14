@@ -22,6 +22,7 @@ import {
   Gauge,
   HardDrive,
   RotateCcw,
+  Coins,
   Loader2,
   MemoryStick,
   Monitor,
@@ -101,6 +102,8 @@ type HostCardProps = {
   onUpgrade: (host: any) => void;
   onResetTraffic?: (host: any) => void;
   onCorrectTraffic?: (host: any) => void;
+  /** 给这台机器配「整台按量计费」。只有管理员那边传，租户那边不渲染这一项。 */
+  onEditBilling?: (host: any) => void;
   onViewProbeLatency?: (host: any) => void;
   resetTrafficPending?: boolean;
   traffic?: { bytesIn?: number | null; bytesOut?: number | null } | null;
@@ -115,7 +118,7 @@ type HostCardProps = {
 
 type HostActionButtonsProps = Pick<
   HostCardProps,
-  "host" | "onEdit" | "onDelete" | "onUpgrade" | "onResetTraffic" | "onCorrectTraffic" | "onViewProbeLatency" | "resetTrafficPending" | "canUpgrade"
+  "host" | "onEdit" | "onDelete" | "onUpgrade" | "onResetTraffic" | "onCorrectTraffic" | "onEditBilling" | "onViewProbeLatency" | "resetTrafficPending" | "canUpgrade"
 > & {
   className?: string;
   buttonClassName?: string;
@@ -128,6 +131,7 @@ export function HostActionButtons({
   onUpgrade,
   onResetTraffic,
   onCorrectTraffic,
+  onEditBilling,
   onViewProbeLatency,
   resetTrafficPending = false,
   canUpgrade,
@@ -216,6 +220,19 @@ export function HostActionButtons({
             </DropdownMenuItem>
           )}
           {/*
+            「这台机器怎么计费」的入口就放在这台机器上。
+
+            计费配置本来只能在「流量计费管理」那一页按转发组 / 隧道配，可商家是按台
+            买机器、机房也是按台出账单的 —— 「这台一律按 X 元/GB」原来得给这台上的
+            每个转发组各配一遍，漏一个就有一批流量悄悄不计费。
+          */}
+          {onEditBilling && (
+            <DropdownMenuItem onSelect={() => onEditBilling(host)}>
+              <Coins />
+              <span>按量计费</span>
+            </DropdownMenuItem>
+          )}
+          {/*
             升不了的人干脆别给这一项。
 
             原来是渲染出来再 disabled —— 对管理员是对的（机器离线时确实点不了，
@@ -256,6 +273,7 @@ export default function HostCard({
   onUpgrade,
   onResetTraffic,
   onCorrectTraffic,
+  onEditBilling,
   onViewProbeLatency,
   resetTrafficPending = false,
   traffic = null,
@@ -554,6 +572,7 @@ export default function HostCard({
               onUpgrade={onUpgrade}
               onResetTraffic={onResetTraffic}
               onCorrectTraffic={onCorrectTraffic}
+              onEditBilling={onEditBilling}
               onViewProbeLatency={onViewProbeLatency}
               resetTrafficPending={resetTrafficPending}
               canUpgrade={canUpgrade}
@@ -572,6 +591,7 @@ export default function HostCard({
               onUpgrade={onUpgrade}
               onResetTraffic={onResetTraffic}
               onCorrectTraffic={onCorrectTraffic}
+              onEditBilling={onEditBilling}
               onViewProbeLatency={onViewProbeLatency}
               resetTrafficPending={resetTrafficPending}
               canUpgrade={canUpgrade}

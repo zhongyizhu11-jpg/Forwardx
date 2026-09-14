@@ -920,14 +920,29 @@ export const hostsRouter = router({
         const billingByRuleId = billingRules.length > 0
           ? await db.findTrafficBillingResourcesForRules(billingRules)
           : new Map();
-        const billingStatsByHost = new Map<number, { total: number; billed: number; milliCents: number }>();
+        /*
+          这台机器自己那条「整台兜底价」。
+
+          和上面那个统计是两件事：上面答的是「现在这台上的转发实际在怎么算钱」（走
+          转发组 / 隧道 / 主机哪一档都算），这个答的是「这台机器本身配没配价」——
+          主机管理里的按量计费弹窗要拿它回填，没有的话每次打开都是空白，人会以为
+          没配过然后再配一条。只给管理员：配置和价钱都是商家的事。
+        */
+        const hostBillingConfigs = ctx.user.role === "admin"
+          ? await db.findHostTrafficBillingConfigs(items.map((row: any) => Number(row.id)))
+          : new Map();
+        const billingStatsByHost = new Map<number, { total: number; billed: number; milliCents: number; hostDefault: boolean }>();
         for (const rule of billingRules) {
           const hostId = Number(rule.hostId);
-          const stat = billingStatsByHost.get(hostId) || { total: 0, billed: 0, milliCents: 0 };
+          const stat = billingStatsByHost.get(hostId) || { total: 0, billed: 0, milliCents: 0, hostDefault: false };
           stat.total += 1;
           const resource = billingByRuleId.get(Number(rule.id));
           if (resource?.config) {
             stat.billed += 1;
+            // 这条是靠「整台兜底价」才算上钱的（转发组 / 隧道都没配）。读的是转发
+            // 实际落在哪一档，而不是「这台机器有没有一条 host 配置」—— 后者在配了
+            // 但每条转发都被组价接走时会说谎。
+            if (resource.resourceType === "host") stat.hostDefault = true;
             // 同一台机器上的几条转发可能挂在不同资源上、单价不同 —— 取其一做展示，
             // 多种价钱时界面只说「按量计费」，不编一个平均值出来。
             const price = Math.max(0, Number(resource.config.pricePerGbMilliCents) || 0);
@@ -948,8 +963,13 @@ export const hostsRouter = router({
                 totalRules: stat?.total || 0,
                 // -1 表示这台机器上有好几种单价，界面据此只说「按量计费」不报价。
                 pricePerGbMilliCents: ctx.user.role === "admin" ? (stat?.milliCents ?? 0) : 0,
+                // 整台兜底价在管着的话，界面要说清「这台上没单独计价的转发按这个走」，
+                // 而不是让人以为每一条都单独配过。
+                hostDefault: !!stat?.hostDefault,
               }
               : null,
+            // 这台机器自己配的整台兜底价（含停用的），只给管理员。
+            hostBillingConfig: hostBillingConfigs.get(Number(row.id)) || null,
             // 不是自己的机器：能看（说明管理员授权过），但改不动也删不掉 ——
             // 服务端 update/delete 本来就按 userId 挡着，界面据此收起入口。
             manageable: ctx.user.role === "admin" || Number(row.userId) === ctx.user.id,

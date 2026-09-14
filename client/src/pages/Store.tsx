@@ -490,7 +490,7 @@ export default function Store() {
                             </CardTitle>
                             <CardDescription className="mt-2">余额可用时可直接在转发规则中使用。</CardDescription>
                           </div>
-                          <Badge variant="outline">{config.resourceKind || (config.resourceType === "host" ? "历史主机" : config.resourceType === "tunnel" ? "隧道转发" : "转发资源")}</Badge>
+                          <Badge variant="outline">{config.resourceKind || (config.resourceType === "host" ? "整台主机" : config.resourceType === "tunnel" ? "隧道转发" : "转发资源")}</Badge>
                         </div>
                       </CardHeader>
                       <CardContent className="flex-1 space-y-4">

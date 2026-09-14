@@ -144,7 +144,7 @@ function forwardGroupBillingKind(group: any) {
 }
 
 function trafficBillingResourceLabel(resourceType: TrafficBillingResourceType) {
-  if (resourceType === "host") return "历史主机";
+  if (resourceType === "host") return "整台主机";
   if (resourceType === "tunnel") return "隧道转发";
   return "转发资源";
 }
@@ -527,7 +527,7 @@ export async function listTrafficBillingConfigs() {
       if (config.resourceType === "host") {
         return {
           resourceName: hostNames.get(resourceId) || `主机 #${config.resourceId}`,
-          resourceKind: "历史主机",
+          resourceKind: "整台主机",
           resourceMissing: !hostNames.has(resourceId),
           configuredMultiplier: normalizeMultiplier(Number(config.multiplier || 100)),
           multiplier: normalizeMultiplier(Number(config.multiplier || 100)),
@@ -658,6 +658,47 @@ export async function deleteTrafficBillingConfig(id: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(trafficBillingConfigs).where(eq(trafficBillingConfigs.id, id));
+}
+
+/**
+ * 一批主机各自的「整台兜底价」配置。
+ *
+ * 主机这一档是转发找计费配置时的最后一级兜底（转发组 → 隧道 → 主机），所以它回答
+ * 的是「这台机器上没被单独计价的转发，按多少钱算」。主机管理里那个按量计费弹窗要
+ * 拿它回填，一页十二台一次查完。
+ *
+ * **停用的也要返回**：弹窗得能显示「配过、但现在停着」，并且让人重新开起来。
+ * 换成只查启用中的，停用过的那台在界面上会和从没配过的长得一模一样，
+ * 于是人会再配一条，撞上唯一约束。
+ */
+export async function findHostTrafficBillingConfigs(hostIds: readonly number[]) {
+  const result = new Map<number, {
+    id: number;
+    enabled: boolean;
+    requiresPermission: boolean;
+    pricePerGbMilliCents: number;
+    multiplier: number;
+    description: string | null;
+  }>();
+  const wanted = Array.from(new Set(hostIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return result;
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db.select().from(trafficBillingConfigs).where(and(
+    eq(trafficBillingConfigs.resourceType, "host"),
+    inArray(trafficBillingConfigs.resourceId, wanted),
+  ));
+  for (const row of rows as any[]) {
+    result.set(Number(row.resourceId), {
+      id: Number(row.id),
+      enabled: !!row.enabled,
+      requiresPermission: !!row.requiresPermission,
+      pricePerGbMilliCents: configPriceMilliCents(row),
+      multiplier: normalizeMultiplier(Number(row.multiplier || 100)),
+      description: row.description ?? null,
+    });
+  }
+  return result;
 }
 
 export async function findTrafficBillingConfig(resourceType: TrafficBillingResourceType, resourceId: number) {

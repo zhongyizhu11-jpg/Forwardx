@@ -340,7 +340,12 @@ test("revoked resource grants stop owned rules without hiding or deleting them",
       assert.equal(enumerationFailureResult.failures[0].userId, null);
       assert.match(enumerationFailureResult.failures[0].error, /^user enumeration failed:/);
       assert.deepEqual(await adminTrafficBilling.setEnabled({ enabled: false }), { enabled: false });
-      assert.deepEqual(await adminTrafficBilling.deleteConfig({ id: Number(configWrittenWithUserFailures.id) }), { success: true });
+      // disabledRules 是「顺带停掉了几条转发」，界面据此提醒管理员。这里对账不上
+      // （users 表都被删了、对账整个失败），所以是 0 —— 删除本身照样成功。
+      assert.deepEqual(
+        await adminTrafficBilling.deleteConfig({ id: Number(configWrittenWithUserFailures.id) }),
+        { success: true, disabledRules: 0 },
+      );
     } finally {
       await runtime.closeDatabase().catch(() => undefined);
     }

@@ -120,16 +120,23 @@ function MobileInfoRow({
 }
 
 type BillingResourceType = "host" | "tunnel" | "forward_group";
-type BillingResourceCategory = "port" | "tunnel" | "chain" | "group" | "legacy_host";
+type BillingResourceCategory = "port" | "tunnel" | "chain" | "group" | "host";
 type BillingConfigViewMode = "card" | "table";
 const BILLING_CONFIG_VIEW_MODE_STORAGE_KEY = "forwardx.trafficBilling.configs.viewMode";
-const BILLING_RESOURCE_CATEGORY_ITEMS: Array<{ value: Exclude<BillingResourceCategory, "legacy_host">; label: string; description: string }> = [
+const BILLING_RESOURCE_CATEGORY_ITEMS: Array<{ value: BillingResourceCategory; label: string; description: string }> = [
   { value: "port", label: "端口转发", description: "链路管理中的端口转发资源" },
   { value: "tunnel", label: "隧道转发", description: "已创建的隧道资源" },
   { value: "chain", label: "转发链", description: "固定多跳链路资源" },
   { value: "group", label: "转发组", description: "转发组资源" },
+  /*
+    整台主机这一档一直在跑，只是界面上曾被标成「历史主机」并禁用新建。
+
+    转发找计费配置的顺序是 转发组 → 隧道 → **主机**，主机是最后一档兜底，回答的是
+    「这台机器上没被单独计价的转发按多少钱算」。商家按台买机器、机房按台出账单，
+    禁掉这一档等于逼人给每台上的每个转发组各配一遍，漏一个就有一批流量不计费。
+  */
+  { value: "host", label: "整台主机", description: "这台机器上没被转发组 / 隧道单独计价的转发，按这个价兜底" },
 ];
-const LEGACY_HOST_RESOURCE_CATEGORY_ITEM = { value: "legacy_host" as const, label: "历史主机", description: "旧版本主机计费资源" };
 
 function getStoredBillingConfigViewMode(): BillingConfigViewMode {
   if (typeof window === "undefined") return "card";
@@ -189,7 +196,7 @@ function forwardGroupTypeText(group: any) {
 }
 
 function resourceCategoryForConfig(config: any, forwardGroups: any[]): BillingResourceCategory {
-  if (config?.resourceType === "host") return "legacy_host";
+  if (config?.resourceType === "host") return "host";
   if (config?.resourceType === "tunnel") return "tunnel";
   const group = forwardGroups.find((item: any) => Number(item.id) === Number(config?.resourceId));
   const mode = forwardGroupMode(group || { groupMode: config?.resourceKind === "端口转发" ? "port" : config?.resourceKind === "转发链" ? "chain" : "failover" });
@@ -199,7 +206,7 @@ function resourceCategoryForConfig(config: any, forwardGroups: any[]): BillingRe
 }
 
 function resourceTypeForCategory(category: BillingResourceCategory): BillingResourceType {
-  if (category === "legacy_host") return "host";
+  if (category === "host") return "host";
   if (category === "tunnel") return "tunnel";
   return "forward_group";
 }
@@ -207,7 +214,7 @@ function resourceTypeForCategory(category: BillingResourceCategory): BillingReso
 function getResourceDisplayName(category: BillingResourceCategory, item: any) {
   if (!item) return "";
   if (category === "tunnel") return item.name || `隧道 #${item.id}`;
-  if (category === "legacy_host") return item.name || `主机 #${item.id}`;
+  if (category === "host") return item.name || `主机 #${item.id}`;
   return item.name || `${forwardGroupTypeText(item)} #${item.id}`;
 }
 
@@ -221,7 +228,7 @@ function billingResourceSearchText(category: BillingResourceCategory, item: any,
       item?.id,
     ].filter(Boolean).join(" / ");
   }
-  if (category === "legacy_host") {
+  if (category === "host") {
     return [getResourceDisplayName(category, item), item?.ip, item?.ipv4, item?.ipv6, item?.id].filter(Boolean).join(" / ");
   }
   return [
@@ -249,7 +256,7 @@ function billingResourceStatusTone(category: BillingResourceCategory, item: any)
     if (item.isEnabled) return "warning";
     return "offline";
   }
-  if (category === "legacy_host") return item.isOnline ? "online" : "offline";
+  if (category === "host") return item.isOnline ? "online" : "offline";
   if (item.isEnabled === false) return "offline";
   if (String(item.lastStatus || "").toLowerCase() === "error") return "offline";
   if (item.latestLatencyIsTimeout) return "warning";
@@ -270,13 +277,13 @@ function BillingResourceOption({
   singleLine?: boolean;
 }) {
   const name = getResourceDisplayName(category, item);
-  const kind = category === "tunnel" ? String(item?.mode || "").toUpperCase() || "隧道" : category === "legacy_host" ? "历史主机" : forwardGroupTypeText(item);
+  const kind = category === "tunnel" ? String(item?.mode || "").toUpperCase() || "隧道" : category === "host" ? "整台主机" : forwardGroupTypeText(item);
   const meta = category === "tunnel"
     ? getTunnelRouteText(item, hosts)
-    : category === "legacy_host"
+    : category === "host"
     ? [item?.ip, item?.ipv4, item?.ipv6].filter(Boolean).join(" / ")
     : item?.members?.length ? `${item.members.length} 成员` : kind;
-  const multiplier = category === "legacy_host" ? null : formatTrafficMultiplier(item?.trafficMultiplier ?? 100);
+  const multiplier = category === "host" ? null : formatTrafficMultiplier(item?.trafficMultiplier ?? 100);
   return (
     <div className={cn("flex min-w-0 items-center gap-2", compact ? "py-0" : "py-1")}>
       {renderStatusDot(billingResourceStatusTone(category, item))}
@@ -322,7 +329,7 @@ function BillingConfigCard({
         </div>
       </div>
       <div className="mt-3 space-y-2 border-t border-border/40 pt-3">
-        <MobileInfoRow label="类型">{config.resourceKind || (config.resourceType === "host" ? "历史主机" : config.resourceType === "tunnel" ? "隧道转发" : "转发资源")} #{config.resourceId}</MobileInfoRow>
+        <MobileInfoRow label="类型">{config.resourceKind || (config.resourceType === "host" ? "整台主机" : config.resourceType === "tunnel" ? "隧道转发" : "转发资源")} #{config.resourceId}</MobileInfoRow>
         <MobileInfoRow label="单价">{formatPricePerGb(config)} / GB</MobileInfoRow>
         <MobileInfoRow label="倍率">{config.multiplierText || formatTrafficMultiplier(config.multiplier || 100)}</MobileInfoRow>
         <MobileInfoRow label="权限">
@@ -381,7 +388,7 @@ export default function TrafficBillingConfigManager({
     ? chainForwardGroups
     : configForm.resourceCategory === "group"
     ? standardForwardGroups
-    : configForm.resourceCategory === "legacy_host"
+    : configForm.resourceCategory === "host"
     ? hosts
     : portForwardGroups;
   const selectedResource = resources.find((item: any) => Number(item.id) === Number(configForm.resourceId));
@@ -638,7 +645,7 @@ export default function TrafficBillingConfigManager({
         <DialogContent className="max-w-2xl sm:max-h-[90svh]">
           <DialogHeader>
             <DialogTitle>{configForm.id ? "编辑计费资源" : "新增计费资源"}</DialogTitle>
-            <DialogDescription>选择资源并设置每 GB 单价；倍率继承资源配置。</DialogDescription>
+            <DialogDescription>选择资源并设置每 GB 单价；隧道 / 转发组的倍率继承自资源本身。</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-3 sm:col-span-2 sm:grid-cols-[11rem_minmax(0,1fr)]">
@@ -661,11 +668,6 @@ export default function TrafficBillingConfigManager({
                     <SelectValue placeholder="资源类型" />
                   </SelectTrigger>
                   <SelectContent>
-                    {configForm.resourceCategory === "legacy_host" ? (
-                      <SelectItem value="legacy_host" textValue={LEGACY_HOST_RESOURCE_CATEGORY_ITEM.label} disabled>
-                        <span className="truncate text-sm font-medium">{LEGACY_HOST_RESOURCE_CATEGORY_ITEM.label}</span>
-                      </SelectItem>
-                    ) : null}
                     {BILLING_RESOURCE_CATEGORY_ITEMS.map((item) => (
                       <SelectItem key={item.value} value={item.value} textValue={item.label}>
                         <span className="truncate text-sm font-medium">{item.label}</span>
@@ -676,18 +678,7 @@ export default function TrafficBillingConfigManager({
               </div>
               <div className="min-w-0 space-y-2">
                 <Label>资源</Label>
-              {configForm.resourceCategory === "legacy_host" ? (
-                <div className="flex h-10 min-w-0 items-center rounded-md border border-border/60 bg-muted/20 px-3">
-                  <BillingResourceOption
-                    category="legacy_host"
-                    item={selectedResource || { id: configForm.resourceId, name: configForm.resourceName || `主机 #${configForm.resourceId}`, missing: true }}
-                    hosts={hosts}
-                    compact
-                    singleLine
-                  />
-                </div>
-              ) : (
-                <Select
+              <Select
                   value={configForm.resourceId}
                   onValueChange={(resourceId) => {
                     const resource = resources.find((item: any) => Number(item.id) === Number(resourceId));
@@ -716,7 +707,6 @@ export default function TrafficBillingConfigManager({
                     ))}
                   </SelectContent>
                 </Select>
-              )}
               </div>
             </div>
             <div className="space-y-2">
@@ -726,10 +716,14 @@ export default function TrafficBillingConfigManager({
             <div className="space-y-2">
               <Label>链路倍率</Label>
               <div className="flex h-10 items-center rounded-md border border-border/60 bg-muted/20 px-3 text-sm">
-                {selectedResource && configForm.resourceCategory !== "legacy_host"
+                {/*
+                  主机没有 trafficMultiplier 这一列 —— 隧道和转发组有，主机是按台的资源，
+                  倍率一直挂在链路上。写「沿用旧配置」会让人以为某处有个看不见的倍率在起作用。
+                */}
+                {configForm.resourceCategory === "host"
+                  ? "1x（主机没有链路倍率）"
+                  : selectedResource
                   ? formatTrafficMultiplier(selectedResource.trafficMultiplier ?? 100)
-                  : configForm.resourceCategory === "legacy_host"
-                  ? "沿用旧配置"
                   : "选择资源后显示"}
               </div>
             </div>

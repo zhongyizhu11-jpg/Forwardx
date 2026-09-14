@@ -27,3 +27,25 @@ export function formatTrafficPricePerGb(milliCents: unknown): string {
   if (yuan <= 0) return "";
   return `¥${Number(yuan.toFixed(5))}/GB`;
 }
+
+/**
+ * 能配的最低单价：0.001 元/GB（100 毫分）。
+ *
+ * 有下限是因为 0 在这里不是「免费」而是「没设价」—— 一条价钱为 0 的计费配置
+ * 会把资源标成在计费、却一分不扣，账对不上还找不到原因。
+ */
+export const MIN_PRICE_PER_GB_MILLI_CENTS = 100;
+
+/** 元 → 毫分。界面上填的是元，库里存的是毫分。 */
+export function milliCentsFromYuan(yuan: unknown): number {
+  const value = Number(yuan);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.round(value * MILLI_CENTS_PER_YUAN);
+}
+
+/** 毫分 → 输入框里的元。没设价时给空串，而不是 "0"（那会被当成填过 0）。 */
+export function priceInputFromMilliCents(milliCents: unknown): string {
+  const yuan = yuanFromMilliCents(milliCents);
+  if (yuan <= 0) return "";
+  return String(Number(yuan.toFixed(5)));
+}

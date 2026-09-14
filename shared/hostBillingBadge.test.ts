@@ -43,3 +43,21 @@ test("计费条数多过总条数时不出现 3/2 这种label", () => {
   const badge = hostBillingBadge({ billedRules: 3, totalRules: 2, pricePerGbMilliCents: 0 });
   assert.equal(badge.label, "按量计费");
 });
+
+/**
+ * 兜底价管着的时候，悬停里必须说清它是**最后一档**。
+ *
+ * 不点破的话：商家给某个转发组单独定了价，又给整台配了兜底价，然后发现那个组的账
+ * 没按新价变 —— 他只会以为面板算错了。实际上是组价优先，这正是设计。
+ */
+test("整台兜底价管着时，说清转发组 / 隧道的价优先", () => {
+  const badge = hostBillingBadge({ billedRules: 3, totalRules: 3, pricePerGbMilliCents: 20000, hostDefault: true });
+  assert.match(badge.title, /整台兜底价/);
+  assert.match(badge.title, /走它们自己的价/);
+});
+
+test("没有兜底价时不提它，只说配置挂在哪", () => {
+  const badge = hostBillingBadge({ billedRules: 1, totalRules: 3, pricePerGbMilliCents: 20000 });
+  assert.ok(!badge.title.includes("整台兜底价"));
+  assert.match(badge.title, /计费配置挂在转发所属的转发组 \/ 隧道上/);
+});
