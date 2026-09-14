@@ -831,15 +831,19 @@ export async function deleteProxySubToken(id: number) {
 
 /**
  * 记录一次订阅拉取。失败不应该影响订阅内容的返回，所以调用方按尽力而为处理。
+ *
+ * 次数交给数据库自己加，不先读出来再写回去：同一条订阅地址常常是好几个客户端同时
+ * 在拉（手机、电脑、路由器各刷各的），先读后写的话它们会读到同一个旧值、写回同一个
+ * 新值，二十次拉取只涨一次。商家看这个数就是想知道「客户端到底拉没拉过、拉得勤不勤」，
+ * 少记的那些正是最该看见的那部分。
  */
 export async function recordProxySubTokenAccess(id: number, info: { ip?: string; userAgent?: string }) {
   const db = await getDb();
   if (!db) return;
-  const current = await getProxySubTokenById(id);
   await db
     .update(proxySubTokens)
     .set({
-      accessCount: Number(current?.accessCount || 0) + 1,
+      accessCount: sql`COALESCE(${proxySubTokens.accessCount}, 0) + 1`,
       lastAccessAt: nowDate(),
       lastAccessIp: (info.ip || "").slice(0, 64) || null,
       lastAccessUserAgent: (info.userAgent || "").slice(0, 200) || null,
@@ -1010,10 +1014,28 @@ export async function getProxySubscriptionDocumentForUser(
   userId: number,
   options: { rulePreset?: unknown } = {},
 ): Promise<ProxySubscriptionDocument> {
+  return (await getProxySubscriptionPreviewForUser(userId, options)).document;
+}
+
+/**
+ * 「订阅内容」那一屏要的两样：算出来的 plan（谁进了、谁没进、为什么），
+ * 和渲染出来的 document（策略组长什么样）。
+ *
+ * 要合在一个函数里，是因为它们必须是**同一次读库**的结果。分两次要的话，
+ * 中间只要有人删掉一条转发，这一屏就会自相矛盾：策略组里列着一个节点，
+ * 底下的节点清单里却没有它。而这一屏存在的全部意义就是回答
+ * 「我的订阅里到底有什么」—— 它自己前后不一致，比慢一点严重得多。
+ * 顺带也省掉白跑的那一遍（原来一次预览要把整份订阅组装两遍）。
+ */
+export async function getProxySubscriptionPreviewForUser(
+  userId: number,
+  options: { rulePreset?: unknown } = {},
+): Promise<{ plan: ProxySubscriptionPlan; document: ProxySubscriptionDocument }> {
   // plan 和它用到的模板一次查出来，不再各查一遍。
   const { plan, templates } = await buildProxySubscriptionContextForUser(userId);
-  return buildProxySubscriptionDocument(plan, templates as any, {
+  const document = buildProxySubscriptionDocument(plan, templates as any, {
     mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
     rulePreset: normalizeProxyRulePreset(options.rulePreset),
   });
+  return { plan, document };
 }
