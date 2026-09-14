@@ -893,9 +893,20 @@ export async function recordProxySubTokenFailure(
  * 主机不按 userId 过滤：转发可以建在共享主机上，那台主机未必属于这个用户，
  * 但入口地址仍然是它的。规则本身已按 userId 限定，不会越权。
  */
-export async function buildProxySubscriptionPlanForUser(userId: number): Promise<ProxySubscriptionPlan> {
+/**
+ * 组装订阅要的两样东西：算好的 plan，和它用到的那份节点模板。
+ *
+ * 合成一个函数是因为它们**本来就是一次查出来的**。原来 plan 在里面查了一遍模板，
+ * 外面渲染文档时又查了一遍（每遍三条查询：自己的、别人分享的、独立凭据的），
+ * 一次订阅拉取白跑三条。客户端十二小时刷一次不觉得，可有人把间隔调到几分钟、
+ * 一个商家几百个租户时，白跑的就是几百倍。
+ */
+async function buildProxySubscriptionContextForUser(userId: number): Promise<{
+  plan: ProxySubscriptionPlan;
+  templates: any[];
+}> {
   const db = await getDb();
-  if (!db) return { entries: [], skipped: [], warnings: [] };
+  if (!db) return { plan: { entries: [], skipped: [], warnings: [] }, templates: [] };
 
   const rules = await db
     .select({
@@ -920,6 +931,7 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
     .orderBy(asc(forwardRules.sortOrder), asc(forwardRules.id));
 
   const templates = await getProxyNodesForSubscription(userId) as any[];
+
   /**
    * 自建节点开在哪台机器上。
    *
@@ -941,26 +953,52 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
       if (hostId) (template as any).hostId = hostId;
     }
   }
-  const hostRows = await db
-    .select({
-      id: hosts.id,
-      name: hosts.name,
-      ip: hosts.ip,
-      ipv4: hosts.ipv4,
-      ipv6: hosts.ipv6,
-      entryIp: hosts.entryIp,
-      ddnsEnabled: hosts.ddnsEnabled,
-      ddnsDomain: hosts.ddnsDomain,
-      // 从没收过心跳 = Agent 还没装上，见 hostNeverConnected。
-      lastHeartbeat: hosts.lastHeartbeat,
-    })
-    .from(hosts);
 
-  return buildProxySubscriptionPlan({
-    rules: rules as any,
-    templates: templates as any,
-    hosts: hostRows as any,
-  });
+  /**
+   * 只取真正用得上的那几台机器。
+   *
+   * 原来是 `select * from hosts` 不带条件 —— 一个商家几百台机器，每来一次订阅拉取
+   * 就整表读一遍，而实际用到的只有「这些转发的入口机」加「这些自建节点所在的机器」。
+   * 不按 userId 过滤是对的（转发可以建在共享主机上，那台机器未必属于他），但按
+   * **用到的 id** 过滤既正确又省事。
+   */
+  const hostIds = Array.from(new Set([
+    ...rules.map((rule: any) => Number(rule.hostId || 0)),
+    ...templates.map((template: any) => Number(template.hostId || 0)),
+  ].filter((id) => id > 0)));
+  const hostRows = hostIds.length > 0
+    ? await db
+      .select({
+        id: hosts.id,
+        name: hosts.name,
+        ip: hosts.ip,
+        ipv4: hosts.ipv4,
+        ipv6: hosts.ipv6,
+        entryIp: hosts.entryIp,
+        ddnsEnabled: hosts.ddnsEnabled,
+        ddnsDomain: hosts.ddnsDomain,
+        // 从没收过心跳 = Agent 还没装上，见 hostNeverConnected。
+        lastHeartbeat: hosts.lastHeartbeat,
+      })
+      .from(hosts)
+      .where(inArray(hosts.id, hostIds))
+    : [];
+
+  return {
+    plan: buildProxySubscriptionPlan({
+      rules: rules as any,
+      templates: templates as any,
+      hosts: hostRows as any,
+    }),
+    templates,
+  };
+}
+
+/**
+ * 取出该用户的转发、模板与入口主机，算出订阅节点列表。
+ */
+export async function buildProxySubscriptionPlanForUser(userId: number): Promise<ProxySubscriptionPlan> {
+  return (await buildProxySubscriptionContextForUser(userId)).plan;
 }
 
 /**
@@ -970,17 +1008,10 @@ export async function buildProxySubscriptionPlanForUser(userId: number): Promise
  */
 export async function getProxySubscriptionDocumentForUser(
   userId: number,
-  options: {
-    rulePreset?: unknown;
-    /**
-     * 已经算好的 plan。预览那条路要同时拿 plan 和 document，不传的话这一整套
-     * （全部规则 + 全部主机 + 全部节点）会白算第二遍。
-     */
-    plan?: ProxySubscriptionPlan;
-  } = {},
+  options: { rulePreset?: unknown } = {},
 ): Promise<ProxySubscriptionDocument> {
-  const plan = options.plan ?? await buildProxySubscriptionPlanForUser(userId);
-  const templates = await getProxyNodesForSubscription(userId);
+  // plan 和它用到的模板一次查出来，不再各查一遍。
+  const { plan, templates } = await buildProxySubscriptionContextForUser(userId);
   return buildProxySubscriptionDocument(plan, templates as any, {
     mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
     rulePreset: normalizeProxyRulePreset(options.rulePreset),
