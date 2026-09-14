@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { ProxyNodeRow, proxyNodeMetaText, type ProxyNodeRowSpec } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog, type ProxyNodeShareTarget } from "@/components/proxy/ProxyNodeShareDialog";
 import { ProxyNodeQuotaDetail, ProxyNodeQuotaToggle } from "@/components/proxy/ProxyNodeQuotaCells";
+import { MONTHLY_RESET_MAX_DAY } from "@shared/billingTime";
 import { bytesFromGb, gbFromBytes, positiveIntFromInput } from "@shared/trafficGb";
 import { clipboardNeedsManualCopy, copyTextFromElement, copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
@@ -217,11 +218,18 @@ export default function ProxyInboundsSection({
     展开用量的那几行。自己存一份，不跟粘贴那一路共用一个集合 ——
     入站 id 和节点 id 是两套各自自增的序号，放一起会互相点开对方。
   */
+  // REALITY 那两项一律收着（它们不填也对），靠折叠条上的摘要交代设过什么。
+  const [realityOpen, setRealityOpen] = useState(false);
   const [expandedQuotaIds, setExpandedQuotaIds] = useState<number[]>([]);
   const toggleQuota = (id: number) => {
     setExpandedQuotaIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
   };
   const [form, setForm] = useState<InboundForm>(emptyForm());
+  /** 折叠着的 REALITY 里设了什么。只写填过的 —— 都留空时说「按默认值」就够了。 */
+  const realitySummary = [
+    form.serverName.trim(),
+    form.realityDest.trim() ? `→ ${form.realityDest.trim()}` : "",
+  ].filter(Boolean).join(" ");
 
   const inboundsQuery = trpc.proxyInbounds.list.useQuery();
   const optionsQuery = trpc.proxyInbounds.options.useQuery();
@@ -416,16 +424,29 @@ export default function ProxyInboundsSection({
   };
 
   const openEdit = (row: any) => {
+    /*
+      安全层和传输方式按协议收敛一次再进表单。
+
+      服务端保存时本来就会收敛（见 mergeInbound），所以正常存下来的行不会不合法。
+      但「协议是 Shadowsocks、安全层却写着 reality」这种组合仍然可能从旧版本、
+      迁移数据或直接改库里冒出来 —— 那时候弹窗会按 reality 去渲染，凭空显示一段
+      这个协议根本用不上的设置。界面不该比服务端更容易信一个不合法的值。
+    */
+    const protocol = String(row.protocol || "vless") as ProxyInboundProtocol;
+    const allowedSecurities = proxyInboundSecurities(protocol);
+    const allowedTransports = proxyInboundTransports(protocol);
+    const security = String(row.security || "reality") as ProxyInboundSecurity;
+    const transport = String(row.transport || "tcp") as ProxyNodeTransport;
     setForm({
       id: Number(row.id),
       hostId: Number(row.hostId),
       userId: Number(row.userId || 0),
       name: String(row.name || ""),
       remark: String(row.remark || ""),
-      protocol: String(row.protocol || "vless") as ProxyInboundProtocol,
+      protocol,
       port: Number(row.port || 0),
-      transport: String(row.transport || "tcp") as ProxyNodeTransport,
-      security: String(row.security || "reality") as ProxyInboundSecurity,
+      transport: allowedTransports.includes(transport) ? transport : allowedTransports[0],
+      security: allowedSecurities.includes(security) ? security : allowedSecurities[0],
       serverName: String(row.serverName || ""),
       realityDest: String(row.realityDest || ""),
       path: String(row.path || ""),
@@ -482,7 +503,7 @@ export default function ProxyInboundsSection({
       trafficLimit: bytesFromGb(form.trafficLimitGb),
       trafficUsed: bytesFromGb(form.trafficUsedGb),
       trafficAutoReset: form.trafficAutoReset,
-      trafficResetDay: Math.min(28, Math.max(1, positiveIntFromInput(form.trafficResetDay) || 1)),
+      trafficResetDay: Math.min(MONTHLY_RESET_MAX_DAY, Math.max(1, positiveIntFromInput(form.trafficResetDay) || 1)),
       isEnabled: form.isEnabled,
       users: form.users.map((user, index) => ({ id: user.id, name: user.name.trim() || `凭据 ${index + 1}` })),
     };
@@ -940,27 +961,55 @@ export default function ProxyInboundsSection({
               ) : null}
             </div>
 
+            {/*
+              REALITY 这两项留空就有默认值，绝大多数人从头到尾不会碰 —— 而它们夹在
+              端口和凭据中间，把常用的东西往下顶了一屏。所以收起来。
+
+              ACME 和 TLS 那两段不能这么办：域名、证书路径是**必须填**的，收起来
+              等于让人存下一个跑不起来的配置。可收的只有「不填也对」的那一类。
+
+              收起来之后靠折叠条上那行字交代里头设了什么，免得改过的人以为丢了。
+            */}
             {isReality ? (
-              <div className="space-y-3 rounded-md border p-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">要偷的握手域名</Label>
-                  <Input
-                    value={form.serverName}
-                    onChange={(event) => setForm((prev) => ({ ...prev, serverName: event.target.value }))}
-                    placeholder={optionsQuery.data?.defaultRealityServerName || "dl.google.com"}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    留空按默认值。REALITY 不需要域名和证书，密钥对由面板生成。
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">握手目标（可选）</Label>
-                  <Input
-                    value={form.realityDest}
-                    onChange={(event) => setForm((prev) => ({ ...prev, realityDest: event.target.value }))}
-                    placeholder="留空按握手域名的 443"
-                  />
-                </div>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground"
+                  onClick={() => setRealityOpen((prev) => !prev)}
+                  aria-expanded={realityOpen}
+                >
+                  <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${realityOpen ? "" : "-rotate-90"}`} />
+                  <span>REALITY 高级</span>
+                  {!realityOpen ? (
+                    <span className="min-w-0 truncate font-normal text-foreground/70">
+                      {realitySummary || "按默认值"}
+                    </span>
+                  ) : null}
+                  <span className="h-px flex-1 bg-border" />
+                </button>
+                {realityOpen ? (
+                  <div className="space-y-3 rounded-md border p-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">要偷的握手域名</Label>
+                      <Input
+                        value={form.serverName}
+                        onChange={(event) => setForm((prev) => ({ ...prev, serverName: event.target.value }))}
+                        placeholder={optionsQuery.data?.defaultRealityServerName || "dl.google.com"}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        留空按默认值。REALITY 不需要域名和证书，密钥对由面板生成。
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">握手目标（可选）</Label>
+                      <Input
+                        value={form.realityDest}
+                        onChange={(event) => setForm((prev) => ({ ...prev, realityDest: event.target.value }))}
+                        placeholder="留空按握手域名的 443"
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -1186,7 +1235,7 @@ export default function ProxyInboundsSection({
               <div className="flex items-center justify-between gap-3 pt-1">
                 <div className="min-w-0">
                   <Label className="text-xs">每月自动清零</Label>
-                  <p className="mt-0.5 text-xs text-muted-foreground">按机房的流量周期来，日期只能填 1-28。</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">按机房的流量周期来。填 29/30/31 就是月末 —— 短月份自动落到当月最后一天。</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {form.trafficAutoReset ? (

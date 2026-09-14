@@ -23,7 +23,7 @@ import {
   selfTestSweepActivity,
   startSelfTestSweepTimer,
 } from "./selfTestTiming";
-import { billingMonthlyBoundary, billingStartOfCalendarDay } from "@shared/billingTime";
+import { billingMonthlyBoundary, billingStartOfCalendarDay, MONTHLY_RESET_MAX_DAY } from "@shared/billingTime";
 import { normalizeProxyNodeResetDay } from "@shared/proxyNodeQuota";
 import { expireStalePendingOrders, recoverStaleProcessingPaymentOrders, reconcilePendingPaymentOrders } from "./payment";
 
@@ -76,12 +76,19 @@ async function refreshUserRuleAgents(userId: number, reason: string) {
   }
 }
 
-async function runMonthlyTrafficReset() {
+/**
+ * 每月流量重置：用户、主机、落地节点、落地端口四路。
+ *
+ * 导出是为了能被用例直接跑一遍真库。这一段每一路都是「界面上有个开关，到了日子
+ * 该有事情发生」—— 而落地端口那一路上个版本就是漏接了调度，开关存得下设置却
+ * 永远不触发。只测「算不算到期」测不出这种漏接，必须真的把这个函数跑起来。
+ */
+export async function runMonthlyTrafficReset() {
   try {
     const now = new Date();
     const usersToReset = await db.getUsersForAutoReset(now);
     for (const user of usersToReset) {
-      const resetDay = Math.min(28, Math.max(1, Math.floor(Number(user.trafficResetDay) || 1)));
+      const resetDay = Math.min(MONTHLY_RESET_MAX_DAY, Math.max(1, Math.floor(Number(user.trafficResetDay) || 1)));
       const boundary = billingMonthlyBoundary(now, resetDay);
       if (!await db.resetUserTrafficForCycle(user.id, boundary, now)) continue;
       const recovery = await db.recoverUserForwardAccessIfEligible(user.id);
@@ -108,14 +115,37 @@ async function runMonthlyTrafficReset() {
      * 落地机的套餐流量也按月重置。lastTrafficReset 挡住重复触发 ——
      * 这个任务每小时跑一次，不挡的话重置日当天会清零二十几次。
      */
+    /*
+      到没到重置日，交给 billingMonthlyBoundary 按当月天数算：设成每月 31 号的，
+      二月就是 28 号（闰年 29 号）。今天还没到那个边界日时，边界会落在今天之后，
+      于是这一行自然不动。
+    */
+    const dueForReset = (row: any) => {
+      const boundary = billingMonthlyBoundary(now, normalizeProxyNodeResetDay(row?.trafficResetDay));
+      if (now.getTime() < boundary.getTime()) return false;
+      const last = row?.lastTrafficReset ? new Date(row.lastTrafficReset) : null;
+      return !last || last.getTime() < boundary.getTime();
+    };
+
     const nodesToReset = await db.getProxyNodesForTrafficAutoReset(now);
     for (const node of nodesToReset as any[]) {
-      const resetDay = normalizeProxyNodeResetDay((node as any).trafficResetDay);
-      const boundary = billingMonthlyBoundary(now, resetDay);
-      const last = (node as any).lastTrafficReset ? new Date((node as any).lastTrafficReset) : null;
-      if (last && last.getTime() >= boundary.getTime()) continue;
+      if (!dueForReset(node)) continue;
       await db.resetProxyNodeTraffic(Number(node.id));
       console.log(`[Scheduler] Auto-reset proxy node traffic for node ${node.id} (${node.name})`);
+    }
+
+    /*
+      自建落地端口的额度也按月重置。
+
+      这一步原来漏了：界面上那个「每月自动清零」开关存得下设置，却没有任何东西
+      去读它 —— 开关拨了、日子到了、数字纹丝不动。设置存了却不生效，比没有这个
+      开关更糟：人会以为已经安排好了，然后在某个月底被机房停机。
+    */
+    const inboundsToReset = await db.getProxyInboundsForTrafficAutoReset();
+    for (const inbound of inboundsToReset as any[]) {
+      if (!dueForReset(inbound)) continue;
+      await db.resetProxyInboundTraffic(Number(inbound.id));
+      console.log(`[Scheduler] Auto-reset proxy inbound traffic for inbound ${inbound.id} (${inbound.name})`);
     }
 
     const recharged = await db.rechargeSubscriptionTrafficCycles();

@@ -372,7 +372,7 @@ export const usersRouter = router({
         gostRateLimitOut: z.number().int().min(0).max(1_000_000).optional(),
         expiresAt: z.string().nullable().optional(), // ISO date string or null
         trafficAutoReset: z.boolean().optional(),
-        trafficResetDay: z.number().min(1).max(28).optional(),
+        trafficResetDay: z.number().min(1).max(31).optional(),
         canAddRules: z.boolean().optional(),
         displayRemark: z.string().trim().max(24).nullable().optional(),
         maxRules: z.number().min(0).optional(),

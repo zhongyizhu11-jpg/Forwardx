@@ -340,7 +340,7 @@ export const proxySubscriptionsRouter = router({
       if (input.trafficLimit !== undefined) data.trafficLimit = input.trafficLimit;
       if (input.trafficAutoReset !== undefined) data.trafficAutoReset = input.trafficAutoReset;
       if (input.trafficResetDay !== undefined) {
-        // 收敛到 1-28：29/30/31 在二月不存在，那样设会整月不重置，
+        // 收敛到 1-31：29/30/31 会按当月天数夹到月末，
         // 而界面上看不出原因。
         data.trafficResetDay = normalizeProxyNodeResetDay(input.trafficResetDay);
       }

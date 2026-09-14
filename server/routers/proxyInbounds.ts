@@ -255,7 +255,7 @@ const inboundInput = z.object({
   trafficLimit: z.number().int().min(0).optional(),
   trafficUsed: z.number().int().min(0).optional(),
   trafficAutoReset: z.boolean().optional(),
-  trafficResetDay: z.number().int().min(1).max(28).optional(),
+  trafficResetDay: z.number().int().min(1).max(31).optional(),
   isEnabled: z.boolean().optional(),
   /**
    * 入站上的用户。只有多用户协议用得上，且只收 id 与 name ——

@@ -123,11 +123,23 @@ export function billingMonthStart(reference: Date | number | string) {
   return billingStartOfDay(year, month, 1);
 }
 
+/**
+ * 每月重置日的上限。
+ *
+ * 29/30/31 是可以填的：`billingMonthlyBoundary` 会把它收敛到当月的最后一天，
+ * 所以「每月 31 号」在二月就是 28 号（闰年 29 号）—— 也就是「月末」，而机房按
+ * 月末结算本来就很常见。
+ *
+ * 早先这里卡在 28，是因为怕落在不存在的日子上会整月不触发。真正该修的是触发
+ * 判断（拿当月天数去夹一下），而不是不让人填。
+ */
+export const MONTHLY_RESET_MAX_DAY = 31;
+
 export function billingMonthlyBoundary(
   reference: Date | number | string,
   resetDay: unknown,
   monthOffset = 0,
-  maximumResetDay = 28,
+  maximumResetDay: number = MONTHLY_RESET_MAX_DAY,
 ) {
   const current = billingCalendarParts(reference);
   const monthIndex = current.year * 12 + current.month - 1 + Math.trunc(monthOffset);

@@ -84,13 +84,17 @@ test("负的已用量按 0 算", () => {
   assert.equal(proxyNodeQuotaPercent({ bandwidthMbps: 0, trafficLimit: 1000 * GB, trafficUsed: -5 }), 0);
 });
 
-test("重置日收敛到 1-28", () => {
+test("重置日收敛到 1-31", () => {
   /**
-   * 29/30/31 在二月不存在，落在那几天的重置会整月不触发 —— 表现是「设了自动重置
-   * 却从来没重置过」，而且从界面上查不出原因。
+   * 29/30/31 照收。它们在二月不存在，但触发判断会拿当月天数夹一下（见
+   * shared/monthlyResetDay.test.ts），所以「每月 31 号」在二月就是月末。
+   *
+   * 早先这里卡在 28，是怕落在不存在的日子上会整月不触发。那个担心是对的，
+   * 但该修的是触发判断，不是不让人填 —— 机房按月末结算太常见了。
    */
-  assert.equal(normalizeProxyNodeResetDay(31), 28);
-  assert.equal(normalizeProxyNodeResetDay(29), 28);
+  assert.equal(normalizeProxyNodeResetDay(31), 31);
+  assert.equal(normalizeProxyNodeResetDay(29), 29);
+  assert.equal(normalizeProxyNodeResetDay(32), 31, "超出上限往回夹，不是丢掉");
   assert.equal(normalizeProxyNodeResetDay(0), 1);
   assert.equal(normalizeProxyNodeResetDay(-5), 1);
   assert.equal(normalizeProxyNodeResetDay(15), 15);

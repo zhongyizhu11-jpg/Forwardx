@@ -1066,3 +1066,16 @@ export async function resetProxyInboundTraffic(id: number) {
     updatedAt: nowDate(),
   } as any).where(eq(proxyInbounds.id, Number(id)));
 }
+
+/**
+ * 该做月度重置的落地端口。
+ *
+ * 和主机、节点两路一样：只挑「开了自动重置」的，到期与否由调用方按当月天数判断
+ * （见 billingMonthlyBoundary）。重复触发靠 lastTrafficReset 挡 —— 调度任务每小时
+ * 跑一次，不挡的话重置日当天会清零二十几次。
+ */
+export async function getProxyInboundsForTrafficAutoReset() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(proxyInbounds).where(eq(proxyInbounds.trafficAutoReset, true));
+}

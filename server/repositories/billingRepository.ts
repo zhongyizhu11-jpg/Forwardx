@@ -58,6 +58,7 @@ import {
   billingAddMonthsClamped,
   billingCalendarParts,
   billingMonthlyBoundary,
+  MONTHLY_RESET_MAX_DAY,
   billingStartOfCalendarDay,
 } from "../../shared/billingTime";
 
@@ -1229,7 +1230,7 @@ function nextConfiguredSubscriptionTrafficReset(
   reference: Date,
   expiresAt: Date | null,
 ) {
-  const resetDay = Math.min(28, Math.max(1, Math.floor(Number(user.trafficResetDay) || 1)));
+  const resetDay = Math.min(MONTHLY_RESET_MAX_DAY, Math.max(1, Math.floor(Number(user.trafficResetDay) || 1)));
   let monthOffset = 0;
   let next = billingMonthlyBoundary(reference, resetDay, monthOffset);
 

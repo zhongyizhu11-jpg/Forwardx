@@ -62,6 +62,7 @@ import {
 import { summarizeProxyNodeHealthCounts, type ProxyNodeHealth } from "@shared/proxyNodeHealth";
 import { PROXY_SUB_TOKEN_FAILURE_LABELS, proxySubTokenStatus } from "@shared/proxySubTokenStatus";
 import { bytesFromGb, gbFromBytes } from "@shared/trafficGb";
+import { MONTHLY_RESET_MAX_DAY } from "@shared/billingTime";
 import { ProxyNodeQuotaDetail, ProxyNodeQuotaToggle } from "@/components/proxy/ProxyNodeQuotaCells";
 import {
   normalizeProxyNodeGroupMode,
@@ -566,6 +567,24 @@ export default function ClientSubscriptionsPage() {
     [pastedNodes, inboundHealthStates],
   );
 
+  /**
+   * 折叠着的「高级」里设了什么。
+   *
+   * 收起来省地方，但不能省到让人以为配置没了 —— 所以设过的那几项直接写在折叠条上。
+   * 只写非默认的：默认值写出来是噪音，而这一行的全部价值就是「有没有东西被我藏起来」。
+   */
+  const advancedSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (nodeAutoGroup !== PROXY_NODE_DEFAULT_AUTO_GROUP) {
+      parts.push(PROXY_NODE_AUTO_GROUP_LABELS[nodeAutoGroup]);
+    }
+    if (nodeFrontProxyId > 0) {
+      const front = (nodes as any[]).find((item: any) => Number(item.id) === nodeFrontProxyId);
+      parts.push(`经由 ${front?.name || `#${nodeFrontProxyId}`}`);
+    }
+    return parts.join(" · ");
+  }, [nodeAutoGroup, nodeFrontProxyId, nodes]);
+
   const toggleQuota = (id: number) => {
     setExpandedQuotaIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
   };
@@ -820,17 +839,17 @@ export default function ClientSubscriptionsPage() {
     setNodeTrafficUsedGb(gbFromBytes(node.trafficUsed));
     setNodeTrafficAutoReset(!!node.trafficAutoReset);
     setNodeTrafficResetDay(String(Number(node.trafficResetDay || 1)));
-    /**
-     * 高级项不是默认值就展开。
-     *
-     * 这两项收进折叠区是因为多数人用不上；但对配过的人，打开弹窗看不见自己设过的
-     * 选路方式或前置代理，第一反应是「我的配置丢了」—— 折叠可以省地方，不能省到
-     * 让人怀疑数据。
-     */
-    setNodeAdvancedOpen(
-      normalizeProxyNodeAutoGroup(node.autoGroup) !== PROXY_NODE_DEFAULT_AUTO_GROUP
-      || Number(node.frontProxyId || 0) > 0,
-    );
+    /*
+      高级一律收着，配过的人也收着。
+
+      原来是「不是默认值就自动展开」，出发点是别让人以为配置丢了。但那等于
+      「谁配过谁的弹窗就永远长一截」—— 而改名字、换链接这种日常操作天天做，
+      选路和前置代理配一次就不动了。
+
+      不展开也不让人起疑，靠的是把里头设了什么写在折叠条上（见下面的 advancedSummary）：
+      看得见就不会以为丢了，这比整段摊开便宜得多。
+    */
+    setNodeAdvancedOpen(false);
     setNodeDialogOpen(true);
   };
 
@@ -855,7 +874,7 @@ export default function ClientSubscriptionsPage() {
       bandwidthMbps: Math.max(0, Math.floor(Number(nodeBandwidthMbps) || 0)),
       trafficLimit: bytesFromGb(nodeTrafficLimitGb),
       trafficAutoReset: nodeTrafficAutoReset,
-      trafficResetDay: Math.min(28, Math.max(1, Math.floor(Number(nodeTrafficResetDay) || 1))),
+      trafficResetDay: Math.min(MONTHLY_RESET_MAX_DAY, Math.max(1, Math.floor(Number(nodeTrafficResetDay) || 1))),
     };
     if (editingNodeId) {
       // 已用量只在编辑时能改：新建时还没有任何用量，给个输入框只会让人以为要填。
@@ -1837,7 +1856,7 @@ export default function ClientSubscriptionsPage() {
               <div className="flex items-center justify-between gap-3 pt-1">
                 <div className="min-w-0">
                   <Label className="text-xs">每月自动清零</Label>
-                  <p className="mt-0.5 text-xs text-muted-foreground">按机房的流量周期来，日期只能填 1-28。</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">按机房的流量周期来。填 29/30/31 就是月末 —— 短月份自动落到当月最后一天。</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {nodeTrafficAutoReset ? (
@@ -1855,8 +1874,10 @@ export default function ClientSubscriptionsPage() {
             </div>
             {/*
               自动选路和前置代理都是少数人才用的东西，平铺在这里会把「改个名字、
-              换条链接」这种日常操作推到第二屏。收进折叠区，但只要它们不是默认值
-              就自动展开 —— 否则改过设置的人再打开会以为自己的配置没了。
+              换条链接」这种日常操作推到第二屏。所以一律收着 —— 配过的人也收着。
+
+              代价是「我设过的东西看不见了」，所以折叠条上直接写出里头设了什么。
+              摊开是为了让人看见，而看见并不非得摊开。
             */}
             <div className="space-y-2">
               <button
@@ -1867,6 +1888,9 @@ export default function ClientSubscriptionsPage() {
               >
                 <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${nodeAdvancedOpen ? "" : "-rotate-90"}`} />
                 <span>高级</span>
+                {!nodeAdvancedOpen && advancedSummary ? (
+                  <span className="min-w-0 truncate font-normal text-foreground/70">{advancedSummary}</span>
+                ) : null}
                 <span className="h-px flex-1 bg-border" />
               </button>
               {nodeAdvancedOpen ? (
