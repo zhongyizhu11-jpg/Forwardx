@@ -59,3 +59,35 @@ test("收方看不到节点主人的套餐与用量", () => {
   assert.equal(row.address, "1.2.3.4");
   assert.equal(row.port, 443);
 });
+
+/**
+ * 备注和对外标注是两个字段，抹掉一个、留下另一个。
+ *
+ * 备注是主人自己的账本（「给张三的」「机房账号 xxx」），抹干净是对的。但抹干净
+ * 之后收方那一屏就只剩一个没有信息量的「直连」—— 他最想知道的「这条是家宽还是
+ * IEPL」恰恰只有主人说得出。所以另开了 publicLabel，它必须跟着节点走。
+ */
+test("对外标注跟着节点走，备注不出门", () => {
+  const row = redactSharedProxyNodeRow({
+    id: 7, name: "HKT", address: "1.2.3.4", port: 443,
+    remark: "给张三的·便宜线", publicLabel: "家宽",
+  } as any);
+  assert.equal(row.remark, null, "主人的账本不能出现在收方那边");
+  assert.equal(
+    (row as any).publicLabel,
+    "家宽",
+    "抹掉这一句，收方那一屏就只剩一个没有信息量的「直连」",
+  );
+});
+
+test("没填对外标注就照实没有，不拿备注顶上", () => {
+  const row = redactSharedProxyNodeRow({
+    id: 8, name: "SG", address: "5.6.7.8", port: 443,
+    remark: "这条快到期了",
+  } as any);
+  assert.equal(row.remark, null);
+  assert.ok(
+    !(row as any).publicLabel,
+    "拿备注当兜底等于把账本换个名字泄出去 —— 宁可什么都不显示",
+  );
+});

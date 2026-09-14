@@ -77,6 +77,13 @@ type InboundForm = {
    * 混用的话，要么客户端里出现「给张三的」，要么你自己认不出这个端口是干嘛的。
    */
   remark: string;
+  /**
+   * 对外标注：分享给别人时对方看得到的那一句（「家宽」「IEPL」）。
+   *
+   * 和 remark 分开是因为它们服务两种人 —— remark 是自己的账本，泄出去会出事；
+   * 这一句是线路本身的属性，是收方最想知道的。
+   */
+  publicLabel: string;
   protocol: ProxyInboundProtocol;
   port: number;
   transport: ProxyNodeTransport;
@@ -117,6 +124,7 @@ function emptyForm(): InboundForm {
     userId: 0,
     name: "",
     remark: "",
+    publicLabel: "",
     protocol: "vless",
     port: 443,
     transport: "tcp",
@@ -443,6 +451,7 @@ export default function ProxyInboundsSection({
       userId: Number(row.userId || 0),
       name: String(row.name || ""),
       remark: String(row.remark || ""),
+      publicLabel: String(row.publicLabel || ""),
       protocol,
       port: Number(row.port || 0),
       transport: allowedTransports.includes(transport) ? transport : allowedTransports[0],
@@ -484,6 +493,7 @@ export default function ProxyInboundsSection({
       ...(isAdmin && form.userId > 0 ? { userId: form.userId } : {}),
       name: form.name.trim(),
       remark: form.remark.trim(),
+      publicLabel: form.publicLabel.trim(),
       protocol: form.protocol,
       port: form.port,
       transport: form.transport,
@@ -846,7 +856,21 @@ export default function ProxyInboundsSection({
                   placeholder="给张三的 / 测试用"
                 />
                 {/* 只留在面板里 —— 写进名称的话，客户端里就会出现「给张三的」。 */}
-                <p className="text-xs text-muted-foreground">这个端口是干嘛的，只给你自己看，不进订阅。</p>
+                <p className="text-xs text-muted-foreground">这个端口是干嘛的，只给你自己看。分享出去的人看不到。</p>
+              </div>
+              <div className="min-w-0 space-y-1.5">
+                <Label className="text-xs">对外标注</Label>
+                <Input
+                  value={form.publicLabel}
+                  onChange={(event) => setForm((prev) => ({ ...prev, publicLabel: event.target.value }))}
+                  placeholder="家宽 / IEPL / 深港专线"
+                  maxLength={12}
+                />
+                {/*
+                  和备注分开：备注是自己的账本（「给张三的」），泄给租户会出事；
+                  这一句是线路本身的属性，恰恰是租户最想知道、而只有你说得出的那件事。
+                */}
+                <p className="text-xs text-muted-foreground">线路是什么类型，分享出去的人也看得到。不进订阅。</p>
               </div>
               {isAdmin ? (
                 <div className="min-w-0 space-y-1.5 sm:col-span-2">
@@ -1235,7 +1259,6 @@ export default function ProxyInboundsSection({
               <div className="flex items-center justify-between gap-3 pt-1">
                 <div className="min-w-0">
                   <Label className="text-xs">每月自动清零</Label>
-                  <p className="mt-0.5 text-xs text-muted-foreground">按机房的流量周期来。填 29/30/31 就是月末 —— 短月份自动落到当月最后一天。</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {form.trafficAutoReset ? (

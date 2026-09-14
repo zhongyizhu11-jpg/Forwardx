@@ -964,6 +964,8 @@ export async function syncProxyNodeFromInbound(inboundId: number): Promise<numbe
        * 备注、订阅内容里那一条却还标着「直连」—— 填了等于没填。
        */
       remark: String((row as any).remark || "").trim() || null,
+      // 对外标注同理跟着入站走 —— 分享出去时它是收方唯一能看到的那句说明。
+      publicLabel: String((row as any).publicLabel || "").trim() || null,
       protocol: node.protocol,
       address: node.address,
       port: node.port,

@@ -279,6 +279,8 @@ const tables: TableDef[] = [
     name: "proxy_nodes",
     columns: [
       c("id", "id"), c("userId", "int", { notNull: true }), c("name", "text", { notNull: true }), c("remark", "text"),
+      // 对外标注：分享出去时对方看得到的那一句（remark 是自己看的，会被抹掉）。
+      c("publicLabel", "text"),
       c("protocol", "varchar", { length: 32, notNull: true, default: "vless" }), c("sourceLink", "text"),
       c("address", "text", { notNull: true }), c("port", "int", { notNull: true }),
       c("uuid", "text"), c("password", "text"), c("method", "text"),
@@ -311,7 +313,7 @@ const tables: TableDef[] = [
     name: "proxy_inbounds",
     columns: [
       c("id", "id"), c("userId", "int", { notNull: true }), c("hostId", "int", { notNull: true }),
-      c("name", "text", { notNull: true }), c("remark", "text"),
+      c("name", "text", { notNull: true }), c("remark", "text"), c("publicLabel", "text"),
       c("protocol", "varchar", { length: 32, notNull: true, default: "vless" }),
       c("port", "int", { notNull: true }),
       c("transport", "varchar", { length: 16, notNull: true, default: "tcp" }),

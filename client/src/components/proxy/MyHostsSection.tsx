@@ -5,11 +5,12 @@ import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { formatBytes, formatUptime } from "@/components/hosts/hostDisplay";
 import { ProxyNodeRow, proxyNodeMetaText } from "@/components/proxy/ProxyNodeRow";
 import { clipboardNeedsManualCopy, copyTextFromElement } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import { Plus, Terminal, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 /**
@@ -46,6 +47,67 @@ export default function MyHostsSection() {
     { hostId: commandHostId },
     { enabled: commandHostId > 0 },
   );
+  /*
+    自己加的机器现在什么情况。
+
+    原来这一段只有一个在线的小圆点 —— 可「在线」只回答了「Agent 连上没有」，
+    回答不了「这机器还撑得住吗」。租户自己掏钱买的机器，内存满了、磁盘满了、
+    刚重启过，他都该看得见，否则只能来问管理员。
+
+    走 latestMetricsSummary：它本来就是 protectedProcedure，逐台过 requireHostAccess，
+    所以不用开新接口、也不用给租户放主机管理那一整页的权限（那里还有分组、令牌、
+    Agent 升级和删任意主机，不是这个需求要的东西）。
+  */
+  const myHostIds = useMemo(
+    () => ((hostsQuery.data || []) as any[])
+      // 和下面的 myHosts 同一个口径：只要自己的。两处分别写会在改口径时漏掉一处。
+      .filter((host: any) => Number(host?.userId || 0) === Number(user?.id || 0))
+      .map((host: any) => Number(host.id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+      // 排序是为了让查询键稳定：顺序一变 react-query 会当成新查询重新拉一遍。
+      .sort((a, b) => a - b),
+    [hostsQuery.data, user?.id],
+  );
+  const metricsQuery = trpc.hosts.latestMetricsSummary.useQuery(
+    { hostIds: myHostIds },
+    {
+      enabled: !isAdmin && myHostIds.length > 0,
+      // 机器状态是看一眼就走的东西，不值得为它一直轮询。
+      refetchInterval: 30_000,
+      staleTime: 20_000,
+    },
+  );
+  const metricByHostId = useMemo(() => {
+    const map = new Map<number, any>();
+    for (const row of (metricsQuery.data || []) as any[]) map.set(Number(row.hostId), row);
+    return map;
+  }, [metricsQuery.data]);
+
+  /**
+   * 机器现在什么情况：CPU / 内存 / 磁盘 / 已经跑了多久。
+   *
+   * 离线时这些数是最后一次上报的值，会冻在那儿 —— 所以离线就说「最后一次」，
+   * 别让人以为是此刻的读数（主机卡片那边同样的道理）。
+   */
+  const hostStatusLine = (host: any) => {
+    const metric = metricByHostId.get(Number(host.id));
+    // 还没上报过就什么都不说 —— 拿一排 0 冒充「机器很闲」比空着更糟。
+    if (!metric) return null;
+    const parts = [
+      metric.cpuUsage == null ? "" : `CPU ${Math.round(Number(metric.cpuUsage))}%`,
+      metric.memoryUsage == null ? "" : `内存 ${Math.round(Number(metric.memoryUsage))}%`,
+      metric.diskUsed == null || metric.diskTotal == null
+        ? ""
+        : `磁盘 ${formatBytes(Number(metric.diskUsed))}/${formatBytes(Number(metric.diskTotal))}`,
+      metric.uptime == null ? "" : `${host.isOnline ? "已跑" : "最后跑了"} ${formatUptime(Number(metric.uptime))}`,
+    ].filter(Boolean);
+    if (parts.length === 0) return null;
+    return (
+      <p className="truncate text-[11px] leading-tight text-muted-foreground">
+        {host.isOnline ? "" : "最后一次 · "}{parts.join(" · ")}
+      </p>
+    );
+  };
 
   const invalidate = () => {
     utils.hosts.list.invalidate();
@@ -226,6 +288,7 @@ export default function MyHostsSection() {
                 host.isOnline ? "在线" : "离线",
                 host.agentVersion ? `Agent ${host.agentVersion}` : "还没装 Agent",
               ])}
+              detail={hostStatusLine(host)}
               actions={[
                 {
                   key: "command",

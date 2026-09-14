@@ -42,6 +42,14 @@ export function redactSharedProxyNodeRow<T extends ShareableProxyNodeRow>(row: T
     trafficLimit: 0,
     trafficUsed: 0,
     trafficAutoReset: false,
+    /*
+      备注抹掉，对外标注留着。
+
+      两个字段服务的是两种人：remark 是主人自己的账本（「给张三的」「这条快到期了」
+      「便宜线」），泄给收方会出事；publicLabel 是「家宽」「IEPL」这种线路本身的属性 ——
+      恰恰是收方最想知道、而只有主人说得出的那件事。抹掉它，收方的订阅里就只剩一个
+      没有信息量的「直连」。
+    */
     remark: null,
   };
 }

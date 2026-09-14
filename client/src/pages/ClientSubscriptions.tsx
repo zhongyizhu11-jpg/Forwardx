@@ -494,6 +494,8 @@ export default function ClientSubscriptionsPage() {
   const [shareNode, setShareNode] = useState<{ id: number; name: string } | null>(null);
   const [nodeAdvancedOpen, setNodeAdvancedOpen] = useState(false);
   const [nodeRemark, setNodeRemark] = useState("");
+  /** 对外标注：分享出去时对方看得到的那一句。备注是自己看的，两回事。 */
+  const [nodePublicLabel, setNodePublicLabel] = useState("");
 
   /**
    * 「落地节点」这一段只列粘进来的，不列自建节点派生出来的那些。
@@ -511,12 +513,18 @@ export default function ClientSubscriptionsPage() {
     () => (nodes as any[]).filter((node) => !Number(node?.inboundId || 0) || node?.sharedFrom),
     [nodes],
   );
-  /** 模板 id → 备注。订阅内容那边只有 templateId，备注在节点行上。 */
+  /**
+   * 模板 id → 那一条直连要标什么。订阅内容那边只有 templateId，标注在节点行上。
+   *
+   * 对外标注优先：分享进来的节点被抹掉了备注（那是对方的账本），只剩这一句 ——
+   * 而它恰恰是收方最需要的（这条线是家宽还是 IEPL）。自己的节点两个都在时也用它：
+   * 「订阅内容」这一屏说的是客户端会拿到什么，那是对外的口径。
+   */
   const remarkByTemplateId = useMemo(() => {
     const map = new Map<number, string>();
     for (const node of nodes as any[]) {
-      const remark = String(node?.remark || "").trim();
-      if (remark) map.set(Number(node.id), remark);
+      const label = String(node?.publicLabel || "").trim() || String(node?.remark || "").trim();
+      if (label) map.set(Number(node.id), label);
     }
     return map;
   }, [nodes]);
@@ -813,6 +821,7 @@ export default function ClientSubscriptionsPage() {
     setEditingNodeId(null);
     setNodeName("");
     setNodeRemark("");
+    setNodePublicLabel("");
     setNodeLink("");
     setNodeAutoGroup(PROXY_NODE_DEFAULT_AUTO_GROUP);
     setNodeIncludeDirect(false);
@@ -830,6 +839,7 @@ export default function ClientSubscriptionsPage() {
     setEditingNodeId(node.id);
     setNodeName(String(node.name || ""));
     setNodeRemark(String(node.remark || ""));
+    setNodePublicLabel(String(node.publicLabel || ""));
     setNodeLink(String(node.sourceLink || ""));
     setNodeAutoGroup(normalizeProxyNodeAutoGroup(node.autoGroup));
     setNodeIncludeDirect(!!node.includeDirect);
@@ -867,6 +877,7 @@ export default function ClientSubscriptionsPage() {
     const payload = {
       name,
       remark: nodeRemark.trim() || null,
+      publicLabel: nodePublicLabel.trim() || null,
       link,
       autoGroup: nodeAutoGroup,
       includeDirect: nodeIncludeDirect,
@@ -1770,16 +1781,32 @@ export default function ClientSubscriptionsPage() {
                 id="proxy-node-remark"
                 value={nodeRemark}
                 onChange={(event) => setNodeRemark(event.target.value)}
-                placeholder="例如 落地 / 家宽 / 备用"
+                placeholder="例如 给张三的 / 这条快到期"
+                maxLength={12}
+              />
+              <p className="text-xs text-muted-foreground">
+                只给你自己看。分享出去的节点，对方看不到这一句。
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="proxy-node-public-label">对外标注</Label>
+              <Input
+                id="proxy-node-public-label"
+                value={nodePublicLabel}
+                onChange={(event) => setNodePublicLabel(event.target.value)}
+                placeholder="例如 家宽 / IEPL / 深港专线"
                 maxLength={12}
               />
               {/*
-                备注只在面板上显示，不进订阅 —— 订阅里节点叫什么由上面的名称决定。
-                「订阅内容」里的直连条目原来一律标「直连」，那句话对每一条都成立，
-                等于没说；填了备注就用备注顶掉它。
+                和备注分开是因为它们服务两种人。
+
+                备注是主人自己的账本（「给张三的」「便宜线」），泄给租户会出事；
+                对外标注是线路本身的属性（「家宽」「IEPL」）—— 恰恰是租户最想知道、
+                而只有主人说得出的那件事。合成一个字段，两种用途只能二选一：
+                要么泄露账本，要么租户看到的永远是一个没有信息量的「直连」。
               */}
               <p className="text-xs text-muted-foreground">
-                只在面板上显示，会顶掉「订阅内容」里那个「直连」标签。不进订阅。
+                会顶掉「订阅内容」里那个「直连」标签，分享出去的人也看得到。不进订阅。
               </p>
             </div>
             <div className="space-y-2">
@@ -1856,7 +1883,6 @@ export default function ClientSubscriptionsPage() {
               <div className="flex items-center justify-between gap-3 pt-1">
                 <div className="min-w-0">
                   <Label className="text-xs">每月自动清零</Label>
-                  <p className="mt-0.5 text-xs text-muted-foreground">按机房的流量周期来。填 29/30/31 就是月末 —— 短月份自动落到当月最后一天。</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {nodeTrafficAutoReset ? (

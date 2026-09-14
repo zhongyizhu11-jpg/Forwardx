@@ -407,7 +407,19 @@ export const proxyNodes = table("proxy_nodes", {
   id: serial("id"),
   userId: int("userId").notNull(),
   name: text("name").notNull(),
+  /** 备注：只给节点主人自己看，共享出去时会被抹掉（见 redactSharedProxyNodeRow）。 */
   remark: text("remark"),
+  /**
+   * 对外标注：分享给别人时，对方看得到的那一句。
+   *
+   * 和 remark 分开是因为它们服务两种人。remark 是「给张三的」「这条快到期了」
+   * 「便宜线」—— 自己的账本，泄给租户会出事；publicLabel 是「家宽」「IEPL」
+   * 「深港专线」—— 恰恰是租户最想知道、而只有主人说得出的那件事。
+   *
+   * 合成一个字段的话，两种用途只能二选一：要么泄露账本，要么租户看到的永远是
+   * 一个没有信息量的「直连」。
+   */
+  publicLabel: text("publicLabel"),
   // vless | vmess | trojan | shadowsocks | hysteria2 | tuic | anytls | snell
   protocol: varchar("protocol", { length: 32 }).notNull().default("vless"),
   // 用户粘贴的原始链接，仅作留档与重新导入，渲染以下面解析后的字段为准
@@ -490,6 +502,8 @@ export const proxyInbounds = table("proxy_inbounds", {
   hostId: int("hostId").notNull(),
   name: text("name").notNull(),
   remark: text("remark"),
+  /** 对外标注：分享出去时对方看得到的那一句，会带到派生节点上。见 proxy_nodes.publicLabel。 */
+  publicLabel: text("publicLabel"),
   // vless | vmess | trojan | shadowsocks | hysteria2 | tuic | anytls | snell
   protocol: varchar("protocol", { length: 32 }).notNull().default("vless"),
   port: int("port").notNull(),
