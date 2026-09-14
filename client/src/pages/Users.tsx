@@ -53,6 +53,7 @@ import { pollingInterval } from "@/lib/polling";
 import { getTunnelRouteText } from "@/lib/tunnelDisplay";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { trpc } from "@/lib/trpc";
+import { forwardAccessResultMessage } from "@shared/forwardAccessMessage";
 import {
   ArrowDownToLine,
   ArrowRightLeft,
@@ -618,14 +619,29 @@ function UsersContent() {
       });
       return { previousUsers };
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (result: any, variables) => {
+      /*
+        按**服务端实际落成的值**回填，不是按我们刚发出去的那个。
+
+        服务端记下管理员的意图（manualCanAddRules）之后会重算生效值 —— 用户超额时
+        生效值仍然是关。原来这里拿 variables.enabled 去 patch 并弹「已开启」：
+        toast 说开了，开关还是灰的，刷新一次原样。管理员以为开好了，租户那边一条
+        转发都跑不起来。意图照旧记下（额度一放开就会自动生效），但话得说实。
+      */
+      const effective = typeof result?.canAddRules === "boolean" ? result.canAddRules : variables.enabled;
       patchCachedUser(variables.userId, {
-        canAddRules: variables.enabled,
+        canAddRules: effective,
         manualCanAddRules: variables.enabled,
         manualAllowForwardXTunnel: variables.enabled,
       });
       utils.rules.list.invalidate();
-      toast.success(variables.enabled ? "用户转发已开启" : "用户转发已关闭");
+      const message = forwardAccessResultMessage({
+        requested: variables.enabled,
+        effective: result?.canAddRules,
+        reason: result?.pauseReason,
+      });
+      if (message.tone === "warning") toast.warning(message.text);
+      else toast.success(message.text);
     },
     onError: (err, _variables, context) => {
       if (context?.previousUsers) utils.users.listPage.setData(userPageInput, context.previousUsers);

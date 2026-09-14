@@ -1,6 +1,7 @@
 import * as React from "react"
 import * as SwitchPrimitives from "@radix-ui/react-switch"
 import { cn } from "@/lib/utils"
+import { settledToggleChecked } from "@/lib/optimisticToggle";
 
 type SwitchProps = React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root> & {
   instant?: boolean;
@@ -74,9 +75,19 @@ const OptimisticSwitch = React.forwardRef<React.ComponentRef<typeof SwitchPrimit
         runningRef.current = false;
         if (mountedRef.current) {
           setIsPending(false);
-          if (externalCheckedRef.current === confirmedRef.current) {
-            setVisualChecked(externalCheckedRef.current);
-          }
+          /*
+            队列跑完就以外部值为准，不管它和我们刚发出去的那个一不一样。
+
+            原来这里只在两者相等时才回同步 —— 隐含假设是「请求什么，服务端就会变成
+            什么」。而不相等恰恰是最该说出来的情形：给一个超额的用户开「转发」，
+            服务端记下了意图但重算后生效值仍然是关，开关却一直亮着，刷新前谁也看
+            不出来。外部值一时还没跟上的话，下面那个 effect 会在它到达时再同步一次
+            （此刻 runningRef 已经清了，不会再被跳过）。
+          */
+          const settled = settledToggleChecked(externalCheckedRef.current, confirmedRef.current);
+          confirmedRef.current = settled;
+          desiredRef.current = settled;
+          setVisualChecked(settled);
         }
       }
     }, []);

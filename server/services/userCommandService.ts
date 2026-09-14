@@ -2,6 +2,7 @@ import { appendPanelLog } from "../_core/panelLogger";
 import * as db from "../db";
 import { refreshUserForwardEndpoints } from "../routers/helpers";
 import { trafficBillingUserLockKey, withKeyedTaskLock } from "../keyedTaskLock";
+import type { ForwardAccessPauseReason } from "../repositories/userRepository";
 
 type CommandActor = { id: number; role?: string };
 
@@ -94,8 +95,25 @@ export async function setUserForwardAccessCommand(input: {
   });
   if (!input.enabled) await db.disableAllUserRules(input.targetUserId);
   await refreshUserForwardEndpoints(input.targetUserId, `${input.reasonPrefix || "user-forward"}-${input.enabled ? "enabled" : "disabled"}`);
-  appendPanelLog("info", `[UserCommand] action=forward.${input.enabled ? "enable" : "disable"} actor=${input.actor.id} target=${input.targetUserId}`);
-  return { target };
+  /*
+    交出**真的落成了什么**，不是请求的那个值。
+
+    上面写下的是管理员的意图（manualCanAddRules），随后重算生效值 —— 用户超额时
+    生效值仍然是关。原来这里只返回 `{ target }`，路由回一个写死的 `{ success: true }`，
+    客户端就拿自己刚发出去的值去 patch 缓存并弹「用户转发已开启」：toast 说开了，
+    开关还是灰的，刷新一次原样。管理员以为开好了，租户那边一条转发都跑不起来。
+
+    意图**不回滚**：额度一放开就该自动生效，那正是 manual 那一列存在的意义。
+    所以这里只是如实汇报，不是把写进去的东西撤掉。
+  */
+  const after = await db.getUserById(input.targetUserId);
+  const canAddRules = !!(after as any)?.canAddRules;
+  const pauseReason = ((after as any)?.forwardAccessPauseReason ?? null) as ForwardAccessPauseReason;
+  appendPanelLog(
+    "info",
+    `[UserCommand] action=forward.${input.enabled ? "enable" : "disable"} actor=${input.actor.id} target=${input.targetUserId} effective=${canAddRules}${canAddRules === input.enabled ? "" : ` blockedBy=${pauseReason || "unknown"}`}`,
+  );
+  return { target, canAddRules, pauseReason };
 }
 
 export async function resetUserTrafficCommand(input: {

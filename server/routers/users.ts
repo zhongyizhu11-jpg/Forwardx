@@ -468,9 +468,11 @@ export const usersRouter = router({
     setForwardAccess: adminProcedure
       .input(z.object({ userId: z.number(), enabled: z.boolean() }))
       .mutation(async ({ input, ctx }) => {
-        await setUserForwardAccessCommand({ actor: ctx.user, targetUserId: input.userId, enabled: input.enabled });
-        console.info(`[Users] Forward access ${input.enabled ? "enabled" : "disabled"} userId=${input.userId} ${actorLabel(ctx)}`);
-        return { success: true };
+        const result = await setUserForwardAccessCommand({ actor: ctx.user, targetUserId: input.userId, enabled: input.enabled });
+        console.info(`[Users] Forward access ${input.enabled ? "enabled" : "disabled"} userId=${input.userId} effective=${result.canAddRules} ${actorLabel(ctx)}`);
+        // 回真正的生效状态。界面拿它 patch 缓存、拿它说话 —— 原来回的是写死的
+        // `{ success: true }`，客户端只好拿自己发出去的值去报「已开启」。
+        return { success: true, canAddRules: result.canAddRules, pauseReason: result.pauseReason };
       }),
     setAccountEnabled: adminProcedure
       .input(z.object({ userId: z.number(), enabled: z.boolean() }))
