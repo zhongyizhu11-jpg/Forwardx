@@ -20,6 +20,8 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 import { getTunnelRouteText } from "@/lib/tunnelDisplay";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
+import { SlidingTabsList, type SlidingTabItem } from "@/components/ui/sliding-tabs";
+import TrafficBillingSection from "@/components/TrafficBillingSection";
 import { cn } from "@/lib/utils";
 import { formatTrafficMultiplier } from "@shared/trafficMultiplier";
 import {
@@ -30,7 +32,7 @@ import {
   PLAN_PRICE_TIER_LIMIT,
   planMonthlyEquivalentCents,
 } from "@shared/planPricing";
-import { ArrowRight, Check, CheckCircle2, LayoutGrid, List, Package, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, Coins, LayoutGrid, List, Package, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -83,13 +85,22 @@ type TrafficAddonForm = {
   sortOrder: string;
 };
 
-type PlanManageTab = "plans";
+type PlanManageTab = "plans" | "billing";
 type PlanDialogTab = "settings" | "resources";
 type PlanListViewMode = "card" | "table";
 type PlanResourceKey = "hostIds" | "tunnelIds" | "forwardGroupIds" | "proxyNodeIds";
 type ForwardGroupMode = "port" | "failover" | "chain" | "entry" | "exit";
 type PlanResourcePart = { label: string; count: number };
-const PLAN_MANAGE_TABS = ["plans"] as const;
+const PLAN_MANAGE_TABS = ["plans", "billing"] as const;
+/*
+  套餐计费和流量计费是同一件事的两种卖法（包月吃额度 / 按 GB 扣余额），
+  所以放在同一页的两个 tab 里，而不是侧边栏两个入口 —— 「我这个月怎么收钱」
+  不该分两个地方问。
+*/
+const PLAN_MANAGE_TAB_ITEMS = [
+  { value: "plans", label: "套餐计费", icon: Package },
+  { value: "billing", label: "流量计费", icon: Coins },
+] as const satisfies readonly SlidingTabItem<PlanManageTab>[];
 const PLAN_MANAGE_TAB_STORAGE_KEY = "forwardx.plans.tab";
 const PLAN_LIST_VIEW_MODE_STORAGE_KEY = "forwardx.plans.viewMode";
 
@@ -1131,21 +1142,24 @@ export default function Plans() {
             <Button variant="outline" onClick={() => setAssignOpen(true)}>
               <Settings2 className="mr-2 h-4 w-4" /> 手动分配
             </Button>
-            <Button onClick={openCreate}>
-              <Plus className="mr-2 h-4 w-4" /> 新增套餐
-            </Button>
+            {/* 计费 tab 里有它自己的「新增计费资源」，这个按钮只管套餐，别让一个按钮有两种含义。 */}
+            {activeTab === "plans" && (
+              <Button onClick={openCreate}>
+                <Plus className="mr-2 h-4 w-4" /> 新增套餐
+              </Button>
+            )}
           </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {/*
-            按量计费的状态卡：只读，开关挪去「流量计费」那一页统一管。
+            按量计费的状态卡：只读，开关在旁边的「流量计费」tab 里统一管。
 
             原来这里也有一个开关，但它读的 trafficBilling.configs 查询带着
             `enabled: activeTab === "billing"` —— 默认 tab 是「套餐」，查询根本不发，
             于是这张卡**永远显示「已关闭」**，哪怕库里是开着的。两面都错：以为没在
             收钱其实在收；想关掉它，看到「已关闭」就不会去动。
-            现在查询无条件发，状态是真的；要改去流量计费页。
+            现在查询无条件发，状态是真的；要改切到「流量计费」tab。
           */}
           <Card>
             <CardHeader className="pb-2">
@@ -1154,7 +1168,7 @@ export default function Plans() {
                 {trafficBillingLoading
                   ? <Skeleton className="h-7 w-16" />
                   : <span>{trafficBillingEnabled ? "已开启" : "已关闭"}</span>}
-                <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1 text-xs" onClick={() => navigate("/traffic-billing")}>
+                <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1 text-xs" onClick={() => setActiveTab("billing")}>
                   去设置 <ArrowRight className="h-3 w-3" />
                 </Button>
               </CardTitle>
@@ -1239,6 +1253,8 @@ export default function Plans() {
         )}
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as PlanManageTab)} className="space-y-4">
+          <SlidingTabsList items={PLAN_MANAGE_TAB_ITEMS} activeValue={activeTab} ariaLabel="套餐管理" minItemWidthRem={9.5} />
+
           <TabsContent value="plans" className="mt-0 space-y-6">
             <Card>
               <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1372,6 +1388,9 @@ export default function Plans() {
             <PersistentPagination pagination={planPagination} itemName="个套餐" />
           </TabsContent>
 
+          <TabsContent value="billing" className="mt-0">
+            <TrafficBillingSection />
+          </TabsContent>
         </Tabs>
       </div>
 

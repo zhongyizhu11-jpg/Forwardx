@@ -136,7 +136,7 @@ export default function HostTrafficBillingDialog({
           <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
-              流量计费<strong>总开关是关着的</strong>，这里配了也一分钱都不会扣。要去侧边栏的「流量计费」页先打开。
+              流量计费<strong>总开关是关着的</strong>，这里配了也一分钱都不会扣。要去「套餐管理 → 流量计费」先打开。
             </span>
           </div>
         ) : null}

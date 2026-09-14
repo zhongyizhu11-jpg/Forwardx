@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
+import { pickTabValue } from "@/lib/urlTab";
 
 type UseUrlTabOptions<T extends string> = {
   values: readonly T[];
@@ -9,9 +10,16 @@ type UseUrlTabOptions<T extends string> = {
   clearDefaultFromUrl?: boolean;
 };
 
-function getQueryValue(location: string, queryKey: string) {
-  const query = location.split("?")[1] || "";
-  return new URLSearchParams(query).get(queryKey);
+/**
+ * 地址栏里的查询串。
+ *
+ * **不能**从 wouter 的 `useLocation()` 里取：它只给路径，不含 `?` 后面的部分，
+ * 于是 `location.split("?")[1]` 永远是空 —— `?tab=xxx` 深链接一直是个死功能，
+ * 而且不报错，只是默默回落到默认 tab。
+ */
+function currentSearch() {
+  if (typeof window === "undefined") return "";
+  return window.location.search || "";
 }
 
 function readStoredTab<T extends string>(storageKey: string | undefined, coerce: (value: unknown) => T | null) {
@@ -49,10 +57,8 @@ export function useUrlTab<T extends string>({
   }, [allowedValues]);
 
   const resolveTab = useCallback(() => {
-    return coerce(getQueryValue(location, queryKey))
-      || readStoredTab(storageKey, coerce)
-      || defaultValue;
-  }, [coerce, defaultValue, location, queryKey, storageKey]);
+    return pickTabValue(currentSearch(), readStoredTab(storageKey, coerce), values, defaultValue, queryKey);
+  }, [coerce, defaultValue, location, queryKey, storageKey, valuesKey]);
 
   const [tab, setTabState] = useState<T>(() => resolveTab());
 
@@ -67,8 +73,9 @@ export function useUrlTab<T extends string>({
     setTabState(next);
     writeStoredTab(storageKey, next);
 
-    const [path, query = ""] = location.split("?");
-    const params = new URLSearchParams(query);
+    // 路径从 wouter 拿（它给的就是路径），查询串从地址栏拿。
+    const path = location.split("?")[0];
+    const params = new URLSearchParams(currentSearch());
     if (clearDefaultFromUrl && next === defaultValue) {
       params.delete(queryKey);
     } else {
@@ -76,7 +83,7 @@ export function useUrlTab<T extends string>({
     }
     const nextQuery = params.toString();
     const nextLocation = `${path || "/"}${nextQuery ? `?${nextQuery}` : ""}`;
-    if (nextLocation !== location) setLocation(nextLocation);
+    if (nextLocation !== `${path}${currentSearch()}`) setLocation(nextLocation);
   }, [clearDefaultFromUrl, coerce, defaultValue, location, queryKey, setLocation, storageKey]);
 
   return [tab, setTab] as const;

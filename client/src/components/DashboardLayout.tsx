@@ -44,7 +44,6 @@ import {
   CreditCard,
   WalletCards,
   ReceiptText,
-  Coins,
   Package,
   ShoppingBag,
   Megaphone,
@@ -115,12 +114,6 @@ const adminMenuItems: SidebarNavItem[] = [
   { icon: CreditCard, label: "支付对接", path: "/payments", menuKey: "payments" },
   { icon: WalletCards, label: "账单与兑换", path: "/billing", menuKey: "billing" },
   { icon: Package, label: "套餐管理", path: "/plans", menuKey: "plans" },
-  /*
-    流量计费这一页原来有路由、有总开关，但**侧边栏里点不到，全站零链接** ——
-    只能手敲 /traffic-billing。于是「按量计费的总开关」在界面上等于不存在：
-    人在套餐管理里配好了价（那个 tab 又刻意不渲染总开关），等来的账单是 0。
-  */
-  { icon: Coins, label: "流量计费", path: "/traffic-billing", menuKey: "trafficBilling" },
   { icon: Users, label: "用户管理", path: "/users", menuKey: "users" },
   lookingGlassMenuItem,
   { icon: Settings, label: "系统设置", path: "/settings", menuKey: "settings" },
