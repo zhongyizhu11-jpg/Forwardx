@@ -23,6 +23,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,7 @@ import { trpc } from "@/lib/trpc";
 import {
   ArrowDownToLine,
   ArrowRightLeft,
+  ChevronRight,
   ArrowUpFromLine,
   ShieldOff,
   Package,
@@ -281,6 +283,11 @@ function UsersContent() {
     defaultValue: "accounts",
     storageKey: "forwardx.users.type",
   });
+  /*
+    窄屏上点开的那个人。存 id 而不是整行数据 —— 存整行的话，列表刷新后弹窗里还是
+    旧数字（余额刚充完、开关刚拨过），而这一屏正是拿来看这些数的。
+  */
+  const [detailUserId, setDetailUserId] = useState<number | null>(null);
   const [showAddonDialog, setShowAddonDialog] = useState(false);
   const [addonUserId, setAddonUserId] = useState<number | null>(null);
   const [addonUserName, setAddonUserName] = useState("");
@@ -774,6 +781,10 @@ function UsersContent() {
     isReady: !isLoading && !!userPageQuery.data,
   });
   const pagedUsers = userPagination.items;
+  // 弹窗里的那个人现从列表取：列表一刷新，弹窗里的数跟着新。
+  const detailUser = detailUserId === null
+    ? null
+    : (pagedUsers as any[]).find((item: any) => Number(item.id) === detailUserId) || null;
   const subscriptionPagination = useServerPagination(visibleSubscriptions, Number(subscriptionPageQuery.data?.totalItems || 0), subscriptionPageRequest, {
     pageSize: 12,
     isReady: !subscriptionsLoading && !!subscriptionPageQuery.data,
@@ -1210,6 +1221,108 @@ function UsersContent() {
   const availableBillingForwardGroups = billableForwardGroups.filter((group: any) => !trafficBillingForwardGroupIds.includes(Number(group.id)));
   const selectedBillingForwardGroups = billableForwardGroups.filter((group: any) => trafficBillingForwardGroupIds.includes(Number(group.id)));
 
+  /**
+   * 一个用户的全部细节 —— 就是原来窄屏那张大卡的内容，一项没少，只是挪进了弹窗。
+   *
+   * 列表上只留认人用的那几样，其余全在这儿：点开才看，而不是每找一个人都滑过
+   * 别人的全部家当。
+   */
+  const renderUserDetail = (u: any) => {
+    const limit = Number(u.trafficLimit) || 0;
+    const used = Number(u.trafficUsed) || 0;
+    const billingUsed = Number(u.trafficBillingUsed) || 0;
+    const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+    const isExpired = u.expiresAt && new Date(u.expiresAt) <= new Date();
+    const isOverLimit = limit > 0 && used >= limit;
+    const speedLimit = Math.max(Number(u.gostRateLimitIn) || 0, Number(u.gostRateLimitOut) || 0);
+    return (
+      <div className="grid gap-2">
+        <div className="rounded-md bg-muted/25 p-2">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="shrink-0 text-muted-foreground">套餐/分配</span>
+            <span className="min-w-0 truncate text-right tabular-nums">
+              {formatBytes(used)} / {limit > 0 ? formatBytes(limit) : "不限"}
+            </span>
+          </div>
+          {limit > 0 && (
+            <Progress value={pct} className={`mt-2 h-1.5 ${isOverLimit ? "[&>div]:bg-destructive" : ""}`} />
+          )}
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {isOverLimit && <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">超额</Badge>}
+            {u.trafficAutoReset && (
+              <Badge variant="outline" className="h-5 px-1.5 text-[10px]">每月{u.trafficResetDay || 1}日重置</Badge>
+            )}
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 pt-2 text-xs">
+            <span className="shrink-0 text-muted-foreground">按量计费</span>
+            <span className="min-w-0 truncate text-right font-medium tabular-nums">{formatBytes(billingUsed)}</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="min-w-0 rounded-md bg-muted/25 p-2">
+            <p className="text-muted-foreground">余额</p>
+            <p className="mt-1 truncate font-medium">{formatCurrencyCny(u.balanceCents)}</p>
+          </div>
+          <div className="min-w-0 rounded-md bg-muted/25 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-muted-foreground">到期</p>
+              {isExpired && <Badge variant="destructive" className="h-5 shrink-0 px-1.5 text-[10px]">已到期</Badge>}
+            </div>
+            <p className={`mt-1 truncate font-medium ${isExpired ? "text-destructive" : ""}`}>
+              {u.expiresAt ? new Date(u.expiresAt).toLocaleDateString() : "不限"}
+            </p>
+          </div>
+          <div className="min-w-0 rounded-md bg-muted/25 p-2">
+            <p className="text-muted-foreground">Telegram</p>
+            <p className="mt-1 truncate font-medium">
+              {u.telegramId ? (u.telegramUsername ? `@${u.telegramUsername}` : u.telegramFirstName || u.telegramId) : "未绑定"}
+            </p>
+          </div>
+          <div className="min-w-0 rounded-md bg-muted/25 p-2">
+            <p className="text-muted-foreground">邮箱</p>
+            <p className="mt-1 truncate font-medium">{u.emailVerified ? "已验证" : u.email ? "未验证" : "未填写"}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <span>规则: {u.maxRules ? `${u.maxRules} 条` : "不限"}</span>
+          <span>端口: {u.maxPorts ? `${u.maxPorts} 个` : "不限"}</span>
+          <span>连接: {u.maxConnections ? `${u.maxConnections}` : "不限"}</span>
+          <span>单 IP: {u.maxIPs ? `${u.maxIPs}` : "不限"}</span>
+          {speedLimit > 0 && <span className="col-span-2">转发限速: {formatForwardRateLimit(u.gostRateLimitIn, u.gostRateLimitOut)}</span>}
+        </div>
+
+        <div className="flex h-9 items-center justify-between rounded-md border border-border/50 px-2">
+          <span className="text-xs text-muted-foreground">转发</span>
+          <OptimisticSwitch
+            checked={u.role === "admin" || !!u.canAddRules}
+            disabled={u.role === "admin"}
+            onCheckedChangeAsync={(checked) => updateForwardAccessMutation.mutateAsync({ userId: u.id, enabled: checked })}
+          />
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 pt-1">
+          {renderAccountEnabledControl(u, true)}
+          {/*
+            编辑会开另一个弹窗。不先把详情关掉的话两层弹窗叠在一起，
+            关掉上面那个会连下面一起关，人会以为自己的改动没保存。
+          */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 px-2 text-xs"
+            onClick={() => { setDetailUserId(null); openTrafficSettings(u); }}
+          >
+            <Pencil className="mr-1 h-3.5 w-3.5" />
+            编辑
+          </Button>
+          {renderUserMoreMenu(u, "h-9 justify-center gap-1 rounded-md border border-border/50 px-2 text-xs")}
+        </div>
+      </div>
+    );
+  };
+
   const renderAccountEnabledControl = (u: any, compact = false) => {
     const enabled = u.accountEnabled !== false;
     const isSelf = u.id === currentUser?.id;
@@ -1373,118 +1486,58 @@ function UsersContent() {
         <DataSectionLoading className="sm:hidden" label="正在加载用户数据" minHeight="min-h-[220px]" />
       )}
 
+      {/*
+        一人一行，点开看详情。
+
+        原来每个用户在窄屏上是一整张卡：套餐、按量、余额、到期、TG、邮箱、四个配额、
+        两个开关、三个按钮 —— 一屏一个人。管理员在这一页干的最多的事是**找人**
+        （「张三那个号还在不在」「谁超额了」），而找人只需要名字和状态；剩下那十几项
+        是找到之后才看的。把它们平铺在列表里，等于每找一个人都要滑过别人的全部家当。
+
+        所以行上只留**用来认人和判断要不要点进去**的东西：名字、角色、异常徽章、
+        一句用量。其余的原样搬进详情弹窗，一项没少。
+      */}
       {!isLoading && users && users.length > 0 && (
-        <AutoAnimateContainer className="space-y-3 sm:hidden">
+        <AutoAnimateContainer className="divide-y divide-border/50 overflow-hidden rounded-lg border border-border/50 bg-card/70 sm:hidden">
           {pagedUsers.map((u: any) => {
             const limit = Number(u.trafficLimit) || 0;
             const used = Number(u.trafficUsed) || 0;
-            const billingUsed = Number(u.trafficBillingUsed) || 0;
-            const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
             const isExpired = u.expiresAt && new Date(u.expiresAt) <= new Date();
             const isOverLimit = limit > 0 && used >= limit;
-            const speedLimit = Math.max(Number(u.gostRateLimitIn) || 0, Number(u.gostRateLimitOut) || 0);
-
             return (
-              <div key={u.id} className="rounded-lg border border-border/50 bg-card/70 p-3 shadow-sm">
-                <div className="flex items-start gap-3">
-                  <UserAvatar user={u} className="h-10 w-10 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <p className="min-w-0 max-w-full truncate text-sm font-semibold">{u.username || "未命名"}</p>
-                      <Badge variant={u.role === "admin" ? "default" : "outline"} className="h-5 px-1.5 text-[10px]">
-                        {u.role === "admin" ? "管理员" : "普通用户"}
-                      </Badge>
-                      {u.id === currentUser?.id && (
-                        <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-primary">当前</Badge>
-                      )}
-                      {u.accountEnabled === false && (
-                        <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">账户禁用</Badge>
-                      )}
-                    </div>
-                    <p className="mt-1 truncate text-xs text-muted-foreground">
-                      #{u.id}{u.displayRemark ? ` · ${u.displayRemark}` : ""}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-3 grid gap-2">
-                  <div className="rounded-md bg-muted/25 p-2">
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="shrink-0 text-muted-foreground">套餐/分配</span>
-                      <span className="min-w-0 truncate text-right tabular-nums">
-                        {formatBytes(used)} / {limit > 0 ? formatBytes(limit) : "不限"}
-                      </span>
-                    </div>
-                    {limit > 0 && (
-                      <Progress value={pct} className={`mt-2 h-1.5 ${isOverLimit ? "[&>div]:bg-destructive" : ""}`} />
+              <button
+                key={u.id}
+                type="button"
+                className="flex w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left transition-colors active:bg-muted/40"
+                onClick={() => setDetailUserId(u.id)}
+              >
+                <UserAvatar user={u} className="h-9 w-9 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="min-w-0 truncate text-sm font-semibold">{u.username || "未命名"}</span>
+                    {u.role === "admin" && <Badge className="h-4 shrink-0 px-1 text-[10px]">管理员</Badge>}
+                    {u.id === currentUser?.id && (
+                      <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] text-primary">当前</Badge>
                     )}
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {isOverLimit && <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">超额</Badge>}
-                      {u.trafficAutoReset && (
-                        <Badge variant="outline" className="h-5 px-1.5 text-[10px]">每月{u.trafficResetDay || 1}日重置</Badge>
-                      )}
-                    </div>
-                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 pt-2 text-xs">
-                      <span className="shrink-0 text-muted-foreground">按量计费</span>
-                      <span className="min-w-0 truncate text-right font-medium tabular-nums">{formatBytes(billingUsed)}</span>
-                    </div>
+                    {/*
+                      异常要在行上就看得见 —— 「谁被禁了 / 谁超额了 / 谁过期了」正是
+                      管理员扫这一屏在找的东西，藏进详情就等于要一个个点开找。
+                    */}
+                    {u.accountEnabled === false && (
+                      <Badge variant="destructive" className="h-4 shrink-0 px-1 text-[10px]">禁用</Badge>
+                    )}
+                    {isOverLimit && <Badge variant="destructive" className="h-4 shrink-0 px-1 text-[10px]">超额</Badge>}
+                    {isExpired && <Badge variant="destructive" className="h-4 shrink-0 px-1 text-[10px]">已到期</Badge>}
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="min-w-0 rounded-md bg-muted/25 p-2">
-                      <p className="text-muted-foreground">余额</p>
-                      <p className="mt-1 truncate font-medium">{formatCurrencyCny(u.balanceCents)}</p>
-                    </div>
-                    <div className="min-w-0 rounded-md bg-muted/25 p-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-muted-foreground">到期</p>
-                        {isExpired && <Badge variant="destructive" className="h-5 shrink-0 px-1.5 text-[10px]">已到期</Badge>}
-                      </div>
-                      <p className={`mt-1 truncate font-medium ${isExpired ? "text-destructive" : ""}`}>
-                        {u.expiresAt ? new Date(u.expiresAt).toLocaleDateString() : "不限"}
-                      </p>
-                    </div>
-                    <div className="min-w-0 rounded-md bg-muted/25 p-2">
-                      <p className="text-muted-foreground">Telegram</p>
-                      <p className="mt-1 truncate font-medium">
-                        {u.telegramId ? (u.telegramUsername ? `@${u.telegramUsername}` : u.telegramFirstName || u.telegramId) : "未绑定"}
-                      </p>
-                    </div>
-                    <div className="min-w-0 rounded-md bg-muted/25 p-2">
-                      <p className="text-muted-foreground">邮箱</p>
-                      <p className="mt-1 truncate font-medium">{u.emailVerified ? "已验证" : u.email ? "未验证" : "未填写"}</p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <span>规则: {u.maxRules ? `${u.maxRules} 条` : "不限"}</span>
-                    <span>端口: {u.maxPorts ? `${u.maxPorts} 个` : "不限"}</span>
-                    <span>连接: {u.maxConnections ? `${u.maxConnections}` : "不限"}</span>
-                    <span>单 IP: {u.maxIPs ? `${u.maxIPs}` : "不限"}</span>
-                    {speedLimit > 0 && <span className="col-span-2">转发限速: {formatForwardRateLimit(u.gostRateLimitIn, u.gostRateLimitOut)}</span>}
-                  </div>
-
-                  <div className="grid gap-2">
-                    <div className="flex h-9 items-center justify-between rounded-md border border-border/50 px-2">
-                      <span className="text-xs text-muted-foreground">转发</span>
-                      <OptimisticSwitch
-                        checked={u.role === "admin" || !!u.canAddRules}
-                        disabled={u.role === "admin"}
-                        onCheckedChangeAsync={(checked) => updateForwardAccessMutation.mutateAsync({ userId: u.id, enabled: checked })}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 pt-1">
-                    {renderAccountEnabledControl(u, true)}
-                    <Button variant="outline" size="sm" className="h-9 px-2 text-xs" onClick={() => openTrafficSettings(u)}>
-                      <Pencil className="mr-1 h-3.5 w-3.5" />
-                      编辑
-                    </Button>
-                    {renderUserMoreMenu(u, "h-9 justify-center gap-1 rounded-md border border-border/50 px-2 text-xs")}
-                  </div>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                    #{u.id}
+                    {u.displayRemark ? ` · ${u.displayRemark}` : ""}
+                    {" · "}
+                    {formatBytes(used)} / {limit > 0 ? formatBytes(limit) : "不限"}
+                  </p>
                 </div>
-              </div>
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </button>
             );
           })}
         </AutoAnimateContainer>
@@ -2145,6 +2198,34 @@ function UsersContent() {
               {sendEmailMutation.isPending ? "发送中..." : "发送邮件"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/*
+        窄屏上点开一个人看详情。内容就是原来那张大卡，一项没少。
+
+        按 id 从当前列表里现取，不存整行：存整行的话，充值 / 拨开关之后列表刷新了，
+        弹窗里还是旧数字 —— 而这一屏正是拿来看这些数的。
+      */}
+      <Dialog open={detailUser !== null} onOpenChange={(open) => !open && setDetailUserId(null)}>
+        <DialogContent className="max-h-[88svh] overflow-y-auto sm:max-w-md">
+          {detailUser && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex min-w-0 items-center gap-2">
+                  <UserAvatar user={detailUser} className="h-8 w-8 shrink-0" />
+                  <span className="min-w-0 truncate">{detailUser.username || "未命名"}</span>
+                  <Badge variant={detailUser.role === "admin" ? "default" : "outline"} className="h-5 shrink-0 px-1.5 text-[10px]">
+                    {detailUser.role === "admin" ? "管理员" : "普通用户"}
+                  </Badge>
+                </DialogTitle>
+                <DialogDescription>
+                  #{detailUser.id}{detailUser.displayRemark ? ` · ${detailUser.displayRemark}` : ""}
+                </DialogDescription>
+              </DialogHeader>
+              {renderUserDetail(detailUser)}
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
