@@ -16,8 +16,3 @@ export function addMonthsClamped(date: Date, months: number): Date {
   return next;
 }
 
-export function nextMonthlyTrafficReset(start: Date, expiresAt: Date | null): Date | null {
-  if (!expiresAt) return addMonthsClamped(start, 1);
-  const next = addMonthsClamped(start, 1);
-  return next.getTime() < expiresAt.getTime() ? next : null;
-}

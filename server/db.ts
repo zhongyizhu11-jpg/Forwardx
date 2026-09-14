@@ -479,13 +479,6 @@ export async function initDatabase() {
   }
 }
 
-export async function ensureConfiguredDatabase() {
-  const db = await getDb();
-  if (!db || !getDatabaseKind()) return false;
-  await ensureDatabaseSchema();
-  return true;
-}
-
 export async function hasAdminUser() {
   const db = await getDb();
   if (!db) return false;

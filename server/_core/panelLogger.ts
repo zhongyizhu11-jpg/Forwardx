@@ -50,11 +50,6 @@ export async function getPanelLogs() {
   return await readRecentJsonLogsAsync(PANEL_LOG_FILE) as PanelLogEntry[];
 }
 
-export async function getFilteredPanelLogs(level: PanelLogFilterLevel = "all") {
-  const currentLogs = await getPanelLogs();
-  return level === "all" ? currentLogs : currentLogs.filter((entry) => entry.level === level);
-}
-
 export async function getPanelLogPage(input: { level?: PanelLogFilterLevel; limit?: number | null; offset?: number | null } = {}) {
   const page = await readRecentJsonLogPageAsync<PanelLogEntry>(PANEL_LOG_FILE, {
     level: input.level || "all",
@@ -71,14 +66,6 @@ export async function getPanelLogPage(input: { level?: PanelLogFilterLevel; limi
       error: page.summary.error || 0,
     },
   };
-}
-
-export async function getPanelLogSummary() {
-  return (await getPanelLogs()).reduce<Record<string, number>>((acc, entry) => {
-    acc[entry.level] = (acc[entry.level] || 0) + 1;
-    acc.all = (acc.all || 0) + 1;
-    return acc;
-  }, { all: 0, log: 0, info: 0, warn: 0, error: 0 });
 }
 
 export async function clearPanelLogs() {

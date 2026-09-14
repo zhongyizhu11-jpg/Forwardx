@@ -80,16 +80,6 @@ async function _getActiveSubscriptionForwardGroupIds(userId: number): Promise<nu
   return Array.from(ids);
 }
 
-/** 获取某用户被授权的主机列表（含主机信息） */
-export async function getUserAllowedHosts(userId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  const hostIds = await getUserEffectiveAllowedHostIds(userId);
-  if (hostIds.length === 0) return [];
-  const allHosts = await db.select().from(hosts);
-  return allHosts.filter((h: any) => hostIds.includes(h.id));
-}
-
 /** 设置某用户的主机权限（全量替换） */
 export async function setUserHostPermissions(userId: number, hostIds: number[]) {
   const db = await getDb();
@@ -101,14 +91,6 @@ export async function setUserHostPermissions(userId: number, hostIds: number[]) 
     await db.insert(userHostPermissions).values(hostIds.map(hostId => ({ userId, hostId })));
   }
   clearLinkAccessScopeCache();
-}
-
-/** 获取某主机被授权的用户ID列表 */
-export async function getHostAllowedUserIds(hostId: number): Promise<number[]> {
-  const db = await getDb();
-  if (!db) return [];
-  const rows = await db.select({ userId: userHostPermissions.userId }).from(userHostPermissions).where(eq(userHostPermissions.hostId, hostId));
-  return rows.map((r: any) => r.userId);
 }
 
 /** 检查用户是否有某主机的使用权限 */
@@ -255,12 +237,6 @@ export async function checkUserForwardGroupPermission(userId: number, forwardGro
   return allowedIds.includes(Number(forwardGroupId));
 }
 
-export async function deleteForwardGroupPermissions(forwardGroupId: number) {
-  const db = await getDb();
-  if (!db) return;
-  await db.delete(userForwardGroupPermissions).where(eq(userForwardGroupPermissions.forwardGroupId, forwardGroupId));
-}
-
 export async function getTunnelsForUser(userId: number) {
   const db = await getDb();
   if (!db) return [];
@@ -302,8 +278,3 @@ export async function checkUserTunnelPermission(userId: number, tunnelId: number
   return planTunnelIds.includes(tunnelId);
 }
 
-export async function deleteTunnelPermissions(tunnelId: number) {
-  const db = await getDb();
-  if (!db) return;
-  await db.delete(userTunnelPermissions).where(eq(userTunnelPermissions.tunnelId, tunnelId));
-}

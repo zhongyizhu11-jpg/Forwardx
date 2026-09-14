@@ -1,4 +1,3 @@
-export const MAX_LATENCY_CHART_MS = 500;
 
 export type LatencyStabilitySample = {
   latency: number;

@@ -363,13 +363,6 @@ export async function registerUser(data: { username: string; password: string; n
   });
 }
 
-export async function resetUserPassword(userId: number, newPassword: string) {
-  const db = await getDb();
-  if (!db) return;
-  await revokeUserAuthSessions(userId, { reason: "password_reset" });
-  await db.update(users).set({ password: hashPassword(newPassword), updatedAt: nowDate() }).where(eq(users.id, userId));
-}
-
 export async function updateUserAccount(userId: number, data: { username?: string; name?: string | null; password?: string; avatar?: string | null }) {
   const db = await getDb();
   if (!db) return;

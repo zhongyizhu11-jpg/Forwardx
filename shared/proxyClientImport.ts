@@ -299,6 +299,3 @@ export function proxySubscriptionKindSupported(
   return format === "clash" || format === "singbox";
 }
 
-export function proxySubscriptionFormatLabel(format: ProxySubscriptionFormat): string {
-  return PROXY_SUBSCRIPTION_FORMAT_LABELS[format];
-}

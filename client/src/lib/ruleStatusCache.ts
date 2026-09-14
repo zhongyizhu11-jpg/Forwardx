@@ -307,8 +307,3 @@ export function clearRuleStatusSnapshots(userId: unknown, ruleIds?: Iterable<num
 
 // Short aliases keep call sites readable while retaining the explicit exports
 // above for consumers that prefer the full name.
-export const getRuleStatusSnapshot = readRuleStatusSnapshot;
-export const getRuleStatusSnapshots = readRuleStatusSnapshots;
-export const setRuleStatusSnapshot = writeRuleStatusSnapshot;
-export const setRuleStatusSnapshots = writeRuleStatusSnapshots;
-export const clearRuleStatusCache = clearRuleStatusSnapshots;

@@ -23,14 +23,6 @@ export function normalizePageRequest(input: PageRequest | null | undefined, defa
   return { page, pageSize };
 }
 
-export function pageWindow(input: PageRequest | null | undefined, defaultPageSize = 12): PageWindow {
-  const request = normalizePageRequest(input, defaultPageSize);
-  return {
-    ...request,
-    offset: (request.page - 1) * request.pageSize,
-  };
-}
-
 export function pageWindowForTotal(
   input: PageRequest | null | undefined,
   totalItems: number,
@@ -61,17 +53,3 @@ export function pageResult<T>(
   };
 }
 
-export function paginateItems<T>(items: T[], input: PageRequest | null | undefined, defaultPageSize = 12): PageResult<T> {
-  const request = normalizePageRequest(input, defaultPageSize);
-  const totalItems = items.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / request.pageSize));
-  const page = Math.min(request.page, totalPages);
-  const start = (page - 1) * request.pageSize;
-  return {
-    items: items.slice(start, start + request.pageSize),
-    page,
-    pageSize: request.pageSize,
-    totalItems,
-    totalPages,
-  };
-}

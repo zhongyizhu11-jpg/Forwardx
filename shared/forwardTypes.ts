@@ -109,10 +109,6 @@ export function normalizeForwardProtocolSettings(input?: Partial<Record<string, 
   return out;
 }
 
-export function isForwardProtocolEnabled(settings: Partial<Record<string, unknown>> | null | undefined, key: ForwardProtocolKey) {
-  return normalizeForwardProtocolSettings(settings)[key] !== false;
-}
-
 export function isNginxForwardProtocolEnabled(settings: Partial<Record<string, unknown>> | null | undefined) {
   const normalized = normalizeForwardProtocolSettings(settings);
   return normalized.nginx !== false || normalized.nginx_stream !== false;

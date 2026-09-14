@@ -77,10 +77,6 @@ export function createMigrationCode() {
   return { code, expiresAt: entry.expiresAt, expiresInSeconds: MIGRATION_CODE_TTL_MS / 1000 };
 }
 
-export function consumeMigrationCode(code: string) {
-  return !!takeMigrationCodeEntry(code);
-}
-
 export function getCurrentMigrationCode() {
   cleanupMigrationCodes();
   const now = Date.now();
@@ -209,25 +205,6 @@ export function consumeApprovedMigrationRequest(requestId: string, code: string,
     dataScope: request.dataScope,
     targetDatabaseType: request.targetDatabaseType,
     directSqliteRequested: request.directSqliteRequested,
-  };
-}
-
-export function consumeMigrationCodeForTakeover(code: string) {
-  const entry = takeMigrationCodeEntry(code);
-  if (!entry) return null;
-  const now = Date.now();
-  const takeoverToken = randomToken(48);
-  const takeoverEntry = {
-    createdAt: now,
-    expiresAt: now + TAKEOVER_TOKEN_TTL_MS,
-    targetPanelUrl: "",
-    status: "issued" as const,
-  };
-  takeoverTokens.set(takeoverToken, takeoverEntry);
-  return {
-    takeoverToken,
-    expiresAt: takeoverEntry.expiresAt,
-    expiresInSeconds: TAKEOVER_TOKEN_TTL_MS / 1000,
   };
 }
 

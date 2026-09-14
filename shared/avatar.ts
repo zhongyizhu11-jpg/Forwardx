@@ -36,10 +36,6 @@ function randomSeed(): string {
   return uuid || `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
-export function randomMultiavatarValue(seed: string = randomSeed()) {
-  return multiavatarValue(seed);
-}
-
 export function randomAvataaarsValue(seed: string = randomSeed()) {
   return avataaarsValue(seed);
 }
@@ -72,7 +68,6 @@ export function avatarSeedFromValue(value?: string | null, fallback?: string | n
   return normalizeSeed(String(fallback || "forwardx"));
 }
 
-export const multiavatarSeedFromValue = avatarSeedFromValue;
 
 export function getAvatarDataUrlByteLength(value: string) {
   const text = String(value || "");

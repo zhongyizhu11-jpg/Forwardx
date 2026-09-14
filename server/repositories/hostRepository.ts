@@ -1003,16 +1003,6 @@ export async function getHostByAgentToken(token: string) {
   return r[0];
 }
 
-export async function getHostAgentIdentityByToken(token: string) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const rows = await db.select({ id: hosts.id, name: hosts.name })
-    .from(hosts)
-    .where(eq(hosts.agentToken, token))
-    .limit(1);
-  return rows[0];
-}
-
 export async function getHostAgentPresenceById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -1126,8 +1116,3 @@ export async function releaseHostPendingRuleCleanup(hostId: number) {
   return count;
 }
 
-/** 获取主机下未删除的转发规则数量 */
-export async function getHostRuleCount(hostId: number): Promise<number> {
-  const blockers = await getHostRuleDeleteBlockers(hostId);
-  return blockers.ruleCount + blockers.managedRuleCount + blockers.pendingCleanupCount;
-}

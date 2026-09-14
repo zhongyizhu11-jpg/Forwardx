@@ -40,12 +40,6 @@ export function getTunnelRuntimeHostStatus(tunnelId: number, hostId: number) {
   return tunnelRuntimeStatus.get(Number(tunnelId))?.get(Number(hostId));
 }
 
-export function getTunnelRuntimeReadyCount(tunnelId: number, hostIds: number[]) {
-  const hosts = tunnelRuntimeStatus.get(Number(tunnelId));
-  if (!hosts) return 0;
-  return hostIds.filter((hostId) => hosts.get(Number(hostId)) === true).length;
-}
-
 export type TunnelRuntimeTopology = {
   entryHostIds?: number[];
   hopHostIds?: number[];

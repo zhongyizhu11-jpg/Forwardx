@@ -865,18 +865,6 @@ export async function setSubscriptionPlanPrices(planId: number, tiers: Array<Par
   }
 }
 
-/** 这个套餐挂着的周期档位，按天数升序。 */
-export async function getPlanPriceTiers(planId: number): Promise<PlanPriceTier[]> {
-  const db = await getDb();
-  if (!db) return [];
-  const rows = await db
-    .select({ durationDays: subscriptionPlanPrices.durationDays, priceCents: subscriptionPlanPrices.priceCents })
-    .from(subscriptionPlanPrices)
-    .where(eq(subscriptionPlanPrices.planId, planId))
-    .orderBy(asc(subscriptionPlanPrices.durationDays));
-  return normalizePlanPriceTiers(rows as any[]);
-}
-
 /**
  * 客户选的这一档到底卖不卖、卖多少钱 —— 收钱前的唯一裁判。
  *
@@ -2459,17 +2447,6 @@ async function rechargeSubscriptionTrafficCyclesForUserUnlocked(userId: number, 
     } as any);
   }
   return { resetCount: reset ? 1 : 0, settled: true };
-}
-
-export async function settleSubscriptionTrafficCyclesForUser(userId: number, now = nowDate()) {
-  const result = await withTrafficBillingUserLock(
-    userId,
-    () => rechargeSubscriptionTrafficCyclesForUserUnlocked(userId, now),
-  );
-  if (result.settled) {
-    await recoverUserForwardAccessIfEligible(userId);
-  }
-  return result.resetCount;
 }
 
 export async function rechargeSubscriptionTrafficCycles() {

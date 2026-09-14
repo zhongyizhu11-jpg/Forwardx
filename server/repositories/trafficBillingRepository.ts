@@ -363,25 +363,6 @@ export async function setTrafficBillingEnabled(enabled: boolean) {
   trafficBillingEnabledCache = { value: enabled, expiresAt: Date.now() + TRAFFIC_BILLING_ENABLED_CACHE_MS };
 }
 
-export async function getActiveTrafficBillingResourceIds() {
-  try {
-    if (!(await isTrafficBillingEnabled())) return emptyTrafficBillingResourceIds();
-    const db = await getDb();
-    if (!db) return emptyTrafficBillingResourceIds();
-    const rows = await db
-      .select({
-        resourceType: trafficBillingConfigs.resourceType,
-        resourceId: trafficBillingConfigs.resourceId,
-      })
-      .from(trafficBillingConfigs)
-      .where(eq(trafficBillingConfigs.enabled, true));
-    return trafficBillingResourceIdsFromRows(rows as any[]);
-  } catch (error) {
-    warnTrafficBillingAccessFailure(error);
-    return emptyTrafficBillingResourceIds();
-  }
-}
-
 async function loadTrafficBillingConfigSnapshot() {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -586,25 +567,6 @@ export async function setUserTrafficBillingPermissions(userId: number, hostIds: 
     ...Array.from(new Set(forwardGroupIds.map(Number).filter((id) => id > 0))).map((resourceId) => ({ userId, resourceType: "forward_group", resourceId })),
   ];
   if (rows.length > 0) await db.insert(userTrafficBillingPermissions).values(rows as any);
-}
-
-export async function checkUserTrafficBillingPermission(userId: number, resourceType: TrafficBillingResourceType, resourceId: number) {
-  const db = await getDb();
-  if (!db) return false;
-  const configRows = await db.select().from(trafficBillingConfigs).where(and(
-    eq(trafficBillingConfigs.resourceType, resourceType),
-    eq(trafficBillingConfigs.resourceId, resourceId),
-    eq(trafficBillingConfigs.enabled, true),
-  )).limit(1);
-  const config = configRows[0] as any;
-  if (!config) return false;
-  if (!config.requiresPermission) return true;
-  const rows = await db.select().from(userTrafficBillingPermissions).where(and(
-    eq(userTrafficBillingPermissions.userId, userId),
-    eq(userTrafficBillingPermissions.resourceType, resourceType),
-    eq(userTrafficBillingPermissions.resourceId, resourceId),
-  )).limit(1);
-  return rows.length > 0;
 }
 
 /**

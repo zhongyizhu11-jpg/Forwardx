@@ -84,15 +84,6 @@ function isPrimaryAddressFallbackVisible(value: unknown) {
   return !!text && text !== "unknown" && !text.includes(":");
 }
 
-export function hostAddressLines(host: any) {
-  const rows: Array<{ label: string; value: string }> = [];
-  if (host.ipv4) rows.push({ label: "IPv4", value: host.ipv4 });
-  if (host.ipv6) rows.push({ label: "IPv6", value: host.ipv6 });
-  if (rows.length === 0 && host.ip && host.ip !== "unknown") rows.push({ label: "IP", value: host.ip });
-  if (rows.length === 0) rows.push({ label: "IP", value: "-" });
-  return rows;
-}
-
 export function hostPrimaryAddressLines(host: any) {
   const rows: Array<{ label: string; value: string }> = [];
   if (host.ipv4) rows.push({ label: "IPv4", value: host.ipv4 });

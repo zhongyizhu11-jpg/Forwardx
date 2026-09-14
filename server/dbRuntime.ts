@@ -408,11 +408,6 @@ export function readDatabaseConfig(): DatabaseConfig | null {
   return null;
 }
 
-export function readMysqlConfig(): MysqlConfig | null {
-  const config = readDatabaseConfig();
-  return config?.type === "mysql" ? config.mysql : null;
-}
-
 export function maskDatabaseConfig(config: DatabaseConfig | null) {
   if (!config) return null;
   if (config.type === "sqlite") {
@@ -434,11 +429,6 @@ export function maskDatabaseConfig(config: DatabaseConfig | null) {
       password: config.mysql.password ? "********" : "",
     },
   };
-}
-
-export function maskMysqlConfig(config: MysqlConfig | null) {
-  if (!config) return null;
-  return { ...config, password: config.password ? "********" : "" };
 }
 
 export function writeDatabaseConfig(config: DatabaseConfig) {
@@ -466,10 +456,6 @@ export function clearDatabaseSetupPendingConfig() {
   } catch {
     // Ignore cleanup failures; setup locking also relies on the local marker.
   }
-}
-
-export function writeMysqlConfig(config: MysqlConfig) {
-  writeDatabaseConfig({ type: "mysql", mysql: config });
 }
 
 function mysqlConnectionOptions(config: MysqlConfig): ConnectionOptions {
@@ -785,24 +771,9 @@ export function getSqlite() {
   return _sqlite;
 }
 
-export function requirePool() {
-  if (!_pool) throw new DatabaseNotConfiguredError("MySQL database is not connected");
-  return _pool;
-}
-
-export function requirePostgresPool() {
-  if (!_pgPool) throw new DatabaseNotConfiguredError("PostgreSQL database is not connected");
-  return _pgPool;
-}
-
 export function requireSqlite() {
   if (!_sqlite) throw new DatabaseNotConfiguredError("SQLite database is not connected");
   return _sqlite;
-}
-
-export function requireConnectedDatabase() {
-  if (!_kind || !_db) throw new DatabaseNotConfiguredError();
-  return { kind: _kind, db: _db, pool: _pool, pgPool: _pgPool, sqlite: _sqlite };
 }
 
 function postgresSql(sqlText: string, params: any[] = []) {

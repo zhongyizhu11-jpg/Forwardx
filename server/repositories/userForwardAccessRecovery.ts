@@ -126,10 +126,6 @@ export async function getUserForwardRuleIdsDisabledByAccess(userId: number) {
   return rows.map((row: any) => Number(row.id || 0)).filter((id: number) => id > 0);
 }
 
-export async function hasUserForwardRulesDisabledByAccess(userId: number) {
-  return (await getUserForwardRuleIdsDisabledByAccess(userId)).length > 0;
-}
-
 /** Restore only rules that were running when account eligibility paused them. */
 export async function restoreUserForwardRulesAfterAccessRecovery(userId: number): Promise<UserForwardRuleRecoveryResult> {
   const empty = { clearedRuleIds: [], enabledRuleIds: [], refreshedHostIds: [] };

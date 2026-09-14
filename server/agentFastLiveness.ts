@@ -338,10 +338,6 @@ export function observePresenceCapableHostActivity(hostId: unknown, seenAt: unkn
   return agentFastLivenessTracker.observeActivity(hostId, seenAt);
 }
 
-export function primePresenceCapableHost(host: AgentFastLivenessHost) {
-  return agentFastLivenessTracker.registerHost(host, { startupGrace: true });
-}
-
 export function primePresenceCapableHosts(hosts: Iterable<AgentFastLivenessHost>) {
   return agentFastLivenessTracker.primeHosts(hosts);
 }
@@ -349,12 +345,6 @@ export function primePresenceCapableHosts(hosts: Iterable<AgentFastLivenessHost>
 export function removePresenceCapableHost(hostId: unknown) {
   clearAuthenticatedAgentActivity(hostId);
   return agentFastLivenessTracker.removeHost(hostId);
-}
-
-export function subscribeAgentFastLivenessOffline(
-  listener: (event: AgentFastLivenessTransition) => void | Promise<void>,
-) {
-  return agentFastLivenessTracker.subscribeOffline(listener);
 }
 
 /**
@@ -378,4 +368,3 @@ export function getAgentFastLivenessState(hostId: unknown) {
 
 export const getPresenceCapableHostLivenessSnapshot = getAgentFastLivenessState;
 export const isPresenceCapableHostConfirmedOffline = isAgentFastLivenessConfirmedOffline;
-export const subscribePresenceCapableHostOffline = subscribeAgentFastLivenessOffline;

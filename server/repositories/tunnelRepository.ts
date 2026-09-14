@@ -2554,12 +2554,3 @@ export async function deleteTunnelHops(tunnelId: number) {
   await db.delete(tunnelHops).where(eq(tunnelHops.tunnelId, tunnelId));
 }
 
-export async function getTunnelsByHopHost(hostId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  const rows = await db.select({ tunnelId: tunnelHops.tunnelId }).from(tunnelHops).where(eq(tunnelHops.hostId, hostId));
-  const ids = Array.from(new Set(rows.map((r: any) => r.tunnelId)));
-  if (ids.length === 0) return [];
-  return db.select().from(tunnels).where(sql`${tunnels.id} IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`);
-}
-

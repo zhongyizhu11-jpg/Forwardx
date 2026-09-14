@@ -14,6 +14,14 @@
 
 ### 变化
 
+- **删掉 64 个没人调用的导出**，37 个文件、486 行。全部是一路堆上来的残留，不改任何行为：
+  - **改名后留下的兼容别名**：`getRuleStatusSnapshot`/`setRuleStatusSnapshot` 那一组（5 个）指向 `readRuleStatusSnapshot`、`multiavatarSeedFromValue` 指向 `avatarSeedFromValue`、`subscribePresenceCapableHostOffline` 指向 `subscribeAgentFastLivenessOffline` —— 新名字早就全站换完了，旧名字没有一处引用，留着只会让人以为是两个东西。
+  - **被同一批删掉的调用方带走的**：`timeParam`、`compareTime`、`quoteIdentifiers`、`countDistinct` 等，删完再扫一遍才暴露出来，所以是反复扫到收敛为零。
+  - **没接线的常量和分页/展示助手**：`MAX_LATENCY_CHART_MS`、`ONE_YEAR_MS`、`AXIOS_TIMEOUT_MS`、`TUNNEL_RELAY_MODE_LABELS`、`usePersistentPagination`、`hostAddressLines`。
+  - **刻意留下的两处**：`server/pluginApi.ts` 的 `registerPluginEventHandler`/`emitPluginEvent`/`createPluginRuntimeContext` 和 `shared/pluginTypes.ts` —— 仓库里确实没有调用方，但它们是**插件按名字调的对外接口**，删了受影响的是装在外面的第三方插件，仓库内的静态扫描看不见；`stopTelegramBot` 同理留着，它看起来是个没接上的生命周期钩子，删掉等于把问题盖住而不是解决。
+  - 验收是硬指标：`tsc --noEmit` 干净、1316 条服务端测试过 1315（剩下那条 `setupFlow` 超时是容器里本来就有的，CI 上是绿的）、`pnpm build` 通过、真面板十个路由逐个打开看主体内容都在。
+
+
 - **打开面板少下 44% 的代码**。原来 26 个页面全是静态导入，打出来的主包 **3477 KB（gzip 960 KB）** —— 一个只想看「我的套餐」的租户，在手机上要先把 Settings（6460 行）、Rules（8778 行）、Plugins 的全部代码下完，才能看到第一屏。现在除登录页和仪表盘外按路由拆包：**主包 1832 KB（gzip 540 KB）**，页面代码点到才下（Rules 265 KB、Settings 167 KB 各自独立）。
   - 登录页和仪表盘**刻意留同步**：它们是所有人的入口，拆了会在最常见的那两屏上多一次往返、闪一下占位，省下的字节不划算。
   - 占位**延迟 250ms 才出现**。页面包是小文件，缓存命中时几十毫秒就到，那时候闪一下转圈比什么都不显示更糟 —— 屏幕会抖。

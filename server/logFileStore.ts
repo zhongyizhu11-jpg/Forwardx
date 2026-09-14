@@ -302,16 +302,6 @@ export async function flushJsonLogWrites(filePath?: string) {
   await Promise.all(Array.from(paths, (target) => queuePendingAppend(target)));
 }
 
-export function clearJsonLogStateForTests() {
-  pendingAppends.clear();
-  pendingAppendBytes.clear();
-  pendingAppendDrops.clear();
-  pendingAppendDropLoggedAt.clear();
-  appendFlushScheduled.clear();
-  fileOperationQueues.clear();
-  ensuredLogDirs.clear();
-}
-
 process.once("beforeExit", () => {
   // setImmediate/fs operations normally keep Node alive; this is a final guard
   // for callers that append a last message while the event loop is draining.

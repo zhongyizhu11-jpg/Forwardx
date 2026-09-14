@@ -31,25 +31,6 @@ export async function requireRuleAccess(ctx: { user: { id: number; role: string 
   return rule;
 }
 
-export async function requireTunnelAccess(ctx: { user: { id: number; role: string } }, tunnelId: number) {
-  const tunnel = await db.getTunnelById(tunnelId);
-  if (!tunnel) throw new Error("隧道不存在");
-  if (ctx.user.role !== "admin" && tunnel.userId !== ctx.user.id) {
-    throw new Error("无权访问该隧道");
-  }
-  return tunnel;
-}
-
-export async function requireTunnelUseAccess(ctx: { user: { id: number; role: string } }, tunnelId: number) {
-  const tunnel = await db.getTunnelById(tunnelId);
-  if (!tunnel) throw new Error("隧道不存在");
-  if (ctx.user.role !== "admin" && tunnel.userId !== ctx.user.id) {
-    const hasPermission = await db.checkUserTunnelPermission(ctx.user.id, tunnel.id);
-    if (!hasPermission) throw new Error("无权使用该隧道");
-  }
-  return tunnel;
-}
-
 export async function requireTrafficBillingAccessIfConfigured(
   ctx: { user: { id: number; role: string } },
   resourceType: "host" | "tunnel" | "forward_group",

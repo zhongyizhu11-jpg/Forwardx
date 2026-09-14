@@ -120,10 +120,6 @@ export function parseLinkTestMessage(raw: unknown): ParsedLinkTestMessage {
   return { message: text, details: [], totalLatencyMs: null };
 }
 
-export function hasLinkTestDetails(parsed: ParsedLinkTestMessage | null | undefined) {
-  return !!parsed?.details?.length;
-}
-
 export function hasPendingLinkTestDetails(parsed: ParsedLinkTestMessage | null | undefined) {
   return (parsed?.details || []).some((detail) => detail.pending === true);
 }

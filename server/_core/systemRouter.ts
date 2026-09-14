@@ -1165,17 +1165,6 @@ function setUpgradeWaitingForAssets(targetVersion: string, reason: string, mode:
   };
 }
 
-export function getPanelUpgradeRuntimeStatus() {
-  return {
-    currentVersion: APP_VERSION,
-    repoUrl: REPO_URL,
-    update: lastUpdateInfo,
-    job: upgradeJob,
-    upgradeEnabled: !!ENV.upgradeCommand.trim(),
-    ...getDeploymentInfo(),
-  };
-}
-
 async function startPanelVersionTask(targetVersionInput: string | null | undefined, mode: "upgrade" | "rollback") {
   const accelerator = await readPanelUpdateAccelerator();
   const command = normalizeUpgradeCommand(ENV.upgradeCommand, accelerator);

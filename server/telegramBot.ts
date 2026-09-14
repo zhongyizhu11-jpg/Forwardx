@@ -5476,11 +5476,6 @@ export async function startTelegramBot() {
   })();
 }
 
-export function stopTelegramBot() {
-  pollingAbort = true;
-  pollingStarted = false;
-}
-
 export function resetTelegramBotPolling() {
   updateOffset = 0;
   activeTokenKey = "";
