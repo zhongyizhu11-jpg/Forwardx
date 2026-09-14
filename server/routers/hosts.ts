@@ -373,21 +373,15 @@ async function getHostsWithUpgradeStateCleanup(userId?: number) {
 /**
  * 一个用户能查到哪些主机。
  *
- * `ownedOnly` 是给「主机管理」那一页用的：那一页是**管理自己机器**的地方，
- * 而被授权用的、套餐附带的都是别人（多半是管理员）的机器 —— 租户在那儿既改不动
- * 也删不掉，列出来只会让他以为那些也归他管，还顺带把别人的机器摊给他看。
+ * 租户看得到的是：**自己加的，加上管理员显式授权给他的**。没授权的机器在他那儿
+ * 从头到尾不存在 —— 不在列表里，也不在转发规则的主机下拉里。
  *
- * 别的地方（转发规则的主机下拉、开落地端口挑机器）仍然要带上被授权的那些：
- * 那里问的是「我能用哪些机器」，和「哪些机器是我的」不是一个问题。
+ * 被授权的那些会出现，但只读：hosts.update / hosts.delete 都要求
+ * `host.userId === 自己`，服务端本来就挡着。界面据此不渲染改名和删除的入口 ——
+ * 别让人点进去才发现动不了。
  */
-async function visibleHostQueryScope(
-  user: { id: number; role: string },
-  options: { ownedOnly?: boolean } = {},
-) {
+async function visibleHostQueryScope(user: { id: number; role: string }) {
   if (user.role === "admin") return {} as { ownerUserId?: number; allowedHostIds?: number[]; sortUserId?: number };
-  if (options.ownedOnly) {
-    return { ownerUserId: user.id, allowedHostIds: [] as number[], sortUserId: user.id };
-  }
   const [allowedHostIds, billingResourceIds] = await Promise.all([
     db.getUserEffectiveAllowedHostIds(user.id),
     db.getUserUsableTrafficBillingResourceIds(user.id),
@@ -879,8 +873,7 @@ export const hostsRouter = router({
           scheduleStaleHostUpgradeCleanup();
           scheduleOrphanedAgentHostCleanup();
         }
-        // 主机管理这一页只列自己的机器 —— 被授权用的是别人的，他在这儿动不了。
-        const scope = await visibleHostQueryScope(ctx.user, { ownedOnly: true });
+        const scope = await visibleHostQueryScope(ctx.user);
         const [pageData, groups] = await Promise.all([
           db.getHostsPage({
             ...input,
@@ -904,10 +897,34 @@ export const hostsRouter = router({
         const ownerNames = ctx.user.role === "admin"
           ? await db.getUserDisplayNamesByIds(items.map((row: any) => Number(row.userId)))
           : new Map<number, string>();
-        const withOwners = items.map((row: any) => ({
-          ...row,
-          ownerLabel: hostOwnerLabel(ctx.user, row, ownerNames),
-        }));
+        /*
+          这台机器上的转发是扣余额还是吃套餐流量 —— 摆到卡片上。
+
+          两者是互斥的两条路（见 agentReportRoutes 里那个 billingResource 分支），
+          而配置藏在编辑弹窗里，列表上一个字都没有。结果就是「这台到底在不在计费」
+          得点进去一台台看，记错账的代价是真金白银。
+        */
+        const billingByHost = await db.findEnabledHostTrafficBillingConfigs(
+          items.map((row: any) => Number(row.id)),
+        );
+        const withOwners = items.map((row: any) => {
+          const billing = billingByHost.get(Number(row.id));
+          return {
+            ...row,
+            ownerLabel: hostOwnerLabel(ctx.user, row, ownerNames),
+            // 非管理员不给单价：他只需要知道「这台是按量计费的」，价钱是商家的事。
+            trafficBilling: billing
+              ? {
+                enabled: true as const,
+                pricePerGbMilliCents: ctx.user.role === "admin" ? billing.pricePerGbMilliCents : 0,
+                multiplier: billing.multiplier,
+              }
+              : null,
+            // 不是自己的机器：能看（说明管理员授权过），但改不动也删不掉 ——
+            // 服务端 update/delete 本来就按 userId 挡着，界面据此收起入口。
+            manageable: ctx.user.role === "admin" || Number(row.userId) === ctx.user.id,
+          };
+        });
         let outdatedItems = 0;
         let onlineOutdatedItems = 0;
         let offlineUpgradeableItems = 0;
@@ -999,8 +1016,7 @@ export const hostsRouter = router({
       .query(async ({ input, ctx }) => {
       const requestedIds = Array.from(new Set((input?.hostIds || []).map(Number).filter((id) => id > 0)));
       if (requestedIds.length === 0) return [];
-      // 和列表同一个口径：卡片上的数要和下面列出来的机器对得上。
-      const scope = await visibleHostQueryScope(ctx.user, { ownedOnly: true });
+      const scope = await visibleHostQueryScope(ctx.user);
       const hosts = await db.getHostStatusRows({ ...scope, hostIds: requestedIds });
       return hosts
         .map(compactHostStatus)
@@ -1015,8 +1031,7 @@ export const hostsRouter = router({
       `summary:${ctx.user.id}:${input?.groupId || "all"}:${input?.search || ""}`,
       { ttlMs: 2_000, staleMs: 10_000 },
       async () => {
-        // 和列表同一个口径：卡片上的数要和下面列出来的机器对得上。
-        const scope = await visibleHostQueryScope(ctx.user, { ownedOnly: true });
+        const scope = await visibleHostQueryScope(ctx.user);
         const summaryScope = await db.getHostSummaryScope({
           ...scope,
           search: input?.search || "",

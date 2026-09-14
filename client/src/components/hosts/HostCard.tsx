@@ -31,6 +31,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, type ReactNode } from "react";
+import { formatTrafficPricePerGb } from "@shared/trafficBillingPrice";
 import {
   HOST_TRAFFIC_MEASURE_MODE_LABELS,
   hostTrafficPercent,
@@ -87,6 +88,23 @@ function formatRemainingTime(purchasedAt: unknown, stoppedAt: unknown) {
   return `剩余${Math.ceil(remainingMs / dayMs)}天`;
 }
 
+/** 「按量计费」后面那半句单价。非管理员看不到价钱（服务端就没给）。 */
+function hostBillingPriceText(host: any): string {
+  const text = formatTrafficPricePerGb(host?.trafficBilling?.pricePerGbMilliCents);
+  return text ? ` · ${text}` : "";
+}
+
+/** 悬停里把两条路说清楚：扣的是钱还是流量额度。 */
+function hostBillingTitle(host: any): string {
+  const multiplier = Number(host?.trafficBilling?.multiplier) || 100;
+  const lines = [
+    "这台机器上的转发按 GB 扣用户余额，不记进他的套餐流量额度",
+    multiplier !== 100 ? `倍率 ${multiplier / 100}×` : "",
+    "余额扣完会自动停掉该用户名下的转发",
+  ];
+  return lines.filter(Boolean).join("\n");
+}
+
 function compactHostOsInfo(value: unknown) {
   return String(value || "")
     .replace(/\s*\([^)]*\)\s*/g, " ")
@@ -135,6 +153,8 @@ export function HostActionButtons({
 }: HostActionButtonsProps) {
   const confirmDialog = useConfirmDialog();
   const isOnline = !!host.isOnline;
+  // 服务端没给这个字段时按「能管」算：管理员那一侧本来就都能管。
+  const manageable = host?.manageable !== false;
   const agentUpgradeTimedOut = isAgentUpgradeTimedOut(host);
   const upgradeTitle = !isOnline
     ? "主机离线，无法下发升级任务"
@@ -165,16 +185,25 @@ export function HostActionButtons({
           <Activity className="h-3.5 w-3.5" />
         </Button>
       )}
-      <Button
-        variant="ghost"
-        size="icon"
-        className={buttonClassName}
-        title="编辑主机"
-        aria-label="编辑主机"
-        onClick={() => onEdit(host)}
-      >
-        <Pencil className="h-3.5 w-3.5" />
-      </Button>
+      {/*
+        不是自己的机器就不给改名和删除的入口。
+
+        这一类是管理员授权他使用的：看得到（授权过才看得到）、能在上面建转发，
+        但 hosts.update / hosts.delete 服务端都按 `userId === 自己` 挡着。
+        留着按钮的话，点下去只会吃一句「无权操作此主机」—— 那不是提示，是绊脚石。
+      */}
+      {manageable && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className={buttonClassName}
+          title="编辑主机"
+          aria-label="编辑主机"
+          onClick={() => onEdit(host)}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -221,14 +250,16 @@ export function HostActionButtons({
               <span>升级 Agent</span>
             </DropdownMenuItem>
           )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            onSelect={() => void confirmDelete()}
-          >
-            <Trash2 />
-            <span>删除主机</span>
-          </DropdownMenuItem>
+          {manageable && <DropdownMenuSeparator />}
+          {manageable && (
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => void confirmDelete()}
+            >
+              <Trash2 />
+              <span>删除主机</span>
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -489,6 +520,28 @@ export default function HostCard({
           </span>
         </div>
       ) : null}
+      {/*
+        这台机器上的转发是扣余额还是吃套餐流量。
+
+        两条路互斥：配了按量计费就按 GB 扣余额，没配就记进用户的套餐流量额度。
+        原来这个开关藏在编辑弹窗里，列表上一个字都没有 —— 「这台到底在不在计费」
+        得点进去一台台看，而记错账的代价是真金白银，所以摆到卡片上。
+      */}
+      <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5">
+        <span className="shrink-0 text-muted-foreground">计费：</span>
+        {host.trafficBilling?.enabled ? (
+          <span
+            className="min-w-0 truncate rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
+            title={hostBillingTitle(host)}
+          >
+            按量计费{hostBillingPriceText(host)}
+          </span>
+        ) : (
+          <span className="min-w-0 truncate text-muted-foreground" title="这台机器上的转发不扣余额，只记进用户自己的套餐流量额度">
+            走套餐流量
+          </span>
+        )}
+      </div>
     </div>
   );
 
