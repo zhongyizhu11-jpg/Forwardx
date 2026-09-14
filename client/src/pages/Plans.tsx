@@ -733,8 +733,14 @@ export default function Plans() {
     refetchOnWindowFocus: false,
     placeholderData: (previousData) => previousData,
   });
+  /*
+    无条件发：这三张统计卡（套餐数量、套餐资源，以及「商店状态」那行「N 个套餐的
+    购买入口不生效」）挂在**页头**，两个 tab 都看得见，而查询原来跟着
+    `activeTab === "plans"` 走。点到「流量计费」那一侧，planSummary 变 undefined，
+    卡片就一路回落到 0：面板上明明有 2 个套餐、12 份资源，同一个页面换个 tab 就说
+    「套餐数量 0」。跟之前按量计费那张状态卡是同一个毛病 —— 页头的数字不归 tab 管。
+  */
   const planSummaryQuery = trpc.plans.summary.useQuery(undefined, {
-    enabled: activeTab === "plans",
     staleTime: 10_000,
     refetchOnWindowFocus: false,
     placeholderData: (previousData) => previousData,
@@ -742,6 +748,7 @@ export default function Plans() {
   const plans = (planPageQuery.data?.items || []) as any[];
   const isLoading = planPageQuery.isLoading;
   const planSummary = planSummaryQuery.data;
+  const planSummaryLoading = planSummaryQuery.isLoading;
   const planPagination = useServerPagination(
     plans,
     Number(planPageQuery.data?.totalItems || 0),
@@ -1200,13 +1207,13 @@ export default function Plans() {
             <CardHeader className="pb-2">
               <CardDescription>套餐数量</CardDescription>
               <CardTitle>
-                <AnimatedStatValue value={Number(planSummary?.totalItems || 0)} loading={isLoading} cacheKey="plans.count" fallbackValue={0} />
+                <AnimatedStatValue value={Number(planSummary?.totalItems || 0)} loading={planSummaryLoading} cacheKey="plans.count" fallbackValue={0} />
               </CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
               <AnimatedStatValue
                 value={`${activePlans} 个已启用`}
-                loading={isLoading}
+                loading={planSummaryLoading}
                 cacheKey="plans.activeCount"
                 fallbackValue="0 个已启用"
               />
@@ -1218,7 +1225,7 @@ export default function Plans() {
               <CardTitle>
                 <AnimatedStatValue
                   value={planResourceTotal}
-                  loading={isLoading}
+                  loading={planSummaryLoading}
                   cacheKey="plans.resourceTotal"
                   fallbackValue={0}
                 />
