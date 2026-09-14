@@ -21,6 +21,9 @@ export const trafficBillingRouter = router({
     };
   }),
 
+  /** 租户自己那一屏：我有几条转发在按量扣钱、按什么价。单价给他看 —— 那是他在付的钱。 */
+  myMeteredForwards: protectedProcedure.query(async ({ ctx }) => db.getUserMeteredForwardSummary(ctx.user.id)),
+
   configs: adminProcedure.query(async () => {
     const [enabled, configs] = await Promise.all([
       db.isTrafficBillingEnabled(),

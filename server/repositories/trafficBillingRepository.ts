@@ -17,7 +17,7 @@ import {
 import { executeRaw, getDatabaseKind, getDb, insertAndGetId, nowDate, queryRaw, quoteDbIdentifier, withDatabaseTransaction } from "../dbRuntime";
 import { getSetting, setSetting } from "./settingsRepository";
 import { formatTrafficMultiplier, normalizeTrafficMultiplier } from "../../shared/trafficMultiplier";
-import { countEnabledForwardRulesByUserIds, getBillingRelevantRulesByHostIds } from "./forwardRuleRepository";
+import { countEnabledForwardRulesByUserIds, getBillingRelevantRulesByHostIds, getBillingRelevantRulesByUserId } from "./forwardRuleRepository";
 
 const GB_BYTES = 1024 ** 3;
 const MILLI_CENTS_PER_CENT = 1000;
@@ -1079,6 +1079,37 @@ export async function listTrafficBillingRecords(options?: { userId?: number; lim
  * 不是一个笼统的 ok/not ok：「3 个资源在计费」和「都要授权但一个人都没授权」是完全
  * 不同的处境，缩成一个布尔值就等于没说。
  */
+/**
+ * 租户自己那一屏要的：「我有几条转发在按量扣钱、按什么价」。
+ *
+ * 「我的套餐」原来只讲套餐额度。一个纯按量计费的租户在那一页上是一片空白，还被劝
+ * 「去商店下单」—— 而他的「还剩多少」根本不是额度，是余额，在另一页。他真正要知道
+ * 的三件事（在按什么价用、花了多少、余额还够不够）一个都看不到。
+ *
+ * 单价**要给他看**。主机卡片上对非管理员藏价钱是因为那是商家给别人机器的定价；
+ * 这里是他自己在付的钱，藏起来才是不对的。
+ */
+export async function getUserMeteredForwardSummary(userId: number) {
+  const empty = { meteredRules: 0, totalRules: 0, minPricePerGbMilliCents: 0, maxPricePerGbMilliCents: 0 };
+  if (!(await isTrafficBillingEnabled())) return empty;
+  const rules = await getBillingRelevantRulesByUserId(userId);
+  if (rules.length === 0) return empty;
+  const byRuleId = await findTrafficBillingResourcesForRules(rules);
+  const prices: number[] = [];
+  for (const rule of rules) {
+    const config = byRuleId.get(Number(rule.id))?.config;
+    if (!config) continue;
+    prices.push(configPriceMilliCents(config));
+  }
+  if (prices.length === 0) return { ...empty, totalRules: rules.length };
+  return {
+    meteredRules: prices.length,
+    totalRules: rules.length,
+    minPricePerGbMilliCents: Math.min(...prices),
+    maxPricePerGbMilliCents: Math.max(...prices),
+  };
+}
+
 export async function getTrafficBillingSetupStatus() {
   const enabled = await isTrafficBillingEnabled();
   const db = await getDb();

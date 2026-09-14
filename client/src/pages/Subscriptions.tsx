@@ -14,7 +14,8 @@ import { planResourceText } from "@/lib/planDisplay";
 import { pollingInterval } from "@/lib/polling";
 import { trafficQuotaBreakdown, type TrafficQuotaSourceKind } from "@/lib/trafficQuota";
 import { trpc } from "@/lib/trpc";
-import { CalendarClock, CheckCircle2, CreditCard, Eye, EyeOff, Gauge, Package, RefreshCw, ShoppingBag, TicketPercent, Trash2, WalletCards } from "lucide-react";
+import { formatTrafficPricePerGb } from "@shared/trafficBillingPrice";
+import { AlertTriangle, CalendarClock, CheckCircle2, Coins, CreditCard, Eye, EyeOff, Gauge, Package, RefreshCw, ShoppingBag, TicketPercent, Trash2, WalletCards } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -102,6 +103,21 @@ export default function Subscriptions() {
   const { data: storeStatus } = trpc.plans.storeStatus.useQuery();
   const { data: wallet, isLoading: walletLoading } = trpc.billing.me.useQuery();
   const { data: billingFeatures } = trpc.billing.featureStatus.useQuery();
+  /*
+    「我有几条转发在按量扣钱、按什么价」。
+
+    这一页原来只讲套餐额度。一个纯按量计费的租户在这儿是一片空白，还被劝「去商店
+    下单」—— 而他的「还剩多少」根本不是额度、是余额，在账单中心那一页。他真正要
+    知道的三件事（按什么价用、花了多少、余额够不够）一件都看不到。
+  */
+  const { data: metered } = trpc.trafficBilling.myMeteredForwards.useQuery(undefined, {
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+  const { data: meteredSummary } = trpc.trafficBilling.status.useQuery(undefined, {
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
   const { data: paymentMethods = [] } = trpc.payment.availableMethods.useQuery(undefined, {
     enabled: !!storeStatus?.enabled,
   });
@@ -265,6 +281,20 @@ export default function Subscriptions() {
 
   const selectedPrice = Number(selected?.addon?.priceCents || 0);
   const balanceCents = wallet?.balanceCents == null ? null : Number(wallet.balanceCents);
+  const meteredRules = Number(metered?.meteredRules || 0);
+  const meteredCharged = Number(meteredSummary?.totalAmountCents || 0);
+  const meteredGb = Number(meteredSummary?.totalBilledGb || 0);
+  /*
+    几条转发挂在不同资源上、单价不一样时给一个区间，不编一个平均价。
+    「¥0.5–2.8/GB」是句实话，「¥1.65/GB」不是。
+  */
+  const meteredPriceText = (() => {
+    const low = formatTrafficPricePerGb(metered?.minPricePerGbMilliCents);
+    const high = formatTrafficPricePerGb(metered?.maxPricePerGbMilliCents);
+    if (!low) return "";
+    if (!high || low === high) return low;
+    return `${low.replace("/GB", "")}–${high.replace("¥", "")}`;
+  })();
   const balanceReady = !walletLoading && balanceCents !== null;
   const balance = balanceCents ?? 0;
   const balanceEnough = balanceReady && balance >= selectedPrice;
@@ -320,6 +350,58 @@ export default function Subscriptions() {
           </div>
         )}
 
+        {/*
+          按量计费那一路。只在他真的有转发在按量扣钱时才出现 —— 纯套餐用户看到
+          「余额」只会以为自己还得再掏一笔。
+        */}
+        {meteredRules > 0 && (
+          <Card className="border-amber-500/30 bg-amber-500/[0.04]">
+            <CardHeader className="gap-2 pb-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Coins className="h-4 w-4 text-amber-600 dark:text-amber-400" /> 按量计费
+                </CardTitle>
+                <CardDescription>
+                  你有 {meteredRules} 条转发按 GB 扣余额{meteredPriceText ? `，${meteredPriceText}` : ""}。这部分不占套餐流量额度。
+                </CardDescription>
+              </div>
+              <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => setLocation("/wallet")}>
+                <WalletCards className="mr-2 h-3.5 w-3.5" /> 去充值
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:flex sm:flex-wrap sm:gap-x-8">
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-foreground">当前余额</p>
+                  <p className="mt-0.5 truncate text-sm font-semibold tabular-nums">
+                    {balanceCents == null ? "—" : money(balanceCents)}
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-foreground">累计已扣</p>
+                  <p className="mt-0.5 truncate text-sm font-medium tabular-nums">{money(meteredCharged)}</p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-foreground">已计费流量</p>
+                  <p className="mt-0.5 truncate text-sm font-medium tabular-nums">{meteredGb} GB</p>
+                </div>
+              </div>
+              {/*
+                余额见底不是「提示」，是会真的发生的事：余额 ≤ 0 时面板会停掉他
+                名下**全部**转发，不只是按量的那几条。
+              */}
+              {balanceCents != null && balanceCents <= 0 ? (
+                <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>余额已经是 0，按量计费扣不动的时候，你名下全部转发都会被停掉。尽快充值。</span>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">余额扣完会自动停掉你名下全部转发，不只是按量计费的这几条。</p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {isLoading && (
           <DataSectionLoading label="正在加载订阅数据" />
         )}
@@ -344,9 +426,15 @@ export default function Subscriptions() {
               <CardDescription>
                 {cancelledCount > 0
                   ? "已取消记录当前处于隐藏状态。"
-                  : storeStatus?.enabled
-                    ? "当前账户还没有套餐记录，可以去商店自助下单。"
-                    : "当前账户还没有套餐记录。商店暂未开放，请联系管理员为你分配套餐。"}
+                  /*
+                    他正在按量计费的话，「还没有套餐记录，去下单吧」是条错的建议 ——
+                    他本来就不走套餐，上面那张卡才是他要看的东西。
+                  */
+                  : meteredRules > 0
+                    ? "你走的是按量计费，不需要套餐也能用 —— 用量按上面那张卡的单价扣余额。想改成包月的话可以再买套餐。"
+                    : storeStatus?.enabled
+                      ? "当前账户还没有套餐记录，可以去商店自助下单。"
+                      : "当前账户还没有套餐记录。商店暂未开放，请联系管理员为你分配套餐。"}
               </CardDescription>
             </CardHeader>
             {storeStatus?.enabled && (

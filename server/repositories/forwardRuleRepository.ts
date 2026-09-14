@@ -1141,6 +1141,32 @@ export async function getBillingRelevantRulesByHostIds(hostIds: readonly number[
  * **名下全部**的转发，不只是这台机器上的那几条。只报这台机器上的条数会把后果说小 ——
  * 而这正是人会拿来做决定的那个数。
  */
+/**
+ * 某个用户名下还在跑的转发，只取计费判断要用的那几列。
+ *
+ * 给租户自己那一页用：「我有几条转发在按量扣钱」。和按主机查的那个是同一件事换个
+ * 维度问 —— 计费永远记在转发的主人头上，不是机器的主人。
+ */
+export async function getBillingRelevantRulesByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id <= 0) return [];
+  const rows = await db
+    .select({
+      id: forwardRules.id,
+      hostId: forwardRules.hostId,
+      tunnelId: forwardRules.tunnelId,
+      forwardGroupId: forwardRules.forwardGroupId,
+    })
+    .from(forwardRules)
+    .where(and(
+      eq(forwardRules.userId, id),
+      eq(forwardRules.pendingDelete, false),
+    ));
+  return rows as any[];
+}
+
 export async function countEnabledForwardRulesByUserIds(userIds: readonly number[]) {
   const result = new Map<number, number>();
   const wanted = Array.from(new Set(userIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
