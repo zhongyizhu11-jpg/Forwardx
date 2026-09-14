@@ -660,34 +660,6 @@ export async function deleteTrafficBillingConfig(id: number) {
   await db.delete(trafficBillingConfigs).where(eq(trafficBillingConfigs.id, id));
 }
 
-/**
- * 一批主机各自开没开按量计费、单价多少。
- *
- * 给列表用：一台台去查的话，一页十二台就是十二次往返；而这条信息要摆在每张卡上
- * （「这台机器上的转发是扣余额还是吃套餐流量」是两回事，看不出来就会记错账）。
- *
- * 只返回**启用中**的：停用的配置等于没配，列表上不该显示成在计费。
- */
-export async function findEnabledHostTrafficBillingConfigs(hostIds: readonly number[]) {
-  const result = new Map<number, { pricePerGbMilliCents: number; multiplier: number }>();
-  const wanted = Array.from(new Set(hostIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
-  if (wanted.length === 0) return result;
-  const db = await getDb();
-  if (!db) return result;
-  const rows = await db.select().from(trafficBillingConfigs).where(and(
-    eq(trafficBillingConfigs.resourceType, "host"),
-    inArray(trafficBillingConfigs.resourceId, wanted),
-    eq(trafficBillingConfigs.enabled, true),
-  ));
-  for (const row of rows as any[]) {
-    result.set(Number(row.resourceId), {
-      pricePerGbMilliCents: Math.max(0, Number(row.pricePerGbMilliCents) || 0),
-      multiplier: Math.max(0, Number(row.multiplier) || 100),
-    });
-  }
-  return result;
-}
-
 export async function findTrafficBillingConfig(resourceType: TrafficBillingResourceType, resourceId: number) {
   const db = await getDb();
   if (!db) return undefined;

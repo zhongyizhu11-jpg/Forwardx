@@ -900,24 +900,54 @@ export const hostsRouter = router({
         /*
           这台机器上的转发是扣余额还是吃套餐流量 —— 摆到卡片上。
 
-          两者是互斥的两条路（见 agentReportRoutes 里那个 billingResource 分支），
-          而配置藏在编辑弹窗里，列表上一个字都没有。结果就是「这台到底在不在计费」
-          得点进去一台台看，记错账的代价是真金白银。
+          两条路互斥（见 agentReportRoutes 里那个 billingResource 分支），而列表上
+          原来一个字都没有：「这台到底在不在计费」得一台台点进去看，记错账的代价是
+          真金白银。
+
+          答案不在主机上。计费配置挂在**转发组 / 隧道**上（主机那一档只剩历史配置，
+          界面里那一项是禁用的），所以只能顺着这台机器上的转发去问：每条转发按
+          转发组 → 隧道 → 主机 的顺序找配置，找得到就是按量计费。
+
+          第一版我只查了主机那一档，于是新部署上每台都显示「走套餐流量」—— 哪怕
+          上面的转发正按组计费。摆一个关于钱的结论在显眼处，就得是真的。
         */
-        const billingByHost = await db.findEnabledHostTrafficBillingConfigs(
-          items.map((row: any) => Number(row.id)),
-        );
+        // 总开关关着就一分钱都不扣（agentReportRoutes 里是同一个判断），那卡片上也
+        // 不能说「按量计费」—— 顺带省掉底下这一整串查询。
+        const trafficBillingEnabled = await db.isTrafficBillingEnabled();
+        const billingRules = trafficBillingEnabled
+          ? await db.getBillingRelevantRulesByHostIds(items.map((row: any) => Number(row.id)))
+          : [];
+        const billingByRuleId = billingRules.length > 0
+          ? await db.findTrafficBillingResourcesForRules(billingRules)
+          : new Map();
+        const billingStatsByHost = new Map<number, { total: number; billed: number; milliCents: number }>();
+        for (const rule of billingRules) {
+          const hostId = Number(rule.hostId);
+          const stat = billingStatsByHost.get(hostId) || { total: 0, billed: 0, milliCents: 0 };
+          stat.total += 1;
+          const resource = billingByRuleId.get(Number(rule.id));
+          if (resource?.config) {
+            stat.billed += 1;
+            // 同一台机器上的几条转发可能挂在不同资源上、单价不同 —— 取其一做展示，
+            // 多种价钱时界面只说「按量计费」，不编一个平均值出来。
+            const price = Math.max(0, Number(resource.config.pricePerGbMilliCents) || 0);
+            stat.milliCents = stat.milliCents === 0 || stat.milliCents === price ? price : -1;
+          }
+          billingStatsByHost.set(hostId, stat);
+        }
         const withOwners = items.map((row: any) => {
-          const billing = billingByHost.get(Number(row.id));
+          const stat = billingStatsByHost.get(Number(row.id));
+          const billed = stat?.billed || 0;
           return {
             ...row,
             ownerLabel: hostOwnerLabel(ctx.user, row, ownerNames),
-            // 非管理员不给单价：他只需要知道「这台是按量计费的」，价钱是商家的事。
-            trafficBilling: billing
+            // 非管理员不给单价：他只需要知道「这台上的转发在按量计费」，价钱是商家的事。
+            trafficBilling: billed > 0
               ? {
-                enabled: true as const,
-                pricePerGbMilliCents: ctx.user.role === "admin" ? billing.pricePerGbMilliCents : 0,
-                multiplier: billing.multiplier,
+                billedRules: billed,
+                totalRules: stat?.total || 0,
+                // -1 表示这台机器上有好几种单价，界面据此只说「按量计费」不报价。
+                pricePerGbMilliCents: ctx.user.role === "admin" ? (stat?.milliCents ?? 0) : 0,
               }
               : null,
             // 不是自己的机器：能看（说明管理员授权过），但改不动也删不掉 ——

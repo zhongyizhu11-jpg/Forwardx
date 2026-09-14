@@ -31,7 +31,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, type ReactNode } from "react";
-import { formatTrafficPricePerGb } from "@shared/trafficBillingPrice";
+import { hostBillingBadge } from "@shared/hostBillingBadge";
 import {
   HOST_TRAFFIC_MEASURE_MODE_LABELS,
   hostTrafficPercent,
@@ -86,23 +86,6 @@ function formatRemainingTime(purchasedAt: unknown, stoppedAt: unknown) {
   if (remainingMs <= 0) return "已到期";
   if (remainingMs < dayMs) return "不足1天";
   return `剩余${Math.ceil(remainingMs / dayMs)}天`;
-}
-
-/** 「按量计费」后面那半句单价。非管理员看不到价钱（服务端就没给）。 */
-function hostBillingPriceText(host: any): string {
-  const text = formatTrafficPricePerGb(host?.trafficBilling?.pricePerGbMilliCents);
-  return text ? ` · ${text}` : "";
-}
-
-/** 悬停里把两条路说清楚：扣的是钱还是流量额度。 */
-function hostBillingTitle(host: any): string {
-  const multiplier = Number(host?.trafficBilling?.multiplier) || 100;
-  const lines = [
-    "这台机器上的转发按 GB 扣用户余额，不记进他的套餐流量额度",
-    multiplier !== 100 ? `倍率 ${multiplier / 100}×` : "",
-    "余额扣完会自动停掉该用户名下的转发",
-  ];
-  return lines.filter(Boolean).join("\n");
 }
 
 function compactHostOsInfo(value: unknown) {
@@ -427,6 +410,7 @@ export default function HostCard({
       </div>
     </div>
   );
+  const billingBadge = hostBillingBadge(host.trafficBilling);
   const remainingTimeLabel = formatRemainingTime(host.purchasedAt, host.stoppedAt);
   const hostName = String(host.name || "-").trim() || "-";
   const osInfoText = compactHostOsInfo(host.osInfo);
@@ -523,22 +507,22 @@ export default function HostCard({
       {/*
         这台机器上的转发是扣余额还是吃套餐流量。
 
-        两条路互斥：配了按量计费就按 GB 扣余额，没配就记进用户的套餐流量额度。
+        两条路互斥：转发找得到计费配置就按 GB 扣余额，找不到就记进用户的套餐流量额度。
         原来这个开关藏在编辑弹窗里，列表上一个字都没有 —— 「这台到底在不在计费」
         得点进去一台台看，而记错账的代价是真金白银，所以摆到卡片上。
       */}
       <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5">
         <span className="shrink-0 text-muted-foreground">计费：</span>
-        {host.trafficBilling?.enabled ? (
+        {billingBadge.metered ? (
           <span
             className="min-w-0 truncate rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
-            title={hostBillingTitle(host)}
+            title={billingBadge.title}
           >
-            按量计费{hostBillingPriceText(host)}
+            {billingBadge.label}
           </span>
         ) : (
-          <span className="min-w-0 truncate text-muted-foreground" title="这台机器上的转发不扣余额，只记进用户自己的套餐流量额度">
-            走套餐流量
+          <span className="min-w-0 truncate text-muted-foreground" title={billingBadge.title}>
+            {billingBadge.label}
           </span>
         )}
       </div>

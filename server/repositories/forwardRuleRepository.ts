@@ -1103,6 +1103,35 @@ export async function resetForwardRulesForUserSync(userId: number) {
   ));
 }
 
+/**
+ * 一批主机上还在跑的转发，只取计费判断要用的那几列。
+ *
+ * 给主机列表用：「这台机器上的转发是扣余额还是吃套餐流量」这件事，答案不在主机上 ——
+ * 计费配置挂在**转发组 / 隧道**上（主机那一档只剩历史配置），所以只能顺着这台机器上
+ * 的转发去问。一次查完而不是一台台查：一页十二台就是十二次往返。
+ *
+ * 排掉 pendingDelete：已经删掉、只等 Agent 确认的那些不该再影响「现在怎么计费」。
+ */
+export async function getBillingRelevantRulesByHostIds(hostIds: readonly number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  const wanted = Array.from(new Set(hostIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return [];
+  const rows = await db
+    .select({
+      id: forwardRules.id,
+      hostId: forwardRules.hostId,
+      tunnelId: forwardRules.tunnelId,
+      forwardGroupId: forwardRules.forwardGroupId,
+    })
+    .from(forwardRules)
+    .where(and(
+      inArray(forwardRules.hostId, wanted),
+      eq(forwardRules.pendingDelete, false),
+    ));
+  return rows as any[];
+}
+
 export async function deleteForwardRule(id: number) {
   const db = await getDb();
   if (!db) return;
