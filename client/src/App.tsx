@@ -98,7 +98,13 @@ function Router() {
       <Route path="/homepage-preview">{routeComponent(HomepagePreviewPage)}</Route>
       <Route path="/">{routeComponent(HomePage)}</Route>
       <Route path="/profile">{routeComponent(ProfilePage)}</Route>
-      <Route path="/hosts">{() => <AdminRoute component={HostsPage} />}</Route>
+      {/*
+        主机管理对租户也开放：他能自助加机器，就得有个地方看这些机器的状况
+        （CPU、内存、磁盘、流量、在不在线）。页面按角色收口 —— 服务端只给他
+        自己的机器（listPage 的 ownedOnly），分组/Token 两个 tab 和 Agent 升级、
+        重置流量这些管理员专属的入口都不渲染。
+      */}
+      <Route path="/hosts">{routeComponent(HostsPage)}</Route>
       <Route path="/rules">{routeComponent(RulesPage)}</Route>
       <Route path="/looking-glass" component={LookingGlassRoute} />
       <Route path="/forward-groups">{() => <AdminRoute component={ForwardGroupsPage} />}</Route>

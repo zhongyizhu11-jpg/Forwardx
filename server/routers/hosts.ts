@@ -370,6 +370,16 @@ async function getHostsWithUpgradeStateCleanup(userId?: number) {
   return clearCompletedHostAgentUpgradeRequests(await db.getHosts(userId));
 }
 
+/**
+ * 一个用户能查到哪些主机。
+ *
+ * 租户看得到的是：**自己加的，加上管理员显式授权给他的**。没授权的机器在他那儿
+ * 从头到尾不存在 —— 不在列表里，也不在转发规则的主机下拉里。
+ *
+ * 被授权的那些会出现，但只读：hosts.update / hosts.delete 都要求
+ * `host.userId === 自己`，服务端本来就挡着。界面据此不渲染改名和删除的入口 ——
+ * 别让人点进去才发现动不了。
+ */
 async function visibleHostQueryScope(user: { id: number; role: string }) {
   if (user.role === "admin") return {} as { ownerUserId?: number; allowedHostIds?: number[]; sortUserId?: number };
   const [allowedHostIds, billingResourceIds] = await Promise.all([
@@ -434,13 +444,48 @@ export function selfServiceHostLimitFrom(raw: string | null | undefined): number
   return Math.floor(value);
 }
 
+/**
+ * 这个人能加几台。
+ *
+ * 用户行上的 maxSelfServiceHosts 优先，**留空（null）才是跟随全局**：
+ *
+ *   - null / 没这一列 → 用全局那一档
+ *   - 0              → 一台都不许加
+ *   - N              → 最多 N 台
+ *
+ * 0 特意不当成「跟随全局」也不当成「不限」：这是个数量字段，人填 0 就是想说
+ * 「一台都不给他」。当成不限就把他放开了，当成跟随全局就等于他根本没法卡死
+ * 某一个人 —— 两种都和填的人想做的事相反。
+ */
+export function selfServiceHostLimitForUser(
+  user: { maxSelfServiceHosts?: unknown } | null | undefined,
+  globalLimit: number,
+): number | null {
+  // 全局那一档沿用老规矩：0 表示不限。这里把它翻译成 null，好和「0 台」分开。
+  const globalResolved = globalLimit > 0 ? globalLimit : null;
+  const raw = (user as any)?.maxSelfServiceHosts;
+  if (raw === null || raw === undefined || raw === "") return globalResolved;
+  const own = Math.floor(Number(raw));
+  // 认不出来的值（脏数据、负数）回落到全局，不要算出一个负的上限。
+  if (!Number.isFinite(own) || own < 0) return globalResolved;
+  return own;
+}
+
+/**
+ * 还能不能再加一台。
+ *
+ * limit 是 selfServiceHostLimitForUser 算出来的结果：**null 表示不限，0 表示一台
+ * 都不许**。别把这两个混成同一个数 —— 早先这里写的是 `limit <= 0 return true`，
+ * 那时候只有全局设置、0 就是不限；现在管理员能把某个人卡到 0，再按老规矩算就成了
+ * 「卡死他反而把他放开」。
+ */
 export function canAddSelfServiceHost(
   user: { role: string },
   ownedCount: number,
-  limit: number,
+  limit: number | null,
 ): boolean {
   if (user.role === "admin") return true;
-  if (limit <= 0) return true;
+  if (limit === null) return true;
   return ownedCount < limit;
 }
 
@@ -451,6 +496,33 @@ export function canReadHostInstallCommand(
   if (!host) return false;
   if (user.role === "admin") return true;
   return Number((host as any).userId) === Number(user.id);
+}
+
+/**
+ * 列表上要不要标出「这台机器是谁的」，标什么。
+ *
+ * 租户可以自助加机器，加完就出现在管理员的主机管理里 —— 那是对的（面板是管理员在
+ * 跑，出了事要能查、要能删），但不标出主人的话，管理员看到的是一台凭空多出来的
+ * 陌生机器：不知道能不能动它，也不知道该找谁。
+ *
+ * 三条规矩：
+ *
+ * 1. **只给管理员**。普通用户能看见的除了自己的，还有被授权用的别人的机器 ——
+ *    在那儿标出主人等于把另一个租户的身份透给他。
+ * 2. **自己建的不标**。满屏都是自己的名字，等于没标，还把真正该注意的那几台淹了。
+ * 3. **人没了也要说**。用户注销但机器还留着时照说「已注销用户 #N」，不能静悄悄
+ *    当成自己的 —— 那是一台没人认领的机器，恰恰最需要管理员看见。
+ */
+export function hostOwnerLabel(
+  viewer: { id: number; role: string },
+  host: { userId?: unknown },
+  names: ReadonlyMap<number, string>,
+): string | null {
+  if (viewer.role !== "admin") return null;
+  const ownerId = Number(host?.userId || 0);
+  if (ownerId <= 0) return null;
+  if (ownerId === Number(viewer.id)) return null;
+  return names.get(ownerId) || `已注销用户 #${ownerId}`;
 }
 
 function compactHostForList(host: any) {
@@ -812,6 +884,97 @@ export const hostsRouter = router({
         ]);
         const items = await clearCompletedHostAgentUpgradeRequests(pageData.items as any[]);
         scheduleHostGeoRefresh(items);
+        /*
+          管理员那边标出每台机器是谁的。
+
+          租户可以自助加机器（订阅管理里那个入口），加完了这台机器就出现在管理员
+          的主机管理里 —— 这是对的，面板是管理员在跑，出了事要能查、要能删。但列表
+          上一个字都没说这是谁的，管理员看到的是一台凭空多出来的陌生机器。
+
+          只给管理员：普通用户能看见的除了自己的，还有被授权用的别人的机器，
+          在那里标出主人等于把另一个租户的身份透给他。
+        */
+        const ownerNames = ctx.user.role === "admin"
+          ? await db.getUserDisplayNamesByIds(items.map((row: any) => Number(row.userId)))
+          : new Map<number, string>();
+        /*
+          这台机器上的转发是扣余额还是吃套餐流量 —— 摆到卡片上。
+
+          两条路互斥（见 agentReportRoutes 里那个 billingResource 分支），而列表上
+          原来一个字都没有：「这台到底在不在计费」得一台台点进去看，记错账的代价是
+          真金白银。
+
+          答案不在主机上。计费配置挂在**转发组 / 隧道**上（主机那一档只剩历史配置，
+          界面里那一项是禁用的），所以只能顺着这台机器上的转发去问：每条转发按
+          转发组 → 隧道 → 主机 的顺序找配置，找得到就是按量计费。
+
+          第一版我只查了主机那一档，于是新部署上每台都显示「走套餐流量」—— 哪怕
+          上面的转发正按组计费。摆一个关于钱的结论在显眼处，就得是真的。
+        */
+        // 总开关关着就一分钱都不扣（agentReportRoutes 里是同一个判断），那卡片上也
+        // 不能说「按量计费」—— 顺带省掉底下这一整串查询。
+        const trafficBillingEnabled = await db.isTrafficBillingEnabled();
+        const billingRules = trafficBillingEnabled
+          ? await db.getBillingRelevantRulesByHostIds(items.map((row: any) => Number(row.id)))
+          : [];
+        const billingByRuleId = billingRules.length > 0
+          ? await db.findTrafficBillingResourcesForRules(billingRules)
+          : new Map();
+        /*
+          这台机器自己那条「整台兜底价」。
+
+          和上面那个统计是两件事：上面答的是「现在这台上的转发实际在怎么算钱」（走
+          转发组 / 隧道 / 主机哪一档都算），这个答的是「这台机器本身配没配价」——
+          主机管理里的按量计费弹窗要拿它回填，没有的话每次打开都是空白，人会以为
+          没配过然后再配一条。只给管理员：配置和价钱都是商家的事。
+        */
+        const hostBillingConfigs = ctx.user.role === "admin"
+          ? await db.findHostTrafficBillingConfigs(items.map((row: any) => Number(row.id)))
+          : new Map();
+        const billingStatsByHost = new Map<number, { total: number; billed: number; milliCents: number; hostDefault: boolean }>();
+        for (const rule of billingRules) {
+          const hostId = Number(rule.hostId);
+          const stat = billingStatsByHost.get(hostId) || { total: 0, billed: 0, milliCents: 0, hostDefault: false };
+          stat.total += 1;
+          const resource = billingByRuleId.get(Number(rule.id));
+          if (resource?.config) {
+            stat.billed += 1;
+            // 这条是靠「整台兜底价」才算上钱的（转发组 / 隧道都没配）。读的是转发
+            // 实际落在哪一档，而不是「这台机器有没有一条 host 配置」—— 后者在配了
+            // 但每条转发都被组价接走时会说谎。
+            if (resource.resourceType === "host") stat.hostDefault = true;
+            // 同一台机器上的几条转发可能挂在不同资源上、单价不同 —— 取其一做展示，
+            // 多种价钱时界面只说「按量计费」，不编一个平均值出来。
+            const price = Math.max(0, Number(resource.config.pricePerGbMilliCents) || 0);
+            stat.milliCents = stat.milliCents === 0 || stat.milliCents === price ? price : -1;
+          }
+          billingStatsByHost.set(hostId, stat);
+        }
+        const withOwners = items.map((row: any) => {
+          const stat = billingStatsByHost.get(Number(row.id));
+          const billed = stat?.billed || 0;
+          return {
+            ...row,
+            ownerLabel: hostOwnerLabel(ctx.user, row, ownerNames),
+            // 非管理员不给单价：他只需要知道「这台上的转发在按量计费」，价钱是商家的事。
+            trafficBilling: billed > 0
+              ? {
+                billedRules: billed,
+                totalRules: stat?.total || 0,
+                // -1 表示这台机器上有好几种单价，界面据此只说「按量计费」不报价。
+                pricePerGbMilliCents: ctx.user.role === "admin" ? (stat?.milliCents ?? 0) : 0,
+                // 整台兜底价在管着的话，界面要说清「这台上没单独计价的转发按这个走」，
+                // 而不是让人以为每一条都单独配过。
+                hostDefault: !!stat?.hostDefault,
+              }
+              : null,
+            // 这台机器自己配的整台兜底价（含停用的），只给管理员。
+            hostBillingConfig: hostBillingConfigs.get(Number(row.id)) || null,
+            // 不是自己的机器：能看（说明管理员授权过），但改不动也删不掉 ——
+            // 服务端 update/delete 本来就按 userId 挡着，界面据此收起入口。
+            manageable: ctx.user.role === "admin" || Number(row.userId) === ctx.user.id,
+          };
+        });
         let outdatedItems = 0;
         let onlineOutdatedItems = 0;
         let offlineUpgradeableItems = 0;
@@ -829,7 +992,7 @@ export const hostsRouter = router({
         ]));
         return {
           ...pageData,
-          items: items.map(compactHostForList),
+          items: withOwners.map(compactHostForList),
           versionCounts: undefined,
           outdatedItems,
           onlineOutdatedItems,
@@ -1100,7 +1263,11 @@ export const hostsRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         if (ctx.user.role !== "admin") {
-          const limit = selfServiceHostLimitFrom(await db.getSetting("selfServiceHostLimit"));
+          const [globalLimit, owner] = await Promise.all([
+            db.getSetting("selfServiceHostLimit").then(selfServiceHostLimitFrom),
+            db.getUserById(ctx.user.id),
+          ]);
+          const limit = selfServiceHostLimitForUser(owner, globalLimit);
           const owned = (await db.getHosts(ctx.user.id)).length;
           if (!canAddSelfServiceHost(ctx.user, owned, limit)) {
             throw new Error(`你自己添加的机器已达上限（${owned}/${limit}）。删掉一台，或让管理员调高上限。`);
@@ -1185,11 +1352,18 @@ export const hostsRouter = router({
      * 提示，等于让人白填一遍表单。
      */
     selfServiceQuota: protectedProcedure.query(async ({ ctx }) => {
-      const limit = selfServiceHostLimitFrom(await db.getSetting("selfServiceHostLimit"));
+      const [globalLimit, owner] = await Promise.all([
+        db.getSetting("selfServiceHostLimit").then(selfServiceHostLimitFrom),
+        db.getUserById(ctx.user.id),
+      ]);
+      // 这个人自己的上限优先，没设才用全局那一档。
+      const limit = selfServiceHostLimitForUser(owner, globalLimit);
       const used = (await db.getHosts(ctx.user.id)).length;
       return {
         used,
-        limit: ctx.user.role === "admin" ? 0 : limit,
+        // 0 在这个接口上一直表示「不限」，界面据此显示「2 台」而不是「2/10」。
+        // null（不限）翻回 0，管理员同理。
+        limit: ctx.user.role === "admin" || limit === null ? 0 : limit,
         canAdd: canAddSelfServiceHost(ctx.user, used, limit),
       };
     }),

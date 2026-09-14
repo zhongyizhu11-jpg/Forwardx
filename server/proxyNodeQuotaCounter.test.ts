@@ -122,22 +122,33 @@ test("清零会记下重置时间，月度任务靠它判断本周期是否已�
   `);
 });
 
-test("只挑开了自动重置且已到重置日的节点", () => {
+test("只把开了自动重置的取出来，到没到日子由调用方按当月天数判断", () => {
+  /*
+    这里原来还带一条「重置日 <= 今天几号」的 SQL 预筛，用例也是按那个写的。
+    重置日放开到 31 之后那条会漏：二月 28 号那天 `31 <= 28` 不成立，设成每月
+    31 号的整个二月都不重置。
+
+    改成只按开关取，日期交给 billingMonthlyBoundary 夹当月天数 —— 主机那一路
+    一直就是这么做的。所以这个用例现在守的是「开关过滤对不对」，日期那部分
+    由 shared/monthlyResetDay.test.ts 和 server/proxyInboundTrafficReset.test.ts 守。
+  */
   runInDatabase(String.raw`
-    await addNode(1, "到日子了");
-    await addNode(2, "还没到");
+    await addNode(1, "每月 1 号");
+    await addNode(2, "每月 31 号");
     await addNode(3, "没开自动重置");
     await exec("UPDATE proxy_nodes SET trafficAutoReset = 1, trafficResetDay = 1 WHERE id = 1");
-    await exec("UPDATE proxy_nodes SET trafficAutoReset = 1, trafficResetDay = 28 WHERE id = 2");
+    await exec("UPDATE proxy_nodes SET trafficAutoReset = 1, trafficResetDay = 31 WHERE id = 2");
     await exec("UPDATE proxy_nodes SET trafficAutoReset = 0, trafficResetDay = 1 WHERE id = 3");
 
-    // 当月 15 号：1 号那个该重置，28 号那个还没到，没开开关的一律不动。
     const due = await repo.getProxyNodesForTrafficAutoReset(new Date(2026, 0, 15));
-    assert.deepEqual(due.map((row) => Number(row.id)), [1]);
+    assert.deepEqual(
+      due.map((row) => Number(row.id)).sort(),
+      [1, 2],
+      "开了开关的都要取出来 —— 包括设成 31 号的，否则短月份里它永远轮不到判断",
+    );
 
-    // 月底：28 号那个也到了。
-    const endOfMonth = await repo.getProxyNodesForTrafficAutoReset(new Date(2026, 0, 28));
-    assert.deepEqual(endOfMonth.map((row) => Number(row.id)).sort(), [1, 2]);
+    // 没开开关的一个都不能混进来：那是唯一一条在这里就该挡掉的。
+    assert.ok(!due.map((row) => Number(row.id)).includes(3), "没开自动重置的不该被取出来");
   `);
 });
 

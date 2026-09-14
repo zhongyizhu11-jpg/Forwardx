@@ -12,6 +12,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { ProxyNodeRow, proxyNodeMetaText, type ProxyNodeRowSpec } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog, type ProxyNodeShareTarget } from "@/components/proxy/ProxyNodeShareDialog";
+import { ProxyNodeQuotaDetail, ProxyNodeQuotaToggle } from "@/components/proxy/ProxyNodeQuotaCells";
+import { MONTHLY_RESET_MAX_DAY } from "@shared/billingTime";
+import { bytesFromGb, gbFromBytes, positiveIntFromInput } from "@shared/trafficGb";
 import { clipboardNeedsManualCopy, copyTextFromElement, copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import {
@@ -74,6 +77,13 @@ type InboundForm = {
    * 混用的话，要么客户端里出现「给张三的」，要么你自己认不出这个端口是干嘛的。
    */
   remark: string;
+  /**
+   * 对外标注：分享给别人时对方看得到的那一句（「家宽」「IEPL」）。
+   *
+   * 和 remark 分开是因为它们服务两种人 —— remark 是自己的账本，泄出去会出事；
+   * 这一句是线路本身的属性，是收方最想知道的。
+   */
+  publicLabel: string;
   protocol: ProxyInboundProtocol;
   port: number;
   transport: ProxyNodeTransport;
@@ -90,6 +100,17 @@ type InboundForm = {
   snellVersion: number;
   /** Shadowsocks 的加密方式。其他协议用不到，留着也不会下发。 */
   method: string;
+  /**
+   * 这个端口自己的额度与用量（GB / Mbps，空串 = 没填）。
+   *
+   * 和主机那一层不是一回事：主机层是机房账单口径（系统级网卡计数，直连和机器上
+   * 跑的别的服务都算），这一层只数**面板经手的这个端口**。
+   */
+  bandwidthMbps: string;
+  trafficLimitGb: string;
+  trafficUsedGb: string;
+  trafficAutoReset: boolean;
+  trafficResetDay: string;
   isEnabled: boolean;
   /** 只有 id 与名字：凭据一律服务端生成，前端拿不到也不该传。 */
   /** sharedUserId > 0 = 分享时自动发的凭据，界面上只读：它的生死跟着分享走。 */
@@ -103,6 +124,7 @@ function emptyForm(): InboundForm {
     userId: 0,
     name: "",
     remark: "",
+    publicLabel: "",
     protocol: "vless",
     port: 443,
     transport: "tcp",
@@ -118,6 +140,11 @@ function emptyForm(): InboundForm {
     obfsPassword: "",
     snellVersion: PROXY_INBOUND_SNELL_VERSIONS[0],
     method: PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
+    bandwidthMbps: "",
+    trafficLimitGb: "",
+    trafficUsedGb: "",
+    trafficAutoReset: false,
+    trafficResetDay: "1",
     isEnabled: true,
     users: [{ id: 0, name: "默认" }],
   };
@@ -195,7 +222,22 @@ export default function ProxyInboundsSection({
   const confirm = useConfirmDialog();
   const [collapsed, setCollapsed] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  /*
+    展开用量的那几行。自己存一份，不跟粘贴那一路共用一个集合 ——
+    入站 id 和节点 id 是两套各自自增的序号，放一起会互相点开对方。
+  */
+  // REALITY 那两项一律收着（它们不填也对），靠折叠条上的摘要交代设过什么。
+  const [realityOpen, setRealityOpen] = useState(false);
+  const [expandedQuotaIds, setExpandedQuotaIds] = useState<number[]>([]);
+  const toggleQuota = (id: number) => {
+    setExpandedQuotaIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  };
   const [form, setForm] = useState<InboundForm>(emptyForm());
+  /** 折叠着的 REALITY 里设了什么。只写填过的 —— 都留空时说「按默认值」就够了。 */
+  const realitySummary = [
+    form.serverName.trim(),
+    form.realityDest.trim() ? `→ ${form.realityDest.trim()}` : "",
+  ].filter(Boolean).join(" ");
 
   const inboundsQuery = trpc.proxyInbounds.list.useQuery();
   const optionsQuery = trpc.proxyInbounds.options.useQuery();
@@ -390,16 +432,30 @@ export default function ProxyInboundsSection({
   };
 
   const openEdit = (row: any) => {
+    /*
+      安全层和传输方式按协议收敛一次再进表单。
+
+      服务端保存时本来就会收敛（见 mergeInbound），所以正常存下来的行不会不合法。
+      但「协议是 Shadowsocks、安全层却写着 reality」这种组合仍然可能从旧版本、
+      迁移数据或直接改库里冒出来 —— 那时候弹窗会按 reality 去渲染，凭空显示一段
+      这个协议根本用不上的设置。界面不该比服务端更容易信一个不合法的值。
+    */
+    const protocol = String(row.protocol || "vless") as ProxyInboundProtocol;
+    const allowedSecurities = proxyInboundSecurities(protocol);
+    const allowedTransports = proxyInboundTransports(protocol);
+    const security = String(row.security || "reality") as ProxyInboundSecurity;
+    const transport = String(row.transport || "tcp") as ProxyNodeTransport;
     setForm({
       id: Number(row.id),
       hostId: Number(row.hostId),
       userId: Number(row.userId || 0),
       name: String(row.name || ""),
       remark: String(row.remark || ""),
-      protocol: String(row.protocol || "vless") as ProxyInboundProtocol,
+      publicLabel: String(row.publicLabel || ""),
+      protocol,
       port: Number(row.port || 0),
-      transport: String(row.transport || "tcp") as ProxyNodeTransport,
-      security: String(row.security || "reality") as ProxyInboundSecurity,
+      transport: allowedTransports.includes(transport) ? transport : allowedTransports[0],
+      security: allowedSecurities.includes(security) ? security : allowedSecurities[0],
       serverName: String(row.serverName || ""),
       realityDest: String(row.realityDest || ""),
       path: String(row.path || ""),
@@ -411,6 +467,11 @@ export default function ProxyInboundsSection({
       obfsPassword: String(row.obfsPassword || ""),
       snellVersion: Number(row.snellVersion || PROXY_INBOUND_SNELL_VERSIONS[0]),
       method: String(row.method || PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD),
+      bandwidthMbps: Number(row.bandwidthMbps || 0) > 0 ? String(row.bandwidthMbps) : "",
+      trafficLimitGb: gbFromBytes(row.trafficLimit),
+      trafficUsedGb: gbFromBytes(row.trafficUsed),
+      trafficAutoReset: !!row.trafficAutoReset,
+      trafficResetDay: String(Number(row.trafficResetDay || 1)),
       isEnabled: !!row.isEnabled,
       users: Array.isArray(row.users) && row.users.length > 0
         ? row.users.map((user: any) => ({
@@ -432,6 +493,7 @@ export default function ProxyInboundsSection({
       ...(isAdmin && form.userId > 0 ? { userId: form.userId } : {}),
       name: form.name.trim(),
       remark: form.remark.trim(),
+      publicLabel: form.publicLabel.trim(),
       protocol: form.protocol,
       port: form.port,
       transport: form.transport,
@@ -447,6 +509,11 @@ export default function ProxyInboundsSection({
       obfsPassword: form.obfsPassword.trim(),
       snellVersion: form.snellVersion,
       method: form.method,
+      bandwidthMbps: positiveIntFromInput(form.bandwidthMbps),
+      trafficLimit: bytesFromGb(form.trafficLimitGb),
+      trafficUsed: bytesFromGb(form.trafficUsedGb),
+      trafficAutoReset: form.trafficAutoReset,
+      trafficResetDay: Math.min(MONTHLY_RESET_MAX_DAY, Math.max(1, positiveIntFromInput(form.trafficResetDay) || 1)),
       isEnabled: form.isEnabled,
       users: form.users.map((user, index) => ({ id: user.id, name: user.name.trim() || `凭据 ${index + 1}` })),
     };
@@ -518,6 +585,17 @@ export default function ProxyInboundsSection({
       hostNeverOnlineInboundIds?.has(Number(row.id)) ? "机器的 Agent 还没连上" : "",
       !row.isEnabled ? "已停用" : "",
     ]),
+    detail: expandedQuotaIds.includes(Number(row.id))
+      ? <ProxyNodeQuotaDetail node={row} hostQuota={row.hostQuota} />
+      : null,
+    inline: (
+      <ProxyNodeQuotaToggle
+        node={row}
+        hostQuota={row.hostQuota}
+        expanded={expandedQuotaIds.includes(Number(row.id))}
+        onToggle={() => toggleQuota(Number(row.id))}
+      />
+    ),
     toggle: (
       <Switch
         className="shrink-0 scale-90"
@@ -551,7 +629,7 @@ export default function ProxyInboundsSection({
           { key: "delete", label: "删除", icon: Trash2, destructive: true, onSelect: () => void askDelete(row) },
         ]),
     ],
-  })), [rows, hosts, userOptions, isAdmin, linkLoadingId, inboundLeading, notInSubscriptionInboundIds, hostNeverOnlineInboundIds]);
+  })), [rows, hosts, userOptions, isAdmin, linkLoadingId, inboundLeading, notInSubscriptionInboundIds, hostNeverOnlineInboundIds, expandedQuotaIds]);
 
   /** 三类合成一个列表：自建在前（它们是这一页的起点），然后是粘贴和分享来的。 */
   const allRowSpecs = useMemo(() => [...inboundRowSpecs, ...extraRows], [inboundRowSpecs, extraRows]);
@@ -619,8 +697,17 @@ export default function ProxyInboundsSection({
               卡片只有 390px —— shrink-0 让它既不能缩也不能换行，于是整条从卡片右边
               溢出去被裁掉：左边的下拉被切掉半个，右边的按钮贴着屏幕边。
               去掉之后它会先缩到可用宽度，再在内部自己换行。
+
+              换行之后必须 justify-start，不能 justify-end。挤不下时这一组会被撑成
+              整行宽，justify-end 于是把每一行都往右推：第一行「自动」左边空出一截，
+              第二行只剩「新建」孤零零贴在右边 —— 看着像排版坏了。没换行时这一组
+              是内容宽，start 和 end 没区别（外层 justify-between 已经把它推到右边），
+              所以这里只影响换行那一种情况。
+
+              也不要写成 sm:justify-end：宽屏一样可能换行（窗口拖窄、侧栏展开），
+              那时候同一个洞又回来了，而没换行时 end 本来就没有任何作用。
             */}
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            <div className="flex min-w-0 flex-wrap items-center justify-start gap-2">
               {/* 分组只在真的有好几条时才给 —— 两条节点摆个分组下拉是噪音。 */}
               {groupMode && onGroupModeChange && groupModeOptions && totalRowCount > 1 ? (
                 <Select value={groupMode} onValueChange={(value) => onGroupModeChange(value as ProxyNodeGroupMode)}>
@@ -778,7 +865,21 @@ export default function ProxyInboundsSection({
                   placeholder="给张三的 / 测试用"
                 />
                 {/* 只留在面板里 —— 写进名称的话，客户端里就会出现「给张三的」。 */}
-                <p className="text-xs text-muted-foreground">这个端口是干嘛的，只给你自己看，不进订阅。</p>
+                <p className="text-xs text-muted-foreground">这个端口是干嘛的，只给你自己看。分享出去的人看不到。</p>
+              </div>
+              <div className="min-w-0 space-y-1.5">
+                <Label className="text-xs">对外标注</Label>
+                <Input
+                  value={form.publicLabel}
+                  onChange={(event) => setForm((prev) => ({ ...prev, publicLabel: event.target.value }))}
+                  placeholder="家宽 / IEPL / 深港专线"
+                  maxLength={12}
+                />
+                {/*
+                  和备注分开：备注是自己的账本（「给张三的」），泄给租户会出事；
+                  这一句是线路本身的属性，恰恰是租户最想知道、而只有你说得出的那件事。
+                */}
+                <p className="text-xs text-muted-foreground">线路是什么类型，分享出去的人也看得到。不进订阅。</p>
               </div>
               {isAdmin ? (
                 <div className="min-w-0 space-y-1.5 sm:col-span-2">
@@ -893,27 +994,55 @@ export default function ProxyInboundsSection({
               ) : null}
             </div>
 
+            {/*
+              REALITY 这两项留空就有默认值，绝大多数人从头到尾不会碰 —— 而它们夹在
+              端口和凭据中间，把常用的东西往下顶了一屏。所以收起来。
+
+              ACME 和 TLS 那两段不能这么办：域名、证书路径是**必须填**的，收起来
+              等于让人存下一个跑不起来的配置。可收的只有「不填也对」的那一类。
+
+              收起来之后靠折叠条上那行字交代里头设了什么，免得改过的人以为丢了。
+            */}
             {isReality ? (
-              <div className="space-y-3 rounded-md border p-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">要偷的握手域名</Label>
-                  <Input
-                    value={form.serverName}
-                    onChange={(event) => setForm((prev) => ({ ...prev, serverName: event.target.value }))}
-                    placeholder={optionsQuery.data?.defaultRealityServerName || "dl.google.com"}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    留空按默认值。REALITY 不需要域名和证书，密钥对由面板生成。
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">握手目标（可选）</Label>
-                  <Input
-                    value={form.realityDest}
-                    onChange={(event) => setForm((prev) => ({ ...prev, realityDest: event.target.value }))}
-                    placeholder="留空按握手域名的 443"
-                  />
-                </div>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground"
+                  onClick={() => setRealityOpen((prev) => !prev)}
+                  aria-expanded={realityOpen}
+                >
+                  <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${realityOpen ? "" : "-rotate-90"}`} />
+                  <span>REALITY 高级</span>
+                  {!realityOpen ? (
+                    <span className="min-w-0 truncate font-normal text-foreground/70">
+                      {realitySummary || "按默认值"}
+                    </span>
+                  ) : null}
+                  <span className="h-px flex-1 bg-border" />
+                </button>
+                {realityOpen ? (
+                  <div className="space-y-3 rounded-md border p-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">要偷的握手域名</Label>
+                      <Input
+                        value={form.serverName}
+                        onChange={(event) => setForm((prev) => ({ ...prev, serverName: event.target.value }))}
+                        placeholder={optionsQuery.data?.defaultRealityServerName || "dl.google.com"}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        留空按默认值。REALITY 不需要域名和证书，密钥对由面板生成。
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">握手目标（可选）</Label>
+                      <Input
+                        value={form.realityDest}
+                        onChange={(event) => setForm((prev) => ({ ...prev, realityDest: event.target.value }))}
+                        placeholder="留空按握手域名的 443"
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -1076,6 +1205,87 @@ export default function ProxyInboundsSection({
                 想一人一份、能单独吊销，改用 VLESS / VMess / Trojan / Hysteria2 / TUIC / AnyTLS。
               </p>
             )}
+
+            {/*
+              端口自己的额度。和主机那一层刻意分开说：
+              主机层是机房账单口径（Agent 报的系统级网卡计数，直连和机器上跑的别的
+              服务都算进去），这一层只数面板经手的这个端口。两个数放在一起而不点破
+              区别，人只会以为面板前后矛盾。
+            */}
+            <div className="space-y-2 rounded-lg border p-3">
+              <Label>这个端口的额度</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-xs text-muted-foreground">带宽（Mbps）</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    value={form.bandwidthMbps}
+                    onChange={(event) => setForm((prev) => ({ ...prev, bandwidthMbps: event.target.value }))}
+                    placeholder="不填 = 不限"
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-xs text-muted-foreground">总流量（GB）</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    value={form.trafficLimitGb}
+                    onChange={(event) => setForm((prev) => ({ ...prev, trafficLimitGb: event.target.value }))}
+                    placeholder="不填 = 不限"
+                  />
+                </div>
+              </div>
+              {form.id > 0 ? (
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">已用流量（GB）</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      value={form.trafficUsedGb}
+                      onChange={(event) => setForm((prev) => ({ ...prev, trafficUsedGb: event.target.value }))}
+                      placeholder="0"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => setForm((prev) => ({ ...prev, trafficUsedGb: "" }))}
+                    >
+                      清零
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    面板自己会累加，这里只是用来手工校准。
+                    <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                      这是<strong>这个端口</strong>跑掉的量，不是这台机器的总量 —— 机房按整台机器的网卡算，
+                      那个数在「主机管理」里，通常比这里大。
+                    </span>
+                  </p>
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <div className="min-w-0">
+                  <Label className="text-xs">每月自动清零</Label>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {form.trafficAutoReset ? (
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      className="h-8 w-16"
+                      value={form.trafficResetDay}
+                      onChange={(event) => setForm((prev) => ({ ...prev, trafficResetDay: event.target.value }))}
+                    />
+                  ) : null}
+                  <Switch
+                    checked={form.trafficAutoReset}
+                    onCheckedChange={(checked) => setForm((prev) => ({ ...prev, trafficAutoReset: checked }))}
+                  />
+                </div>
+              </div>
+            </div>
 
             <div className="flex items-center justify-between rounded-md border p-3">
               <div className="min-w-0">

@@ -22,6 +22,7 @@ import {
   Gauge,
   HardDrive,
   RotateCcw,
+  Coins,
   Loader2,
   MemoryStick,
   Monitor,
@@ -31,6 +32,13 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, type ReactNode } from "react";
+import { hostBillingBadge } from "@shared/hostBillingBadge";
+import {
+  HOST_TRAFFIC_MEASURE_MODE_LABELS,
+  hostTrafficPercent,
+  hostTrafficUsedBytes,
+  normalizeHostTrafficMeasureMode,
+} from "@shared/hostTrafficQuota";
 import {
   formatBytes,
   formatUptime,
@@ -94,6 +102,8 @@ type HostCardProps = {
   onUpgrade: (host: any) => void;
   onResetTraffic?: (host: any) => void;
   onCorrectTraffic?: (host: any) => void;
+  /** 给这台机器配「整台按量计费」。只有管理员那边传，租户那边不渲染这一项。 */
+  onEditBilling?: (host: any) => void;
   onViewProbeLatency?: (host: any) => void;
   resetTrafficPending?: boolean;
   traffic?: { bytesIn?: number | null; bytesOut?: number | null } | null;
@@ -108,7 +118,7 @@ type HostCardProps = {
 
 type HostActionButtonsProps = Pick<
   HostCardProps,
-  "host" | "onEdit" | "onDelete" | "onUpgrade" | "onResetTraffic" | "onCorrectTraffic" | "onViewProbeLatency" | "resetTrafficPending" | "canUpgrade"
+  "host" | "onEdit" | "onDelete" | "onUpgrade" | "onResetTraffic" | "onCorrectTraffic" | "onEditBilling" | "onViewProbeLatency" | "resetTrafficPending" | "canUpgrade"
 > & {
   className?: string;
   buttonClassName?: string;
@@ -121,6 +131,7 @@ export function HostActionButtons({
   onUpgrade,
   onResetTraffic,
   onCorrectTraffic,
+  onEditBilling,
   onViewProbeLatency,
   resetTrafficPending = false,
   canUpgrade,
@@ -129,6 +140,8 @@ export function HostActionButtons({
 }: HostActionButtonsProps) {
   const confirmDialog = useConfirmDialog();
   const isOnline = !!host.isOnline;
+  // 服务端没给这个字段时按「能管」算：管理员那一侧本来就都能管。
+  const manageable = host?.manageable !== false;
   const agentUpgradeTimedOut = isAgentUpgradeTimedOut(host);
   const upgradeTitle = !isOnline
     ? "主机离线，无法下发升级任务"
@@ -159,16 +172,25 @@ export function HostActionButtons({
           <Activity className="h-3.5 w-3.5" />
         </Button>
       )}
-      <Button
-        variant="ghost"
-        size="icon"
-        className={buttonClassName}
-        title="编辑主机"
-        aria-label="编辑主机"
-        onClick={() => onEdit(host)}
-      >
-        <Pencil className="h-3.5 w-3.5" />
-      </Button>
+      {/*
+        不是自己的机器就不给改名和删除的入口。
+
+        这一类是管理员授权他使用的：看得到（授权过才看得到）、能在上面建转发，
+        但 hosts.update / hosts.delete 服务端都按 `userId === 自己` 挡着。
+        留着按钮的话，点下去只会吃一句「无权操作此主机」—— 那不是提示，是绊脚石。
+      */}
+      {manageable && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className={buttonClassName}
+          title="编辑主机"
+          aria-label="编辑主机"
+          onClick={() => onEdit(host)}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -197,22 +219,47 @@ export function HostActionButtons({
               <span>用量修正</span>
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem
-            disabled={!canUpgrade || !isOnline}
-            title={upgradeTitle}
-            onSelect={() => onUpgrade(host)}
-          >
-            <Download />
-            <span>升级 Agent</span>
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            onSelect={() => void confirmDelete()}
-          >
-            <Trash2 />
-            <span>删除主机</span>
-          </DropdownMenuItem>
+          {/*
+            「这台机器怎么计费」的入口就放在这台机器上。
+
+            计费配置本来只能在「流量计费管理」那一页按转发组 / 隧道配，可商家是按台
+            买机器、机房也是按台出账单的 —— 「这台一律按 X 元/GB」原来得给这台上的
+            每个转发组各配一遍，漏一个就有一批流量悄悄不计费。
+          */}
+          {onEditBilling && (
+            <DropdownMenuItem onSelect={() => onEditBilling(host)}>
+              <Coins />
+              <span>按量计费</span>
+            </DropdownMenuItem>
+          )}
+          {/*
+            升不了的人干脆别给这一项。
+
+            原来是渲染出来再 disabled —— 对管理员是对的（机器离线时确实点不了，
+            但过一会儿就能点）；对租户却是一个永远灰着的菜单项，因为下发升级
+            本来就是管理员专属的接口。旁边「重置流量」「用量修正」都是没权限
+            就不渲染，这一项跟上。
+          */}
+          {canUpgrade && (
+            <DropdownMenuItem
+              disabled={!isOnline}
+              title={upgradeTitle}
+              onSelect={() => onUpgrade(host)}
+            >
+              <Download />
+              <span>升级 Agent</span>
+            </DropdownMenuItem>
+          )}
+          {manageable && <DropdownMenuSeparator />}
+          {manageable && (
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => void confirmDelete()}
+            >
+              <Trash2 />
+              <span>删除主机</span>
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -226,6 +273,7 @@ export default function HostCard({
   onUpgrade,
   onResetTraffic,
   onCorrectTraffic,
+  onEditBilling,
   onViewProbeLatency,
   resetTrafficPending = false,
   traffic = null,
@@ -250,18 +298,13 @@ export default function HostCard({
   const totalNetworkIn = traffic?.bytesIn == null ? null : Number(traffic.bytesIn);
   const totalNetworkOut = traffic?.bytesOut == null ? null : Number(traffic.bytesOut);
   const trafficLimit = Math.max(0, Number(host.trafficLimit || 0));
-  const trafficMeasureMode = host.trafficMeasureMode === "outbound" || host.trafficMeasureMode === "max" ? host.trafficMeasureMode : "both";
-  const trafficMeasureModeLabel = trafficMeasureMode === "outbound"
-    ? "仅出向"
-    : trafficMeasureMode === "max"
-      ? "取最大值"
-      : "双向";
-  const trafficUsedBytes = trafficMeasureMode === "outbound"
-    ? Math.max(0, totalNetworkOut ?? 0)
-    : trafficMeasureMode === "max"
-      ? Math.max(0, totalNetworkIn ?? 0, totalNetworkOut ?? 0)
-      : Math.max(0, (totalNetworkIn ?? 0) + (totalNetworkOut ?? 0));
-  const trafficPercent = trafficLimit > 0 ? Math.round((trafficUsedBytes / trafficLimit) * 100) : null;
+  const trafficMeasureMode = normalizeHostTrafficMeasureMode(host.trafficMeasureMode);
+  const trafficMeasureModeLabel = HOST_TRAFFIC_MEASURE_MODE_LABELS[trafficMeasureMode];
+  const trafficUsedBytes = hostTrafficUsedBytes(
+    { bytesIn: totalNetworkIn, bytesOut: totalNetworkOut },
+    trafficMeasureMode,
+  );
+  const trafficPercent = hostTrafficPercent(trafficUsedBytes, trafficLimit);
   const trafficProgress = trafficPercent === null ? 0 : Math.min(100, Math.max(0, trafficPercent));
   const trafficUsageLabel = trafficPercent === null
     ? `${formatBytes(trafficUsedBytes)} / ♾️`
@@ -318,11 +361,27 @@ export default function HostCard({
   const currentTrafficOutLabel = formatNetworkSpeed(networkSpeed.out);
   const systemTrafficInLabel = formatOptionalBytes(systemNetworkIn);
   const systemTrafficOutLabel = formatOptionalBytes(systemNetworkOut);
+  const isOnline = !!host.isOnline;
+  /*
+    机器离线了，这两个数就不再是「当前」。
+
+    速率是拿最后两次采样算出来的，运行时间也是最后一次上报里的值 —— 机器一掉线
+    它们就冻在那儿，可标题还写着「当前瞬时流量」。于是同一张卡上，红色的「离线」
+    和「当前 4.09 KB/s」并排放着：看的人没法判断这机器是真在跑，还是这串数字是
+    三天前的化石。
+
+    数字照留（掉线前跑到哪儿是有用的线索，抹掉更糟），只把名字改对。
+  */
+  const lastReportedText = latestMetric?.recordedAt
+    ? new Date(latestMetric.recordedAt).toLocaleString("zh-CN", { hour12: false })
+    : "";
+  const currentTrafficLabel = isOnline ? "当前" : "最后一次";
   const currentTrafficTitle = [
-    "当前瞬时流量",
+    isOnline ? "当前瞬时流量" : "最后一次上报时的瞬时流量 —— 机器已离线，这不是现在的速率",
     `下行 ${currentTrafficInLabel}`,
     `上行 ${currentTrafficOutLabel}`,
-  ].join("\n");
+    !isOnline && lastReportedText ? `上报于 ${lastReportedText}` : "",
+  ].filter(Boolean).join("\n");
   const systemTrafficTitle = [
     "系统累计流量（系统重启后重置）",
     `下行 ${systemTrafficInLabel}`,
@@ -364,11 +423,12 @@ export default function HostCard({
   const renderTrafficSplitBox = () => (
     <div className={`rounded-md border px-2.5 py-2 ${trafficPanelClass}`}>
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] divide-x divide-border/40">
-        {renderTrafficColumn({ label: "当前", inValue: currentTrafficInLabel, outValue: currentTrafficOutLabel, title: currentTrafficTitle, className: "pr-2" })}
+        {renderTrafficColumn({ label: currentTrafficLabel, inValue: currentTrafficInLabel, outValue: currentTrafficOutLabel, title: currentTrafficTitle, className: "pr-2" })}
         {renderTrafficColumn({ label: "累计", inValue: systemTrafficInLabel, outValue: systemTrafficOutLabel, title: systemTrafficTitle, className: "pl-2" })}
       </div>
     </div>
   );
+  const billingBadge = hostBillingBadge(host.trafficBilling);
   const remainingTimeLabel = formatRemainingTime(host.purchasedAt, host.stoppedAt);
   const hostName = String(host.name || "-").trim() || "-";
   const osInfoText = compactHostOsInfo(host.osInfo);
@@ -379,7 +439,6 @@ export default function HostCard({
       : "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
   const agentNeedsUpdate = isAgentVersionBehind(host.agentVersion, latestAgentVersion);
   const agentUpgradeTimedOut = isAgentUpgradeTimedOut(host);
-  const isOnline = !!host.isOnline;
   const trafficUsageProgressClass = trafficLimit > 0
     ? metricUsageProgressClass(trafficProgress, isOnline)
     : isOnline
@@ -445,6 +504,46 @@ export default function HostCard({
         <span className="shrink-0 text-muted-foreground">国家/地区：</span>
         <HostRegionBadge host={host} compact={regionCompact} />
       </div>
+      {/*
+        这台机器是谁的。
+
+        租户可以自助加机器，加完就出现在管理员这张列表里 —— 那是对的（面板是管理员
+        在跑，出了事要能查、要能删），但不标出主人的话，管理员看到的是一台凭空多
+        出来的陌生机器：不知道能不能动它，也不知道该找谁。
+
+        服务端只给管理员算这个字段，而且自己建的不给（满屏自己的名字等于没标）。
+        所以这里有值就显示，没值就不占地方。
+      */}
+      {host.ownerLabel ? (
+        <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5">
+          <span className="shrink-0 text-muted-foreground">归属：</span>
+          <span className="min-w-0 truncate" title={`这台机器由「${host.ownerLabel}」自己加进来的`}>
+            {host.ownerLabel}
+          </span>
+        </div>
+      ) : null}
+      {/*
+        这台机器上的转发是扣余额还是吃套餐流量。
+
+        两条路互斥：转发找得到计费配置就按 GB 扣余额，找不到就记进用户的套餐流量额度。
+        原来这个开关藏在编辑弹窗里，列表上一个字都没有 —— 「这台到底在不在计费」
+        得点进去一台台看，而记错账的代价是真金白银，所以摆到卡片上。
+      */}
+      <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5">
+        <span className="shrink-0 text-muted-foreground">计费：</span>
+        {billingBadge.metered ? (
+          <span
+            className="min-w-0 truncate rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
+            title={billingBadge.title}
+          >
+            {billingBadge.label}
+          </span>
+        ) : (
+          <span className="min-w-0 truncate text-muted-foreground" title={billingBadge.title}>
+            {billingBadge.label}
+          </span>
+        )}
+      </div>
     </div>
   );
 
@@ -473,6 +572,7 @@ export default function HostCard({
               onUpgrade={onUpgrade}
               onResetTraffic={onResetTraffic}
               onCorrectTraffic={onCorrectTraffic}
+              onEditBilling={onEditBilling}
               onViewProbeLatency={onViewProbeLatency}
               resetTrafficPending={resetTrafficPending}
               canUpgrade={canUpgrade}
@@ -491,6 +591,7 @@ export default function HostCard({
               onUpgrade={onUpgrade}
               onResetTraffic={onResetTraffic}
               onCorrectTraffic={onCorrectTraffic}
+              onEditBilling={onEditBilling}
               onViewProbeLatency={onViewProbeLatency}
               resetTrafficPending={resetTrafficPending}
               canUpgrade={canUpgrade}
@@ -668,7 +769,13 @@ export default function HostCard({
             </div>
             <div className="flex items-center gap-2 text-xs pt-1">
               <Clock className="h-3 w-3 text-muted-foreground" />
-              <span className="text-muted-foreground">运行时间</span>
+              <span
+                className="text-muted-foreground"
+                title={isOnline ? "" : `最后一次上报时已经跑了这么久${lastReportedText ? `（上报于 ${lastReportedText}）` : ""}`}
+              >
+                {/* 离线时这个数也是冻住的，别让它看起来还在走。 */}
+                {isOnline ? "运行时间" : "最后运行时长"}
+              </span>
               {remainingTimeLabel && (
                 <span className={`shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none ${remainingTimeClass}`}>
                   {remainingTimeLabel}

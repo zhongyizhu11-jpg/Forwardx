@@ -17,6 +17,7 @@ import {
 import { executeRaw, getDatabaseKind, getDb, insertAndGetId, nowDate, queryRaw, quoteDbIdentifier, withDatabaseTransaction } from "../dbRuntime";
 import { getSetting, setSetting } from "./settingsRepository";
 import { formatTrafficMultiplier, normalizeTrafficMultiplier } from "../../shared/trafficMultiplier";
+import { countEnabledForwardRulesByUserIds, getBillingRelevantRulesByHostIds, getBillingRelevantRulesByUserId } from "./forwardRuleRepository";
 
 const GB_BYTES = 1024 ** 3;
 const MILLI_CENTS_PER_CENT = 1000;
@@ -144,7 +145,7 @@ function forwardGroupBillingKind(group: any) {
 }
 
 function trafficBillingResourceLabel(resourceType: TrafficBillingResourceType) {
-  if (resourceType === "host") return "历史主机";
+  if (resourceType === "host") return "整台主机";
   if (resourceType === "tunnel") return "隧道转发";
   return "转发资源";
 }
@@ -527,7 +528,7 @@ export async function listTrafficBillingConfigs() {
       if (config.resourceType === "host") {
         return {
           resourceName: hostNames.get(resourceId) || `主机 #${config.resourceId}`,
-          resourceKind: "历史主机",
+          resourceKind: "整台主机",
           resourceMissing: !hostNames.has(resourceId),
           configuredMultiplier: normalizeMultiplier(Number(config.multiplier || 100)),
           multiplier: normalizeMultiplier(Number(config.multiplier || 100)),
@@ -606,6 +607,91 @@ export async function checkUserTrafficBillingPermission(userId: number, resource
   return rows.length > 0;
 }
 
+/**
+ * 「给这台机器配整台兜底价，会把谁接管过去、会停掉谁」。
+ *
+ * 兜底价是转发找计费配置的最后一档，所以它会接管这台机器上**所有**没被转发组 / 隧道
+ * 单独计价的转发 —— 包括走套餐的租户的。而计费那条路的判断里从头到尾没有「这个人是
+ * 套餐户还是计费户」（面板里没这个字段），套餐户通常余额又是 0，于是：
+ *
+ *   余额 ≤ 0 → setUserForwardAccess(false) → **停掉他名下全部转发**，不只是这台上的。
+ *
+ * 保存之前把这件事摆出来。不摆的话，你只有在租户来问「我的转发怎么全停了」的时候
+ * 才会知道 —— 而那时候钱和业务都已经出事了。
+ */
+export async function previewHostTrafficBillingTakeover(hostId: number) {
+  const empty = { totalRules: 0, takeoverRules: 0, users: [] as any[], stopUsers: 0, stopRules: 0 };
+  const id = Number(hostId);
+  if (!Number.isInteger(id) || id <= 0) return empty;
+  const db = await getDb();
+  if (!db) return empty;
+
+  const rules = await getBillingRelevantRulesByHostIds([id]);
+  if (rules.length === 0) return empty;
+
+  /*
+    只问**上面两档**：转发组 → 隧道。
+
+    把 hostId 抹成 0 是因为 trafficBillingResourceCandidatesForRule 只在 hostId > 0 时
+    才生成主机那一档候选 —— 抹掉它，解析出来的就正好是「不算兜底价的话，这条转发现在
+    有没有价」。已经有价的不受兜底价影响（上面的档优先），剩下的才是会被接管的。
+  */
+  const higherTierByRuleId = await findTrafficBillingResourcesForRules(
+    rules.map((rule: any) => ({ ...rule, hostId: 0 })),
+  );
+  const takeover = rules.filter((rule: any) => !higherTierByRuleId.get(Number(rule.id))?.config);
+  if (takeover.length === 0) {
+    return { ...empty, totalRules: rules.length };
+  }
+
+  const rulesByUserId = new Map<number, number>();
+  for (const rule of takeover) {
+    const userId = Number(rule.userId || 0);
+    if (userId <= 0) continue;
+    rulesByUserId.set(userId, (rulesByUserId.get(userId) || 0) + 1);
+  }
+  const userIds = Array.from(rulesByUserId.keys());
+  if (userIds.length === 0) return { ...empty, totalRules: rules.length, takeoverRules: takeover.length };
+
+  const [userRows, enabledRuleCounts] = await Promise.all([
+    db.select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      balanceCents: users.balanceCents,
+      trafficLimit: users.trafficLimit,
+    }).from(users).where(inArray(users.id, userIds)),
+    countEnabledForwardRulesByUserIds(userIds),
+  ]);
+
+  const rows = (userRows as any[]).map((user) => {
+    const userId = Number(user.id);
+    // 余额 ≤ 0 就扣不动。管理员也一样 —— 计费那条路上没有按角色放行。
+    const balanceCents = Number(user.balanceCents || 0);
+    const wouldStop = balanceCents <= 0;
+    return {
+      userId,
+      username: String(user.username || `#${userId}`),
+      role: String(user.role || "user"),
+      balanceCents,
+      // 有套餐额度的人，正是「本来走套餐、会被兜底价接管走」的那一类。
+      hasPlanQuota: Number(user.trafficLimit || 0) > 0,
+      takeoverRules: rulesByUserId.get(userId) || 0,
+      // 停的是他名下全部的转发，不只是这台机器上的这几条。
+      enabledRules: enabledRuleCounts.get(userId) || 0,
+      wouldStop,
+    };
+  }).sort((left, right) => Number(right.wouldStop) - Number(left.wouldStop) || right.takeoverRules - left.takeoverRules);
+
+  return {
+    totalRules: rules.length,
+    takeoverRules: takeover.length,
+    users: rows,
+    stopUsers: rows.filter((row) => row.wouldStop).length,
+    stopRules: rows.filter((row) => row.wouldStop).reduce((total, row) => total + row.enabledRules, 0),
+  };
+}
+
 export async function upsertTrafficBillingConfig(data: InsertTrafficBillingConfig) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -658,6 +744,47 @@ export async function deleteTrafficBillingConfig(id: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(trafficBillingConfigs).where(eq(trafficBillingConfigs.id, id));
+}
+
+/**
+ * 一批主机各自的「整台兜底价」配置。
+ *
+ * 主机这一档是转发找计费配置时的最后一级兜底（转发组 → 隧道 → 主机），所以它回答
+ * 的是「这台机器上没被单独计价的转发，按多少钱算」。主机管理里那个按量计费弹窗要
+ * 拿它回填，一页十二台一次查完。
+ *
+ * **停用的也要返回**：弹窗得能显示「配过、但现在停着」，并且让人重新开起来。
+ * 换成只查启用中的，停用过的那台在界面上会和从没配过的长得一模一样，
+ * 于是人会再配一条，撞上唯一约束。
+ */
+export async function findHostTrafficBillingConfigs(hostIds: readonly number[]) {
+  const result = new Map<number, {
+    id: number;
+    enabled: boolean;
+    requiresPermission: boolean;
+    pricePerGbMilliCents: number;
+    multiplier: number;
+    description: string | null;
+  }>();
+  const wanted = Array.from(new Set(hostIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return result;
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db.select().from(trafficBillingConfigs).where(and(
+    eq(trafficBillingConfigs.resourceType, "host"),
+    inArray(trafficBillingConfigs.resourceId, wanted),
+  ));
+  for (const row of rows as any[]) {
+    result.set(Number(row.resourceId), {
+      id: Number(row.id),
+      enabled: !!row.enabled,
+      requiresPermission: !!row.requiresPermission,
+      pricePerGbMilliCents: configPriceMilliCents(row),
+      multiplier: normalizeMultiplier(Number(row.multiplier || 100)),
+      description: row.description ?? null,
+    });
+  }
+  return result;
 }
 
 export async function findTrafficBillingConfig(resourceType: TrafficBillingResourceType, resourceId: number) {
@@ -938,6 +1065,102 @@ export async function listTrafficBillingRecords(options?: { userId?: number; lim
     return base.where(eq(trafficBillingRecords.userId, options.userId)).orderBy(desc(trafficBillingRecords.createdAt)).limit(limit);
   }
   return base.orderBy(desc(trafficBillingRecords.createdAt)).limit(limit);
+}
+
+/**
+ * 「按量计费这一套，我到底配好了没有」。
+ *
+ * 这件事原来散在四个地方：总开关在一个**侧边栏点不到**的页面里，资源定价在套餐管理
+ * 的一个 tab 下（那里还看不到总开关），授权在用户管理的用户编辑弹窗里，余额在账单
+ * 与兑换。四处都对了才真的能收到钱，错一处就是静悄悄不生效 —— 而没有任何一个地方
+ * 告诉你缺哪一环。
+ *
+ * 所以把四环的现状一次算出来，摆在计费中心页上。每一环都返回**能拿来做判断的数**，
+ * 不是一个笼统的 ok/not ok：「3 个资源在计费」和「都要授权但一个人都没授权」是完全
+ * 不同的处境，缩成一个布尔值就等于没说。
+ */
+/**
+ * 租户自己那一屏要的：「我有几条转发在按量扣钱、按什么价」。
+ *
+ * 「我的套餐」原来只讲套餐额度。一个纯按量计费的租户在那一页上是一片空白，还被劝
+ * 「去商店下单」—— 而他的「还剩多少」根本不是额度，是余额，在另一页。他真正要知道
+ * 的三件事（在按什么价用、花了多少、余额还够不够）一个都看不到。
+ *
+ * 单价**要给他看**。主机卡片上对非管理员藏价钱是因为那是商家给别人机器的定价；
+ * 这里是他自己在付的钱，藏起来才是不对的。
+ */
+export async function getUserMeteredForwardSummary(userId: number) {
+  const empty = { meteredRules: 0, totalRules: 0, minPricePerGbMilliCents: 0, maxPricePerGbMilliCents: 0 };
+  if (!(await isTrafficBillingEnabled())) return empty;
+  const rules = await getBillingRelevantRulesByUserId(userId);
+  if (rules.length === 0) return empty;
+  const byRuleId = await findTrafficBillingResourcesForRules(rules);
+  const prices: number[] = [];
+  for (const rule of rules) {
+    const config = byRuleId.get(Number(rule.id))?.config;
+    if (!config) continue;
+    prices.push(configPriceMilliCents(config));
+  }
+  if (prices.length === 0) return { ...empty, totalRules: rules.length };
+  return {
+    meteredRules: prices.length,
+    totalRules: rules.length,
+    minPricePerGbMilliCents: Math.min(...prices),
+    maxPricePerGbMilliCents: Math.max(...prices),
+  };
+}
+
+export async function getTrafficBillingSetupStatus() {
+  const enabled = await isTrafficBillingEnabled();
+  const db = await getDb();
+  if (!db) {
+    return {
+      enabled,
+      configs: { total: 0, active: 0, open: 0, permissionOnly: 0 },
+      authorizedUsers: 0,
+      fundedUsers: 0,
+      tenantUsers: 0,
+    };
+  }
+
+  const [configRows, permissionRows, userRows] = await Promise.all([
+    db.select({
+      enabled: trafficBillingConfigs.enabled,
+      requiresPermission: trafficBillingConfigs.requiresPermission,
+      resourceType: trafficBillingConfigs.resourceType,
+      resourceId: trafficBillingConfigs.resourceId,
+    }).from(trafficBillingConfigs),
+    db.select({
+      userId: userTrafficBillingPermissions.userId,
+      resourceType: userTrafficBillingPermissions.resourceType,
+      resourceId: userTrafficBillingPermissions.resourceId,
+    }).from(userTrafficBillingPermissions),
+    db.select({ id: users.id, role: users.role, balanceCents: users.balanceCents }).from(users),
+  ]);
+
+  const active = (configRows as any[]).filter((row) => !!row.enabled);
+  const activeKeys = new Set(active.map((row) => `${String(row.resourceType)}:${Number(row.resourceId)}`));
+  // 只数**启用中**资源上的授权。停用资源上的旧授权不代表谁现在用得上，
+  // 拿它去说「已经授权了 3 个人」是在报一个假的就绪状态。
+  const authorizedUsers = new Set((permissionRows as any[])
+    .filter((row) => activeKeys.has(`${String(row.resourceType)}:${Number(row.resourceId)}`))
+    .map((row) => Number(row.userId)));
+
+  const tenants = (userRows as any[]).filter((row) => String(row.role || "user") !== "admin");
+  return {
+    enabled,
+    configs: {
+      total: configRows.length,
+      active: active.length,
+      // 不需要单独授权的：任何有余额的租户都能直接用，也会出现在商店里。
+      open: active.filter((row) => !row.requiresPermission).length,
+      permissionOnly: active.filter((row) => !!row.requiresPermission).length,
+    },
+    authorizedUsers: authorizedUsers.size,
+    // 余额 ≤ 0 的租户扣不动钱，转发会被停 —— 「有几个人真付得起」是这一环的实话。
+    fundedUsers: tenants.filter((row) => Number(row.balanceCents || 0) > 0).length,
+    tenantUsers: tenants.length,
+  };
 }
 
 export async function getTrafficBillingSummary(userId?: number) {

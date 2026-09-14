@@ -21,6 +21,9 @@ export const trafficBillingRouter = router({
     };
   }),
 
+  /** 租户自己那一屏：我有几条转发在按量扣钱、按什么价。单价给他看 —— 那是他在付的钱。 */
+  myMeteredForwards: protectedProcedure.query(async ({ ctx }) => db.getUserMeteredForwardSummary(ctx.user.id)),
+
   configs: adminProcedure.query(async () => {
     const [enabled, configs] = await Promise.all([
       db.isTrafficBillingEnabled(),
@@ -37,6 +40,20 @@ export const trafficBillingRouter = router({
       configs: (await db.listTrafficBillingConfigs()).filter((item: any) => item.enabled && !item.requiresPermission),
     };
   }),
+
+  /**
+   * 「给这台机器配整台兜底价，会把谁接管过去、会停掉谁」。
+   *
+   * 保存之前问一次。兜底价会接管这台机器上所有没被单独计价的转发（包括走套餐的
+   * 租户的），而余额 ≤ 0 的人会被停掉**名下全部**转发 —— 这件事原来只有等租户
+   * 来问「我的转发怎么全停了」才会发现。
+   */
+  /** 「按量计费这一套配好了没有」—— 四环的现状，给计费中心页的开通清单用。 */
+  setupStatus: adminProcedure.query(async () => db.getTrafficBillingSetupStatus()),
+
+  hostTakeoverPreview: adminProcedure
+    .input(z.object({ hostId: z.number().int().positive() }))
+    .query(async ({ input }) => db.previewHostTrafficBillingTakeover(input.hostId)),
 
   setEnabled: adminProcedure
     .input(z.object({ enabled: z.boolean() }))
@@ -73,7 +90,10 @@ export const trafficBillingRouter = router({
         reconciliation.failures.length > 0 ? "warn" : "info",
         `[TrafficBilling] config saved ${input.resourceType}=${input.resourceId} priceMilli=${input.pricePerGbMilliCents ?? 0} requiresPermission=${input.requiresPermission} affectedUsers=${reconciliation.affectedUsers} disabledRules=${reconciliation.disabledRules} failures=${reconciliation.failures.length}`,
       );
-      return config;
+      // 把「顺带停掉了几条转发」原样带回去。改计费资源会牵动授权：靠这个资源
+      // 才用得上某台机器的用户，资源一变就可能失去访问，他的转发被停。界面不说
+      // 的话，这件事只在服务端日志里 —— 而挨停的是别人的业务。
+      return { ...(config as any), disabledRules: reconciliation.disabledRules };
     }),
 
   deleteConfig: adminProcedure
@@ -87,7 +107,7 @@ export const trafficBillingRouter = router({
         reconciliation.failures.length > 0 ? "warn" : "info",
         `[TrafficBilling] config deleted id=${input.id} affectedUsers=${reconciliation.affectedUsers} disabledRules=${reconciliation.disabledRules} failures=${reconciliation.failures.length}`,
       );
-      return { success: true };
+      return { success: true, disabledRules: reconciliation.disabledRules };
     }),
 
   records: protectedProcedure

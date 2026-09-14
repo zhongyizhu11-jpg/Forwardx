@@ -143,6 +143,8 @@ const tables: TableDef[] = [
       c("avatarChangeDay", "varchar", { length: 16 }), c("avatarChangeCount", "int", { notNull: true, default: 0 }), c("role", "varchar", { length: 32, notNull: true, default: "user" }), c("accountEnabled", "bool", { notNull: true, default: true }),
       c("canAddRules", "bool", { notNull: true, default: false }), c("forwardAccessPauseReason", "varchar", { length: 64 }), c("maxRules", "int", { notNull: true, default: 0 }),
       c("maxProxyInbounds", "int", { notNull: true, default: 0 }), c("maxProxySubTokens", "int", { notNull: true, default: 0 }),
+      // 可空：留空 = 跟随全局上限，0 = 一台都不许加（见 drizzle/schema.ts）。
+      c("maxSelfServiceHosts", "int"),
       c("maxPorts", "int", { notNull: true, default: 0 }), c("allowedForwardTypes", "text"),
       c("allowForwardXTunnel", "bool", { notNull: true, default: false }), c("allowProxySubscription", "bool", { notNull: true, default: false }), c("gostRateLimitIn", "int", { notNull: true, default: 0 }),
       c("gostRateLimitOut", "int", { notNull: true, default: 0 }), c("maxConnections", "int", { notNull: true, default: 0 }),
@@ -208,7 +210,8 @@ const tables: TableDef[] = [
       c("geoLatitudeMicro", "int"), c("geoLongitudeMicro", "int"), c("geoUpdatedAt", "epoch"),
       c("portRangeStart", "int"), c("portRangeEnd", "int"), c("portAllowlist", "text"),
       c("blockHttp", "bool", { notNull: true, default: false }), c("blockSocks", "bool", { notNull: true, default: false }),
-      c("blockTls", "bool", { notNull: true, default: false }), c("isOnline", "bool", { notNull: true, default: false }),
+      c("blockTls", "bool", { notNull: true, default: false }),
+      c("isOnline", "bool", { notNull: true, default: false }),
       c("lastHeartbeat", "epoch"), c("userId", "int", { notNull: true }), c("createdAt", "epoch", { notNull: true, default: "now" }),
       c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],
@@ -278,6 +281,8 @@ const tables: TableDef[] = [
     name: "proxy_nodes",
     columns: [
       c("id", "id"), c("userId", "int", { notNull: true }), c("name", "text", { notNull: true }), c("remark", "text"),
+      // 对外标注：分享出去时对方看得到的那一句（remark 是自己看的，会被抹掉）。
+      c("publicLabel", "text"),
       c("protocol", "varchar", { length: 32, notNull: true, default: "vless" }), c("sourceLink", "text"),
       c("address", "text", { notNull: true }), c("port", "int", { notNull: true }),
       c("uuid", "text"), c("password", "text"), c("method", "text"),
@@ -310,7 +315,7 @@ const tables: TableDef[] = [
     name: "proxy_inbounds",
     columns: [
       c("id", "id"), c("userId", "int", { notNull: true }), c("hostId", "int", { notNull: true }),
-      c("name", "text", { notNull: true }), c("remark", "text"),
+      c("name", "text", { notNull: true }), c("remark", "text"), c("publicLabel", "text"),
       c("protocol", "varchar", { length: 32, notNull: true, default: "vless" }),
       c("port", "int", { notNull: true }),
       c("transport", "varchar", { length: 16, notNull: true, default: "tcp" }),
@@ -325,6 +330,11 @@ const tables: TableDef[] = [
       c("congestionControl", "text"),
       c("snellVersion", "int", { notNull: true, default: 0 }), c("snellMode", "text"),
       c("clonedFromInboundId", "int", { notNull: true, default: 0 }),
+      // 端口自己的额度与用量。计数链装在监听端口上，多用户入站分不到人头，所以记在这里。
+      c("bandwidthMbps", "int", { notNull: true, default: 0 }),
+      c("trafficLimit", "bigint", { notNull: true, default: 0 }), c("trafficUsed", "bigint", { notNull: true, default: 0 }),
+      c("trafficAutoReset", "bool", { notNull: true, default: false }),
+      c("trafficResetDay", "int", { notNull: true, default: 1 }), c("lastTrafficReset", "epoch"),
       c("isEnabled", "bool", { notNull: true, default: true }), c("sortOrder", "int", { notNull: true, default: 0 }),
       c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],

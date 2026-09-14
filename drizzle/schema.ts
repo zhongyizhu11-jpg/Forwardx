@@ -154,6 +154,15 @@ export const users = table("users", {
   // 能生成几条订阅地址（proxy_sub_tokens），0 = 不限制。
   // 每条地址都是一份完整凭据，发出去就收不回来 —— 只能靠吊销那一条。
   maxProxySubTokens: int("maxProxySubTokens").notNull().default(0),
+  /**
+   * 自助能加几台机器。**留空 = 跟随系统设置里的全局上限，0 = 一台都不许加。**
+   *
+   * 特意做成可空，而不是学旁边几个「0 = 不限」：这是个数量字段，人填 0 就是想说
+   * 「一台都不给他」。要是 0 当成「不限」，管理员想卡死某个人反而把他放开了；
+   * 要是 0 当成「跟随全局」，他就根本没有办法卡死某一个人。两种都不对，只有
+   * 「空」和「0」分开才说得清。
+   */
+  maxSelfServiceHosts: int("maxSelfServiceHosts"),
   // 允许使用的转发方式，逗号分隔，如 "iptables,realm,socat"；null 或空串 = 全部允许
   allowedForwardTypes: text("allowedForwardTypes"),
   allowForwardXTunnel: boolean("allowForwardXTunnel").notNull().default(false),
@@ -407,7 +416,19 @@ export const proxyNodes = table("proxy_nodes", {
   id: serial("id"),
   userId: int("userId").notNull(),
   name: text("name").notNull(),
+  /** 备注：只给节点主人自己看，共享出去时会被抹掉（见 redactSharedProxyNodeRow）。 */
   remark: text("remark"),
+  /**
+   * 对外标注：分享给别人时，对方看得到的那一句。
+   *
+   * 和 remark 分开是因为它们服务两种人。remark 是「给张三的」「这条快到期了」
+   * 「便宜线」—— 自己的账本，泄给租户会出事；publicLabel 是「家宽」「IEPL」
+   * 「深港专线」—— 恰恰是租户最想知道、而只有主人说得出的那件事。
+   *
+   * 合成一个字段的话，两种用途只能二选一：要么泄露账本，要么租户看到的永远是
+   * 一个没有信息量的「直连」。
+   */
+  publicLabel: text("publicLabel"),
   // vless | vmess | trojan | shadowsocks | hysteria2 | tuic | anytls | snell
   protocol: varchar("protocol", { length: 32 }).notNull().default("vless"),
   // 用户粘贴的原始链接，仅作留档与重新导入，渲染以下面解析后的字段为准
@@ -490,6 +511,8 @@ export const proxyInbounds = table("proxy_inbounds", {
   hostId: int("hostId").notNull(),
   name: text("name").notNull(),
   remark: text("remark"),
+  /** 对外标注：分享出去时对方看得到的那一句，会带到派生节点上。见 proxy_nodes.publicLabel。 */
+  publicLabel: text("publicLabel"),
   // vless | vmess | trojan | shadowsocks | hysteria2 | tuic | anytls | snell
   protocol: varchar("protocol", { length: 32 }).notNull().default("vless"),
   port: int("port").notNull(),
@@ -532,6 +555,23 @@ export const proxyInbounds = table("proxy_inbounds", {
    * 取消授权时连端口一起收掉。
    */
   clonedFromInboundId: int("clonedFromInboundId").notNull().default(0),
+  /**
+   * 这个端口自己的额度与用量。
+   *
+   * 记在入站上而不是派生节点上：Agent 的计数链装在**监听端口**上，一个多用户入站
+   * 派生出好几个节点，它们共用这一个端口，上报回来的字节数分不到人头上（sing-box
+   * 官方二进制没有 per-user 统计，见 clonedFromInboundId 那段）。所以「跑了多少」
+   * 天然是端口的属性，不是某一份凭据的。
+   *
+   * 和主机那一层的区别要记牢：主机层是机房账单口径（系统级网卡计数，直连和机器上
+   * 跑的别的服务都算），这一层只数**面板经手的这个端口**。两个数不该被当成一回事。
+   */
+  bandwidthMbps: int("bandwidthMbps").notNull().default(0),
+  trafficLimit: bigint("trafficLimit", { mode: "number" }).notNull().default(0),
+  trafficUsed: bigint("trafficUsed", { mode: "number" }).notNull().default(0),
+  trafficAutoReset: boolean("trafficAutoReset").notNull().default(false),
+  trafficResetDay: int("trafficResetDay").notNull().default(1),
+  lastTrafficReset: epoch("lastTrafficReset"),
   isEnabled: boolean("isEnabled").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),

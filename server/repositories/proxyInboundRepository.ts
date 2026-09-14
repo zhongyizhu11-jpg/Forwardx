@@ -964,6 +964,8 @@ export async function syncProxyNodeFromInbound(inboundId: number): Promise<numbe
        * 备注、订阅内容里那一条却还标着「直连」—— 填了等于没填。
        */
       remark: String((row as any).remark || "").trim() || null,
+      // 对外标注同理跟着入站走 —— 分享出去时它是收方唯一能看到的那句说明。
+      publicLabel: String((row as any).publicLabel || "").trim() || null,
       protocol: node.protocol,
       address: node.address,
       port: node.port,
@@ -1022,4 +1024,60 @@ export async function syncProxyNodeFromInbound(inboundId: number): Promise<numbe
     if (!kept.has(Number(node.id))) await deleteProxyNode(Number(node.id));
   }
   return ids;
+}
+
+/**
+ * 把一批端口跑掉的字节累加上去。
+ *
+ * 和 addProxyNodeTraffic 一样交给数据库自己加，不先读后写：同一台机器上好几个端口
+ * 的上报是一批进来的，而一台机器多个 Agent 进程、或者重试叠在一起时，先读后写会
+ * 互相盖掉（订阅拉取次数就栽在这上面过）。
+ */
+export async function addProxyInboundTraffic(entries: ReadonlyMap<number, number>) {
+  if (entries.size === 0) return;
+  const db = await getDb();
+  if (!db) return;
+  for (const [inboundId, bytes] of entries) {
+    const id = Number(inboundId);
+    const delta = Number(bytes);
+    if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(delta) || delta <= 0) continue;
+    await db.update(proxyInbounds).set({
+      trafficUsed: sql`COALESCE(${proxyInbounds.trafficUsed}, 0) + ${delta}`,
+      updatedAt: nowDate(),
+    } as any).where(eq(proxyInbounds.id, id));
+  }
+}
+
+/** 手工校准这个端口的已用量，用来跟别处的统计对齐。之后仍然继续累加。 */
+export async function setProxyInboundTrafficUsed(id: number, bytes: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(proxyInbounds).set({
+    trafficUsed: Math.max(0, Math.floor(Number(bytes) || 0)),
+    updatedAt: nowDate(),
+  } as any).where(eq(proxyInbounds.id, Number(id)));
+}
+
+/** 用量清零，并记下这次重置的时间（月度自动重置靠它判断本周期是否已经重置过）。 */
+export async function resetProxyInboundTraffic(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(proxyInbounds).set({
+    trafficUsed: 0,
+    lastTrafficReset: nowDate(),
+    updatedAt: nowDate(),
+  } as any).where(eq(proxyInbounds.id, Number(id)));
+}
+
+/**
+ * 该做月度重置的落地端口。
+ *
+ * 和主机、节点两路一样：只挑「开了自动重置」的，到期与否由调用方按当月天数判断
+ * （见 billingMonthlyBoundary）。重复触发靠 lastTrafficReset 挡 —— 调度任务每小时
+ * 跑一次，不挡的话重置日当天会清零二十几次。
+ */
+export async function getProxyInboundsForTrafficAutoReset() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(proxyInbounds).where(eq(proxyInbounds.trafficAutoReset, true));
 }

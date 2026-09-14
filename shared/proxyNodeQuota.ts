@@ -1,3 +1,5 @@
+import { MONTHLY_RESET_MAX_DAY } from "./billingTime";
+
 /**
  * 落地机的套餐规格与用量：带宽 / 总流量 / 已用流量。
  *
@@ -127,6 +129,26 @@ export function formatProxyNodeQuotaLabeled(quota: ProxyNodeQuota): string {
   return parts.join(" · ");
 }
 
+/**
+ * 展开那一行用的写法：**已用排最前**。
+ *
+ * 手机上这一行放不下完整的三个数，会被截断 —— 所以顺序决定了截掉的是哪一部分。
+ * 「带宽 2G · 总流量 100G · 已用 92G（92%）」截断后剩「带宽 2G · 总流量 100G …」，
+ * 把唯一要紧的那个数（用了多少、到几成）正好切掉；反过来排就总能先看见它。
+ *
+ * 带标签而不用 `2G / 100G / 92G` 那种紧凑式：那三个数里第一个是 Gbps、后两个是 GB，
+ * 挤在一起读起来像同一种单位的三个数。
+ */
+export function formatProxyNodeQuotaUsedFirst(quota: ProxyNodeQuota): string {
+  const limit = Number(quota.trafficLimit) || 0;
+  const parts: string[] = [];
+  parts.push(limit > 0
+    ? `已用 ${formatQuotaBytes(quota.trafficUsed)} / ${formatQuotaBytes(limit)}（${proxyNodeQuotaPercent(quota)}%）`
+    : `已用 ${formatQuotaBytes(quota.trafficUsed)}`);
+  if ((Number(quota.bandwidthMbps) || 0) > 0) parts.push(`带宽 ${formatBandwidthMbps(quota.bandwidthMbps)}`);
+  return parts.join(" · ");
+}
+
 /** 这个节点有没有值得展开的套餐信息。三样全空时连图标都不该出现。 */
 export function hasProxyNodeQuota(quota: ProxyNodeQuota): boolean {
   return (Number(quota.bandwidthMbps) || 0) > 0
@@ -135,12 +157,15 @@ export function hasProxyNodeQuota(quota: ProxyNodeQuota): boolean {
 }
 
 /**
- * 月度重置的边界日收敛到 1-28。
+ * 月度重置的边界日收敛到 1-31。
  *
- * 29/30/31 在二月不存在，落在那几天的重置会整月不触发 —— 用户看到的是
- * 「设了自动重置但从来没重置过」，而且查不出原因。
+ * 29/30/31 照收：触发判断会拿当月天数夹一下，所以「每月 31 号」在二月就是 28 号
+ * （闰年 29 号）—— 也就是「月末」，而机房按月末结算本来就很常见。
+ *
+ * 早先这里卡在 28，是因为怕落在不存在的日子上会整月不触发。那个担心是对的，
+ * 但该修的是触发判断，不是不让人填。
  */
 export function normalizeProxyNodeResetDay(value: unknown): number {
   const day = Math.floor(Number(value) || 1);
-  return Math.min(28, Math.max(1, day));
+  return Math.min(MONTHLY_RESET_MAX_DAY, Math.max(1, day));
 }

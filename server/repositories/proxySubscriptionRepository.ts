@@ -727,19 +727,24 @@ export async function resetProxyNodeTraffic(id: number) {
  * 只挑「开了自动重置、且今天已经到了重置日」的，重复触发由 lastTrafficReset
  * 挡住 —— 调度任务每小时跑一次，不挡的话一天会清零二十几次。
  */
-export async function getProxyNodesForTrafficAutoReset(reference = nowDate()) {
+export async function getProxyNodesForTrafficAutoReset(_reference = nowDate()) {
   const db = await getDb();
   if (!db) return [];
-  const day = reference.getDate();
+  /*
+    只按「开了自动重置」过滤，到期与否交给调用方按当月天数判断。
+
+    原来这里还带一条 `trafficResetDay <= 今天几号` 的预筛。那条在重置日只能填到
+    28 时是对的，一旦放开到 31 就会漏：二月 28 号那天 `31 <= 28` 不成立，设成
+    每月 31 号的节点整个二月都不会重置 —— 而用户看到的只是「设了自动重置却从来
+    没重置过」，查不出原因。
+
+    夹当月天数这件事 `billingMonthlyBoundary` 已经会做了，主机那一路也一直是
+    「先取出开了开关的，再逐行判断」。少一条预筛换两条路算法一致，值得。
+  */
   return db
     .select()
     .from(proxyNodes)
-    .where(and(
-      eq(proxyNodes.trafficAutoReset, true),
-      // 28 号之后把 29/30/31 号设的也一起带上：那几天在二月不存在，
-      // 不带的话二月整月不会重置。
-      sql`${proxyNodes.trafficResetDay} <= ${day}`,
-    ));
+    .where(eq(proxyNodes.trafficAutoReset, true));
 }
 
 // ==================== 客户端订阅：令牌 ====================

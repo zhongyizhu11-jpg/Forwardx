@@ -372,12 +372,14 @@ export const usersRouter = router({
         gostRateLimitOut: z.number().int().min(0).max(1_000_000).optional(),
         expiresAt: z.string().nullable().optional(), // ISO date string or null
         trafficAutoReset: z.boolean().optional(),
-        trafficResetDay: z.number().min(1).max(28).optional(),
+        trafficResetDay: z.number().min(1).max(31).optional(),
         canAddRules: z.boolean().optional(),
         displayRemark: z.string().trim().max(24).nullable().optional(),
         maxRules: z.number().min(0).optional(),
         /** 自建落地节点数上限，0 = 不限。与 maxRules 一样走 manual 那一列。 */
         maxProxyInbounds: z.number().min(0).optional(),
+        /** 能自助加几台机器。0 = 跟随系统设置的全局上限，不是「不限」。 */
+        maxSelfServiceHosts: z.number().min(0).max(10000).nullable().optional(),
         /** 订阅地址条数上限，0 = 不限。 */
         maxProxySubTokens: z.number().min(0).optional(),
         maxPorts: z.number().min(0).optional(),
@@ -466,9 +468,11 @@ export const usersRouter = router({
     setForwardAccess: adminProcedure
       .input(z.object({ userId: z.number(), enabled: z.boolean() }))
       .mutation(async ({ input, ctx }) => {
-        await setUserForwardAccessCommand({ actor: ctx.user, targetUserId: input.userId, enabled: input.enabled });
-        console.info(`[Users] Forward access ${input.enabled ? "enabled" : "disabled"} userId=${input.userId} ${actorLabel(ctx)}`);
-        return { success: true };
+        const result = await setUserForwardAccessCommand({ actor: ctx.user, targetUserId: input.userId, enabled: input.enabled });
+        console.info(`[Users] Forward access ${input.enabled ? "enabled" : "disabled"} userId=${input.userId} effective=${result.canAddRules} ${actorLabel(ctx)}`);
+        // 回真正的生效状态。界面拿它 patch 缓存、拿它说话 —— 原来回的是写死的
+        // `{ success: true }`，客户端只好拿自己发出去的值去报「已开启」。
+        return { success: true, canAddRules: result.canAddRules, pauseReason: result.pauseReason };
       }),
     setAccountEnabled: adminProcedure
       .input(z.object({ userId: z.number(), enabled: z.boolean() }))

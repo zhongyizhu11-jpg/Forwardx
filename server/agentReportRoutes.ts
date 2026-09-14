@@ -798,6 +798,9 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
      * proxy_nodes.trafficUsed 上 —— traffic_stats 过期会被清掉，事后算不回来。
      */
     const trafficByProxyNode = new Map<number, number>();
+    // 落地端口自己的用量。计数链装在监听端口上，一个多用户入站派生出的几个节点
+    // 共用这一个端口，字节数分不到人头，所以记在入站上而不是派生节点上。
+    const trafficByProxyInbound = new Map<number, number>();
     const trafficBatch: db.TrafficStatBatchItem[] = [];
     const runningRuleIds = new Set<number>();
     const billingEntries: Array<{
@@ -888,6 +891,12 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       acceptedBytesIn += normalizeTrafficCounterBytes(stat.bytesIn);
       acceptedBytesOut += normalizeTrafficCounterBytes(stat.bytesOut);
       quotaTrafficByUser.set(userId, (quotaTrafficByUser.get(userId) || 0) + bytes);
+      /*
+        端口自己也要记一笔。原来这里只往租户配额上加，端口的已用量就永远是 0 ——
+        于是「这台落地机的套餐」那一整套（额度、到量提醒）对自建的端口完全不响，
+        而自建的那台机器恰恰才是有机房账单、会超量被停机的那一个。
+      */
+      trafficByProxyInbound.set(inboundId, (trafficByProxyInbound.get(inboundId) || 0) + bytes);
     }
 
     for (const stat of ruleStats) {
@@ -972,6 +981,7 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     await db.insertTrafficStatsBatch(trafficBatch);
     await db.markForwardRulesRunning(Array.from(runningRuleIds));
     await db.addProxyNodeTraffic(trafficByProxyNode);
+    await db.addProxyInboundTraffic(trafficByProxyInbound);
 
     for (const { rule, ruleBytes, billingResource } of billingEntries) {
       strictTrafficAccounting = true;

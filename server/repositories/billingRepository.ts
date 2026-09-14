@@ -58,6 +58,7 @@ import {
   billingAddMonthsClamped,
   billingCalendarParts,
   billingMonthlyBoundary,
+  MONTHLY_RESET_MAX_DAY,
   billingStartOfCalendarDay,
 } from "../../shared/billingTime";
 
@@ -1229,7 +1230,7 @@ function nextConfiguredSubscriptionTrafficReset(
   reference: Date,
   expiresAt: Date | null,
 ) {
-  const resetDay = Math.min(28, Math.max(1, Math.floor(Number(user.trafficResetDay) || 1)));
+  const resetDay = Math.min(MONTHLY_RESET_MAX_DAY, Math.max(1, Math.floor(Number(user.trafficResetDay) || 1)));
   let monthOffset = 0;
   let next = billingMonthlyBoundary(reference, resetDay, monthOffset);
 
@@ -2320,6 +2321,13 @@ export async function updateUserManualEntitlements(userId: number, data: {
   trafficAutoReset?: boolean;
   trafficResetDay?: number;
   forwardAccessPauseReason?: ForwardAccessPauseReason;
+  /**
+   * 自助能加几台机器。0 = 跟随系统设置的全局上限，不是「不限」。
+   *
+   * 不带 manual 前缀：上面那些是「手工额度」，要和套餐给的额度算优先级；
+   * 这一项套餐不给，就是一个普通设置，没有两份来源要合。
+   */
+  maxSelfServiceHosts?: number | null;
 }) {
   return withTrafficBillingUserTransaction(userId, async () => {
     await updateUserTrafficSettings(userId, data as any);

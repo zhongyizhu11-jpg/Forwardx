@@ -66,9 +66,13 @@ test("没配的时候用默认额度，配了就按配的来", () => {
   assert.equal(selfServiceHostLimitFrom("-5"), DEFAULT_SELF_SERVICE_HOST_LIMIT);
 });
 
-test("到额度就拦住，管理员不受限，0 = 不限", () => {
+test("到额度就拦住，管理员不受限，null = 不限", () => {
   assert.equal(canAddSelfServiceHost(owner, 2, 3), true);
   assert.equal(canAddSelfServiceHost(owner, 3, 3), false);
-  assert.equal(canAddSelfServiceHost(owner, 99, 0), true);
+  // null 才是「不限」。0 不再是不限 —— 管理员能把某个人卡到一台都不给，
+  // 那时候 0 必须真的挡住，否则「卡死他」变成「把他放开」。
+  assert.equal(canAddSelfServiceHost(owner, 99, null), true);
+  assert.equal(canAddSelfServiceHost(owner, 0, 0), false, "设成 0 就是一台都不许加");
   assert.equal(canAddSelfServiceHost(admin, 999, 3), true);
+  assert.equal(canAddSelfServiceHost(admin, 999, 0), true, "管理员不受这个字段影响");
 });

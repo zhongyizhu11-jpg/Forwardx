@@ -61,12 +61,9 @@ import {
 } from "@shared/proxyClientImport";
 import { summarizeProxyNodeHealthCounts, type ProxyNodeHealth } from "@shared/proxyNodeHealth";
 import { PROXY_SUB_TOKEN_FAILURE_LABELS, proxySubTokenStatus } from "@shared/proxySubTokenStatus";
-import {
-  formatProxyNodeQuotaDetail,
-  formatProxyNodeQuotaLabeled,
-  hasProxyNodeQuota,
-  proxyNodeQuotaState,
-} from "@shared/proxyNodeQuota";
+import { bytesFromGb, gbFromBytes } from "@shared/trafficGb";
+import { MONTHLY_RESET_MAX_DAY } from "@shared/billingTime";
+import { ProxyNodeQuotaDetail, ProxyNodeQuotaToggle } from "@/components/proxy/ProxyNodeQuotaCells";
 import {
   normalizeProxyNodeGroupMode,
   PROXY_NODE_GROUP_MODES,
@@ -82,7 +79,6 @@ import {
   ChevronDown,
   Copy,
   Eye,
-  Gauge,
   EyeOff,
   KeyRound,
   Layers,
@@ -246,25 +242,6 @@ function ProxyNodeHealthDot({ health }: { health?: ProxyNodeHealth | null }) {
 }
 
 /**
- * GB ↔ 字节。用 1000 而不是 1024：机房卖的「1000G」是按 1000 算的，
- * 按 1024 存进去再显示出来会变成 931G，跟你填的数对不上。
- */
-const GB_IN_BYTES = 1e9;
-
-function bytesFromGb(value: string): number {
-  const gb = Number(String(value).trim());
-  if (!Number.isFinite(gb) || gb <= 0) return 0;
-  return Math.round(gb * GB_IN_BYTES);
-}
-
-function gbFromBytes(bytes: unknown): string {
-  const value = Number(bytes) || 0;
-  if (value <= 0) return "";
-  const gb = value / GB_IN_BYTES;
-  return String(gb >= 100 ? Math.round(gb) : Number(gb.toFixed(2)));
-}
-
-/**
  * 订阅内容的两类条目。
  *
  * 中转在前：那是主力 —— 直连条目只有开了「加进订阅」的节点才有，通常只有一两条，
@@ -292,61 +269,6 @@ function SectionLabel({ children, count }: { children: React.ReactNode; count?: 
   );
 }
 
-const QUOTA_STATE_STYLES = {
-  none: "text-muted-foreground",
-  normal: "text-muted-foreground",
-  warn: "text-amber-600 dark:text-amber-500",
-  exceeded: "text-red-600 dark:text-red-500",
-} as const;
-
-function nodeQuotaOf(node: any) {
-  return {
-    bandwidthMbps: Number(node.bandwidthMbps || 0),
-    trafficLimit: Number(node.trafficLimit || 0),
-    trafficUsed: Number(node.trafficUsed || 0),
-  };
-}
-
-/**
- * 套餐用量的开关：一个小图标，点一下才展开。
- *
- * 常驻显示试过两版都不行 —— 放第一行会把节点名挤没，放第二行会把 IP 端口截断。
- * 手机上那一行就这么宽，地址和套餐只能二选一常驻，而地址是每次都要看的那个。
- *
- * 但图标本身带颜色：用到 80% 变黄、超额变红。不然把数字藏起来的代价就是
- * 「快超额了却要逐个点开才发现」，那比挤掉地址更糟。
- */
-function ProxyNodeQuotaToggle({ node, expanded, onToggle }: { node: any; expanded: boolean; onToggle: () => void }) {
-  const quota = nodeQuotaOf(node);
-  if (!hasProxyNodeQuota(quota)) return null;
-  const state = proxyNodeQuotaState(quota);
-  return (
-    <button
-      type="button"
-      className={`shrink-0 rounded p-1 transition-colors hover:bg-muted ${QUOTA_STATE_STYLES[state]}`}
-      onClick={onToggle}
-      aria-expanded={expanded}
-      // 桌面端悬停就能看到，不必点开；手机上没有悬停，所以图标本身要能点。
-      title={`${formatProxyNodeQuotaLabeled(quota)}${state === "exceeded" ? "（已超出总流量）" : state === "warn" ? "（接近总流量）" : ""}`}
-    >
-      <Gauge className="h-3.5 w-3.5" />
-    </button>
-  );
-}
-
-/**
- * 展开后的那一行。带标签写清三个数各自是什么 —— 折起来时的 `500M/1T/367G`
- * 得先知道顺序才读得懂，展开了就没必要让人猜。
- */
-function ProxyNodeQuotaDetail({ node }: { node: any }) {
-  const quota = nodeQuotaOf(node);
-  const state = proxyNodeQuotaState(quota);
-  return (
-    <p className={`truncate text-[11px] leading-tight ${QUOTA_STATE_STYLES[state]}`}>
-      {formatProxyNodeQuotaDetail(quota)}
-    </p>
-  );
-}
 
 /**
  * 令牌行上那句「最近一次被拒」。
@@ -572,6 +494,8 @@ export default function ClientSubscriptionsPage() {
   const [shareNode, setShareNode] = useState<{ id: number; name: string } | null>(null);
   const [nodeAdvancedOpen, setNodeAdvancedOpen] = useState(false);
   const [nodeRemark, setNodeRemark] = useState("");
+  /** 对外标注：分享出去时对方看得到的那一句。备注是自己看的，两回事。 */
+  const [nodePublicLabel, setNodePublicLabel] = useState("");
 
   /**
    * 「落地节点」这一段只列粘进来的，不列自建节点派生出来的那些。
@@ -589,12 +513,18 @@ export default function ClientSubscriptionsPage() {
     () => (nodes as any[]).filter((node) => !Number(node?.inboundId || 0) || node?.sharedFrom),
     [nodes],
   );
-  /** 模板 id → 备注。订阅内容那边只有 templateId，备注在节点行上。 */
+  /**
+   * 模板 id → 那一条直连要标什么。订阅内容那边只有 templateId，标注在节点行上。
+   *
+   * 对外标注优先：分享进来的节点被抹掉了备注（那是对方的账本），只剩这一句 ——
+   * 而它恰恰是收方最需要的（这条线是家宽还是 IEPL）。自己的节点两个都在时也用它：
+   * 「订阅内容」这一屏说的是客户端会拿到什么，那是对外的口径。
+   */
   const remarkByTemplateId = useMemo(() => {
     const map = new Map<number, string>();
     for (const node of nodes as any[]) {
-      const remark = String(node?.remark || "").trim();
-      if (remark) map.set(Number(node.id), remark);
+      const label = String(node?.publicLabel || "").trim() || String(node?.remark || "").trim();
+      if (label) map.set(Number(node.id), label);
     }
     return map;
   }, [nodes]);
@@ -644,6 +574,24 @@ export default function ClientSubscriptionsPage() {
       + inboundHealthStates.filter((state) => state === "offline").length,
     [pastedNodes, inboundHealthStates],
   );
+
+  /**
+   * 折叠着的「高级」里设了什么。
+   *
+   * 收起来省地方，但不能省到让人以为配置没了 —— 所以设过的那几项直接写在折叠条上。
+   * 只写非默认的：默认值写出来是噪音，而这一行的全部价值就是「有没有东西被我藏起来」。
+   */
+  const advancedSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (nodeAutoGroup !== PROXY_NODE_DEFAULT_AUTO_GROUP) {
+      parts.push(PROXY_NODE_AUTO_GROUP_LABELS[nodeAutoGroup]);
+    }
+    if (nodeFrontProxyId > 0) {
+      const front = (nodes as any[]).find((item: any) => Number(item.id) === nodeFrontProxyId);
+      parts.push(`经由 ${front?.name || `#${nodeFrontProxyId}`}`);
+    }
+    return parts.join(" · ");
+  }, [nodeAutoGroup, nodeFrontProxyId, nodes]);
 
   const toggleQuota = (id: number) => {
     setExpandedQuotaIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
@@ -873,6 +821,7 @@ export default function ClientSubscriptionsPage() {
     setEditingNodeId(null);
     setNodeName("");
     setNodeRemark("");
+    setNodePublicLabel("");
     setNodeLink("");
     setNodeAutoGroup(PROXY_NODE_DEFAULT_AUTO_GROUP);
     setNodeIncludeDirect(false);
@@ -890,6 +839,7 @@ export default function ClientSubscriptionsPage() {
     setEditingNodeId(node.id);
     setNodeName(String(node.name || ""));
     setNodeRemark(String(node.remark || ""));
+    setNodePublicLabel(String(node.publicLabel || ""));
     setNodeLink(String(node.sourceLink || ""));
     setNodeAutoGroup(normalizeProxyNodeAutoGroup(node.autoGroup));
     setNodeIncludeDirect(!!node.includeDirect);
@@ -899,17 +849,17 @@ export default function ClientSubscriptionsPage() {
     setNodeTrafficUsedGb(gbFromBytes(node.trafficUsed));
     setNodeTrafficAutoReset(!!node.trafficAutoReset);
     setNodeTrafficResetDay(String(Number(node.trafficResetDay || 1)));
-    /**
-     * 高级项不是默认值就展开。
-     *
-     * 这两项收进折叠区是因为多数人用不上；但对配过的人，打开弹窗看不见自己设过的
-     * 选路方式或前置代理，第一反应是「我的配置丢了」—— 折叠可以省地方，不能省到
-     * 让人怀疑数据。
-     */
-    setNodeAdvancedOpen(
-      normalizeProxyNodeAutoGroup(node.autoGroup) !== PROXY_NODE_DEFAULT_AUTO_GROUP
-      || Number(node.frontProxyId || 0) > 0,
-    );
+    /*
+      高级一律收着，配过的人也收着。
+
+      原来是「不是默认值就自动展开」，出发点是别让人以为配置丢了。但那等于
+      「谁配过谁的弹窗就永远长一截」—— 而改名字、换链接这种日常操作天天做，
+      选路和前置代理配一次就不动了。
+
+      不展开也不让人起疑，靠的是把里头设了什么写在折叠条上（见下面的 advancedSummary）：
+      看得见就不会以为丢了，这比整段摊开便宜得多。
+    */
+    setNodeAdvancedOpen(false);
     setNodeDialogOpen(true);
   };
 
@@ -927,6 +877,7 @@ export default function ClientSubscriptionsPage() {
     const payload = {
       name,
       remark: nodeRemark.trim() || null,
+      publicLabel: nodePublicLabel.trim() || null,
       link,
       autoGroup: nodeAutoGroup,
       includeDirect: nodeIncludeDirect,
@@ -934,7 +885,7 @@ export default function ClientSubscriptionsPage() {
       bandwidthMbps: Math.max(0, Math.floor(Number(nodeBandwidthMbps) || 0)),
       trafficLimit: bytesFromGb(nodeTrafficLimitGb),
       trafficAutoReset: nodeTrafficAutoReset,
-      trafficResetDay: Math.min(28, Math.max(1, Math.floor(Number(nodeTrafficResetDay) || 1))),
+      trafficResetDay: Math.min(MONTHLY_RESET_MAX_DAY, Math.max(1, Math.floor(Number(nodeTrafficResetDay) || 1))),
     };
     if (editingNodeId) {
       // 已用量只在编辑时能改：新建时还没有任何用量，给个输入框只会让人以为要填。
@@ -1830,16 +1781,32 @@ export default function ClientSubscriptionsPage() {
                 id="proxy-node-remark"
                 value={nodeRemark}
                 onChange={(event) => setNodeRemark(event.target.value)}
-                placeholder="例如 落地 / 家宽 / 备用"
+                placeholder="例如 给张三的 / 这条快到期"
+                maxLength={12}
+              />
+              <p className="text-xs text-muted-foreground">
+                只给你自己看。分享出去的节点，对方看不到这一句。
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="proxy-node-public-label">对外标注</Label>
+              <Input
+                id="proxy-node-public-label"
+                value={nodePublicLabel}
+                onChange={(event) => setNodePublicLabel(event.target.value)}
+                placeholder="例如 家宽 / IEPL / 深港专线"
                 maxLength={12}
               />
               {/*
-                备注只在面板上显示，不进订阅 —— 订阅里节点叫什么由上面的名称决定。
-                「订阅内容」里的直连条目原来一律标「直连」，那句话对每一条都成立，
-                等于没说；填了备注就用备注顶掉它。
+                和备注分开是因为它们服务两种人。
+
+                备注是主人自己的账本（「给张三的」「便宜线」），泄给租户会出事；
+                对外标注是线路本身的属性（「家宽」「IEPL」）—— 恰恰是租户最想知道、
+                而只有主人说得出的那件事。合成一个字段，两种用途只能二选一：
+                要么泄露账本，要么租户看到的永远是一个没有信息量的「直连」。
               */}
               <p className="text-xs text-muted-foreground">
-                只在面板上显示，会顶掉「订阅内容」里那个「直连」标签。不进订阅。
+                会顶掉「订阅内容」里那个「直连」标签，分享出去的人也看得到。不进订阅。
               </p>
             </div>
             <div className="space-y-2">
@@ -1916,7 +1883,6 @@ export default function ClientSubscriptionsPage() {
               <div className="flex items-center justify-between gap-3 pt-1">
                 <div className="min-w-0">
                   <Label className="text-xs">每月自动清零</Label>
-                  <p className="mt-0.5 text-xs text-muted-foreground">按机房的流量周期来，日期只能填 1-28。</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {nodeTrafficAutoReset ? (
@@ -1934,8 +1900,10 @@ export default function ClientSubscriptionsPage() {
             </div>
             {/*
               自动选路和前置代理都是少数人才用的东西，平铺在这里会把「改个名字、
-              换条链接」这种日常操作推到第二屏。收进折叠区，但只要它们不是默认值
-              就自动展开 —— 否则改过设置的人再打开会以为自己的配置没了。
+              换条链接」这种日常操作推到第二屏。所以一律收着 —— 配过的人也收着。
+
+              代价是「我设过的东西看不见了」，所以折叠条上直接写出里头设了什么。
+              摊开是为了让人看见，而看见并不非得摊开。
             */}
             <div className="space-y-2">
               <button
@@ -1946,6 +1914,9 @@ export default function ClientSubscriptionsPage() {
               >
                 <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${nodeAdvancedOpen ? "" : "-rotate-90"}`} />
                 <span>高级</span>
+                {!nodeAdvancedOpen && advancedSummary ? (
+                  <span className="min-w-0 truncate font-normal text-foreground/70">{advancedSummary}</span>
+                ) : null}
                 <span className="h-px flex-1 bg-border" />
               </button>
               {nodeAdvancedOpen ? (

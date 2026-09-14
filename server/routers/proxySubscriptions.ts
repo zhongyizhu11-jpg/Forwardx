@@ -281,6 +281,8 @@ export const proxySubscriptionsRouter = router({
       name: z.string().trim().min(1).max(64),
       // 与 updateNode 一致收 null：界面上清空备注就是 null，两个入口用同一份 payload。
       remark: z.string().trim().max(200).nullable().optional(),
+      /** 对外标注：分享给别人时对方看得到的那一句。remark 是自己看的，两回事。 */
+      publicLabel: z.string().trim().max(40).nullable().optional(),
       link: z.string().min(1).max(8192),
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
       includeDirect: z.boolean().optional(),
@@ -298,6 +300,7 @@ export const proxySubscriptionsRouter = router({
         userId: ctx.user.id,
         name: input.name,
         remark: input.remark || null,
+        publicLabel: input.publicLabel || null,
         ...(input.autoGroup ? { autoGroup: input.autoGroup } : {}),
         ...(input.includeDirect !== undefined ? { includeDirect: input.includeDirect } : {}),
         ...(input.frontProxyId !== undefined ? { frontProxyId: input.frontProxyId } : {}),
@@ -318,6 +321,8 @@ export const proxySubscriptionsRouter = router({
       id: z.number().int().positive(),
       name: z.string().trim().min(1).max(64).optional(),
       remark: z.string().trim().max(200).nullable().optional(),
+      /** 对外标注：分享给别人时对方看得到的那一句。remark 是自己看的，两回事。 */
+      publicLabel: z.string().trim().max(40).nullable().optional(),
       link: z.string().min(1).max(8192).optional(),
       isEnabled: z.boolean().optional(),
       autoGroup: z.enum(PROXY_NODE_AUTO_GROUPS).optional(),
@@ -340,13 +345,14 @@ export const proxySubscriptionsRouter = router({
       if (input.trafficLimit !== undefined) data.trafficLimit = input.trafficLimit;
       if (input.trafficAutoReset !== undefined) data.trafficAutoReset = input.trafficAutoReset;
       if (input.trafficResetDay !== undefined) {
-        // 收敛到 1-28：29/30/31 在二月不存在，那样设会整月不重置，
+        // 收敛到 1-31：29/30/31 会按当月天数夹到月末，
         // 而界面上看不出原因。
         data.trafficResetDay = normalizeProxyNodeResetDay(input.trafficResetDay);
       }
       if (input.trafficUsed !== undefined) data.trafficUsed = input.trafficUsed;
       if (input.name !== undefined) data.name = input.name;
       if (input.remark !== undefined) data.remark = input.remark || null;
+      if (input.publicLabel !== undefined) data.publicLabel = input.publicLabel || null;
       if (input.isEnabled !== undefined) data.isEnabled = input.isEnabled;
       if (input.autoGroup !== undefined) data.autoGroup = input.autoGroup;
       if (input.includeDirect !== undefined) data.includeDirect = input.includeDirect;
