@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { valueAtPath } from "./agentResourceState";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -94,16 +95,6 @@ class PluginActionError extends Error {
 type FormMode = "create" | "edit";
 
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-function valueAtPath(value: unknown, path?: string) {
-  if (!path) return value;
-  let current = value;
-  for (const segment of path.split(".")) {
-    if (!current || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[segment];
-  }
-  return current;
-}
 
 function rowIdentity(row: any, view: PluginResourceViewDefinition) {
   return String(valueAtPath(row, view.rowKey || "id") ?? "");

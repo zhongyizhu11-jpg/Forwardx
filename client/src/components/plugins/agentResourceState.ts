@@ -56,7 +56,11 @@ const ADVICE_KEYS = new Set([
 ]);
 const META_KEYS = new Set(["success", "status", "code", ...ERROR_KEYS, ...ADVICE_KEYS]);
 
-function valueAtPath(value: unknown, path?: string) {
+/**
+ * 按 "a.b.c" 取嵌套字段，插件结果渲染器三处原来各存一份。
+ * 中途遇到非对象就回 undefined —— 插件报上来的结构不受面板控制。
+ */
+export function valueAtPath(value: unknown, path?: string) {
   if (!path) return value;
   let current = value;
   for (const segment of path.split(".")) {

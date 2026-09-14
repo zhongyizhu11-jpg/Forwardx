@@ -49,3 +49,18 @@ export function priceInputFromMilliCents(milliCents: unknown): string {
   if (yuan <= 0) return "";
   return String(Number(yuan.toFixed(5)));
 }
+
+export const MILLI_CENTS_PER_CENT = 1000;
+
+/**
+ * 从一条计费配置里取出单价（毫分/GB），兼容老字段。
+ *
+ * 流量计费配置页和套餐商店原来各存一份。老数据里价钱存在 `pricePerGbCents`
+ * （分），新字段是 `pricePerGbMilliCents`（毫分）—— 两份各自判「用哪个」，
+ * 漂了就意味着同一条配置在两页显示成两个价钱。这是**正在收钱的数字**。
+ */
+export function pricePerGbMilliCentsOf(config: any) {
+  const milliCents = Math.round(Number(config?.pricePerGbMilliCents || 0));
+  if (milliCents > 0) return milliCents;
+  return Math.round(Number(config?.pricePerGbCents || 0)) * MILLI_CENTS_PER_CENT;
+}

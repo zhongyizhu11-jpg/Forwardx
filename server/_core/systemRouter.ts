@@ -1,4 +1,5 @@
 import { router, publicProcedure, protectedProcedure, adminProcedure } from "./trpc";
+import { githubRepoParts } from "../../shared/githubAccelerator";
 import { updateMultiDeviceLoginSettingCache } from "./context";
 import { z } from "zod";
 import * as db from "../db";
@@ -473,12 +474,6 @@ function publicPersonalizationBackground(all: Record<string, string | null>) {
     urlType,
     effectiveUrl: resolvePersonalizationBackgroundUrl(config),
   };
-}
-
-function githubRepoParts(repoUrl: string) {
-  const match = repoUrl.match(/github\.com\/([^/]+)\/([^/#?]+)/i);
-  if (!match) throw new Error("GitHub 仓库地址格式不正确");
-  return { owner: match[1], repo: match[2].replace(/\.git$/i, "") };
 }
 
 function githubApiBase(repoUrl: string) {

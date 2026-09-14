@@ -1,4 +1,6 @@
 import DashboardLayout from "@/components/DashboardLayout";
+import { MILLI_CENTS_PER_CENT, pricePerGbMilliCentsOf } from "@shared/trafficBillingPrice";
+import { formatQuotaBytes } from "@shared/formatBytes";
 import { formatMoneyCents as money, formatMoneyMilliCents as moneyFromMilliCents } from "@shared/formatMoney";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
@@ -27,27 +29,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
 
-const MILLI_CENTS_PER_CENT = 1000;
 const MILLI_CENTS_PER_YUAN = 100000;
-
-function pricePerGbMilliCents(config: any) {
-  const milliCents = Math.round(Number(config?.pricePerGbMilliCents || 0));
-  if (milliCents > 0) return milliCents;
-  return Math.round(Number(config?.pricePerGbCents || 0)) * MILLI_CENTS_PER_CENT;
-}
-
-function bytes(size?: number | null) {
-  const value = Number(size || 0);
-  if (!value) return "不限";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let n = value;
-  let idx = 0;
-  while (n >= 1024 && idx < units.length - 1) {
-    n /= 1024;
-    idx++;
-  }
-  return `${n >= 10 || idx === 0 ? n.toFixed(0) : n.toFixed(2)} ${units[idx]}`;
-}
 
 function speed(value?: number | null) {
   const num = Number(value || 0);
@@ -73,13 +55,13 @@ function billingDescription(config: any) {
 }
 
 function effectiveBillingPriceMilliCents(config: any) {
-  return Math.round(pricePerGbMilliCents(config) * Number(config.multiplier || 100) / 100);
+  return Math.round(pricePerGbMilliCentsOf(config) * Number(config.multiplier || 100) / 100);
 }
 
 function planBenefitItems(plan: any) {
   const items = [
     `连续端口 ${plan.portCount || 0} 个`,
-    `套餐流量 ${bytes(plan.trafficLimit)}`,
+    `套餐流量 ${formatQuotaBytes(plan.trafficLimit)}`,
     `限速 ${speed(plan.rateLimitMbps)}`,
     `规则 ${plan.maxRules || "不限"} · 连接 ${plan.maxConnections || "不限"} · 单 IP ${plan.maxIPs || "不限"}`,
     "计数范围：端口转发按主机，隧道转发按隧道",
@@ -489,7 +471,7 @@ export default function Store() {
                         ) : (
                           <>
                             <div className="grid gap-2 text-sm text-muted-foreground">
-                              <div>基础单价：{moneyFromMilliCents(pricePerGbMilliCents(config))} / GB</div>
+                              <div>基础单价：{moneyFromMilliCents(pricePerGbMilliCentsOf(config))} / GB</div>
                               <div>倍率：{config.multiplierText || formatTrafficMultiplier(config.multiplier || 100)}</div>
                               <div>资源编号：#{config.resourceId}</div>
                               <div>创建规则时选择该资源，按实际计费流量从余额扣费。</div>

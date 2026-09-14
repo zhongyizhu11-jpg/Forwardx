@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { ledgerTone } from "@/lib/ledgerTone";
 import { balanceTypeLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -39,13 +40,6 @@ function paymentMethodText(type?: string | null) {
   if (type === "stripe") return "Stripe";
   if (type === "usdt" || type === "gmpay") return "USDT";
   return type || "-";
-}
-
-function ledgerTone(item: any) {
-  if (item.kind === "balance" && Number(item.amountCents) < 0) return "text-destructive";
-  if (item.kind === "balance" && Number(item.amountCents) > 0) return "text-emerald-600";
-  if (item.kind === "payment" && (item.status === "paid" || item.status === "completed")) return "text-emerald-600";
-  return "";
 }
 
 function ledgerIcon(item: any) {

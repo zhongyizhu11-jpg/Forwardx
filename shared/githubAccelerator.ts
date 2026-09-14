@@ -93,3 +93,13 @@ export function buildPanelInstallerCommand(options: {
     : "";
   return `curl -fsSL ${shellSingleQuote(scriptUrl)} | ${runner} -s -- ${options.action}${acceleratorArg}`;
 }
+
+/**
+ * 从仓库地址里拆出 owner/repo，主机路由和系统路由原来各存一份。
+ * 结尾的 .git 去掉 —— 用户填的地址常常是 clone 用的那一条。
+ */
+export function githubRepoParts(repoUrl: string) {
+  const match = repoUrl.match(/github\.com\/([^/]+)\/([^/#?]+)/i);
+  if (!match) throw new Error("GitHub 仓库地址格式不正确");
+  return { owner: match[1], repo: match[2].replace(/\.git$/i, "") };
+}

@@ -1,5 +1,6 @@
 ﻿import { asc, desc, eq } from "drizzle-orm";
 import { agentTokens, hosts, InsertAgentToken } from "../../drizzle/schema";
+import { isFreshHostHeartbeat } from "../hostHeartbeatPolicy";
 import { executeRaw, getDb, insertAndGetId, nowDate, queryRaw } from "../dbRuntime";
 import { inList, quoteIdentifier } from "../dbCompat";
 import { HOST_ONLINE_TTL_MS } from "../hostHeartbeatPolicy";
@@ -17,14 +18,8 @@ let agentAuthTokenCache: (AgentAuthTokenSnapshot & { expiresAt: number }) | null
 let agentAuthTokenLoad: Promise<AgentAuthTokenSnapshot> | null = null;
 let agentAuthTokenGeneration = 0;
 
-function isFreshHeartbeat(lastHeartbeat: unknown) {
-  if (!lastHeartbeat) return false;
-  const time = new Date(lastHeartbeat as any).getTime();
-  return Number.isFinite(time) && Date.now() - time <= HOST_ONLINE_TTL_MS;
-}
-
 function withComputedOnline<T extends { isOnline?: boolean; lastHeartbeat?: unknown }>(host: T): T {
-  return { ...host, isOnline: !!host.isOnline && isFreshHeartbeat(host.lastHeartbeat) };
+  return { ...host, isOnline: !!host.isOnline && isFreshHostHeartbeat(host.lastHeartbeat) };
 }
 
 export async function createAgentToken(data: InsertAgentToken) {

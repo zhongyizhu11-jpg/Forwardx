@@ -1,7 +1,11 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { parseHostDateTime } from "@/components/hosts/HostCard";
+import { getStoredAgentTokenViewMode, storeAgentTokenViewMode, type AgentTokenViewMode } from "@/lib/agentTokenViewMode";
+import { formatMetricSizeDetail } from "@/lib/formatMetricSize";
+import { usePageVisible } from "@/hooks/usePageVisible";
 import { escapeTooltipHtml, hostGeoCoordinate, hostMapClusterDistance, longitudeDistanceDegrees } from "@/lib/hostGeo";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
-import AgentTokenManager, { type AgentTokenViewMode } from "@/components/AgentTokenManager";
+import AgentTokenManager from "@/components/AgentTokenManager";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import DashboardLayout from "@/components/DashboardLayout";
 import DateTimePickerInput, {
@@ -143,16 +147,6 @@ function parseCustomPortsInput(value: string) {
     invalid,
     normalized: normalizedPorts.join(","),
   };
-}
-
-function usePageVisible() {
-  const [visible, setVisible] = useState(() => typeof document === "undefined" || document.visibilityState === "visible");
-  useEffect(() => {
-    const onVisibilityChange = () => setVisible(document.visibilityState === "visible");
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, []);
-  return visible;
 }
 
 type HostGlobePoint = {
@@ -742,25 +736,7 @@ function formatUsagePercent(value: unknown) {
   return percent === null ? "--" : `${percent}%`;
 }
 
-function formatMetricSizeDetail(used: unknown, total: unknown) {
-  const usedBytes = Number(used);
-  const totalBytes = Number(total);
-  if (!Number.isFinite(usedBytes) || usedBytes <= 0) return "";
-  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return formatBytes(usedBytes);
-  return `${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`;
-}
-
 const hostListDayMs = 24 * 60 * 60 * 1000;
-
-function parseHostDateTime(value: unknown) {
-  if (!value) return null;
-  const ms = value instanceof Date
-    ? value.getTime()
-    : typeof value === "number"
-      ? value
-      : Date.parse(String(value));
-  return Number.isFinite(ms) ? ms : null;
-}
 
 function formatHostDateTimeText(value: unknown) {
   const ms = parseHostDateTime(value);
@@ -1134,7 +1110,6 @@ const HOST_DIALOG_TABS = [
 
 const HOST_MANAGE_TAB_STORAGE_KEY = "forwardx.hosts.manageTab";
 const HOST_VIEW_MODE_STORAGE_KEY = "forwardx.hosts.viewMode";
-const AGENT_TOKEN_VIEW_MODE_STORAGE_KEY = "forwardx.agentTokens.viewMode";
 const HOST_PROBE_SERVICE_VIEW_MODE_STORAGE_KEY = "forwardx.hostProbeServices.viewMode";
 const HOST_GROUP_VIEW_MODE_STORAGE_KEY = "forwardx.hostGroups.viewMode";
 
@@ -1152,25 +1127,6 @@ function storeHostViewMode(viewMode: HostViewMode) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(HOST_VIEW_MODE_STORAGE_KEY, viewMode);
-  } catch {
-    // Ignore storage failures so the page still works in restricted browsers.
-  }
-}
-
-function getStoredAgentTokenViewMode(): AgentTokenViewMode {
-  if (typeof window === "undefined") return "card";
-  try {
-    const value = window.localStorage.getItem(AGENT_TOKEN_VIEW_MODE_STORAGE_KEY);
-    return value === "table" ? "table" : "card";
-  } catch {
-    return "card";
-  }
-}
-
-function storeAgentTokenViewMode(viewMode: AgentTokenViewMode) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(AGENT_TOKEN_VIEW_MODE_STORAGE_KEY, viewMode);
   } catch {
     // Ignore storage failures so the page still works in restricted browsers.
   }

@@ -1,4 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, or, sql, type SQLWrapper } from "drizzle-orm";
+import { isFreshHostHeartbeat } from "../hostHeartbeatPolicy";
+export { isFreshHostHeartbeat } from "../hostHeartbeatPolicy";
 import {
   agentTokens,
   forwardGroupMembers,
@@ -46,12 +48,6 @@ import {
 // ==================== Host Queries ====================
 
 export { HOST_ONLINE_TTL_MS };
-
-export function isFreshHostHeartbeat(lastHeartbeat: unknown) {
-  if (!lastHeartbeat) return false;
-  const time = new Date(lastHeartbeat as any).getTime();
-  return Number.isFinite(time) && Date.now() - time <= HOST_ONLINE_TTL_MS;
-}
 
 function withComputedOnline<T extends { id?: unknown; isOnline?: boolean; lastHeartbeat?: unknown }>(host: T): T {
   return {

@@ -1,4 +1,9 @@
 import AnimatedStatValue from "@/components/AnimatedStatValue";
+import { MILLI_CENTS_PER_CENT, pricePerGbMilliCentsOf } from "@shared/trafficBillingPrice";
+import { renderStatusDot } from "@/lib/statusDot";
+import { forwardGroupModeOf, forwardGroupTypeText, type ForwardGroupMode } from "@shared/forwardTypes";
+import MobileInfoRow from "@/components/MobileInfoRow";
+import StatCard from "@/components/StatCard";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -21,18 +26,11 @@ import { Coins, Gauge, LayoutGrid, List, Pencil, Plus, ReceiptText, Route, Serve
 import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
 import { toast } from "sonner";
 
-const MILLI_CENTS_PER_CENT = 1000;
 const MILLI_CENTS_PER_YUAN = 100000;
 const MIN_PRICE_PER_GB_MILLI_CENTS = 100;
 
-function pricePerGbMilliCents(config: any) {
-  const milliCents = Math.round(Number(config?.pricePerGbMilliCents || 0));
-  if (milliCents > 0) return milliCents;
-  return Math.round(Number(config?.pricePerGbCents || 0)) * MILLI_CENTS_PER_CENT;
-}
-
 function formatPricePerGb(config: any) {
-  const yuan = pricePerGbMilliCents(config) / MILLI_CENTS_PER_YUAN;
+  const yuan = pricePerGbMilliCentsOf(config) / MILLI_CENTS_PER_YUAN;
   return new Intl.NumberFormat("zh-CN", {
     style: "currency",
     currency: "CNY",
@@ -43,77 +41,6 @@ function formatPricePerGb(config: any) {
 
 function formatPriceInput(milliCents: number) {
   return (milliCents / MILLI_CENTS_PER_YUAN).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-}
-
-function TrafficBillingStatCard({
-  title,
-  value,
-  subtitle,
-  icon: Icon,
-  tone,
-  loading = false,
-  cacheKey,
-  fallbackValue,
-}: {
-  title: string;
-  value: string | number;
-  subtitle?: string;
-  icon: ElementType;
-  tone: string;
-  loading?: boolean;
-  cacheKey: string;
-  fallbackValue?: string | number;
-}) {
-  return (
-    <Card className="group relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-      <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
-      <CardContent className="relative p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
-            <AnimatedStatValue
-              as="p"
-              value={value}
-              loading={loading}
-              cacheKey={cacheKey}
-              fallbackValue={fallbackValue}
-              className="break-words text-2xl font-bold tracking-tight tabular-nums"
-            />
-            {subtitle && (
-              <AnimatedStatValue
-                as="p"
-                value={subtitle}
-                loading={loading}
-                cacheKey={`${cacheKey}.subtitle`}
-                fallbackValue=""
-                className="break-words text-xs text-muted-foreground/80"
-              />
-            )}
-          </div>
-          <div className={`hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${tone}`}>
-            <Icon className="h-5 w-5 text-white" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function MobileInfoRow({
-  label,
-  children,
-  valueClassName = "",
-}: {
-  label: string;
-  children: ReactNode;
-  valueClassName?: string;
-}) {
-  return (
-    <div className="grid grid-cols-[4.75rem_1fr] gap-2 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <div className={`min-w-0 text-right break-words ${valueClassName}`}>{children}</div>
-    </div>
-  );
 }
 
 type BillingResourceType = "host" | "tunnel" | "forward_group";
@@ -177,26 +104,11 @@ const defaultBillingConfigForm = (): BillingConfigForm => ({
   requiresPermission: false,
 });
 
-function forwardGroupMode(group: any) {
-  const mode = String(group?.groupMode || "failover");
-  return ["port", "chain", "failover", "entry", "exit"].includes(mode) ? mode : "failover";
-}
-
-function forwardGroupTypeText(group: any) {
-  const mode = forwardGroupMode(group);
-  if (mode === "port") return "端口转发";
-  if (mode === "chain") return "转发链";
-  if (mode === "entry") return "入口组";
-  if (mode === "exit") return "出口组";
-  if (group?.groupType === "tunnel") return "隧道转发组";
-  return "转发组";
-}
-
 function resourceCategoryForConfig(config: any, forwardGroups: any[]): BillingResourceCategory {
   if (config?.resourceType === "host") return "host";
   if (config?.resourceType === "tunnel") return "tunnel";
   const group = forwardGroups.find((item: any) => Number(item.id) === Number(config?.resourceId));
-  const mode = forwardGroupMode(group || { groupMode: config?.resourceKind === "端口转发" ? "port" : config?.resourceKind === "转发链" ? "chain" : "failover" });
+  const mode = forwardGroupModeOf(group || { groupMode: config?.resourceKind === "端口转发" ? "port" : config?.resourceKind === "转发链" ? "chain" : "failover" });
   if (mode === "port") return "port";
   if (mode === "chain") return "chain";
   return "group";
@@ -235,15 +147,6 @@ function billingResourceSearchText(category: BillingResourceCategory, item: any,
     item?.members?.length ? `${item.members.length} 成员` : "",
     item?.id,
   ].filter(Boolean).join(" / ");
-}
-
-function renderStatusDot(tone: "online" | "warning" | "offline") {
-  const className = tone === "online"
-    ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.16)]"
-    : tone === "warning"
-    ? "bg-amber-400 shadow-[0_0_0_3px_rgba(251,191,36,0.18)]"
-    : "bg-muted-foreground/35";
-  return <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${className}`} aria-hidden="true" />;
 }
 
 function billingResourceStatusTone(category: BillingResourceCategory, item: any): "online" | "warning" | "offline" {
@@ -376,9 +279,9 @@ export default function TrafficBillingConfigManager({
   const { data, isLoading: configsLoading } = trpc.trafficBilling.configs.useQuery();
   const { data: summary, isLoading: summaryLoading } = trpc.trafficBilling.status.useQuery();
 
-  const portForwardGroups = forwardGroups.filter((group: any) => forwardGroupMode(group) === "port");
-  const chainForwardGroups = forwardGroups.filter((group: any) => forwardGroupMode(group) === "chain");
-  const standardForwardGroups = forwardGroups.filter((group: any) => forwardGroupMode(group) === "failover");
+  const portForwardGroups = forwardGroups.filter((group: any) => forwardGroupModeOf(group) === "port");
+  const chainForwardGroups = forwardGroups.filter((group: any) => forwardGroupModeOf(group) === "chain");
+  const standardForwardGroups = forwardGroups.filter((group: any) => forwardGroupModeOf(group) === "failover");
   const resources = configForm.resourceCategory === "tunnel"
     ? tunnels
     : configForm.resourceCategory === "chain"
@@ -446,7 +349,7 @@ export default function TrafficBillingConfigManager({
       resourceId: String(config.resourceId || ""),
       resourceName: String(config.resourceName || ""),
       description: String(config.description || ""),
-      price: formatPriceInput(pricePerGbMilliCents(config)),
+      price: formatPriceInput(pricePerGbMilliCentsOf(config)),
       enabled: config.enabled !== false,
       requiresPermission: !!config.requiresPermission,
     });
@@ -515,7 +418,7 @@ export default function TrafficBillingConfigManager({
 
       {showSummary && (
         <div className="grid gap-4 md:grid-cols-3">
-          <TrafficBillingStatCard
+          <StatCard
             title="累计扣费"
             value={money(totalCharged)}
             subtitle="历史扣费合计"
@@ -525,7 +428,7 @@ export default function TrafficBillingConfigManager({
             cacheKey="trafficBilling.totalCharged"
             fallbackValue={money(0)}
           />
-          <TrafficBillingStatCard
+          <StatCard
             title="已计费流量"
             value={`${totalGb} GB`}
             subtitle="扣费记录累计"
@@ -535,7 +438,7 @@ export default function TrafficBillingConfigManager({
             cacheKey="trafficBilling.totalGb"
             fallbackValue="0 GB"
           />
-          <TrafficBillingStatCard
+          <StatCard
             title="计费资源"
             value={data?.configs?.length || 0}
             subtitle="已配置资源"

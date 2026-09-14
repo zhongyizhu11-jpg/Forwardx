@@ -830,7 +830,16 @@ export async function queryRaw<T = Record<string, any>>(sqlText: string, params:
   throw new DatabaseNotConfiguredError();
 }
 
-function normalizeRawValue(value: any, kind = _kind) {
+/**
+ * 把一个参数值变成这种数据库吃得下的形状。
+ *
+ * 库切换那边（databaseSwitch）原来存着一份一模一样的 normalizeTargetValue ——
+ * 迁移时写进新库的值，必须和面板平时写进去的走同一套转换，不然同一条数据
+ * 迁完之后会跟原来长得不一样（时间变字符串、布尔变 true/false）。
+ *
+ * 默认的 kind 取当前连接；迁移那边连的是另一个库，所以要显式传。
+ */
+export function normalizeRawValue(value: any, kind = _kind) {
   if (value instanceof Date) return Math.floor(value.getTime() / 1000);
   if (typeof value === "boolean" && kind !== "postgresql") return value ? 1 : 0;
   return value;

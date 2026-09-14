@@ -1,4 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { getStoredAgentTokenViewMode, storeAgentTokenViewMode, type AgentTokenViewMode } from "@/lib/agentTokenViewMode";
+import { usePageVisible } from "@/hooks/usePageVisible";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useOptimisticSortableOrder, useSortableReorder } from "@/components/SortableDragHandle";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -58,7 +60,7 @@ type AgentTokenManagerProps = {
   onFilterStatsChange?: (stats: { filtered: number; total: number }) => void;
 };
 
-export type AgentTokenViewMode = "card" | "table";
+export type { AgentTokenViewMode } from "@/lib/agentTokenViewMode";
 type InstallAddressMode = "public" | "current";
 type InstallAddressOption = {
   id: InstallAddressMode;
@@ -66,36 +68,6 @@ type InstallAddressOption = {
   description: string;
   url: string;
 };
-
-const AGENT_TOKEN_VIEW_MODE_STORAGE_KEY = "forwardx.agentTokens.viewMode";
-function usePageVisible() {
-  const [visible, setVisible] = useState(() => typeof document === "undefined" || document.visibilityState === "visible");
-  useEffect(() => {
-    const onVisibilityChange = () => setVisible(document.visibilityState === "visible");
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, []);
-  return visible;
-}
-
-function getStoredAgentTokenViewMode(): AgentTokenViewMode {
-  if (typeof window === "undefined") return "card";
-  try {
-    const value = window.localStorage.getItem(AGENT_TOKEN_VIEW_MODE_STORAGE_KEY);
-    return value === "table" ? "table" : "card";
-  } catch {
-    return "card";
-  }
-}
-
-function storeAgentTokenViewMode(viewMode: AgentTokenViewMode) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(AGENT_TOKEN_VIEW_MODE_STORAGE_KEY, viewMode);
-  } catch {
-    // Ignore storage failures so the token manager remains usable.
-  }
-}
 
 function isLoopbackPanelUrl(value: string) {
   try {

@@ -1,4 +1,5 @@
 import { protectedProcedure, adminProcedure, publicProcedure, router } from "../_core/trpc";
+import { githubRepoParts } from "@shared/githubAccelerator";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { nanoid } from "nanoid";
@@ -267,12 +268,6 @@ function hostTrafficConfigPayload(input: {
     trafficAutoReset: !!input.trafficAutoReset,
     trafficResetDay: input.trafficResetDay ?? 1,
   };
-}
-
-function githubRepoParts(repoUrl: string) {
-  const match = repoUrl.match(/github\.com\/([^/]+)\/([^/#?]+)/i);
-  if (!match) throw new Error("GitHub 仓库地址格式不正确");
-  return { owner: match[1], repo: match[2].replace(/\.git$/i, "") };
 }
 
 async function releaseAssetExistsViaDownloadUrl(tag: string, assetName: string) {

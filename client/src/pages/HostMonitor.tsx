@@ -1,4 +1,5 @@
 import DataSectionLoading from "@/components/DataSectionLoading";
+import { formatMetricSizeDetail } from "@/lib/formatMetricSize";
 import { LatencyPeakCutToggle } from "@/components/LatencyPeakCutToggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -101,14 +102,6 @@ function clampPercent(value: unknown) {
 function formatUsagePercent(value: unknown) {
   const percent = clampPercent(value);
   return percent === null ? "--" : `${percent}%`;
-}
-
-function formatMetricSizeDetail(used: unknown, total: unknown) {
-  const usedBytes = Number(used);
-  const totalBytes = Number(total);
-  if (!Number.isFinite(usedBytes) || usedBytes <= 0) return "";
-  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return formatBytes(usedBytes);
-  return `${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`;
 }
 
 function formatFullDateTime(value: unknown) {

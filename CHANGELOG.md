@@ -22,7 +22,7 @@
 
 ### 变化
 
-- **重复实现从 33 组降到 24 组**，这一轮合并了后果最重的九处，全部是一字不差的复制粘贴：
+- **一字不差的重复实现从 33 组清到 0 组**，共 36 个文件、净减 474 行。第一轮合并了后果最重的九处：
   - **`compareVersions` 三份、`normalizeVersion` 四份** → `shared/version.ts`。这把尺子同时管三件事：面板要不要显示「发现新版本」、后端敢不敢给某台 Agent 下发新指令、主机卡上的升级角标亮不亮。四份各自演化的话，界面说该升、后端说不用升，谁也说不清该信哪个。单独测了八条，含两条有方向的：**版本号缺失时一律判「不够」**（宁可少下发一个新能力，也不能对着一台不认识这条指令的 Agent 发过去），以及「够门槛」和「落后」必须互补。反向对照两个都红了（把缺失判成「够」、改成字符串比较）。
   - **`maskIdentifier` 两份** → `server/routers/helpers.ts`。打码规则是隐私口径，漂了意味着有一条路上比另一条露得多，而多露的那条不会报错，只会安安静静写进日志。
   - **`dbBool` / `databaseBool` 三份** → `repositoryUtils`。SQLite 存 0/1、PostgreSQL 存 true/false、裸 SQL 回来还可能是字符串。
@@ -30,6 +30,17 @@
   - **`hostGeoCoordinate` 四份、`escapeTooltipHtml` 四份、经纬度聚类距离两份** → `client/src/lib/hostGeo.ts`。同一台机器在四张图上该落在同一个点。
   - **`prefetchReactGlobe` 两份** → `client/src/lib/reactGlobeLoader.ts`。这一份不只是重复：两页各有一个模块级的「预取过了」标志，**互不知道对方**，先后打开链路管理和转发规则就会把地球组件预取两次 —— 那个包 gzip 后 500 KB 出头，手机上白下一遍不是小事。
   - 合并一律照搬原实现，**不顺手改行为**（比如经度环距那两份都没取模，就保持没取模，并在注释里写明为什么可以）。
+
+  第二轮把剩下的 24 组清完，挑几处说：
+  - **`bytes` 三份（套餐商店、我的套餐、套餐管理）** —— 这是上一版 formatBytes 收敛时**漏掉的第三种写法**：单位阶梯只到 TB，而且保留尾零（「1.50 GB」），跟全站其它地方的「1.5 GB」对不上。现在数字交给 `formatBytes`，`formatQuotaBytes` 只负责「0 当成不限」这一条额度语义。所以这三页的「1.50 GB」现在显示成「1.5 GB」。
+  - **`dbBool` 其实有六份、两种写法**：三份带 `typeof` 闸门，另三份直接 `String(value)` 比对。对库里真实出现的值（0/1、true/false、"0"/"1"/"true"/"false"、null、空串）结果完全一致，只在传进一个自定义 `toString` 的对象时才分岔 —— 那种值不会从数据库列里来，所以按同一份合了，并在注释里写明这个判断依据。
+  - **`isFreshHeartbeat` / `isFreshHostHeartbeat` 两份** → `hostHeartbeatPolicy`。库里那个 `isOnline` 是上次写入的结论，心跳停了它不会自己变，所以读出来还要拿时间戳再验一次。两份漂了就会出现「主机页说在线、Token 页说离线」，而这两页说的是同一台机器。
+  - **`linkHostSearchParts` / `forwardGroupHostSearchParts` 两份** → `hostSearchParts`。这份清单是「能不能搜到」的定义：两页各存一份，就会出现在链路管理里用 DDNS 域名搜得到、到转发组里同一个词搜不到。
+  - **`pricePerGbMilliCents` 两份** → `shared/trafficBillingPrice.ts`。老数据价钱存在 `pricePerGbCents`（分）、新字段是毫分，两份各自判「用哪个」，漂了就是同一条配置在两页显示成两个价钱 —— 这是正在收钱的数字。
+  - **`normalizeTargetValue` / `normalizeRawValue` 两份**（库切换 / 运行时）→ 一份。迁移时写进新库的值必须和面板平时写进去的走同一套转换，不然同一条数据迁完之后跟原来长得不一样。
+  - **账单页和流量计费页的统计卡**改用全站那一份 `StatCard`。原来那两份是同一段复制的样式、且**没有窄屏适配**（固定 `p-4` + `text-2xl`）；换成共用的之后手机上数字会自适应、图标收起。真面板在 390px 和 1280px 两个宽度各看了一遍，横向不溢出。
+  - `hostGeo` 那四合一另配了测试和反向对照（越界坐标改成夹边界、气泡不转义单引号、经度不按环形算 —— 三个都红）。
+  - **一处差点改坏的地方，被 tsc 拦下了**：整体改名 `pricePerGbMilliCents` → `pricePerGbMilliCentsOf` 时，连保存单价那段里的局部变量和**提交给接口的字段名**一起改了。字段名一改，保存时就会把单价当成未知属性丢掉 —— 一次静默的「改了价钱没生效」。已改回，保存路径按原样。
 
 - **三处「为了一个数字，把整张表读回来」改成窄查询**：
   - 自助加机器的配额检查（校验时一次、界面显示「2/10」时又一次）原来是 `(await getHosts(userId)).length` —— 为了得到一个台数，把这个人名下每台机器的每一列（agentToken、DDNS 配置、端口区间那一堆）全查回来再扔掉。换成 `countHostsByUserId`，一条 `COUNT(*)`。

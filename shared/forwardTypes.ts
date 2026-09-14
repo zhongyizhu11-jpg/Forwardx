@@ -113,3 +113,29 @@ export function isNginxForwardProtocolEnabled(settings: Partial<Record<string, u
   const normalized = normalizeForwardProtocolSettings(settings);
   return normalized.nginx !== false || normalized.nginx_stream !== false;
 }
+
+export type ForwardGroupMode = "port" | "failover" | "chain" | "entry" | "exit";
+
+/**
+ * 转发组的模式，认不出的一律当 failover。
+ *
+ * 流量计费配置页和套餐管理页原来各存一份（一个用 includes、一个用连等，结果
+ * 一样），文案函数也各存一份。这是**摆给人看的类别名** —— 同一个组在两页叫
+ * 两个名字，人会以为是两种东西。
+ */
+export function forwardGroupModeOf(group: any): ForwardGroupMode {
+  const mode = String(group?.groupMode || "failover");
+  return mode === "port" || mode === "failover" || mode === "chain" || mode === "entry" || mode === "exit"
+    ? mode
+    : "failover";
+}
+
+export function forwardGroupTypeText(group: any) {
+  const mode = forwardGroupModeOf(group);
+  if (mode === "port") return "端口转发";
+  if (mode === "chain") return "转发链";
+  if (mode === "entry") return "入口组";
+  if (mode === "exit") return "出口组";
+  if (group?.groupType === "tunnel") return "隧道转发组";
+  return "转发组";
+}

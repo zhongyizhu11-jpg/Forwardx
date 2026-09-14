@@ -1,4 +1,5 @@
 import DeckGL from "@deck.gl/react";
+import { hostRegionText } from "@/components/hosts/hostDisplay";
 import { escapeTooltipHtml, hostGeoCoordinate, hostMapClusterDistance, longitudeDistanceDegrees } from "@/lib/hostGeo";
 import { GeoJsonLayer, LineLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import MapLibreMap from "react-map-gl/maplibre";
@@ -65,13 +66,6 @@ function hostAddressText(host: any) {
   if (host.ipv6) parts.push(`IPv6 ${host.ipv6}`);
   if (parts.length === 0 && host.ip) parts.push(`IP ${host.ip}`);
   return parts.join("  /  ") || "-";
-}
-
-function hostRegionText(host: any) {
-  const parts = [host.geoCountryName || host.geoCountryCode, host.geoRegion]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean);
-  return parts.join(" / ");
 }
 
 function hostCountryCode(host: any) {

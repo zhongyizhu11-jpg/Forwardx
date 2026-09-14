@@ -69,7 +69,7 @@ function formatOptionalBytes(value: number | null) {
 
 const dayMs = 24 * 60 * 60 * 1000;
 
-function parseHostDateTime(value: unknown) {
+export function parseHostDateTime(value: unknown) {
   if (!value) return null;
   const ms = value instanceof Date
     ? value.getTime()

@@ -1,4 +1,7 @@
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
+import { ledgerTone } from "@/lib/ledgerTone";
+import MobileInfoRow from "@/components/MobileInfoRow";
+import StatCard from "@/components/StatCard";
 import { balanceTypeLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -68,60 +71,6 @@ function discountStatus(code: any) {
   return "生效中";
 }
 
-function BillingStatCard({
-  title,
-  value,
-  subtitle,
-  icon: Icon,
-  tone,
-  loading = false,
-  cacheKey,
-  fallbackValue,
-}: {
-  title: string;
-  value: string | number;
-  subtitle?: string;
-  icon: ElementType;
-  tone: string;
-  loading?: boolean;
-  cacheKey: string;
-  fallbackValue?: string | number;
-}) {
-  return (
-    <Card className="group relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-      <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
-      <CardContent className="relative p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
-            <AnimatedStatValue
-              as="p"
-              value={value}
-              loading={loading}
-              cacheKey={cacheKey}
-              fallbackValue={fallbackValue}
-              className="break-words text-2xl font-bold tracking-tight tabular-nums"
-            />
-            {subtitle && (
-              <AnimatedStatValue
-                as="p"
-                value={subtitle}
-                loading={loading}
-                cacheKey={`${cacheKey}.subtitle`}
-                fallbackValue=""
-                className="break-words text-xs text-muted-foreground/80"
-              />
-            )}
-          </div>
-          <div className={`hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${tone}`}>
-            <Icon className="h-5 w-5 text-white" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 function BillingToggleCard({
   title,
   enabled,
@@ -183,34 +132,10 @@ function downloadCodeTextFile(codes: string[], filename = `redemption-codes-${ne
   URL.revokeObjectURL(url);
 }
 
-function ledgerTone(item: any) {
-  if (item.kind === "balance" && Number(item.amountCents) < 0) return "text-destructive";
-  if (item.kind === "balance" && Number(item.amountCents) > 0) return "text-emerald-600";
-  if (item.kind === "payment" && (item.status === "paid" || item.status === "completed")) return "text-emerald-600";
-  return "";
-}
-
 function ledgerIcon(item: any) {
   if (item.kind === "payment") return CreditCard;
   if (item.kind === "subscription") return Package;
   return WalletCards;
-}
-
-function MobileInfoRow({
-  label,
-  children,
-  valueClassName = "",
-}: {
-  label: string;
-  children: ReactNode;
-  valueClassName?: string;
-}) {
-  return (
-    <div className="grid grid-cols-[4.75rem_1fr] gap-2 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <div className={`min-w-0 text-right break-words ${valueClassName}`}>{children}</div>
-    </div>
-  );
 }
 
 export default function Billing() {
@@ -590,7 +515,7 @@ export default function Billing() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <BillingStatCard
+          <StatCard
             title="用户余额总额"
             value={money(totalBalance)}
             subtitle={`${Number(billingSummary?.userCount || 0)} 个用户`}
@@ -600,7 +525,7 @@ export default function Billing() {
             cacheKey="billing.totalBalance"
             fallbackValue={money(0)}
           />
-          <BillingStatCard
+          <StatCard
             title="可用兑换码"
             value={activeRedemptionCodes}
             subtitle="未使用且已启用"
@@ -610,7 +535,7 @@ export default function Billing() {
             cacheKey="billing.activeRedemptionCodes"
             fallbackValue={0}
           />
-          <BillingStatCard
+          <StatCard
             title="生效折扣码"
             value={activeDiscountCodes}
             subtitle="当前可抵扣"

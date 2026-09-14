@@ -27,3 +27,17 @@ export function formatBytes(bytes: number | string | null | undefined): string {
   // parseFloat 顺手把尾零去掉 —— 「1.5 GB」而不是「1.50 GB」。
   return `${parseFloat(value.toFixed(index === 0 ? 0 : 2))} ${UNITS[index]}`;
 }
+
+/**
+ * 额度口径的字节显示：0 表示「不限」，不是「0 B」。
+ *
+ * 套餐商店、我的套餐、套餐管理三页原来各有一份叫 `bytes` 的私有实现 —— 那是
+ * formatBytes 收敛之后**漏掉的第三种写法**：单位阶梯只到 TB，而且保留尾零
+ * （「1.50 GB」），跟全站其它地方的「1.5 GB」对不上。现在数字部分交给
+ * formatBytes，这里只负责「0 当成不限」这一条额度语义。
+ */
+export function formatQuotaBytes(size?: number | null, unlimitedText = "不限") {
+  const value = Number(size || 0);
+  if (!value) return unlimitedText;
+  return formatBytes(value);
+}

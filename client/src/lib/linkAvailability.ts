@@ -1,4 +1,5 @@
 import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
+import { timestampMillis } from "./timestamp";
 import {
   LINK_PROBE_FRESH_MS,
   LINK_PROBE_MAX_FUTURE_SKEW_MS,
@@ -42,15 +43,6 @@ type AvailabilitySummaryInput = {
   message?: string;
   usableMemberIds?: unknown[];
 };
-
-function timestampMillis(value: unknown) {
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 0 && value < 1_000_000_000_000 ? value * 1000 : value;
-  }
-  const timestamp = new Date(String(value || "")).getTime();
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
 
 export function resolveFreshLinkProbe(
   probe: ProbeInput | null | undefined,
