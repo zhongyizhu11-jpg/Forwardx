@@ -1,4 +1,5 @@
 import AnimatedStatValue from "@/components/AnimatedStatValue";
+import { formatMoneyCents as money } from "@shared/formatMoney";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Badge } from "@/components/ui/badge";
@@ -19,10 +20,6 @@ import { formatTrafficMultiplier } from "@shared/trafficMultiplier";
 import { Coins, Gauge, LayoutGrid, List, Pencil, Plus, ReceiptText, Route, Server, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
 import { toast } from "sonner";
-
-function money(cents?: number | null) {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" }).format((Number(cents) || 0) / 100);
-}
 
 const MILLI_CENTS_PER_CENT = 1000;
 const MILLI_CENTS_PER_YUAN = 100000;

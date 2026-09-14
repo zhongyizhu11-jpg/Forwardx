@@ -1,4 +1,5 @@
 import DashboardLayout from "@/components/DashboardLayout";
+import { formatMoneyCents as money } from "@shared/formatMoney";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,10 +22,6 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { BILLING_DATE_TIME_FORMAT_OPTIONS } from "@shared/billingTime";
 import { planDurationLabel } from "@shared/planPricing";
-
-function money(cents?: number | null, currency = "CNY") {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((Number(cents) || 0) / 100);
-}
 
 function bytes(size?: number | null) {
   const value = Number(size || 0);

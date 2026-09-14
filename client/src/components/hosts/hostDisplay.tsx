@@ -1,3 +1,9 @@
+import { formatBytes } from "@shared/formatBytes";
+
+// 这里原来自带一份实现（全站共 7 份各不相同）。改成转发共享的那一份，
+// 现有的调用方（MyHostsSection 等）不用改导入。
+export { formatBytes };
+
 const AGENT_UPGRADE_TIMEOUT_MS = 10 * 60 * 1000;
 const HOST_METRICS_CACHE_PREFIX = "forwardx.hosts.metrics.";
 
@@ -35,15 +41,6 @@ export function metricUsageProgressClass(value: unknown, isOnline: boolean) {
   if (usage >= 80) return "h-1.5 bg-muted [&>div]:bg-red-500";
   if (usage >= 50) return "h-1.5 bg-muted [&>div]:bg-amber-500";
   return "h-1.5 bg-muted [&>div]:bg-emerald-500";
-}
-
-export function formatBytes(bytes: number | null | undefined): string {
-  const num = Number(bytes);
-  if (!Number.isFinite(num) || num === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB", "PB"];
-  const i = Math.min(sizes.length - 1, Math.floor(Math.log(Math.abs(num)) / Math.log(k)));
-  return parseFloat((num / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
 export function formatUptime(seconds: number | null | undefined): string {

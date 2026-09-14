@@ -1,4 +1,5 @@
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
+import { formatMoneyCents as money } from "@shared/formatMoney";
 import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -149,10 +150,6 @@ function storePlanListViewMode(viewMode: PlanListViewMode) {
   } catch {
     // View preference is optional.
   }
-}
-
-function money(cents?: number, currency = "CNY") {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((cents || 0) / 100);
 }
 
 function bytes(size?: number | null) {

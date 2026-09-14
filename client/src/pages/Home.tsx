@@ -1,4 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { formatMoneyCents as money } from "@shared/formatMoney";
+import { formatBytes } from "@shared/formatBytes";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import StatCard from "@/components/StatCard";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -56,23 +58,11 @@ type TrafficPieDatum = {
   percent: number;
 };
 
-function formatBytes(bytes: number | string | null | undefined): string {
-  const num = Number(bytes);
-  if (!num || Number.isNaN(num)) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  const index = Math.min(units.length - 1, Math.floor(Math.log(Math.abs(num)) / Math.log(1024)));
-  return `${parseFloat((num / 1024 ** index).toFixed(index === 0 ? 0 : 2))} ${units[index]}`;
-}
-
 function quotaSourceLabel(kind: TrafficQuotaSourceKind) {
   if (kind === "manual") return "手工额度";
   if (kind === "addon") return "已购附加流量";
   if (kind === "grant") return "管理员加赠";
   return "套餐额度";
-}
-
-function money(cents?: number | null, currency = "CNY") {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((Number(cents) || 0) / 100);
 }
 
 function formatTrafficTime(value: string | Date): string {

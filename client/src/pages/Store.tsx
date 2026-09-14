@@ -1,4 +1,5 @@
 import DashboardLayout from "@/components/DashboardLayout";
+import { formatMoneyCents as money, formatMoneyMilliCents as moneyFromMilliCents } from "@shared/formatMoney";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import { Badge } from "@/components/ui/badge";
@@ -26,10 +27,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
 
-function money(cents?: number, currency = "CNY") {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((cents || 0) / 100);
-}
-
 const MILLI_CENTS_PER_CENT = 1000;
 const MILLI_CENTS_PER_YUAN = 100000;
 
@@ -37,16 +34,6 @@ function pricePerGbMilliCents(config: any) {
   const milliCents = Math.round(Number(config?.pricePerGbMilliCents || 0));
   if (milliCents > 0) return milliCents;
   return Math.round(Number(config?.pricePerGbCents || 0)) * MILLI_CENTS_PER_CENT;
-}
-
-function moneyFromMilliCents(milliCents?: number, currency = "CNY") {
-  const yuan = Number(milliCents || 0) / MILLI_CENTS_PER_YUAN;
-  return new Intl.NumberFormat("zh-CN", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: yuan > 0 && yuan < 0.01 ? 3 : 2,
-    maximumFractionDigits: 3,
-  }).format(yuan);
 }
 
 function bytes(size?: number | null) {

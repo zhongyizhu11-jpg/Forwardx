@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatBytes } from "@shared/formatBytes";
 import DashboardLayout from "@/components/DashboardLayout";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { AgentResourceManager } from "@/components/plugins/AgentResourceManager";
@@ -114,13 +115,6 @@ function pluginSourceLabel(sourceType?: string) {
 
 function pluginSupportsUpdates(plugin?: PluginRow) {
   return plugin?.sourceType === "github" || plugin?.sourceType === "local";
-}
-
-function formatBytes(bytes: number) {
-  const value = Number(bytes || 0);
-  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
-  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${value} B`;
 }
 
 function formatTime(value?: string | Date | number | null) {

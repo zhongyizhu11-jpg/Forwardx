@@ -1,4 +1,5 @@
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
+import { formatMoneyCents as money } from "@shared/formatMoney";
 import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -33,10 +34,6 @@ const BILLING_TAB_ITEMS = [
   { value: "discount", label: "折扣码" },
 ] as const satisfies readonly SlidingTabItem<BillingTab>[];
 const BILLING_TAB_STORAGE_KEY = "forwardx.billing.tab";
-
-function money(cents?: number, currency = "CNY") {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((Number(cents) || 0) / 100);
-}
 
 function dateText(value?: string | Date | null) {
   return value ? new Date(value).toLocaleString() : "不限";

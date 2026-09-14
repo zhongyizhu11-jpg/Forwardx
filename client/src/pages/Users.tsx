@@ -1,4 +1,6 @@
 import DataSectionError from "@/components/DataSectionError";
+import { formatMoneyCents as formatCurrencyCny } from "@shared/formatMoney";
+import { formatBytes } from "@shared/formatBytes";
 import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
@@ -85,15 +87,6 @@ import { useLocation } from "wouter";
 import { BILLING_DATE_TIME_FORMAT_OPTIONS, billingCalendarParts } from "@shared/billingTime";
 import { FORWARD_TYPES } from "@shared/forwardTypes";
 
-function formatBytes(bytes: number | string | null | undefined): string {
-  const num = Number(bytes);
-  if (!num || isNaN(num) || num === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(Math.abs(num)) / Math.log(k));
-  return parseFloat((num / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-}
-
 function parseTrafficInputGB(value: string): number {
   // 纯数字输入，单位 GB，0 表示不限制
   const num = parseFloat(String(value).trim());
@@ -120,10 +113,6 @@ function formatForwardRateLimit(inMbps: unknown, outMbps: unknown): string {
 
 function userLabel(user: any) {
   return user?.name || user?.username || `#${user?.id}`;
-}
-
-function formatCurrencyCny(cents: number | string | null | undefined): string {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" }).format((Number(cents) || 0) / 100);
 }
 
 const USER_MANAGE_TYPES = ["accounts", "subscriptions"] as const;

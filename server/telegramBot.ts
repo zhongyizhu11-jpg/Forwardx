@@ -1,4 +1,5 @@
 import * as db from "./db";
+import { formatBytes } from "../shared/formatBytes";
 import { createDirectForwardRuleForActor, deleteForwardRuleForActor, toggleForwardRuleForActor } from "./routers/rules.crud";
 import { ENV } from "./env";
 import { ACCOUNT_DISABLED_ERR_MSG } from "../shared/const";
@@ -272,14 +273,6 @@ function escapeHtml(value: unknown) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
-
-function formatBytes(bytes: number | string | null | undefined) {
-  const num = Number(bytes) || 0;
-  if (num <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  const index = Math.min(units.length - 1, Math.floor(Math.log(num) / Math.log(1024)));
-  return `${parseFloat((num / 1024 ** index).toFixed(index === 0 ? 0 : 2))} ${units[index]}`;
 }
 
 function formatMoneyCny(cents: number | string | null | undefined) {

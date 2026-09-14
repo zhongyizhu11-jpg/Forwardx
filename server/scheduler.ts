@@ -1,4 +1,5 @@
 import * as db from "./db";
+import { formatBytes } from "../shared/formatBytes";
 import { pushAgentRefresh } from "./agentEvents";
 import { appendPanelLog } from "./_core/panelLogger";
 import { parseSelfTestMeta } from "./agentRouteUtils";
@@ -488,7 +489,7 @@ async function runHostEmailReminders(users: any[], now: number) {
         text: [
           `主机：${host.name || `#${host.id}`}`,
           `剩余约 ${plan.leftPercent}%`,
-          `已用：${formatBytesLocal(plan.usedBytes)} / ${formatBytesLocal(plan.limitBytes)}`,
+          `已用：${formatBytes(plan.usedBytes)} / ${formatBytes(plan.limitBytes)}`,
           `计算方式：${hostTrafficMeasureModeLabel(host.trafficMeasureMode)}`,
           "",
           "流量跑超之后这台机器上的转发和落地节点会一起受影响，请及时处理。",
@@ -553,7 +554,7 @@ async function runProxyNodeEmailReminders(users: any[]) {
       text: [
         `节点：${node.name || `#${node.id}`}`,
         `地址：${node.address || "-"}:${node.port || "-"}`,
-        `已用：${formatBytesLocal(plan.usedBytes)} / ${formatBytesLocal(plan.limitBytes)}（${plan.usedPercent}%）`,
+        `已用：${formatBytes(plan.usedBytes)} / ${formatBytes(plan.limitBytes)}（${plan.usedPercent}%）`,
         "",
         plan.state === "exceeded"
           ? "面板不会因此停掉它，但机房通常会 —— 到时候客户端里这条线路会直接断。"
@@ -619,8 +620,8 @@ async function runTelegramReminders() {
               "ForwardX 流量提醒",
               "",
               `你的流量剩余约 ${leftPercent}%。`,
-              `已用：${formatBytesLocal(used)}`,
-              `总量：${formatBytesLocal(limit)}`,
+              `已用：${formatBytes(used)}`,
+              `总量：${formatBytes(limit)}`,
               "请及时续费或联系管理员。",
             ].join("\n"),
           );
@@ -651,8 +652,8 @@ async function runTelegramReminders() {
               "",
               `主机：${escapeHtmlLocal(host.name || `#${host.id}`)}`,
               `剩余约 ${leftPercent}%`,
-              `已用：${formatBytesLocal(used)}`,
-              `总量：${formatBytesLocal(limit)}`,
+              `已用：${formatBytes(used)}`,
+              `总量：${formatBytes(limit)}`,
               `计算方式：${hostTrafficMeasureModeLabel(host.trafficMeasureMode)}`,
             ].join("\n"),
           );
@@ -680,7 +681,7 @@ async function runTelegramReminders() {
             plan.state === "exceeded" ? "ForwardX 落地节点流量已用完" : "ForwardX 落地节点流量提醒",
             "",
             `节点：${escapeHtmlLocal(node.name || `#${node.id}`)}`,
-            `已用：${formatBytesLocal(plan.usedBytes)} / ${formatBytesLocal(plan.limitBytes)}（${plan.usedPercent}%）`,
+            `已用：${formatBytes(plan.usedBytes)} / ${formatBytes(plan.limitBytes)}（${plan.usedPercent}%）`,
             "",
             plan.state === "exceeded"
               ? "面板不会因此停掉它，但机房通常会 —— 到时候客户端里这条线路会直接断。"
@@ -808,13 +809,6 @@ function escapeHtmlLocal(value: unknown) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
-
-function formatBytesLocal(bytes: number) {
-  if (!bytes) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-  return `${parseFloat((bytes / 1024 ** index).toFixed(index === 0 ? 0 : 2))} ${units[index]}`;
 }
 
 export function startScheduler() {

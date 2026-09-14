@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { formatMoneyCents as money } from "@shared/formatMoney";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DashboardLayout from "@/components/DashboardLayout";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -18,10 +19,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 type PaymentType = "alipay" | "wxpay" | "stripe" | "usdt";
-
-function money(cents?: number | null, currency = "CNY") {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((Number(cents) || 0) / 100);
-}
 
 function dateText(value?: string | Date | null) {
   if (!value) return "-";

@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { formatBytes } from "@shared/formatBytes";
 import DashboardLayout from "@/components/DashboardLayout";
 import { EmailSettingsContent } from "./EmailSettings";
 import { Badge } from "@/components/ui/badge";
@@ -614,13 +615,6 @@ function normalizePersonalizationBackgroundConfig(value: any): PersonalizationBa
     urlType: normalizedSource === "url" && source.urlType === "video" ? "video" : "image",
     images: Array.isArray(source.images) ? source.images : [],
   };
-}
-
-function formatBytes(bytes: number) {
-  const value = Number(bytes || 0);
-  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
-  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
-  return `${Math.max(0, value)} B`;
 }
 
 function createLocalId(prefix: string) {
