@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { escapeTooltipHtml, hostGeoCoordinate, hostMapClusterDistance, longitudeDistanceDegrees } from "@/lib/hostGeo";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AgentTokenManager, { type AgentTokenViewMode } from "@/components/AgentTokenManager";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
@@ -154,15 +155,6 @@ function usePageVisible() {
   return visible;
 }
 
-function hostGeoCoordinate(host: any) {
-  if (host?.geoLatitudeMicro == null || host?.geoLongitudeMicro == null) return null;
-  const lat = Number(host.geoLatitudeMicro) / 1_000_000;
-  const lng = Number(host.geoLongitudeMicro) / 1_000_000;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  return { lat, lng };
-}
-
 type HostGlobePoint = {
   host: any;
   lat: number;
@@ -209,11 +201,6 @@ function normalizeLongitude(lng: number) {
   return lng;
 }
 
-function longitudeDistanceDegrees(a: number, b: number) {
-  const diff = Math.abs(a - b);
-  return Math.min(diff, 360 - diff);
-}
-
 function hostCountryCode(host: any) {
   return normalizeCountryCode(host?.geoCountryCode);
 }
@@ -232,20 +219,13 @@ function hostGlobePointPulledOut(point: HostGlobePoint) {
   return Math.abs(point.lat - point.displayLat) > 0.01 || Math.abs(point.lng - point.displayLng) > 0.01;
 }
 
-function hostGlobeClusterDistance(point: HostGlobePoint, cluster: HostGlobeCluster) {
-  const latDiff = point.lat - cluster.centerLat;
-  const lngScale = Math.max(0.35, Math.cos((((point.lat + cluster.centerLat) / 2) * Math.PI) / 180));
-  const lngDiff = longitudeDistanceDegrees(point.lng, cluster.centerLng) * lngScale;
-  return Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
-}
-
 function buildHostGlobeClusters(points: HostGlobePoint[]) {
   const clusters: HostGlobeCluster[] = [];
   points
     .slice()
     .sort((a, b) => a.lng - b.lng || a.lat - b.lat)
     .forEach((point) => {
-      const cluster = clusters.find((item) => hostGlobeClusterDistance(point, item) <= HOST_GLOBE_CLUSTER_DISTANCE_DEGREES);
+      const cluster = clusters.find((item) => hostMapClusterDistance(point, item) <= HOST_GLOBE_CLUSTER_DISTANCE_DEGREES);
       if (!cluster) {
         clusters.push({ centerLat: point.lat, centerLng: point.lng, points: [point] });
         return;
@@ -334,25 +314,6 @@ function createHostGlobeLabelElement(
     onEdit(point.host);
   });
   return element;
-}
-
-function escapeTooltipHtml(value: unknown) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return char;
-    }
-  });
 }
 
 function renderHostGlobeTooltip(point: HostGlobePoint) {

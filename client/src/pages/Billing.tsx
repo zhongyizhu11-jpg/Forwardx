@@ -1,4 +1,5 @@
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
+import { balanceTypeLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
@@ -167,17 +168,6 @@ function BillingToggleCard({
 
 function normalizeCodeInput(value: string) {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 64);
-}
-
-function balanceTypeText(type?: string | null) {
-  if (type === "admin_recharge") return "管理员充值";
-  if (type === "admin_adjust") return "管理员修改";
-  if (type === "payment") return "在线充值入账";
-  if (type === "purchase") return "余额消费";
-  if (type === "redeem") return "兑换入账";
-  if (type === "traffic_billing") return "流量计费";
-  if (type === "traffic_addon_purchase") return "购买附加流量";
-  return type || "余额变动";
 }
 
 function downloadCodeTextFile(codes: string[], filename = `redemption-codes-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.txt`) {
@@ -905,7 +895,7 @@ export default function Billing() {
                         <div className={`shrink-0 text-right text-sm font-medium ${Number(tx.amountCents) >= 0 ? "text-emerald-600" : "text-destructive"}`}>{money(tx.amountCents)}</div>
                       </div>
                       <div className="mt-3 space-y-2 border-t border-border/40 pt-3">
-                        <MobileInfoRow label="类型"><Badge variant="outline">{tx.typeLabel || balanceTypeText(tx.type)}</Badge></MobileInfoRow>
+                        <MobileInfoRow label="类型"><Badge variant="outline">{tx.typeLabel || balanceTypeLabel(tx.type)}</Badge></MobileInfoRow>
                         <MobileInfoRow label="余额">{money(tx.balanceAfterCents)}</MobileInfoRow>
                         <MobileInfoRow label="说明">{tx.description || "-"}</MobileInfoRow>
                       </div>
@@ -924,7 +914,7 @@ export default function Billing() {
                     {transactions.map((tx: any) => (
                       <TableRow key={tx.id}>
                         <TableCell>{tx.name || tx.username || `#${tx.userId}`}</TableCell>
-                        <TableCell><Badge variant="outline">{tx.typeLabel || balanceTypeText(tx.type)}</Badge></TableCell>
+                        <TableCell><Badge variant="outline">{tx.typeLabel || balanceTypeLabel(tx.type)}</Badge></TableCell>
                         <TableCell className={Number(tx.amountCents) >= 0 ? "text-emerald-600" : "text-destructive"}>{money(tx.amountCents)}</TableCell>
                         <TableCell>{money(tx.balanceAfterCents)}</TableCell>
                         <TableCell>{tx.description || "-"}</TableCell>

@@ -53,25 +53,7 @@ export function formatUptime(seconds: number | null | undefined): string {
   return `${m}分钟`;
 }
 
-function normalizeVersion(version: string | null | undefined) {
-  return String(version || "").trim().replace(/^v/i, "");
-}
-
-export function compareVersions(a: string | null | undefined, b: string | null | undefined) {
-  const pa = normalizeVersion(a).split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
-  const pb = normalizeVersion(b).split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
-    if (diff !== 0) return diff > 0 ? 1 : -1;
-  }
-  return 0;
-}
-
-export function isAgentVersionBehind(version: string | null | undefined, target: string | null | undefined) {
-  if (!version || !target) return false;
-  return compareVersions(version, target) < 0;
-}
+export { compareVersions, isAgentVersionBehind, normalizeVersion } from "@shared/version";
 
 export function isAgentUpgradeTimedOut(host: any) {
   if (!host?.agentUpgradeRequested || !host.agentUpgradeRequestedAt) return false;

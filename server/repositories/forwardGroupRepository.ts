@@ -91,7 +91,7 @@ import {
 } from "../portReservations";
 import { repairPortForwardRuleHostReferences } from "../portForwardRuleHosts";
 import { summarizeForwardGroupRuntime } from "../forwardGroupRuntimeStatus";
-import { sqlBool } from "./repositoryUtils";
+import { dbBool, sqlBool } from "./repositoryUtils";
 import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
 import { MAX_FORWARD_GROUP_MEMBERS } from "../../shared/forwardGroup";
 import { getLastAuthenticatedAgentActivity } from "../agentActivity";
@@ -152,14 +152,6 @@ function nullableNumber(value: unknown) {
 function nullableString(value: unknown) {
   const text = String(value || "").trim();
   return text || null;
-}
-
-function dbBool(value: unknown, fallback = false) {
-  if (value === undefined || value === null || value === "") return fallback;
-  if (value === true || value === 1) return true;
-  if (typeof value !== "string") return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true";
 }
 
 function runtimeFieldEqual(current: unknown, next: unknown) {

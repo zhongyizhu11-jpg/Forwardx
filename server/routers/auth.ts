@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { maskIdentifier } from "./helpers";
 import { nanoid } from "nanoid";
 import jwt from "jsonwebtoken";
 import { ACCOUNT_DISABLED_ERR_MSG, COOKIE_NAME, SESSION_REPLACED_ERR_MSG } from "../../shared/const";
@@ -91,18 +92,6 @@ function normalizeEmail(email: string) {
 export function pruneEmailAuthStores(now = Date.now()) {
   pruneMapEntries(emailCodeStore, (entry) => entry.expiresAt <= now);
   pruneMapEntries(emailSendIpStore, (entry) => now - entry.lastFailAt >= EMAIL_CODE_IP_WINDOW_MS);
-}
-
-function maskIdentifier(value?: string | null) {
-  const text = String(value || "").trim();
-  if (!text) return "unknown";
-  const [name, domain] = text.split("@");
-  if (domain) {
-    const visible = name.length <= 2 ? `${name[0] || "*"}*` : `${name.slice(0, 2)}***`;
-    return `${visible}@${domain}`;
-  }
-  if (text.length <= 3) return `${text[0] || "*"}***`;
-  return `${text.slice(0, 2)}***${text.slice(-1)}`;
 }
 
 function getRequestIp(ctx: { req: { ip?: string; socket: { remoteAddress?: string } } }) {

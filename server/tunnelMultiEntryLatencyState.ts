@@ -1,3 +1,5 @@
+import { normalizeProbeCounts } from "../shared/latencyProbe";
+
 export type TunnelEntryLatencyDetail = {
   hostId: number;
   label: string;
@@ -93,21 +95,6 @@ function cleanExpiredStates(now: number) {
 
 function resultSucceeded(result: ProbeResult | undefined) {
   return !!result && result.probeSuccesses > 0 && Number(result.latencyMs || 0) > 0;
-}
-
-function normalizeProbeCounts(input: {
-  probeCount?: number | null;
-  probeSuccesses?: number | null;
-  isTimeout?: boolean;
-}) {
-  const rawCount = Number(input.probeCount);
-  const probeCount = Number.isInteger(rawCount) && rawCount >= 1 && rawCount <= 1024 ? rawCount : 1;
-  const rawSuccesses = Number(input.probeSuccesses);
-  const hasSuccesses = input.probeSuccesses !== undefined && input.probeSuccesses !== null
-    && Number.isInteger(rawSuccesses);
-  let probeSuccesses = hasSuccesses ? rawSuccesses : (input.isTimeout ? 0 : probeCount);
-  probeSuccesses = Math.max(0, Math.min(probeCount, probeSuccesses));
-  return { probeCount, probeSuccesses };
 }
 
 function combineProbeCounts(results: ProbeResult[]) {

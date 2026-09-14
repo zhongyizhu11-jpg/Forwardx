@@ -1,4 +1,5 @@
 import DeckGL from "@deck.gl/react";
+import { escapeTooltipHtml, hostGeoCoordinate, hostMapClusterDistance, longitudeDistanceDegrees } from "@/lib/hostGeo";
 import { GeoJsonLayer, LineLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import MapLibreMap from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -73,15 +74,6 @@ function hostRegionText(host: any) {
   return parts.join(" / ");
 }
 
-function hostGeoCoordinate(host: any) {
-  if (host?.geoLatitudeMicro == null || host?.geoLongitudeMicro == null) return null;
-  const lat = Number(host.geoLatitudeMicro) / 1_000_000;
-  const lng = Number(host.geoLongitudeMicro) / 1_000_000;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  return { lat, lng };
-}
-
 function hostCountryCode(host: any) {
   return normalizeCountryCode(host?.geoCountryCode);
 }
@@ -104,18 +96,6 @@ function normalizeLongitude(lng: number) {
   if (lng < -180) return lng + 360;
   if (lng > 180) return lng - 360;
   return lng;
-}
-
-function longitudeDistanceDegrees(a: number, b: number) {
-  const diff = Math.abs(a - b);
-  return Math.min(diff, 360 - diff);
-}
-
-function hostMapClusterDistance(point: HostMapPoint, cluster: HostMapCluster) {
-  const latDiff = point.lat - cluster.centerLat;
-  const lngScale = Math.max(0.35, Math.cos((((point.lat + cluster.centerLat) / 2) * Math.PI) / 180));
-  const lngDiff = longitudeDistanceDegrees(point.lng, cluster.centerLng) * lngScale;
-  return Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
 }
 
 function hostMapPointPulledOut(point: HostMapPoint) {
@@ -158,25 +138,6 @@ function spreadHostMapPoints(points: HostMapPoint[]) {
         displayLng: normalizeLongitude(cluster.centerLng + (pullLng + column * 12) / lngScale),
       };
     });
-  });
-}
-
-function escapeTooltipHtml(value: unknown) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return char;
-    }
   });
 }
 

@@ -1,4 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { loadReactGlobe, prefetchReactGlobe } from "@/lib/reactGlobeLoader";
+import { escapeTooltipHtml, hostGeoCoordinate } from "@/lib/hostGeo";
 import { formatBytes } from "@shared/formatBytes";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
@@ -162,7 +164,6 @@ import { buildLinkAvailabilityIndex } from "@/lib/linkAvailability";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { useIsMobile } from "@/hooks/useMobile";
 
-const loadReactGlobe = () => import("react-globe.gl");
 const ReactGlobe = lazy(loadReactGlobe) as typeof import("react-globe.gl").default;
 
 function clearRuleTrafficStatCaches() {
@@ -445,7 +446,6 @@ const RULE_GLOBE_PATH_LAYER_ALTITUDE_STEP = 0.006;
 const RULE_GLOBE_PATH_LAYER_ALTITUDE_MAX = 0.018;
 const RULE_GLOBE_TARGET_OFFSET_DEGREES = 5.8;
 const RULE_GLOBE_COLORS = ["#334155", "#4ade80", "#f59e0b", "#fb7185", "#2dd4bf", "#f97316", "#84cc16", "#64748b", "#f472b6", "#14b8a6"];
-let reactGlobePrefetchStarted = false;
 
 function normalizeRuleCategoryCounts(value: unknown): RuleCategoryCounts {
   const source = value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -1241,40 +1241,6 @@ type RuleGlobeCountryFeature = CountryFeatureLike & {
   };
 };
 
-function prefetchReactGlobe() {
-  if (reactGlobePrefetchStarted || typeof window === "undefined") return;
-  reactGlobePrefetchStarted = true;
-  const startPrefetch = () => {
-    loadReactGlobe().catch(() => {
-      reactGlobePrefetchStarted = false;
-    });
-  };
-  if ("requestIdleCallback" in window) {
-    window.requestIdleCallback(startPrefetch, { timeout: 2200 });
-  } else {
-    globalThis.setTimeout(startPrefetch, 700);
-  }
-}
-
-function escapeTooltipHtml(value: unknown) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return char;
-    }
-  });
-}
-
 function hashText(value: unknown) {
   const text = String(value ?? "");
   let hash = 2166136261;
@@ -1310,15 +1276,6 @@ function hostAddressCandidates(host: any | null | undefined) {
   return [host?.entryIp, host?.ipv4, host?.ipv6, host?.ip, host?.tunnelEntryIp]
     .map((value) => String(value || "").trim())
     .filter(Boolean);
-}
-
-function hostGeoCoordinate(host: any | null | undefined) {
-  if (host?.geoLatitudeMicro == null || host?.geoLongitudeMicro == null) return null;
-  const lat = Number(host.geoLatitudeMicro) / 1_000_000;
-  const lng = Number(host.geoLongitudeMicro) / 1_000_000;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  return { lat, lng };
 }
 
 function microGeoCoordinate(geo: Pick<RuleTargetGeo, "geoLatitudeMicro" | "geoLongitudeMicro"> | null | undefined) {

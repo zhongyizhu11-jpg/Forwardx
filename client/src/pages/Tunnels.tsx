@@ -1,4 +1,6 @@
 import DataSectionError from "@/components/DataSectionError";
+import { loadReactGlobe, prefetchReactGlobe } from "@/lib/reactGlobeLoader";
+import { escapeTooltipHtml, hostGeoCoordinate } from "@/lib/hostGeo";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -129,7 +131,6 @@ import {
 import MultiHopEditor from "@/components/MultiHopEditor";
 import { ForwardGroupsContent } from "@/pages/ForwardGroups";
 
-const loadReactGlobe = () => import("react-globe.gl");
 const ReactGlobe = lazy(loadReactGlobe) as typeof import("react-globe.gl").default;
 
 function TunnelSectionTransition({
@@ -311,7 +312,6 @@ const TUNNEL_GLOBE_PATH_MIN_ALTITUDE = 0.038;
 const TUNNEL_GLOBE_PATH_MAX_ALTITUDE = 0.082;
 const TUNNEL_GLOBE_PATH_LAYER_ALTITUDE_STEP = 0.005;
 const TUNNEL_GLOBE_PATH_LAYER_ALTITUDE_MAX = 0.014;
-let reactGlobePrefetchStarted = false;
 
 const defaultForm: TunnelForm = {
   name: "",
@@ -471,15 +471,6 @@ function normalizeChainConnectHostsForHosts(
   });
 }
 
-function hostGeoCoordinate(host: any) {
-  if (host?.geoLatitudeMicro == null || host?.geoLongitudeMicro == null) return null;
-  const lat = Number(host.geoLatitudeMicro) / 1_000_000;
-  const lng = Number(host.geoLongitudeMicro) / 1_000_000;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  return { lat, lng };
-}
-
 function hostRegionText(host: any) {
   return [host?.geoCountryName || host?.geoCountryCode, host?.geoRegion]
     .map((value) => String(value || "").trim())
@@ -503,25 +494,6 @@ function createTunnelGlobeHostPoint(host: any): TunnelGlobeHostPoint | null {
     lng: coord.lng,
     regionText: hostRegionText(host),
   };
-}
-
-function escapeTooltipHtml(value: unknown) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return char;
-    }
-  });
 }
 
 function formatGlobeLatency(value: unknown, timeout?: unknown) {
@@ -852,21 +824,6 @@ function storeChainViewMode(viewMode: TunnelViewMode) {
   }
 }
 
-
-function prefetchReactGlobe() {
-  if (reactGlobePrefetchStarted || typeof window === "undefined") return;
-  reactGlobePrefetchStarted = true;
-  const startPrefetch = () => {
-    loadReactGlobe().catch(() => {
-      reactGlobePrefetchStarted = false;
-    });
-  };
-  if ("requestIdleCallback" in window) {
-    window.requestIdleCallback(startPrefetch, { timeout: 2200 });
-  } else {
-    globalThis.setTimeout(startPrefetch, 700);
-  }
-}
 
 function formatTunnelLatencyTime(value: string | Date) {
   const d = new Date(value);

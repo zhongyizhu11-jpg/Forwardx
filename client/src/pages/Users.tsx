@@ -1,4 +1,5 @@
 import DataSectionError from "@/components/DataSectionError";
+import { subscriptionSourceLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as formatCurrencyCny } from "@shared/formatMoney";
 import { formatBytes } from "@shared/formatBytes";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -139,14 +140,6 @@ function subscriptionStatusLabel(status?: string) {
   if (status === "expired") return "已过期";
   if (status === "cancelled") return "已取消";
   return status || "-";
-}
-
-function subscriptionSourceLabel(source?: string) {
-  if (source === "admin") return "管理员分配";
-  if (source === "balance") return "余额购买";
-  if (source === "payment") return "在线支付";
-  if (source === "redeem") return "兑换套餐";
-  return source || "套餐记录";
 }
 
 function isSubscriptionActive(sub: any) {

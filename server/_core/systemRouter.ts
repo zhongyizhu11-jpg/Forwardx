@@ -3,6 +3,7 @@ import { updateMultiDeviceLoginSettingCache } from "./context";
 import { z } from "zod";
 import * as db from "../db";
 import { ENV } from "../env";
+import { compareVersions, normalizeVersion } from "../../shared/version";
 import { spawn } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
@@ -377,9 +378,6 @@ let upgradeJob: UpgradeJob = {
   error: null,
 };
 
-function normalizeVersion(version: string | null | undefined) {
-  return String(version || "").trim().replace(/^v/i, "");
-}
 
 function isValidBackgroundImageDataUrl(value: string) {
   const text = String(value || "").trim();
@@ -475,17 +473,6 @@ function publicPersonalizationBackground(all: Record<string, string | null>) {
     urlType,
     effectiveUrl: resolvePersonalizationBackgroundUrl(config),
   };
-}
-
-function compareVersions(a: string, b: string) {
-  const pa = normalizeVersion(a).split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
-  const pb = normalizeVersion(b).split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
-    if (diff !== 0) return diff > 0 ? 1 : -1;
-  }
-  return 0;
 }
 
 function githubRepoParts(repoUrl: string) {

@@ -9,6 +9,7 @@ import { AGENT_ASSET_NAMES, getMissingBundledAgentAssets } from "../agentAssets"
 import { pushTunnelEndpointRefresh, requireHostAccess } from "./helpers";
 import { AGENT_VERSION, APP_VERSION, REPO_URL } from "../_core/systemRouter";
 import { isAgentUpgradeTargetSatisfied, isAgentVersionAtLeast } from "../agentRouteUtils";
+import { normalizeVersion } from "@shared/version";
 import { scheduleHostGeoRefresh } from "../hostGeo";
 import { refreshHostAddressRuntime } from "../hostAddressRuntime";
 import { scheduleHostDdnsUpdate } from "../hostDdns";
@@ -266,9 +267,6 @@ function hostTrafficConfigPayload(input: {
     trafficAutoReset: !!input.trafficAutoReset,
     trafficResetDay: input.trafficResetDay ?? 1,
   };
-}
-function normalizeVersion(version: string | null | undefined) {
-  return String(version || "").trim().replace(/^v/i, "");
 }
 
 function githubRepoParts(repoUrl: string) {

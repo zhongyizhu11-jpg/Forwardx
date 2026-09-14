@@ -1,4 +1,5 @@
 import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
+import { maskIdentifier } from "./helpers";
 import { z } from "zod";
 import * as db from "../db";
 import { FORWARD_TYPES } from "../../shared/forwardTypes";
@@ -19,18 +20,6 @@ const DISPLAY_NAME_MAX_LENGTH = 24;
 
 function actorLabel(ctx: { user?: { id: number; username?: string } | null }) {
   return ctx.user ? `adminId=${ctx.user.id}` : "adminId=unknown";
-}
-
-function maskIdentifier(value?: string | null) {
-  const text = String(value || "").trim();
-  if (!text) return "unknown";
-  const [name, domain] = text.split("@");
-  if (domain) {
-    const visible = name.length <= 2 ? `${name[0] || "*"}*` : `${name.slice(0, 2)}***`;
-    return `${visible}@${domain}`;
-  }
-  if (text.length <= 3) return `${text[0] || "*"}***`;
-  return `${text.slice(0, 2)}***${text.slice(-1)}`;
 }
 
 export const usersRouter = router({

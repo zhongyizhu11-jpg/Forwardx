@@ -20,7 +20,7 @@ import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPol
 import { releaseHostPortReservations, reserveAvailableHostPort, reserveSpecificHostPort, type HostPortReservation } from "../portReservations";
 import { getHostById } from "./hostRepository";
 import { getForwardRulesByTunnel } from "./forwardRuleRepository";
-import { sqlBool } from "./repositoryUtils";
+import { dbBool, sqlBool } from "./repositoryUtils";
 import { mapWithConcurrency } from "../asyncPool";
 import { withKeyedTaskLock } from "../keyedTaskLock";
 import { pageResult, pageWindowForTotal, type PageRequest } from "../../shared/pagination";
@@ -33,14 +33,6 @@ import {
 import { resolveRuleProxyProtocolOptions } from "../gostProxyProtocol";
 import { HOST_ONLINE_TTL_MS } from "../hostHeartbeatPolicy";
 import { LINK_PROBE_FRESH_MS, LINK_PROBE_MAX_FUTURE_SKEW_MS } from "../../shared/linkProbePolicy";
-
-function databaseBool(value: unknown, fallback = false) {
-  if (value === undefined || value === null || value === "") return fallback;
-  if (value === true || value === 1) return true;
-  if (typeof value !== "string") return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true";
-}
 
 // The Agent uses the tunnel row's listener for the lowest-id active GOST
 // rule. Nginx Stream follows the same convention. Keep this predicate local
@@ -428,7 +420,7 @@ export async function backfillTunnelExitGroupReferences() {
   const groupIdsBySignature = new Map<string, number[]>();
   for (const group of exitGroups as any[]) {
     const signature = (members as any[])
-      .filter((member) => Number(member.groupId) === Number(group.id) && databaseBool(member.isEnabled, true) && Number(member.hostId || 0) > 0)
+      .filter((member) => Number(member.groupId) === Number(group.id) && dbBool(member.isEnabled, true) && Number(member.hostId || 0) > 0)
       .sort((a, b) => Number(a.priority || 0) - Number(b.priority || 0))
       .map((member) => Number(member.hostId))
       .join(",");
@@ -448,7 +440,7 @@ export async function backfillTunnelExitGroupReferences() {
     const signature = [
       Number(tunnel.exitHostId || 0),
       ...(exitNodes as any[])
-        .filter((node) => databaseBool(node.isEnabled, true) && Number(node.hostId || 0) > 0)
+        .filter((node) => dbBool(node.isEnabled, true) && Number(node.hostId || 0) > 0)
         .sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0))
         .map((node) => Number(node.hostId)),
     ].filter((id) => id > 0).join(",");
@@ -664,20 +656,20 @@ export async function updateForwardRuleRuntimeOptionsByTunnel(tunnelId: number, 
     const proxyOptions = resolveRuleProxyProtocolOptions(rule, tunnel);
     const desired = {
       ...proxyOptions,
-      tcpFastOpen: forwardx && tcpSupported && databaseBool(tunnel.tcpFastOpen),
+      tcpFastOpen: forwardx && tcpSupported && dbBool(tunnel.tcpFastOpen),
       zeroCopy: false,
-      udpOverTcp: forwardx && udpSupported && databaseBool(tunnel.udpOverTcp),
+      udpOverTcp: forwardx && udpSupported && dbBool(tunnel.udpOverTcp),
       udpOverTcpPort: null,
     };
     const changed = (
-      databaseBool(rule.proxyProtocolReceive) !== desired.proxyProtocolReceive
-      || databaseBool(rule.proxyProtocolSend) !== desired.proxyProtocolSend
-      || databaseBool(rule.proxyProtocolExitReceive) !== desired.proxyProtocolExitReceive
-      || databaseBool(rule.proxyProtocolExitSend) !== desired.proxyProtocolExitSend
+      dbBool(rule.proxyProtocolReceive) !== desired.proxyProtocolReceive
+      || dbBool(rule.proxyProtocolSend) !== desired.proxyProtocolSend
+      || dbBool(rule.proxyProtocolExitReceive) !== desired.proxyProtocolExitReceive
+      || dbBool(rule.proxyProtocolExitSend) !== desired.proxyProtocolExitSend
       || Number(rule.proxyProtocolVersion || 1) !== desired.proxyProtocolVersion
-      || databaseBool(rule.tcpFastOpen) !== desired.tcpFastOpen
-      || databaseBool(rule.zeroCopy) !== desired.zeroCopy
-      || databaseBool(rule.udpOverTcp) !== desired.udpOverTcp
+      || dbBool(rule.tcpFastOpen) !== desired.tcpFastOpen
+      || dbBool(rule.zeroCopy) !== desired.zeroCopy
+      || dbBool(rule.udpOverTcp) !== desired.udpOverTcp
       || rule.udpOverTcpPort != null
     );
     if (!changed) continue;
@@ -793,17 +785,17 @@ async function isForwardGroupRuntimeEnabled(groupId: number) {
     groupMode: forwardGroups.groupMode,
     entryGroupId: forwardGroups.entryGroupId,
   }).from(forwardGroups).where(eq(forwardGroups.id, groupId)).limit(1))[0] as any;
-  if (!group || !databaseBool(group.isEnabled)) return false;
+  if (!group || !dbBool(group.isEnabled)) return false;
   if (String(group.groupMode || "") !== "chain" || Number(group.entryGroupId || 0) <= 0) return true;
   const entryGroup = (await db.select({
     isEnabled: forwardGroups.isEnabled,
     groupMode: forwardGroups.groupMode,
   }).from(forwardGroups).where(eq(forwardGroups.id, Number(group.entryGroupId))).limit(1))[0] as any;
-  return databaseBool(entryGroup?.isEnabled) && String(entryGroup.groupMode || "") === "entry";
+  return dbBool(entryGroup?.isEnabled) && String(entryGroup.groupMode || "") === "entry";
 }
 
 async function canRestoreForwardRuleAfterTunnel(rule: any) {
-  if (databaseBool(rule.disabledByUser) || databaseBool(rule.disabledByGroup) || String(rule.protocolBlockReason || "").trim()) return false;
+  if (dbBool(rule.disabledByUser) || dbBool(rule.disabledByGroup) || String(rule.protocolBlockReason || "").trim()) return false;
   const groupId = Number(rule.forwardGroupId || 0);
   if (groupId > 0 && !(await isForwardGroupRuntimeEnabled(groupId))) return false;
 
@@ -820,10 +812,10 @@ async function canRestoreForwardRuleAfterTunnel(rule: any) {
     }).from(forwardRules).where(eq(forwardRules.id, templateId)).limit(1))[0] as any;
     if (
       !template
-      || databaseBool(template.pendingDelete)
-      || !databaseBool(template.isEnabled)
-      || databaseBool(template.disabledByGroup)
-      || databaseBool(template.disabledByUser)
+      || dbBool(template.pendingDelete)
+      || !dbBool(template.isEnabled)
+      || dbBool(template.disabledByGroup)
+      || dbBool(template.disabledByUser)
       || String(template.protocolBlockReason || "").trim()
     ) return false;
   }
@@ -834,7 +826,7 @@ async function canRestoreForwardRuleAfterTunnel(rule: any) {
       .from(forwardGroupMembers)
       .where(eq(forwardGroupMembers.id, memberId))
       .limit(1))[0] as any;
-    if (!databaseBool(member?.isEnabled)) return false;
+    if (!dbBool(member?.isEnabled)) return false;
   }
   return true;
 }
@@ -1080,9 +1072,9 @@ export async function reserveTunnelListenerPort(
         .where(eq(forwardRules.tunnelId, tunnelId));
       const primaryId = (rows as any[])
         .filter((row) => (
-          !databaseBool(row.pendingDelete)
-          && !databaseBool(row.isForwardGroupTemplate)
-          && databaseBool(row.isEnabled)
+          !dbBool(row.pendingDelete)
+          && !dbBool(row.isForwardGroupTemplate)
+          && dbBool(row.isEnabled)
           && String(row.forwardType || "").trim().toLowerCase() === "gost"
         ))
         .map((row) => Number(row.id || 0))
@@ -1248,9 +1240,9 @@ export async function syncTunnelListenerPortReferences(
   }).from(forwardRules).where(eq(forwardRules.tunnelId, tunnelId));
   const primary = (rules as any[])
     .filter((rule) => (
-      !databaseBool(rule.pendingDelete)
-      && !databaseBool(rule.isForwardGroupTemplate)
-      && databaseBool(rule.isEnabled)
+      !dbBool(rule.pendingDelete)
+      && !dbBool(rule.isForwardGroupTemplate)
+      && dbBool(rule.isEnabled)
       && String(rule.forwardType || "").trim().toLowerCase() === "gost"
     ))
     .sort((left, right) => Number(left.id) - Number(right.id))[0];
@@ -1308,9 +1300,9 @@ export async function reconcileTunnelRulePrimaryExitPorts(
   const rules = (await getForwardRulesByTunnel(tunnelId) as any[])
     .filter((rule) => (
       rule
-      && !databaseBool(rule.pendingDelete)
-      && !databaseBool(rule.isForwardGroupTemplate)
-      && databaseBool(rule.isEnabled)
+      && !dbBool(rule.pendingDelete)
+      && !dbBool(rule.isForwardGroupTemplate)
+      && dbBool(rule.isEnabled)
       && String(rule.forwardType || "").trim().toLowerCase() === "gost"
     ))
     .sort((left, right) => Number(left.id || 0) - Number(right.id || 0));
@@ -1611,7 +1603,7 @@ export async function ensureForwardXMimicPorts(tunnelInput: any, hopsInput: any[
     }
 
     for (const node of exitNodes) {
-      if (!databaseBool(node?.isEnabled, true)) continue;
+      if (!dbBool(node?.isEnabled, true)) continue;
       const hostId = Number(node.hostId || 0);
       const listenPort = Number(node.listenPort || 0);
       if (hostId <= 0 || listenPort <= 0) continue;
@@ -1984,7 +1976,7 @@ export async function replaceTunnelExitNodes(tunnelId: number, nodes: Array<Omit
       listenPort: Number(node.listenPort),
       mimicPort: Number((node as any).mimicPort || 0),
       connectHost: node.connectHost ?? null,
-      isEnabled: databaseBool(node.isEnabled, true),
+      isEnabled: dbBool(node.isEnabled, true),
     } as any);
   }
   });
@@ -2053,9 +2045,9 @@ export async function syncTunnelExitGroupEndpoints(
     const activeManagedRuleIds = (mappedRules as any[])
       .filter((rule) => (
         rule
-        && !databaseBool(rule.pendingDelete)
-        && !databaseBool(rule.isForwardGroupTemplate)
-        && databaseBool(rule.isEnabled)
+        && !dbBool(rule.pendingDelete)
+        && !dbBool(rule.isForwardGroupTemplate)
+        && dbBool(rule.isEnabled)
         && String(rule.forwardType || "").trim().toLowerCase() === "gost"
       ))
       .map((rule) => Number(rule.id || 0))
@@ -2151,7 +2143,7 @@ export async function syncTunnelExitGroupEndpoints(
       // Database adapters may return boolean columns as strings (notably
       // SQLite/JSON-backed legacy rows).  `!!"0"` is true, so normalize the
       // persisted value before deciding whether the runtime state changed.
-      const loadBalanceChanged = databaseBool(currentTunnel.loadBalanceEnabled) !== (nextNodes.length > 0);
+      const loadBalanceChanged = dbBool(currentTunnel.loadBalanceEnabled) !== (nextNodes.length > 0);
       const changed = endpointsChanged
         || String(currentTunnel.loadBalanceStrategy || "") !== strategy
         || loadBalanceChanged;
@@ -2195,7 +2187,7 @@ export async function syncTunnelExitGroupEndpoints(
         ...(changed ? { isRunning: false } : {}),
       };
       if (String(refreshedTunnel.mode || "").toLowerCase() === "forwardx"
-        && (databaseBool(refreshedTunnel.udpOverTcp) || String(refreshedTunnel.forwardxVersion || "").toLowerCase() === "v2")) {
+        && (dbBool(refreshedTunnel.udpOverTcp) || String(refreshedTunnel.forwardxVersion || "").toLowerCase() === "v2")) {
         const refreshedHops = await getTunnelHops(tunnelId);
         const refreshedNodes = await getTunnelExitNodes(tunnelId);
         const ensured = await ensureForwardXMimicPorts(refreshedTunnel, refreshedHops, refreshedNodes);
@@ -2286,7 +2278,7 @@ export async function getTunnelExitEndpoints(tunnel: any) {
       mimicPort: Number(node.mimicPort || 0),
       connectHost: String(node.connectHost || "").trim() || null,
       primary: false,
-      isEnabled: databaseBool(node.isEnabled, true),
+      isEnabled: dbBool(node.isEnabled, true),
     })),
   ].filter((endpoint) => endpoint.hostId > 0 && endpoint.listenPort > 0 && endpoint.isEnabled);
 }
@@ -2411,17 +2403,17 @@ export async function reconcileForwardRuleTunnelExits(
     const candidates = (tunnelRules as any[])
       .filter((candidate) => (
         candidate
-        && !databaseBool(candidate.pendingDelete)
-        && !databaseBool(candidate.isForwardGroupTemplate)
-        && databaseBool(candidate.isEnabled)
+        && !dbBool(candidate.pendingDelete)
+        && !dbBool(candidate.isForwardGroupTemplate)
+        && dbBool(candidate.isEnabled)
         && String(candidate.forwardType || "").trim().toLowerCase() === "gost"
       ));
     // Include a freshly-created rule if a replica/read pool has not exposed
     // it yet, as long as its supplied runtime fields identify an active GOST.
     if (!candidates.some((candidate) => Number(candidate.id) === ruleId)
-      && !databaseBool(rule?.pendingDelete)
-      && !databaseBool(rule?.isForwardGroupTemplate)
-      && databaseBool(rule?.isEnabled, true)
+      && !dbBool(rule?.pendingDelete)
+      && !dbBool(rule?.isForwardGroupTemplate)
+      && dbBool(rule?.isEnabled, true)
       && String(rule?.forwardType || "gost").trim().toLowerCase() === "gost") {
       candidates.push(rule);
     }
@@ -2451,7 +2443,7 @@ export async function reconcileForwardRuleTunnelExits(
     return [];
   }
   const endpoints = (await getTunnelExitEndpoints(tunnel)).filter((endpoint) => !endpoint.primary);
-  if (!databaseBool((tunnel as any).loadBalanceEnabled) || endpoints.length === 0) {
+  if (!dbBool((tunnel as any).loadBalanceEnabled) || endpoints.length === 0) {
     await clearForwardRuleTunnelExits(ruleId);
     return [];
   }

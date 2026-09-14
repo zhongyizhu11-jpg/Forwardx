@@ -1,3 +1,19 @@
+/**
+ * 从库里读回来的布尔值统一在这里判。
+ *
+ * SQLite 存 0/1、PostgreSQL 存 true/false、裸 SQL 回来的还可能是字符串 "1"/"true"，
+ * 所以三个地方（tunnels 路由、forwardGroup 仓库、tunnel 仓库）各写了一份一样的
+ * 判断。空值走 fallback 而不是一律 false —— 「这一列还没设过」和「设成了关」是
+ * 两回事，后者不该被前者盖掉。
+ */
+export function dbBool(value: unknown, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (value === true || value === 1) return true;
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true";
+}
+
 export { epochSeconds, sqlBool } from "../dbCompat";
 
 export function clampPositiveInt(value: unknown, fallback: number, max: number) {

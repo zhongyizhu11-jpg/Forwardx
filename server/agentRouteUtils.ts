@@ -5,25 +5,10 @@ import { linkProbeMethodForRule, normalizeLinkProbeMethod } from "../shared/late
 export const AGENT_PLUGIN_TASK_VERSION = "2.2.151";
 export const AGENT_PANEL_MIGRATION_VERSION = "2.2.153";
 
-export function normalizeVersion(version: string | null | undefined) {
-  return String(version || "").trim().replace(/^v/i, "");
-}
-
-export function compareVersions(a: string | null | undefined, b: string | null | undefined) {
-  const pa = normalizeVersion(a).split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
-  const pb = normalizeVersion(b).split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
-    if (diff !== 0) return diff > 0 ? 1 : -1;
-  }
-  return 0;
-}
-
-export function isAgentVersionAtLeast(version: string | null | undefined, target: string | null | undefined) {
-  if (!version || !target) return false;
-  return compareVersions(version, target) >= 0;
-}
+// 版本比较的唯一一份在 shared/version.ts。这里保持再导出，是因为服务端十几处
+// 都从 agentRouteUtils 拿 isAgentVersionAtLeast，没必要为了搬家改一圈 import。
+export { normalizeVersion, compareVersions, isAgentVersionAtLeast, isAgentVersionBehind } from "../shared/version";
+import { compareVersions, normalizeVersion } from "../shared/version";
 
 export function isAgentUpgradeTargetSatisfied(
   version: string | null | undefined,
@@ -38,11 +23,6 @@ export function isAgentUpgradeTargetSatisfied(
     return normalizedVersion === normalizedTarget;
   }
   return compareVersions(normalizedVersion, normalizedTarget) >= 0;
-}
-
-export function isAgentVersionBehind(version: string | null | undefined, target: string | null | undefined) {
-  if (!version || !target) return false;
-  return compareVersions(version, target) < 0;
 }
 
 export function hasAgentVersionChanged(
