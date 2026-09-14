@@ -353,6 +353,8 @@ const tables: TableDef[] = [
       c("isEnabled", "bool", { notNull: true, default: true }),
       c("accessCount", "int", { notNull: true, default: 0 }), c("lastAccessAt", "epoch"),
       c("lastAccessIp", "text"), c("lastAccessUserAgent", "text"), c("expiresAt", "epoch"),
+      // 被拒的那一次：光记成功回答不了「客户说更新不了」。
+      c("lastFailureAt", "epoch"), c("lastFailureReason", "varchar", { length: 32 }),
       c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],
     unique: [["token"]],

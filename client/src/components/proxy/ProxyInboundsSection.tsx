@@ -141,6 +141,8 @@ export default function ProxyInboundsSection({
   groupModeOptions,
   onPasteNode,
   inboundLeading,
+  notInSubscriptionInboundIds,
+  hostNeverOnlineInboundIds,
   onOpenPreview,
   previewAlertCount = 0,
   onOpenHosts,
@@ -161,6 +163,20 @@ export default function ProxyInboundsSection({
    * 看起来像自建节点永远查不出状态。
    */
   inboundLeading?: (inboundId: number) => ReactNode;
+  /**
+   * 客户端里根本看不到的那些入站。
+   *
+   * 由「订阅管理」那一页算好传进来 —— 判断依据是服务端组装出的订阅内容，这里没有
+   * 也不该有那份数据。行上要写的是**后果**（不在订阅里），而不是机制（没转发绑定）。
+   */
+  notInSubscriptionInboundIds?: ReadonlySet<number>;
+  /**
+   * Agent 从没连上过的那些机器上的入站。
+   *
+   * 和「掉线」分开：掉线是暂时的，行首那个状态点已经在说了；这里说的是「机器加进来了，
+   * Agent 还没装」—— 配置下发不下去，这个端口根本没跑起来。
+   */
+  hostNeverOnlineInboundIds?: ReadonlySet<number>;
   onOpenPreview?: () => void;
   /**
    * 预览里等着处理的条数（现在是「还没加入订阅的转发」）。收进弹窗之后这个信号
@@ -467,6 +483,8 @@ export default function ProxyInboundsSection({
    */
   const inboundRowSpecs = useMemo<ProxyNodeRowSpec[]>(() => rows.map((row) => ({
     key: `inbound-${row.id}`,
+    // 自建：面板在你自己机器上开的，凭据也是面板生成的。
+    accent: "own" as const,
     leading: inboundLeading?.(Number(row.id)),
     name: row.name,
     protocol: String(row.protocol || ""),
@@ -494,6 +512,10 @@ export default function ProxyInboundsSection({
       Number(row.sharedUserCount || 0) > 0 ? `分享给 ${row.sharedUserCount} 人` : "",
       // 套餐附带的专属端口是面板托管的，标出来，免得人以为是自己建的。
       Number(row.clonedFromInboundId || 0) > 0 ? "套餐附带 · 面板托管" : "",
+      // 没开直连、又没有转发指向它 —— 这个端口跑得好好的，客户端里却没有它。
+      notInSubscriptionInboundIds?.has(Number(row.id)) ? "不在订阅里" : "",
+      // 机器都没连上，这个端口就没跑起来 —— 比「不在订阅里」更靠前的一个问题。
+      hostNeverOnlineInboundIds?.has(Number(row.id)) ? "机器的 Agent 还没连上" : "",
       !row.isEnabled ? "已停用" : "",
     ]),
     toggle: (
@@ -529,7 +551,7 @@ export default function ProxyInboundsSection({
           { key: "delete", label: "删除", icon: Trash2, destructive: true, onSelect: () => void askDelete(row) },
         ]),
     ],
-  })), [rows, hosts, userOptions, isAdmin, linkLoadingId, inboundLeading]);
+  })), [rows, hosts, userOptions, isAdmin, linkLoadingId, inboundLeading, notInSubscriptionInboundIds, hostNeverOnlineInboundIds]);
 
   /** 三类合成一个列表：自建在前（它们是这一页的起点），然后是粘贴和分享来的。 */
   const allRowSpecs = useMemo(() => [...inboundRowSpecs, ...extraRows], [inboundRowSpecs, extraRows]);
@@ -591,7 +613,14 @@ export default function ProxyInboundsSection({
                 </span>
               ) : null}
             </button>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {/*
+              这一组**不能** shrink-0。
+              租户那边比管理员多一个「我的机器」按钮，四个控件加起来 426px，而手机上
+              卡片只有 390px —— shrink-0 让它既不能缩也不能换行，于是整条从卡片右边
+              溢出去被裁掉：左边的下拉被切掉半个，右边的按钮贴着屏幕边。
+              去掉之后它会先缩到可用宽度，再在内部自己换行。
+            */}
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
               {/* 分组只在真的有好几条时才给 —— 两条节点摆个分组下拉是噪音。 */}
               {groupMode && onGroupModeChange && groupModeOptions && totalRowCount > 1 ? (
                 <Select value={groupMode} onValueChange={(value) => onGroupModeChange(value as ProxyNodeGroupMode)}>
@@ -695,6 +724,7 @@ export default function ProxyInboundsSection({
                           toggle={spec.toggle}
                           actions={spec.actions}
                           muted={spec.muted}
+                          accent={spec.accent}
                         />
                       ))}
                     </div>

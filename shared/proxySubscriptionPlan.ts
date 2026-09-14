@@ -7,7 +7,7 @@
  * 这里只做纯计算，不碰数据库；调用方负责把行取出来传进来。
  */
 
-import { getHostEntryAddress, type HostEntryAddressSource } from "./hostEntryAddress";
+import { getHostEntryAddress, hostNeverConnected, type HostEntryAddressSource } from "./hostEntryAddress";
 import { proxyNodeBindingTruth } from "./proxyNodeAutoBind";
 import {
   buildProxyRulePlan,
@@ -31,6 +31,11 @@ import {
 /** proxy_nodes 表的一行，字段名与数据库一致。 */
 export type ProxyNodeTemplateRow = {
   id: number;
+  /**
+   * 自建节点所在的那台机器。粘来的、别人分享的没有这一项 —— 那些机器不在这个面板里，
+   * 面板对它们的状态无话可说。
+   */
+  hostId?: unknown;
   /** 是否把这个节点自己的地址也作为一个节点放进订阅。 */
   includeDirect?: unknown;
   /** 前置代理：连接先经由哪个节点建立（同表另一行的 id）。 */
@@ -89,6 +94,8 @@ export type ProxySubscriptionRuleRow = {
 
 export type ProxySubscriptionHostRow = HostEntryAddressSource & {
   id: number;
+  /** 最后一次心跳。从来没有 = Agent 还没装上，见 hostNeverConnected。 */
+  lastHeartbeat?: unknown;
   name?: unknown;
 };
 
@@ -142,11 +149,13 @@ export type ProxySubscriptionSkip = {
  * 刻意不做成 skip —— 静默少一条节点正是这套面板反复踩过的坑，而这类判断又不可能
  * 百分之百准（见 proxyNodeBindingTruth），所以宁可发出去 + 明确告警，让人自己判。
  */
-export type ProxySubscriptionWarningReason = "target-mismatch" | "node-unused";
+export type ProxySubscriptionWarningReason = "target-mismatch" | "node-unused" | "host-never-online";
 
 export const PROXY_SUBSCRIPTION_WARNING_LABELS: Record<ProxySubscriptionWarningReason, string> = {
   "target-mismatch": "这条转发的目标已经不是它绑的那个节点了",
   "node-unused": "这个节点没进任何一份订阅",
+  // 从没连上过 ≠ 掉线。掉线归节点行上那个状态点管，这里说的是「Agent 还没装」。
+  "host-never-online": "这台机器的 Agent 还没连上过，配置下发不下去",
 };
 
 export type ProxySubscriptionWarning = {
@@ -431,6 +440,33 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
    * 就不进订阅，而转发页上看不出」是同一个坑，只是从节点这一侧再犯一次。停用的不算：
    * 那是他自己关的，行上本来就写着停用。
    */
+  /**
+   * 发出去的自建节点里，有没有哪台机器的 Agent 从没连上过。
+   *
+   * 那种机器上开的落地端口，配置根本下发不下去 —— 面板却照样把它当成一条好线路
+   * 发进订阅，客户端拉到手连不上，而这一页上一个字都没提过。
+   *
+   * **仍然照发**：机器可能下一分钟就连上了，而把人刚建好的节点悄悄拿掉，比发出去
+   * 更糟（他会以为没建成功，再建一个）。所以只警告，不删。
+   */
+  for (const entry of [...directEntries, ...entries]) {
+    const template = templatesById.get(Number(entry.templateId));
+    const hostId = Number(template?.hostId || 0);
+    if (hostId <= 0) continue;
+    const host = hostsById.get(hostId);
+    if (!host || !hostNeverConnected(host)) continue;
+    if (warnings.some((item) => item.reason === "host-never-online" && item.nodeId === Number(entry.templateId))) continue;
+    warnings.push({
+      ruleId: 0,
+      ruleName: "",
+      reason: "host-never-online",
+      targetText: text((host as any).name) || `主机 #${hostId}`,
+      nodeId: Number(entry.templateId),
+      nodeName: text(entry.node.name) || `节点 #${entry.templateId}`,
+      nodeText: `${entry.node.address}:${entry.node.port}`,
+    });
+  }
+
   const emittedTemplates = new Set<number>([
     ...directWithFront.map((entry) => Number(entry.templateId)),
     ...entries.map((entry) => Number(entry.templateId)),

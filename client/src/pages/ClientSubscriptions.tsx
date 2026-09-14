@@ -60,6 +60,7 @@ import {
   type ProxySubscriptionKind,
 } from "@shared/proxyClientImport";
 import { summarizeProxyNodeHealthCounts, type ProxyNodeHealth } from "@shared/proxyNodeHealth";
+import { PROXY_SUB_TOKEN_FAILURE_LABELS, proxySubTokenStatus } from "@shared/proxySubTokenStatus";
 import {
   formatProxyNodeQuotaDetail,
   formatProxyNodeQuotaLabeled,
@@ -344,6 +345,26 @@ function ProxyNodeQuotaDetail({ node }: { node: any }) {
     <p className={`truncate text-[11px] leading-tight ${QUOTA_STATE_STYLES[state]}`}>
       {formatProxyNodeQuotaDetail(quota)}
     </p>
+  );
+}
+
+/**
+ * 令牌行上那句「最近一次被拒」。
+ *
+ * 只在**最近一次确实是失败**时出现（成功之后就不再挂着，见 proxySubTokenStatus）。
+ * 说不了的那一种也照实说不了：地址被改过或重置过时，请求根本落不到任何一行上。
+ */
+function renderTokenFailure(token: any) {
+  const status = proxySubTokenStatus(token);
+  if (status.kind !== "failed") return null;
+  return (
+    <span
+      className="inline-flex min-w-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400"
+      title={`客户端来拉过，被挡下了：${PROXY_SUB_TOKEN_FAILURE_LABELS[status.reason]}`}
+    >
+      <AlertTriangle className="h-3 w-3 shrink-0" />
+      <span className="truncate">最近一次没拉到：{PROXY_SUB_TOKEN_FAILURE_LABELS[status.reason]}</span>
+    </span>
   );
 }
 
@@ -647,10 +668,56 @@ export default function ClientSubscriptionsPage() {
    * 开关写的是这条 proxy_nodes 记录自己的 isEnabled，跟自建那一路写派生节点的
    * includeDirect 是两回事 —— 所以两路各自组装，列表只负责排版。
    */
+  /**
+   * 客户端里根本看不到的那些节点（服务端算的，它才知道谁被引用了）。
+   *
+   * 放在这里是因为下面的行规格要用它 —— 要动手的人就在那一行：行上原来只写
+   * 「无转发绑定」，那是**机制**；「不在订阅里」才是后果，而且两者不等价 ——
+   * 粘来的节点开了直连，没有转发照样在订阅里。
+   */
+  const unusedNodeIds = useMemo(
+    () => new Set(((previewQuery.data?.warnings ?? []) as any[])
+      .filter((item) => item?.reason === "node-unused")
+      .map((item) => Number(item.nodeId))),
+    [previewQuery.data],
+  );
+  const unusedInboundIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const node of nodes as any[]) {
+      const inboundId = Number(node?.inboundId || 0);
+      if (inboundId > 0 && unusedNodeIds.has(Number(node.id))) ids.add(inboundId);
+    }
+    return ids;
+  }, [nodes, unusedNodeIds]);
+
+  /**
+   * 机器的 Agent 从没连上过的那些节点。
+   *
+   * 这种机器上开的端口，配置根本下发不下去 —— 节点照样在订阅里（机器可能下一分钟
+   * 就连上了，悄悄拿掉比发出去更糟），但得在行上说出来。掉线不算：那是暂时的，
+   * 状态点已经在说了。
+   */
+  const hostOfflineNodeIds = useMemo(
+    () => new Set(((previewQuery.data?.warnings ?? []) as any[])
+      .filter((item) => item?.reason === "host-never-online")
+      .map((item) => Number(item.nodeId))),
+    [previewQuery.data],
+  );
+  const hostOfflineInboundIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const node of nodes as any[]) {
+      const inboundId = Number(node?.inboundId || 0);
+      if (inboundId > 0 && hostOfflineNodeIds.has(Number(node.id))) ids.add(inboundId);
+    }
+    return ids;
+  }, [nodes, hostOfflineNodeIds]);
+
   const pastedRowSpecs = useMemo<ProxyNodeRowSpec[]>(() => pastedNodes.map((node: any) => {
     const quotaExpanded = expandedQuotaIds.includes(Number(node.id));
     return {
       key: `node-${node.id}`,
+      // 粘来的和别人分享来的，左边色条不同：能不能改、凭据归谁，是这两类最大的差别。
+      accent: node.sharedFrom ? ("shared" as const) : ("pasted" as const),
       protocol: String(node.protocol || ""),
       sortName: String(node.name || ""),
       leading: <ProxyNodeHealthDot health={node.health} />,
@@ -669,6 +736,8 @@ export default function ClientSubscriptionsPage() {
         node.sharedFrom
           ? "不可修改"
           : node.ruleCount > 0 ? `${node.ruleCount} 条转发` : "无转发绑定",
+        // 后果放在机制后面：没转发不等于不在订阅里（开了直连照样在）。
+        unusedNodeIds.has(Number(node.id)) ? "不在订阅里" : "",
         node.sharedToUserIds?.length ? `已分享 ${node.sharedToUserIds.length} 人` : "",
         !node.isEnabled ? "已停用" : "",
       ]),
@@ -717,7 +786,7 @@ export default function ClientSubscriptionsPage() {
         },
       ],
     };
-  }), [pastedNodes, expandedQuotaIds, isAdmin]);
+  }), [pastedNodes, unusedNodeIds, expandedQuotaIds, isAdmin]);
 
   const changeGroupMode = (mode: ProxyNodeGroupMode) => {
     setNodeGroupMode(mode);
@@ -761,6 +830,11 @@ export default function ClientSubscriptionsPage() {
     () => (preview?.warnings ?? []).filter((item: any) => item.reason === "node-unused"),
     [preview],
   );
+  /** 机器还没连上面板的那些节点 —— 发出去了，但现在连不上。 */
+  const hostOfflineNodes = useMemo(
+    () => (preview?.warnings ?? []).filter((item: any) => item.reason === "host-never-online"),
+    [preview],
+  );
   const unboundRules = useMemo(
     () => (preview?.skipped ?? []).filter((item) => item.reason === "unbound"),
     [preview],
@@ -783,13 +857,14 @@ export default function ClientSubscriptionsPage() {
     () => summarizeProxyNodeHealthCounts({ total: nodeCount, online: onlineNodeCount, offline: offlineNodeCount }),
     [nodeCount, onlineNodeCount, offlineNodeCount],
   );
-  const pendingCount = unboundRules.length + driftedRules.length + unusedNodes.length;
+  const pendingCount = unboundRules.length + driftedRules.length + unusedNodes.length + hostOfflineNodes.length;
   const pendingSubtitle = pendingCount === 0
     ? "都对上了"
     : [
       unboundRules.length > 0 ? `${unboundRules.length} 条差节点` : "",
       driftedRules.length > 0 ? `${driftedRules.length} 条指向已变` : "",
       unusedNodes.length > 0 ? `${unusedNodes.length} 个没进订阅` : "",
+      hostOfflineNodes.length > 0 ? `${hostOfflineNodes.length} 个机器没连上` : "",
     ].filter(Boolean).join(" · ");
 
   const enabledNodes = useMemo(() => nodes.filter((node: any) => node.isEnabled), [nodes]);
@@ -1066,12 +1141,18 @@ export default function ClientSubscriptionsPage() {
                   return (
                   <div key={token.id} className="space-y-3 rounded-lg border p-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                         <span className="font-medium">{token.name}</span>
                         {!token.isEnabled && <Badge variant="outline">已停用</Badge>}
                         <span className="text-xs text-muted-foreground">
                           已拉取 {token.accessCount || 0} 次
                         </span>
+                        {/*
+                          最近一次是被拒的，就把原因摆在这。
+                          「客户说订阅更新不了」原来无从回答 —— 行上只有成功次数，
+                          分不出他到底试没试、被挡在哪一步。
+                        */}
+                        {renderTokenFailure(token)}
                       </div>
                       <div className="flex items-center gap-2">
                         <Switch
@@ -1383,8 +1464,10 @@ export default function ClientSubscriptionsPage() {
           groupModeOptions={groupModeOptions}
           onPasteNode={openCreateNode}
           inboundLeading={inboundLeading}
+          notInSubscriptionInboundIds={unusedInboundIds}
+          hostNeverOnlineInboundIds={hostOfflineInboundIds}
           onOpenPreview={() => setPreviewOpen(true)}
-          previewAlertCount={unboundRules.length + driftedRules.length + unusedNodes.length}
+          previewAlertCount={pendingCount}
           onOpenHosts={isAdmin ? undefined : () => setHostsOpen(true)}
           onlineCount={onlineNodeCount}
           offlineCount={offlineNodeCount}
@@ -1514,6 +1597,30 @@ export default function ClientSubscriptionsPage() {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {hostOfflineNodes.length > 0 && (
+                  <div className="space-y-2">
+                    <SectionLabel count={hostOfflineNodes.length}>机器还没连上面板</SectionLabel>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      这几台机器的 Agent 从没连上过 —— 配置下发不下去，节点虽然在订阅里，客户端现在连不上。
+                      去「我的机器」拿安装命令，在那台机器上装好 Agent 就行。
+                    </p>
+                    {hostOfflineNodes.map((item: any) => (
+                      <div
+                        key={`host-offline-${item.nodeId}`}
+                        className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.nodeName}</span>
+                        </div>
+                        <p className="break-all text-xs text-muted-foreground">
+                          开在「{item.targetText}」上，这台机器的 Agent 还没装
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 )}
 

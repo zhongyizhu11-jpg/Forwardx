@@ -120,3 +120,25 @@ export function getHostEntryAddressText(
     .map((entry) => (port === undefined ? entry.value : formatHostAddressWithPort(entry.value, port)))
     .join(" / ");
 }
+
+/**
+ * 这台机器的 Agent 到底装没装上。
+ *
+ * 「从没连上过」和「掉线了」是两件事，代价也不一样：
+ *
+ * - 掉线是暂时的，机器重启、网络抖一下都会掉。界面上那个状态点已经在说了，再拿它
+ *   去警告一遍只会天天报。
+ * - **从没连上过**不是暂时的，是一步没做完：机器加进面板了，Agent 却还没装。在这种
+ *   机器上开出来的落地端口，配置根本下发不下去 —— 可面板照样把它当成一条好线路发进
+ *   订阅，客户端拉到手连不上，而这一页上没有任何字提到过这件事。
+ *
+ * 判据是心跳：收过一次心跳，就说明 Agent 曾经装好并连上过，之后的掉线归状态点管。
+ */
+export function hostNeverConnected(host: { lastHeartbeat?: unknown } | null | undefined): boolean {
+  if (!host) return false;
+  const raw = (host as any).lastHeartbeat;
+  if (raw === null || raw === undefined || raw === "") return true;
+  const time = raw instanceof Date ? raw.getTime() : new Date(raw as any).getTime();
+  // 解析不出来的时间戳当作「有过心跳」：宁可漏说一句，也不要对着一台好机器报警。
+  return Number.isFinite(time) ? time <= 0 : false;
+}
