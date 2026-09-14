@@ -1713,10 +1713,25 @@ export default function ClientSubscriptionsPage() {
                     */}
                     <SectionLabel count={unboundRules.length}>差一个落地节点</SectionLabel>
                     <p className="text-xs text-muted-foreground">
-                      这些转发还没说清楚通往哪个落地节点，所以进不了订阅。选一个就好；
-                      目标地址正好是你某个节点时，以后新建的转发会自动认出来。
+                      {enabledNodes.length === 0
+                        ? "这些转发还没说清楚通往哪个落地节点，所以进不了订阅。先加一个节点，它们就能一起认上来。"
+                        : "这些转发还没说清楚通往哪个落地节点，所以进不了订阅。选一个就好；目标地址正好是你某个节点时，以后新建的转发会自动认出来。"}
                     </p>
-                    {unboundRules.map((item) => (
+                    {/*
+                      一个节点都还没有的时候，逐行摆一个选不了的下拉，等于把同一句
+                      「请先添加落地节点」重复几十遍 —— 真正该做的那一件事（去加个节点）
+                      反而被挤到看不见的地方。这种时候只把名字列出来：要动的手只有一次，
+                      不是几十次。
+                    */}
+                    {enabledNodes.length === 0 ? (
+                      <ul className="space-y-1">
+                        {unboundRules.map((item) => (
+                          <li key={item.ruleId} className="truncate text-xs text-muted-foreground">
+                            {item.ruleName}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : unboundRules.map((item) => (
                       <div
                         key={item.ruleId}
                         className="flex items-center gap-2 rounded-md border border-dashed px-2.5 py-1.5"
@@ -1724,16 +1739,13 @@ export default function ClientSubscriptionsPage() {
                         <span className="min-w-0 flex-1 truncate text-sm">{item.ruleName}</span>
                         <Select
                           value=""
-                          disabled={enabledNodes.length === 0}
                           onValueChange={(value) => bindRule.mutate({
                             ruleId: item.ruleId,
                             proxyNodeId: Number(value),
                           })}
                         >
                           <SelectTrigger className="h-8 w-36 shrink-0 text-xs">
-                            <SelectValue
-                              placeholder={enabledNodes.length === 0 ? "请先添加落地节点" : "选择落地节点"}
-                            />
+                            <SelectValue placeholder="选择落地节点" />
                           </SelectTrigger>
                           <SelectContent>
                             {enabledNodes.map((node: any) => (

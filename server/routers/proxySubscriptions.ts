@@ -453,8 +453,9 @@ export const proxySubscriptionsRouter = router({
   /** 预览订阅内容：进订阅的节点，以及每条被排除的转发和原因。 */
   preview: protectedProcedure.query(async ({ ctx }) => {
     if (!await hasProxySubscriptionPermission(ctx)) return { groups: [], nodes: [], skipped: [], warnings: [] };
-    const plan = await db.buildProxySubscriptionPlanForUser(ctx.user.id);
-    const document = await db.getProxySubscriptionDocumentForUser(ctx.user.id);
+    // 一次读库出这两样：分开取的话，中间有人动了转发，
+    // 策略组和节点清单就会互相对不上（见 getProxySubscriptionPreviewForUser）。
+    const { plan, document } = await db.getProxySubscriptionPreviewForUser(ctx.user.id);
     return {
       groups: document.groups
         .filter((group) => group.type !== "select")

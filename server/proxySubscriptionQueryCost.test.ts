@@ -118,3 +118,101 @@ test("SQLite 一次订阅组装不重复查模板，也不整表读主机", () =
   fs.rmSync(directory, { recursive: true, force: true });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
+
+/**
+ * 面板里「订阅内容」那一屏也走同一份组装，不许把整份订阅算两遍。
+ *
+ * 这一屏要两样东西：算出来的 plan（谁进了、谁没进、为什么），和渲染出来的 document
+ * （策略组长什么样）。原来是分两次去要的 —— 于是整份订阅从头组装了两遍，打库次数
+ * 正好翻倍。
+ *
+ * 慢一倍还是次要的。真正的问题是那两次是**两次独立读库**：中间只要有人删掉一条转发，
+ * 这一屏就会自相矛盾 —— 策略组里列着一个节点，底下的节点清单里却没有它。而这一屏
+ * 存在的全部意义就是回答「我的订阅里到底有什么」。
+ */
+test("SQLite 预览订阅内容不把整份订阅组装两遍", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-sub-preview-cost-"));
+  const databasePath = path.join(directory, "sub-preview-cost.db");
+  const script = String.raw`
+    import assert from "node:assert/strict";
+    import path from "node:path";
+    import { pathToFileURL } from "node:url";
+
+    const Database = (await import("better-sqlite3")).default;
+    const originalPrepare = Database.prototype.prepare;
+    let recording = false;
+    const statements = [];
+    Database.prototype.prepare = function (sql) {
+      if (recording) statements.push(String(sql));
+      return originalPrepare.call(this, sql);
+    };
+
+    const url = (file) => pathToFileURL(path.join(process.cwd(), file)).href;
+    const runtime = await import(url("server/dbRuntime.ts"));
+    const schema = await import(url("server/dbSchema.ts"));
+    const subs = await import(url("server/repositories/proxySubscriptionRepository.ts"));
+
+    await runtime.connectDatabase({ type: "sqlite", sqlite: { path: process.env.FORWARDX_TEST_DB } });
+    await schema.ensureDatabaseSchema();
+    const exec = (sql, p = []) => runtime.executeRaw(sql, p);
+
+    await exec("INSERT INTO users (id, username, password, role, allowProxySubscription) VALUES (1,'t','h','user',1)");
+    await exec("INSERT INTO hosts (id,name,ip,ipv4,agentToken,userId) VALUES (1,'机器','10.0.0.1','10.0.0.1','tok',1)");
+    await exec("INSERT INTO proxy_nodes (id,userId,name,protocol,address,port,uuid,tls,isEnabled,includeDirect) VALUES (1,1,'节点','vless','198.51.100.1',443,'u',1,1,1)");
+    await exec("INSERT INTO forward_rules (id,hostId,name,forwardType,protocol,sourcePort,targetIp,targetPort,userId,isEnabled,proxyNodeId,proxyNodeVisible) VALUES (1,1,'转发','direct','tcp',20001,'198.51.100.1',443,1,1,1,1)");
+
+    const measure = async (run) => {
+      await run();                 // 预热，避开首次的建表/兼容性杂音
+      statements.length = 0;
+      recording = true;
+      const value = await run();
+      recording = false;
+      return { value, count: statements.length, sql: statements.slice() };
+    };
+
+    const preview = await measure(() => subs.getProxySubscriptionPreviewForUser(1));
+
+    /*
+      按绝对条数订，不拿「渲染文档要几条」当基准 —— 渲染那条路如今就是走预览实现的，
+      拿它作基准，两边只会一起变，等于没订。
+    */
+    for (const table of ["proxy_nodes", "proxy_node_shares", "proxy_inbound_users", "hosts", "forward_rules"]) {
+      const reads = preview.sql.filter((sql) => new RegExp('from\\s+"?' + table + '"?', "i").test(sql));
+      assert.ok(
+        reads.length <= 1,
+        table + " 在一次预览里被查了 " + reads.length + " 次 —— plan 和 document 多半又各组装了一遍：\n" + reads.join("\n"),
+      );
+    }
+    assert.ok(
+      preview.count <= 5,
+      "一次预览打库 " + preview.count + " 条（不该超过一次订阅组装的 5 条）：\n" + preview.sql.join("\n"),
+    );
+
+    // 两样东西确实都拿到了，而且来自同一次组装。
+    assert.ok(Array.isArray(preview.value.plan.entries), "预览要带上 plan");
+    assert.ok(Array.isArray(preview.value.document.nodes), "预览要带上 document");
+    const nodeNames = new Set(preview.value.document.nodes.map((node) => node.name));
+    for (const group of preview.value.document.groups) {
+      for (const member of group.members) {
+        if (member === "DIRECT" || member === "REJECT" || nodeNames.has(member)) continue;
+        // 策略组里也可以引用别的策略组
+        assert.ok(
+          preview.value.document.groups.some((other) => other.name === member),
+          "策略组「" + group.name + "」里的 " + member + " 在节点清单里找不到 —— 这一屏自相矛盾了",
+        );
+      }
+    }
+
+    console.log("OK preview=" + preview.count);
+    Database.prototype.prepare = originalPrepare;
+    await runtime.closeDatabase();
+  `;
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+    cwd: process.cwd(),
+    env: { ...process.env, DATABASE_TYPE: "sqlite", FORWARDX_TEST_DB: databasePath },
+    encoding: "utf8",
+    timeout: 90_000,
+  });
+  fs.rmSync(directory, { recursive: true, force: true });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
