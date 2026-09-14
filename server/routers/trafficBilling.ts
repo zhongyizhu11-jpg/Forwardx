@@ -38,6 +38,17 @@ export const trafficBillingRouter = router({
     };
   }),
 
+  /**
+   * 「给这台机器配整台兜底价，会把谁接管过去、会停掉谁」。
+   *
+   * 保存之前问一次。兜底价会接管这台机器上所有没被单独计价的转发（包括走套餐的
+   * 租户的），而余额 ≤ 0 的人会被停掉**名下全部**转发 —— 这件事原来只有等租户
+   * 来问「我的转发怎么全停了」才会发现。
+   */
+  hostTakeoverPreview: adminProcedure
+    .input(z.object({ hostId: z.number().int().positive() }))
+    .query(async ({ input }) => db.previewHostTrafficBillingTakeover(input.hostId)),
+
   setEnabled: adminProcedure
     .input(z.object({ enabled: z.boolean() }))
     .mutation(async ({ input }) => {

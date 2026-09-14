@@ -17,6 +17,7 @@ import {
 import { executeRaw, getDatabaseKind, getDb, insertAndGetId, nowDate, queryRaw, quoteDbIdentifier, withDatabaseTransaction } from "../dbRuntime";
 import { getSetting, setSetting } from "./settingsRepository";
 import { formatTrafficMultiplier, normalizeTrafficMultiplier } from "../../shared/trafficMultiplier";
+import { countEnabledForwardRulesByUserIds, getBillingRelevantRulesByHostIds } from "./forwardRuleRepository";
 
 const GB_BYTES = 1024 ** 3;
 const MILLI_CENTS_PER_CENT = 1000;
@@ -604,6 +605,91 @@ export async function checkUserTrafficBillingPermission(userId: number, resource
     eq(userTrafficBillingPermissions.resourceId, resourceId),
   )).limit(1);
   return rows.length > 0;
+}
+
+/**
+ * 「给这台机器配整台兜底价，会把谁接管过去、会停掉谁」。
+ *
+ * 兜底价是转发找计费配置的最后一档，所以它会接管这台机器上**所有**没被转发组 / 隧道
+ * 单独计价的转发 —— 包括走套餐的租户的。而计费那条路的判断里从头到尾没有「这个人是
+ * 套餐户还是计费户」（面板里没这个字段），套餐户通常余额又是 0，于是：
+ *
+ *   余额 ≤ 0 → setUserForwardAccess(false) → **停掉他名下全部转发**，不只是这台上的。
+ *
+ * 保存之前把这件事摆出来。不摆的话，你只有在租户来问「我的转发怎么全停了」的时候
+ * 才会知道 —— 而那时候钱和业务都已经出事了。
+ */
+export async function previewHostTrafficBillingTakeover(hostId: number) {
+  const empty = { totalRules: 0, takeoverRules: 0, users: [] as any[], stopUsers: 0, stopRules: 0 };
+  const id = Number(hostId);
+  if (!Number.isInteger(id) || id <= 0) return empty;
+  const db = await getDb();
+  if (!db) return empty;
+
+  const rules = await getBillingRelevantRulesByHostIds([id]);
+  if (rules.length === 0) return empty;
+
+  /*
+    只问**上面两档**：转发组 → 隧道。
+
+    把 hostId 抹成 0 是因为 trafficBillingResourceCandidatesForRule 只在 hostId > 0 时
+    才生成主机那一档候选 —— 抹掉它，解析出来的就正好是「不算兜底价的话，这条转发现在
+    有没有价」。已经有价的不受兜底价影响（上面的档优先），剩下的才是会被接管的。
+  */
+  const higherTierByRuleId = await findTrafficBillingResourcesForRules(
+    rules.map((rule: any) => ({ ...rule, hostId: 0 })),
+  );
+  const takeover = rules.filter((rule: any) => !higherTierByRuleId.get(Number(rule.id))?.config);
+  if (takeover.length === 0) {
+    return { ...empty, totalRules: rules.length };
+  }
+
+  const rulesByUserId = new Map<number, number>();
+  for (const rule of takeover) {
+    const userId = Number(rule.userId || 0);
+    if (userId <= 0) continue;
+    rulesByUserId.set(userId, (rulesByUserId.get(userId) || 0) + 1);
+  }
+  const userIds = Array.from(rulesByUserId.keys());
+  if (userIds.length === 0) return { ...empty, totalRules: rules.length, takeoverRules: takeover.length };
+
+  const [userRows, enabledRuleCounts] = await Promise.all([
+    db.select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      balanceCents: users.balanceCents,
+      trafficLimit: users.trafficLimit,
+    }).from(users).where(inArray(users.id, userIds)),
+    countEnabledForwardRulesByUserIds(userIds),
+  ]);
+
+  const rows = (userRows as any[]).map((user) => {
+    const userId = Number(user.id);
+    // 余额 ≤ 0 就扣不动。管理员也一样 —— 计费那条路上没有按角色放行。
+    const balanceCents = Number(user.balanceCents || 0);
+    const wouldStop = balanceCents <= 0;
+    return {
+      userId,
+      username: String(user.username || `#${userId}`),
+      role: String(user.role || "user"),
+      balanceCents,
+      // 有套餐额度的人，正是「本来走套餐、会被兜底价接管走」的那一类。
+      hasPlanQuota: Number(user.trafficLimit || 0) > 0,
+      takeoverRules: rulesByUserId.get(userId) || 0,
+      // 停的是他名下全部的转发，不只是这台机器上的这几条。
+      enabledRules: enabledRuleCounts.get(userId) || 0,
+      wouldStop,
+    };
+  }).sort((left, right) => Number(right.wouldStop) - Number(left.wouldStop) || right.takeoverRules - left.takeoverRules);
+
+  return {
+    totalRules: rules.length,
+    takeoverRules: takeover.length,
+    users: rows,
+    stopUsers: rows.filter((row) => row.wouldStop).length,
+    stopRules: rows.filter((row) => row.wouldStop).reduce((total, row) => total + row.enabledRules, 0),
+  };
 }
 
 export async function upsertTrafficBillingConfig(data: InsertTrafficBillingConfig) {

@@ -60,6 +60,21 @@ export default function HostTrafficBillingDialog({
   });
   const featureEnabled = billingStatus?.enabled !== false;
 
+  /*
+    保存前先问清楚：这个价会把谁接管过去、会停掉谁。
+
+    兜底价接管的是这台机器上**所有**没被转发组 / 隧道单独计价的转发，包括走套餐的
+    租户的 —— 计费那条路的判断里没有「这个人是套餐户还是计费户」。套餐户通常余额
+    是 0，而余额 ≤ 0 会被停掉名下全部转发。
+  */
+  const { data: takeover } = trpc.trafficBilling.hostTakeoverPreview.useQuery(
+    { hostId: Number(host?.id || 0) },
+    { enabled: open && Number(host?.id || 0) > 0, refetchOnWindowFocus: false },
+  );
+  const takeoverUsers = (takeover?.users || []) as any[];
+  const planUsers = takeoverUsers.filter((row) => row.hasPlanQuota);
+  const stopUsers = takeoverUsers.filter((row) => row.wouldStop);
+
   const utils = trpc.useUtils();
   const afterWrite = async (disabledRules: number) => {
     await Promise.all([
@@ -67,6 +82,7 @@ export default function HostTrafficBillingDialog({
       utils.trafficBilling.configs.invalidate(),
       utils.trafficBilling.status.invalidate(),
       utils.trafficBilling.storeResources.invalidate(),
+      utils.trafficBilling.hostTakeoverPreview.invalidate(),
     ]);
     // 改计费资源会牵动授权：靠这个资源才用得上这台机器的用户可能因此失去访问，
     // 他的转发被停。这件事原来只写进服务端日志 —— 而挨停的是别人的业务。
@@ -122,6 +138,37 @@ export default function HostTrafficBillingDialog({
             <span>
               流量计费<strong>总开关是关着的</strong>，这里配了也一分钱都不会扣。要去「系统设置 → 流量计费」先打开。
             </span>
+          </div>
+        ) : null}
+
+        {takeover && takeover.takeoverRules > 0 ? (
+          <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-3 text-xs">
+            <p className="text-muted-foreground">
+              保存后，这台机器上
+              <strong className="text-foreground"> {takeover.takeoverRules} / {takeover.totalRules} </strong>
+              条转发会改成按 GB 扣余额
+              {takeover.takeoverRules < takeover.totalRules ? "（其余的已经被所属转发组 / 隧道单独计价，不受影响）" : ""}。
+            </p>
+            {planUsers.length > 0 ? (
+              <p className="text-muted-foreground">
+                其中
+                <strong className="text-foreground"> {planUsers.length} </strong>
+                位是<strong className="text-foreground">有套餐额度</strong>的租户
+                （{planUsers.map((row) => row.username).join("、")}）——
+                他们本来走套餐流量，之后会改成扣余额。
+              </p>
+            ) : null}
+            {stopUsers.length > 0 ? (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  <strong>{stopUsers.length} 人余额为 0</strong>
+                  （{stopUsers.map((row) => `${row.username}${row.role === "admin" ? "，管理员" : ""}`).join("、")}），
+                  扣不动余额会被停掉<strong>名下全部 {takeover.stopRules} 条转发</strong>——
+                  不只是这台机器上的。要么先给他们充值，要么别用整台兜底价，改成按转发组 / 隧道单独配。
+                </span>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

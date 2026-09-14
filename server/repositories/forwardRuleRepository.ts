@@ -1123,6 +1123,8 @@ export async function getBillingRelevantRulesByHostIds(hostIds: readonly number[
       hostId: forwardRules.hostId,
       tunnelId: forwardRules.tunnelId,
       forwardGroupId: forwardRules.forwardGroupId,
+      // 计费永远记在转发的主人头上（不是机器的主人），预检要按人汇总就得带上他。
+      userId: forwardRules.userId,
     })
     .from(forwardRules)
     .where(and(
@@ -1130,6 +1132,32 @@ export async function getBillingRelevantRulesByHostIds(hostIds: readonly number[
       eq(forwardRules.pendingDelete, false),
     ));
   return rows as any[];
+}
+
+/**
+ * 一批用户名下还开着的转发有多少条。
+ *
+ * 给「配了兜底价会停掉谁」的预检用：余额扣不动时 setUserForwardAccess 停的是这个人
+ * **名下全部**的转发，不只是这台机器上的那几条。只报这台机器上的条数会把后果说小 ——
+ * 而这正是人会拿来做决定的那个数。
+ */
+export async function countEnabledForwardRulesByUserIds(userIds: readonly number[]) {
+  const result = new Map<number, number>();
+  const wanted = Array.from(new Set(userIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return result;
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db
+    .select({ userId: forwardRules.userId, count: sql<number>`COUNT(*)` })
+    .from(forwardRules)
+    .where(and(
+      inArray(forwardRules.userId, wanted),
+      eq(forwardRules.isEnabled, true),
+      eq(forwardRules.pendingDelete, false),
+    ))
+    .groupBy(forwardRules.userId);
+  for (const row of rows as any[]) result.set(Number(row.userId), Number(row.count || 0));
+  return result;
 }
 
 export async function deleteForwardRule(id: number) {
