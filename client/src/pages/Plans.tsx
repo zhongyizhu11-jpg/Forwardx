@@ -886,7 +886,6 @@ export default function Plans() {
       setAssignDurationDays("30");
       utils.plans.subscriptions.invalidate();
       utils.plans.subscriptionsPage.invalidate();
-      utils.users.list.invalidate();
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
     },

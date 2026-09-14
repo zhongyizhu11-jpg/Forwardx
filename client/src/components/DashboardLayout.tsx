@@ -796,7 +796,6 @@ function DashboardLayoutContent({
   const updateAvatarMutation = trpc.users.updateAvatar.useMutation({
     onSuccess: () => {
       utils.auth.me.invalidate();
-      utils.users.list.invalidate();
       toast.success("头像已更新");
       setShowAvatarDialog(false);
     },

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { InsertUser, users, forwardRules, trafficBillingUsage, userSubscriptions } from "../../drizzle/schema";
 import { executeRaw, getDatabaseKind, getDb, insertAndGetId, nowDate, queryRaw, quoteDbIdentifier, rawAffectedRows, withDatabaseTransaction } from "../dbRuntime";
 import { hashPassword, verifyPassword, verifyPasswordAgainstDummy } from "../password";
@@ -559,6 +559,26 @@ function usersForListQuery(db: any) {
     })
     .from(users)
     .leftJoin(billingUsageByUser, eq(users.id, billingUsageByUser.userId));
+}
+
+/**
+ * 对账扫描要的是「有哪些非管理员用户」，只需要 id。
+ *
+ * 原来走 getAllUsers()：那条查询为了列表展示会 leftJoin 一份按用户聚合的计费
+ * 用量，再把每个用户的每一列（密码哈希、Telegram 绑定、一整套配额）读回来 ——
+ * 而调用方只是拿 id 去逐个对账。管理员在这一步本来就要跳过，所以顺手在 SQL 里
+ * 滤掉，不用先全读回来再在内存里 filter。
+ */
+export async function getNonAdminUserIds() {
+  const db = await getDb();
+  if (!db) return [] as number[];
+  const rows = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(ne(users.role, "admin"));
+  return Array.from(new Set((rows as any[])
+    .map((row) => Number(row.id))
+    .filter((id) => Number.isInteger(id) && id > 0)));
 }
 
 export async function getAllUsers() {

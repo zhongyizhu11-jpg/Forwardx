@@ -18,6 +18,15 @@
 
 ### 变化
 
+- **三处「为了一个数字，把整张表读回来」改成窄查询**：
+  - 自助加机器的配额检查（校验时一次、界面显示「2/10」时又一次）原来是 `(await getHosts(userId)).length` —— 为了得到一个台数，把这个人名下每台机器的每一列（agentToken、DDNS 配置、端口区间那一堆）全查回来再扔掉。换成 `countHostsByUserId`，一条 `COUNT(*)`。
+  - 主机分组保存时校验「这些主机在不在」，原来整表读 `hosts` 再在内存里建 Set。换成 `findExistingHostIds`，只问那几个 id。
+  - 按量计费的授权对账扫描原来走 `getAllUsers()` —— 那条查询为了列表展示会 leftJoin 一份按用户聚合的计费用量，再把每个用户的每一列（密码哈希、Telegram 绑定、整套配额）读回来，而调用方只是拿 id 去逐个对账。换成 `getNonAdminUserIds()`，管理员直接在 SQL 里滤掉。
+  - 三处都拿**老写法当场算一遍再对**，不是看着像就算数（`server/narrowedTableReads.test.ts`）。反向对照四个都红了：去掉 `COUNT(*)` 的 WHERE、让 id 校验原样回传不查库、去掉 role 过滤、以及把 `role <> 'admin'` 写成 `role = 'user'`（后者会漏掉 role 是空串的老数据 —— 对账漏一个人，等于这个人的转发权限对不上账还没人发现）。
+  - 真面板复核（把管理员降成租户、上限设成 4）：`selfServiceQuota` 回 `used 4 / limit 4 / canAdd false`，再加一台被拦下并给出「已达上限（4/4）」。
+
+- **删掉 22 个无效的缓存失效调用**。`utils.users.list.invalidate()` 散在四个文件里，而 `users.list` 这个查询**全站没有任何地方去取** —— 分页化之后列表早就走 `users.listPage` 了。所幸每一处后面都跟着一句 `listPage.invalidate()`，所以没造成「改完不刷新」，纯属留着占地方、让人以为还有个全量列表在用。
+
 - **删掉 64 个没人调用的导出**，37 个文件、486 行。全部是一路堆上来的残留，不改任何行为：
   - **改名后留下的兼容别名**：`getRuleStatusSnapshot`/`setRuleStatusSnapshot` 那一组（5 个）指向 `readRuleStatusSnapshot`、`multiavatarSeedFromValue` 指向 `avatarSeedFromValue`、`subscribePresenceCapableHostOffline` 指向 `subscribeAgentFastLivenessOffline` —— 新名字早就全站换完了，旧名字没有一处引用，留着只会让人以为是两个东西。
   - **被同一批删掉的调用方带走的**：`timeParam`、`compareTime`、`quoteIdentifiers`、`countDistinct` 等，删完再扫一遍才暴露出来，所以是反复扫到收敛为零。

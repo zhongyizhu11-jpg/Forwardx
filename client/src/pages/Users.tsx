@@ -376,7 +376,6 @@ function UsersContent() {
   const subscriptionsLoading = subscriptionPageQuery.isLoading;
   const updateForwardGroupPermsMutation = trpc.users.setForwardGroupPermissions.useMutation({
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
     },
@@ -384,7 +383,6 @@ function UsersContent() {
   });
   const updateHostPermsMutation = trpc.users.setHostPermissions.useMutation({
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
     },
@@ -392,7 +390,6 @@ function UsersContent() {
   });
   const updateTunnelPermsMutation = trpc.users.setTunnelPermissions.useMutation({
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
     },
@@ -426,7 +423,6 @@ function UsersContent() {
   });
   const updateTrafficBillingPermsMutation = trpc.users.setTrafficBillingPermissions.useMutation({
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.listPage.invalidate();
     },
     onError: (err) => toast.error(err.message || "更新流量计费授权失败"),
@@ -492,7 +488,6 @@ function UsersContent() {
 
   const createUserMutation = trpc.users.create.useMutation({
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
       toast.success("用户创建成功");
@@ -508,7 +503,6 @@ function UsersContent() {
 
   const resetPasswordMutation = trpc.users.resetPassword.useMutation({
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
       toast.success("账户信息已更新");
@@ -522,7 +516,6 @@ function UsersContent() {
 
   const deleteMutation = trpc.users.delete.useMutation({
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
       toast.success("用户已删除");
@@ -535,7 +528,6 @@ function UsersContent() {
 
   const removeTwoFactorMutation = trpc.users.removeTwoFactor.useMutation({
     onSuccess: (data) => {
-      utils.users.list.invalidate();
       utils.users.listPage.invalidate();
       toast.success(data.removed ? "双因素认证已移除" : "该用户未绑定双因素认证");
       setShowRemoveTwoFactor(false);
@@ -573,7 +565,6 @@ function UsersContent() {
         manualMaxIPs: variables.maxIPs,
         allowedForwardTypes: variables.allowedForwardTypes,
       });
-      utils.users.list.invalidate();
       utils.users.listPage.invalidate();
       toast.success("流量设置已更新");
       setShowTrafficSettings(false);
@@ -587,7 +578,6 @@ function UsersContent() {
         trafficUsed: 0,
         trafficBillingUsed: 0,
       });
-      utils.users.list.invalidate();
       utils.users.listPage.invalidate();
       toast.success("流量统计已重置");
       setShowResetTraffic(false);
@@ -638,7 +628,6 @@ function UsersContent() {
     },
     onSettled: async () => {
       await Promise.all([
-        utils.users.list.invalidate(),
         utils.users.listPage.invalidate(),
         utils.rules.list.invalidate(),
         utils.rules.listPage.invalidate(),
@@ -664,7 +653,6 @@ function UsersContent() {
     },
     onSettled: async () => {
       await Promise.all([
-        utils.users.list.invalidate(),
         utils.users.listPage.invalidate(),
         utils.rules.list.invalidate(),
         utils.rules.listPage.invalidate(),
@@ -674,7 +662,6 @@ function UsersContent() {
 
   const adminRechargeMutation = trpc.billing.adminRecharge.useMutation({
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.listPage.invalidate();
       utils.billing.me.invalidate();
       utils.billing.ledger.invalidate();
@@ -688,7 +675,6 @@ function UsersContent() {
 
   const adminSetBalanceMutation = trpc.billing.adminSetBalance.useMutation({
     onSuccess: (data) => {
-      utils.users.list.invalidate();
       utils.users.listPage.invalidate();
       utils.billing.me.invalidate();
       utils.billing.ledger.invalidate();
@@ -701,7 +687,6 @@ function UsersContent() {
   });
   const adminAddTrafficAddonMutation = trpc.billing.adminAddTrafficAddon.useMutation({
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.listPage.invalidate();
       utils.users.summary.invalidate();
       utils.plans.subscriptions.invalidate();
@@ -718,7 +703,6 @@ function UsersContent() {
 
   const extendSubscriptionMutation = trpc.plans.extendSubscription.useMutation({
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.listPage.invalidate();
       utils.users.summary.invalidate();
       utils.plans.subscriptions.invalidate();
@@ -740,7 +724,6 @@ function UsersContent() {
       }
     },
     onSuccess: () => {
-      utils.users.list.invalidate();
       utils.users.listPage.invalidate();
       utils.users.summary.invalidate();
       utils.plans.subscriptions.invalidate();
