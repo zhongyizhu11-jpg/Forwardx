@@ -1,4 +1,5 @@
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
+import MobileInfoRow from "@/components/MobileInfoRow";
 import DashboardLayout from "@/components/DashboardLayout";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -279,23 +280,6 @@ function CallbackItem({ label, value }: { label: string; value: string }) {
           <Copy className="h-3.5 w-3.5" />
         </Button>
       </div>
-    </div>
-  );
-}
-
-function MobileOrderInfoRow({
-  label,
-  children,
-  valueClassName = "",
-}: {
-  label: string;
-  children: ReactNode;
-  valueClassName?: string;
-}) {
-  return (
-    <div className="grid grid-cols-[4.75rem_1fr] gap-2 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <div className={`min-w-0 text-right break-words ${valueClassName}`}>{children}</div>
     </div>
   );
 }
@@ -929,18 +913,18 @@ export default function Payments() {
                     </div>
                   </div>
                   <div className="mt-3 space-y-2 border-t border-border/40 pt-3">
-                    <MobileOrderInfoRow label="通道">
+                    <MobileInfoRow label="通道">
                       <div className="flex flex-wrap justify-end gap-1">
                         <Badge variant="secondary">{providerLabel(order.provider)}</Badge>
                         <Badge variant="outline">{paymentTypeLabel(order.paymentType)}</Badge>
                       </div>
-                    </MobileOrderInfoRow>
-                    <MobileOrderInfoRow label="状态">{statusBadge(order.status)}</MobileOrderInfoRow>
-                    <MobileOrderInfoRow label="网关流水" valueClassName="font-mono text-xs text-muted-foreground">
+                    </MobileInfoRow>
+                    <MobileInfoRow label="状态">{statusBadge(order.status)}</MobileInfoRow>
+                    <MobileInfoRow label="网关流水" valueClassName="font-mono text-xs text-muted-foreground">
                       {order.tradeNo || "-"}
-                    </MobileOrderInfoRow>
-                    <MobileOrderInfoRow label="创建时间">{formatDate(order.createdAt)}</MobileOrderInfoRow>
-                    <MobileOrderInfoRow label="支付时间">{formatDate(order.paidAt)}</MobileOrderInfoRow>
+                    </MobileInfoRow>
+                    <MobileInfoRow label="创建时间">{formatDate(order.createdAt)}</MobileInfoRow>
+                    <MobileInfoRow label="支付时间">{formatDate(order.paidAt)}</MobileInfoRow>
                   </div>
                 </div>
               ))}

@@ -1048,16 +1048,6 @@ export async function addProxyInboundTraffic(entries: ReadonlyMap<number, number
   }
 }
 
-/** 手工校准这个端口的已用量，用来跟别处的统计对齐。之后仍然继续累加。 */
-export async function setProxyInboundTrafficUsed(id: number, bytes: number) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(proxyInbounds).set({
-    trafficUsed: Math.max(0, Math.floor(Number(bytes) || 0)),
-    updatedAt: nowDate(),
-  } as any).where(eq(proxyInbounds.id, Number(id)));
-}
-
 /** 用量清零，并记下这次重置的时间（月度自动重置靠它判断本周期是否已经重置过）。 */
 export async function resetProxyInboundTraffic(id: number) {
   const db = await getDb();

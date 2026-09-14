@@ -91,7 +91,7 @@ import {
 } from "../portReservations";
 import { repairPortForwardRuleHostReferences } from "../portForwardRuleHosts";
 import { summarizeForwardGroupRuntime } from "../forwardGroupRuntimeStatus";
-import { sqlBool } from "./repositoryUtils";
+import { dbBool, sqlBool } from "./repositoryUtils";
 import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
 import { MAX_FORWARD_GROUP_MEMBERS } from "../../shared/forwardGroup";
 import { getLastAuthenticatedAgentActivity } from "../agentActivity";
@@ -152,14 +152,6 @@ function nullableNumber(value: unknown) {
 function nullableString(value: unknown) {
   const text = String(value || "").trim();
   return text || null;
-}
-
-function dbBool(value: unknown, fallback = false) {
-  if (value === undefined || value === null || value === "") return fallback;
-  if (value === true || value === 1) return true;
-  if (typeof value !== "string") return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true";
 }
 
 function runtimeFieldEqual(current: unknown, next: unknown) {
@@ -1140,46 +1132,6 @@ export async function getForwardGroupModesByIds(groupIds: number[]) {
   return (rows as any[]).map((group) => ({
     id: Number(group.id),
     groupMode: groupModeOf(group),
-  }));
-}
-
-export async function getForwardGroupTrafficContextsByIds(groupIds: number[]) {
-  const db = await getDb();
-  if (!db) return [];
-  const ids = Array.from(new Set(groupIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)));
-  if (ids.length === 0) return [];
-  const groupRows: any[] = [];
-  const memberRows: any[] = [];
-  for (let index = 0; index < ids.length; index += 400) {
-    const chunk = ids.slice(index, index + 400);
-    const [groups, members] = await Promise.all([
-      db.select({
-        id: forwardGroups.id,
-        groupMode: forwardGroups.groupMode,
-        trafficMultiplier: forwardGroups.trafficMultiplier,
-      }).from(forwardGroups).where(inArray(forwardGroups.id, chunk)),
-      db.select({
-        id: forwardGroupMembers.id,
-        groupId: forwardGroupMembers.groupId,
-        isEnabled: forwardGroupMembers.isEnabled,
-        priority: forwardGroupMembers.priority,
-      }).from(forwardGroupMembers).where(inArray(forwardGroupMembers.groupId, chunk)),
-    ]);
-    groupRows.push(...groups);
-    memberRows.push(...members);
-  }
-  const membersByGroupId = new Map<number, any[]>();
-  for (const member of memberRows) {
-    const groupId = Number(member.groupId || 0);
-    const members = membersByGroupId.get(groupId) || [];
-    members.push(member);
-    membersByGroupId.set(groupId, members);
-  }
-  return groupRows.map((group) => ({
-    ...group,
-    groupMode: groupModeOf(group),
-    members: (membersByGroupId.get(Number(group.id)) || [])
-      .sort((a, b) => Number(a.priority) - Number(b.priority)),
   }));
 }
 
@@ -3374,12 +3326,6 @@ export async function syncForwardGroupRules(groupId: number, options: SyncForwar
     `forward-group-sync:${groupId}`,
     () => syncForwardGroupRulesWithLockHeld(groupId, options),
   );
-}
-
-export async function syncForwardGroupTemplateRule(templateRuleId: number) {
-  const template = await getForwardRuleById(templateRuleId);
-  if (!template || !(template as any).forwardGroupId) return;
-  await syncForwardGroupRules(Number((template as any).forwardGroupId));
 }
 
 export async function createForwardGroup(data: InsertForwardGroup, members: ForwardGroupMemberInput[]) {

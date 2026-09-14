@@ -1,4 +1,5 @@
 import { protectedProcedure, router } from "../_core/trpc";
+import { dbBool } from "../repositories/repositoryUtils";
 import { z } from "zod";
 import { planProxyNodeBinding } from "@shared/proxyNodeAutoBind";
 import { isIP } from "node:net";
@@ -46,11 +47,6 @@ const mainBackupGostTunnelModes = new Set(["tls", "wss", "tcp", "mtls", "mwss", 
 
 function isMainBackupGostTunnelMode(mode: unknown) {
   return mainBackupGostTunnelModes.has(String(mode || "").toLowerCase());
-}
-
-function dbBool(value: unknown, fallback = false) {
-  if (value === undefined || value === null || value === "") return fallback;
-  return value === true || value === 1 || value === "1" || String(value).trim().toLowerCase() === "true";
 }
 
 const failoverInputShape = {

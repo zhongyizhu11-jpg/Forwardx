@@ -1,3 +1,9 @@
+import { formatBytes } from "@shared/formatBytes";
+
+// 这里原来自带一份实现（全站共 7 份各不相同）。改成转发共享的那一份，
+// 现有的调用方（MyHostsSection 等）不用改导入。
+export { formatBytes };
+
 const AGENT_UPGRADE_TIMEOUT_MS = 10 * 60 * 1000;
 const HOST_METRICS_CACHE_PREFIX = "forwardx.hosts.metrics.";
 
@@ -37,15 +43,6 @@ export function metricUsageProgressClass(value: unknown, isOnline: boolean) {
   return "h-1.5 bg-muted [&>div]:bg-emerald-500";
 }
 
-export function formatBytes(bytes: number | null | undefined): string {
-  const num = Number(bytes);
-  if (!Number.isFinite(num) || num === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB", "PB"];
-  const i = Math.min(sizes.length - 1, Math.floor(Math.log(Math.abs(num)) / Math.log(k)));
-  return parseFloat((num / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-}
-
 export function formatUptime(seconds: number | null | undefined): string {
   if (!seconds) return "-";
   const d = Math.floor(seconds / 86400);
@@ -56,25 +53,7 @@ export function formatUptime(seconds: number | null | undefined): string {
   return `${m}分钟`;
 }
 
-function normalizeVersion(version: string | null | undefined) {
-  return String(version || "").trim().replace(/^v/i, "");
-}
-
-export function compareVersions(a: string | null | undefined, b: string | null | undefined) {
-  const pa = normalizeVersion(a).split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
-  const pb = normalizeVersion(b).split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
-    if (diff !== 0) return diff > 0 ? 1 : -1;
-  }
-  return 0;
-}
-
-export function isAgentVersionBehind(version: string | null | undefined, target: string | null | undefined) {
-  if (!version || !target) return false;
-  return compareVersions(version, target) < 0;
-}
+export { compareVersions, isAgentVersionBehind, normalizeVersion } from "@shared/version";
 
 export function isAgentUpgradeTimedOut(host: any) {
   if (!host?.agentUpgradeRequested || !host.agentUpgradeRequestedAt) return false;
@@ -85,15 +64,6 @@ export function isAgentUpgradeTimedOut(host: any) {
 function isPrimaryAddressFallbackVisible(value: unknown) {
   const text = String(value || "").trim();
   return !!text && text !== "unknown" && !text.includes(":");
-}
-
-export function hostAddressLines(host: any) {
-  const rows: Array<{ label: string; value: string }> = [];
-  if (host.ipv4) rows.push({ label: "IPv4", value: host.ipv4 });
-  if (host.ipv6) rows.push({ label: "IPv6", value: host.ipv6 });
-  if (rows.length === 0 && host.ip && host.ip !== "unknown") rows.push({ label: "IP", value: host.ip });
-  if (rows.length === 0) rows.push({ label: "IP", value: "-" });
-  return rows;
 }
 
 export function hostPrimaryAddressLines(host: any) {

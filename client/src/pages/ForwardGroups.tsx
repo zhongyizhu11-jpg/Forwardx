@@ -1,4 +1,9 @@
 import DataSectionError from "@/components/DataSectionError";
+import { hostSearchParts } from "@/lib/hostSearchParts";
+import { formatLatencyTimeLabel } from "@/lib/latencyTimeLabel";
+import { hostIpv6Address, hostPrivateAddress, normalizeConnectHostForHost, sameAddress } from "@/lib/multiHopAddress";
+import { addressKey } from "@/lib/multiHopAddress";
+import SectionTransition from "@/components/SectionTransition";
 import DashboardLayout from "@/components/DashboardLayout";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { LatencyRating } from "@/components/LatencyRating";
@@ -353,30 +358,6 @@ type ForwardGroupsContentProps = {
 
 const FORWARD_GROUP_VIEW_MODE_STORAGE_KEY = "forwardx.forwardGroups.viewMode";
 
-function ForwardGroupViewTransition({
-  transitionKey,
-  children,
-}: {
-  transitionKey: string;
-  children: ReactNode;
-}) {
-  const reduceMotion = useReducedMotion();
-
-  return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={transitionKey}
-        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.995 }}
-        animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-        exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.995 }}
-        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-      >
-        {children}
-      </motion.div>
-    </AnimatePresence>
-  );
-}
-
 function getStoredForwardGroupViewMode(): ForwardGroupViewMode {
   if (typeof window === "undefined") return "card";
   try {
@@ -410,36 +391,6 @@ function sameNullableStringArray(a: Array<string | null>, b: Array<string | null
     if ((a[i] || null) !== (b[i] || null)) return false;
   }
   return true;
-}
-
-function addressKey(value: unknown) {
-  const text = String(value || "").trim();
-  const unwrapped = text.startsWith("[") && text.endsWith("]") ? text.slice(1, -1).trim() : text;
-  return unwrapped.toLowerCase();
-}
-
-function sameAddress(a: unknown, b: unknown) {
-  const left = addressKey(a);
-  const right = addressKey(b);
-  return !!left && !!right && left === right;
-}
-
-function hostPrivateAddress(host: any) {
-  return String(host?.tunnelEntryIp || "").trim();
-}
-
-function hostIpv6Address(host: any) {
-  return String(host?.ipv6 || "").trim();
-}
-
-function normalizeConnectHostForHost(value: unknown, host: any, fallback: string | null = null) {
-  const text = String(value || "").trim();
-  if (!text) return fallback;
-  const privateAddr = hostPrivateAddress(host);
-  const ipv6Addr = hostIpv6Address(host);
-  if (privateAddr && sameAddress(text, privateAddr)) return privateAddr;
-  if (ipv6Addr && sameAddress(text, ipv6Addr)) return ipv6Addr;
-  return fallback;
 }
 
 function normalizeChainConnectHostsForHosts(
@@ -484,27 +435,6 @@ function forwardGroupSearchMatches(parts: unknown[], query: string) {
   return parts.some((part) => normalizeForwardGroupSearchText(part).includes(needle));
 }
 
-function forwardGroupHostSearchParts(host: any | null | undefined) {
-  if (!host) return [];
-  return [
-    host.id,
-    host.name,
-    host.hostname,
-    host.ip,
-    host.ipv4,
-    host.ipv6,
-    host.publicIp,
-    host.entryIp,
-    host.tunnelEntryIp,
-    host.ddnsDomain,
-    host.region,
-    host.country,
-    host.os,
-    host.system,
-    host.agentVersion,
-  ];
-}
-
 function forwardGroupMatchesSearchQuery(
   group: any,
   query: string,
@@ -545,7 +475,7 @@ function forwardGroupMatchesSearchQuery(
       member?.entryAddress,
       member?.connectHost,
       host?.name || (member?.hostId ? `host #${member.hostId}` : ""),
-      ...forwardGroupHostSearchParts(host),
+      ...hostSearchParts(host),
     ];
   });
   return forwardGroupSearchMatches([
@@ -590,15 +520,6 @@ type GroupLatencySeriesDatum = {
 const groupLatencySeriesCache = new Map<number, GroupLatencySeriesDatum[]>();
 const groupLatencyAnimatedKeys = new Set<number>();
 
-function formatGroupLatencyTime(value: string | Date) {
-  const d = new Date(value);
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const hour = String(d.getHours()).padStart(2, "0");
-  const minute = String(d.getMinutes()).padStart(2, "0");
-  return `${month}/${day} ${hour}:${minute}`;
-}
-
 function ForwardGroupLatencyDialog({
   groupId,
   groupName,
@@ -635,8 +556,8 @@ function ForwardGroupLatencyDialog({
       const counts = normalizeLatencyProbeCounts(d);
       const latency = Number(d.latencyMs) || 0;
       return {
-        label: formatGroupLatencyTime(d.recordedAt),
-        fullLabel: formatGroupLatencyTime(d.recordedAt),
+        label: formatLatencyTimeLabel(d.recordedAt),
+        fullLabel: formatLatencyTimeLabel(d.recordedAt),
         latency: counts.isTimeout ? 0 : latency,
         chartLatency: counts.isTimeout ? 0 : clipLatencyForChart(latency),
         isTimeout: counts.isTimeout,
@@ -2006,7 +1927,7 @@ export function ForwardGroupsContent({
         </div>}
       </div>
 
-      <ForwardGroupViewTransition transitionKey={contentTransitionKey}>
+      <SectionTransition transitionKey={contentTransitionKey}>
         {isLoading ? (
         <DataSectionLoading label={loadingLabel} />
       ) : visibleGroups.length > 0 ? (
@@ -2322,7 +2243,7 @@ export function ForwardGroupsContent({
           </CardContent>
         </Card>
         )}
-      </ForwardGroupViewTransition>
+      </SectionTransition>
 
       <Dialog
         open={showDialog}

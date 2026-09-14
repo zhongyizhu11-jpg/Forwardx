@@ -6,6 +6,23 @@ import { tunnelLatencyProbeSourceHostIds } from "../tunnelLatencyDetails";
 import { clearTunnelAutoHopLatencyState } from "../tunnelAutoLatencyState";
 import { clearTunnelMultiEntryLatencyState } from "../tunnelMultiEntryLatencyState";
 
+/**
+ * 写进日志的账号名要打码，两处（登录审计和用户操作日志）原来各存一份一模一样的实现。
+ * 打码规则是**隐私口径**：漂了就意味着有一条路上比另一条路露得多，而多露的那条
+ * 不会自己报错，只会安安静静地写进日志。
+ */
+export function maskIdentifier(value?: string | null) {
+  const text = String(value || "").trim();
+  if (!text) return "unknown";
+  const [name, domain] = text.split("@");
+  if (domain) {
+    const visible = name.length <= 2 ? `${name[0] || "*"}*` : `${name.slice(0, 2)}***`;
+    return `${visible}@${domain}`;
+  }
+  if (text.length <= 3) return `${text[0] || "*"}***`;
+  return `${text.slice(0, 2)}***${text.slice(-1)}`;
+}
+
 export function ensureAdminOrSelf(ctx: { user: { id: number; role: string } }, userId: number) {
   if (ctx.user.role !== "admin" && ctx.user.id !== userId) {
     throw new Error("无权访问该用户的数据");
@@ -29,25 +46,6 @@ export async function requireRuleAccess(ctx: { user: { id: number; role: string 
     throw new Error("无权访问该规则");
   }
   return rule;
-}
-
-export async function requireTunnelAccess(ctx: { user: { id: number; role: string } }, tunnelId: number) {
-  const tunnel = await db.getTunnelById(tunnelId);
-  if (!tunnel) throw new Error("隧道不存在");
-  if (ctx.user.role !== "admin" && tunnel.userId !== ctx.user.id) {
-    throw new Error("无权访问该隧道");
-  }
-  return tunnel;
-}
-
-export async function requireTunnelUseAccess(ctx: { user: { id: number; role: string } }, tunnelId: number) {
-  const tunnel = await db.getTunnelById(tunnelId);
-  if (!tunnel) throw new Error("隧道不存在");
-  if (ctx.user.role !== "admin" && tunnel.userId !== ctx.user.id) {
-    const hasPermission = await db.checkUserTunnelPermission(ctx.user.id, tunnel.id);
-    if (!hasPermission) throw new Error("无权使用该隧道");
-  }
-  return tunnel;
 }
 
 export async function requireTrafficBillingAccessIfConfigured(

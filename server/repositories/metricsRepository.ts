@@ -941,13 +941,6 @@ export async function claimAgentTrafficReport(hostId: number, reportId: string, 
   return false;
 }
 
-export async function insertTrafficStat(stat: InsertTrafficStat, options: { userId?: number } = {}) {
-  const ruleId = Number(stat.ruleId);
-  let userId = Number(options.userId || 0) || 0;
-  if (userId <= 0) userId = await getRuleUserId(ruleId);
-  await insertTrafficStatsBatch([{ stat, userId }]);
-}
-
 export async function cleanOldTrafficStats(retainHours: number = 72) {
   const db = await getDb();
   if (!db) return;

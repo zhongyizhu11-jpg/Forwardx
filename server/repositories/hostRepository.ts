@@ -1,4 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, or, sql, type SQLWrapper } from "drizzle-orm";
+import { isFreshHostHeartbeat } from "../hostHeartbeatPolicy";
+export { isFreshHostHeartbeat } from "../hostHeartbeatPolicy";
 import {
   agentTokens,
   forwardGroupMembers,
@@ -46,12 +48,6 @@ import {
 // ==================== Host Queries ====================
 
 export { HOST_ONLINE_TTL_MS };
-
-export function isFreshHostHeartbeat(lastHeartbeat: unknown) {
-  if (!lastHeartbeat) return false;
-  const time = new Date(lastHeartbeat as any).getTime();
-  return Number.isFinite(time) && Date.now() - time <= HOST_ONLINE_TTL_MS;
-}
 
 function withComputedOnline<T extends { id?: unknown; isOnline?: boolean; lastHeartbeat?: unknown }>(host: T): T {
   return {
@@ -541,6 +537,36 @@ export async function getHostsByIds(ids: readonly number[]) {
   return (rows as any[]).map((row) => withComputedOnline(row));
 }
 
+/**
+ * 只数个数，不把机器整行读出来。
+ *
+ * 自助加机器的配额检查原来写成 `(await getHosts(userId)).length` —— 为了得到
+ * 一个数字，把这个人名下每台机器的每一列（含 agentToken、DDNS 配置、端口区间
+ * 那一堆）全查回来再扔掉。一个有几百台机器的用户，每点一次「添加主机」和每开
+ * 一次那个对话框都要走一遍。
+ */
+export async function countHostsByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return 0;
+  const owner = Number(userId);
+  if (!Number.isInteger(owner) || owner <= 0) return 0;
+  const rows = await db.select({ count: sql<number>`COUNT(*)` }).from(hosts).where(eq(hosts.userId, owner));
+  return Math.max(0, Math.trunc(Number((rows as any[])[0]?.count) || 0));
+}
+
+/**
+ * 给一组 id，回其中真实存在的那些。校验「这些主机在不在」用这个，
+ * 别整表读回来再在内存里建 Set。
+ */
+export async function findExistingHostIds(ids: readonly number[]) {
+  const db = await getDb();
+  if (!db) return new Set<number>();
+  const wanted = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return new Set<number>();
+  const rows = await db.select({ id: hosts.id }).from(hosts).where(inArray(hosts.id, wanted));
+  return new Set((rows as any[]).map((row) => Number(row.id)));
+}
+
 export async function createHost(host: InsertHost) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1003,16 +1029,6 @@ export async function getHostByAgentToken(token: string) {
   return r[0];
 }
 
-export async function getHostAgentIdentityByToken(token: string) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const rows = await db.select({ id: hosts.id, name: hosts.name })
-    .from(hosts)
-    .where(eq(hosts.agentToken, token))
-    .limit(1);
-  return rows[0];
-}
-
 export async function getHostAgentPresenceById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -1126,8 +1142,3 @@ export async function releaseHostPendingRuleCleanup(hostId: number) {
   return count;
 }
 
-/** 获取主机下未删除的转发规则数量 */
-export async function getHostRuleCount(hostId: number): Promise<number> {
-  const blockers = await getHostRuleDeleteBlockers(hostId);
-  return blockers.ruleCount + blockers.managedRuleCount + blockers.pendingCleanupCount;
-}

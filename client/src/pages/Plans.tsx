@@ -1,4 +1,9 @@
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
+import { StatusDot } from "@/lib/statusDot";
+import { forwardGroupModeOf, forwardGroupTypeText, type ForwardGroupMode } from "@shared/forwardTypes";
+import MobileInfoRow from "@/components/MobileInfoRow";
+import { formatQuotaBytes } from "@shared/formatBytes";
+import { formatMoneyCents as money } from "@shared/formatMoney";
 import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -89,7 +94,6 @@ type PlanManageTab = "plans" | "billing";
 type PlanDialogTab = "settings" | "resources";
 type PlanListViewMode = "card" | "table";
 type PlanResourceKey = "hostIds" | "tunnelIds" | "forwardGroupIds" | "proxyNodeIds";
-type ForwardGroupMode = "port" | "failover" | "chain" | "entry" | "exit";
 type PlanResourcePart = { label: string; count: number };
 const PLAN_MANAGE_TABS = ["plans", "billing"] as const;
 /*
@@ -151,23 +155,6 @@ function storePlanListViewMode(viewMode: PlanListViewMode) {
   }
 }
 
-function money(cents?: number, currency = "CNY") {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((cents || 0) / 100);
-}
-
-function bytes(size?: number | null) {
-  const value = Number(size || 0);
-  if (!value) return "不限";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let n = value;
-  let idx = 0;
-  while (n >= 1024 && idx < units.length - 1) {
-    n /= 1024;
-    idx++;
-  }
-  return `${n >= 10 || idx === 0 ? n.toFixed(0) : n.toFixed(2)} ${units[idx]}`;
-}
-
 function speed(value?: number | null) {
   const num = Number(value || 0);
   return num > 0 ? `${parseFloat(num.toFixed(2))} Mbps` : "不限";
@@ -221,23 +208,6 @@ function unpricedTierLabels(form: PlanForm): string[] {
   return form.priceTiers
     .filter((tier) => String(tier.price ?? "").trim() === "")
     .map((tier) => planDurationLabel(Number(tier.durationDays || 0)));
-}
-
-function MobileInfoRow({
-  label,
-  children,
-  valueClassName = "",
-}: {
-  label: string;
-  children: ReactNode;
-  valueClassName?: string;
-}) {
-  return (
-    <div className="grid grid-cols-[4.75rem_1fr] gap-2 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <div className={`min-w-0 text-right break-words ${valueClassName}`}>{children}</div>
-    </div>
-  );
 }
 
 function PlanStatusQuickToggle({
@@ -326,7 +296,7 @@ function PlanCard({
           </div>
         </MobileInfoRow>
         <MobileInfoRow label="端口">{plan.portCount} 个端口</MobileInfoRow>
-        <MobileInfoRow label="规则/流量">规则 {plan.maxRules || "不限"} · 流量 {bytes(plan.trafficLimit)}</MobileInfoRow>
+        <MobileInfoRow label="规则/流量">规则 {plan.maxRules || "不限"} · 流量 {formatQuotaBytes(plan.trafficLimit)}</MobileInfoRow>
         <MobileInfoRow label="连接/IP">连接 {plan.maxConnections || "不限"} · 单 IP {plan.maxIPs || "不限"}</MobileInfoRow>
         <MobileInfoRow label="限速">{speed(plan.rateLimitMbps)}</MobileInfoRow>
         <MobileInfoRow label="附加流量">{plan.trafficAddons?.length || 0} 档</MobileInfoRow>
@@ -352,33 +322,16 @@ function hostMeta(host: any) {
   return Array.from(new Set([host?.ip, host?.ipv4, host?.ipv6].filter(Boolean))).join(" / ");
 }
 
-function forwardGroupMode(group: any): ForwardGroupMode {
-  const mode = String(group?.groupMode || "failover");
-  return mode === "port" || mode === "failover" || mode === "chain" || mode === "entry" || mode === "exit"
-    ? mode
-    : "failover";
-}
-
 function isPortForwardGroup(group: any) {
-  return forwardGroupMode(group) === "port";
+  return forwardGroupModeOf(group) === "port";
 }
 
 function isChainForwardGroup(group: any) {
-  return forwardGroupMode(group) === "chain";
+  return forwardGroupModeOf(group) === "chain";
 }
 
 function isStandardForwardGroup(group: any) {
-  return forwardGroupMode(group) === "failover";
-}
-
-function forwardGroupTypeText(group: any) {
-  const mode = forwardGroupMode(group);
-  if (mode === "port") return "端口转发";
-  if (mode === "chain") return "转发链";
-  if (mode === "entry") return "入口组";
-  if (mode === "exit") return "出口组";
-  if (group?.groupType === "tunnel") return "隧道转发组";
-  return "转发组";
+  return forwardGroupModeOf(group) === "failover";
 }
 
 function planResourcePartsForDisplay(plan: any, forwardGroupMap: Map<number, any>): PlanResourcePart[] {
@@ -446,15 +399,6 @@ function planResourceStatusTone(type: "host" | "tunnel" | "forward_group", item:
   return "online";
 }
 
-function PlanResourceStatusDot({ tone }: { tone: string }) {
-  const className = tone === "online"
-    ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.16)]"
-    : tone === "warning"
-    ? "bg-amber-400 shadow-[0_0_0_3px_rgba(251,191,36,0.18)]"
-    : "bg-muted-foreground/35";
-  return <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${className}`} aria-hidden="true" />;
-}
-
 function PlanResourceOption({
   type,
   item,
@@ -475,7 +419,7 @@ function PlanResourceOption({
   const multiplier = type === "host" || !showMultiplier ? null : formatTrafficMultiplier(item?.trafficMultiplier ?? 100);
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <PlanResourceStatusDot tone={planResourceStatusTone(type, item)} />
+      <StatusDot tone={planResourceStatusTone(type, item)} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-medium">{title}</span>
@@ -736,8 +680,14 @@ export default function Plans() {
     refetchOnWindowFocus: false,
     placeholderData: (previousData) => previousData,
   });
+  /*
+    无条件发：这三张统计卡（套餐数量、套餐资源，以及「商店状态」那行「N 个套餐的
+    购买入口不生效」）挂在**页头**，两个 tab 都看得见，而查询原来跟着
+    `activeTab === "plans"` 走。点到「流量计费」那一侧，planSummary 变 undefined，
+    卡片就一路回落到 0：面板上明明有 2 个套餐、12 份资源，同一个页面换个 tab 就说
+    「套餐数量 0」。跟之前按量计费那张状态卡是同一个毛病 —— 页头的数字不归 tab 管。
+  */
   const planSummaryQuery = trpc.plans.summary.useQuery(undefined, {
-    enabled: activeTab === "plans",
     staleTime: 10_000,
     refetchOnWindowFocus: false,
     placeholderData: (previousData) => previousData,
@@ -745,6 +695,7 @@ export default function Plans() {
   const plans = (planPageQuery.data?.items || []) as any[];
   const isLoading = planPageQuery.isLoading;
   const planSummary = planSummaryQuery.data;
+  const planSummaryLoading = planSummaryQuery.isLoading;
   const planPagination = useServerPagination(
     plans,
     Number(planPageQuery.data?.totalItems || 0),
@@ -882,7 +833,6 @@ export default function Plans() {
       setAssignDurationDays("30");
       utils.plans.subscriptions.invalidate();
       utils.plans.subscriptionsPage.invalidate();
-      utils.users.list.invalidate();
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
     },
@@ -1203,13 +1153,13 @@ export default function Plans() {
             <CardHeader className="pb-2">
               <CardDescription>套餐数量</CardDescription>
               <CardTitle>
-                <AnimatedStatValue value={Number(planSummary?.totalItems || 0)} loading={isLoading} cacheKey="plans.count" fallbackValue={0} />
+                <AnimatedStatValue value={Number(planSummary?.totalItems || 0)} loading={planSummaryLoading} cacheKey="plans.count" fallbackValue={0} />
               </CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
               <AnimatedStatValue
                 value={`${activePlans} 个已启用`}
-                loading={isLoading}
+                loading={planSummaryLoading}
                 cacheKey="plans.activeCount"
                 fallbackValue="0 个已启用"
               />
@@ -1221,7 +1171,7 @@ export default function Plans() {
               <CardTitle>
                 <AnimatedStatValue
                   value={planResourceTotal}
-                  loading={isLoading}
+                  loading={planSummaryLoading}
                   cacheKey="plans.resourceTotal"
                   fallbackValue={0}
                 />
@@ -1346,7 +1296,7 @@ export default function Plans() {
                                 </TableCell>
                                 <TableCell className="text-sm text-muted-foreground">
                                   <div>{plan.portCount} 个端口</div>
-                                  <div>规则 {plan.maxRules || "不限"} · 流量 {bytes(plan.trafficLimit)}</div>
+                                  <div>规则 {plan.maxRules || "不限"} · 流量 {formatQuotaBytes(plan.trafficLimit)}</div>
                                   <div>附加流量 {plan.trafficAddons?.length || 0} 档</div>
                                   <div>连接 {plan.maxConnections || "不限"} · 单 IP {plan.maxIPs || "不限"} · 限速 {speed(plan.rateLimitMbps)}</div>
                                 </TableCell>

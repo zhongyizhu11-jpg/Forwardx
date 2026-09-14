@@ -10,12 +10,6 @@ export const AGENT_FORWARDX_RELAY_FAILOVER_VERSION = "2.2.160";
  */
 export const AGENT_FORWARDX_RELAY_AGGREGATE_VERSION = "2.2.194";
 
-export const TUNNEL_RELAY_MODE_LABELS: Record<TunnelRelayMode, string> = {
-  chain: "串行中转 - 逐跳转发",
-  failover: "中转故障转移 - 择一可用",
-  aggregate: "带宽叠加 - 多中转并行",
-};
-
 export const TUNNEL_RELAY_MODE_HINTS: Record<TunnelRelayMode, string> = {
   chain: "流量按顺序经过每一台中转，最终到达出口。",
   failover: "入口每次只用一台中转，故障时切换到下一台。",

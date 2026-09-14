@@ -1,4 +1,9 @@
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
+import { ledgerTone } from "@/lib/ledgerTone";
+import MobileInfoRow from "@/components/MobileInfoRow";
+import StatCard from "@/components/StatCard";
+import { balanceTypeLabel } from "@shared/ledgerLabels";
+import { formatMoneyCents as money } from "@shared/formatMoney";
 import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -34,10 +39,6 @@ const BILLING_TAB_ITEMS = [
 ] as const satisfies readonly SlidingTabItem<BillingTab>[];
 const BILLING_TAB_STORAGE_KEY = "forwardx.billing.tab";
 
-function money(cents?: number, currency = "CNY") {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((Number(cents) || 0) / 100);
-}
-
 function dateText(value?: string | Date | null) {
   return value ? new Date(value).toLocaleString() : "不限";
 }
@@ -68,60 +69,6 @@ function discountStatus(code: any) {
   if (code.expiresAt && new Date(code.expiresAt).getTime() <= now) return "已过期";
   if (Number(code.maxUses || 0) > 0 && Number(code.usedCount || 0) >= Number(code.maxUses)) return "已用完";
   return "生效中";
-}
-
-function BillingStatCard({
-  title,
-  value,
-  subtitle,
-  icon: Icon,
-  tone,
-  loading = false,
-  cacheKey,
-  fallbackValue,
-}: {
-  title: string;
-  value: string | number;
-  subtitle?: string;
-  icon: ElementType;
-  tone: string;
-  loading?: boolean;
-  cacheKey: string;
-  fallbackValue?: string | number;
-}) {
-  return (
-    <Card className="group relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-      <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
-      <CardContent className="relative p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
-            <AnimatedStatValue
-              as="p"
-              value={value}
-              loading={loading}
-              cacheKey={cacheKey}
-              fallbackValue={fallbackValue}
-              className="break-words text-2xl font-bold tracking-tight tabular-nums"
-            />
-            {subtitle && (
-              <AnimatedStatValue
-                as="p"
-                value={subtitle}
-                loading={loading}
-                cacheKey={`${cacheKey}.subtitle`}
-                fallbackValue=""
-                className="break-words text-xs text-muted-foreground/80"
-              />
-            )}
-          </div>
-          <div className={`hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${tone}`}>
-            <Icon className="h-5 w-5 text-white" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
 }
 
 function BillingToggleCard({
@@ -172,17 +119,6 @@ function normalizeCodeInput(value: string) {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 64);
 }
 
-function balanceTypeText(type?: string | null) {
-  if (type === "admin_recharge") return "管理员充值";
-  if (type === "admin_adjust") return "管理员修改";
-  if (type === "payment") return "在线充值入账";
-  if (type === "purchase") return "余额消费";
-  if (type === "redeem") return "兑换入账";
-  if (type === "traffic_billing") return "流量计费";
-  if (type === "traffic_addon_purchase") return "购买附加流量";
-  return type || "余额变动";
-}
-
 function downloadCodeTextFile(codes: string[], filename = `redemption-codes-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.txt`) {
   if (!codes.length || typeof window === "undefined") return;
   const blob = new Blob([codes.join("\r\n")], { type: "text/plain;charset=utf-8" });
@@ -196,34 +132,10 @@ function downloadCodeTextFile(codes: string[], filename = `redemption-codes-${ne
   URL.revokeObjectURL(url);
 }
 
-function ledgerTone(item: any) {
-  if (item.kind === "balance" && Number(item.amountCents) < 0) return "text-destructive";
-  if (item.kind === "balance" && Number(item.amountCents) > 0) return "text-emerald-600";
-  if (item.kind === "payment" && (item.status === "paid" || item.status === "completed")) return "text-emerald-600";
-  return "";
-}
-
 function ledgerIcon(item: any) {
   if (item.kind === "payment") return CreditCard;
   if (item.kind === "subscription") return Package;
   return WalletCards;
-}
-
-function MobileInfoRow({
-  label,
-  children,
-  valueClassName = "",
-}: {
-  label: string;
-  children: ReactNode;
-  valueClassName?: string;
-}) {
-  return (
-    <div className="grid grid-cols-[4.75rem_1fr] gap-2 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <div className={`min-w-0 text-right break-words ${valueClassName}`}>{children}</div>
-    </div>
-  );
 }
 
 export default function Billing() {
@@ -603,7 +515,7 @@ export default function Billing() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <BillingStatCard
+          <StatCard
             title="用户余额总额"
             value={money(totalBalance)}
             subtitle={`${Number(billingSummary?.userCount || 0)} 个用户`}
@@ -613,7 +525,7 @@ export default function Billing() {
             cacheKey="billing.totalBalance"
             fallbackValue={money(0)}
           />
-          <BillingStatCard
+          <StatCard
             title="可用兑换码"
             value={activeRedemptionCodes}
             subtitle="未使用且已启用"
@@ -623,7 +535,7 @@ export default function Billing() {
             cacheKey="billing.activeRedemptionCodes"
             fallbackValue={0}
           />
-          <BillingStatCard
+          <StatCard
             title="生效折扣码"
             value={activeDiscountCodes}
             subtitle="当前可抵扣"
@@ -908,7 +820,7 @@ export default function Billing() {
                         <div className={`shrink-0 text-right text-sm font-medium ${Number(tx.amountCents) >= 0 ? "text-emerald-600" : "text-destructive"}`}>{money(tx.amountCents)}</div>
                       </div>
                       <div className="mt-3 space-y-2 border-t border-border/40 pt-3">
-                        <MobileInfoRow label="类型"><Badge variant="outline">{tx.typeLabel || balanceTypeText(tx.type)}</Badge></MobileInfoRow>
+                        <MobileInfoRow label="类型"><Badge variant="outline">{tx.typeLabel || balanceTypeLabel(tx.type)}</Badge></MobileInfoRow>
                         <MobileInfoRow label="余额">{money(tx.balanceAfterCents)}</MobileInfoRow>
                         <MobileInfoRow label="说明">{tx.description || "-"}</MobileInfoRow>
                       </div>
@@ -927,7 +839,7 @@ export default function Billing() {
                     {transactions.map((tx: any) => (
                       <TableRow key={tx.id}>
                         <TableCell>{tx.name || tx.username || `#${tx.userId}`}</TableCell>
-                        <TableCell><Badge variant="outline">{tx.typeLabel || balanceTypeText(tx.type)}</Badge></TableCell>
+                        <TableCell><Badge variant="outline">{tx.typeLabel || balanceTypeLabel(tx.type)}</Badge></TableCell>
                         <TableCell className={Number(tx.amountCents) >= 0 ? "text-emerald-600" : "text-destructive"}>{money(tx.amountCents)}</TableCell>
                         <TableCell>{money(tx.balanceAfterCents)}</TableCell>
                         <TableCell>{tx.description || "-"}</TableCell>

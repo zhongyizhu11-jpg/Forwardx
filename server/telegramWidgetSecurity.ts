@@ -36,8 +36,3 @@ export function consumeTelegramWidgetLoginOnce(
   return true;
 }
 
-/** Test-only reset hook. */
-export function clearTelegramWidgetLoginReplayForTests() {
-  consumedWidgetLogins.clear();
-}
-

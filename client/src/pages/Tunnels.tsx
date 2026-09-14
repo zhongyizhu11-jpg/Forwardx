@@ -1,4 +1,11 @@
 import DataSectionError from "@/components/DataSectionError";
+import { hostSearchParts } from "@/lib/hostSearchParts";
+import { formatLatencyTimeLabel } from "@/lib/latencyTimeLabel";
+import { hostIpv6Address, hostPrivateAddress, normalizeConnectHostForHost, sameAddress } from "@/lib/multiHopAddress";
+import { addressKey } from "@/lib/multiHopAddress";
+import SectionTransition from "@/components/SectionTransition";
+import { loadReactGlobe, prefetchReactGlobe } from "@/lib/reactGlobeLoader";
+import { escapeTooltipHtml, hostGeoCoordinate } from "@/lib/hostGeo";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -129,32 +136,7 @@ import {
 import MultiHopEditor from "@/components/MultiHopEditor";
 import { ForwardGroupsContent } from "@/pages/ForwardGroups";
 
-const loadReactGlobe = () => import("react-globe.gl");
 const ReactGlobe = lazy(loadReactGlobe) as typeof import("react-globe.gl").default;
-
-function TunnelSectionTransition({
-  transitionKey,
-  children,
-}: {
-  transitionKey: string;
-  children: ReactNode;
-}) {
-  const reduceMotion = useReducedMotion();
-
-  return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={transitionKey}
-        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.995 }}
-        animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-        exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.995 }}
-        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-      >
-        {children}
-      </motion.div>
-    </AnimatePresence>
-  );
-}
 
 type TunnelForm = {
   name: string;
@@ -311,7 +293,6 @@ const TUNNEL_GLOBE_PATH_MIN_ALTITUDE = 0.038;
 const TUNNEL_GLOBE_PATH_MAX_ALTITUDE = 0.082;
 const TUNNEL_GLOBE_PATH_LAYER_ALTITUDE_STEP = 0.005;
 const TUNNEL_GLOBE_PATH_LAYER_ALTITUDE_MAX = 0.014;
-let reactGlobePrefetchStarted = false;
 
 const defaultForm: TunnelForm = {
   name: "",
@@ -393,18 +374,6 @@ function sameNullableStringArray(a: Array<string | null>, b: Array<string | null
   return true;
 }
 
-function addressKey(value: unknown) {
-  const text = String(value || "").trim();
-  const unwrapped = text.startsWith("[") && text.endsWith("]") ? text.slice(1, -1).trim() : text;
-  return unwrapped.toLowerCase();
-}
-
-function sameAddress(a: unknown, b: unknown) {
-  const left = addressKey(a);
-  const right = addressKey(b);
-  return !!left && !!right && left === right;
-}
-
 function normalizeHopConnectHosts(
   raw: Array<string | null>,
   hostCount: number,
@@ -417,24 +386,6 @@ function normalizeHopConnectHosts(
 
 function hostPublicAddress(host: any) {
   return String(host?.entryIp || host?.ipv4 || host?.ipv6 || host?.ip || "").trim();
-}
-
-function hostPrivateAddress(host: any) {
-  return String(host?.tunnelEntryIp || "").trim();
-}
-
-function hostIpv6Address(host: any) {
-  return String(host?.ipv6 || "").trim();
-}
-
-function normalizeConnectHostForHost(value: unknown, host: any, fallback: string | null = null) {
-  const text = String(value || "").trim();
-  if (!text) return fallback;
-  const privateAddr = hostPrivateAddress(host);
-  const ipv6Addr = hostIpv6Address(host);
-  if (privateAddr && sameAddress(text, privateAddr)) return privateAddr;
-  if (ipv6Addr && sameAddress(text, ipv6Addr)) return ipv6Addr;
-  return fallback;
 }
 
 function normalizeHopConnectHostsForHosts(
@@ -453,31 +404,6 @@ function normalizeHopConnectHostsForHosts(
     // lets the runtime resolve the host's current public/entry address.
     return normalizeConnectHostForHost(value, host, null);
   });
-}
-
-function normalizeChainConnectHostsForHosts(
-  raw: Array<string | null>,
-  hopHostIds: number[],
-  hosts: any[] | undefined,
-  externalEntry = false,
-): Array<string | null> {
-  const base = normalizeHopConnectHosts(raw, hopHostIds.length);
-  if (externalEntry && hopHostIds.length > 0) base[0] = raw[0] || null;
-  const hostById = new Map((hosts || []).map((host: any) => [Number(host.id), host]));
-  return base.map((value, idx) => {
-    if (idx === 0 && !externalEntry) return null;
-    const host = hostById.get(Number(hopHostIds[idx] || 0));
-    return normalizeConnectHostForHost(value, host, null);
-  });
-}
-
-function hostGeoCoordinate(host: any) {
-  if (host?.geoLatitudeMicro == null || host?.geoLongitudeMicro == null) return null;
-  const lat = Number(host.geoLatitudeMicro) / 1_000_000;
-  const lng = Number(host.geoLongitudeMicro) / 1_000_000;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  return { lat, lng };
 }
 
 function hostRegionText(host: any) {
@@ -503,25 +429,6 @@ function createTunnelGlobeHostPoint(host: any): TunnelGlobeHostPoint | null {
     lng: coord.lng,
     regionText: hostRegionText(host),
   };
-}
-
-function escapeTooltipHtml(value: unknown) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return char;
-    }
-  });
 }
 
 function formatGlobeLatency(value: unknown, timeout?: unknown) {
@@ -852,30 +759,6 @@ function storeChainViewMode(viewMode: TunnelViewMode) {
   }
 }
 
-
-function prefetchReactGlobe() {
-  if (reactGlobePrefetchStarted || typeof window === "undefined") return;
-  reactGlobePrefetchStarted = true;
-  const startPrefetch = () => {
-    loadReactGlobe().catch(() => {
-      reactGlobePrefetchStarted = false;
-    });
-  };
-  if ("requestIdleCallback" in window) {
-    window.requestIdleCallback(startPrefetch, { timeout: 2200 });
-  } else {
-    globalThis.setTimeout(startPrefetch, 700);
-  }
-}
-
-function formatTunnelLatencyTime(value: string | Date) {
-  const d = new Date(value);
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const hour = String(d.getHours()).padStart(2, "0");
-  const minute = String(d.getMinutes()).padStart(2, "0");
-  return `${month}/${day} ${hour}:${minute}`;
-}
 
 function TunnelWorldGlobe({
   tunnels,
@@ -1331,8 +1214,8 @@ function TunnelLatencyDialog({
       const at = new Date(item.recordedAt);
       const time = Number.isFinite(at.getTime()) ? at.getTime() : Date.now();
       const point = byTime.get(time) || {
-        label: formatTunnelLatencyTime(at),
-        fullLabel: formatTunnelLatencyTime(at),
+        label: formatLatencyTimeLabel(at),
+        fullLabel: formatLatencyTimeLabel(at),
       };
       const key = normalizeTunnelLatencySeriesKey(item.seriesKey);
       const counts = normalizeLatencyProbeCounts(item);
@@ -2057,27 +1940,6 @@ function linkSearchMatches(parts: unknown[], query: string) {
   return parts.some((part) => normalizeLinkSearchText(part).includes(needle));
 }
 
-function linkHostSearchParts(host: any | null | undefined) {
-  if (!host) return [];
-  return [
-    host.id,
-    host.name,
-    host.hostname,
-    host.ip,
-    host.ipv4,
-    host.ipv6,
-    host.publicIp,
-    host.entryIp,
-    host.tunnelEntryIp,
-    host.ddnsDomain,
-    host.region,
-    host.country,
-    host.os,
-    host.system,
-    host.agentVersion,
-  ];
-}
-
 function linkForwardGroupSearchParts(
   group: any,
   hosts: any[] | undefined,
@@ -2118,7 +1980,7 @@ function linkForwardGroupSearchParts(
       member?.connectHost,
       groupMemberConnectLabel(member, hosts),
       groupMemberHostName(member, hosts),
-      ...linkHostSearchParts(host),
+      ...hostSearchParts(host),
     ];
   });
   return [
@@ -2170,7 +2032,7 @@ function tunnelMatchesLinkSearch(
   const loadBalanceExitParts = (Array.isArray(tunnel?.loadBalanceExits) ? tunnel.loadBalanceExits : []).flatMap((exit: any) => [
     exit?.hostId,
     exit?.connectHost,
-    ...linkHostSearchParts(hostById.get(Number(exit?.hostId || 0))),
+    ...hostSearchParts(hostById.get(Number(exit?.hostId || 0))),
   ]);
   const groupParts = [
     entryGroup?.id,
@@ -2194,7 +2056,7 @@ function tunnelMatchesLinkSearch(
     tunnel?.certDomain,
     getTunnelRouteText(tunnel, hosts),
     ...groupParts,
-    ...hopIds.flatMap((hostId: number) => [hostId, ...linkHostSearchParts(hostById.get(Number(hostId)))]),
+    ...hopIds.flatMap((hostId: number) => [hostId, ...hostSearchParts(hostById.get(Number(hostId)))]),
     ...loadBalanceExitParts,
   ], query);
 }
@@ -2530,7 +2392,7 @@ function TunnelsContent() {
     });
     return {
       hopHostIds: nextIds,
-      hopConnectHosts: normalizeChainConnectHostsForHosts(nextConnectHosts, nextIds, hosts, !!entryGroupId),
+      hopConnectHosts: normalizeHopConnectHostsForHosts(nextConnectHosts, nextIds, hosts, !!entryGroupId),
     };
   };
   const applyEntryGroupToTunnelForm = (prev: TunnelForm, entryGroupId: number | null): TunnelForm => {
@@ -3168,7 +3030,7 @@ function TunnelsContent() {
       toast.error(`转发链最多支持 ${MAX_FORWARD_GROUP_MEMBERS} 台主机`);
       return;
     }
-    const normalizedConnectHosts = normalizeChainConnectHostsForHosts(
+    const normalizedConnectHosts = normalizeHopConnectHostsForHosts(
       chainCreateForm.hopConnectHosts,
       chainCreateForm.hopHostIds,
       hosts,
@@ -3982,7 +3844,7 @@ function TunnelsContent() {
               管理 GOST、ForwardX 和 Nginx 隧道。
             </p>
           </div>
-          <TunnelSectionTransition transitionKey={activeSectionTransitionKey}>
+          <SectionTransition transitionKey={activeSectionTransitionKey}>
       {viewMode === "globe" ? (
         (isLoading || forwardGroupsLoading || !tunnels || !forwardGroups || !hosts) ? (
           <DataSectionLoading label="正在加载全球链路地图" />
@@ -4348,11 +4210,11 @@ function TunnelsContent() {
           </CardContent>
         </Card>
       )}
-          </TunnelSectionTransition>
+          </SectionTransition>
         </TabsContent>
 
         <TabsContent value="ports" className="space-y-4">
-          <TunnelSectionTransition transitionKey={activeSectionTransitionKey}>
+          <SectionTransition transitionKey={activeSectionTransitionKey}>
             <ForwardGroupsContent
               mode="port"
               embedded
@@ -4362,10 +4224,10 @@ function TunnelsContent() {
               searchQuery={normalizedLinkSearchQuery}
               createRequestKey={groupCreateRequest?.mode === "port" ? groupCreateRequest.requestKey : undefined}
             />
-          </TunnelSectionTransition>
+          </SectionTransition>
         </TabsContent>
         <TabsContent value="chains" className="space-y-4">
-          <TunnelSectionTransition transitionKey={activeSectionTransitionKey}>
+          <SectionTransition transitionKey={activeSectionTransitionKey}>
           {chainViewMode === "globe" ? (
             <>
               {(isLoading || forwardGroupsLoading || !tunnels || !forwardGroups || !hosts) ? (
@@ -4406,11 +4268,11 @@ function TunnelsContent() {
               onEditRequestConsumed={() => setChainEditRequest(null)}
             />
           )}
-          </TunnelSectionTransition>
+          </SectionTransition>
         </TabsContent>
 
         <TabsContent value="groups" className="space-y-4">
-          <TunnelSectionTransition transitionKey={activeSectionTransitionKey}>
+          <SectionTransition transitionKey={activeSectionTransitionKey}>
             <ForwardGroupsContent
               mode="failover"
               embedded
@@ -4420,11 +4282,11 @@ function TunnelsContent() {
               searchQuery={normalizedLinkSearchQuery}
               createRequestKey={groupCreateRequest?.mode === "failover" ? groupCreateRequest.requestKey : undefined}
             />
-          </TunnelSectionTransition>
+          </SectionTransition>
         </TabsContent>
 
         <TabsContent value="entries" className="space-y-4">
-          <TunnelSectionTransition transitionKey={activeSectionTransitionKey}>
+          <SectionTransition transitionKey={activeSectionTransitionKey}>
             <ForwardGroupsContent
               mode="entry"
               embedded
@@ -4434,11 +4296,11 @@ function TunnelsContent() {
               searchQuery={normalizedLinkSearchQuery}
               createRequestKey={groupCreateRequest?.mode === "entry" ? groupCreateRequest.requestKey : undefined}
             />
-          </TunnelSectionTransition>
+          </SectionTransition>
         </TabsContent>
 
         <TabsContent value="exits" className="space-y-4">
-          <TunnelSectionTransition transitionKey={activeSectionTransitionKey}>
+          <SectionTransition transitionKey={activeSectionTransitionKey}>
             <ForwardGroupsContent
               mode="exit"
               embedded
@@ -4448,7 +4310,7 @@ function TunnelsContent() {
               searchQuery={normalizedLinkSearchQuery}
               createRequestKey={groupCreateRequest?.mode === "exit" ? groupCreateRequest.requestKey : undefined}
             />
-          </TunnelSectionTransition>
+          </SectionTransition>
         </TabsContent>
       </Tabs>
 
@@ -4793,7 +4655,7 @@ function TunnelsContent() {
                         excludedHostIds={externalChainEntryHostIds(chainCreateForm.entryGroupId)}
                         onChange={(ids) => {
                           setChainCreateForm((prev) => {
-                            const normalizedConnectHosts = normalizeChainConnectHostsForHosts(prev.hopConnectHosts, ids, hosts, !!prev.entryGroupId);
+                            const normalizedConnectHosts = normalizeHopConnectHostsForHosts(prev.hopConnectHosts, ids, hosts, !!prev.entryGroupId);
                             if (
                               sameNumberArray(prev.hopHostIds, ids)
                               && sameNullableStringArray(prev.hopConnectHosts, normalizedConnectHosts)
@@ -4809,7 +4671,7 @@ function TunnelsContent() {
                         }}
                         onConnectHostsChange={(hopConnectHosts) => {
                           setChainCreateForm((prev) => {
-                            const normalizedConnectHosts = normalizeChainConnectHostsForHosts(hopConnectHosts, prev.hopHostIds, hosts, !!prev.entryGroupId);
+                            const normalizedConnectHosts = normalizeHopConnectHostsForHosts(hopConnectHosts, prev.hopHostIds, hosts, !!prev.entryGroupId);
                             if (sameNullableStringArray(prev.hopConnectHosts, normalizedConnectHosts)) return prev;
                             return { ...prev, hopConnectHosts: normalizedConnectHosts };
                           });

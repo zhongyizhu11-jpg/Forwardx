@@ -1,3 +1,5 @@
+import { normalizeProbeCounts, type ProbeCounts } from "../shared/latencyProbe";
+
 export type TunnelAutoHopDetail = {
   hopIndex: number;
   hopCount: number;
@@ -20,22 +22,6 @@ const byTunnel = new Map<string, Map<number, AutoHopResult>>();
 
 const AUTO_HOP_TTL_MS = 6 * 60 * 1000;
 
-type ProbeCounts = { probeCount: number; probeSuccesses: number };
-
-function normalizeProbeCounts(input: {
-  probeCount?: number | null;
-  probeSuccesses?: number | null;
-  isTimeout?: boolean;
-}): ProbeCounts {
-  const rawCount = Number(input.probeCount);
-  const probeCount = Number.isInteger(rawCount) && rawCount >= 1 && rawCount <= 1024 ? rawCount : 1;
-  const rawSuccesses = Number(input.probeSuccesses);
-  const hasSuccesses = input.probeSuccesses !== undefined && input.probeSuccesses !== null
-    && Number.isInteger(rawSuccesses);
-  let probeSuccesses = hasSuccesses ? rawSuccesses : (input.isTimeout ? 0 : probeCount);
-  probeSuccesses = Math.max(0, Math.min(probeCount, probeSuccesses));
-  return { probeCount, probeSuccesses };
-}
 
 /**
  * Combine hop-level probe counters conservatively. A packet is considered to

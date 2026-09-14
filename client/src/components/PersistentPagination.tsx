@@ -105,57 +105,6 @@ function getPageWindow(currentPage: number, totalPages: number) {
   return Array.from(pages).sort((a, b) => a - b);
 }
 
-export function usePersistentPagination<T>(
-  items: T[],
-  { storageKey, pageSize = 12, isReady = true }: PersistentPaginationOptions,
-): PersistentPaginationState<T> {
-  const [page, setStoredPage] = useState(() => readStoredPage(storageKey));
-  const totalItems = items.length;
-  const totalPages = isReady ? Math.max(1, Math.ceil(totalItems / pageSize)) : Math.max(1, page);
-  const currentPage = isReady ? Math.min(Math.max(page, 1), totalPages) : Math.max(page, 1);
-
-  useEffect(() => {
-    setStoredPage(readStoredPage(storageKey));
-  }, [storageKey]);
-
-  useEffect(() => {
-    if (!isReady) return;
-    if (page === currentPage) return;
-    setStoredPage(currentPage);
-    writeStoredPage(storageKey, currentPage);
-  }, [currentPage, isReady, page, storageKey]);
-
-  const setPage = (nextPage: number) => {
-    const raw = Number.isFinite(nextPage) ? Math.floor(nextPage) : 1;
-    const maxPage = isReady ? totalPages : Math.max(1, raw);
-    const clamped = Math.min(Math.max(raw, 1), maxPage);
-    setStoredPage(clamped);
-    writeStoredPage(storageKey, clamped);
-  };
-
-  const pagedItems = useMemo(() => {
-    if (!isReady) return [];
-    const start = (currentPage - 1) * pageSize;
-    return items.slice(start, start + pageSize);
-  }, [currentPage, isReady, items, pageSize]);
-
-  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const endItem = totalItems === 0 ? 0 : Math.min(totalItems, currentPage * pageSize);
-
-  return {
-    currentPage,
-    totalPages,
-    totalItems,
-    pageSize,
-    startItem,
-    endItem,
-    items: pagedItems,
-    setPage,
-    nextPage: () => setPage(currentPage + 1),
-    previousPage: () => setPage(currentPage - 1),
-  };
-}
-
 export function PersistentPagination<T>({
   pagination,
   itemName = "项",

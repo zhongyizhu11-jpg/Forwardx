@@ -1,4 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { ledgerTone } from "@/lib/ledgerTone";
+import { balanceTypeLabel } from "@shared/ledgerLabels";
+import { formatMoneyCents as money } from "@shared/formatMoney";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DashboardLayout from "@/components/DashboardLayout";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -19,10 +22,6 @@ import { toast } from "sonner";
 
 type PaymentType = "alipay" | "wxpay" | "stripe" | "usdt";
 
-function money(cents?: number | null, currency = "CNY") {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((Number(cents) || 0) / 100);
-}
-
 function dateText(value?: string | Date | null) {
   if (!value) return "-";
   const date = new Date(value);
@@ -41,24 +40,6 @@ function paymentMethodText(type?: string | null) {
   if (type === "stripe") return "Stripe";
   if (type === "usdt" || type === "gmpay") return "USDT";
   return type || "-";
-}
-
-function balanceTypeText(type?: string | null) {
-  if (type === "admin_recharge") return "管理员充值";
-  if (type === "admin_adjust") return "管理员修改";
-  if (type === "payment") return "在线充值入账";
-  if (type === "purchase") return "余额消费";
-  if (type === "redeem") return "兑换入账";
-  if (type === "traffic_billing") return "流量计费";
-  if (type === "traffic_addon_purchase") return "购买附加流量";
-  return type || "余额变动";
-}
-
-function ledgerTone(item: any) {
-  if (item.kind === "balance" && Number(item.amountCents) < 0) return "text-destructive";
-  if (item.kind === "balance" && Number(item.amountCents) > 0) return "text-emerald-600";
-  if (item.kind === "payment" && (item.status === "paid" || item.status === "completed")) return "text-emerald-600";
-  return "";
 }
 
 function ledgerIcon(item: any) {
@@ -295,7 +276,7 @@ export default function Wallet() {
                 {(wallet?.transactions || []).map((tx: any) => (
                   <TableRow key={tx.id}>
                     <TableCell>
-                      <Badge variant="outline">{tx.typeLabel || balanceTypeText(tx.type)}</Badge>
+                      <Badge variant="outline">{tx.typeLabel || balanceTypeLabel(tx.type)}</Badge>
                     </TableCell>
                     <TableCell className={Number(tx.amountCents) >= 0 ? "text-emerald-600" : "text-destructive"}>
                       {money(tx.amountCents)}

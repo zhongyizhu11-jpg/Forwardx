@@ -93,7 +93,6 @@ function ProfileContent() {
   const updateProfileMutation = trpc.auth.updateProfile.useMutation({
     onSuccess: () => {
       utils.auth.me.invalidate();
-      utils.users.list.invalidate();
       toast.success("显示名称已更新");
     },
     onError: (error) => toast.error(error.message || "显示名称更新失败"),
@@ -113,7 +112,6 @@ function ProfileContent() {
   const updateAvatarMutation = trpc.users.updateAvatar.useMutation({
     onSuccess: (data) => {
       utils.auth.me.invalidate();
-      utils.users.list.invalidate();
       utils.users.avatarQuota.invalidate();
       toast.success(data.quota?.unlimited ? "头像已更新" : `头像已更新，今日剩余 ${data.quota?.remaining ?? 0} 次`);
     },
@@ -124,7 +122,6 @@ function ProfileContent() {
     onSuccess: (data) => {
       setAvatarDraft(data.avatar);
       utils.auth.me.invalidate();
-      utils.users.list.invalidate();
       utils.users.avatarQuota.invalidate();
       toast.success(data.quota?.unlimited ? "头像已随机更新" : `头像已随机更新，今日剩余 ${data.quota?.remaining ?? 0} 次`);
     },

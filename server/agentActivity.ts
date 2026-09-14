@@ -24,11 +24,6 @@ export function getLastAuthenticatedAgentActivity(hostIdValue: unknown) {
   return authenticatedAgentSeenAt.get(hostId) ?? null;
 }
 
-export function subscribeAuthenticatedAgentActivity(listener: AuthenticatedAgentActivityListener) {
-  authenticatedAgentActivityListeners.add(listener);
-  return () => { authenticatedAgentActivityListeners.delete(listener); };
-}
-
 export function hasRecentAuthenticatedAgentActivity(
   hostIdValue: unknown,
   now = Date.now(),

@@ -10,10 +10,6 @@ export function quoteIdentifier(id: string) {
   return quoteDbIdentifier(id);
 }
 
-export function quoteIdentifiers(ids: string[]) {
-  return ids.map((id) => quoteIdentifier(id));
-}
-
 export function placeholders(count: number) {
   const total = Math.max(0, Math.floor(Number(count) || 0));
   return Array.from({ length: total }, () => "?").join(", ");
@@ -26,10 +22,6 @@ export function inList(values: unknown[]): RawSqlFragment {
 
 export function countAll(alias = "count") {
   return `COUNT(*) AS ${quoteIdentifier(alias)}`;
-}
-
-export function countDistinct(columnSql: string, alias = "count") {
-  return `COUNT(DISTINCT ${columnSql}) AS ${quoteIdentifier(alias)}`;
 }
 
 export function sqlCountAll<T = number>() {
@@ -56,14 +48,6 @@ export function sqlBool(value: boolean) {
 
 export function epochSeconds(value: Date) {
   return Math.floor(value.getTime() / 1000);
-}
-
-export function timeParam(value: Date | number) {
-  return value instanceof Date ? epochSeconds(value) : value;
-}
-
-export function compareTime(columnSql: string, op: ">=" | ">" | "<=" | "<" | "=", value: Date | number): RawSqlFragment {
-  return { sql: `${columnSql} ${op} ?`, params: [timeParam(value)] };
 }
 
 export function limitOffset(limit?: number, offset?: number): RawSqlFragment {

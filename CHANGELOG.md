@@ -1,5 +1,75 @@
 # Changelog
 
+## [2.3.362] - 2026-09-14
+
+### 修复
+
+- **同一条订阅记录，两个地方叫两个名字**。`subscriptionSourceLabel` 有两份：`source='payment'` 在服务端通知里叫「在线购买」，在用户管理页叫「在线支付」；认不出来源时的兜底文案一个是「套餐变更」、一个是「套餐记录」。`balanceTypeLabel` 更是三份（服务端一份、账单页一份、钱包页一份）。
+  - 一笔钱在两个地方叫两个名字，比叫错更让人不敢信 —— 租户会开始怀疑是不是两笔。
+  - 现在收敛成 `shared/ledgerLabels.ts` 一份，**以服务端那份的口径为准**（通知是推到人手机上的，改它代价最大），所以用户管理页的「在线支付」统一成「在线购买」。顺带把「认不出的类型」从吞成一句「余额变动」改成原样显示 —— 出现一个没见过的流水类型时，把它的原名摆出来才查得下去。
+
+- **套餐管理换个 tab，页头就说「套餐数量 0」**。页头那三张统计卡（套餐数量、套餐资源，以及商店状态里「N 个套餐的购买入口不生效」那行）两个 tab 都看得见，可它们的 `plans.summary` 查询原来跟着 `activeTab === "plans"` 走 —— 点到「流量计费」那一侧查询直接不发，`planSummary` 变 `undefined`，卡片一路回落到 0。
+  - 真面板对照：`/plans` 显示「套餐数量 2 / 套餐资源 12」，`/plans?tab=billing` 同一时刻显示「0 / 0」。库里没变，就是同一个页面自己跟自己对不上。
+  - 跟上一版按量计费那张状态卡是同一个毛病：**页头的数字不归 tab 管**。现在这个查询无条件发，卡片的 loading 也改看它自己那条查询（原先看的是被 tab 门禁挡住的列表查询，所以连「加载中」都不显示，直接摆一个 0 出来）。
+
+- **同一个数在不同页面显示得不一样**。`formatBytes` 全站有 **8 份各自定义、8 种实现**，其中三份是错的：
+  - **系统设置和插件那两份封顶到 MB** —— 一个 5 GB 的备份写成「5120.0 MB」，单位爬不上去，大小就没法一眼判断。
+  - **用户管理那份单位阶梯只到 TB**，超过 1 PB 会取到数组外，界面上直接显示「1.78 undefined」。
+  - 转发规则那份保留尾零（「1.50 GB」），别处是「1.5 GB」。
+  - 金额那边同样：`money` 7 份 + 用户管理的 `formatCurrencyCny` 1 份，共 **8 份**，有的写 `Number(cents) || 0`、有的直接 `cents || 0`、有的把币种写死。
+  - 现在各收敛成唯一一份（`shared/formatBytes.ts`、`shared/formatMoney.ts`）并单独测：单位阶梯、夹住下标不吐 undefined、尾零、脏值、负数、字符串入参、不足一分的单价要给三位小数（固定两位会把 0.003 元/GB 显示成「¥0.00」，一个正在收钱的价钱看起来像免费）。
+  - 一个数在两个页面长得不一样，比显示得不好看严重得多 —— 人会开始不确定该信哪个。
+
+### 变化
+
+- **一字不差的重复实现从 33 组清到 0 组**，共 36 个文件、净减 474 行。第一轮合并了后果最重的九处：
+  - **`compareVersions` 三份、`normalizeVersion` 四份** → `shared/version.ts`。这把尺子同时管三件事：面板要不要显示「发现新版本」、后端敢不敢给某台 Agent 下发新指令、主机卡上的升级角标亮不亮。四份各自演化的话，界面说该升、后端说不用升，谁也说不清该信哪个。单独测了八条，含两条有方向的：**版本号缺失时一律判「不够」**（宁可少下发一个新能力，也不能对着一台不认识这条指令的 Agent 发过去），以及「够门槛」和「落后」必须互补。反向对照两个都红了（把缺失判成「够」、改成字符串比较）。
+  - **`maskIdentifier` 两份** → `server/routers/helpers.ts`。打码规则是隐私口径，漂了意味着有一条路上比另一条露得多，而多露的那条不会报错，只会安安静静写进日志。
+  - **`dbBool` / `databaseBool` 三份** → `repositoryUtils`。SQLite 存 0/1、PostgreSQL 存 true/false、裸 SQL 回来还可能是字符串。
+  - **`normalizeProbeCounts` 两份** → `shared/latencyProbe.ts`。
+  - **`hostGeoCoordinate` 四份、`escapeTooltipHtml` 四份、经纬度聚类距离两份** → `client/src/lib/hostGeo.ts`。同一台机器在四张图上该落在同一个点。
+  - **`prefetchReactGlobe` 两份** → `client/src/lib/reactGlobeLoader.ts`。这一份不只是重复：两页各有一个模块级的「预取过了」标志，**互不知道对方**，先后打开链路管理和转发规则就会把地球组件预取两次 —— 那个包 gzip 后 500 KB 出头，手机上白下一遍不是小事。
+  - 合并一律照搬原实现，**不顺手改行为**（比如经度环距那两份都没取模，就保持没取模，并在注释里写明为什么可以）。
+
+  第二轮把剩下的 24 组清完，挑几处说：
+  - **`bytes` 三份（套餐商店、我的套餐、套餐管理）** —— 这是上一版 formatBytes 收敛时**漏掉的第三种写法**：单位阶梯只到 TB，而且保留尾零（「1.50 GB」），跟全站其它地方的「1.5 GB」对不上。现在数字交给 `formatBytes`，`formatQuotaBytes` 只负责「0 当成不限」这一条额度语义。所以这三页的「1.50 GB」现在显示成「1.5 GB」。
+  - **`dbBool` 其实有六份、两种写法**：三份带 `typeof` 闸门，另三份直接 `String(value)` 比对。对库里真实出现的值（0/1、true/false、"0"/"1"/"true"/"false"、null、空串）结果完全一致，只在传进一个自定义 `toString` 的对象时才分岔 —— 那种值不会从数据库列里来，所以按同一份合了，并在注释里写明这个判断依据。
+  - **`isFreshHeartbeat` / `isFreshHostHeartbeat` 两份** → `hostHeartbeatPolicy`。库里那个 `isOnline` 是上次写入的结论，心跳停了它不会自己变，所以读出来还要拿时间戳再验一次。两份漂了就会出现「主机页说在线、Token 页说离线」，而这两页说的是同一台机器。
+  - **`linkHostSearchParts` / `forwardGroupHostSearchParts` 两份** → `hostSearchParts`。这份清单是「能不能搜到」的定义：两页各存一份，就会出现在链路管理里用 DDNS 域名搜得到、到转发组里同一个词搜不到。
+  - **`pricePerGbMilliCents` 两份** → `shared/trafficBillingPrice.ts`。老数据价钱存在 `pricePerGbCents`（分）、新字段是毫分，两份各自判「用哪个」，漂了就是同一条配置在两页显示成两个价钱 —— 这是正在收钱的数字。
+  - **`normalizeTargetValue` / `normalizeRawValue` 两份**（库切换 / 运行时）→ 一份。迁移时写进新库的值必须和面板平时写进去的走同一套转换，不然同一条数据迁完之后跟原来长得不一样。
+  - **账单页和流量计费页的统计卡**改用全站那一份 `StatCard`。原来那两份是同一段复制的样式、且**没有窄屏适配**（固定 `p-4` + `text-2xl`）；换成共用的之后手机上数字会自适应、图标收起。真面板在 390px 和 1280px 两个宽度各看了一遍，横向不溢出。
+  - `hostGeo` 那四合一另配了测试和反向对照（越界坐标改成夹边界、气泡不转义单引号、经度不按环形算 —— 三个都红）。
+  - **一处差点改坏的地方，被 tsc 拦下了**：整体改名 `pricePerGbMilliCents` → `pricePerGbMilliCentsOf` 时，连保存单价那段里的局部变量和**提交给接口的字段名**一起改了。字段名一改，保存时就会把单价当成未知属性丢掉 —— 一次静默的「改了价钱没生效」。已改回，保存路径按原样。
+
+- **三处「为了一个数字，把整张表读回来」改成窄查询**：
+  - 自助加机器的配额检查（校验时一次、界面显示「2/10」时又一次）原来是 `(await getHosts(userId)).length` —— 为了得到一个台数，把这个人名下每台机器的每一列（agentToken、DDNS 配置、端口区间那一堆）全查回来再扔掉。换成 `countHostsByUserId`，一条 `COUNT(*)`。
+  - 主机分组保存时校验「这些主机在不在」，原来整表读 `hosts` 再在内存里建 Set。换成 `findExistingHostIds`，只问那几个 id。
+  - 按量计费的授权对账扫描原来走 `getAllUsers()` —— 那条查询为了列表展示会 leftJoin 一份按用户聚合的计费用量，再把每个用户的每一列（密码哈希、Telegram 绑定、整套配额）读回来，而调用方只是拿 id 去逐个对账。换成 `getNonAdminUserIds()`，管理员直接在 SQL 里滤掉。
+  - 三处都拿**老写法当场算一遍再对**，不是看着像就算数（`server/narrowedTableReads.test.ts`）。反向对照四个都红了：去掉 `COUNT(*)` 的 WHERE、让 id 校验原样回传不查库、去掉 role 过滤、以及把 `role <> 'admin'` 写成 `role = 'user'`（后者会漏掉 role 是空串的老数据 —— 对账漏一个人，等于这个人的转发权限对不上账还没人发现）。
+  - 真面板复核（把管理员降成租户、上限设成 4）：`selfServiceQuota` 回 `used 4 / limit 4 / canAdd false`，再加一台被拦下并给出「已达上限（4/4）」。
+
+- **删掉 22 个无效的缓存失效调用**。`utils.users.list.invalidate()` 散在四个文件里，而 `users.list` 这个查询**全站没有任何地方去取** —— 分页化之后列表早就走 `users.listPage` 了。所幸每一处后面都跟着一句 `listPage.invalidate()`，所以没造成「改完不刷新」，纯属留着占地方、让人以为还有个全量列表在用。
+
+- **删掉 64 个没人调用的导出**，37 个文件、486 行。全部是一路堆上来的残留，不改任何行为：
+  - **改名后留下的兼容别名**：`getRuleStatusSnapshot`/`setRuleStatusSnapshot` 那一组（5 个）指向 `readRuleStatusSnapshot`、`multiavatarSeedFromValue` 指向 `avatarSeedFromValue`、`subscribePresenceCapableHostOffline` 指向 `subscribeAgentFastLivenessOffline` —— 新名字早就全站换完了，旧名字没有一处引用，留着只会让人以为是两个东西。
+  - **被同一批删掉的调用方带走的**：`timeParam`、`compareTime`、`quoteIdentifiers`、`countDistinct` 等，删完再扫一遍才暴露出来，所以是反复扫到收敛为零。
+  - **没接线的常量和分页/展示助手**：`MAX_LATENCY_CHART_MS`、`ONE_YEAR_MS`、`AXIOS_TIMEOUT_MS`、`TUNNEL_RELAY_MODE_LABELS`、`usePersistentPagination`、`hostAddressLines`。
+  - **刻意留下的两处**：`server/pluginApi.ts` 的 `registerPluginEventHandler`/`emitPluginEvent`/`createPluginRuntimeContext` 和 `shared/pluginTypes.ts` —— 仓库里确实没有调用方，但它们是**插件按名字调的对外接口**，删了受影响的是装在外面的第三方插件，仓库内的静态扫描看不见；`stopTelegramBot` 同理留着，它看起来是个没接上的生命周期钩子，删掉等于把问题盖住而不是解决。
+  - 验收是硬指标：`tsc --noEmit` 干净、1316 条服务端测试过 1315（剩下那条 `setupFlow` 超时是容器里本来就有的，CI 上是绿的）、`pnpm build` 通过、真面板十个路由逐个打开看主体内容都在。
+
+
+- **打开面板少下 44% 的代码**。原来 26 个页面全是静态导入，打出来的主包 **3477 KB（gzip 960 KB）** —— 一个只想看「我的套餐」的租户，在手机上要先把 Settings（6460 行）、Rules（8778 行）、Plugins 的全部代码下完，才能看到第一屏。现在除登录页和仪表盘外按路由拆包：**主包 1832 KB（gzip 540 KB）**，页面代码点到才下（Rules 265 KB、Settings 167 KB 各自独立）。
+  - 登录页和仪表盘**刻意留同步**：它们是所有人的入口，拆了会在最常见的那两屏上多一次往返、闪一下占位，省下的字节不划算。
+  - 占位**延迟 250ms 才出现**。页面包是小文件，缓存命中时几十毫秒就到，那时候闪一下转圈比什么都不显示更糟 —— 屏幕会抖。
+  - **Suspense 边界贴着页面放，不能包在整个路由表外面**。包在外面的话，页面代码还在下载时整棵树都挂起，权限守卫会跟着重渲染，而守卫在渲染期会返回 `<Redirect>`，那会同步改地址、进而更新所有 `useLocation` 订阅者（侧边栏就是一个）—— 「渲染 A 时更新了 B」，几个来回就撞上 React 的更新深度上限，整页掉进 ErrorBoundary。第一版我就是包在外面的，从侧边栏点「套餐管理」直接白屏报错；边界下移到守卫内部之后，挂起只影响页面那一小块。
+  - 顺带：真面板上跑同一份冒烟，控制台告警从 **27 条降到 19 条** —— 重渲染轮次少了，本来就存在的那条「渲染期 setState」警告被触发得更少（那条警告 main 上原本就有，不是这次引入的，也没在这次修掉）。
+
+
+### 版本
+
+- 面板与 APK Release `2.3.362`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
+
 ## [2.3.361] - 2026-09-14
 
 ### 修复

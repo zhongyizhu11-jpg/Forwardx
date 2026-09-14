@@ -1,3 +1,5 @@
+import { timestampMillis } from "./timestamp";
+
 import {
   LINK_PROBE_FRESH_MS,
   LINK_PROBE_MAX_FUTURE_SKEW_MS,
@@ -29,15 +31,6 @@ export function preferLastKnownForwardRuleVisualStatus(
     state: lastKnown.state,
     title: title ? `${title}（上次状态，等待新的上报）` : "上次状态，等待新的上报",
   };
-}
-
-function timestampMillis(value: unknown) {
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 0 && value < 1_000_000_000_000 ? value * 1000 : value;
-  }
-  const timestamp = new Date(String(value || "")).getTime();
-  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 export function resolveForwardRuleVisualStatus(input: {

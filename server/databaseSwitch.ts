@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { normalizeRawValue } from "./dbRuntime";
 import fs from "fs";
 import path from "path";
 import mysql, { type Pool, type PoolConnection, type PoolOptions } from "mysql2/promise";
@@ -420,14 +421,8 @@ function postgresSql(sqlText: string, params: any[] = []) {
   };
 }
 
-function normalizeTargetValue(value: any, kind: DatabaseKind) {
-  if (value instanceof Date) return Math.floor(value.getTime() / 1000);
-  if (typeof value === "boolean" && kind !== "postgresql") return value ? 1 : 0;
-  return value;
-}
-
 async function targetQuery<T = Record<string, any>>(session: TargetSession, sqlText: string, params: any[] = []): Promise<T[]> {
-  const normalized = params.map((value) => normalizeTargetValue(value, session.kind));
+  const normalized = params.map((value) => normalizeRawValue(value, session.kind));
   if (session.kind === "mysql") {
     const [rows] = await session.executor.query(sqlText, normalized);
     return rows as T[];
@@ -440,7 +435,7 @@ async function targetQuery<T = Record<string, any>>(session: TargetSession, sqlT
 }
 
 async function targetExecute(session: TargetSession, sqlText: string, params: any[] = []) {
-  const normalized = params.map((value) => normalizeTargetValue(value, session.kind));
+  const normalized = params.map((value) => normalizeRawValue(value, session.kind));
   if (session.kind === "mysql") {
     const [result] = await session.executor.execute(sqlText, normalized);
     return result;

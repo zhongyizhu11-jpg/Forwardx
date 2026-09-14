@@ -1,4 +1,5 @@
 import { protectedProcedure, adminProcedure, publicProcedure, router } from "../_core/trpc";
+import { githubRepoParts } from "@shared/githubAccelerator";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { nanoid } from "nanoid";
@@ -9,6 +10,7 @@ import { AGENT_ASSET_NAMES, getMissingBundledAgentAssets } from "../agentAssets"
 import { pushTunnelEndpointRefresh, requireHostAccess } from "./helpers";
 import { AGENT_VERSION, APP_VERSION, REPO_URL } from "../_core/systemRouter";
 import { isAgentUpgradeTargetSatisfied, isAgentVersionAtLeast } from "../agentRouteUtils";
+import { normalizeVersion } from "@shared/version";
 import { scheduleHostGeoRefresh } from "../hostGeo";
 import { refreshHostAddressRuntime } from "../hostAddressRuntime";
 import { scheduleHostDdnsUpdate } from "../hostDdns";
@@ -121,8 +123,8 @@ function normalizeHostGroupInput(input: z.infer<typeof hostGroupInputSchema>) {
 
 async function assertHostGroupHostIdsExist(hostIds: number[]) {
   if (hostIds.length === 0) return;
-  const allHosts = await db.getHosts();
-  const existingIds = new Set((allHosts as any[]).map((host) => Number(host.id)));
+  // 只问这几个 id 在不在，别把整张 hosts 读回来在内存里建 Set。
+  const existingIds = await db.findExistingHostIds(hostIds);
   const missing = hostIds.filter((hostId) => !existingIds.has(hostId));
   if (missing.length > 0) throw new Error(`主机不存在：${missing.join(", ")}`);
 }
@@ -266,15 +268,6 @@ function hostTrafficConfigPayload(input: {
     trafficAutoReset: !!input.trafficAutoReset,
     trafficResetDay: input.trafficResetDay ?? 1,
   };
-}
-function normalizeVersion(version: string | null | undefined) {
-  return String(version || "").trim().replace(/^v/i, "");
-}
-
-function githubRepoParts(repoUrl: string) {
-  const match = repoUrl.match(/github\.com\/([^/]+)\/([^/#?]+)/i);
-  if (!match) throw new Error("GitHub 仓库地址格式不正确");
-  return { owner: match[1], repo: match[2].replace(/\.git$/i, "") };
 }
 
 async function releaseAssetExistsViaDownloadUrl(tag: string, assetName: string) {
@@ -1268,7 +1261,7 @@ export const hostsRouter = router({
             db.getUserById(ctx.user.id),
           ]);
           const limit = selfServiceHostLimitForUser(owner, globalLimit);
-          const owned = (await db.getHosts(ctx.user.id)).length;
+          const owned = await db.countHostsByUserId(ctx.user.id);
           if (!canAddSelfServiceHost(ctx.user, owned, limit)) {
             throw new Error(`你自己添加的机器已达上限（${owned}/${limit}）。删掉一台，或让管理员调高上限。`);
           }
@@ -1358,7 +1351,7 @@ export const hostsRouter = router({
       ]);
       // 这个人自己的上限优先，没设才用全局那一档。
       const limit = selfServiceHostLimitForUser(owner, globalLimit);
-      const used = (await db.getHosts(ctx.user.id)).length;
+      const used = await db.countHostsByUserId(ctx.user.id);
       return {
         used,
         // 0 在这个接口上一直表示「不限」，界面据此显示「2 台」而不是「2/10」。

@@ -150,15 +150,6 @@ export async function listRecentConfigAuditEvents(limit = 500) {
   return db.select().from(configAuditEvents).orderBy(desc(configAuditEvents.id)).limit(Math.min(2000, Math.max(1, limit)));
 }
 
-export async function getResourceConfigRevision(resourceType: string, resourceId: number) {
-  const db = await getDb();
-  if (!db) return 0;
-  const rows = await db.select({ id: configAuditEvents.id }).from(configAuditEvents)
-    .where(and(eq(configAuditEvents.resourceType, resourceType as any), eq(configAuditEvents.resourceId, resourceId)))
-    .orderBy(desc(configAuditEvents.id)).limit(1);
-  return Number(rows[0]?.id || 0);
-}
-
 export type MimicLifecycleResource = {
   resourceType: "forward_rule" | "tunnel";
   resourceId: number;

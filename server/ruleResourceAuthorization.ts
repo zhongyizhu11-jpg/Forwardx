@@ -1,4 +1,5 @@
 import { pushAgentRefresh } from "./agentEvents";
+import { dbBool } from "./repositories/repositoryUtils";
 import * as db from "./db";
 import { mapWithConcurrency } from "./asyncPool";
 import { canUseForwardRuleResource, getLinkAccessScope, type LinkAccessScope } from "./linkAccessView";
@@ -9,11 +10,6 @@ export const RULE_RESOURCE_AUTHORIZATION_REVOKED_REASON = "资源授权已失效
 function positiveId(value: unknown) {
   const id = Number(value || 0);
   return Number.isInteger(id) && id > 0 ? id : 0;
-}
-
-function dbBool(value: unknown, fallback = false) {
-  if (value === undefined || value === null || value === "") return fallback;
-  return value === true || value === 1 || value === "1" || String(value).trim().toLowerCase() === "true";
 }
 
 async function loadRuleResourceAccess(userId: number): Promise<LinkAccessScope | null> {

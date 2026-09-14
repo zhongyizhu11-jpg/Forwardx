@@ -1,6 +1,11 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { parseHostDateTime } from "@/components/hosts/HostCard";
+import { getStoredAgentTokenViewMode, storeAgentTokenViewMode, type AgentTokenViewMode } from "@/lib/agentTokenViewMode";
+import { formatMetricSizeDetail } from "@/lib/formatMetricSize";
+import { usePageVisible } from "@/hooks/usePageVisible";
+import { escapeTooltipHtml, hostGeoCoordinate, hostMapClusterDistance, longitudeDistanceDegrees } from "@/lib/hostGeo";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
-import AgentTokenManager, { type AgentTokenViewMode } from "@/components/AgentTokenManager";
+import AgentTokenManager from "@/components/AgentTokenManager";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import DashboardLayout from "@/components/DashboardLayout";
 import DateTimePickerInput, {
@@ -144,25 +149,6 @@ function parseCustomPortsInput(value: string) {
   };
 }
 
-function usePageVisible() {
-  const [visible, setVisible] = useState(() => typeof document === "undefined" || document.visibilityState === "visible");
-  useEffect(() => {
-    const onVisibilityChange = () => setVisible(document.visibilityState === "visible");
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, []);
-  return visible;
-}
-
-function hostGeoCoordinate(host: any) {
-  if (host?.geoLatitudeMicro == null || host?.geoLongitudeMicro == null) return null;
-  const lat = Number(host.geoLatitudeMicro) / 1_000_000;
-  const lng = Number(host.geoLongitudeMicro) / 1_000_000;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  return { lat, lng };
-}
-
 type HostGlobePoint = {
   host: any;
   lat: number;
@@ -209,11 +195,6 @@ function normalizeLongitude(lng: number) {
   return lng;
 }
 
-function longitudeDistanceDegrees(a: number, b: number) {
-  const diff = Math.abs(a - b);
-  return Math.min(diff, 360 - diff);
-}
-
 function hostCountryCode(host: any) {
   return normalizeCountryCode(host?.geoCountryCode);
 }
@@ -232,20 +213,13 @@ function hostGlobePointPulledOut(point: HostGlobePoint) {
   return Math.abs(point.lat - point.displayLat) > 0.01 || Math.abs(point.lng - point.displayLng) > 0.01;
 }
 
-function hostGlobeClusterDistance(point: HostGlobePoint, cluster: HostGlobeCluster) {
-  const latDiff = point.lat - cluster.centerLat;
-  const lngScale = Math.max(0.35, Math.cos((((point.lat + cluster.centerLat) / 2) * Math.PI) / 180));
-  const lngDiff = longitudeDistanceDegrees(point.lng, cluster.centerLng) * lngScale;
-  return Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
-}
-
 function buildHostGlobeClusters(points: HostGlobePoint[]) {
   const clusters: HostGlobeCluster[] = [];
   points
     .slice()
     .sort((a, b) => a.lng - b.lng || a.lat - b.lat)
     .forEach((point) => {
-      const cluster = clusters.find((item) => hostGlobeClusterDistance(point, item) <= HOST_GLOBE_CLUSTER_DISTANCE_DEGREES);
+      const cluster = clusters.find((item) => hostMapClusterDistance(point, item) <= HOST_GLOBE_CLUSTER_DISTANCE_DEGREES);
       if (!cluster) {
         clusters.push({ centerLat: point.lat, centerLng: point.lng, points: [point] });
         return;
@@ -334,25 +308,6 @@ function createHostGlobeLabelElement(
     onEdit(point.host);
   });
   return element;
-}
-
-function escapeTooltipHtml(value: unknown) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return char;
-    }
-  });
 }
 
 function renderHostGlobeTooltip(point: HostGlobePoint) {
@@ -781,25 +736,7 @@ function formatUsagePercent(value: unknown) {
   return percent === null ? "--" : `${percent}%`;
 }
 
-function formatMetricSizeDetail(used: unknown, total: unknown) {
-  const usedBytes = Number(used);
-  const totalBytes = Number(total);
-  if (!Number.isFinite(usedBytes) || usedBytes <= 0) return "";
-  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return formatBytes(usedBytes);
-  return `${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`;
-}
-
 const hostListDayMs = 24 * 60 * 60 * 1000;
-
-function parseHostDateTime(value: unknown) {
-  if (!value) return null;
-  const ms = value instanceof Date
-    ? value.getTime()
-    : typeof value === "number"
-      ? value
-      : Date.parse(String(value));
-  return Number.isFinite(ms) ? ms : null;
-}
 
 function formatHostDateTimeText(value: unknown) {
   const ms = parseHostDateTime(value);
@@ -1173,7 +1110,6 @@ const HOST_DIALOG_TABS = [
 
 const HOST_MANAGE_TAB_STORAGE_KEY = "forwardx.hosts.manageTab";
 const HOST_VIEW_MODE_STORAGE_KEY = "forwardx.hosts.viewMode";
-const AGENT_TOKEN_VIEW_MODE_STORAGE_KEY = "forwardx.agentTokens.viewMode";
 const HOST_PROBE_SERVICE_VIEW_MODE_STORAGE_KEY = "forwardx.hostProbeServices.viewMode";
 const HOST_GROUP_VIEW_MODE_STORAGE_KEY = "forwardx.hostGroups.viewMode";
 
@@ -1191,25 +1127,6 @@ function storeHostViewMode(viewMode: HostViewMode) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(HOST_VIEW_MODE_STORAGE_KEY, viewMode);
-  } catch {
-    // Ignore storage failures so the page still works in restricted browsers.
-  }
-}
-
-function getStoredAgentTokenViewMode(): AgentTokenViewMode {
-  if (typeof window === "undefined") return "card";
-  try {
-    const value = window.localStorage.getItem(AGENT_TOKEN_VIEW_MODE_STORAGE_KEY);
-    return value === "table" ? "table" : "card";
-  } catch {
-    return "card";
-  }
-}
-
-function storeAgentTokenViewMode(viewMode: AgentTokenViewMode) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(AGENT_TOKEN_VIEW_MODE_STORAGE_KEY, viewMode);
   } catch {
     // Ignore storage failures so the page still works in restricted browsers.
   }

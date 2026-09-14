@@ -1,4 +1,6 @@
 import DashboardLayout from "@/components/DashboardLayout";
+import { formatQuotaBytes } from "@shared/formatBytes";
+import { formatMoneyCents as money } from "@shared/formatMoney";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,23 +23,6 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { BILLING_DATE_TIME_FORMAT_OPTIONS } from "@shared/billingTime";
 import { planDurationLabel } from "@shared/planPricing";
-
-function money(cents?: number | null, currency = "CNY") {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format((Number(cents) || 0) / 100);
-}
-
-function bytes(size?: number | null) {
-  const value = Number(size || 0);
-  if (!value) return "不限";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let n = value;
-  let idx = 0;
-  while (n >= 1024 && idx < units.length - 1) {
-    n /= 1024;
-    idx++;
-  }
-  return `${n >= 10 || idx === 0 ? n.toFixed(0) : n.toFixed(2)} ${units[idx]}`;
-}
 
 function speed(value?: number | null) {
   const num = Number(value || 0);
@@ -336,14 +321,14 @@ export default function Subscriptions() {
             <div className="min-w-0">
               <p className="text-xs text-muted-foreground">当前总额度</p>
               <p className="mt-0.5 truncate text-sm font-semibold tabular-nums">
-                {quota.unlimited ? "不限" : bytes(effectiveTrafficLimit)}
+                {quota.unlimited ? "不限" : formatQuotaBytes(effectiveTrafficLimit)}
               </p>
             </div>
             {quota.sources.map((source) => (
               <div key={source.kind} className="min-w-0">
                 <p className="text-xs text-muted-foreground">{quotaSourceLabel(source.kind)}</p>
                 <p className="mt-0.5 truncate text-sm font-medium tabular-nums">
-                  {source.unlimited ? "不限" : bytes(source.bytes)}
+                  {source.unlimited ? "不限" : formatQuotaBytes(source.bytes)}
                 </p>
               </div>
             ))}
@@ -532,18 +517,18 @@ export default function Subscriptions() {
                     </div>
                     <div className="rounded-md border border-border/50 p-3">
                       <div className="text-xs">套餐额度</div>
-                      <div className="mt-1 font-medium text-foreground">{bytes(sub.trafficLimit)}</div>
+                      <div className="mt-1 font-medium text-foreground">{formatQuotaBytes(sub.trafficLimit)}</div>
                     </div>
                     {purchasedAddonBytes > 0 && (
                       <div className="rounded-md border border-border/50 p-3">
                         <div className="text-xs">已购附加流量</div>
-                        <div className="mt-1 font-medium text-foreground">{bytes(purchasedAddonBytes)}</div>
+                        <div className="mt-1 font-medium text-foreground">{formatQuotaBytes(purchasedAddonBytes)}</div>
                       </div>
                     )}
                     {grantedAddonBytes > 0 && (
                       <div className="rounded-md border border-border/50 p-3">
                         <div className="text-xs">管理员加赠</div>
-                        <div className="mt-1 font-medium text-foreground">{bytes(grantedAddonBytes)}</div>
+                        <div className="mt-1 font-medium text-foreground">{formatQuotaBytes(grantedAddonBytes)}</div>
                       </div>
                     )}
                     <div className="rounded-md border border-border/50 p-3">
@@ -576,7 +561,7 @@ export default function Subscriptions() {
                             onClick={() => setSelected({ sub, addon })}
                             disabled={purchaseAddon.isPending}
                           >
-                            <span className="font-medium">{bytes(addon.trafficBytes)}</span>
+                            <span className="font-medium">{formatQuotaBytes(addon.trafficBytes)}</span>
                             <span className="text-muted-foreground">{money(addon.priceCents)}</span>
                           </Button>
                         ))}
@@ -722,7 +707,7 @@ export default function Subscriptions() {
                 购买附加流量
               </DialogTitle>
               <DialogDescription>
-                {selected?.sub?.planName || "当前套餐"} · {selected ? bytes(selected.addon.trafficBytes) : "-"}
+                {selected?.sub?.planName || "当前套餐"} · {selected ? formatQuotaBytes(selected.addon.trafficBytes) : "-"}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-sm">

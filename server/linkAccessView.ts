@@ -1,4 +1,5 @@
 import { eq, inArray } from "drizzle-orm";
+import { dbBool } from "./repositories/repositoryUtils";
 import {
   forwardGroups,
   forwardGroupMembers,
@@ -55,11 +56,6 @@ function warnLinkAccessLookupFailure(error: unknown) {
 function positiveId(value: unknown) {
   const id = Number(value || 0);
   return Number.isInteger(id) && id > 0 ? id : 0;
-}
-
-function dbBool(value: unknown, fallback = false) {
-  if (value === undefined || value === null || value === "") return fallback;
-  return value === true || value === 1 || value === "1" || String(value).trim().toLowerCase() === "true";
 }
 
 /**

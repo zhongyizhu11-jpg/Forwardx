@@ -5,16 +5,11 @@ import { clearLinkAccessScopeCache } from "./linkAccessView";
 import { reconcileUserRuleResourceAuthorization } from "./ruleResourceAuthorization";
 import { refreshUserForwardEndpoints } from "./routers/helpers";
 
-function positiveId(value: unknown) {
-  const id = Number(value || 0);
-  return Number.isInteger(id) && id > 0 ? id : 0;
-}
-
 export async function reconcileTrafficBillingAuthorization(reason: string) {
   clearLinkAccessScopeCache();
-  let users: any[];
+  let userIds: number[];
   try {
-    users = await db.getAllUsers() as any[];
+    userIds = await db.getNonAdminUserIds();
   } catch (error) {
     const failures = [{
       userId: null,
@@ -28,10 +23,6 @@ export async function reconcileTrafficBillingAuthorization(reason: string) {
       failures,
     };
   }
-  const userIds = Array.from(new Set(users
-    .filter((user) => String(user?.role || "user") !== "admin")
-    .map((user) => positiveId(user?.id))
-    .filter((userId) => userId > 0)));
   const results = await mapWithConcurrency(userIds, 4, async (userId) => {
     try {
       const result = await withKeyedTaskLock(`user-resource-permissions:${userId}`, async () => {

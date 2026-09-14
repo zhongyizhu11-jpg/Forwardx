@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { valueAtPath } from "./agentResourceState";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -7,16 +8,6 @@ import { cn } from "@/lib/utils";
 import type { PluginResultFieldDefinition, PluginResultSchemaDefinition } from "@shared/pluginTypes";
 import { Clipboard, ExternalLink, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
-
-function valueAtPath(value: unknown, path?: string) {
-  if (!path) return value;
-  let current = value;
-  for (const segment of path.split(".")) {
-    if (!current || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[segment];
-  }
-  return current;
-}
 
 function displayValue(value: unknown, field: PluginResultFieldDefinition) {
   if (value === undefined || value === null || value === "") return "-";

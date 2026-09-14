@@ -1,4 +1,5 @@
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
+import { dbBool } from "../repositories/repositoryUtils";
 import { z } from "zod";
 import crypto from "crypto";
 import * as db from "../db";
@@ -69,14 +70,6 @@ function normalizeTunnelMode(mode: unknown) {
 // Database adapters do not all return booleans in the same representation
 // (SQLite commonly yields 0/1 while MySQL may yield strings). Keep runtime
 // selection consistent across create/update/reconciliation paths.
-function dbBool(value: unknown, fallback = false) {
-  if (value === undefined || value === null || value === "") return fallback;
-  if (value === true || value === 1) return true;
-  if (typeof value !== "string") return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true";
-}
-
 export function isExplicitListenPortRequest(
   provided: boolean,
   requestedPort: number,

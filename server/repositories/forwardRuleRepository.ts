@@ -1345,18 +1345,6 @@ export async function markForwardRulesRunning(ids: number[]) {
   return ruleIds.length;
 }
 
-export async function disableForwardRuleByProtocolBlock(id: number, reason: string) {
-  const db = await getDb();
-  if (!db) return;
-  const message = String(reason || "Protocol blocked").slice(0, 300);
-  await db.update(forwardRules).set({
-    isEnabled: false,
-    isRunning: false,
-    protocolBlockReason: message,
-    updatedAt: nowDate(),
-  } as any).where(eq(forwardRules.id, id));
-}
-
 export async function disableForwardRulesOutsideHostPortRange(
   hostId: number,
   policySource?: PortPolicySource | null,

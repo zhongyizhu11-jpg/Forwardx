@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { balanceTypeLabel, subscriptionSourceLabel } from "../../shared/ledgerLabels";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import {
   balanceTransactions, InsertBalanceTransaction,
@@ -863,18 +864,6 @@ export async function setSubscriptionPlanPrices(planId: number, tiers: Array<Par
       updatedAt: nowDate(),
     } as any).where(eq(subscriptionPlans.id, planId));
   }
-}
-
-/** 这个套餐挂着的周期档位，按天数升序。 */
-export async function getPlanPriceTiers(planId: number): Promise<PlanPriceTier[]> {
-  const db = await getDb();
-  if (!db) return [];
-  const rows = await db
-    .select({ durationDays: subscriptionPlanPrices.durationDays, priceCents: subscriptionPlanPrices.priceCents })
-    .from(subscriptionPlanPrices)
-    .where(eq(subscriptionPlanPrices.planId, planId))
-    .orderBy(asc(subscriptionPlanPrices.durationDays));
-  return normalizePlanPriceTiers(rows as any[]);
 }
 
 /**
@@ -2461,17 +2450,6 @@ async function rechargeSubscriptionTrafficCyclesForUserUnlocked(userId: number, 
   return { resetCount: reset ? 1 : 0, settled: true };
 }
 
-export async function settleSubscriptionTrafficCyclesForUser(userId: number, now = nowDate()) {
-  const result = await withTrafficBillingUserLock(
-    userId,
-    () => rechargeSubscriptionTrafficCyclesForUserUnlocked(userId, now),
-  );
-  if (result.settled) {
-    await recoverUserForwardAccessIfEligible(userId);
-  }
-  return result.resetCount;
-}
-
 export async function rechargeSubscriptionTrafficCycles() {
   const rows = await subscriptionCycleRows();
   const userIds = Array.from(new Set((rows as any[])
@@ -3122,24 +3100,6 @@ function paymentOrderTypeLabel(type: string | null | undefined) {
   return "余额充值";
 }
 
-function balanceTypeLabel(type: string) {
-  if (type === "admin_recharge") return "管理员充值";
-  if (type === "admin_adjust") return "管理员修改";
-  if (type === "payment") return "在线充值入账";
-  if (type === "purchase") return "余额消费";
-  if (type === "redeem") return "兑换入账";
-  if (type === "traffic_billing") return "流量计费";
-  if (type === "traffic_addon_purchase") return "购买附加流量";
-  return type || "余额变动";
-}
-
-function subscriptionSourceLabel(source: string) {
-  if (source === "admin") return "管理员分配";
-  if (source === "payment") return "在线购买";
-  if (source === "redeem") return "兑换套餐";
-  if (source === "balance") return "余额购买";
-  return source || "套餐变更";
-}
 
 
 async function listUserSubscriptionsForLedger(
