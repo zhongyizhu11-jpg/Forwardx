@@ -434,6 +434,23 @@ export function selfServiceHostLimitFrom(raw: string | null | undefined): number
   return Math.floor(value);
 }
 
+/**
+ * 这个人能加几台。
+ *
+ * 用户行上的 maxSelfServiceHosts 优先，**0 表示跟随全局设置**（不是「不限」）——
+ * 全局默认本来就是个真实上限（10 台），要是 0 也当成不限，管理员把某人调成 0
+ * 反而等于给他松了绑，恰好和他想做的事相反。
+ *
+ * 想给某个人真的放开，就填一个够大的数；想全体放开，改系统设置里那一项。
+ */
+export function selfServiceHostLimitForUser(
+  user: { maxSelfServiceHosts?: unknown } | null | undefined,
+  globalLimit: number,
+): number {
+  const own = Math.floor(Number((user as any)?.maxSelfServiceHosts) || 0);
+  return own > 0 ? own : globalLimit;
+}
+
 export function canAddSelfServiceHost(
   user: { role: string },
   ownedCount: number,
@@ -1144,7 +1161,11 @@ export const hostsRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         if (ctx.user.role !== "admin") {
-          const limit = selfServiceHostLimitFrom(await db.getSetting("selfServiceHostLimit"));
+          const [globalLimit, owner] = await Promise.all([
+            db.getSetting("selfServiceHostLimit").then(selfServiceHostLimitFrom),
+            db.getUserById(ctx.user.id),
+          ]);
+          const limit = selfServiceHostLimitForUser(owner, globalLimit);
           const owned = (await db.getHosts(ctx.user.id)).length;
           if (!canAddSelfServiceHost(ctx.user, owned, limit)) {
             throw new Error(`你自己添加的机器已达上限（${owned}/${limit}）。删掉一台，或让管理员调高上限。`);
@@ -1229,7 +1250,12 @@ export const hostsRouter = router({
      * 提示，等于让人白填一遍表单。
      */
     selfServiceQuota: protectedProcedure.query(async ({ ctx }) => {
-      const limit = selfServiceHostLimitFrom(await db.getSetting("selfServiceHostLimit"));
+      const [globalLimit, owner] = await Promise.all([
+        db.getSetting("selfServiceHostLimit").then(selfServiceHostLimitFrom),
+        db.getUserById(ctx.user.id),
+      ]);
+      // 这个人自己的上限优先，没设才用全局那一档。
+      const limit = selfServiceHostLimitForUser(owner, globalLimit);
       const used = (await db.getHosts(ctx.user.id)).length;
       return {
         used,

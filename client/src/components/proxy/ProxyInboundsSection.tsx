@@ -697,8 +697,17 @@ export default function ProxyInboundsSection({
               卡片只有 390px —— shrink-0 让它既不能缩也不能换行，于是整条从卡片右边
               溢出去被裁掉：左边的下拉被切掉半个，右边的按钮贴着屏幕边。
               去掉之后它会先缩到可用宽度，再在内部自己换行。
+
+              换行之后必须 justify-start，不能 justify-end。挤不下时这一组会被撑成
+              整行宽，justify-end 于是把每一行都往右推：第一行「自动」左边空出一截，
+              第二行只剩「新建」孤零零贴在右边 —— 看着像排版坏了。没换行时这一组
+              是内容宽，start 和 end 没区别（外层 justify-between 已经把它推到右边），
+              所以这里只影响换行那一种情况。
+
+              也不要写成 sm:justify-end：宽屏一样可能换行（窗口拖窄、侧栏展开），
+              那时候同一个洞又回来了，而没换行时 end 本来就没有任何作用。
             */}
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            <div className="flex min-w-0 flex-wrap items-center justify-start gap-2">
               {/* 分组只在真的有好几条时才给 —— 两条节点摆个分组下拉是噪音。 */}
               {groupMode && onGroupModeChange && groupModeOptions && totalRowCount > 1 ? (
                 <Select value={groupMode} onValueChange={(value) => onGroupModeChange(value as ProxyNodeGroupMode)}>

@@ -299,6 +299,8 @@ function UsersContent() {
   const [maxRules, setMaxRules] = useState(0);
   /** 自建落地节点数上限。0 = 不限，与其他配额一致。 */
   const [maxProxyInbounds, setMaxProxyInbounds] = useState(0);
+  /** 能自助加几台机器。0 = 跟随系统设置的全局上限，不是「不限」。 */
+  const [maxSelfServiceHosts, setMaxSelfServiceHosts] = useState(0);
   /** 订阅地址条数上限。0 = 不限。 */
   const [maxProxySubTokens, setMaxProxySubTokens] = useState(0);
   const [maxPorts, setMaxPorts] = useState(0);
@@ -934,6 +936,7 @@ function UsersContent() {
     setGostRateLimitOutInput(unifiedRateLimit > 0 ? String(unifiedRateLimit) : "0");
     setMaxRules(u.manualMaxRules || 0);
     setMaxProxyInbounds(u.manualMaxProxyInbounds || 0);
+    setMaxSelfServiceHosts(u.maxSelfServiceHosts || 0);
     setMaxProxySubTokens(u.manualMaxProxySubTokens || 0);
     setMaxPorts(u.manualMaxPorts || 0);
     setMaxConnections(u.manualMaxConnections || 0);
@@ -991,6 +994,7 @@ function UsersContent() {
       trafficResetDay,
       maxRules,
       maxProxyInbounds,
+      maxSelfServiceHosts,
       maxProxySubTokens,
       maxPorts,
       maxConnections,
@@ -2303,6 +2307,22 @@ function UsersContent() {
                   />
                   <p className="text-xs text-muted-foreground">
                     他自己能在被授权的主机上开几个落地节点。管理员替他开的也算在内。0 或留空表示不限制。
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>能自助加几台机器</Label>
+                  <Input
+                    type="number"
+                    value={maxSelfServiceHosts || ""}
+                    onChange={(e) => setMaxSelfServiceHosts(parseInt(e.target.value) || 0)}
+                    placeholder="0=按系统设置"
+                  />
+                  {/*
+                    这一项刻意不是「0=不限制」—— 全局那一档本来就是个真实上限，
+                    0 当成不限的话，把某人调成 0 反而等于给他松绑，和想做的事正好相反。
+                  */}
+                  <p className="text-xs text-muted-foreground">
+                    他自己能在「我的机器」里加几台。0 或留空表示跟随系统设置里的全局上限（不是不限制）。
                   </p>
                 </div>
                 <div className="space-y-2">

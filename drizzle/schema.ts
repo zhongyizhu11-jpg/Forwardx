@@ -154,6 +154,14 @@ export const users = table("users", {
   // 能生成几条订阅地址（proxy_sub_tokens），0 = 不限制。
   // 每条地址都是一份完整凭据，发出去就收不回来 —— 只能靠吊销那一条。
   maxProxySubTokens: int("maxProxySubTokens").notNull().default(0),
+  /**
+   * 自助能加几台机器。**0 = 跟随系统设置里的全局上限**，不是「不限」。
+   *
+   * 和上面几个 0=不限 的故意不一样，因为这一项的全局默认本来就是一个真实的
+   * 上限（10 台）。要是 0 也当成不限，管理员把某个人调成 0 反而等于给他松了绑，
+   * 恰好和他想做的事相反 —— 那种「填 0 结果全放开」的字段迟早出事。
+   */
+  maxSelfServiceHosts: int("maxSelfServiceHosts").notNull().default(0),
   // 允许使用的转发方式，逗号分隔，如 "iptables,realm,socat"；null 或空串 = 全部允许
   allowedForwardTypes: text("allowedForwardTypes"),
   allowForwardXTunnel: boolean("allowForwardXTunnel").notNull().default(false),
