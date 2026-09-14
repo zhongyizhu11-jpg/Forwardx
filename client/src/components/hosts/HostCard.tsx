@@ -32,6 +32,12 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, type ReactNode } from "react";
 import {
+  HOST_TRAFFIC_MEASURE_MODE_LABELS,
+  hostTrafficPercent,
+  hostTrafficUsedBytes,
+  normalizeHostTrafficMeasureMode,
+} from "@shared/hostTrafficQuota";
+import {
   formatBytes,
   formatUptime,
   HostRegionBadge,
@@ -250,18 +256,13 @@ export default function HostCard({
   const totalNetworkIn = traffic?.bytesIn == null ? null : Number(traffic.bytesIn);
   const totalNetworkOut = traffic?.bytesOut == null ? null : Number(traffic.bytesOut);
   const trafficLimit = Math.max(0, Number(host.trafficLimit || 0));
-  const trafficMeasureMode = host.trafficMeasureMode === "outbound" || host.trafficMeasureMode === "max" ? host.trafficMeasureMode : "both";
-  const trafficMeasureModeLabel = trafficMeasureMode === "outbound"
-    ? "仅出向"
-    : trafficMeasureMode === "max"
-      ? "取最大值"
-      : "双向";
-  const trafficUsedBytes = trafficMeasureMode === "outbound"
-    ? Math.max(0, totalNetworkOut ?? 0)
-    : trafficMeasureMode === "max"
-      ? Math.max(0, totalNetworkIn ?? 0, totalNetworkOut ?? 0)
-      : Math.max(0, (totalNetworkIn ?? 0) + (totalNetworkOut ?? 0));
-  const trafficPercent = trafficLimit > 0 ? Math.round((trafficUsedBytes / trafficLimit) * 100) : null;
+  const trafficMeasureMode = normalizeHostTrafficMeasureMode(host.trafficMeasureMode);
+  const trafficMeasureModeLabel = HOST_TRAFFIC_MEASURE_MODE_LABELS[trafficMeasureMode];
+  const trafficUsedBytes = hostTrafficUsedBytes(
+    { bytesIn: totalNetworkIn, bytesOut: totalNetworkOut },
+    trafficMeasureMode,
+  );
+  const trafficPercent = hostTrafficPercent(trafficUsedBytes, trafficLimit);
   const trafficProgress = trafficPercent === null ? 0 : Math.min(100, Math.max(0, trafficPercent));
   const trafficUsageLabel = trafficPercent === null
     ? `${formatBytes(trafficUsedBytes)} / ♾️`

@@ -5,6 +5,7 @@ import {
   formatBandwidthMbps,
   formatProxyNodeQuotaDetail,
   formatProxyNodeQuotaLabeled,
+  formatProxyNodeQuotaUsedFirst,
   hasProxyNodeQuota,
   formatQuotaBytes,
   normalizeProxyNodeResetDay,
@@ -134,3 +135,28 @@ test("带标签的写法留给悬停说明，那里不缺地方", () => {
   );
 });
 
+
+/**
+ * 展开那一行的顺序。手机上放不下，会被截断 —— 所以最要紧的那个数必须排在最前面，
+ * 否则截断正好切掉唯一有用的部分。
+ */
+test("展开那一行把已用排在最前，截断也先看见它", () => {
+  const line = formatProxyNodeQuotaUsedFirst({
+    bandwidthMbps: 2000,
+    trafficLimit: 100e9,
+    trafficUsed: 92e9,
+  });
+  assert.ok(line.startsWith("已用 "), `已用必须排第一，实际是「${line}」`);
+  assert.match(line, /92%/, "百分比要跟已用在一起，别被甩到后面去");
+  assert.ok(
+    line.indexOf("已用") < line.indexOf("带宽"),
+    "带宽是三个数里最不常看的那个，排最后",
+  );
+});
+
+test("没设总量就没有分母，也就没有百分比", () => {
+  const line = formatProxyNodeQuotaUsedFirst({ bandwidthMbps: 0, trafficLimit: 0, trafficUsed: 5e9 });
+  assert.ok(!line.includes("%"), `没额度不该编一个百分比出来：「${line}」`);
+  assert.ok(!line.includes("带宽"), "带宽没填就别占位置");
+  assert.ok(line.includes("已用"));
+});

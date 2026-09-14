@@ -12,6 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { ProxyNodeRow, proxyNodeMetaText, type ProxyNodeRowSpec } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog, type ProxyNodeShareTarget } from "@/components/proxy/ProxyNodeShareDialog";
+import { ProxyNodeQuotaDetail, ProxyNodeQuotaToggle } from "@/components/proxy/ProxyNodeQuotaCells";
+import { bytesFromGb, gbFromBytes, positiveIntFromInput } from "@shared/trafficGb";
 import { clipboardNeedsManualCopy, copyTextFromElement, copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import {
@@ -90,6 +92,17 @@ type InboundForm = {
   snellVersion: number;
   /** Shadowsocks 的加密方式。其他协议用不到，留着也不会下发。 */
   method: string;
+  /**
+   * 这个端口自己的额度与用量（GB / Mbps，空串 = 没填）。
+   *
+   * 和主机那一层不是一回事：主机层是机房账单口径（系统级网卡计数，直连和机器上
+   * 跑的别的服务都算），这一层只数**面板经手的这个端口**。
+   */
+  bandwidthMbps: string;
+  trafficLimitGb: string;
+  trafficUsedGb: string;
+  trafficAutoReset: boolean;
+  trafficResetDay: string;
   isEnabled: boolean;
   /** 只有 id 与名字：凭据一律服务端生成，前端拿不到也不该传。 */
   /** sharedUserId > 0 = 分享时自动发的凭据，界面上只读：它的生死跟着分享走。 */
@@ -118,6 +131,11 @@ function emptyForm(): InboundForm {
     obfsPassword: "",
     snellVersion: PROXY_INBOUND_SNELL_VERSIONS[0],
     method: PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD,
+    bandwidthMbps: "",
+    trafficLimitGb: "",
+    trafficUsedGb: "",
+    trafficAutoReset: false,
+    trafficResetDay: "1",
     isEnabled: true,
     users: [{ id: 0, name: "默认" }],
   };
@@ -195,6 +213,14 @@ export default function ProxyInboundsSection({
   const confirm = useConfirmDialog();
   const [collapsed, setCollapsed] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  /*
+    展开用量的那几行。自己存一份，不跟粘贴那一路共用一个集合 ——
+    入站 id 和节点 id 是两套各自自增的序号，放一起会互相点开对方。
+  */
+  const [expandedQuotaIds, setExpandedQuotaIds] = useState<number[]>([]);
+  const toggleQuota = (id: number) => {
+    setExpandedQuotaIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  };
   const [form, setForm] = useState<InboundForm>(emptyForm());
 
   const inboundsQuery = trpc.proxyInbounds.list.useQuery();
@@ -411,6 +437,11 @@ export default function ProxyInboundsSection({
       obfsPassword: String(row.obfsPassword || ""),
       snellVersion: Number(row.snellVersion || PROXY_INBOUND_SNELL_VERSIONS[0]),
       method: String(row.method || PROXY_INBOUND_SHADOWSOCKS_DEFAULT_METHOD),
+      bandwidthMbps: Number(row.bandwidthMbps || 0) > 0 ? String(row.bandwidthMbps) : "",
+      trafficLimitGb: gbFromBytes(row.trafficLimit),
+      trafficUsedGb: gbFromBytes(row.trafficUsed),
+      trafficAutoReset: !!row.trafficAutoReset,
+      trafficResetDay: String(Number(row.trafficResetDay || 1)),
       isEnabled: !!row.isEnabled,
       users: Array.isArray(row.users) && row.users.length > 0
         ? row.users.map((user: any) => ({
@@ -447,6 +478,11 @@ export default function ProxyInboundsSection({
       obfsPassword: form.obfsPassword.trim(),
       snellVersion: form.snellVersion,
       method: form.method,
+      bandwidthMbps: positiveIntFromInput(form.bandwidthMbps),
+      trafficLimit: bytesFromGb(form.trafficLimitGb),
+      trafficUsed: bytesFromGb(form.trafficUsedGb),
+      trafficAutoReset: form.trafficAutoReset,
+      trafficResetDay: Math.min(28, Math.max(1, positiveIntFromInput(form.trafficResetDay) || 1)),
       isEnabled: form.isEnabled,
       users: form.users.map((user, index) => ({ id: user.id, name: user.name.trim() || `凭据 ${index + 1}` })),
     };
@@ -518,6 +554,17 @@ export default function ProxyInboundsSection({
       hostNeverOnlineInboundIds?.has(Number(row.id)) ? "机器的 Agent 还没连上" : "",
       !row.isEnabled ? "已停用" : "",
     ]),
+    detail: expandedQuotaIds.includes(Number(row.id))
+      ? <ProxyNodeQuotaDetail node={row} hostQuota={row.hostQuota} />
+      : null,
+    inline: (
+      <ProxyNodeQuotaToggle
+        node={row}
+        hostQuota={row.hostQuota}
+        expanded={expandedQuotaIds.includes(Number(row.id))}
+        onToggle={() => toggleQuota(Number(row.id))}
+      />
+    ),
     toggle: (
       <Switch
         className="shrink-0 scale-90"
@@ -551,7 +598,7 @@ export default function ProxyInboundsSection({
           { key: "delete", label: "删除", icon: Trash2, destructive: true, onSelect: () => void askDelete(row) },
         ]),
     ],
-  })), [rows, hosts, userOptions, isAdmin, linkLoadingId, inboundLeading, notInSubscriptionInboundIds, hostNeverOnlineInboundIds]);
+  })), [rows, hosts, userOptions, isAdmin, linkLoadingId, inboundLeading, notInSubscriptionInboundIds, hostNeverOnlineInboundIds, expandedQuotaIds]);
 
   /** 三类合成一个列表：自建在前（它们是这一页的起点），然后是粘贴和分享来的。 */
   const allRowSpecs = useMemo(() => [...inboundRowSpecs, ...extraRows], [inboundRowSpecs, extraRows]);
@@ -1076,6 +1123,88 @@ export default function ProxyInboundsSection({
                 想一人一份、能单独吊销，改用 VLESS / VMess / Trojan / Hysteria2 / TUIC / AnyTLS。
               </p>
             )}
+
+            {/*
+              端口自己的额度。和主机那一层刻意分开说：
+              主机层是机房账单口径（Agent 报的系统级网卡计数，直连和机器上跑的别的
+              服务都算进去），这一层只数面板经手的这个端口。两个数放在一起而不点破
+              区别，人只会以为面板前后矛盾。
+            */}
+            <div className="space-y-2 rounded-lg border p-3">
+              <Label>这个端口的额度</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-xs text-muted-foreground">带宽（Mbps）</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    value={form.bandwidthMbps}
+                    onChange={(event) => setForm((prev) => ({ ...prev, bandwidthMbps: event.target.value }))}
+                    placeholder="不填 = 不限"
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-xs text-muted-foreground">总流量（GB）</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    value={form.trafficLimitGb}
+                    onChange={(event) => setForm((prev) => ({ ...prev, trafficLimitGb: event.target.value }))}
+                    placeholder="不填 = 不限"
+                  />
+                </div>
+              </div>
+              {form.id > 0 ? (
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">已用流量（GB）</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      value={form.trafficUsedGb}
+                      onChange={(event) => setForm((prev) => ({ ...prev, trafficUsedGb: event.target.value }))}
+                      placeholder="0"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => setForm((prev) => ({ ...prev, trafficUsedGb: "" }))}
+                    >
+                      清零
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    面板自己会累加，这里只是用来手工校准。
+                    <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                      这是<strong>这个端口</strong>跑掉的量，不是这台机器的总量 —— 机房按整台机器的网卡算，
+                      那个数在「主机管理」里，通常比这里大。
+                    </span>
+                  </p>
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <div className="min-w-0">
+                  <Label className="text-xs">每月自动清零</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">按机房的流量周期来，日期只能填 1-28。</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {form.trafficAutoReset ? (
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      className="h-8 w-16"
+                      value={form.trafficResetDay}
+                      onChange={(event) => setForm((prev) => ({ ...prev, trafficResetDay: event.target.value }))}
+                    />
+                  ) : null}
+                  <Switch
+                    checked={form.trafficAutoReset}
+                    onCheckedChange={(checked) => setForm((prev) => ({ ...prev, trafficAutoReset: checked }))}
+                  />
+                </div>
+              </div>
+            </div>
 
             <div className="flex items-center justify-between rounded-md border p-3">
               <div className="min-w-0">

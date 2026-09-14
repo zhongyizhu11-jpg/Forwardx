@@ -61,12 +61,8 @@ import {
 } from "@shared/proxyClientImport";
 import { summarizeProxyNodeHealthCounts, type ProxyNodeHealth } from "@shared/proxyNodeHealth";
 import { PROXY_SUB_TOKEN_FAILURE_LABELS, proxySubTokenStatus } from "@shared/proxySubTokenStatus";
-import {
-  formatProxyNodeQuotaDetail,
-  formatProxyNodeQuotaLabeled,
-  hasProxyNodeQuota,
-  proxyNodeQuotaState,
-} from "@shared/proxyNodeQuota";
+import { bytesFromGb, gbFromBytes } from "@shared/trafficGb";
+import { ProxyNodeQuotaDetail, ProxyNodeQuotaToggle } from "@/components/proxy/ProxyNodeQuotaCells";
 import {
   normalizeProxyNodeGroupMode,
   PROXY_NODE_GROUP_MODES,
@@ -82,7 +78,6 @@ import {
   ChevronDown,
   Copy,
   Eye,
-  Gauge,
   EyeOff,
   KeyRound,
   Layers,
@@ -246,25 +241,6 @@ function ProxyNodeHealthDot({ health }: { health?: ProxyNodeHealth | null }) {
 }
 
 /**
- * GB ↔ 字节。用 1000 而不是 1024：机房卖的「1000G」是按 1000 算的，
- * 按 1024 存进去再显示出来会变成 931G，跟你填的数对不上。
- */
-const GB_IN_BYTES = 1e9;
-
-function bytesFromGb(value: string): number {
-  const gb = Number(String(value).trim());
-  if (!Number.isFinite(gb) || gb <= 0) return 0;
-  return Math.round(gb * GB_IN_BYTES);
-}
-
-function gbFromBytes(bytes: unknown): string {
-  const value = Number(bytes) || 0;
-  if (value <= 0) return "";
-  const gb = value / GB_IN_BYTES;
-  return String(gb >= 100 ? Math.round(gb) : Number(gb.toFixed(2)));
-}
-
-/**
  * 订阅内容的两类条目。
  *
  * 中转在前：那是主力 —— 直连条目只有开了「加进订阅」的节点才有，通常只有一两条，
@@ -292,61 +268,6 @@ function SectionLabel({ children, count }: { children: React.ReactNode; count?: 
   );
 }
 
-const QUOTA_STATE_STYLES = {
-  none: "text-muted-foreground",
-  normal: "text-muted-foreground",
-  warn: "text-amber-600 dark:text-amber-500",
-  exceeded: "text-red-600 dark:text-red-500",
-} as const;
-
-function nodeQuotaOf(node: any) {
-  return {
-    bandwidthMbps: Number(node.bandwidthMbps || 0),
-    trafficLimit: Number(node.trafficLimit || 0),
-    trafficUsed: Number(node.trafficUsed || 0),
-  };
-}
-
-/**
- * 套餐用量的开关：一个小图标，点一下才展开。
- *
- * 常驻显示试过两版都不行 —— 放第一行会把节点名挤没，放第二行会把 IP 端口截断。
- * 手机上那一行就这么宽，地址和套餐只能二选一常驻，而地址是每次都要看的那个。
- *
- * 但图标本身带颜色：用到 80% 变黄、超额变红。不然把数字藏起来的代价就是
- * 「快超额了却要逐个点开才发现」，那比挤掉地址更糟。
- */
-function ProxyNodeQuotaToggle({ node, expanded, onToggle }: { node: any; expanded: boolean; onToggle: () => void }) {
-  const quota = nodeQuotaOf(node);
-  if (!hasProxyNodeQuota(quota)) return null;
-  const state = proxyNodeQuotaState(quota);
-  return (
-    <button
-      type="button"
-      className={`shrink-0 rounded p-1 transition-colors hover:bg-muted ${QUOTA_STATE_STYLES[state]}`}
-      onClick={onToggle}
-      aria-expanded={expanded}
-      // 桌面端悬停就能看到，不必点开；手机上没有悬停，所以图标本身要能点。
-      title={`${formatProxyNodeQuotaLabeled(quota)}${state === "exceeded" ? "（已超出总流量）" : state === "warn" ? "（接近总流量）" : ""}`}
-    >
-      <Gauge className="h-3.5 w-3.5" />
-    </button>
-  );
-}
-
-/**
- * 展开后的那一行。带标签写清三个数各自是什么 —— 折起来时的 `500M/1T/367G`
- * 得先知道顺序才读得懂，展开了就没必要让人猜。
- */
-function ProxyNodeQuotaDetail({ node }: { node: any }) {
-  const quota = nodeQuotaOf(node);
-  const state = proxyNodeQuotaState(quota);
-  return (
-    <p className={`truncate text-[11px] leading-tight ${QUOTA_STATE_STYLES[state]}`}>
-      {formatProxyNodeQuotaDetail(quota)}
-    </p>
-  );
-}
 
 /**
  * 令牌行上那句「最近一次被拒」。

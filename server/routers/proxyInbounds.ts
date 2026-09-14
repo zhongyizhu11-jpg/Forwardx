@@ -244,6 +244,18 @@ const inboundInput = z.object({
   congestionControl: z.string().trim().max(32).optional(),
   snellVersion: z.number().int().optional(),
   snellMode: z.string().trim().max(32).optional(),
+  /**
+   * 这个端口自己的额度与用量。
+   *
+   * 和主机那一层不是一回事：主机层是机房账单口径（系统级网卡计数），这一层只数
+   * 面板经手的这个端口。已用量可以手工改，是为了跟别处的统计对齐 —— 面板自己
+   * 仍然继续累加。
+   */
+  bandwidthMbps: z.number().int().min(0).max(1000000).optional(),
+  trafficLimit: z.number().int().min(0).optional(),
+  trafficUsed: z.number().int().min(0).optional(),
+  trafficAutoReset: z.boolean().optional(),
+  trafficResetDay: z.number().int().min(1).max(28).optional(),
   isEnabled: z.boolean().optional(),
   /**
    * 入站上的用户。只有多用户协议用得上，且只收 id 与 name ——
@@ -259,6 +271,20 @@ const inboundInput = z.object({
 type InboundInput = z.infer<typeof inboundInput>;
 
 /** 把接口入参并进入站模型，缺省值按协议推导。 */
+/**
+ * 端口额度那几列。不走 mergeInbound —— 那个拼的是要下发给 sing-box 的配置，
+ * 额度只是面板自己记账用的，混进去会让「配置变了没」这种判断跟着抖。
+ */
+function inboundQuotaRow(input: Partial<InboundInput>) {
+  return {
+    ...(input.bandwidthMbps !== undefined ? { bandwidthMbps: input.bandwidthMbps } : {}),
+    ...(input.trafficLimit !== undefined ? { trafficLimit: input.trafficLimit } : {}),
+    ...(input.trafficUsed !== undefined ? { trafficUsed: input.trafficUsed } : {}),
+    ...(input.trafficAutoReset !== undefined ? { trafficAutoReset: input.trafficAutoReset } : {}),
+    ...(input.trafficResetDay !== undefined ? { trafficResetDay: input.trafficResetDay } : {}),
+  };
+}
+
 function mergeInbound(base: ProxyInbound, input: Partial<InboundInput>): ProxyInbound {
   const merged: ProxyInbound = { ...base };
   if (input.protocol !== undefined) merged.protocol = input.protocol as ProxyInboundProtocol;
@@ -341,6 +367,41 @@ export const proxyInboundsRouter = router({
     );
     // 用户清单一次查完：一行一次的话，管理员那边五十个端口就是五十次往返。
     const usersByInbound = await db.getProxyInboundUsersByInbounds(rows.map((row: any) => Number(row.id)));
+    /*
+      这些端口所在机器的机房额度。
+
+      端口自己的用量（trafficUsed）只数面板经手的这一个端口，而机房是按整台机器的
+      网卡算的 —— 两个数不是一回事，界面上要能同时给出来，否则人拿端口那个数去对
+      机房账单，永远对不上还以为面板算错了。
+
+      按用到的机器查，不整表读；一次查完而不是一行一次。
+      hosts 里已经有 trafficLimit / trafficMeasureMode 了（主机管理那边一直在用），
+      这里只是把它和计数表凑到一起送出去。
+    */
+    const hostIds: number[] = Array.from(
+      new Set<number>(rows.map((row: any) => Number(row.hostId))),
+    ).filter((id) => id > 0);
+    const [hostRows, hostTraffic] = hostIds.length > 0
+      ? await Promise.all([db.getHostsByIds(hostIds), db.getHostTrafficSummary(hostIds)])
+      : [[], []];
+    const hostById = new Map((hostRows as any[]).map((host: any) => [Number(host.id), host]));
+    const trafficByHost = new Map((hostTraffic as any[]).map((row: any) => [Number(row.hostId), row]));
+    const hostQuotaOf = (hostId: number) => {
+      const host = hostById.get(Number(hostId));
+      if (!host) return null;
+      const counter = trafficByHost.get(Number(hostId));
+      return {
+        name: String(host.name || ""),
+        trafficLimit: Math.max(0, Number(host.trafficLimit) || 0),
+        measureMode: String(host.trafficMeasureMode || "both"),
+        // 计数原样送出去，口径换算交给 shared/hostTrafficQuota —— 服务端算一遍、
+        // 客户端再算一遍的话，两边迟早对不上。
+        bytesIn: Math.max(0, Number(counter?.bytesIn) || 0),
+        bytesOut: Math.max(0, Number(counter?.bytesOut) || 0),
+        // 没有计数行 = Agent 还没报过。「还没有数」和「用了 0」在界面上是两回事。
+        reported: !!counter,
+      };
+    };
     return rows.map((row: any) => ({
       ...row,
       // 私钥不出接口：前端没有任何用得上它的地方，多送一次就多一条泄漏路径。
@@ -359,6 +420,7 @@ export const proxyInboundsRouter = router({
       sharedUserCount: new Set(
         (derived.get(Number(row.id))?.ids || []).flatMap((id: number) => shareUserIds.get(Number(id)) || []),
       ).size,
+      hostQuota: hostQuotaOf(Number(row.hostId)),
     }));
   }),
 
@@ -413,6 +475,7 @@ export const proxyInboundsRouter = router({
         name: input.name,
         remark: input.remark || null,
         isEnabled: input.isEnabled ?? true,
+        ...inboundQuotaRow(input),
         ...db.proxyInboundToRow(inbound),
       } as any);
       await db.replaceProxyInboundUsers(Number(id), inbound.users);
@@ -473,6 +536,7 @@ export const proxyInboundsRouter = router({
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.remark !== undefined ? { remark: input.remark || null } : {}),
         ...(input.isEnabled !== undefined ? { isEnabled: input.isEnabled } : {}),
+        ...inboundQuotaRow(input),
         ...db.proxyInboundToRow(inbound),
       } as any);
       await db.replaceProxyInboundUsers(input.id, inbound.users);

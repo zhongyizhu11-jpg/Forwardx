@@ -525,6 +525,22 @@ export async function getHostById(id: number) {
   return r[0] ? withComputedOnline(r[0]) : undefined;
 }
 
+/**
+ * 按 id 取一批主机。
+ *
+ * 只查用到的那些，不整表读：调用方手里已经有 id 了，而一个部署里主机可能有上千台
+ * （订阅组装那条路就吃过整表读的亏）。查不到的 id 不出现在结果里，调用方自己决定
+ * 「这台机器不见了」怎么显示。
+ */
+export async function getHostsByIds(ids: readonly number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  const wanted = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return [];
+  const rows = await db.select().from(hosts).where(inArray(hosts.id, wanted));
+  return (rows as any[]).map((row) => withComputedOnline(row));
+}
+
 export async function createHost(host: InsertHost) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

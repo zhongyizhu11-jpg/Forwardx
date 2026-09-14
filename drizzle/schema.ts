@@ -532,6 +532,23 @@ export const proxyInbounds = table("proxy_inbounds", {
    * 取消授权时连端口一起收掉。
    */
   clonedFromInboundId: int("clonedFromInboundId").notNull().default(0),
+  /**
+   * 这个端口自己的额度与用量。
+   *
+   * 记在入站上而不是派生节点上：Agent 的计数链装在**监听端口**上，一个多用户入站
+   * 派生出好几个节点，它们共用这一个端口，上报回来的字节数分不到人头上（sing-box
+   * 官方二进制没有 per-user 统计，见 clonedFromInboundId 那段）。所以「跑了多少」
+   * 天然是端口的属性，不是某一份凭据的。
+   *
+   * 和主机那一层的区别要记牢：主机层是机房账单口径（系统级网卡计数，直连和机器上
+   * 跑的别的服务都算），这一层只数**面板经手的这个端口**。两个数不该被当成一回事。
+   */
+  bandwidthMbps: int("bandwidthMbps").notNull().default(0),
+  trafficLimit: bigint("trafficLimit", { mode: "number" }).notNull().default(0),
+  trafficUsed: bigint("trafficUsed", { mode: "number" }).notNull().default(0),
+  trafficAutoReset: boolean("trafficAutoReset").notNull().default(false),
+  trafficResetDay: int("trafficResetDay").notNull().default(1),
+  lastTrafficReset: epoch("lastTrafficReset"),
   isEnabled: boolean("isEnabled").notNull().default(true),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),

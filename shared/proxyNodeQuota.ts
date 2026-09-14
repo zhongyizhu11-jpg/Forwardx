@@ -127,6 +127,26 @@ export function formatProxyNodeQuotaLabeled(quota: ProxyNodeQuota): string {
   return parts.join(" · ");
 }
 
+/**
+ * 展开那一行用的写法：**已用排最前**。
+ *
+ * 手机上这一行放不下完整的三个数，会被截断 —— 所以顺序决定了截掉的是哪一部分。
+ * 「带宽 2G · 总流量 100G · 已用 92G（92%）」截断后剩「带宽 2G · 总流量 100G …」，
+ * 把唯一要紧的那个数（用了多少、到几成）正好切掉；反过来排就总能先看见它。
+ *
+ * 带标签而不用 `2G / 100G / 92G` 那种紧凑式：那三个数里第一个是 Gbps、后两个是 GB，
+ * 挤在一起读起来像同一种单位的三个数。
+ */
+export function formatProxyNodeQuotaUsedFirst(quota: ProxyNodeQuota): string {
+  const limit = Number(quota.trafficLimit) || 0;
+  const parts: string[] = [];
+  parts.push(limit > 0
+    ? `已用 ${formatQuotaBytes(quota.trafficUsed)} / ${formatQuotaBytes(limit)}（${proxyNodeQuotaPercent(quota)}%）`
+    : `已用 ${formatQuotaBytes(quota.trafficUsed)}`);
+  if ((Number(quota.bandwidthMbps) || 0) > 0) parts.push(`带宽 ${formatBandwidthMbps(quota.bandwidthMbps)}`);
+  return parts.join(" · ");
+}
+
 /** 这个节点有没有值得展开的套餐信息。三样全空时连图标都不该出现。 */
 export function hasProxyNodeQuota(quota: ProxyNodeQuota): boolean {
   return (Number(quota.bandwidthMbps) || 0) > 0
