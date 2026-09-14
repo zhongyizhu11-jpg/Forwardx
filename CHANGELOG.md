@@ -127,7 +127,6 @@
 ### 版本
 
 - 面板与 APK Release `2.3.361`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`，Android APP `2.3.97`。Agent 与 FXP runtime 本次无改动，已安装的 Agent 无需升级。
-
 ## [2.3.360] - 2026-09-14
 
 ### 修复
