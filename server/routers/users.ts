@@ -379,7 +379,7 @@ export const usersRouter = router({
         /** 自建落地节点数上限，0 = 不限。与 maxRules 一样走 manual 那一列。 */
         maxProxyInbounds: z.number().min(0).optional(),
         /** 能自助加几台机器。0 = 跟随系统设置的全局上限，不是「不限」。 */
-        maxSelfServiceHosts: z.number().min(0).max(10000).optional(),
+        maxSelfServiceHosts: z.number().min(0).max(10000).nullable().optional(),
         /** 订阅地址条数上限，0 = 不限。 */
         maxProxySubTokens: z.number().min(0).optional(),
         maxPorts: z.number().min(0).optional(),

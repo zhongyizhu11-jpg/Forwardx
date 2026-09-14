@@ -7,6 +7,7 @@ import DateTimePickerInput, {
   formatDateInputValue as formatDateTimeLocal,
   parseDateInputValue as parseDateTimeLocal,
 } from "@/components/DatePickerInput";
+import AddSelfServiceHostDialog from "@/components/hosts/AddSelfServiceHostDialog";
 import HostCard, { HostActionButtons } from "@/components/hosts/HostCard";
 import HostGroupManager, { compareHostGroupDisplayOrder, type HostGroupView, type HostGroupViewMode } from "@/components/hosts/HostGroupManager";
 import HostProbeServiceManager, { type HostProbeServiceViewMode } from "@/components/hosts/HostProbeServiceManager";
@@ -1358,6 +1359,26 @@ function HostsContent() {
   const hostSearchQuery = manageSearchQueries.hosts;
   const hostPageRequest = usePersistentPageRequest("forwardx.hosts.page");
   const hostListRefreshInterval = visiblePollingInterval("slow", pageVisible);
+  /*
+    自助加机器的额度。管理员不受限，所以只给租户查。
+
+    摆在按钮上而不是等他点开表单才说：到了上限才弹一句错误提示，
+    等于让人白填一遍表单。
+  */
+  const [selfServiceAddOpen, setSelfServiceAddOpen] = useState(false);
+  const selfServiceQuotaQuery = trpc.hosts.selfServiceQuota.useQuery(undefined, {
+    enabled: user?.role !== "admin",
+    staleTime: 30_000,
+  });
+  const canAddSelfServiceHost = user?.role === "admin" || selfServiceQuotaQuery.data?.canAdd !== false;
+  const selfServiceHostLimitLabel = (() => {
+    if (user?.role === "admin") return "";
+    const quota = selfServiceQuotaQuery.data;
+    // limit 为 0 表示不限（接口一直是这个约定），那就不必摆一个分母出来。
+    if (!quota || !quota.limit) return "";
+    return `${quota.used}/${quota.limit}`;
+  })();
+
   const hostPageQuery = trpc.hosts.listPage.useQuery({
     page: hostPageRequest.page,
     pageSize: 12,
@@ -1796,6 +1817,14 @@ function HostsContent() {
     }
     if (activeManageTab === "groups") {
       setHostGroupCreateSignal((value) => value + 1);
+      return;
+    }
+    /*
+      租户走自助那条：管理员这条信号是给「Token 管理」那个组件的，而那个组件
+      只在管理员那边挂着 —— 租户点了会没反应（我就是这么发现的）。
+    */
+    if (user?.role !== "admin") {
+      setSelfServiceAddOpen(true);
       return;
     }
     setTokenCreateSignal((value) => value + 1);
@@ -2257,7 +2286,12 @@ function HostsContent() {
             />
           </Badge>
           {/* 布局切换按钮 */}
-          {updateCount > 0 && (
+          {/*
+            「N 台发现新版本」也只给管理员看。升级是管理员专属的接口，租户看到
+            这句黄字既升不了、也不知道该做什么 —— 一条看着要人动手却没有门的提示，
+            比不提示更让人不安。
+          */}
+          {updateCount > 0 && user?.role === "admin" && (
             <Badge variant="outline" className="justify-center gap-1.5 border-amber-500/30 px-3 py-1.5 text-xs text-amber-500">
               <AlertTriangle className="h-3 w-3" />
               {updateCount} 台发现新版本
@@ -2265,16 +2299,23 @@ function HostsContent() {
           )}
           {activeManageTab === "hosts" && (
             <>
-              <Button
-                variant="outline"
-                size="sm"
-                className="col-span-2 w-full gap-2 sm:col-span-1 sm:w-auto"
-                disabled={checkingAgentUpdate}
-                onClick={handleCheckAgentUpdate}
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${checkingAgentUpdate ? "animate-spin" : ""}`} />
-                检查 Agent 更新
-              </Button>
+              {/*
+                查版本也只给管理员。查得出来却升不了（下发升级是管理员专属的接口），
+                对租户就是一句「发现 2 台有新版本」加一条死路 —— Agent 升级从头到尾
+                都是管理员的事。
+              */}
+              {user?.role === "admin" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="col-span-2 w-full gap-2 sm:col-span-1 sm:w-auto"
+                  disabled={checkingAgentUpdate}
+                  onClick={handleCheckAgentUpdate}
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${checkingAgentUpdate ? "animate-spin" : ""}`} />
+                  检查 Agent 更新
+                </Button>
+              )}
               {user?.role === "admin" && (
                 <Button
                   variant="outline"
@@ -2402,10 +2443,23 @@ function HostsContent() {
               </Button>
             </div>
           )}
-          {user?.role === "admin" && (
-            <Button onClick={openCreate} className="col-span-2 w-full gap-2 sm:col-span-1 sm:w-auto">
+          {/*
+            租户也能加机器 —— 那本来就是 protectedProcedure，额度在服务端卡着。
+            额度用满时按钮留着但点不动，并把「几台/上限几台」写在上面：到了上限
+            才弹一句错误提示，等于让人白填一遍表单。
+          */}
+          {(user?.role === "admin" || activeManageTab === "hosts") && (
+            <Button
+              onClick={openCreate}
+              disabled={!canAddSelfServiceHost}
+              title={canAddSelfServiceHost ? undefined : selfServiceHostLimitLabel}
+              className="col-span-2 w-full gap-2 sm:col-span-1 sm:w-auto"
+            >
               <Plus className="h-4 w-4" />
               {activeManageTab === "services" ? "添加服务" : activeManageTab === "groups" ? "添加分组" : "添加主机"}
+              {selfServiceHostLimitLabel ? (
+                <span className="text-xs font-normal opacity-80">{selfServiceHostLimitLabel}</span>
+              ) : null}
             </Button>
           )}
         </div>
@@ -2827,7 +2881,7 @@ function HostsContent() {
               </div>
               <p className="text-lg font-medium">{isHostTextFiltered ? "未找到匹配主机" : isHostGroupFiltered ? "当前分组暂无主机" : "暂无主机"}</p>
               <p className="text-sm mt-1 text-muted-foreground/60">
-                {isHostTextFiltered ? "调整筛选内容或清空搜索" : isHostGroupFiltered ? "可以在分组管理中为该分组添加主机" : user?.role === "admin" ? "点击添加主机生成 Agent 安装命令" : "请联系管理员添加主机"}
+                {isHostTextFiltered ? "调整筛选内容或清空搜索" : isHostGroupFiltered ? "可以在分组管理中为该分组添加主机" : canAddSelfServiceHost ? "点击添加主机生成 Agent 安装命令" : "已达管理员给你的台数上限，删掉一台才能再加"}
               </p>
             </div>
             )}
@@ -2897,6 +2951,19 @@ function HostsContent() {
         services={probeServices as any[]}
       />
       {/* Reset Host Traffic Dialog */}
+      {/* 租户自助加机器 —— 和「订阅管理 → 我的机器」用的是同一个弹窗。 */}
+      <AddSelfServiceHostDialog
+        open={selfServiceAddOpen}
+        onOpenChange={setSelfServiceAddOpen}
+        onCreated={() => {
+          utils.hosts.listPage.invalidate();
+          utils.hosts.selfServiceQuota.invalidate();
+          utils.hosts.options.invalidate();
+          utils.hosts.summary.invalidate();
+          utils.hosts.statusSummary.invalidate();
+        }}
+      />
+
       <Dialog open={!!resetTrafficHost} onOpenChange={(open) => !open && !resetHostTrafficMutation.isPending && setResetTrafficHost(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

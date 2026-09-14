@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import AddSelfServiceHostDialog from "@/components/hosts/AddSelfServiceHostDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Button } from "@/components/ui/button";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -35,7 +36,6 @@ export default function MyHostsSection() {
   const confirm = useConfirmDialog();
 
   const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", ip: "" });
   const [commandHostId, setCommandHostId] = useState(0);
   const commandRef = useRef<HTMLParagraphElement | null>(null);
 
@@ -116,18 +116,6 @@ export default function MyHostsSection() {
     utils.hosts.options.invalidate();
   };
 
-  const createHost = trpc.hosts.create.useMutation({
-    onSuccess: (result: any) => {
-      invalidate();
-      setAddOpen(false);
-      setForm({ name: "", ip: "" });
-      // 直接把安装命令摆出来：加完机器不装 Agent，这条记录就是个空壳。
-      setCommandHostId(Number(result?.id || 0));
-      toast.success("机器已添加，接着在它上面装 Agent");
-    },
-    onError: (error) => toast.error(error.message || "添加失败"),
-  });
-
   const deleteHost = trpc.hosts.delete.useMutation({
     onSuccess: () => {
       invalidate();
@@ -146,14 +134,6 @@ export default function MyHostsSection() {
   const quotaLimit = Number(quotaQuery.data?.limit || 0);
   const canAddHost = quotaQuery.data ? !!quotaQuery.data.canAdd : true;
 
-  const save = () => {
-    const name = form.name.trim();
-    const ip = form.ip.trim();
-    if (!name) return toast.error("给机器起个名字");
-    if (!ip) return toast.error("填上机器的 IP 或域名");
-    createHost.mutate({ name, ip });
-  };
-
   const askDelete = async (host: any) => {
     const ok = await confirm({
       title: "删除这台机器？",
@@ -170,38 +150,16 @@ export default function MyHostsSection() {
   /** 两个弹窗（加机器 / 安装命令）两种布局都要用，所以拎出来。 */
   const dialogs = (
     <>
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>加一台机器</DialogTitle>
-            <DialogDescription>
-              填个名字和地址就行。加完会给你一条安装命令，在那台机器上执行，它才会连上面板。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">名称</Label>
-              <Input
-                value={form.name}
-                onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
-                placeholder="我的 HK 小鸡"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">IP 或域名</Label>
-              <Input
-                value={form.ip}
-                onChange={(event) => setForm((prev) => ({ ...prev, ip: event.target.value }))}
-                placeholder="1.2.3.4"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)}>取消</Button>
-            <Button onClick={save} disabled={createHost.isPending}>保存</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* 和「主机管理」那一页共用同一个弹窗：字段、提示语、额度提示只该有一份。 */}
+      <AddSelfServiceHostDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onCreated={(hostId) => {
+          invalidate();
+          // 加完直接把安装命令摆出来 —— 不装 Agent 这台机器什么也干不了。
+          if (hostId > 0) setCommandHostId(hostId);
+        }}
+      />
 
       <Dialog open={commandHostId > 0} onOpenChange={(open) => !open && setCommandHostId(0)}>
         <DialogContent className="flex max-h-[92svh] flex-col overflow-hidden sm:max-w-lg">

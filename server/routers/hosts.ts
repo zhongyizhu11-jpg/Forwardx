@@ -370,8 +370,24 @@ async function getHostsWithUpgradeStateCleanup(userId?: number) {
   return clearCompletedHostAgentUpgradeRequests(await db.getHosts(userId));
 }
 
-async function visibleHostQueryScope(user: { id: number; role: string }) {
+/**
+ * 一个用户能查到哪些主机。
+ *
+ * `ownedOnly` 是给「主机管理」那一页用的：那一页是**管理自己机器**的地方，
+ * 而被授权用的、套餐附带的都是别人（多半是管理员）的机器 —— 租户在那儿既改不动
+ * 也删不掉，列出来只会让他以为那些也归他管，还顺带把别人的机器摊给他看。
+ *
+ * 别的地方（转发规则的主机下拉、开落地端口挑机器）仍然要带上被授权的那些：
+ * 那里问的是「我能用哪些机器」，和「哪些机器是我的」不是一个问题。
+ */
+async function visibleHostQueryScope(
+  user: { id: number; role: string },
+  options: { ownedOnly?: boolean } = {},
+) {
   if (user.role === "admin") return {} as { ownerUserId?: number; allowedHostIds?: number[]; sortUserId?: number };
+  if (options.ownedOnly) {
+    return { ownerUserId: user.id, allowedHostIds: [] as number[], sortUserId: user.id };
+  }
   const [allowedHostIds, billingResourceIds] = await Promise.all([
     db.getUserEffectiveAllowedHostIds(user.id),
     db.getUserUsableTrafficBillingResourceIds(user.id),
@@ -437,27 +453,45 @@ export function selfServiceHostLimitFrom(raw: string | null | undefined): number
 /**
  * 这个人能加几台。
  *
- * 用户行上的 maxSelfServiceHosts 优先，**0 表示跟随全局设置**（不是「不限」）——
- * 全局默认本来就是个真实上限（10 台），要是 0 也当成不限，管理员把某人调成 0
- * 反而等于给他松了绑，恰好和他想做的事相反。
+ * 用户行上的 maxSelfServiceHosts 优先，**留空（null）才是跟随全局**：
  *
- * 想给某个人真的放开，就填一个够大的数；想全体放开，改系统设置里那一项。
+ *   - null / 没这一列 → 用全局那一档
+ *   - 0              → 一台都不许加
+ *   - N              → 最多 N 台
+ *
+ * 0 特意不当成「跟随全局」也不当成「不限」：这是个数量字段，人填 0 就是想说
+ * 「一台都不给他」。当成不限就把他放开了，当成跟随全局就等于他根本没法卡死
+ * 某一个人 —— 两种都和填的人想做的事相反。
  */
 export function selfServiceHostLimitForUser(
   user: { maxSelfServiceHosts?: unknown } | null | undefined,
   globalLimit: number,
-): number {
-  const own = Math.floor(Number((user as any)?.maxSelfServiceHosts) || 0);
-  return own > 0 ? own : globalLimit;
+): number | null {
+  // 全局那一档沿用老规矩：0 表示不限。这里把它翻译成 null，好和「0 台」分开。
+  const globalResolved = globalLimit > 0 ? globalLimit : null;
+  const raw = (user as any)?.maxSelfServiceHosts;
+  if (raw === null || raw === undefined || raw === "") return globalResolved;
+  const own = Math.floor(Number(raw));
+  // 认不出来的值（脏数据、负数）回落到全局，不要算出一个负的上限。
+  if (!Number.isFinite(own) || own < 0) return globalResolved;
+  return own;
 }
 
+/**
+ * 还能不能再加一台。
+ *
+ * limit 是 selfServiceHostLimitForUser 算出来的结果：**null 表示不限，0 表示一台
+ * 都不许**。别把这两个混成同一个数 —— 早先这里写的是 `limit <= 0 return true`，
+ * 那时候只有全局设置、0 就是不限；现在管理员能把某个人卡到 0，再按老规矩算就成了
+ * 「卡死他反而把他放开」。
+ */
 export function canAddSelfServiceHost(
   user: { role: string },
   ownedCount: number,
-  limit: number,
+  limit: number | null,
 ): boolean {
   if (user.role === "admin") return true;
-  if (limit <= 0) return true;
+  if (limit === null) return true;
   return ownedCount < limit;
 }
 
@@ -845,7 +879,8 @@ export const hostsRouter = router({
           scheduleStaleHostUpgradeCleanup();
           scheduleOrphanedAgentHostCleanup();
         }
-        const scope = await visibleHostQueryScope(ctx.user);
+        // 主机管理这一页只列自己的机器 —— 被授权用的是别人的，他在这儿动不了。
+        const scope = await visibleHostQueryScope(ctx.user, { ownedOnly: true });
         const [pageData, groups] = await Promise.all([
           db.getHostsPage({
             ...input,
@@ -964,7 +999,8 @@ export const hostsRouter = router({
       .query(async ({ input, ctx }) => {
       const requestedIds = Array.from(new Set((input?.hostIds || []).map(Number).filter((id) => id > 0)));
       if (requestedIds.length === 0) return [];
-      const scope = await visibleHostQueryScope(ctx.user);
+      // 和列表同一个口径：卡片上的数要和下面列出来的机器对得上。
+      const scope = await visibleHostQueryScope(ctx.user, { ownedOnly: true });
       const hosts = await db.getHostStatusRows({ ...scope, hostIds: requestedIds });
       return hosts
         .map(compactHostStatus)
@@ -979,7 +1015,8 @@ export const hostsRouter = router({
       `summary:${ctx.user.id}:${input?.groupId || "all"}:${input?.search || ""}`,
       { ttlMs: 2_000, staleMs: 10_000 },
       async () => {
-        const scope = await visibleHostQueryScope(ctx.user);
+        // 和列表同一个口径：卡片上的数要和下面列出来的机器对得上。
+        const scope = await visibleHostQueryScope(ctx.user, { ownedOnly: true });
         const summaryScope = await db.getHostSummaryScope({
           ...scope,
           search: input?.search || "",
@@ -1259,7 +1296,9 @@ export const hostsRouter = router({
       const used = (await db.getHosts(ctx.user.id)).length;
       return {
         used,
-        limit: ctx.user.role === "admin" ? 0 : limit,
+        // 0 在这个接口上一直表示「不限」，界面据此显示「2 台」而不是「2/10」。
+        // null（不限）翻回 0，管理员同理。
+        limit: ctx.user.role === "admin" || limit === null ? 0 : limit,
         canAdd: canAddSelfServiceHost(ctx.user, used, limit),
       };
     }),

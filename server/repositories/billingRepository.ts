@@ -2327,7 +2327,7 @@ export async function updateUserManualEntitlements(userId: number, data: {
    * 不带 manual 前缀：上面那些是「手工额度」，要和套餐给的额度算优先级；
    * 这一项套餐不给，就是一个普通设置，没有两份来源要合。
    */
-  maxSelfServiceHosts?: number;
+  maxSelfServiceHosts?: number | null;
 }) {
   return withTrafficBillingUserTransaction(userId, async () => {
     await updateUserTrafficSettings(userId, data as any);

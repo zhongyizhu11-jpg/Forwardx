@@ -299,8 +299,11 @@ function UsersContent() {
   const [maxRules, setMaxRules] = useState(0);
   /** 自建落地节点数上限。0 = 不限，与其他配额一致。 */
   const [maxProxyInbounds, setMaxProxyInbounds] = useState(0);
-  /** 能自助加几台机器。0 = 跟随系统设置的全局上限，不是「不限」。 */
-  const [maxSelfServiceHosts, setMaxSelfServiceHosts] = useState(0);
+  /**
+   * 能自助加几台机器。存成字符串，因为**空串和 "0" 是两回事**：
+   * 空 = 跟随系统设置，0 = 一台都不许加。用 number 的话两者都会塌成 0。
+   */
+  const [maxSelfServiceHosts, setMaxSelfServiceHosts] = useState("");
   /** 订阅地址条数上限。0 = 不限。 */
   const [maxProxySubTokens, setMaxProxySubTokens] = useState(0);
   const [maxPorts, setMaxPorts] = useState(0);
@@ -936,7 +939,7 @@ function UsersContent() {
     setGostRateLimitOutInput(unifiedRateLimit > 0 ? String(unifiedRateLimit) : "0");
     setMaxRules(u.manualMaxRules || 0);
     setMaxProxyInbounds(u.manualMaxProxyInbounds || 0);
-    setMaxSelfServiceHosts(u.maxSelfServiceHosts || 0);
+    setMaxSelfServiceHosts(u.maxSelfServiceHosts == null ? "" : String(u.maxSelfServiceHosts));
     setMaxProxySubTokens(u.manualMaxProxySubTokens || 0);
     setMaxPorts(u.manualMaxPorts || 0);
     setMaxConnections(u.manualMaxConnections || 0);
@@ -994,7 +997,8 @@ function UsersContent() {
       trafficResetDay,
       maxRules,
       maxProxyInbounds,
-      maxSelfServiceHosts,
+      // 空串要送 null（跟随全局），不能送 0 —— 0 是「一台都不许加」。
+      maxSelfServiceHosts: maxSelfServiceHosts.trim() === "" ? null : Math.max(0, parseInt(maxSelfServiceHosts, 10) || 0),
       maxProxySubTokens,
       maxPorts,
       maxConnections,
@@ -2313,16 +2317,17 @@ function UsersContent() {
                   <Label>能自助加几台机器</Label>
                   <Input
                     type="number"
-                    value={maxSelfServiceHosts || ""}
-                    onChange={(e) => setMaxSelfServiceHosts(parseInt(e.target.value) || 0)}
-                    placeholder="0=按系统设置"
+                    min={0}
+                    value={maxSelfServiceHosts}
+                    onChange={(e) => setMaxSelfServiceHosts(e.target.value)}
+                    placeholder="留空=按系统设置"
                   />
                   {/*
-                    这一项刻意不是「0=不限制」—— 全局那一档本来就是个真实上限，
-                    0 当成不限的话，把某人调成 0 反而等于给他松绑，和想做的事正好相反。
+                    空和 0 刻意分开：这是个数量字段，人填 0 就是想说「一台都不给他」。
+                    当成「不限」就把他放开了，当成「跟随全局」就等于根本没法卡死某一个人。
                   */}
                   <p className="text-xs text-muted-foreground">
-                    他自己能在「我的机器」里加几台。0 或留空表示跟随系统设置里的全局上限（不是不限制）。
+                    他自己能在「我的机器」里加几台。<strong>留空</strong>＝跟随系统设置里的全局上限；<strong>填 0</strong>＝一台都不许加。
                   </p>
                 </div>
                 <div className="space-y-2">

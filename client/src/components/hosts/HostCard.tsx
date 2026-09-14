@@ -203,14 +203,24 @@ export function HostActionButtons({
               <span>用量修正</span>
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem
-            disabled={!canUpgrade || !isOnline}
-            title={upgradeTitle}
-            onSelect={() => onUpgrade(host)}
-          >
-            <Download />
-            <span>升级 Agent</span>
-          </DropdownMenuItem>
+          {/*
+            升不了的人干脆别给这一项。
+
+            原来是渲染出来再 disabled —— 对管理员是对的（机器离线时确实点不了，
+            但过一会儿就能点）；对租户却是一个永远灰着的菜单项，因为下发升级
+            本来就是管理员专属的接口。旁边「重置流量」「用量修正」都是没权限
+            就不渲染，这一项跟上。
+          */}
+          {canUpgrade && (
+            <DropdownMenuItem
+              disabled={!isOnline}
+              title={upgradeTitle}
+              onSelect={() => onUpgrade(host)}
+            >
+              <Download />
+              <span>升级 Agent</span>
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"

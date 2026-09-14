@@ -1065,7 +1065,12 @@ function DashboardLayoutContent({
     setTheme(resolvedTheme === "dark" ? "light" : "dark");
   };
 
-  const hiddenNormalUserMainPaths = ["/hosts", "/tunnels"];
+  /*
+    「主机管理」现在租户也能进：他能自助加机器，就得有个地方看这些机器的状况。
+    那一页按角色收口（服务端只给他自己的机器，管理员专属的入口不渲染），
+    所以不必再从侧边栏藏起来。链路管理仍然是管理员的。
+  */
+  const hiddenNormalUserMainPaths = ["/tunnels"];
   // 没有客户端订阅权限的用户不该在侧边栏看到这一项。管理员始终可见。
   const proxySubscriptionPermission = trpc.proxySubscriptions.permission.useQuery(undefined, {
     enabled: !isAdmin,

@@ -143,8 +143,8 @@ const tables: TableDef[] = [
       c("avatarChangeDay", "varchar", { length: 16 }), c("avatarChangeCount", "int", { notNull: true, default: 0 }), c("role", "varchar", { length: 32, notNull: true, default: "user" }), c("accountEnabled", "bool", { notNull: true, default: true }),
       c("canAddRules", "bool", { notNull: true, default: false }), c("forwardAccessPauseReason", "varchar", { length: 64 }), c("maxRules", "int", { notNull: true, default: 0 }),
       c("maxProxyInbounds", "int", { notNull: true, default: 0 }), c("maxProxySubTokens", "int", { notNull: true, default: 0 }),
-      // 0 = 跟随系统设置里的全局上限（不是「不限」，见 drizzle/schema.ts）。
-      c("maxSelfServiceHosts", "int", { notNull: true, default: 0 }),
+      // 可空：留空 = 跟随全局上限，0 = 一台都不许加（见 drizzle/schema.ts）。
+      c("maxSelfServiceHosts", "int"),
       c("maxPorts", "int", { notNull: true, default: 0 }), c("allowedForwardTypes", "text"),
       c("allowForwardXTunnel", "bool", { notNull: true, default: false }), c("allowProxySubscription", "bool", { notNull: true, default: false }), c("gostRateLimitIn", "int", { notNull: true, default: 0 }),
       c("gostRateLimitOut", "int", { notNull: true, default: 0 }), c("maxConnections", "int", { notNull: true, default: 0 }),
