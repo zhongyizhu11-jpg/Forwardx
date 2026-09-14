@@ -319,11 +319,27 @@ export default function HostCard({
   const currentTrafficOutLabel = formatNetworkSpeed(networkSpeed.out);
   const systemTrafficInLabel = formatOptionalBytes(systemNetworkIn);
   const systemTrafficOutLabel = formatOptionalBytes(systemNetworkOut);
+  const isOnline = !!host.isOnline;
+  /*
+    机器离线了，这两个数就不再是「当前」。
+
+    速率是拿最后两次采样算出来的，运行时间也是最后一次上报里的值 —— 机器一掉线
+    它们就冻在那儿，可标题还写着「当前瞬时流量」。于是同一张卡上，红色的「离线」
+    和「当前 4.09 KB/s」并排放着：看的人没法判断这机器是真在跑，还是这串数字是
+    三天前的化石。
+
+    数字照留（掉线前跑到哪儿是有用的线索，抹掉更糟），只把名字改对。
+  */
+  const lastReportedText = latestMetric?.recordedAt
+    ? new Date(latestMetric.recordedAt).toLocaleString("zh-CN", { hour12: false })
+    : "";
+  const currentTrafficLabel = isOnline ? "当前" : "最后一次";
   const currentTrafficTitle = [
-    "当前瞬时流量",
+    isOnline ? "当前瞬时流量" : "最后一次上报时的瞬时流量 —— 机器已离线，这不是现在的速率",
     `下行 ${currentTrafficInLabel}`,
     `上行 ${currentTrafficOutLabel}`,
-  ].join("\n");
+    !isOnline && lastReportedText ? `上报于 ${lastReportedText}` : "",
+  ].filter(Boolean).join("\n");
   const systemTrafficTitle = [
     "系统累计流量（系统重启后重置）",
     `下行 ${systemTrafficInLabel}`,
@@ -365,7 +381,7 @@ export default function HostCard({
   const renderTrafficSplitBox = () => (
     <div className={`rounded-md border px-2.5 py-2 ${trafficPanelClass}`}>
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] divide-x divide-border/40">
-        {renderTrafficColumn({ label: "当前", inValue: currentTrafficInLabel, outValue: currentTrafficOutLabel, title: currentTrafficTitle, className: "pr-2" })}
+        {renderTrafficColumn({ label: currentTrafficLabel, inValue: currentTrafficInLabel, outValue: currentTrafficOutLabel, title: currentTrafficTitle, className: "pr-2" })}
         {renderTrafficColumn({ label: "累计", inValue: systemTrafficInLabel, outValue: systemTrafficOutLabel, title: systemTrafficTitle, className: "pl-2" })}
       </div>
     </div>
@@ -380,7 +396,6 @@ export default function HostCard({
       : "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
   const agentNeedsUpdate = isAgentVersionBehind(host.agentVersion, latestAgentVersion);
   const agentUpgradeTimedOut = isAgentUpgradeTimedOut(host);
-  const isOnline = !!host.isOnline;
   const trafficUsageProgressClass = trafficLimit > 0
     ? metricUsageProgressClass(trafficProgress, isOnline)
     : isOnline
@@ -446,6 +461,24 @@ export default function HostCard({
         <span className="shrink-0 text-muted-foreground">国家/地区：</span>
         <HostRegionBadge host={host} compact={regionCompact} />
       </div>
+      {/*
+        这台机器是谁的。
+
+        租户可以自助加机器，加完就出现在管理员这张列表里 —— 那是对的（面板是管理员
+        在跑，出了事要能查、要能删），但不标出主人的话，管理员看到的是一台凭空多
+        出来的陌生机器：不知道能不能动它，也不知道该找谁。
+
+        服务端只给管理员算这个字段，而且自己建的不给（满屏自己的名字等于没标）。
+        所以这里有值就显示，没值就不占地方。
+      */}
+      {host.ownerLabel ? (
+        <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5">
+          <span className="shrink-0 text-muted-foreground">归属：</span>
+          <span className="min-w-0 truncate" title={`这台机器由「${host.ownerLabel}」自己加进来的`}>
+            {host.ownerLabel}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 
@@ -669,7 +702,13 @@ export default function HostCard({
             </div>
             <div className="flex items-center gap-2 text-xs pt-1">
               <Clock className="h-3 w-3 text-muted-foreground" />
-              <span className="text-muted-foreground">运行时间</span>
+              <span
+                className="text-muted-foreground"
+                title={isOnline ? "" : `最后一次上报时已经跑了这么久${lastReportedText ? `（上报于 ${lastReportedText}）` : ""}`}
+              >
+                {/* 离线时这个数也是冻住的，别让它看起来还在走。 */}
+                {isOnline ? "运行时间" : "最后运行时长"}
+              </span>
               {remainingTimeLabel && (
                 <span className={`shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none ${remainingTimeClass}`}>
                   {remainingTimeLabel}

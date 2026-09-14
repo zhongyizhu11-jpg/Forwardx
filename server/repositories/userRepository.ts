@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { InsertUser, users, forwardRules, trafficBillingUsage, userSubscriptions } from "../../drizzle/schema";
 import { executeRaw, getDatabaseKind, getDb, insertAndGetId, nowDate, queryRaw, quoteDbIdentifier, rawAffectedRows, withDatabaseTransaction } from "../dbRuntime";
 import { hashPassword, verifyPassword, verifyPasswordAgainstDummy } from "../password";
@@ -573,6 +573,32 @@ export async function getAllUsers() {
   if (!db) return [];
   return usersForListQuery(db)
     .orderBy(desc(users.createdAt));
+}
+
+/**
+ * 按 id 取一批用户的显示名。
+ *
+ * 只查用到的那几个，不整表读 —— 调用方手里已经有 id 了，而 getUserOptions 那种
+ * 全量读是给下拉框用的，一个上千用户的部署里不该为了在列表上标几个名字读一遍。
+ *
+ * 返回 id → 显示名：优先 name，没有就退回 username。查不到的 id 不出现在结果里，
+ * 调用方自己决定「这个人已经没了」怎么显示。
+ */
+export async function getUserDisplayNamesByIds(ids: readonly number[]): Promise<Map<number, string>> {
+  const result = new Map<number, string>();
+  const wanted = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return result;
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db
+    .select({ id: users.id, username: users.username, name: users.name })
+    .from(users)
+    .where(inArray(users.id, wanted));
+  for (const row of rows as any[]) {
+    const label = String(row.name || "").trim() || String(row.username || "").trim();
+    if (label) result.set(Number(row.id), label);
+  }
+  return result;
 }
 
 export async function getUserOptions() {

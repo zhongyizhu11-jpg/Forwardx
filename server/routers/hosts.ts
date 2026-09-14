@@ -453,6 +453,33 @@ export function canReadHostInstallCommand(
   return Number((host as any).userId) === Number(user.id);
 }
 
+/**
+ * 列表上要不要标出「这台机器是谁的」，标什么。
+ *
+ * 租户可以自助加机器，加完就出现在管理员的主机管理里 —— 那是对的（面板是管理员在
+ * 跑，出了事要能查、要能删），但不标出主人的话，管理员看到的是一台凭空多出来的
+ * 陌生机器：不知道能不能动它，也不知道该找谁。
+ *
+ * 三条规矩：
+ *
+ * 1. **只给管理员**。普通用户能看见的除了自己的，还有被授权用的别人的机器 ——
+ *    在那儿标出主人等于把另一个租户的身份透给他。
+ * 2. **自己建的不标**。满屏都是自己的名字，等于没标，还把真正该注意的那几台淹了。
+ * 3. **人没了也要说**。用户注销但机器还留着时照说「已注销用户 #N」，不能静悄悄
+ *    当成自己的 —— 那是一台没人认领的机器，恰恰最需要管理员看见。
+ */
+export function hostOwnerLabel(
+  viewer: { id: number; role: string },
+  host: { userId?: unknown },
+  names: ReadonlyMap<number, string>,
+): string | null {
+  if (viewer.role !== "admin") return null;
+  const ownerId = Number(host?.userId || 0);
+  if (ownerId <= 0) return null;
+  if (ownerId === Number(viewer.id)) return null;
+  return names.get(ownerId) || `已注销用户 #${ownerId}`;
+}
+
 function compactHostForList(host: any) {
   const { agentToken, ...rest } = host || {};
   return rest;
@@ -812,6 +839,23 @@ export const hostsRouter = router({
         ]);
         const items = await clearCompletedHostAgentUpgradeRequests(pageData.items as any[]);
         scheduleHostGeoRefresh(items);
+        /*
+          管理员那边标出每台机器是谁的。
+
+          租户可以自助加机器（订阅管理里那个入口），加完了这台机器就出现在管理员
+          的主机管理里 —— 这是对的，面板是管理员在跑，出了事要能查、要能删。但列表
+          上一个字都没说这是谁的，管理员看到的是一台凭空多出来的陌生机器。
+
+          只给管理员：普通用户能看见的除了自己的，还有被授权用的别人的机器，
+          在那里标出主人等于把另一个租户的身份透给他。
+        */
+        const ownerNames = ctx.user.role === "admin"
+          ? await db.getUserDisplayNamesByIds(items.map((row: any) => Number(row.userId)))
+          : new Map<number, string>();
+        const withOwners = items.map((row: any) => ({
+          ...row,
+          ownerLabel: hostOwnerLabel(ctx.user, row, ownerNames),
+        }));
         let outdatedItems = 0;
         let onlineOutdatedItems = 0;
         let offlineUpgradeableItems = 0;
@@ -829,7 +873,7 @@ export const hostsRouter = router({
         ]));
         return {
           ...pageData,
-          items: items.map(compactHostForList),
+          items: withOwners.map(compactHostForList),
           versionCounts: undefined,
           outdatedItems,
           onlineOutdatedItems,
