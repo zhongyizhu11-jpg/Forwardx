@@ -45,6 +45,9 @@ export const trafficBillingRouter = router({
    * 租户的），而余额 ≤ 0 的人会被停掉**名下全部**转发 —— 这件事原来只有等租户
    * 来问「我的转发怎么全停了」才会发现。
    */
+  /** 「按量计费这一套配好了没有」—— 四环的现状，给计费中心页的开通清单用。 */
+  setupStatus: adminProcedure.query(async () => db.getTrafficBillingSetupStatus()),
+
   hostTakeoverPreview: adminProcedure
     .input(z.object({ hostId: z.number().int().positive() }))
     .query(async ({ input }) => db.previewHostTrafficBillingTakeover(input.hostId)),

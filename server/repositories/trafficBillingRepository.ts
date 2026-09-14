@@ -1067,6 +1067,71 @@ export async function listTrafficBillingRecords(options?: { userId?: number; lim
   return base.orderBy(desc(trafficBillingRecords.createdAt)).limit(limit);
 }
 
+/**
+ * 「按量计费这一套，我到底配好了没有」。
+ *
+ * 这件事原来散在四个地方：总开关在一个**侧边栏点不到**的页面里，资源定价在套餐管理
+ * 的一个 tab 下（那里还看不到总开关），授权在用户管理的用户编辑弹窗里，余额在账单
+ * 与兑换。四处都对了才真的能收到钱，错一处就是静悄悄不生效 —— 而没有任何一个地方
+ * 告诉你缺哪一环。
+ *
+ * 所以把四环的现状一次算出来，摆在计费中心页上。每一环都返回**能拿来做判断的数**，
+ * 不是一个笼统的 ok/not ok：「3 个资源在计费」和「都要授权但一个人都没授权」是完全
+ * 不同的处境，缩成一个布尔值就等于没说。
+ */
+export async function getTrafficBillingSetupStatus() {
+  const enabled = await isTrafficBillingEnabled();
+  const db = await getDb();
+  if (!db) {
+    return {
+      enabled,
+      configs: { total: 0, active: 0, open: 0, permissionOnly: 0 },
+      authorizedUsers: 0,
+      fundedUsers: 0,
+      tenantUsers: 0,
+    };
+  }
+
+  const [configRows, permissionRows, userRows] = await Promise.all([
+    db.select({
+      enabled: trafficBillingConfigs.enabled,
+      requiresPermission: trafficBillingConfigs.requiresPermission,
+      resourceType: trafficBillingConfigs.resourceType,
+      resourceId: trafficBillingConfigs.resourceId,
+    }).from(trafficBillingConfigs),
+    db.select({
+      userId: userTrafficBillingPermissions.userId,
+      resourceType: userTrafficBillingPermissions.resourceType,
+      resourceId: userTrafficBillingPermissions.resourceId,
+    }).from(userTrafficBillingPermissions),
+    db.select({ id: users.id, role: users.role, balanceCents: users.balanceCents }).from(users),
+  ]);
+
+  const active = (configRows as any[]).filter((row) => !!row.enabled);
+  const activeKeys = new Set(active.map((row) => `${String(row.resourceType)}:${Number(row.resourceId)}`));
+  // 只数**启用中**资源上的授权。停用资源上的旧授权不代表谁现在用得上，
+  // 拿它去说「已经授权了 3 个人」是在报一个假的就绪状态。
+  const authorizedUsers = new Set((permissionRows as any[])
+    .filter((row) => activeKeys.has(`${String(row.resourceType)}:${Number(row.resourceId)}`))
+    .map((row) => Number(row.userId)));
+
+  const tenants = (userRows as any[]).filter((row) => String(row.role || "user") !== "admin");
+  return {
+    enabled,
+    configs: {
+      total: configRows.length,
+      active: active.length,
+      // 不需要单独授权的：任何有余额的租户都能直接用，也会出现在商店里。
+      open: active.filter((row) => !row.requiresPermission).length,
+      permissionOnly: active.filter((row) => !!row.requiresPermission).length,
+    },
+    authorizedUsers: authorizedUsers.size,
+    // 余额 ≤ 0 的租户扣不动钱，转发会被停 —— 「有几个人真付得起」是这一环的实话。
+    fundedUsers: tenants.filter((row) => Number(row.balanceCents || 0) > 0).length,
+    tenantUsers: tenants.length,
+  };
+}
+
 export async function getTrafficBillingSummary(userId?: number) {
   const db = await getDb();
   if (!db) return { enabled: await isTrafficBillingEnabled(), totalAmountCents: 0, totalBilledGb: 0, totalBytes: 0, records: [] };

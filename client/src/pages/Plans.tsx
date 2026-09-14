@@ -14,13 +14,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { OptimisticSwitch, Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { SlidingTabsList, type SlidingTabItem } from "@/components/ui/sliding-tabs";
 import { Textarea } from "@/components/ui/textarea";
 import DataSectionLoading from "@/components/DataSectionLoading";
-import TrafficBillingConfigManager from "@/components/TrafficBillingConfigManager";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { getTunnelRouteText } from "@/lib/tunnelDisplay";
 import { trpc } from "@/lib/trpc";
+import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { formatTrafficMultiplier } from "@shared/trafficMultiplier";
 import {
@@ -31,7 +30,7 @@ import {
   PLAN_PRICE_TIER_LIMIT,
   planMonthlyEquivalentCents,
 } from "@shared/planPricing";
-import { Check, CheckCircle2, Coins, LayoutGrid, List, Package, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, LayoutGrid, List, Package, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -84,17 +83,13 @@ type TrafficAddonForm = {
   sortOrder: string;
 };
 
-type PlanManageTab = "plans" | "billing";
+type PlanManageTab = "plans";
 type PlanDialogTab = "settings" | "resources";
 type PlanListViewMode = "card" | "table";
 type PlanResourceKey = "hostIds" | "tunnelIds" | "forwardGroupIds" | "proxyNodeIds";
 type ForwardGroupMode = "port" | "failover" | "chain" | "entry" | "exit";
 type PlanResourcePart = { label: string; count: number };
-const PLAN_MANAGE_TABS = ["plans", "billing"] as const;
-const PLAN_MANAGE_TAB_ITEMS = [
-  { value: "plans", label: "套餐", icon: Package },
-  { value: "billing", label: "按量计费资源", icon: Coins },
-] as const satisfies readonly SlidingTabItem<PlanManageTab>[];
+const PLAN_MANAGE_TABS = ["plans"] as const;
 const PLAN_MANAGE_TAB_STORAGE_KEY = "forwardx.plans.tab";
 const PLAN_LIST_VIEW_MODE_STORAGE_KEY = "forwardx.plans.viewMode";
 
@@ -718,8 +713,8 @@ export default function Plans() {
     defaultValue: "plans",
     storageKey: PLAN_MANAGE_TAB_STORAGE_KEY,
   });
+  const [, navigate] = useLocation();
   const [planViewMode, setPlanViewMode] = useState<PlanListViewMode>(() => getStoredPlanListViewMode());
-  const [billingCreateRequestKey, setBillingCreateRequestKey] = useState(0);
   const [statusUpdatingPlanId, setStatusUpdatingPlanId] = useState<number | null>(null);
 
   const planPageRequest = usePersistentPageRequest("forwardx.plans.page");
@@ -768,11 +763,10 @@ export default function Plans() {
     enabled: assignOpen,
     staleTime: 30_000,
   });
+  // 无条件发：这张卡片要说的是「按量计费现在开没开」，不能因为你没点开某个 tab
+  // 就一律显示「已关闭」—— 那是在关于钱的事情上说假话。
   const { data: trafficBillingData, isLoading: trafficBillingLoading } = trpc.trafficBilling.configs.useQuery(undefined, {
-    enabled: activeTab === "billing",
-  });
-  const { data: trafficBillingSummary, isLoading: trafficBillingSummaryLoading } = trpc.trafficBilling.status.useQuery(undefined, {
-    enabled: activeTab === "billing",
+    staleTime: 30_000,
   });
 
   const createPlan = trpc.plans.create.useMutation({
@@ -867,27 +861,6 @@ export default function Plans() {
     },
   });
 
-  const setTrafficBillingEnabled = trpc.trafficBilling.setEnabled.useMutation({
-    onMutate: async ({ enabled }) => {
-      await utils.trafficBilling.configs.cancel();
-      const previous = utils.trafficBilling.configs.getData();
-      utils.trafficBilling.configs.setData(undefined, { ...(previous || { configs: [] }), enabled });
-      return { previous };
-    },
-    onSuccess: (_result, { enabled }) => {
-      const current = utils.trafficBilling.configs.getData();
-      utils.trafficBilling.configs.setData(undefined, { ...(current || { configs: [] }), enabled });
-      utils.trafficBilling.storeResources.invalidate();
-      toast.success(enabled ? "按量计费已开启" : "按量计费已关闭");
-    },
-    onError: (error, _variables, context) => {
-      if (context?.previous) utils.trafficBilling.configs.setData(undefined, context.previous);
-      toast.error(error.message || "更新失败");
-    },
-    onSettled: async () => {
-      await utils.trafficBilling.configs.invalidate();
-    },
-  });
 
   const assignPlan = trpc.plans.assign.useMutation({
     onSuccess: (result) => {
@@ -918,8 +891,6 @@ export default function Plans() {
   const storeGateBlocking = !storeStatusLoading && !storeEnabled && storeVisiblePlans > 0;
   const trafficBillingEnabled = !!trafficBillingData?.enabled;
   const trafficBillingConfigs = trafficBillingData?.configs || [];
-  const trafficBillingCharged = Number(trafficBillingSummary?.totalAmountCents || 0);
-  const trafficBillingGb = Number(trafficBillingSummary?.totalBilledGb || 0);
   const forwardGroupMap = useMemo<Map<number, any>>(() => {
     const map = new Map<number, any>();
     for (const plan of plans) {
@@ -1053,13 +1024,7 @@ export default function Plans() {
     setPlanDialogTab("settings");
     setEditing(true);
   };
-  const openCreate = () => {
-    if (activeTab === "billing") {
-      setBillingCreateRequestKey((value) => value + 1);
-      return;
-    }
-    openPlanCreate();
-  };
+  const openCreate = () => openPlanCreate();
 
   const handlePlanViewModeChange = (viewMode: PlanListViewMode) => {
     setPlanViewMode(viewMode);
@@ -1167,28 +1132,38 @@ export default function Plans() {
               <Settings2 className="mr-2 h-4 w-4" /> 手动分配
             </Button>
             <Button onClick={openCreate}>
-              <Plus className="mr-2 h-4 w-4" /> {activeTab === "billing" ? "新增计费资源" : "新增套餐"}
+              <Plus className="mr-2 h-4 w-4" /> 新增套餐
             </Button>
           </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {/*
+            按量计费的状态卡：只读，开关挪去「流量计费」那一页统一管。
+
+            原来这里也有一个开关，但它读的 trafficBilling.configs 查询带着
+            `enabled: activeTab === "billing"` —— 默认 tab 是「套餐」，查询根本不发，
+            于是这张卡**永远显示「已关闭」**，哪怕库里是开着的。两面都错：以为没在
+            收钱其实在收；想关掉它，看到「已关闭」就不会去动。
+            现在查询无条件发，状态是真的；要改去流量计费页。
+          */}
           <Card>
             <CardHeader className="pb-2">
               <CardDescription>按量计费</CardDescription>
               <CardTitle className="flex items-center justify-between gap-3">
-                <span>{trafficBillingEnabled ? "已开启" : "已关闭"}</span>
-                {trafficBillingLoading ? (
-                  <Skeleton className="h-6 w-11 shrink-0 rounded-full" />
-                ) : (
-                  <OptimisticSwitch
-                    checked={trafficBillingEnabled}
-                    onCheckedChangeAsync={(enabled) => setTrafficBillingEnabled.mutateAsync({ enabled })}
-                  />
-                )}
+                {trafficBillingLoading
+                  ? <Skeleton className="h-7 w-16" />
+                  : <span>{trafficBillingEnabled ? "已开启" : "已关闭"}</span>}
+                <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1 text-xs" onClick={() => navigate("/traffic-billing")}>
+                  去设置 <ArrowRight className="h-3 w-3" />
+                </Button>
               </CardTitle>
             </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">公开资源可在余额充足时直接使用。</CardContent>
+            <CardContent className="text-sm text-muted-foreground">
+              {trafficBillingEnabled
+                ? `${trafficBillingConfigs.length} 个资源在按 GB 扣余额。`
+                : "关着的时候，配了价的资源一分钱都不扣，流量照旧记进各自的套餐额度。"}
+            </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
@@ -1244,49 +1219,7 @@ export default function Plans() {
               {planResourceSummary.otherForwardResources > 0 ? ` · ${planResourceSummary.otherForwardResources} 个兼容资源` : ""}
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>累计扣费</CardDescription>
-              <CardTitle>
-                <AnimatedStatValue
-                  value={money(trafficBillingCharged)}
-                  loading={trafficBillingSummaryLoading}
-                  cacheKey="trafficBilling.totalCharged"
-                  fallbackValue={money(0)}
-                />
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">历史扣费合计。</CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>已计费流量</CardDescription>
-              <CardTitle>
-                <AnimatedStatValue
-                  value={`${trafficBillingGb} GB`}
-                  loading={trafficBillingSummaryLoading}
-                  cacheKey="trafficBilling.totalGb"
-                  fallbackValue="0 GB"
-                />
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">扣费记录累计。</CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>计费资源</CardDescription>
-              <CardTitle>
-                <AnimatedStatValue
-                  value={trafficBillingConfigs.length}
-                  loading={trafficBillingLoading}
-                  cacheKey="trafficBilling.configsCount"
-                  fallbackValue={0}
-                />
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">已配置资源。</CardContent>
-          </Card>
-        </div>
+          </div>
 
         {storeGateBlocking && (
           <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
@@ -1306,8 +1239,6 @@ export default function Plans() {
         )}
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as PlanManageTab)} className="space-y-4">
-          <SlidingTabsList items={PLAN_MANAGE_TAB_ITEMS} activeValue={activeTab} ariaLabel="套餐管理" minItemWidthRem={9.5} />
-
           <TabsContent value="plans" className="mt-0 space-y-6">
             <Card>
               <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1441,15 +1372,6 @@ export default function Plans() {
             <PersistentPagination pagination={planPagination} itemName="个套餐" />
           </TabsContent>
 
-          <TabsContent value="billing" className="mt-0">
-            <TrafficBillingConfigManager
-              showHeader={false}
-              showEmbeddedHeader={false}
-              showSummary={false}
-              hideCreateButton
-              createRequestKey={billingCreateRequestKey}
-            />
-          </TabsContent>
         </Tabs>
       </div>
 
