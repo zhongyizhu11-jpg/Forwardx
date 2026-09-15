@@ -66,6 +66,7 @@ import {
   buildIptablesTransitionCleanupCmds,
   buildManagedPortCleanupCmds,
   buildNftCleanupCmds,
+  buildKernelForwardCmds,
   buildNftForwardCmds,
   buildNftTransitionCleanupCmds,
   killByPatternCmd,
@@ -5145,30 +5146,9 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
             forwardType: "guard",
             failover: guardFailover,
           });
-        } else if (rule.forwardType === "iptables") {
-          // Remove any stale nftables state left by a previous backend before
-          // installing iptables rules for this listener.
-          cmds.push(...buildNftTransitionCleanupCmds(rule));
-          cmds.push(...buildIptablesForwardCmds(rule));
-          for (const c of buildCountingChainCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol, rule.forwardType)) cmds.push(c);
-          for (const c of buildRuleAccessLimitCmds(rule)) cmds.push(c);
-          actions.push({
-            ruleId: rule.id,
-            op: "apply",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            networkInterface: hostInterface,
-            commands: cmds,
-          });
-        } else if (rule.forwardType === "nftables") {
-          // The nft builder self-cleans nftables; the transition helper also
-          // removes an older iptables DNAT/FORWARD layout.
-          cmds.push(...buildIptablesTransitionCleanupCmds(rule));
-          cmds.push(...buildNftForwardCmds(rule));
-          for (const c of buildRuleAccessLimitCmds(rule)) cmds.push(c);
+        } else if (rule.forwardType === "iptables" || rule.forwardType === "nftables") {
+          // 两种内核态转发只差三处，差别写在 buildKernelForwardCmds 里。
+          cmds.push(...buildKernelForwardCmds(rule, rule.forwardType, buildRuleAccessLimitCmds(rule)));
           actions.push({
             ruleId: rule.id,
             op: "apply",

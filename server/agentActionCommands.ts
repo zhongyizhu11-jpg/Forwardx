@@ -414,6 +414,41 @@ export function buildNftForwardCmds(rule: any): string[] {
   return cmds;
 }
 
+/** 内核态转发：规则直接进 iptables / nftables，没有中间进程。 */
+export type KernelForwardKind = "iptables" | "nftables";
+
+/**
+ * 内核态转发要下发的命令。
+ *
+ * 这两种原来在心跳路由里各写一遍 else-if，而它们只差三处：换哪一套「清掉上一任
+ * 后端留下的东西」、调哪个转发规则构造器、以及**计数链要不要单独下**。
+ *
+ * 计数链那一处是真差别，不是疏漏：nft 的构造器自带计数器，再下一遍 iptables
+ * 计数链会把同一份流量数两次。
+ *
+ * 访问限制那一段由调用方传进来 —— 它依赖每次请求各不相同的用户配额，不是这一层
+ * 能算的。
+ */
+export function buildKernelForwardCmds(
+  rule: any,
+  kind: KernelForwardKind,
+  accessLimitCmds: readonly string[] = [],
+): string[] {
+  const cmds: string[] = [];
+  if (kind === "iptables") {
+    // 先清掉上一任后端可能留下的 nftables 状态，再装 iptables 规则。
+    cmds.push(...buildNftTransitionCleanupCmds(rule));
+    cmds.push(...buildIptablesForwardCmds(rule));
+    cmds.push(...buildCountingChainCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol, rule.forwardType));
+  } else {
+    // nft 构造器自己会清 nftables；这个 helper 顺带清掉更早的 iptables DNAT/FORWARD 布局。
+    cmds.push(...buildIptablesTransitionCleanupCmds(rule));
+    cmds.push(...buildNftForwardCmds(rule));
+  }
+  cmds.push(...accessLimitCmds);
+  return cmds;
+}
+
 export function buildManagedPortCleanupCmds(port: number, targetIp?: string, targetPort?: number, protocol?: string): string[] {
   const normalizedProtocol = normalizeForwardRuleProtocol(protocol, "both");
   const protocols = forwardRuleProtocols(protocol, "both");
