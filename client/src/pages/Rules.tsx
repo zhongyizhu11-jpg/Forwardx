@@ -7255,7 +7255,7 @@ function RulesContent() {
               className="space-y-3"
             >
               {form.routeMode === "tunnel" && (
-                <div className="space-y-2 rounded-md border border-chart-4/20 bg-chart-4/5 p-2.5">
+                <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                     <div className="space-y-2">
                       <Label>使用隧道</Label>
@@ -7282,7 +7282,7 @@ function RulesContent() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <Badge variant="outline" className="h-9 justify-center gap-1.5 border-chart-4/30 px-3 text-chart-4">
+                    <Badge variant="outline" className="h-9 justify-center gap-1.5 px-3 text-muted-foreground">
                       <Network className="h-3.5 w-3.5" />
                       {selectedTunnelDisplay.shortLabel}
                     </Badge>
@@ -7300,7 +7300,7 @@ function RulesContent() {
               )}
 
               {isForwardGroupRouteMode && (
-                <div className="space-y-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 p-2.5">
+                <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                     <div className="space-y-2">
                       <Label>{form.routeMode === "local" ? (isLegacyLocalRuleEdit ? "迁移到新版端口转发" : "使用端口转发") : form.routeMode === "chain" ? "使用转发链" : "使用转发组"}</Label>
@@ -7330,7 +7330,7 @@ function RulesContent() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <Badge variant="outline" className="h-9 justify-center gap-1.5 border-emerald-500/30 px-3 text-emerald-600">
+                    <Badge variant="outline" className="h-9 justify-center gap-1.5 px-3 text-muted-foreground">
                       {form.routeMode === "local" ? <ArrowRightLeft className="h-3.5 w-3.5" /> : form.routeMode === "chain" ? <GitBranch className="h-3.5 w-3.5" /> : <Layers3 className="h-3.5 w-3.5" />}
                       {isLegacyLocalRuleEdit && !selectedForwardGroup ? "待选择" : FORWARD_TYPE_LABELS[effectiveRouteForwardType] || effectiveRouteForwardType}
                     </Badge>
@@ -7357,7 +7357,7 @@ function RulesContent() {
               )}
 
               {form.routeMode === "local" && !isForwardGroupRouteMode && (
-                <div className="space-y-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 p-2.5">
+                <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                     <div className="space-y-2">
                       <Label>使用按量计费资源</Label>
@@ -7387,7 +7387,7 @@ function RulesContent() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <Badge variant="outline" className="h-9 justify-center gap-1.5 border-emerald-500/30 px-3 text-emerald-600">
+                    <Badge variant="outline" className="h-9 justify-center gap-1.5 px-3 text-muted-foreground">
                       <ArrowRightLeft className="h-3.5 w-3.5" />
                       按量计费
                     </Badge>
@@ -7404,156 +7404,158 @@ function RulesContent() {
                 </div>
               )}
             </RuleRouteTransition>
+            {/*
+              字段顺序按「线路 → 端口 → 出口 → 名称」排：先是这条转发在哪走（上面的线路块），
+              再是进来的端口和出去的地址，最后才是名字。
+              原来「规则名称」排在第二 —— 它是整张表单唯一不必填的字段，却占着最显眼的位置。
+            */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>规则名称</Label>
-                <Input
-                  placeholder="例如: Web 服务转发"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
+              <div className="flex items-center justify-between gap-2">
+              <Label>源端口 <span className="text-destructive">*</span></Label>
+              <span className="truncate text-xs text-muted-foreground" title={`允许端口范围: ${sourcePortRangeText}`}>
+              {sourcePortRangeText}
+              </span>
+              </div>
+              <div className="flex gap-2">
+              <div className="relative min-w-0 flex-1">
+              <Input
+              type="text"
+              pattern="[0-9]*"
+              placeholder={isForwardGroupRouteMode ? "例如 8080" : "0=随机"}
+              value={form.sourcePort || ""}
+              inputMode="numeric"
+              onChange={(e) => {
+              latestPortCheckRef.current += 1;
+              setPortRangeError(null);
+              setPortStatus("idle");
+              setForm({ ...form, sourcePort: parseInt(e.target.value) || 0 });
+              }}
+              className={`pr-24 ${
+              portStatus === "used" ? "border-destructive" :
+              portStatus === "available" ? "border-emerald-500" : ""
+              }`}
+              />
+              {portStatus === "used" && (
+              <div className="absolute right-2.5 top-1/2 inline-flex max-w-[5.5rem] -translate-y-1/2 items-center gap-1 text-[11px] font-medium text-destructive" title={portStatusHint?.title}>
+              <XCircle className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{portStatusHint?.text || "不可用"}</span>
+              </div>
+              )}
+              {portStatus === "available" && (
+              <div className="absolute right-2.5 top-1/2 inline-flex max-w-[5.5rem] -translate-y-1/2 items-center gap-1 text-[11px] font-medium text-emerald-600" title={portStatusHint?.title}>
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{portStatusHint?.text || "可用"}</span>
+              </div>
+              )}
+              </div>
+              <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-10 w-10 shrink-0"
+              onClick={handleRandomPort}
+              title="随机分配端口"
+              disabled={isForwardGroupRouteMode ? !form.forwardGroupId : !form.hostId}
+              >
+              <Shuffle className="h-4 w-4" />
+              </Button>
+              </div>
               </div>
               <div className="space-y-2">
-                <Label>协议</Label>
-                <Select
-                  value={form.protocol}
-                  onValueChange={(v) => setForm({
-                    ...form,
-                    protocol: v as any,
-                    failoverEnabled: v === "tcp" ? form.failoverEnabled : false,
-                  })}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="tcp">TCP</SelectItem>
-                    <SelectItem value="udp">UDP</SelectItem>
-                    <SelectItem value="both">TCP+UDP</SelectItem>
-                  </SelectContent>
-                </Select>
+              <Label>目标地址 <span className="text-destructive">*</span></Label>
+              <Input
+              placeholder="例如: 10.0.0.1 或 example.com"
+              value={form.targetIp}
+              onChange={(e) => setForm({ ...form, targetIp: e.target.value })}
+              />
               </div>
-              {!isForwardGroupRouteMode && form.routeMode === "local" && (
-                <div className="space-y-2">
-                  <Label>转发工具</Label>
-                  {!routeModeLocked && form.routeMode === "local" ? (
-                    <Select
-                      value={form.forwardType}
-                      onValueChange={(v) => setForm({
-                        ...form,
-                        forwardType: v as any,
-                        gostMode: "direct" as const,
-                        gostRelayHost: "",
-                        gostRelayPort: 0,
-                        tunnelId: null,
-                      })}
-                    >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {usableForwardTypes.map((t) => (
-                          <SelectItem key={t} value={t}>{FORWARD_TYPE_LABELS[t]}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <div className="flex h-10 items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-3 text-sm">
-                      <span className="truncate">{FORWARD_TYPE_LABELS[effectiveRouteForwardType] || effectiveRouteForwardType}</span>
-                      <Badge variant="outline" className="shrink-0 text-[10px]">
-                        {isForwardGroupRouteMode ? "上级决定" : "已锁定"}
-                      </Badge>
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className="space-y-2">
+              <Label>目标端口 <span className="text-destructive">*</span></Label>
+              <Input
+              type="number"
+              min={1}
+              max={65535}
+              step={1}
+              placeholder="例如: 80"
+              value={form.targetPort || ""}
+              onChange={(e) => setForm({ ...form, targetPort: parseInt(e.target.value) || 0 })}
+              />
+              </div>
+              <div className="space-y-2">
+              <Label>协议</Label>
+              <Select
+              value={form.protocol}
+              onValueChange={(v) => setForm({
+              ...form,
+              protocol: v as any,
+              failoverEnabled: v === "tcp" ? form.failoverEnabled : false,
+              })}
+              >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+              <SelectItem value="tcp">TCP</SelectItem>
+              <SelectItem value="udp">UDP</SelectItem>
+              <SelectItem value="both">TCP+UDP</SelectItem>
+              </SelectContent>
+              </Select>
+              </div>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                <Label>源端口</Label>
-                  <span className="truncate text-xs text-muted-foreground" title={`允许端口范围: ${sourcePortRangeText}`}>
-                    {sourcePortRangeText}
-                  </span>
-                </div>
-                <div className="flex gap-2">
-                  <div className="relative min-w-0 flex-1">
-                    <Input
-                      type="text"
-                      pattern="[0-9]*"
-                      placeholder={isForwardGroupRouteMode ? "例如 8080" : "0=随机"}
-                      value={form.sourcePort || ""}
-                      inputMode="numeric"
-                      onChange={(e) => {
-                        latestPortCheckRef.current += 1;
-                        setPortRangeError(null);
-                        setPortStatus("idle");
-                        setForm({ ...form, sourcePort: parseInt(e.target.value) || 0 });
-                      }}
-                      className={`pr-24 ${
-                        portStatus === "used" ? "border-destructive" :
-                        portStatus === "available" ? "border-emerald-500" : ""
-                      }`}
-                    />
-                    {portStatus === "used" && (
-                      <div className="absolute right-2.5 top-1/2 inline-flex max-w-[5.5rem] -translate-y-1/2 items-center gap-1 text-[11px] font-medium text-destructive" title={portStatusHint?.title}>
-                        <XCircle className="h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">{portStatusHint?.text || "不可用"}</span>
-                      </div>
-                    )}
-                    {portStatus === "available" && (
-                      <div className="absolute right-2.5 top-1/2 inline-flex max-w-[5.5rem] -translate-y-1/2 items-center gap-1 text-[11px] font-medium text-emerald-600" title={portStatusHint?.title}>
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">{portStatusHint?.text || "可用"}</span>
-                      </div>
-                    )}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-10 w-10 shrink-0"
-                    onClick={handleRandomPort}
-                    title="随机分配端口"
-                    disabled={isForwardGroupRouteMode ? !form.forwardGroupId : !form.hostId}
-                  >
-                    <Shuffle className="h-4 w-4" />
-                  </Button>
-                </div>
+              <Label className="flex items-baseline gap-1.5">规则名称<span className="text-xs font-normal text-muted-foreground">选填</span></Label>
+              <Input
+              placeholder="例如: Web 服务转发"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
               </div>
+              {!isForwardGroupRouteMode && form.routeMode === "local" && (
               <div className="space-y-2">
-                <Label>目标地址</Label>
-                <Input
-                  placeholder="例如: 10.0.0.1 或 example.com"
-                  value={form.targetIp}
-                  onChange={(e) => setForm({ ...form, targetIp: e.target.value })}
-                />
+              <Label>转发工具</Label>
+              {!routeModeLocked && form.routeMode === "local" ? (
+              <Select
+              value={form.forwardType}
+              onValueChange={(v) => setForm({
+              ...form,
+              forwardType: v as any,
+              gostMode: "direct" as const,
+              gostRelayHost: "",
+              gostRelayPort: 0,
+              tunnelId: null,
+              })}
+              >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+              {usableForwardTypes.map((t) => (
+              <SelectItem key={t} value={t}>{FORWARD_TYPE_LABELS[t]}</SelectItem>
+              ))}
+              </SelectContent>
+              </Select>
+              ) : (
+              <div className="flex h-10 items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-3 text-sm">
+              <span className="truncate">{FORWARD_TYPE_LABELS[effectiveRouteForwardType] || effectiveRouteForwardType}</span>
+              <Badge variant="outline" className="shrink-0 text-[10px]">
+              {isForwardGroupRouteMode ? "上级决定" : "已锁定"}
+              </Badge>
               </div>
-              <div className="space-y-2 sm:col-span-2">
-                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.9fr)] sm:items-end">
-                  <div className="space-y-2">
-                    <Label>目标端口 <span className="text-destructive">*</span></Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={65535}
-                      step={1}
-                      placeholder="例如: 80"
-                      value={form.targetPort || ""}
-                      onChange={(e) => setForm({ ...form, targetPort: parseInt(e.target.value) || 0 })}
-                    />
-                  </div>
-                  <div className="flex min-h-10 flex-col gap-2 rounded-md bg-muted/35 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0 space-y-0.5">
-                      <Label className="text-sm font-medium">异常TG提醒</Label>
-                      <p className="text-xs text-muted-foreground">
-                        {telegramBotReady ? "规则运行异常时提醒已绑定 Telegram 的管理员。" : "请先在系统设置中配置并启用 TG 机器人。"}
-                      </p>
-                    </div>
-                    <Switch
-                      checked={telegramBotReady && form.telegramErrorNotifyEnabled}
-                      disabled={!telegramBotReady}
-                      onCheckedChange={(checked) => setForm({ ...form, telegramErrorNotifyEnabled: checked })}
-                    />
-                  </div>
-                </div>
+              )}
               </div>
+              )}
+            </div>
+            {/* 异常提醒是可选的通知设置，不该和必填字段并排同级。 */}
+            <div className={`flex min-h-10 flex-col gap-2 rounded-md bg-muted/35 px-3 py-2 sm:flex-row sm:items-center sm:justify-between${telegramBotReady ? "" : " opacity-60"}`}>
+            <div className="min-w-0 space-y-0.5">
+            <Label className="text-sm font-medium">异常TG提醒</Label>
+            <p className="text-xs text-muted-foreground">
+            {telegramBotReady ? "规则运行异常时提醒已绑定 Telegram 的管理员。" : "请先在系统设置中配置并启用 TG 机器人。"}
+            </p>
+            </div>
+            <Switch
+            checked={telegramBotReady && form.telegramErrorNotifyEnabled}
+            disabled={!telegramBotReady}
+            onCheckedChange={(checked) => setForm({ ...form, telegramErrorNotifyEnabled: checked })}
+            />
             </div>
             {kernelForwardWarning && (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
