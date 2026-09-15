@@ -1603,7 +1603,7 @@ function HostsContent() {
       utils.hosts.summary.invalidate();
       setShowDialog(false);
       resetForm();
-      toast.success("主机添加成功");
+      toast.success("主机已添加");
     },
     onError: (err) => toast.error(err.message || "添加失败"),
   });
@@ -1617,7 +1617,7 @@ function HostsContent() {
       utils.hosts.summary.invalidate();
       setShowDialog(false);
       resetForm();
-      toast.success("主机更新成功");
+      toast.success("主机已更新");
     },
     onError: (err) => toast.error(err.message || "更新失败"),
   });
@@ -1703,7 +1703,7 @@ function HostsContent() {
       }
       if (tracked.has(host.id)) {
         tracked.delete(host.id);
-        toast.success(`${host.name} Agent 升级成功，当前版本 ${host.agentVersion ? `v${host.agentVersion}` : "已上报"}`);
+        toast.success(`${host.name} Agent 已升级，当前版本 ${host.agentVersion ? `v${host.agentVersion}` : "已上报"}`);
       }
     }
     for (const hostId of Array.from(tracked.keys())) {

@@ -270,7 +270,7 @@ export default function Store() {
         const result = await queryOrderUtils.client.payment.queryOrder.query({ outTradeNo: qrOrder.outTradeNo });
         if (result?.status === "completed" || result?.status === "paid" || result?.status === "processing") {
           setQrOrder(null);
-          toast.success("支付成功！");
+          toast.success("已支付");
           utils.plans.mySubscriptions.invalidate();
           utils.billing.me.invalidate();
           utils.billing.ledger.invalidate();

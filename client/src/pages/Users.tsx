@@ -487,7 +487,7 @@ function UsersContent() {
     onSuccess: () => {
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
-      toast.success("用户创建成功");
+      toast.success("用户已创建");
       setShowCreateUser(false);
       setNewUsername("");
       setNewUserPassword("");

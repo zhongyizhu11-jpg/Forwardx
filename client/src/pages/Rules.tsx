@@ -2358,7 +2358,7 @@ function RulesContent() {
       utils.rules.listSummary.invalidate();
       setShowDialog(false);
       resetForm();
-      const msg = data.sourcePort ? `规则创建成功，源端口: ${data.sourcePort}` : "规则创建成功";
+      const msg = data.sourcePort ? `规则已创建，源端口 ${data.sourcePort}` : "规则已创建";
       toast.success(msg);
       /**
        * 面板替人多做了一步，就得说出来。
@@ -2386,7 +2386,7 @@ function RulesContent() {
       utils.rules.listSummary.invalidate();
       setShowDialog(false);
       resetForm();
-      toast.success("规则更新成功");
+      toast.success("规则已更新");
       /**
        * 改目标会连带改动订阅里那条线路 —— 这种事不能悄悄发生。
        *
@@ -2638,7 +2638,7 @@ function RulesContent() {
         forwardGroupId: routeMode === "local" && localUsesSavedForward && firstPortGroup ? Number(firstPortGroup.id) : routeMode === "chain" && firstChain ? Number(firstChain.id) : routeMode === "group" && firstGroup ? Number(firstGroup.id) : null,
       });
     } else {
-      toast.error("暂无可用转发资源，请检查链路配置、授权或计费余额。");
+      toast.error("暂无可用转发资源，请检查链路配置、授权或计费余额");
       return;
     }
     setShowDialog(true);
@@ -5312,7 +5312,7 @@ function RulesContent() {
               ? "group"
               : null;
     if (!preferredType) {
-      toast.error("请先创建可用端口转发、隧道、转发链或转发组后再导入规则。");
+      toast.error("请先创建可用端口转发、隧道、转发链或转发组后再导入规则");
       return;
     }
     setImportScopeType(preferredType as RuleTransferScopeType);
@@ -7407,7 +7407,9 @@ function RulesContent() {
             {/*
               字段顺序按「线路 → 端口 → 出口 → 名称」排：先是这条转发在哪走（上面的线路块），
               再是进来的端口和出去的地址，最后才是名字。
-              原来「规则名称」排在第二 —— 它是整张表单唯一不必填的字段，却占着最显眼的位置。
+              原来「规则名称」排在第二，但它既不是这条转发「走哪儿」也不是「去哪儿」，
+              是最后才需要想的东西；端口和目标才是。名称本身是必填的（创建按钮会等它），
+              所以和其它三个一样标星号 —— 不标的话按钮一直灰着，用户看不出缺什么。
             */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
@@ -7503,7 +7505,7 @@ function RulesContent() {
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
-              <Label className="flex items-baseline gap-1.5">规则名称<span className="text-xs font-normal text-muted-foreground">选填</span></Label>
+              <Label>规则名称 <span className="text-destructive">*</span></Label>
               <Input
               placeholder="例如: Web 服务转发"
               value={form.name}

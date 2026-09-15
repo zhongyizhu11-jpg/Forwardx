@@ -98,7 +98,7 @@ export default function Wallet() {
         服务端算出来了，这里必须说 —— 只说「兑换成功」他还得自己去试。
       */
       const note = forwardAccessRestoredNote((data as any)?.forwardAccessRestored, "self");
-      toast.success(note ? `兑换成功 · ${note}` : "兑换成功");
+      toast.success(note ? `已兑换 · ${note}` : "已兑换");
       setRedeemCode("");
       utils.billing.me.invalidate();
       utils.billing.ledger.invalidate();

@@ -324,7 +324,7 @@ export default function Payments() {
         const result = await queryOrderUtils.client.payment.queryOrder.query({ outTradeNo: testQrOrder.outTradeNo });
         if (result?.status === "completed" || result?.status === "paid" || result?.status === "processing") {
           setTestQrOrder(null);
-          toast.success("支付成功！");
+          toast.success("已支付");
           utils.payment.listOrders.invalidate();
           utils.payment.stats.invalidate();
         } else if (result?.status === "expired" || result?.status === "failed" || result?.status === "cancelled") {
