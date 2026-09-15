@@ -1,4 +1,5 @@
 import DeckGL from "@deck.gl/react";
+import { renderHostMapTooltip } from "@/lib/hostMapTooltip";
 import { hostRegionText } from "@/components/hosts/hostDisplay";
 import { escapeTooltipHtml, hostGeoCoordinate, hostMapClusterDistance, longitudeDistanceDegrees } from "@/lib/hostGeo";
 import { GeoJsonLayer, LineLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
@@ -138,35 +139,6 @@ function spreadHostMapPoints(points: HostMapPoint[]) {
 function deckColorToCss(color: [number, number, number, number]) {
   const [red, green, blue, alpha] = color;
   return `rgba(${red},${green},${blue},${Math.max(0, Math.min(1, alpha / 255))})`;
-}
-
-function renderHostMapTooltip(point: HostMapPoint) {
-  const rows = [
-    { label: "地址", value: point.addressText },
-    { label: "地区", value: point.regionText || "地区获取中" },
-    { label: "系统", value: point.host.osInfo || "系统信息未上报" },
-    { label: "Agent", value: point.host.agentVersion ? `v${point.host.agentVersion}` : "未上报" },
-  ];
-  const regionValue = point.flagUrl
-    ? `<span style="display:inline-flex;min-width:0;align-items:center;gap:7px;"><img src="${escapeTooltipHtml(point.flagUrl)}" alt="${escapeTooltipHtml(point.countryCode)}" referrerpolicy="no-referrer" style="width:20px;height:15px;flex:0 0 auto;border-radius:2px;object-fit:cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='inline';" /><span style="display:none;flex:0 0 auto;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace;font-size:11px;color:#cbd5e1;">${escapeTooltipHtml(point.countryCode)}</span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">${escapeTooltipHtml(point.regionText || "地区获取中")}</span></span>`
-    : escapeTooltipHtml(point.regionText || "地区获取中");
-  return `
-    <div style="min-width:260px;max-width:330px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:rgba(8,13,24,.94);box-shadow:0 18px 44px rgba(0,0,0,.4);backdrop-filter:blur(10px);color:#f8fafc;padding:12px;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;">
-        <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:700;">${escapeTooltipHtml(point.host.name || "-")}</div>
-        <div style="display:flex;align-items:center;gap:6px;color:#cbd5e1;font-size:12px;">
-          <span style="width:8px;height:8px;border-radius:999px;background:${deckColorToCss(point.color)};box-shadow:0 0 14px ${deckColorToCss(point.haloColor)};"></span>
-          ${escapeTooltipHtml(point.statusText)}
-        </div>
-      </div>
-      ${rows.map((row) => `
-        <div style="display:grid;grid-template-columns:42px minmax(0,1fr);gap:8px;align-items:start;margin-top:6px;font-size:12px;line-height:1.45;">
-          <span style="color:#94a3b8;">${escapeTooltipHtml(row.label)}</span>
-          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;color:#e2e8f0;${row.label === "地址" || row.label === "Agent" ? "font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace;" : ""}">${row.label === "地区" ? regionValue : escapeTooltipHtml(row.value)}</span>
-        </div>
-      `).join("")}
-    </div>
-  `;
 }
 
 function buildHostMapPoints(hosts: any[]) {
@@ -346,7 +318,19 @@ export default function HostFlatMap({
             const point = object as HostMapPoint | null;
             if (!point?.host) return null;
             return {
-              html: renderHostMapTooltip(point),
+              html: renderHostMapTooltip({
+                name: point.host.name || "-",
+                addressText: point.addressText,
+                regionText: point.regionText,
+                osInfo: point.host.osInfo || "",
+                agentVersion: point.host.agentVersion || "",
+                statusText: point.statusText,
+                // deck.gl 存的是 [r,g,b,a]，共用那份只认 CSS 串
+                color: deckColorToCss(point.color),
+                glowColor: deckColorToCss(point.haloColor),
+                countryCode: point.countryCode,
+                flagUrl: point.flagUrl,
+              }),
               style: {
                 background: "transparent",
                 border: "none",
