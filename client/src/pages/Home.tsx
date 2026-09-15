@@ -3,9 +3,9 @@ import { quotaSourceLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import { formatBytes } from "@shared/formatBytes";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
-import StatCard from "@/components/StatCard";
 import DashboardLayout from "@/components/DashboardLayout";
 import MobileAppSettings from "@/components/MobileAppSettings";
+import SystemStatusHeader from "@/components/SystemStatusHeader";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -16,14 +16,10 @@ import { trafficQuotaBreakdown, type TrafficQuotaSourceKind } from "@/lib/traffi
 import { trpc } from "@/lib/trpc";
 import {
   Activity,
-  ArrowDownToLine,
-  ArrowRightLeft,
-  ArrowUpFromLine,
   BarChart3,
   Coins,
   Info,
   Package,
-  Server,
   Shield,
   WalletCards,
   Wifi,
@@ -280,6 +276,24 @@ function DashboardContent() {
     { refetchInterval: pollingInterval("slow"), staleTime: 25000, placeholderData: (previousData) => previousData },
   );
 
+  const { data: health, isLoading: healthLoading } = trpc.dashboard.health.useQuery(undefined, {
+    refetchInterval: pollingInterval("normal"),
+    placeholderData: (previousData) => previousData,
+  });
+
+  /*
+    近 24H 流量直接汇总上面那条 series —— 它本来就要取来画图，再为顶上那一个
+    数字发一次请求是白跑。series 还没回来时给 undefined 而不是 0：
+    「还没有数」和「真的是 0」在这一格上是两回事。
+  */
+  const recentBytes = useMemo(() => {
+    if (!trafficSeries) return undefined;
+    return (trafficSeries as any[]).reduce(
+      (total, point) => total + (Number(point.bytesIn) || 0) + (Number(point.bytesOut) || 0),
+      0,
+    );
+  }, [trafficSeries]);
+
   const chartData = useMemo(
     () =>
       (trafficSeries || []).map((point: any) => ({
@@ -371,67 +385,31 @@ function DashboardContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">仪表盘</h1>
-          <p className="mt-1 text-xs text-muted-foreground sm:text-sm">欢迎回来，{user?.name || user?.username || "用户"}</p>
-        </div>
-        <Badge variant="outline" className="gap-1.5 border-emerald-500/30 px-3 py-1.5 text-emerald-600">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          系统在线
-        </Badge>
-      </div>
+      <SystemStatusHeader
+        health={health as any}
+        recentBytes={recentBytes}
+        loading={healthLoading}
+        isAdmin={isAdmin}
+      />
 
-      <div className={`grid grid-cols-2 gap-3 sm:gap-4 ${isAdmin ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
-        {isAdmin && (
-          <StatCard
-            title="主机总数"
-            value={stats?.totalHosts ?? 0}
-            subtitle={`${stats?.onlineHosts ?? 0} 台在线`}
-            icon={Server}
-            tone="bg-gradient-to-br from-teal-500 to-teal-600"
-            loading={isLoading}
-            cacheKey="home.stats.totalHosts"
-            fallbackValue={0}
-            index={0}
-          />
-        )}
-        <StatCard
-          title="转发规则"
-          value={stats?.totalRules ?? 0}
-          subtitle={`${stats?.activeRules ?? 0} 条已启用`}
-          icon={ArrowRightLeft}
-          tone="bg-gradient-to-br from-emerald-500 to-emerald-600"
-          loading={isLoading}
-          cacheKey="home.stats.totalRules"
-          fallbackValue={0}
-          index={isAdmin ? 1 : 0}
-        />
-        <StatCard
-          title="入站流量"
-          value={formatBytes(trafficTotals?.totalTrafficIn ?? 0)}
-          subtitle="累计入站"
-          icon={ArrowDownToLine}
-          tone="bg-gradient-to-br from-rose-500 to-rose-600"
-          loading={trafficTotalsLoading}
-          cacheKey="home.stats.totalTrafficIn"
-          fallbackValue="0 B"
-          className="col-span-2 sm:col-span-1"
-          index={isAdmin ? 2 : 1}
-        />
-        <StatCard
-          title="出站流量"
-          value={formatBytes(trafficTotals?.totalTrafficOut ?? 0)}
-          subtitle="累计出站"
-          icon={ArrowUpFromLine}
-          tone="bg-gradient-to-br from-amber-500 to-amber-600"
-          loading={trafficTotalsLoading}
-          cacheKey="home.stats.totalTrafficOut"
-          fallbackValue="0 B"
-          className="col-span-2 sm:col-span-1"
-          index={isAdmin ? 3 : 2}
-        />
-      </div>
+      {/*
+        主机和转发这两个数已经在顶上那一行里了，不再用一张渐变卡片重复一遍。
+        这里只留「累计流量」—— 它和顶上那个「近 24H」是两个口径，放一起才说得清。
+      */}
+      <section className="grid grid-cols-2 gap-4 rounded-lg border bg-card p-4 sm:p-5">
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground">累计入站</div>
+          <div className="mt-1 truncate text-xl font-semibold tabular-nums tracking-tight">
+            {trafficTotalsLoading && !trafficTotals ? "—" : formatBytes(trafficTotals?.totalTrafficIn ?? 0)}
+          </div>
+        </div>
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground">累计出站</div>
+          <div className="mt-1 truncate text-xl font-semibold tabular-nums tracking-tight">
+            {trafficTotalsLoading && !trafficTotals ? "—" : formatBytes(trafficTotals?.totalTrafficOut ?? 0)}
+          </div>
+        </div>
+      </section>
 
       <MobileAppSettings snapshot={mobileReminderSnapshot} />
 

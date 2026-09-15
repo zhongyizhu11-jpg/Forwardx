@@ -9,13 +9,35 @@ function cachedDashboardQuery<T>(key: string, ttlMs: number, staleMs: number, lo
   return dashboardCache.get(key, { ttlMs, staleMs }, load);
 }
 
+/**
+ * 首页该统计谁的资源。
+ *
+ * 管理员看全部，租户只看自己的 —— 和主机页、转发页同一个口径。原来仪表盘一律
+ * 按 ctx.user.id 过滤，于是管理员的主机页列出 3 台、首页却写着 1 台：同一个人
+ * 同一时刻，两个页面两个答案，而看不出哪个是对的。
+ */
+function dashboardScopeUserId(user: { id: number; role?: unknown }): number | undefined {
+  return String(user.role || "") === "admin" ? undefined : user.id;
+}
+
 export const dashboardRouter = router({
     stats: protectedProcedure.query(async ({ ctx }) => {
+      const scope = dashboardScopeUserId(ctx.user);
       return cachedDashboardQuery(
         `stats:${ctx.user.id}`,
         5_000,
         30_000,
-        () => db.getDashboardStats(ctx.user.id, { includeTraffic: false }),
+        () => db.getDashboardStats(scope, { includeTraffic: false }),
+      );
+    }),
+    /** 首页顶上那一行的依据：现在系统是否正常。 */
+    health: protectedProcedure.query(async ({ ctx }) => {
+      const scope = dashboardScopeUserId(ctx.user);
+      return cachedDashboardQuery(
+        `health:${ctx.user.id}`,
+        5_000,
+        30_000,
+        () => db.getSystemHealthSummary(scope),
       );
     }),
     trafficTotals: protectedProcedure.query(async ({ ctx }) => {
