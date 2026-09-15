@@ -5417,151 +5417,16 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           await settleStoppedRule(rule);
           continue;
         }
-        const cmds: string[] = [];
-        if (rule.forwardType === "iptables") {
-          cmds.push(
-            ...buildNftTransitionCleanupCmds(rule),
-            ...buildIptablesForwardCleanupCmds(rule),
-            ...buildCountingCleanupCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol),
-            ...buildAccessLimitCleanupCmds(rule.sourcePort, accessScopeForRule(rule)),
-          );
-          actions.push({
-            ruleId: rule.id,
-            op: "remove",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            commands: cmds,
-          });
-        } else if (rule.forwardType === "nftables") {
-          const removeAction = await buildDisabledRuleRemovalAction(rule);
-          if (removeAction) actions.push(removeAction);
-        } else if (rule.forwardType === "realm") {
-          const svcName = realmServiceNameForPort(rule.sourcePort, rule.protocol);
-          const realmConfigPath = realmConfigPathForPort(rule.sourcePort, rule.protocol);
-          actions.push({
-            ruleId: rule.id,
-            op: "remove",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            svcName,
-            commands: [
-              ...buildKernelForwardTransitionCleanupCmds(rule),
-              removeManagedServiceCmd(svcName),
-              killByPatternCmd(`[r]ealm .*${realmConfigPath}`),
-              ...legacyRealmCleanupCmds(rule.sourcePort, rule.protocol),
-              ...cleanupGuardBackendCmds(rule),
-              `rm -f ${shQuote(realmConfigPath)} ${shQuote(`${realmConfigPath}.sha256`)} 2>/dev/null || true`,
-              // 清理 conntrack 流量状态文件
-              `rm -f /var/lib/forwardx-agent/traffic_${rule.sourcePort}.prev 2>/dev/null || true`,
-              `rm -f /var/lib/forwardx-agent/port_${rule.sourcePort}.rule /var/lib/forwardx-agent/port_${rule.sourcePort}.tunnel 2>/dev/null || true`,
-              ...buildCountingCleanupCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol),
-              ...buildAccessLimitCleanupCmds(rule.sourcePort, accessScopeForRule(rule)),
-            ],
-          });
-        } else if (rule.forwardType === "socat") {
-          const removeCmds: string[] = [];
-          if (normalizeForwardRuleProtocol(rule.protocol) === "both") {
-            const svcTcp = `forwardx-socat-tcp-${rule.sourcePort}`;
-            const svcUdp = `forwardx-socat-udp-${rule.sourcePort}`;
-            removeCmds.push(removeManagedServiceCmd(svcTcp));
-            removeCmds.push(removeManagedServiceCmd(svcUdp));
-          } else {
-            const svcName = socatServiceNameForPort(rule.sourcePort, rule.protocol);
-            removeCmds.push(removeManagedServiceCmd(svcName));
-            removeCmds.push(...legacySocatCleanupCmds(rule.sourcePort, rule.protocol));
-          }
-          removeCmds.push(socatKillByProtocolCmd(rule.sourcePort, rule.protocol));
-          removeCmds.push(...buildKernelForwardTransitionCleanupCmds(rule));
-          removeCmds.push(...cleanupGuardBackendCmds(rule));
-          // 清理 conntrack 流量状态文件
-          removeCmds.push(`rm -f /var/lib/forwardx-agent/traffic_${rule.sourcePort}.prev 2>/dev/null || true`);
-          removeCmds.push(`rm -f /var/lib/forwardx-agent/port_${rule.sourcePort}.rule /var/lib/forwardx-agent/port_${rule.sourcePort}.tunnel 2>/dev/null || true`);
-          removeCmds.push(...buildCountingCleanupCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol));
-          for (const c of buildAccessLimitCleanupCmds(rule.sourcePort, accessScopeForRule(rule))) removeCmds.push(c);
-          actions.push({
-            ruleId: rule.id,
-            op: "remove",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            commands: removeCmds,
-          });
-        } else if (rule.forwardType === "nginx") {
-          actions.push({
-            ruleId: rule.id,
-            op: "remove",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            commands: [
-              ...buildKernelForwardTransitionCleanupCmds(rule),
-              ...buildNginxPortCleanupCmds(rule),
-              // 这一行原来漏了：同一条 else-if 链上 realm / socat / gost 都清守护后端，
-              // 只有 nginx 不清，而删除那条路径和下面的 nginx-tunnel 分支都是清的。
-              ...cleanupGuardBackendCmds(rule),
-            ],
-          });
-        } else if (rule.forwardType === "gost") {
-          const tunnel = (rule as any).tunnelId ? tunnelById.get((rule as any).tunnelId) as any : null;
-          if (tunnel && isNginxTunnelMode(tunnel)) {
-            actions.push({
-              tunnelId: tunnel.id,
-              statusType: "rule",
-              ruleId: rule.id,
-              op: "remove",
-              forwardType: "nginx-tunnel",
-              sourcePort: rule.sourcePort,
-              targetIp: rule.targetIp,
-              targetPort: rule.targetPort,
-              protocol: rule.protocol,
-              commands: [
-                ...buildKernelForwardTransitionCleanupCmds(rule),
-                ...buildNginxPortCleanupCmds(rule),
-                ...cleanupGuardBackendCmds(rule),
-              ],
-            });
-            continue;
-          }
-          const fxpRemoveKey = tunnel && isForwardXTunnel(tunnel)
-            ? (await forwardXEntryRoute(tunnel)).key
-            : "";
-          const removeCmds: string[] = [
-            ...buildKernelForwardTransitionCleanupCmds(rule),
-            ...buildManagedPortCleanupCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol),
-            ...cleanupGuardBackendCmds(rule),
-          ];
-          actions.push({
-            tunnelId: tunnel ? tunnel.id : 0,
-            statusType: tunnel ? "rule" : undefined,
-            ruleId: rule.id,
-            op: "remove",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            commands: removeCmds,
-            fxp: tunnel && isForwardXTunnel(tunnel) ? {
-              role: "entry",
-              transportVersion: isForwardXWireGuardV2(tunnel) ? "v2" : "v1",
-              tunnelId: tunnel.id,
-              ruleId: rule.id,
-              listenPort: rule.sourcePort,
-              protocol: rule.protocol,
-              key: fxpRemoveKey || tunnelSecretSeed(tunnel),
-            } : undefined,
-          });
-        }
+        /*
+          停用和删除下发的清理命令是同一套，所以这里直接用同一个构造器。
+
+          原来这一段把 buildDisabledRuleRemovalAction 里那六种分支又手抄了一遍
+          （只有 nftables 一支是调过去的），两份各改各的，已经漏过一次：nginx
+          手动停用时不清故障转移的守护后端，而删除那条清。两份手抄的列表不可能
+          长期保持一致 —— 唯一的办法是只留一份。
+        */
+        const removeAction = await buildDisabledRuleRemovalAction(rule);
+        if (removeAction) actions.push(removeAction);
       }
     }
 

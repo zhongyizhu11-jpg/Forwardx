@@ -40,9 +40,9 @@ const BASELINE: Record<string, Record<string, Fingerprint>> = {
     "nftables:tcp": { commands: 43, hash: "fbcba88bad9ac232", svcName: "" },
     "nftables:udp": { commands: 43, hash: "69f524f426873090", svcName: "" },
     "nftables:both": { commands: 57, hash: "5ddc518f8d24304a", svcName: "" },
-    "realm:tcp": { commands: 48, hash: "3abff0c6c0faaacb", svcName: "forwardx-realm-tcp-20007" },
-    "realm:udp": { commands: 45, hash: "a0be6cb612f9c6ec", svcName: "forwardx-realm-udp-20008" },
-    "realm:both": { commands: 56, hash: "7c6034ed7055fbae", svcName: "forwardx-realm-both-20009" },
+    "realm:tcp": { commands: 48, hash: "9059a7f61400c5c5", svcName: "forwardx-realm-tcp-20007" },
+    "realm:udp": { commands: 45, hash: "dfc41670c8c8fd8c", svcName: "forwardx-realm-udp-20008" },
+    "realm:both": { commands: 56, hash: "675213b5e75c4190", svcName: "forwardx-realm-both-20009" },
     "socat:tcp": { commands: 45, hash: "d2828f892bd22bda", svcName: "" },
     "socat:udp": { commands: 44, hash: "1b89cfed65696324", svcName: "" },
     "socat:both": { commands: 53, hash: "025278b32dd51730", svcName: "" },
@@ -217,30 +217,23 @@ for (const pathName of ["disabled", "protocolOff"] as const) {
 }
 
 /**
- * 两条路径当下**只有 realm 不一致**，而且只差顺序。
+ * 两条停用路径现在是**同一段代码**，所以一处都不该差。
  *
- * 这件事单独订一条，因为它是「十几份手抄列表」这个结构问题留下的最后一处痕迹：
- * 同样一条 realm 规则，手动停用和关协议下发的 48 条命令集合完全相同，只有
- * 「删自己的配置文件」那一条排在不同位置（一个在清守护后端之前，一个在之后）。
- * 两条都在线上跑着，功能上等价。
+ * 这条断言原来写的是「差异只剩 realm 的命令顺序」—— 那时候这几条路径各自手抄
+ * 了一份六种转发方式的清理列表，十几份列表谁也不盯着谁，已经因此漏过一次
+ * （nginx 手动停用不清故障转移的守护后端，见 disabledRuleGuardCleanup）。
  *
- * 把这几条路径合并成一处之后，这里应该变成「一处都不差」。到那时这条断言会红 ——
- * 那是好事，改掉它，别绕过它。
+ * 合并之后两条路径都走 buildDisabledRuleRemovalAction，结构上已经不可能岔开。
+ * 这条留着不是防「又抄漏了」，而是防**有人再开一条新的手抄路径** —— 那是唯一
+ * 能让它重新变红的改法。
  */
-test("两条停用路径的差异只剩 realm 的命令顺序", () => {
+test("两条停用路径下发的清理命令完全一致", () => {
   const mismatched = Object.keys(actual.disabled)
     .filter((key) => JSON.stringify(actual.disabled[key]) !== JSON.stringify(actual.protocolOff[key]))
     .sort();
   assert.deepEqual(
     mismatched,
-    ["realm:both", "realm:tcp", "realm:udp"],
-    "两条停用路径的分歧范围变了 —— 要么合并做完了（那就把这条改掉），要么又岔开了一处新的",
+    [],
+    "手动停用和关协议这两条路径又岔开了 —— 它们本该是同一段代码，岔开说明有人在某一条上单独动了手",
   );
-  for (const key of mismatched) {
-    assert.equal(
-      actual.disabled[key].commands,
-      actual.protocolOff[key].commands,
-      `${key} 两条路径连条数都不一样了，那就不只是顺序问题`,
-    );
-  }
 });
