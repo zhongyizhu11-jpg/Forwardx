@@ -154,13 +154,22 @@ const REDEMPTION_ATTEMPT_THRESHOLD = 8;
 const REDEMPTION_ATTEMPT_SOURCE_THRESHOLD = 20;
 const REDEMPTION_ATTEMPT_MAX_KEYS = 50_000;
 
-function redemptionAttemptUserKey(userId: number) {
-  return `user:${userId}`;
+/*
+  试码计数分「种类」：兑换码一类，折扣码一类。
+
+  用同一套窗口和封禁逻辑，但**各记各的账** —— 一个人正常试错两次兑换码，不该把
+  他结账时预览折扣码的额度也吃掉。
+*/
+type AttemptKind = "redeem" | "discount";
+
+function redemptionAttemptUserKey(userId: number, kind: AttemptKind = "redeem") {
+  return kind === "redeem" ? `user:${userId}` : `${kind}:user:${userId}`;
 }
 
-function redemptionAttemptSourceKey(scope?: string | null) {
+function redemptionAttemptSourceKey(scope?: string | null, kind: AttemptKind = "redeem") {
   const normalized = String(scope || "").trim().slice(0, 128);
-  return normalized ? `source:${normalized}` : null;
+  if (!normalized) return null;
+  return kind === "redeem" ? `source:${normalized}` : `${kind}:source:${normalized}`;
 }
 
 function getActiveRedemptionAttemptEntry(key: string) {
@@ -190,15 +199,15 @@ export function pruneRedemptionAttemptStore(now = Date.now()) {
 const redemptionAttemptCleanupTimer = setInterval(() => pruneRedemptionAttemptStore(), 5 * 60 * 1000);
 redemptionAttemptCleanupTimer.unref?.();
 
-function redemptionAttemptKeys(userId: number, scope?: string | null) {
-  const keys = [redemptionAttemptUserKey(userId)];
-  const sourceKey = redemptionAttemptSourceKey(scope);
+function redemptionAttemptKeys(userId: number, scope?: string | null, kind: AttemptKind = "redeem") {
+  const keys = [redemptionAttemptUserKey(userId, kind)];
+  const sourceKey = redemptionAttemptSourceKey(scope, kind);
   if (sourceKey) keys.push(sourceKey);
   return keys;
 }
 
-function recordRedemptionAttemptFailure(userId: number, scope?: string | null) {
-  for (const key of redemptionAttemptKeys(userId, scope)) {
+function recordRedemptionAttemptFailure(userId: number, scope?: string | null, kind: AttemptKind = "redeem") {
+  for (const key of redemptionAttemptKeys(userId, scope, kind)) {
     recordRedemptionAttemptFailureForKey(key);
   }
 }
@@ -209,10 +218,10 @@ function clearRedemptionAttemptFailures(userId: number, scope?: string | null) {
   }
 }
 
-function redemptionAttemptRateLimitState(userId: number, scope?: string | null) {
+function redemptionAttemptRateLimitState(userId: number, scope?: string | null, kind: AttemptKind = "redeem") {
   const checks = [
-    { key: redemptionAttemptUserKey(userId), threshold: REDEMPTION_ATTEMPT_THRESHOLD },
-    ...(redemptionAttemptSourceKey(scope) ? [{ key: redemptionAttemptSourceKey(scope)!, threshold: REDEMPTION_ATTEMPT_SOURCE_THRESHOLD }] : []),
+    { key: redemptionAttemptUserKey(userId, kind), threshold: REDEMPTION_ATTEMPT_THRESHOLD },
+    ...(redemptionAttemptSourceKey(scope, kind) ? [{ key: redemptionAttemptSourceKey(scope, kind)!, threshold: REDEMPTION_ATTEMPT_SOURCE_THRESHOLD }] : []),
   ];
   let retryAfterSeconds = 0;
   for (const check of checks) {
@@ -3552,11 +3561,55 @@ export function calculateDiscountedAmount(amountCents: number, code: any | null 
   return Math.max(0, amount - discount);
 }
 
-export async function previewDiscount(code: string, amountCents: number, planId?: number | null) {
+/**
+ * 预览折扣：算给用户看「这张折扣码能省多少」。
+ *
+ * 这条路原来**一点频率限制都没有**，而隔壁兑换码那条路有（按用户 8 次、按来源
+ * 20 次，超了封 15 分钟）。两条都是「拿一个码来问对不对」，但只有一条上了锁 ——
+ * 门锁了，旁边的窗户开着。
+ *
+ * 为什么要紧：折扣码是管理员手打的（`SALE50` 这类），好猜；而这个接口对不存在的
+ * 码直接回「折扣码不存在」，是个干净的探测口。任何登录用户都能全速试，把商家还
+ * 没公布的、或者只发给某个客户的码翻出来，然后自己在结账时用掉。
+ *
+ * 所以复用兑换码那一套计数器，但**单独记一类账** —— 正常结账时预览一两次不该
+ * 把兑换码的额度吃掉，反过来也是。
+ */
+export async function previewDiscount(
+  code: string,
+  amountCents: number,
+  planId?: number | null,
+  actor?: { userId: number; attemptScope?: string | null },
+) {
+  const limiterUserId = Number(actor?.userId || 0);
+  const limited = limiterUserId
+    ? redemptionAttemptRateLimitState(limiterUserId, actor?.attemptScope, "discount")
+    : { limited: false, retryAfterSeconds: 0 };
+  if (limited.limited) {
+    throw new Error(`折扣码试得太频繁，请 ${limited.retryAfterSeconds} 秒后再试`);
+  }
+  const noteFailure = () => {
+    if (limiterUserId) recordRedemptionAttemptFailure(limiterUserId, actor?.attemptScope, "discount");
+  };
   const item = await getDiscountCodeByCode(code);
-  if (!item) throw new Error("折扣码不存在");
+  if (!item) {
+    noteFailure();
+    throw new Error("折扣码不存在");
+  }
   const allowedPlanIds = Array.isArray((item as any).planIds) ? (item as any).planIds.map(Number) : [];
   if (allowedPlanIds.length > 0 && (!planId || !allowedPlanIds.includes(Number(planId)))) {
+    /*
+      「码是对的、但不适用于这个套餐」**不计入失败**。
+
+      我一开始把它也算进去了，理由是「不然拿一个已知有效的码去遍历套餐 id，
+      能把它适用哪些套餐问出来」。真面板上一跑就看出这个理由站不住：
+      要遍历套餐，前提是**已经拿到一个有效码**了 —— 而拿到有效码这件事本身
+      走的是「不存在」那条路，那条是计数的。挡住了前面，后面这点信息不值得。
+
+      代价却是实打实的：结账时手里有几张码、试到一张是别的套餐的，就白扣一次
+      额度；扣满 8 次，人就被挡在付款外面 15 分钟。**拦试码的人，不该拦正在
+      掏钱的人。**
+    */
     throw new Error("折扣码不适用于该套餐");
   }
   const finalAmountCents = calculateDiscountedAmount(amountCents, item);

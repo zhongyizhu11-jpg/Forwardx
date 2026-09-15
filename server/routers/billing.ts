@@ -175,9 +175,13 @@ export const billingRouter = router({
       amountCents: z.number().int().min(0).max(100_000_000),
       planId: z.number().int().positive().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       if ((await db.getSetting("discountEnabled")) === "false") throw new Error("折扣码功能已关闭");
-      return db.previewDiscount(input.code, input.amountCents, input.planId);
+      // 带上人和来源 IP：这条路和兑换码一样是「拿码来问对不对」，得一起限流。
+      return db.previewDiscount(input.code, input.amountCents, input.planId, {
+        userId: ctx.user.id,
+        attemptScope: getRequestIp(ctx),
+      });
     }),
 
   redeem: protectedProcedure
