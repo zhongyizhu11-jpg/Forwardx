@@ -5506,6 +5506,9 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
             commands: [
               ...buildKernelForwardTransitionCleanupCmds(rule),
               ...buildNginxPortCleanupCmds(rule),
+              // 这一行原来漏了：同一条 else-if 链上 realm / socat / gost 都清守护后端，
+              // 只有 nginx 不清，而删除那条路径和下面的 nginx-tunnel 分支都是清的。
+              ...cleanupGuardBackendCmds(rule),
             ],
           });
         } else if (rule.forwardType === "gost") {
