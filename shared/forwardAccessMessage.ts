@@ -44,3 +44,24 @@ export function forwardAccessResultMessage(input: {
   // 请求关却还开着 —— 不该发生，但真发生了要说出来，别报一句「已关闭」。
   return { tone: "warning", text: "关闭没有生效，请刷新后重试" };
 }
+
+/**
+ * 「顺带把转发恢复了」这句话。
+ *
+ * 余额充值、重置流量、续期、启用账户、兑换码 —— 这六条路服务端都会顺手检查一遍
+ * 「这个人的转发是不是因为超额/欠费被停了，现在够条件恢复了吗」，恢复了就在返回值里
+ * 带一个 `forwardAccessRestored: true`。
+ *
+ * 问题是**六个客户端一个都不读**：租户余额耗尽被停了转发，兑换一张码把它救回来了，
+ * 面板只说「兑换成功」—— 他不知道转发回来没有，只能自己去试，或者来问你。
+ * 服务端做了事却不说，比没做更让人没底。
+ *
+ * 回 null 表示这次没有恢复任何东西（本来就是好的），那就别加废话。
+ */
+export function forwardAccessRestoredNote(
+  restored: boolean | null | undefined,
+  subject: "self" | "user" = "user",
+): string | null {
+  if (!restored) return null;
+  return subject === "self" ? "你被暂停的转发已恢复" : "该用户被暂停的转发已恢复";
+}
