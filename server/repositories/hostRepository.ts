@@ -11,6 +11,7 @@ import {
   hostMetrics,
   hostProbeServiceStats,
   hosts,
+  forwardRuleTrafficCounters,
   hostTrafficCounters,
   InsertHost,
   subscriptionPlanHosts,
@@ -686,6 +687,19 @@ export async function deleteHost(id: number) {
   await db.delete(hostMetrics).where(eq(hostMetrics.hostId, id));
   await db.delete(hostProbeServiceStats).where(eq(hostProbeServiceStats.hostId, id));
   await db.delete(hostTrafficCounters).where(eq(hostTrafficCounters.hostId, id));
+  /**
+   * 按规则记的那份计数也要删。
+   *
+   * 上下这几行已经清了整机计数、流量明细和分桶统计，唯独这一张漏了 —— 而它是
+   * 四张里**唯一没有按时间清理的**：明细和分桶有 72 小时的保留期兜底，这张是
+   * 累计计数，没有时间戳可扫，只能靠删。
+   *
+   * 留着的后果不是多几行垃圾：重算用户总流量时是直接 SUM 这张表、不 join
+   * forward_rules 的，于是一台已经删掉的机器跑过的量会永远算在这个租户头上，
+   * 而管理员再也没法把它清掉 —— 「重置这条转发的流量」要按规则 id 来，规则
+   * 已经跟着主机一起没了。
+   */
+  await db.delete(forwardRuleTrafficCounters).where(eq(forwardRuleTrafficCounters.hostId, id));
   await db.delete(trafficStats).where(eq(trafficStats.hostId, id));
   await db.delete(trafficStatBuckets).where(eq(trafficStatBuckets.hostId, id));
   await db.delete(trafficBillingConfigs).where(and(

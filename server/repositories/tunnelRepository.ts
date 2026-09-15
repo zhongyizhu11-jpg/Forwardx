@@ -4,6 +4,7 @@ import {
   hosts,
   InsertTunnel,
   forwardRules,
+  subscriptionPlanTunnels,
   userTunnelPermissions,
   tunnelHops,
   tunnelExitNodes,
@@ -610,6 +611,14 @@ export async function deleteTunnel(id: number) {
   await db.delete(tunnelExitNodes).where(eq(tunnelExitNodes.tunnelId, id));
   await db.delete(tunnelHops).where(eq(tunnelHops.tunnelId, id));
   await db.delete(userTunnelPermissions).where(eq(userTunnelPermissions.tunnelId, id));
+  /**
+   * 套餐里绑着它的那一行也要删。
+   *
+   * 留着的话套餐会继续宣称带着一个已经不存在的隧道：商店上的数量多一个，
+   * 管理端的套餐编辑里显示成一个只有编号的空壳，而买了这个套餐的人拿到的是
+   * 一条指向不存在资源的授权。主机那一路一直是这么删的，这几路当初漏了。
+   */
+  await db.delete(subscriptionPlanTunnels).where(eq(subscriptionPlanTunnels.tunnelId, id));
   await db.delete(tunnels).where(eq(tunnels.id, id));
   if (before) await recordConfigAuditEvent({ resourceType: "tunnel", resourceId: id, hostId: Number((before as any).entryHostId || 0), action: "delete", before });
   });

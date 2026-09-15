@@ -8,6 +8,7 @@ import {
   forwardRules,
   hosts,
   tunnels,
+  subscriptionPlanForwardGroups,
   userForwardGroupPermissions,
   type InsertForwardGroup,
   type InsertForwardGroupMember,
@@ -3527,6 +3528,14 @@ export async function deleteForwardGroup(id: number) {
   await db.delete(forwardGroupEvents).where(eq(forwardGroupEvents.groupId, id));
   await db.delete(forwardGroupMembers).where(eq(forwardGroupMembers.groupId, id));
   await db.delete(userForwardGroupPermissions).where(eq(userForwardGroupPermissions.forwardGroupId, id));
+  /**
+   * 套餐里绑着它的那一行也要删。
+   *
+   * 留着的话套餐会继续宣称带着一个已经不存在的转发组：商店上的数量多一个，
+   * 管理端的套餐编辑里显示成一个只有编号的空壳，而买了这个套餐的人拿到的是
+   * 一条指向不存在资源的授权。主机那一路一直是这么删的，这几路当初漏了。
+   */
+  await db.delete(subscriptionPlanForwardGroups).where(eq(subscriptionPlanForwardGroups.forwardGroupId, id));
   await db.delete(forwardGroups).where(eq(forwardGroups.id, id));
 }
 

@@ -377,6 +377,15 @@ function buildPlanSnapshot(plan: any) {
     hostIds: normalizeNumericIds(plan?.hostIds || []),
     tunnelIds: normalizeNumericIds(plan?.tunnelIds || []),
     forwardGroupIds: normalizeNumericIds(plan?.forwardGroupIds || []),
+    /**
+     * 套餐带的落地节点也要冻进快照。
+     *
+     * 漏了它的后果最难发现：管理员勾掉「同步已有订阅者」，主机、隧道、转发组
+     * 都按老套餐留着，**只有节点还是照着套餐当前内容算**。于是老客户身上随便
+     * 发生一件小事（充值、流量重置、权益重算）就会触发一次同步，把他买的时候
+     * 送的那个节点悄悄收走 —— 管理员明明说了「不要动老客户」。
+     */
+    proxyNodeIds: normalizeNumericIds(plan?.proxyNodeIds || []),
   };
 }
 
@@ -402,6 +411,14 @@ function parsePlanSnapshot(value: unknown) {
       hostIds: normalizeNumericIds(Array.isArray(parsed.hostIds) ? parsed.hostIds : []),
       tunnelIds: normalizeNumericIds(Array.isArray(parsed.tunnelIds) ? parsed.tunnelIds : []),
       forwardGroupIds: normalizeNumericIds(Array.isArray(parsed.forwardGroupIds) ? parsed.forwardGroupIds : []),
+      /**
+       * 和上面那两项同一个道理：这一列是后加的，老快照里没有。缺就返回
+       * undefined，让节点授权退回「按套餐当前内容算」—— 也就是加这一列之前的
+       * 行为。默认成空数组会把所有老订阅者的节点一次性收光。
+       */
+      proxyNodeIds: Array.isArray(parsed.proxyNodeIds)
+        ? normalizeNumericIds(parsed.proxyNodeIds)
+        : undefined,
     };
   } catch {
     return null;

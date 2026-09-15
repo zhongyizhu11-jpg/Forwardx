@@ -2906,6 +2906,13 @@ export async function getGlobalTcpingSeries(opts: { bucketMinutes?: number; sinc
 }
 
 /** Clean expired TCPing data, keeping the most recent N hours. */
+/**
+ * 名字只提了 tcping，实际上连转发组的延迟历史一起清 —— 两张表是同一轮探测写下的。
+ *
+ * 写在这里说一句，是因为按名字找不到它：`forward_group_latency_stats` 看上去
+ * 像一张没人清的表（它的兄弟 tunnel_latency_stats 有自己的清理函数），照着名字
+ * 搜一遍会得出「漏了」的结论，然后再加一个重复的清理。
+ */
 export async function cleanOldTcpingStats(retainHours: number = 72) {
   const db = await getDb();
   if (!db) return;

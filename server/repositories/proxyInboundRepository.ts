@@ -251,6 +251,19 @@ export async function deleteProxyInbound(id: number) {
   const derived = await db.select().from(proxyNodes).where(eq(proxyNodes.inboundId, id));
   const { deleteProxyNode } = await import("./proxySubscriptionRepository");
   for (const node of derived) await deleteProxyNode(Number((node as any).id));
+  /**
+   * 这个端口上发出去的凭据也要删。
+   *
+   * 这张表存的是 uuid / password 本身。端口没了，凭据留着既连不上任何东西，也
+   * 再没有任何一条路会清它 —— 派生节点跟着入站走，分享记录跟着节点走，唯独这
+   * 一层谁都不管。管理员在弹窗里加的那些（sharedUserId = 0）尤其彻底：删完端口
+   * 它们就成了永远不会被回收的凭据。
+   *
+   * 「为分享单独发的」那些（sharedUserId > 0）本来会在下一次分享对账时被顺手
+   * 清掉，但那要等那个人身上恰好发生一次对账，而且对账要先对着一个已经不存在
+   * 的入站白跑一趟。就地删干净更直接。
+   */
+  await db.delete(proxyInboundUsers).where(eq(proxyInboundUsers.inboundId, id));
   await db.delete(proxyInbounds).where(eq(proxyInbounds.id, id));
   return { releasedNodes: derived.length };
 }

@@ -388,8 +388,10 @@ export const proxySubscriptionsRouter = router({
       await assertOwnedNode(input.id, ctx);
       // 引用它的转发会被自动解绑，只是不再进订阅，转发本身照常运行。
       const released = await db.countRulesUsingProxyNode(input.id);
+      // 套餐里的绑定也会被清掉 —— 那会改变正在卖的东西，得说出来。
+      const releasedPlans = await db.countPlansUsingProxyNode(input.id);
       await db.deleteProxyNode(input.id);
-      return { success: true, releasedRules: released };
+      return { success: true, releasedRules: released, releasedPlans };
     }),
 
   /**
