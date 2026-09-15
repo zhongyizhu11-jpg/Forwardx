@@ -2580,13 +2580,13 @@ function RulesContent() {
         onCheckedChangeAsync={(checked) => toggleRuleEnabled(rule, checked)}
         onToggleSuccess={(checked) => toast.success(checked ? "规则已开启" : "规则已关闭")}
         onToggleError={(error) => toast.error(error instanceof Error ? error.message : "切换规则状态失败")}
-        className="scale-75"
+        className="switch-compact"
         title={title}
         aria-label={`${enabled ? "停用" : "启用"}转发规则 ${rule.name || ""}`}
       />
     ) : (
       <span className="inline-flex shrink-0" title={resourceAccessAllowed ? unsupportedProtocolTitle : revokedResourceTitle}>
-        <Switch checked={false} disabled className="scale-75" aria-label={resourceAccessAllowed ? "当前协议不支持，规则已停用" : "资源授权已失效，规则已停用"} />
+        <Switch checked={false} disabled className="switch-compact" aria-label={resourceAccessAllowed ? "当前协议不支持，规则已停用" : "资源授权已失效，规则已停用"} />
       </span>
     );
     return supported && resourceAccessAllowed ? content : renderUnsupportedHint(content, resourceAccessAllowed ? unsupportedProtocolTitle : revokedResourceTitle);

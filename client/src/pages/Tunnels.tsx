@@ -2789,7 +2789,7 @@ function TunnelsContent() {
         onCheckedChangeAsync={(checked) => toggleTunnelMutation.mutateAsync({ id: tunnel.id, isEnabled: checked })}
         onToggleSuccess={(checked) => toast.success(checked ? "隧道已开启" : "隧道已关闭")}
         onToggleError={(error) => toast.error(error instanceof Error ? error.message : "切换隧道状态失败")}
-        className="scale-75"
+        className="switch-compact"
         title={enabled ? "关闭后该隧道将停止下发和转发" : "开启后该隧道将重新下发并恢复转发"}
         aria-label={`${enabled ? "停用" : "启用"}隧道 ${tunnel?.name || ""}`}
       />
@@ -3908,7 +3908,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="scale-75" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </div>
                     </div>
@@ -4004,7 +4004,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="scale-75" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </div>
                     </div>
@@ -4129,7 +4129,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="scale-75" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </TableCell>
                       <TableCell className="text-right">

@@ -154,7 +154,7 @@ function ServiceEnabledSwitch({
       onCheckedChangeAsync={(checked) => onToggle(service, checked)}
       onToggleSuccess={(checked) => toast.success(checked ? "探测服务已开启" : "探测服务已关闭")}
       onToggleError={(error) => toast.error(error instanceof Error ? error.message : "切换探测服务状态失败")}
-      className="scale-75"
+      className="switch-compact"
       title={`${enabled ? "停用" : "启用"}探测服务 ${service.name || ""}`}
       aria-label={`${enabled ? "停用" : "启用"}服务 ${service.name || ""}`}
     />

@@ -1621,7 +1621,7 @@ export function ForwardGroupsContent({
         onCheckedChangeAsync={(checked) => toggleMutation.mutateAsync({ id: groupId, isEnabled: checked })}
         onToggleSuccess={(checked) => toast.success(`${resourceLabel}已${checked ? "开启" : "关闭"}`)}
         onToggleError={(error) => toast.error(error instanceof Error ? error.message : `切换${resourceLabel}状态失败`)}
-        className="scale-75"
+        className="switch-compact"
         title={enabled ? "关闭后该资源及关联规则将停止下发和转发" : "开启后将恢复此前由该资源受控关闭的规则"}
         aria-label={`${enabled ? "停用" : "启用"}${group?.name || "链路资源"}`}
       />
