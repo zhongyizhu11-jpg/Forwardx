@@ -52,3 +52,27 @@ test("host status sweeps use the online-heartbeat SQLite index", async () => {
     sqlite.close();
   }
 });
+
+/**
+ * 派生节点的每一次读写都按 inboundId 过滤：保存入站、删除入站、主机换地址后重算、
+ * 界面上列出某个端口派生了哪几条。原来这一列上没有索引，这些全是整表扫描 ——
+ * 一个商家几百上千行节点时，删一个入站要扫一遍全表，而这条路上还挂着「删节点顺带
+ * 解绑转发规则」，一次操作里要扫好几遍。
+ */
+test("派生节点按 inboundId 查要走索引", async () => {
+  const sqlite = new Database(":memory:");
+  try {
+    await ensureDatabaseSchema(sqlite);
+    for (const [sql, params] of [
+      [`EXPLAIN QUERY PLAN SELECT * FROM "proxy_nodes" WHERE "inboundId" = ?`, [1]],
+      [`EXPLAIN QUERY PLAN SELECT * FROM "proxy_nodes" WHERE "inboundId" IN (?, ?)`, [1, 2]],
+    ] as Array<[string, number[]]>) {
+      const plan = sqlite.prepare(sql).all(...params) as Array<{ detail?: string }>;
+      const detail = plan.map((row) => String(row.detail || "")).join(" | ");
+      assert.match(detail, /USING INDEX/i, `整表扫描：${detail}`);
+      assert.match(detail, /inboundId/i, detail);
+    }
+  } finally {
+    sqlite.close();
+  }
+});

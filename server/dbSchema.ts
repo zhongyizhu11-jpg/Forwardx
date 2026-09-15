@@ -309,7 +309,12 @@ const tables: TableDef[] = [
       c("isEnabled", "bool", { notNull: true, default: true }), c("sortOrder", "int", { notNull: true, default: 0 }),
       c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],
-    indexes: [["userId"], ["userId", "sortOrder"], ["trafficAutoReset"]],
+    /*
+      inboundId 这一条不能少：派生节点的每一次读写都按它过滤 —— 保存入站、
+      删除入站、主机换地址后重算、界面上列出某个端口派生了哪几条。原来没有索引，
+      这些全都是整表扫描，而一个商家几百上千行节点时，删一个入站要扫一遍全表。
+    */
+    indexes: [["userId"], ["userId", "sortOrder"], ["trafficAutoReset"], ["inboundId"]],
   },
   {
     // 落地入站：面板在自己管的主机上开出来的节点。Reality 私钥只存在这张表。
