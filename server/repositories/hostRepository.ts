@@ -538,6 +538,23 @@ export async function getHostsByIds(ids: readonly number[]) {
 }
 
 /**
+ * 只要名字。
+ *
+ * 提醒文案里「这个端口开在哪台机器上」只需要一个名字，而 getHostsByIds 会把
+ * agentToken、DDNS 配置、端口区间那一整行都读回来再扔掉 —— 定时任务每轮都跑。
+ */
+export async function getHostNamesByIds(ids: readonly number[]): Promise<Map<number, string>> {
+  const db = await getDb();
+  const result = new Map<number, string>();
+  if (!db) return result;
+  const wanted = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return result;
+  const rows = await db.select({ id: hosts.id, name: hosts.name }).from(hosts).where(inArray(hosts.id, wanted));
+  for (const row of rows as any[]) result.set(Number(row.id), String(row.name || ""));
+  return result;
+}
+
+/**
  * 只数个数，不把机器整行读出来。
  *
  * 自助加机器的配额检查原来写成 `(await getHosts(userId)).length` —— 为了得到

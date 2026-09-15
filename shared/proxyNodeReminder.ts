@@ -51,3 +51,24 @@ export function planProxyNodeTrafficReminder(
 export function proxyNodeTrafficReminderKey(nodeId: unknown, state: ProxyNodeQuotaState): string {
   return `proxyNodeTraffic:${Math.floor(Number(nodeId) || 0)}:${state}`;
 }
+
+/**
+ * 有额度的东西一共两层，去重键必须分开命名空间。
+ *
+ * - node：粘进来的落地节点（proxy_nodes）。
+ * - inbound：面板自己在主机上开的那个端口（proxy_inbounds）。
+ *
+ * 两张表各有各的自增 id，5 号端口和 5 号节点撞在一起是迟早的事 —— 撞上之后先到的
+ * 那一条会把另一条顶掉，而被顶掉的那个人永远收不到提醒，也查不出为什么。
+ */
+export type ProxyTrafficReminderScope = "node" | "inbound";
+
+export function proxyTrafficReminderKey(
+  scope: ProxyTrafficReminderScope,
+  id: unknown,
+  state: ProxyNodeQuotaState,
+): string {
+  // node 沿用原来的键：换了名字等于所有人当天再收一遍已经发过的提醒。
+  if (scope === "node") return proxyNodeTrafficReminderKey(id, state);
+  return `proxyInboundTraffic:${Math.floor(Number(id) || 0)}:${state}`;
+}

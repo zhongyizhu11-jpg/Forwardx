@@ -1105,6 +1105,31 @@ export async function addProxyInboundTraffic(entries: ReadonlyMap<number, number
 }
 
 /** 用量清零，并记下这次重置的时间（月度自动重置靠它判断本周期是否已经重置过）。 */
+/**
+ * 设了总流量的落地端口，给到量提醒用。
+ *
+ * 和 getProxyNodesWithTrafficQuota 一样只查设了上限的：没填总量的端口谈不上
+ * 「用了多少算多」，整表读回来再过滤是白读一遍。
+ */
+export async function getProxyInboundsWithTrafficQuota() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      id: proxyInbounds.id,
+      userId: proxyInbounds.userId,
+      hostId: proxyInbounds.hostId,
+      name: proxyInbounds.name,
+      port: proxyInbounds.port,
+      trafficLimit: proxyInbounds.trafficLimit,
+      trafficUsed: proxyInbounds.trafficUsed,
+      isEnabled: proxyInbounds.isEnabled,
+    })
+    .from(proxyInbounds)
+    .where(sql`${proxyInbounds.trafficLimit} > 0`)
+    .orderBy(asc(proxyInbounds.id));
+}
+
 export async function resetProxyInboundTraffic(id: number) {
   const db = await getDb();
   if (!db) return;
