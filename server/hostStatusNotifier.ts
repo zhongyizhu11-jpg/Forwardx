@@ -134,6 +134,31 @@ async function notifyHostStatusChange(host: any, status: HostStatus) {
   await sendHostStatusTelegram(host, status);
 }
 
+/**
+ * 机器掉线了，库里那些「正在跑」的行也要跟着改。
+ *
+ * 心跳超时只改了 hosts.isOnline，而 forward_rules.isRunning / tunnels.isRunning
+ * 是 Agent 上一次上报时写下的结论 —— 机器没了没人再来改它。于是一台已经掉线
+ * 几个小时的机器，它的转发在面板上仍然是绿的，鼠标移上去写着**「Agent 已确认
+ * 规则运行」**：不是含糊的「状态未知」，是一句言之凿凿的假话，而这一页正是人
+ * 出事时第一个打开的地方。
+ *
+ * 用的是地址变更那条路同一个函数（resetAgentRuntimeStateForHost），它连带把
+ * 这台机器参与的隧道（入口、出口、中间跳、入口组成员）一起清掉 —— 机器没了，
+ * 经过它的那条链路当然也没在跑。
+ *
+ * 清成「等待 Agent 上报」而不是「错误」：机器回来时下一次心跳就会重新写上
+ * isRunning，中间这段确实只是「不知道」。掉线本身另有状态点和 Telegram 通知在说。
+ */
+async function clearRuntimeStateForOfflineHost(hostId: number) {
+  clearTunnelRuntimeStatusForHost(hostId);
+  try {
+    await db.resetAgentRuntimeStateForHost(hostId);
+  } catch (error) {
+    console.warn(`[HostStatus] 掉线后清理运行状态失败 host=${hostId}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export async function primeHostStatusNotifier() {
   fastOfflineNotificationDebouncer.clear();
   try {
@@ -149,7 +174,7 @@ export async function primeHostStatusNotifier() {
       const transitionedIds = await db.markStaleHostsOffline(staleIds);
       for (const hostId of transitionedIds) {
         lastKnownStatus.set(hostId, "offline");
-        clearTunnelRuntimeStatusForHost(hostId);
+        await clearRuntimeStateForOfflineHost(hostId);
       }
       if (transitionedIds.length > 0) {
         console.info(`[HostStatus] Primed ${transitionedIds.length} stale online host(s) silently`);
@@ -211,7 +236,7 @@ export async function handlePresenceCapableHostOffline(event: AgentFastLivenessT
     return;
   }
 
-  clearTunnelRuntimeStatusForHost(hostId);
+  await clearRuntimeStateForOfflineHost(hostId);
   await db.scheduleForwardGroupsForHostHealthChange(hostId);
   if (!event.isCurrent()) {
     await restoreHostOnlineAfterStaleOfflineTransition(hostId);
@@ -299,7 +324,7 @@ export async function sweepOfflineHostsAndNotify() {
   const transitionedIdSet = new Set(transitionedIds);
   const transitionedHosts = (staleHosts as any[]).filter((host) => transitionedIdSet.has(Number(host.id)));
   for (const host of transitionedHosts) {
-    clearTunnelRuntimeStatusForHost(Number(host.id));
+    await clearRuntimeStateForOfflineHost(Number(host.id));
     void db.scheduleForwardGroupsForHostHealthChange(Number(host.id)).catch((error) => {
       console.warn(`[HostStatus] Offline forward-group evaluation failed host=${host.id}: ${error instanceof Error ? error.message : String(error)}`);
     });
