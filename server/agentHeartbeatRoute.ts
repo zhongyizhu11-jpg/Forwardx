@@ -82,12 +82,19 @@ import {
   REALM_CONFIG_DIR,
   buildRealmConfigToml,
   buildRealmServiceUnit,
+  buildSocatServiceUnit,
+  cleanEndpointHost,
+  endpointHostPort,
+  isIpv6Literal,
   legacyRealmConfigPathForPort,
   legacyRealmServiceNameForPort,
+  legacySocatServiceNameForPort,
   realmConfigPathForPort,
   realmServiceNameForPort,
   realmTomlString,
   serviceProtocolSuffix,
+  socatDialEndpoint,
+  socatServiceNameForPort,
 } from "./forwardRuntimeConfigs";
 import { handleHostAddressChanged, hostIngressAddress, refreshAgentsAffectedByHostAddress } from "./hostAddressRuntime";
 import { isHostStatusOnline, notifyHostOnlineIfNeeded } from "./hostStatusNotifier";
@@ -1060,14 +1067,6 @@ function actionMayAffectRuntimeFamily(action: any, forwardTypes: Set<string>) {
   return forwardTypes.has(runtimeForwardType);
 }
 
-function cleanEndpointHost(value: unknown) {
-  return String(value || "").trim().replace(/^\[([^\]]+)\]$/, "$1");
-}
-
-function isIpv6Literal(value: unknown) {
-  return isIP(cleanEndpointHost(value)) === 6;
-}
-
 function isForwardXTunnelMode(tunnel: any) {
   return String(tunnel?.mode || "").toLowerCase() === "forwardx";
 }
@@ -1080,17 +1079,6 @@ function isGostTunnelMode(tunnel: any) {
   return !!tunnel && GOST_TUNNEL_MODES.has(String(tunnel?.mode || "").toLowerCase());
 }
 
-function endpointHostPort(host: unknown, port: unknown) {
-  const clean = cleanEndpointHost(host);
-  return isIpv6Literal(clean) ? `[${clean}]:${Number(port) || 0}` : `${clean}:${Number(port) || 0}`;
-}
-
-function socatDialEndpoint(protocol: "TCP" | "UDP", host: unknown, port: unknown) {
-  const clean = cleanEndpointHost(host);
-  const dialProtocol = isIpv6Literal(clean) ? `${protocol}6` : protocol;
-  return `${dialProtocol}:${endpointHostPort(clean, port)}`;
-}
-
 function legacyRealmCleanupCmds(port: unknown, protocol: unknown) {
   const normalized = normalizeForwardRuleProtocol(protocol, "both");
   if (normalized === "udp") return [];
@@ -1101,14 +1089,6 @@ function legacyRealmCleanupCmds(port: unknown, protocol: unknown) {
     killByPatternCmd(`[r]ealm .*${configPath}`),
     `rm -f ${shQuote(configPath)} ${shQuote(`${configPath}.sha256`)} 2>/dev/null || true`,
   ];
-}
-
-function socatServiceNameForPort(port: unknown, protocol: unknown) {
-  return `forwardx-socat-${serviceProtocolSuffix(protocol)}-${Number(port) || 0}`;
-}
-
-function legacySocatServiceNameForPort(port: unknown) {
-  return `forwardx-socat-${Number(port) || 0}`;
 }
 
 function legacySocatCleanupCmds(port: unknown, protocol: unknown) {
@@ -5206,40 +5186,17 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           // both: 需要两个 socat 进程
           if (normalizeForwardRuleProtocol(rule.protocol) === "both") {
             // 两个服务：一个 TCP 一个 UDP
-            const svcNameTcp = `forwardx-socat-tcp-${rule.sourcePort}`;
-            const svcNameUdp = `forwardx-socat-udp-${rule.sourcePort}`;
-            const unitTcp = [
-              "[Unit]",
-              `Description=ForwardX socat TCP forwarder ${rule.sourcePort}->${rule.targetIp}:${rule.targetPort}`,
-              "After=network.target",
-              "",
-              "[Service]",
-              "Type=simple",
-              `ExecStart=/usr/bin/socat TCP6-LISTEN:${rule.sourcePort},fork,reuseaddr,ipv6only=0 ${socatDialEndpoint("TCP", processTarget(rule), rule.targetPort)}`,
-              "Restart=always",
-              "RestartSec=5",
-              "LimitNOFILE=65535",
-              "",
-              "[Install]",
-              "WantedBy=multi-user.target",
-              "",
-            ].join("\n");
-            const unitUdp = [
-              "[Unit]",
-              `Description=ForwardX socat UDP forwarder ${rule.sourcePort}->${rule.targetIp}:${rule.targetPort}`,
-              "After=network.target",
-              "",
-              "[Service]",
-              "Type=simple",
-              `ExecStart=/usr/bin/socat UDP6-LISTEN:${rule.sourcePort},fork,reuseaddr,ipv6only=0 ${socatDialEndpoint("UDP", processTarget(rule), rule.targetPort)}`,
-              "Restart=always",
-              "RestartSec=5",
-              "LimitNOFILE=65535",
-              "",
-              "[Install]",
-              "WantedBy=multi-user.target",
-              "",
-            ].join("\n");
+            const svcNameTcp = socatServiceNameForPort(rule.sourcePort, "tcp");
+            const svcNameUdp = socatServiceNameForPort(rule.sourcePort, "udp");
+            const socatUnitBase = {
+              sourcePort: rule.sourcePort,
+              targetIp: rule.targetIp,
+              targetPort: rule.targetPort,
+              dialHost: processTarget(rule),
+              dialPort: rule.targetPort,
+            };
+            const unitTcp = buildSocatServiceUnit({ ...socatUnitBase, descriptionProtocol: "TCP", dialProtocol: "TCP" });
+            const unitUdp = buildSocatServiceUnit({ ...socatUnitBase, descriptionProtocol: "UDP", dialProtocol: "UDP" });
             // socat both 模式下为该端口挂入 mangle 计数链
             for (const c of buildCountingChainCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol)) socatPostCmds.push(c);
             for (const c of buildRuleAccessLimitCmds(rule)) socatPostCmds.push(c);
@@ -5262,25 +5219,17 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
             });
           } else {
             const protoUpper = normalizeForwardRuleProtocol(rule.protocol) === "udp" ? "UDP" : "TCP";
-            const listenProto = protoUpper === "UDP" ? "UDP6" : "TCP6";
-            const socatCmd = `/usr/bin/socat ${listenProto}-LISTEN:${rule.sourcePort},fork,reuseaddr,ipv6only=0 ${socatDialEndpoint(protoUpper, processTarget(rule), rule.targetPort)}`;
             const singleSvcName = socatServiceNameForPort(rule.sourcePort, rule.protocol);
-            const unit = [
-              "[Unit]",
-              `Description=ForwardX socat ${rule.protocol} forwarder ${rule.sourcePort}->${rule.targetIp}:${rule.targetPort}`,
-              "After=network.target",
-              "",
-              "[Service]",
-              "Type=simple",
-              `ExecStart=${socatCmd}`,
-              "Restart=always",
-              "RestartSec=5",
-              "LimitNOFILE=65535",
-              "",
-              "[Install]",
-              "WantedBy=multi-user.target",
-              "",
-            ].join("\n");
+            // Description 里沿用规则上的原始协议写法（小写），和 both 模式那两个单元不同。
+            const unit = buildSocatServiceUnit({
+              descriptionProtocol: rule.protocol,
+              dialProtocol: protoUpper,
+              sourcePort: rule.sourcePort,
+              targetIp: rule.targetIp,
+              targetPort: rule.targetPort,
+              dialHost: processTarget(rule),
+              dialPort: rule.targetPort,
+            });
             // socat 单协议模式下为该端口挂入 mangle 计数链
             for (const c of buildCountingChainCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol)) socatPostCmds.push(c);
             for (const c of buildRuleAccessLimitCmds(rule)) socatPostCmds.push(c);

@@ -16,6 +16,8 @@
  * 硬搬过来只会变成往这边传十个回调，那不是解耦，是把耦合换个地方写。
  */
 
+import { isIP } from "node:net";
+
 import { isForwardRuleProtocolUdpEnabled, normalizeForwardRuleProtocol } from "../shared/forwardTypes";
 
 export const REALM_CONFIG_DIR = "/etc/forwardx/realm";
@@ -111,6 +113,92 @@ export function buildRealmServiceUnit(input: RealmUnitInput): string {
     "[Service]",
     "Type=simple",
     `ExecStart=/usr/local/bin/realm -c ${input.configPath}${ifaceFlag}`,
+    "Restart=always",
+    "RestartSec=5",
+    "LimitNOFILE=65535",
+    "",
+    "[Install]",
+    "WantedBy=multi-user.target",
+    "",
+  ].join("\n");
+}
+
+/* ---------------------------------------------------------------------------
+ * 端点地址
+ *
+ * 这几个是纯格式化：IPv6 字面量在配置文件和命令行里要带方括号，在 socat 的协议名
+ * 上还要带 `6` 后缀。写漏了不会报错，只会让这条转发起来之后连不通 —— 而面板上
+ * 看到的只是「等待 Agent 上报」。
+ * ------------------------------------------------------------------------- */
+
+export function cleanEndpointHost(value: unknown) {
+  return String(value || "").trim().replace(/^\[([^\]]+)\]$/, "$1");
+}
+
+export function isIpv6Literal(value: unknown) {
+  return isIP(cleanEndpointHost(value)) === 6;
+}
+
+export function endpointHostPort(host: unknown, port: unknown) {
+  const clean = cleanEndpointHost(host);
+  return isIpv6Literal(clean) ? `[${clean}]:${Number(port) || 0}` : `${clean}:${Number(port) || 0}`;
+}
+
+/** socat 的拨号端点：`TCP:1.2.3.4:80`，目标是 IPv6 时变成 `TCP6:[::1]:80`。 */
+export function socatDialEndpoint(protocol: "TCP" | "UDP", host: unknown, port: unknown) {
+  const clean = cleanEndpointHost(host);
+  const dialProtocol = isIpv6Literal(clean) ? `${protocol}6` : protocol;
+  return `${dialProtocol}:${endpointHostPort(clean, port)}`;
+}
+
+/* ---------------------------------------------------------------------------
+ * socat
+ * ------------------------------------------------------------------------- */
+
+export function socatServiceNameForPort(port: unknown, protocol: unknown) {
+  return `forwardx-socat-${serviceProtocolSuffix(protocol)}-${Number(port) || 0}`;
+}
+
+export function legacySocatServiceNameForPort(port: unknown) {
+  return `forwardx-socat-${Number(port) || 0}`;
+}
+
+export type SocatUnitInput = {
+  /**
+   * 写进 Description 的协议名。
+   *
+   * 这里不跟 `dialProtocol` 合并是因为两处本来就不一样：`both` 模式下拆出的两个
+   * 单元写的是大写 `TCP` / `UDP`，单协议模式写的是规则上的原始值（小写）。
+   * 统一成一种写法会改掉已经装在真机上的单元文件内容，触发一次没必要的重下发。
+   */
+  descriptionProtocol: unknown;
+  /** 监听和拨号用的协议，决定 `TCP6-LISTEN` 还是 `UDP6-LISTEN`。 */
+  dialProtocol: "TCP" | "UDP";
+  sourcePort: unknown;
+  /** 只用于 Description 里那句人看的说明，不参与拨号。 */
+  targetIp: unknown;
+  targetPort: unknown;
+  /** 真正拨过去的地址：走故障转移时是本机代理端口，不等于 `targetIp`。 */
+  dialHost: unknown;
+  dialPort: unknown;
+};
+
+/**
+ * socat 的 systemd 单元。
+ *
+ * 监听一律用 `TCP6/UDP6-LISTEN` 加 `ipv6only=0`：一个双栈套接字同时收 v4 和 v6，
+ * 比起两个单元各监听一个协议栈少一半进程，也不会出现「v6 起来了 v4 没起来」。
+ */
+export function buildSocatServiceUnit(input: SocatUnitInput): string {
+  const dial = socatDialEndpoint(input.dialProtocol, input.dialHost, input.dialPort);
+  return [
+    "[Unit]",
+    `Description=ForwardX socat ${input.descriptionProtocol} forwarder ${input.sourcePort}->${input.targetIp}:${input.targetPort}`,
+    "After=network.target",
+    "",
+    "[Service]",
+    "Type=simple",
+    `ExecStart=/usr/bin/socat ${input.dialProtocol}6-LISTEN:${input.sourcePort},fork,reuseaddr,ipv6only=0 ${dial}`,
     "Restart=always",
     "RestartSec=5",
     "LimitNOFILE=65535",

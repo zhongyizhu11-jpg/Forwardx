@@ -31,6 +31,11 @@ type Fingerprint = {
   postCommands: number;
   managedConfigs: number;
   hash: string;
+  /** systemd 单元名，直接记名字：换了名字等于换了一个服务，值得在 diff 里一眼看见。 */
+  svcName: string;
+  svcNameExtra: string;
+  /** 单元文件正文的哈希。正文几十行，记全文没人读得下去。 */
+  serviceHash: string;
 };
 
 /**
@@ -40,21 +45,81 @@ type Fingerprint = {
  * 没开的协议不下发任何动作，这是对的（下面单独有一条断言盯着这个默认值）。
  */
 const BASELINE: Record<string, Fingerprint> = {
-  "gost:both": { commands: 37, preCommands: 0, postCommands: 0, managedConfigs: 0, hash: "360a4a0e1f6068b4" },
-  "gost:tcp": { commands: 29, preCommands: 0, postCommands: 0, managedConfigs: 0, hash: "2c334d927f61cd81" },
-  "gost:udp": { commands: 29, preCommands: 0, postCommands: 0, managedConfigs: 0, hash: "f5bbe6fc6aa6f2f0" },
-  "iptables:both": { commands: 56, preCommands: 0, postCommands: 0, managedConfigs: 0, hash: "33cd10ea2d6ca5e7" },
-  "iptables:tcp": { commands: 42, preCommands: 0, postCommands: 0, managedConfigs: 0, hash: "e602743e9515b3cf" },
-  "iptables:udp": { commands: 42, preCommands: 0, postCommands: 0, managedConfigs: 0, hash: "f86e71852d450149" },
-  "nftables:both": { commands: 53, preCommands: 0, postCommands: 0, managedConfigs: 0, hash: "ec965800c4d6c830" },
-  "nftables:tcp": { commands: 41, preCommands: 0, postCommands: 0, managedConfigs: 0, hash: "e0ab5f22608e1f5f" },
-  "nftables:udp": { commands: 41, preCommands: 0, postCommands: 0, managedConfigs: 0, hash: "7d5156bff9138c4e" },
-  "realm:both": { commands: 4, preCommands: 38, postCommands: 0, managedConfigs: 0, hash: "a8e6be850094ffb2" },
-  "realm:tcp": { commands: 4, preCommands: 30, postCommands: 0, managedConfigs: 0, hash: "2d3e76415810cfd1" },
-  "realm:udp": { commands: 4, preCommands: 27, postCommands: 0, managedConfigs: 0, hash: "e572f87237c1b8b9" },
-  "socat:both": { commands: 0, preCommands: 34, postCommands: 4, managedConfigs: 0, hash: "53d03d134923fa16" },
-  "socat:tcp": { commands: 0, preCommands: 27, postCommands: 4, managedConfigs: 0, hash: "a2a8ca879c8ec2c6" },
-  "socat:udp": { commands: 0, preCommands: 26, postCommands: 4, managedConfigs: 0, hash: "86d0a2c2dd934560" },
+  "gost:both": {
+    commands: 37, preCommands: 0, postCommands: 0, managedConfigs: 0,
+    hash: "360a4a0e1f6068b4",
+    svcName: "", svcNameExtra: "", serviceHash: "16682bd0d8bc0d18",
+  },
+  "gost:tcp": {
+    commands: 29, preCommands: 0, postCommands: 0, managedConfigs: 0,
+    hash: "2c334d927f61cd81",
+    svcName: "", svcNameExtra: "", serviceHash: "16682bd0d8bc0d18",
+  },
+  "gost:udp": {
+    commands: 29, preCommands: 0, postCommands: 0, managedConfigs: 0,
+    hash: "f5bbe6fc6aa6f2f0",
+    svcName: "", svcNameExtra: "", serviceHash: "16682bd0d8bc0d18",
+  },
+  "iptables:both": {
+    commands: 56, preCommands: 0, postCommands: 0, managedConfigs: 0,
+    hash: "33cd10ea2d6ca5e7",
+    svcName: "", svcNameExtra: "", serviceHash: "16682bd0d8bc0d18",
+  },
+  "iptables:tcp": {
+    commands: 42, preCommands: 0, postCommands: 0, managedConfigs: 0,
+    hash: "e602743e9515b3cf",
+    svcName: "", svcNameExtra: "", serviceHash: "16682bd0d8bc0d18",
+  },
+  "iptables:udp": {
+    commands: 42, preCommands: 0, postCommands: 0, managedConfigs: 0,
+    hash: "f86e71852d450149",
+    svcName: "", svcNameExtra: "", serviceHash: "16682bd0d8bc0d18",
+  },
+  "nftables:both": {
+    commands: 53, preCommands: 0, postCommands: 0, managedConfigs: 0,
+    hash: "ec965800c4d6c830",
+    svcName: "", svcNameExtra: "", serviceHash: "16682bd0d8bc0d18",
+  },
+  "nftables:tcp": {
+    commands: 41, preCommands: 0, postCommands: 0, managedConfigs: 0,
+    hash: "e0ab5f22608e1f5f",
+    svcName: "", svcNameExtra: "", serviceHash: "16682bd0d8bc0d18",
+  },
+  "nftables:udp": {
+    commands: 41, preCommands: 0, postCommands: 0, managedConfigs: 0,
+    hash: "7d5156bff9138c4e",
+    svcName: "", svcNameExtra: "", serviceHash: "16682bd0d8bc0d18",
+  },
+  "realm:both": {
+    commands: 4, preCommands: 38, postCommands: 0, managedConfigs: 0,
+    hash: "a8e6be850094ffb2",
+    svcName: "forwardx-realm-both-20009", svcNameExtra: "", serviceHash: "da02cadd2fdc6b49",
+  },
+  "realm:tcp": {
+    commands: 4, preCommands: 30, postCommands: 0, managedConfigs: 0,
+    hash: "2d3e76415810cfd1",
+    svcName: "forwardx-realm-tcp-20007", svcNameExtra: "", serviceHash: "c89ac3ef706d6b04",
+  },
+  "realm:udp": {
+    commands: 4, preCommands: 27, postCommands: 0, managedConfigs: 0,
+    hash: "e572f87237c1b8b9",
+    svcName: "forwardx-realm-udp-20008", svcNameExtra: "", serviceHash: "97741e73c0bd2c00",
+  },
+  "socat:both": {
+    commands: 0, preCommands: 34, postCommands: 4, managedConfigs: 0,
+    hash: "53d03d134923fa16",
+    svcName: "forwardx-socat-tcp-20012", svcNameExtra: "forwardx-socat-udp-20012", serviceHash: "3bf9e5c5667ad86f",
+  },
+  "socat:tcp": {
+    commands: 0, preCommands: 27, postCommands: 4, managedConfigs: 0,
+    hash: "a2a8ca879c8ec2c6",
+    svcName: "forwardx-socat-tcp-20010", svcNameExtra: "", serviceHash: "fde51953aa29401a",
+  },
+  "socat:udp": {
+    commands: 0, preCommands: 26, postCommands: 4, managedConfigs: 0,
+    hash: "86d0a2c2dd934560",
+    svcName: "forwardx-socat-udp-20011", svcNameExtra: "", serviceHash: "966bdfd4dc22e86e",
+  },
 };
 
 const COMMAND_FIELDS = ["commands", "preCommands", "postCommands", "managedConfigs"] as const;
@@ -121,6 +186,8 @@ test("六种转发方式下发的命令保持基线（重构安全网）", () =>
 
     const actions = (body.desiredState && body.desiredState.actions) || [];
     const FIELDS = ["commands", "preCommands", "postCommands", "managedConfigs"];
+    // 单元正文不是命令数组，走的是动作上的顶层字段 —— 单独算一份哈希。
+    const SERVICE_FIELDS = ["unit", "unitExtra"];
     const UNIT = String.fromCharCode(1);
     const RECORD = String.fromCharCode(2);
 
@@ -134,7 +201,15 @@ test("六种转发方式下发的命令保持基线（重构安全网）", () =>
         parts.push(field + ":" + text);
       }
       const hash = crypto.createHash("sha256").update(parts.join(RECORD)).digest("hex").slice(0, 16);
-      return { ...counts, hash };
+      const serviceParts = SERVICE_FIELDS.map((field) => field + ":" + String(action[field] == null ? "" : action[field]));
+      const serviceHash = crypto.createHash("sha256").update(serviceParts.join(RECORD)).digest("hex").slice(0, 16);
+      return {
+        ...counts,
+        hash,
+        svcName: String(action.svcName == null ? "" : action.svcName),
+        svcNameExtra: String(action.svcNameExtra == null ? "" : action.svcNameExtra),
+        serviceHash,
+      };
     };
 
     const out = {};
@@ -172,6 +247,26 @@ test("六种转发方式下发的命令保持基线（重构安全网）", () =>
       got.hash,
       expected.hash,
       `${key} 的命令内容变了（条数没变）；如果是故意改的，更新基线并在提交信息里说清楚`,
+    );
+    /*
+      单元文件正文和服务名走的是动作上的顶层字段，不在上面那四个命令数组里。
+      漏掉它们的话，「把 systemd 单元的拼接搬个地方」这类改动可以一路绿着过去 ——
+      而那正是 realm / socat 这两支重构时唯一动到的东西。
+    */
+    assert.equal(
+      got.svcName,
+      expected.svcName,
+      `${key} 的服务名从 ${expected.svcName || "(无)"} 变成了 ${got.svcName || "(无)"}；换名字等于换了一个服务，旧的会留在真机上`,
+    );
+    assert.equal(
+      got.svcNameExtra,
+      expected.svcNameExtra,
+      `${key} 的第二个服务名从 ${expected.svcNameExtra || "(无)"} 变成了 ${got.svcNameExtra || "(无)"}`,
+    );
+    assert.equal(
+      got.serviceHash,
+      expected.serviceHash,
+      `${key} 的 systemd 单元正文变了；如果是故意改的，更新基线并在提交信息里说清楚`,
     );
   }
 
