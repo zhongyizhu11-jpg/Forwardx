@@ -37,3 +37,61 @@ export function addMonthsClamped(date: Date, months: number): Date {
   return next;
 }
 
+
+/**
+ * 按给定的 id 顺序重排一张表的 sortOrder，两个仓库原来各存一份（探测服务、主机分组），
+ * 371 token 一字不差，只差表名和错误里的那个名词。
+ *
+ * 几个不显眼但要紧的点，合并时原样保留：
+ *
+ * - **先校验再写**：把 id 列表整体查一遍，数量对不上就整个拒绝。少了这一步，
+ *   一个夹带了别人 id 的排序请求会把别人的行也改掉 —— 拖拽排序看起来无害，
+ *   但它是个批量写接口。
+ * - **重复 id 直接判无效**：`new Set(ids).size !== ids.length`。有重复说明前端
+ *   状态已经乱了，照着写会把两行挤到同一个位置。
+ * - **userId 可选**：管理员传空、租户必须带上，由调用方决定，这里不猜。
+ */
+export async function reorderRowsBySortOrder(options: {
+  table: string;
+  ids: number[];
+  userId?: number;
+  /** 校验没过时报给人的话，要带上这张表的名词，例如「服务」「分组」。 */
+  notFoundMessage: string;
+  deps: {
+    getDb: () => Promise<unknown>;
+    queryRaw: <T>(sql: string, params?: any[]) => Promise<T[]>;
+    executeRaw: (sql: string, params?: any[]) => Promise<unknown>;
+    quoteIdentifier: (id: string) => string;
+    inList: (ids: number[]) => { sql: string; params: any[] };
+  };
+}) {
+  const { table, ids, userId, notFoundMessage, deps } = options;
+  const db = await deps.getDb();
+  if (!db) throw new Error("Database not available");
+  const orderedIds = Array.from(ids || [])
+    .map((id) => Math.floor(Number(id)))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (orderedIds.length === 0 || new Set(orderedIds).size !== orderedIds.length) throw new Error("排序数据无效");
+  const q = deps.quoteIdentifier;
+  const list = deps.inList(orderedIds);
+  const params: any[] = [...list.params];
+  let userWhere = "";
+  if (userId) {
+    userWhere = ` AND ${q("userId")} = ?`;
+    params.push(userId);
+  }
+  const rows = await deps.queryRaw<{ id: number }>(
+    `SELECT ${q("id")} FROM ${q(table)} WHERE ${q("id")} IN ${list.sql}${userWhere}`,
+    params,
+  );
+  if (rows.length !== orderedIds.length) throw new Error(notFoundMessage);
+  const now = Math.floor(Date.now() / 1000);
+  for (const [index, id] of orderedIds.entries()) {
+    await deps.executeRaw(
+      `UPDATE ${q(table)}
+          SET ${q("sortOrder")} = ?, ${q("updatedAt")} = ?
+        WHERE ${q("id")} = ?`,
+      [index, now, id],
+    );
+  }
+}

@@ -1,4 +1,5 @@
 import AnimatedStatValue from "@/components/AnimatedStatValue";
+import { resourceStatusTone } from "@/lib/statusDot";
 import { MILLI_CENTS_PER_CENT, pricePerGbMilliCentsOf } from "@shared/trafficBillingPrice";
 import { renderStatusDot } from "@/lib/statusDot";
 import { forwardGroupModeOf, forwardGroupTypeText, type ForwardGroupMode } from "@shared/forwardTypes";
@@ -149,20 +150,6 @@ function billingResourceSearchText(category: BillingResourceCategory, item: any,
   ].filter(Boolean).join(" / ");
 }
 
-function billingResourceStatusTone(category: BillingResourceCategory, item: any): "online" | "warning" | "offline" {
-  if (!item || item.missing) return "offline";
-  if (category === "tunnel") {
-    if (item.isRunning) return "online";
-    if (item.isEnabled) return "warning";
-    return "offline";
-  }
-  if (category === "host") return item.isOnline ? "online" : "offline";
-  if (item.isEnabled === false) return "offline";
-  if (String(item.lastStatus || "").toLowerCase() === "error") return "offline";
-  if (item.latestLatencyIsTimeout) return "warning";
-  return "online";
-}
-
 function BillingResourceOption({
   category,
   item,
@@ -186,7 +173,7 @@ function BillingResourceOption({
   const multiplier = category === "host" ? null : formatTrafficMultiplier(item?.trafficMultiplier ?? 100);
   return (
     <div className={cn("flex min-w-0 items-center gap-2", compact ? "py-0" : "py-1")}>
-      {renderStatusDot(billingResourceStatusTone(category, item))}
+      {renderStatusDot(resourceStatusTone(category, item))}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-medium">{name}</span>

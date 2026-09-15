@@ -1,4 +1,5 @@
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
+import { resourceStatusTone } from "@/lib/statusDot";
 import { StatusDot } from "@/lib/statusDot";
 import { forwardGroupModeOf, forwardGroupTypeText, type ForwardGroupMode } from "@shared/forwardTypes";
 import MobileInfoRow from "@/components/MobileInfoRow";
@@ -385,20 +386,6 @@ function missingResourceHint(item: any) {
   return item?.missing ? "资源不存在或已删除，可删除清理" : "";
 }
 
-function planResourceStatusTone(type: "host" | "tunnel" | "forward_group", item: any) {
-  if (!item || item.missing) return "offline";
-  if (type === "host") return item.isOnline ? "online" : "offline";
-  if (type === "tunnel") {
-    if (item.isRunning) return "online";
-    if (item.isEnabled) return "warning";
-    return "offline";
-  }
-  if (item.isEnabled === false) return "offline";
-  if (String(item.lastStatus || "").toLowerCase() === "error") return "offline";
-  if (item.latestLatencyIsTimeout) return "warning";
-  return "online";
-}
-
 function PlanResourceOption({
   type,
   item,
@@ -419,7 +406,7 @@ function PlanResourceOption({
   const multiplier = type === "host" || !showMultiplier ? null : formatTrafficMultiplier(item?.trafficMultiplier ?? 100);
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <StatusDot tone={planResourceStatusTone(type, item)} />
+      <StatusDot tone={resourceStatusTone(type, item)} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-medium">{title}</span>

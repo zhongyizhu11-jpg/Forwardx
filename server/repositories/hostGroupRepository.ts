@@ -1,4 +1,5 @@
 import { asc, desc, eq } from "drizzle-orm";
+import { reorderRowsBySortOrder } from "./repositoryUtils";
 import {
   hostGroups,
   hostGroupMembers,
@@ -157,34 +158,13 @@ export async function deleteHostGroup(id: number) {
 }
 
 export async function reorderHostGroups(ids: number[], userId?: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const orderedIds = Array.from(ids || [])
-    .map((id) => Math.floor(Number(id)))
-    .filter((id) => Number.isInteger(id) && id > 0);
-  if (orderedIds.length === 0 || new Set(orderedIds).size !== orderedIds.length) throw new Error("排序数据无效");
-  const q = quoteIdentifier;
-  const list = inList(orderedIds);
-  const params: any[] = [...list.params];
-  let userWhere = "";
-  if (userId) {
-    userWhere = ` AND ${q("userId")} = ?`;
-    params.push(userId);
-  }
-  const rows = await queryRaw<{ id: number }>(
-    `SELECT ${q("id")} FROM ${q("host_groups")} WHERE ${q("id")} IN ${list.sql}${userWhere}`,
-    params,
-  );
-  if (rows.length !== orderedIds.length) throw new Error("排序中包含无权操作或不存在的分组");
-  const now = Math.floor(Date.now() / 1000);
-  for (const [index, id] of orderedIds.entries()) {
-    await executeRaw(
-      `UPDATE ${q("host_groups")}
-          SET ${q("sortOrder")} = ?, ${q("updatedAt")} = ?
-        WHERE ${q("id")} = ?`,
-      [index, now, id],
-    );
-  }
+  return reorderRowsBySortOrder({
+    table: "host_groups",
+    ids,
+    userId,
+    notFoundMessage: "排序中包含无权操作或不存在的分组",
+    deps: { getDb, queryRaw, executeRaw, quoteIdentifier, inList },
+  });
 }
 
 export async function reorderHostGroupMembers(groupId: number, hostIds: number[], startIndex = 0) {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { formatLatencyTimeLabel } from "@/lib/latencyTimeLabel";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LatencyPeakCutToggle } from "@/components/LatencyPeakCutToggle";
@@ -43,15 +44,6 @@ type TcpingSeriesDatum = {
 
 const tcpingSeriesCache = new Map<number, TcpingSeriesDatum[]>();
 const tcpingAnimatedKeys = new Set<number>();
-
-function formatTcpingTime(dateStr: string | Date): string {
-  const d = new Date(dateStr);
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const hour = String(d.getHours()).padStart(2, "0");
-  const minute = String(d.getMinutes()).padStart(2, "0");
-  return `${month}/${day} ${hour}:${minute}`;
-}
 
 function TcpingTooltipContent({ active, payload, label }: any) {
   if (!active || !payload || payload.length === 0) return null;
@@ -125,8 +117,8 @@ function TcpingDetailDialog({
       const counts = normalizeLatencyProbeCounts(d);
       const latency = Number(d.latencyMs) || 0;
       return {
-        label: formatTcpingTime(d.recordedAt),
-        fullLabel: formatTcpingTime(d.recordedAt),
+        label: formatLatencyTimeLabel(d.recordedAt),
+        fullLabel: formatLatencyTimeLabel(d.recordedAt),
         latency: counts.isTimeout ? 0 : latency,
         chartLatency: counts.isTimeout ? 0 : clipLatencyForChart(latency),
         isTimeout: counts.isTimeout,
