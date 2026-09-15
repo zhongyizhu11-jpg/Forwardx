@@ -3035,6 +3035,40 @@ function RulesContent() {
   const canUseForwardChain = availableForwardChainGroups.length > 0;
   const canUseFailoverGroup = availableFailoverForwardGroups.length > 0;
   const canCreateRule = canUseLocalForward || canUseGost || canUseForwardChain || canUseFailoverGroup;
+
+  /*
+    创建按钮为什么点不了 —— 一处算，两处用。
+
+    原来这个判断只长在按钮的 disabled 上，于是按钮灰着但不说缺什么：用户盯着
+    一张看起来填满了的表，无从下手。（曾经更糟：有一版把必填的「规则名称」
+    标成了「选填」，照着标签留空的人只会得到一个灰按钮和零解释。）
+
+    所以这里返回「还差什么」的那句话本身，null 表示可以提交。按钮和提示语读
+    同一个值，不可能再各说各话 —— 谁改了判断，提示会跟着变。
+
+    顺序按用户填表的顺序来（线路 → 源端口 → 目标 → 名称），只报第一个缺口：
+    一次列三条缺失反而没人读。
+  */
+  const submitBlocker = useMemo<string | null>(() => {
+    if (form.routeMode === "tunnel" && !form.tunnelId) return "还没选隧道";
+    if (isForwardGroupRouteMode && !form.forwardGroupId) {
+      return form.routeMode === "local" ? "还没选端口转发"
+        : form.routeMode === "chain" ? "还没选转发链"
+        : "还没选转发组";
+    }
+    if (form.routeMode === "local" && !canUseLocalForward) return "没有可用的端口转发资源";
+    if (!isForwardGroupRouteMode && !form.hostId) return "还没选线路";
+    if (portStatus === "used") return "源端口已被占用";
+    if (!form.targetIp) return "还缺目标地址";
+    if (!form.targetPort) return "还缺目标端口";
+    if (!form.name) return "还缺规则名称";
+    if (form.failoverEnabled && form.protocol !== "tcp") return "出站策略只支持 TCP";
+    return null;
+  }, [
+    form.routeMode, form.tunnelId, form.forwardGroupId, form.hostId, form.targetIp,
+    form.targetPort, form.name, form.failoverEnabled, form.protocol,
+    isForwardGroupRouteMode, canUseLocalForward, portStatus,
+  ]);
   const routeModeTabItems: SlidingTabItem<RuleRouteMode>[] = [
     {
       value: "local",
@@ -7649,13 +7683,21 @@ function RulesContent() {
             </div>
             )}
           </div>
-          <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-background/95 pt-3">
+          <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-background/95 pt-3 sm:items-center sm:justify-between">
+            {/*
+              按钮点不了就在旁边说一句缺什么。手册：到达边界要 disabled 对应控件，
+              而不是点了没反应 —— 但光 disabled 还不够，得说得出为什么。
+              提交中不显示，那时候按钮自己写着「处理中...」。
+            */}
+            <p className="min-h-5 text-xs text-muted-foreground sm:mr-auto" aria-live="polite">
+              {!isPending && submitBlocker ? submitBlocker : ""}
+            </p>
             <Button variant="outline" onClick={() => setShowDialog(false)}>
               取消
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={isPending || !form.name || (!isForwardGroupRouteMode && !form.hostId) || !form.targetIp || !form.targetPort || portStatus === "used" || (form.routeMode === "local" && !canUseLocalForward) || (form.routeMode === "tunnel" && !form.tunnelId) || (isForwardGroupRouteMode && !form.forwardGroupId) || (form.failoverEnabled && form.protocol !== "tcp")}
+              disabled={isPending || !!submitBlocker}
             >
               {isPending ? "处理中..." : editingId ? "保存" : "创建"}
             </Button>
