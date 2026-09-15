@@ -162,7 +162,7 @@ import {
   preferLastKnownForwardRuleVisualStatus,
   resolveForwardRuleVisualStatus,
 } from "@/lib/forwardRuleStatus";
-import { buildLinkAvailabilityIndex } from "@/lib/linkAvailability";
+import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { useIsMobile } from "@/hooks/useMobile";
 

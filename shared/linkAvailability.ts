@@ -1,11 +1,8 @@
-import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
+import { normalizeExitGroupStrategy } from "./exitStrategy";
 import { timestampMillis } from "./timestamp";
-import {
-  LINK_PROBE_FRESH_MS,
-  LINK_PROBE_MAX_FUTURE_SKEW_MS,
-} from "@shared/linkProbePolicy";
+import { isLinkProbeFresh } from "./linkProbePolicy";
 
-export { LINK_PROBE_FRESH_MS } from "@shared/linkProbePolicy";
+export { LINK_PROBE_FRESH_MS } from "./linkProbePolicy";
 
 export type LinkAvailabilityStatus = "disabled" | "available" | "degraded" | "pending" | "unavailable";
 
@@ -49,11 +46,7 @@ export function resolveFreshLinkProbe(
   now = Date.now(),
 ): "available" | "unavailable" | null {
   if (!probe) return null;
-  const recordedAt = timestampMillis(probe.latestLatencyAt);
-  const fresh = recordedAt > 0
-    && recordedAt <= now + LINK_PROBE_MAX_FUTURE_SKEW_MS
-    && now - recordedAt <= LINK_PROBE_FRESH_MS;
-  if (!fresh) return null;
+  if (!isLinkProbeFresh(probe.latestLatencyAt, now)) return null;
   if (probe.latestLatencyIsTimeout) return "unavailable";
   const latency = Number(probe.latestLatencyMs);
   return probe.latestLatencyMs !== null

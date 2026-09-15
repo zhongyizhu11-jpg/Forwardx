@@ -1,7 +1,4 @@
-import {
-  LINK_PROBE_FRESH_MS,
-  LINK_PROBE_MAX_FUTURE_SKEW_MS,
-} from "@shared/linkProbePolicy";
+import { isLinkProbeFresh } from "@shared/linkProbePolicy";
 
 export type RuleProbeSummary = {
   latestLatencyMs?: number | null;
@@ -58,10 +55,7 @@ function isValidProbe(probe: RuleProbeSummary | null | undefined) {
 }
 
 function isFreshProbe(probe: RuleProbeSummary, now: number) {
-  const recordedAt = probeTimestamp(probe);
-  return recordedAt > 0
-    && recordedAt <= now + LINK_PROBE_MAX_FUTURE_SKEW_MS
-    && now - recordedAt <= LINK_PROBE_FRESH_MS;
+  return isLinkProbeFresh(probeTimestamp(probe), now);
 }
 
 function isAfterInvalidation(

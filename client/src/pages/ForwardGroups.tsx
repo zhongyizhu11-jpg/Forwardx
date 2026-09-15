@@ -53,7 +53,7 @@ import HostStatusLabel from "@/components/HostStatusLabel";
 import MultiHopEditor from "@/components/MultiHopEditor";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useOptimisticSortableOrder, useSortableReorder } from "@/components/SortableDragHandle";
 import { pollingInterval } from "@/lib/polling";
-import { buildLinkAvailabilityIndex } from "@/lib/linkAvailability";
+import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { handoffManualTestResult } from "@/lib/manualTestCache";
 import { getTunnelRouteText } from "@/lib/tunnelDisplay";
 import { trpc } from "@/lib/trpc";

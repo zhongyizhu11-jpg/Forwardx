@@ -12,7 +12,7 @@
  *    「离线」是错的 —— 那会把一个好端端的节点标成红的。
  */
 
-import { LINK_PROBE_FRESH_MS, LINK_PROBE_MAX_FUTURE_SKEW_MS } from "./linkProbePolicy";
+import { LINK_PROBE_FRESH_MS, isLinkProbeFresh } from "./linkProbePolicy";
 
 /**
  * 节点流量的统计窗口。
@@ -44,10 +44,7 @@ export type ProxyNodeHealth = {
 
 /** 探测是不是还算数。太旧的结果不能拿来标颜色 —— 半小时前通不等于现在通。 */
 export function isProbeFresh(at: number, now = Date.now()): boolean {
-  if (!Number.isFinite(at) || at <= 0) return false;
-  // 允许一点点未来时间：中转机和面板的时钟不会完全一致。
-  if (at > now + LINK_PROBE_MAX_FUTURE_SKEW_MS) return false;
-  return now - at <= LINK_PROBE_FRESH_MS;
+  return isLinkProbeFresh(at, now);
 }
 
 /**

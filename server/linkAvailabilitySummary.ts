@@ -3,7 +3,7 @@ import {
   type LinkAvailabilityResult,
   type LinkAvailabilitySource,
   type LinkAvailabilityStatus,
-} from "../client/src/lib/linkAvailability";
+} from "../shared/linkAvailability";
 import { getForwardProtocolSettings, isTunnelProtocolEnabled } from "./forwardProtocolSettings";
 import { getForwardGroups } from "./repositories/forwardGroupRepository";
 import { getHostStatusRows } from "./repositories/hostRepository";
