@@ -78,6 +78,17 @@ import {
   stopManagedServiceCmd,
   writeManagedServiceCmd,
 } from "./agentActionCommands";
+import {
+  REALM_CONFIG_DIR,
+  buildRealmConfigToml,
+  buildRealmServiceUnit,
+  legacyRealmConfigPathForPort,
+  legacyRealmServiceNameForPort,
+  realmConfigPathForPort,
+  realmServiceNameForPort,
+  realmTomlString,
+  serviceProtocolSuffix,
+} from "./forwardRuntimeConfigs";
 import { handleHostAddressChanged, hostIngressAddress, refreshAgentsAffectedByHostAddress } from "./hostAddressRuntime";
 import { isHostStatusOnline, notifyHostOnlineIfNeeded } from "./hostStatusNotifier";
 import { normalizeLinkProbeMethod } from "@shared/latencyProbe";
@@ -215,7 +226,6 @@ const NGINX_CONFIG_PATH = "/etc/forwardx/nginx/nginx.conf";
 const NGINX_CERT_DIR = "/etc/forwardx/nginx/certs";
 const NGINX_ERROR_LOG_PATH = "/var/log/forwardx-agent/forwardx-nginx-error.log";
 const NGINX_SESSION_LOG_PATH = "/var/log/forwardx-agent/forwardx-nginx-session.log";
-const REALM_CONFIG_DIR = "/etc/forwardx/realm";
 const LEGACY_GOST_SERVICE_NAME = "forwardx-gost";
 const LEGACY_TUNNEL_SERVICE_NAME = "forwardx-tunnels";
 const MIMIC_CONFIG_DIR = "/etc/mimic";
@@ -1079,30 +1089,6 @@ function socatDialEndpoint(protocol: "TCP" | "UDP", host: unknown, port: unknown
   const clean = cleanEndpointHost(host);
   const dialProtocol = isIpv6Literal(clean) ? `${protocol}6` : protocol;
   return `${dialProtocol}:${endpointHostPort(clean, port)}`;
-}
-
-function realmTomlString(value: unknown) {
-  return JSON.stringify(String(value ?? ""));
-}
-
-function serviceProtocolSuffix(protocol: unknown) {
-  return normalizeForwardRuleProtocol(protocol, "both");
-}
-
-function realmServiceNameForPort(port: unknown, protocol: unknown) {
-  return `forwardx-realm-${serviceProtocolSuffix(protocol)}-${Number(port) || 0}`;
-}
-
-function legacyRealmServiceNameForPort(port: unknown) {
-  return `forwardx-realm-${Number(port) || 0}`;
-}
-
-function realmConfigPathForPort(port: unknown, protocol: unknown) {
-  return `${REALM_CONFIG_DIR}/${realmServiceNameForPort(port, protocol)}.toml`;
-}
-
-function legacyRealmConfigPathForPort(port: unknown) {
-  return `${REALM_CONFIG_DIR}/${legacyRealmServiceNameForPort(port)}.toml`;
 }
 
 function legacyRealmCleanupCmds(port: unknown, protocol: unknown) {
@@ -5164,46 +5150,22 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           const svcName = realmServiceNameForPort(rule.sourcePort, rule.protocol);
           const realmConfigPath = realmConfigPathForPort(rule.sourcePort, rule.protocol);
           const realmRemote = endpointHostPort(processTarget(rule), rule.targetPort);
-          const realmConfig = [
-            "[log]",
-            'level = "warn"',
-            "",
-            "[network]",
-            `use_udp = ${isForwardRuleProtocolUdpEnabled(rule.protocol) ? "true" : "false"}`,
-            "tcp_timeout = 300",
-            "udp_timeout = 30",
-            "ipv6_only = false",
-            `send_proxy = ${proxyProtocolEnabled(rule, "send") ? "true" : "false"}`,
-            `send_proxy_version = ${proxyProtocolVersion(rule)}`,
-            `accept_proxy = ${proxyProtocolEnabled(rule, "receive") ? "true" : "false"}`,
-            "accept_proxy_timeout = 5",
-            "",
-            "[[endpoints]]",
-            `listen = ${realmTomlString(`[::0]:${Number(rule.sourcePort) || 0}`)}`,
-            `remote = ${realmTomlString(realmRemote)}`,
-            "",
-          ].join("\n");
+          const realmConfig = buildRealmConfigToml({
+            sourcePort: rule.sourcePort,
+            protocol: rule.protocol,
+            remote: realmRemote,
+            sendProxy: proxyProtocolEnabled(rule, "send"),
+            acceptProxy: proxyProtocolEnabled(rule, "receive"),
+            proxyVersion: proxyProtocolVersion(rule),
+          });
           const realmConfigB64 = Buffer.from(realmConfig, "utf8").toString("base64");
-          const ifaceFlag = hostInterface ? ` --interface ${hostInterface}` : "";
-          const realmCmd = `/usr/local/bin/realm -c ${realmConfigPath}${ifaceFlag}`;
-          const unit = [
-            "[Unit]",
-            `Description=ForwardX realm forwarder ${rule.sourcePort}->${rule.targetIp}:${rule.targetPort}`,
-            "After=network.target",
-            "StartLimitIntervalSec=60",
-            "StartLimitBurst=5",
-            "",
-            "[Service]",
-            "Type=simple",
-            `ExecStart=${realmCmd}`,
-            "Restart=always",
-            "RestartSec=5",
-            "LimitNOFILE=65535",
-            "",
-            "[Install]",
-            "WantedBy=multi-user.target",
-            "",
-          ].join("\n");
+          const unit = buildRealmServiceUnit({
+            sourcePort: rule.sourcePort,
+            targetIp: rule.targetIp,
+            targetPort: rule.targetPort,
+            configPath: realmConfigPath,
+            networkInterface: hostInterface,
+          });
           actions.push({
             ruleId: rule.id,
             op: "apply",

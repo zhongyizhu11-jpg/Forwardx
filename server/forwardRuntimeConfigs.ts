@@ -1,0 +1,122 @@
+/**
+ * 用户态转发后端的配置文件与 systemd 单元，按转发方式各生成各的。
+ *
+ * 为什么把这一层单独拎出来：realm / socat / nginx / gost 这四种都是「起一个进程
+ * 来转」，而心跳路由里它们各自有一大段代码，把三件不同性质的事搅在一起 ——
+ *
+ *   1. **算出配置长什么样**（纯函数：规则进去，一段文本出来）
+ *   2. 拼下发动作、清理上一任后端、挂计数链（依赖每次请求各不相同的上下文）
+ *   3. 往 actions 里塞
+ *
+ * 只有第一件是纯的，也只有第一件是**真正容易写错又看不出来的**：`use_udp` 写反、
+ * proxy protocol 的版本号填错、监听地址少个方括号 —— 这些不会报错，只会让流量
+ * 悄悄走不通。把它们摘出来单独测，比在六千行路由里对着字符串拼接肉眼检查靠谱。
+ *
+ * 第二、三件仍然留在路由里：它们依赖 host、用户配额、故障转移目标这些请求级状态，
+ * 硬搬过来只会变成往这边传十个回调，那不是解耦，是把耦合换个地方写。
+ */
+
+import { isForwardRuleProtocolUdpEnabled, normalizeForwardRuleProtocol } from "../shared/forwardTypes";
+
+export const REALM_CONFIG_DIR = "/etc/forwardx/realm";
+
+/** realm 的 TOML 字符串字面量。JSON 的转义规则在这里正好够用。 */
+export function realmTomlString(value: unknown) {
+  return JSON.stringify(String(value ?? ""));
+}
+
+export function serviceProtocolSuffix(protocol: unknown) {
+  return normalizeForwardRuleProtocol(protocol, "both");
+}
+
+export function realmServiceNameForPort(port: unknown, protocol: unknown) {
+  return `forwardx-realm-${serviceProtocolSuffix(protocol)}-${Number(port) || 0}`;
+}
+
+export function legacyRealmServiceNameForPort(port: unknown) {
+  return `forwardx-realm-${Number(port) || 0}`;
+}
+
+export function realmConfigPathForPort(port: unknown, protocol: unknown) {
+  return `${REALM_CONFIG_DIR}/${realmServiceNameForPort(port, protocol)}.toml`;
+}
+
+export function legacyRealmConfigPathForPort(port: unknown) {
+  return `${REALM_CONFIG_DIR}/${legacyRealmServiceNameForPort(port)}.toml`;
+}
+
+/** 生成 realm 配置需要知道的东西。都是算好的值，这一层不去查库也不碰 host。 */
+export type RealmConfigInput = {
+  /** 本机监听端口。 */
+  sourcePort: unknown;
+  /** tcp / udp / both。 */
+  protocol: unknown;
+  /** 已经拼好的远端 `host:port`（IPv6 要自带方括号）。 */
+  remote: string;
+  /** 往后端发 PROXY protocol 头。 */
+  sendProxy: boolean;
+  /** 接受前端来的 PROXY protocol 头。 */
+  acceptProxy: boolean;
+  /** PROXY protocol 版本，1 或 2。 */
+  proxyVersion: number;
+};
+
+/**
+ * realm 的配置文件内容。
+ *
+ * `use_udp` 跟着规则协议走：写死成 true 会让纯 TCP 的规则也开一个 UDP 监听，
+ * 端口被别人占着时 realm 直接起不来 —— 而面板这边只会看到「等待 Agent 上报」。
+ */
+export function buildRealmConfigToml(input: RealmConfigInput): string {
+  return [
+    "[log]",
+    'level = "warn"',
+    "",
+    "[network]",
+    `use_udp = ${isForwardRuleProtocolUdpEnabled(input.protocol) ? "true" : "false"}`,
+    "tcp_timeout = 300",
+    "udp_timeout = 30",
+    "ipv6_only = false",
+    `send_proxy = ${input.sendProxy ? "true" : "false"}`,
+    `send_proxy_version = ${input.proxyVersion}`,
+    `accept_proxy = ${input.acceptProxy ? "true" : "false"}`,
+    "accept_proxy_timeout = 5",
+    "",
+    "[[endpoints]]",
+    `listen = ${realmTomlString(`[::0]:${Number(input.sourcePort) || 0}`)}`,
+    `remote = ${realmTomlString(input.remote)}`,
+    "",
+  ].join("\n");
+}
+
+export type RealmUnitInput = {
+  sourcePort: unknown;
+  targetIp: unknown;
+  targetPort: unknown;
+  configPath: string;
+  /** 绑定网卡，空表示不绑。 */
+  networkInterface?: string;
+};
+
+/** realm 的 systemd 单元。 */
+export function buildRealmServiceUnit(input: RealmUnitInput): string {
+  const ifaceFlag = input.networkInterface ? ` --interface ${input.networkInterface}` : "";
+  return [
+    "[Unit]",
+    `Description=ForwardX realm forwarder ${input.sourcePort}->${input.targetIp}:${input.targetPort}`,
+    "After=network.target",
+    "StartLimitIntervalSec=60",
+    "StartLimitBurst=5",
+    "",
+    "[Service]",
+    "Type=simple",
+    `ExecStart=/usr/local/bin/realm -c ${input.configPath}${ifaceFlag}`,
+    "Restart=always",
+    "RestartSec=5",
+    "LimitNOFILE=65535",
+    "",
+    "[Install]",
+    "WantedBy=multi-user.target",
+    "",
+  ].join("\n");
+}
