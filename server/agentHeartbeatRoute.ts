@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { parseFailoverTargets } from "../shared/failoverTargets";
 import * as db from "./db";
 import { AGENT_VERSION } from "./_core/systemRouter";
 import { clearHostTcpingRequest, hasHostTcpingRequest, isHostMetricsWatching, pushAgentDesiredState } from "./agentEvents";
@@ -1287,20 +1288,6 @@ function addDnsWatch(watches: Map<string, AgentDnsWatch>, host: string, scope: s
   if (!isHostnameAddress(value)) return;
   const key = `${scope}:${refId || 0}:${value.toLowerCase()}`;
   watches.set(key, { host: value, scope, ...(refId ? { refId } : {}) });
-}
-
-function parseFailoverTargets(raw: unknown) {
-  if (!raw || typeof raw !== "string") return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((target) => ({ targetIp: String(target?.targetIp || "").trim(), targetPort: Number(target?.targetPort) }))
-      .filter((target) => target.targetIp && target.targetPort >= 1 && target.targetPort <= 65535)
-      .slice(0, 10);
-  } catch {
-    return [];
-  }
 }
 
 async function resolveTargetIp(raw: string): Promise<string> {

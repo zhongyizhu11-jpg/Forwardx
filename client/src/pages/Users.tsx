@@ -10,7 +10,7 @@ function withRestoredNote(base: string, restored: unknown) {
   const note = forwardAccessRestoredNote(!!restored, "user");
   return note ? `${base} · ${note}` : base;
 }
-import { subscriptionSourceLabel } from "@shared/ledgerLabels";
+import { subscriptionSourceLabel, subscriptionStatusLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as formatCurrencyCny } from "@shared/formatMoney";
 import { formatBytes } from "@shared/formatBytes";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -144,13 +144,6 @@ function billingDateTimeText(value?: string | Date | null) {
 
 function currentBillingResetDay() {
   return Math.min(billingCalendarParts(new Date()).day, 28);
-}
-
-function subscriptionStatusLabel(status?: string) {
-  if (status === "active") return "生效中";
-  if (status === "expired") return "已过期";
-  if (status === "cancelled") return "已取消";
-  return status || "-";
 }
 
 function isSubscriptionActive(sub: any) {

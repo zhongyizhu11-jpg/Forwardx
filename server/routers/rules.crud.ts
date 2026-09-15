@@ -1,4 +1,5 @@
 import { protectedProcedure, router } from "../_core/trpc";
+import { MAX_FAILOVER_TARGETS, parseFailoverTargets } from "@shared/failoverTargets";
 import { dbBool } from "../repositories/repositoryUtils";
 import { z } from "zod";
 import { planProxyNodeBinding } from "@shared/proxyNodeAutoBind";
@@ -42,7 +43,6 @@ const strictFailoverTargetSchema = z.object({
   targetPort: z.number().int().min(1).max(65535),
 });
 const failoverStrategySchema = z.enum(["fallback", "round_robin", "random", "ip_hash"]);
-const MAX_FAILOVER_TARGETS = 10;
 const mainBackupGostTunnelModes = new Set(["tls", "wss", "tcp", "mtls", "mwss", "mtcp"]);
 
 function isMainBackupGostTunnelMode(mode: unknown) {
@@ -90,20 +90,6 @@ type FailoverInput = {
   recoverSeconds?: number;
   autoFailback?: boolean;
 };
-
-function parseFailoverTargets(raw: unknown) {
-  if (!raw || typeof raw !== "string") return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((target) => ({ targetIp: String(target?.targetIp || "").trim(), targetPort: Number(target?.targetPort) }))
-      .filter((target) => target.targetIp && target.targetPort >= 1 && target.targetPort <= 65535)
-      .slice(0, MAX_FAILOVER_TARGETS);
-  } catch {
-    return [];
-  }
-}
 
 export function normalizeFailoverInput(input: FailoverInput, protocol?: string | null) {
   const enabled = !!input.failoverEnabled;

@@ -1,4 +1,6 @@
 import DataSectionError from "@/components/DataSectionError";
+import { sameNullableStringArray } from "@/lib/multiHopAddress";
+import { normalizeLatencySeriesKey } from "@shared/latencyProbe";
 import { hostSearchParts } from "@/lib/hostSearchParts";
 import { formatLatencyTimeLabel } from "@/lib/latencyTimeLabel";
 import { hostIpv6Address, hostPrivateAddress, normalizeConnectHostForHost, sameAddress } from "@/lib/multiHopAddress";
@@ -272,11 +274,6 @@ const tunnelLatencyColors = [
   "#f97316",
 ];
 
-function normalizeTunnelLatencySeriesKey(value: unknown) {
-  const key = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  return key || "total";
-}
-
 function tunnelLatencySeriesDisplayName(key: string, label?: string | null) {
   const cleanLabel = String(label || "").trim();
   if (cleanLabel) return cleanLabel;
@@ -366,14 +363,6 @@ function sameNumberArray(a: number[], b: number[]) {
   return true;
 }
 
-function sameNullableStringArray(a: Array<string | null>, b: Array<string | null>) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if ((a[i] || null) !== (b[i] || null)) return false;
-  }
-  return true;
-}
-
 function normalizeHopConnectHosts(
   raw: Array<string | null>,
   hostCount: number,
@@ -457,8 +446,8 @@ function tunnelSeriesLatencyEntries(tunnel: any) {
   if (!Array.isArray(tunnel?.latestLatencySeries)) return [];
   return tunnel.latestLatencySeries
     .map((item: any) => ({
-      key: normalizeTunnelLatencySeriesKey(item?.seriesKey),
-      label: tunnelLatencySeriesDisplayName(normalizeTunnelLatencySeriesKey(item?.seriesKey), item?.seriesLabel),
+      key: normalizeLatencySeriesKey(item?.seriesKey),
+      label: tunnelLatencySeriesDisplayName(normalizeLatencySeriesKey(item?.seriesKey), item?.seriesLabel),
       latencyMs: typeof item?.latencyMs === "number" && Number.isFinite(item.latencyMs) ? Number(item.latencyMs) : null,
       isTimeout: !!item?.isTimeout,
     }))
@@ -1187,7 +1176,7 @@ function TunnelLatencyDialog({
     if (rangedSeriesData.length === 0) return [];
     const byKey = new Map<string, TunnelLatencySeriesMeta>();
     for (const item of rangedSeriesData) {
-      const key = normalizeTunnelLatencySeriesKey(item.seriesKey);
+      const key = normalizeLatencySeriesKey(item.seriesKey);
       if (byKey.has(key)) continue;
       byKey.set(key, {
         key,
@@ -1217,7 +1206,7 @@ function TunnelLatencyDialog({
         label: formatLatencyTimeLabel(at),
         fullLabel: formatLatencyTimeLabel(at),
       };
-      const key = normalizeTunnelLatencySeriesKey(item.seriesKey);
+      const key = normalizeLatencySeriesKey(item.seriesKey);
       const counts = normalizeLatencyProbeCounts(item);
       const isTimeout = counts.isTimeout;
       const latency = isTimeout ? 0 : (Number(item.latencyMs) || 0);

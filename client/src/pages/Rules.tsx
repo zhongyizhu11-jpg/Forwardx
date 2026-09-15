@@ -1,4 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import SectionTransition from "@/components/SectionTransition";
+import { forwardGroupModeOf } from "@shared/forwardTypes";
 import { loadReactGlobe, prefetchReactGlobe } from "@/lib/reactGlobeLoader";
 import { escapeTooltipHtml, hostGeoCoordinate } from "@/lib/hostGeo";
 import { formatBytes } from "@shared/formatBytes";
@@ -602,7 +604,7 @@ function getRuleForwardGroupKind(rule: any, forwardGroupById: Map<number, any>):
   const groupId = Number(rule?.forwardGroupId || 0);
   if (!groupId) return null;
   const group = forwardGroupById.get(groupId);
-  const mode = normalizeForwardGroupModeForRule(group);
+  const mode = forwardGroupModeOf(group);
   if (mode === "port") return "local";
   return mode === "chain" ? "chain" : "group";
 }
@@ -658,33 +660,6 @@ function RuleGroupItems({
         {children}
       </AutoAnimateContainer>
     </div>
-  );
-}
-
-function RuleContentTransition({
-  transitionKey,
-  className,
-  children,
-}: {
-  transitionKey: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  const reduceMotion = useReducedMotion();
-
-  return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={transitionKey}
-        className={className}
-        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.995 }}
-        animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-        exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.995 }}
-        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-      >
-        {children}
-      </motion.div>
-    </AnimatePresence>
   );
 }
 
@@ -946,17 +921,12 @@ type EntryAddress = HostEntryAddress;
 const pushUniqueEntryAddress = pushUniqueHostEntryAddress;
 const formatAddressWithPort = formatHostAddressWithPort;
 
-function normalizeForwardGroupModeForRule(group: any | null | undefined) {
-  const mode = String(group?.groupMode || "failover");
-  return mode === "port" || mode === "chain" || mode === "entry" || mode === "exit" ? mode : "failover";
-}
-
 function isForwardChainGroup(group: any | null | undefined) {
-  return normalizeForwardGroupModeForRule(group) === "chain";
+  return forwardGroupModeOf(group) === "chain";
 }
 
 function getForwardGroupRouteLabel(group: any | null | undefined) {
-  const mode = normalizeForwardGroupModeForRule(group);
+  const mode = forwardGroupModeOf(group);
   if (mode === "port") return "端口转发";
   if (mode === "chain") return "转发链";
   return "转发组";
@@ -1080,7 +1050,7 @@ function buildKernelChainForwardWarning(input: Required<Pick<KernelForwardWarnin
   const firstMember = members[0];
   const firstHost = getHost(Number(firstMember.hostId || 0));
   const entryGroup = Number(group?.entryGroupId || 0) > 0 ? forwardGroupById?.get(Number(group.entryGroupId)) : null;
-  const entryMembers = entryGroup && normalizeForwardGroupModeForRule(entryGroup) === "entry" ? enabledHostMembers(entryGroup) : [];
+  const entryMembers = entryGroup && forwardGroupModeOf(entryGroup) === "entry" ? enabledHostMembers(entryGroup) : [];
   const firstConnectHost = resolveChainConnectHostForWarning(firstMember, firstHost);
   let inboundFamilies = entryMembers.length > 0 ? literalFamilySet(firstConnectHost) : hostEntryFamilies(firstHost);
 
@@ -1141,7 +1111,7 @@ function buildKernelForwardWarning({ rule, host, group, hosts = [], hostById, fo
   if (activeGroup && isForwardChainGroup(activeGroup)) {
     return buildKernelChainForwardWarning({ rule, group: activeGroup, hosts, hostById, forwardGroupById, toolLabel });
   }
-  if (activeGroup && normalizeForwardGroupModeForRule(activeGroup) === "failover" && activeGroup.groupType === "host") {
+  if (activeGroup && forwardGroupModeOf(activeGroup) === "failover" && activeGroup.groupType === "host") {
     for (const member of enabledHostMembers(activeGroup)) {
       const memberHost = lookupHostForWarning(hosts, hostById, Number(member.hostId || 0));
       const warning = kernelFamilyWarning(
@@ -1166,12 +1136,12 @@ function buildKernelForwardWarning({ rule, host, group, hosts = [], hostById, fo
   );
 }
 function isSelectableForwardRuleGroup(group: any | null | undefined) {
-  const mode = normalizeForwardGroupModeForRule(group);
+  const mode = forwardGroupModeOf(group);
   return mode === "port" || mode === "failover" || mode === "chain";
 }
 
 function getForwardGroupKindLabel(group: any | null | undefined) {
-  const mode = normalizeForwardGroupModeForRule(group);
+  const mode = forwardGroupModeOf(group);
   if (mode === "port") return "端口转发";
   if (mode === "chain") return "转发链";
   if (mode === "entry") return "入口组";
@@ -1550,7 +1520,7 @@ function buildRuleGlobeData(
     const chainEntryGroup = chainGroup && isForwardChainGroup(chainGroup) && Number(chainGroup.entryGroupId || 0) > 0
       ? forwardGroupById.get(Number(chainGroup.entryGroupId))
       : null;
-    const chainEntryMembers = chainEntryGroup && normalizeForwardGroupModeForRule(chainEntryGroup) === "entry" ? enabledHostMembers(chainEntryGroup) : [];
+    const chainEntryMembers = chainEntryGroup && forwardGroupModeOf(chainEntryGroup) === "entry" ? enabledHostMembers(chainEntryGroup) : [];
     const routeHostIds = ruleGlobeRouteHostIds(rule, tunnelById, forwardGroupById);
     const routePoints = routeHostIds.map((hostId: number) => pointForHostId(hostId)).filter(Boolean) as RuleGlobePoint[];
     if (routePoints.length === 0) {
@@ -2498,7 +2468,7 @@ function RulesContent() {
     if (mode === "local" && !usesForwardGroup && !nextBillingHost) return;
     const expectedGroupMode = mode === "local" ? "port" : mode === "chain" ? "chain" : "failover";
     const nextGroup = usesForwardGroup
-      ? (selectedForwardGroup && normalizeForwardGroupModeForRule(selectedForwardGroup) === expectedGroupMode ? selectedForwardGroup : nextGroups[0])
+      ? (selectedForwardGroup && forwardGroupModeOf(selectedForwardGroup) === expectedGroupMode ? selectedForwardGroup : nextGroups[0])
       : null;
     const nextDirectForwardType = usableForwardTypes.includes(form.forwardType) ? form.forwardType : usableForwardTypes[0];
     const nextForwardType = mode === "tunnel"
@@ -2711,7 +2681,7 @@ function RulesContent() {
     setForm({
       hostId: rule.hostId,
       name: rule.name,
-      routeMode: rule.forwardGroupId ? (normalizeForwardGroupModeForRule(editForwardGroup) === "port" ? "local" : isForwardChainGroup(editForwardGroup) ? "chain" : "group") : rule.forwardType === "gost" && rule.tunnelId ? "tunnel" : "local",
+      routeMode: rule.forwardGroupId ? (forwardGroupModeOf(editForwardGroup) === "port" ? "local" : isForwardChainGroup(editForwardGroup) ? "chain" : "group") : rule.forwardType === "gost" && rule.tunnelId ? "tunnel" : "local",
       forwardType: rule.forwardType,
       protocol: rule.protocol,
       gostMode: "direct" as const,
@@ -2939,7 +2909,7 @@ function RulesContent() {
     [forwardGroups]
   );
   const availablePortForwardGroups = useMemo(
-    () => availableForwardGroups.filter((group: any) => normalizeForwardGroupModeForRule(group) === "port"),
+    () => availableForwardGroups.filter((group: any) => forwardGroupModeOf(group) === "port"),
     [availableForwardGroups]
   );
   const availableForwardChainGroups = useMemo(
@@ -2947,11 +2917,11 @@ function RulesContent() {
     [availableForwardGroups]
   );
   const availableFailoverForwardGroups = useMemo(
-    () => availableForwardGroups.filter((group: any) => normalizeForwardGroupModeForRule(group) === "failover"),
+    () => availableForwardGroups.filter((group: any) => forwardGroupModeOf(group) === "failover"),
     [availableForwardGroups]
   );
   const transferPortGroups = useMemo(
-    () => (forwardGroups || []).filter((group: any) => normalizeForwardGroupModeForRule(group) === "port"),
+    () => (forwardGroups || []).filter((group: any) => forwardGroupModeOf(group) === "port"),
     [forwardGroups]
   );
   const transferChainGroups = useMemo(
@@ -2959,7 +2929,7 @@ function RulesContent() {
     [forwardGroups]
   );
   const transferRuleGroups = useMemo(
-    () => (forwardGroups || []).filter((group: any) => normalizeForwardGroupModeForRule(group) === "failover"),
+    () => (forwardGroups || []).filter((group: any) => forwardGroupModeOf(group) === "failover"),
     [forwardGroups]
   );
   const getRuleFilterResources = useCallback((type: RuleTransferScopeType): any[] => {
@@ -3107,7 +3077,7 @@ function RulesContent() {
 
   const telegramBotReady = !!systemSettings?.telegram?.enabled && !!systemSettings?.telegram?.configured;
   const selectedForwardGroupIsChain = form.routeMode === "chain" || isForwardChainGroup(selectedForwardGroup);
-  const selectedForwardGroupIsPort = normalizeForwardGroupModeForRule(selectedForwardGroup) === "port";
+  const selectedForwardGroupIsPort = forwardGroupModeOf(selectedForwardGroup) === "port";
   const mainBackupForwardType = effectiveRouteForwardType;
   const mainBackupUsesTunnelRoute = form.routeMode === "tunnel" || (!selectedForwardGroupIsChain && selectedForwardGroup?.groupType === "tunnel");
   const mainBackupIsTunnelRoute =
@@ -3225,7 +3195,7 @@ function RulesContent() {
       return;
     }
     const expectedGroupMode = form.routeMode === "local" ? "port" : form.routeMode === "chain" ? "chain" : "failover";
-    if (selectedForwardGroup && normalizeForwardGroupModeForRule(selectedForwardGroup) !== expectedGroupMode) {
+    if (selectedForwardGroup && forwardGroupModeOf(selectedForwardGroup) !== expectedGroupMode) {
       setForm((prev) => ({
         ...prev,
         forwardGroupId: candidates[0] ? Number(candidates[0].id) : null,
@@ -4516,7 +4486,7 @@ function RulesContent() {
     });
   };
   const getForwardGroupSelectText = (group: any) => {
-    const mode = normalizeForwardGroupModeForRule(group);
+    const mode = forwardGroupModeOf(group);
     const billingText = isTrafficBillingForwardGroup(group) ? " / 按量计费资源" : "";
     if (isForwardChainGroup(group) || mode === "port") {
       return [getForwardGroupSelectName(group), formatTrafficMultiplier((group as any)?.trafficMultiplier)].join(" / ") + billingText;
@@ -4632,7 +4602,7 @@ function RulesContent() {
     return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50" aria-hidden="true" />;
   };
   const renderForwardGroupSelectLabel = (group: any) => {
-    const mode = normalizeForwardGroupModeForRule(group);
+    const mode = forwardGroupModeOf(group);
     const memberCount = Number(group?.members?.length || 0);
     return (
       <span className="inline-flex min-w-0 items-center gap-2" title={`${getForwardGroupStatusText(group)} / ${getForwardGroupSelectText(group)}`}>
@@ -4728,11 +4698,11 @@ function RulesContent() {
     const chainEntryGroup = chainGroup && isForwardChainGroup(chainGroup) && Number(chainGroup.entryGroupId || 0) > 0
       ? forwardGroupById.get(Number(chainGroup.entryGroupId))
       : null;
-    const chainEntryMembers = chainEntryGroup && normalizeForwardGroupModeForRule(chainEntryGroup) === "entry" ? enabledHostMembers(chainEntryGroup) : [];
+    const chainEntryMembers = chainEntryGroup && forwardGroupModeOf(chainEntryGroup) === "entry" ? enabledHostMembers(chainEntryGroup) : [];
     const tunnelEntryGroup = tunnel && Number((tunnel as any).entryGroupId || 0) > 0
       ? forwardGroupById.get(Number((tunnel as any).entryGroupId)) || (tunnel as any).entryGroup
       : null;
-    const tunnelEntryMembers = tunnelEntryGroup && normalizeForwardGroupModeForRule(tunnelEntryGroup) === "entry" ? enabledHostMembers(tunnelEntryGroup) : [];
+    const tunnelEntryMembers = tunnelEntryGroup && forwardGroupModeOf(tunnelEntryGroup) === "entry" ? enabledHostMembers(tunnelEntryGroup) : [];
     const tunnelEntryMemberByHostId = new Map<number, any>();
     tunnelEntryMembers.forEach((member: any) => {
       const hostId = Number(member?.hostId || 0);
@@ -5567,7 +5537,7 @@ function RulesContent() {
       pushUniqueEntryAddress(rows, "入口组", entryGroupDomain);
       return rows;
     }
-    const entryMembers = entryGroup && normalizeForwardGroupModeForRule(entryGroup) === "entry"
+    const entryMembers = entryGroup && forwardGroupModeOf(entryGroup) === "entry"
       ? enabledHostMembers(entryGroup)
       : [];
     if (entryMembers.length > 0) {
@@ -5664,7 +5634,7 @@ function RulesContent() {
       pushUniqueEntryAddress(rows, "入口组", domain);
       return rows;
     }
-    const entryMembers = entryGroup && normalizeForwardGroupModeForRule(entryGroup) === "entry"
+    const entryMembers = entryGroup && forwardGroupModeOf(entryGroup) === "entry"
       ? enabledHostMembers(entryGroup)
       : [];
     if (entryMembers.length > 0) {
@@ -6000,7 +5970,7 @@ function RulesContent() {
   const renderRouteBadge = (rule: any, compactRow = false) => {
     const tunnel = rule.forwardType === "gost" && rule.tunnelId ? tunnelById.get(Number(rule.tunnelId)) : null;
     const group = rule.forwardGroupId ? forwardGroupById.get(Number(rule.forwardGroupId)) : null;
-    const groupMode = normalizeForwardGroupModeForRule(group);
+    const groupMode = forwardGroupModeOf(group);
     const groupRouteLabel = getForwardGroupRouteLabel(group);
     const GroupRouteIcon = groupMode === "port" ? ArrowRightLeft : Layers3;
     const kernelWarning = getRuleKernelForwardWarning(rule);
@@ -7026,7 +6996,7 @@ function RulesContent() {
         </Card>
       </div>
 
-      <RuleContentTransition transitionKey={ruleContentTransitionKey}>
+      <SectionTransition transitionKey={ruleContentTransitionKey}>
       {isLoading || (!ruleStatusSnapshotReady && !hasCachedRuleStatus) ? (
         <DataSectionLoading label={isLoading ? "正在加载转发规则" : "正在加载规则状态"} />
       ) : filteredRules.length > 0 ? (
@@ -7227,7 +7197,7 @@ function RulesContent() {
           </CardContent>
         </Card>
       )}
-      </RuleContentTransition>
+      </SectionTransition>
 
       {trafficDetailRule && (
         <TcpingDetailDialog

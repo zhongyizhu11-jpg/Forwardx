@@ -1,4 +1,5 @@
 import type { Pool } from "mysql2/promise";
+import { quoteIdentifierFor } from "./dbRuntime";
 import type Database from "better-sqlite3";
 import type pg from "pg";
 import { getDatabaseKind, getPool, getPostgresPool, getSqlite } from "./dbRuntime";
@@ -550,11 +551,6 @@ export function getDatabaseTableDefs(): readonly TableDef[] {
 
 type SchemaKind = "mysql" | "sqlite" | "postgresql";
 
-function quote(kind: SchemaKind, id: string) {
-  if (kind === "mysql") return `\`${id.replace(/`/g, "``")}\``;
-  return `"${id.replace(/"/g, "\"\"")}"`;
-}
-
 function defaultSql(kind: SchemaKind, value: ColumnDef["default"], columnType?: ColumnType) {
   if (value === undefined || value === null) return "";
   if (kind === "mysql" && (columnType === "text" || columnType === "longtext")) return "";
@@ -571,7 +567,7 @@ function defaultSql(kind: SchemaKind, value: ColumnDef["default"], columnType?: 
 }
 
 function columnSql(kind: SchemaKind, column: ColumnDef, forAlter = false) {
-  const name = quote(kind, column.name);
+  const name = quoteIdentifierFor(kind, column.name);
   if (column.type === "id") {
     if (forAlter) return "";
     if (kind === "mysql") return `${name} BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY`;
@@ -603,10 +599,10 @@ function columnSql(kind: SchemaKind, column: ColumnDef, forAlter = false) {
 }
 
 function mysqlKey(table: string, prefix: string, cols: string[]) {
-  const name = quote("mysql", `${prefix}_${table}_${cols.join("_")}`.slice(0, 60));
+  const name = quoteIdentifierFor("mysql", `${prefix}_${table}_${cols.join("_")}`.slice(0, 60));
   const expr = cols.map((col) => {
     const def = tables.find((t) => t.name === table)?.columns.find((c) => c.name === col);
-    const q = quote("mysql", col);
+    const q = quoteIdentifierFor("mysql", col);
     return def?.type === "text" || def?.type === "longtext" ? `${q}(191)` : q;
   }).join(", ");
   return { name, expr };
@@ -624,20 +620,20 @@ async function ensureMysqlSchema(pool: Pool) {
       return `KEY ${key.name} (${key.expr})`;
     });
     await pool.query(
-      `CREATE TABLE IF NOT EXISTS ${quote("mysql", table.name)} (${[...columns, ...unique, ...indexes].join(", ")}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      `CREATE TABLE IF NOT EXISTS ${quoteIdentifierFor("mysql", table.name)} (${[...columns, ...unique, ...indexes].join(", ")}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     );
     for (const column of table.columns) {
       if (column.type === "id") continue;
-      await pool.query(`ALTER TABLE ${quote("mysql", table.name)} ADD COLUMN ${columnSql("mysql", column, true)}`).catch(() => undefined);
+      await pool.query(`ALTER TABLE ${quoteIdentifierFor("mysql", table.name)} ADD COLUMN ${columnSql("mysql", column, true)}`).catch(() => undefined);
       if (column.type === "longtext") {
         const definition = columnSql("mysql", column, true);
-        await pool.query(`ALTER TABLE ${quote("mysql", table.name)} MODIFY COLUMN ${definition}${column.notNull ? "" : " NULL"}`);
+        await pool.query(`ALTER TABLE ${quoteIdentifierFor("mysql", table.name)} MODIFY COLUMN ${definition}${column.notNull ? "" : " NULL"}`);
       }
     }
     for (const cols of [...(table.indexes || []), ...(table.unique || [])]) {
       const uniquePrefix = (table.unique || []).some((u) => u.join("|") === cols.join("|")) ? "uniq" : "idx";
       const key = mysqlKey(table.name, uniquePrefix, cols);
-      await pool.query(`ALTER TABLE ${quote("mysql", table.name)} ADD ${uniquePrefix === "uniq" ? "UNIQUE " : ""}INDEX ${key.name} (${key.expr})`).catch(() => undefined);
+      await pool.query(`ALTER TABLE ${quoteIdentifierFor("mysql", table.name)} ADD ${uniquePrefix === "uniq" ? "UNIQUE " : ""}INDEX ${key.name} (${key.expr})`).catch(() => undefined);
     }
   }
   for (const [key, value] of seedSettings) {
@@ -656,21 +652,21 @@ function indexName(prefix: string, table: string, cols: string[]) {
 async function ensurePostgresqlSchema(pool: pg.Pool) {
   for (const table of tables) {
     const columns = table.columns.map((column) => columnSql("postgresql", column)).filter(Boolean);
-    const unique = (table.unique || []).map((cols) => `UNIQUE (${cols.map((col) => quote("postgresql", col)).join(", ")})`);
+    const unique = (table.unique || []).map((cols) => `UNIQUE (${cols.map((col) => quoteIdentifierFor("postgresql", col)).join(", ")})`);
     await pool.query(
-      `CREATE TABLE IF NOT EXISTS ${quote("postgresql", table.name)} (${[...columns, ...unique].join(", ")})`,
+      `CREATE TABLE IF NOT EXISTS ${quoteIdentifierFor("postgresql", table.name)} (${[...columns, ...unique].join(", ")})`,
     );
     for (const column of table.columns) {
       if (column.type === "id") continue;
-      await pool.query(`ALTER TABLE ${quote("postgresql", table.name)} ADD COLUMN ${columnSql("postgresql", column, true)}`).catch(() => undefined);
+      await pool.query(`ALTER TABLE ${quoteIdentifierFor("postgresql", table.name)} ADD COLUMN ${columnSql("postgresql", column, true)}`).catch(() => undefined);
     }
     for (const cols of table.indexes || []) {
-      const name = quote("postgresql", indexName("idx", table.name, cols));
-      await pool.query(`CREATE INDEX IF NOT EXISTS ${name} ON ${quote("postgresql", table.name)} (${cols.map((col) => quote("postgresql", col)).join(", ")})`).catch(() => undefined);
+      const name = quoteIdentifierFor("postgresql", indexName("idx", table.name, cols));
+      await pool.query(`CREATE INDEX IF NOT EXISTS ${name} ON ${quoteIdentifierFor("postgresql", table.name)} (${cols.map((col) => quoteIdentifierFor("postgresql", col)).join(", ")})`).catch(() => undefined);
     }
     for (const cols of table.unique || []) {
-      const name = quote("postgresql", indexName("uniq", table.name, cols));
-      await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${name} ON ${quote("postgresql", table.name)} (${cols.map((col) => quote("postgresql", col)).join(", ")})`).catch(() => undefined);
+      const name = quoteIdentifierFor("postgresql", indexName("uniq", table.name, cols));
+      await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${name} ON ${quoteIdentifierFor("postgresql", table.name)} (${cols.map((col) => quoteIdentifierFor("postgresql", col)).join(", ")})`).catch(() => undefined);
     }
   }
   for (const [key, value] of seedSettings) {
@@ -685,20 +681,20 @@ async function ensurePostgresqlSchema(pool: pg.Pool) {
 function ensureSqliteSchema(sqlite: Database.Database) {
   for (const table of tables) {
     const columns = table.columns.map((column) => columnSql("sqlite", column)).filter(Boolean);
-    const unique = (table.unique || []).map((cols) => `UNIQUE (${cols.map((col) => quote("sqlite", col)).join(", ")})`);
-    sqlite.exec(`CREATE TABLE IF NOT EXISTS ${quote("sqlite", table.name)} (${[...columns, ...unique].join(", ")})`);
+    const unique = (table.unique || []).map((cols) => `UNIQUE (${cols.map((col) => quoteIdentifierFor("sqlite", col)).join(", ")})`);
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS ${quoteIdentifierFor("sqlite", table.name)} (${[...columns, ...unique].join(", ")})`);
     for (const column of table.columns) {
       if (column.type === "id") continue;
       try {
-        sqlite.exec(`ALTER TABLE ${quote("sqlite", table.name)} ADD COLUMN ${columnSql("sqlite", column, true)}`);
+        sqlite.exec(`ALTER TABLE ${quoteIdentifierFor("sqlite", table.name)} ADD COLUMN ${columnSql("sqlite", column, true)}`);
       } catch {
         // Column already exists.
       }
     }
     for (const cols of [...(table.indexes || []), ...(table.unique || [])]) {
       const uniquePrefix = (table.unique || []).some((u) => u.join("|") === cols.join("|")) ? "UNIQUE " : "";
-      const indexName = quote("sqlite", `${uniquePrefix ? "uniq" : "idx"}_${table.name}_${cols.join("_")}`.slice(0, 60));
-      sqlite.exec(`CREATE ${uniquePrefix}INDEX IF NOT EXISTS ${indexName} ON ${quote("sqlite", table.name)} (${cols.map((col) => quote("sqlite", col)).join(", ")})`);
+      const indexName = quoteIdentifierFor("sqlite", `${uniquePrefix ? "uniq" : "idx"}_${table.name}_${cols.join("_")}`.slice(0, 60));
+      sqlite.exec(`CREATE ${uniquePrefix}INDEX IF NOT EXISTS ${indexName} ON ${quoteIdentifierFor("sqlite", table.name)} (${cols.map((col) => quoteIdentifierFor("sqlite", col)).join(", ")})`);
     }
   }
   for (const [key, value] of seedSettings) {

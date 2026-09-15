@@ -1,4 +1,5 @@
 import DashboardLayout from "@/components/DashboardLayout";
+import { quotaSourceLabel, subscriptionSourceLabel, subscriptionStatusLabel } from "@shared/ledgerLabels";
 import { formatQuotaBytes } from "@shared/formatBytes";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -43,30 +44,8 @@ function billingDateTime(value?: string | Date | null) {
   return date.toLocaleString("zh-CN", BILLING_DATE_TIME_FORMAT_OPTIONS);
 }
 
-function statusLabel(status?: string) {
-  if (status === "active") return "生效中";
-  if (status === "expired") return "已过期";
-  if (status === "cancelled") return "已取消";
-  return status || "-";
-}
-
-function sourceLabel(source?: string) {
-  if (source === "admin") return "后台分配";
-  if (source === "payment") return "在线购买";
-  if (source === "redeem") return "兑换套餐";
-  if (source === "balance") return "余额购买";
-  return source || "-";
-}
-
 function cycleEnd(sub: any) {
   return sub?.nextTrafficResetAt || sub?.expiresAt || null;
-}
-
-function quotaSourceLabel(kind: TrafficQuotaSourceKind) {
-  if (kind === "manual") return "手工额度";
-  if (kind === "addon") return "已购附加流量";
-  if (kind === "grant") return "管理员加赠";
-  return "套餐额度";
 }
 
 export default function Subscriptions() {
@@ -454,10 +433,10 @@ export default function Subscriptions() {
                         <Package className="h-5 w-5 shrink-0" />
                         <span className="truncate">{sub.planName || `套餐 #${sub.planId}`}</span>
                       </CardTitle>
-                      <CardDescription className="mt-2">{sourceLabel(sub.source)}</CardDescription>
+                      <CardDescription className="mt-2">{subscriptionSourceLabel(sub.source)}</CardDescription>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-                      <Badge variant={isActive ? "default" : "secondary"}>{statusLabel(sub.status)}</Badge>
+                      <Badge variant={isActive ? "default" : "secondary"}>{subscriptionStatusLabel(sub.status)}</Badge>
                       {sub.status === "cancelled" && (
                         <Button
                           type="button"

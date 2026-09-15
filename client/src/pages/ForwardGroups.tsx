@@ -1,4 +1,5 @@
 import DataSectionError from "@/components/DataSectionError";
+import { sameNullableStringArray } from "@/lib/multiHopAddress";
 import { hostSearchParts } from "@/lib/hostSearchParts";
 import { formatLatencyTimeLabel } from "@/lib/latencyTimeLabel";
 import { hostIpv6Address, hostPrivateAddress, normalizeConnectHostForHost, sameAddress } from "@/lib/multiHopAddress";
@@ -381,14 +382,6 @@ function sameNumberArray(a: number[], b: number[]) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
-
-function sameNullableStringArray(a: Array<string | null>, b: Array<string | null>) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if ((a[i] || null) !== (b[i] || null)) return false;
   }
   return true;
 }

@@ -9,9 +9,12 @@ import type { ReactNode } from "react";
  */
 export function SectionTransition({
   transitionKey,
+  className,
   children,
 }: {
   transitionKey: string;
+  /** 转发规则那一份带自己的排版类名，合并时保留成可选项。 */
+  className?: string;
   children: ReactNode;
 }) {
   const reduceMotion = useReducedMotion();
@@ -20,6 +23,7 @@ export function SectionTransition({
     <AnimatePresence mode="wait">
       <motion.div
         key={transitionKey}
+        className={className}
         initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.995 }}
         animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
         exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.995 }}

@@ -37,3 +37,31 @@ export function subscriptionSourceLabel(source?: string | null) {
   const key = String(source || "");
   return SUBSCRIPTION_SOURCE_LABELS[key] || key || "套餐变更";
 }
+
+const SUBSCRIPTION_STATUS_LABELS: Record<string, string> = {
+  active: "生效中",
+  expired: "已过期",
+  cancelled: "已取消",
+};
+
+/** 订阅当前处于什么状态。用户管理和「我的套餐」原来各存一份。 */
+export function subscriptionStatusLabel(status?: string | null) {
+  const key = String(status || "");
+  return SUBSCRIPTION_STATUS_LABELS[key] || key || "-";
+}
+
+const QUOTA_SOURCE_LABELS: Record<string, string> = {
+  manual: "手工额度",
+  addon: "已购附加流量",
+  grant: "管理员加赠",
+};
+
+/**
+ * 这一档流量额度是哪来的。仪表盘和「我的套餐」原来各存一份。
+ *
+ * 认不出来时回「套餐额度」而不是原样显示 —— 这一列的取值是面板自己定的枚举，
+ * 不是用户填的，出现新值只可能是版本没对齐，那时候按最常见的那种说更不容易误导。
+ */
+export function quotaSourceLabel(kind?: string | null) {
+  return QUOTA_SOURCE_LABELS[String(kind || "")] || "套餐额度";
+}

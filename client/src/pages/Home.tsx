@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { quotaSourceLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import { formatBytes } from "@shared/formatBytes";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
@@ -54,13 +55,6 @@ type TrafficPieDatum = {
   color: string;
   percent: number;
 };
-
-function quotaSourceLabel(kind: TrafficQuotaSourceKind) {
-  if (kind === "manual") return "手工额度";
-  if (kind === "addon") return "已购附加流量";
-  if (kind === "grant") return "管理员加赠";
-  return "套餐额度";
-}
 
 function formatTrafficTime(value: string | Date): string {
   const date = new Date(value);
