@@ -1,0 +1,246 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+/**
+ * 「这条转发别跑了」下发的清理命令，钉成基线。
+ *
+ * apply 那一路已经有基线了（forwardTypeCommandBaseline），这一组补的是**另外半边**：
+ * 停用和删除。面板里有几条路径都会走到这里 —— 用户手动停用、管理员在设置里关掉
+ * 整个协议、规则被删除 —— 每条路径都为六种转发方式各手抄了一份清理命令列表。
+ *
+ * 十几份手抄的列表，谁也不盯着谁。已经因此漏过一次：nginx 手动停用时不清故障转移
+ * 的守护后端，而关协议和删除那两条都清（见 disabledRuleGuardCleanup）。
+ *
+ * 所以这一组在把这几条路径合并成一处之前先铺上：合并之后每一种转发方式下发的
+ * 清理命令必须一条不差、一条不多、顺序不变 —— 这些命令是要在真机上删 iptables
+ * 规则、停 systemd 单元、删配置文件的，靠读代码判断「应该一样」不算数。
+ *
+ * 如果你是**故意**改了清理逻辑，这个测试会红。更新基线，并在提交信息里说清改了
+ * 什么、为什么。不要不看就把哈希覆盖过去 —— 那等于把安全网拆了。
+ */
+
+type Fingerprint = { commands: number; hash: string; svcName: string };
+
+/**
+ * 两条停用路径当下的真实产出。
+ *
+ * `disabled` = 用户手动停用（协议还开着）；`protocolOff` = 管理员把整个协议关掉。
+ * 两边一样才是对的 —— 但这里分开记，因为「一样」本身就是要被钉住的事实，
+ * 合并成一张表就看不出哪天又岔开了。
+ */
+const BASELINE: Record<string, Record<string, Fingerprint>> = {
+  disabled: {
+    "iptables:tcp": { commands: 35, hash: "66782e9b849c3a63", svcName: "" },
+    "iptables:udp": { commands: 35, hash: "da0a75ee3c12d204", svcName: "" },
+    "iptables:both": { commands: 43, hash: "1935fd50346029ab", svcName: "" },
+    "nftables:tcp": { commands: 43, hash: "fbcba88bad9ac232", svcName: "" },
+    "nftables:udp": { commands: 43, hash: "69f524f426873090", svcName: "" },
+    "nftables:both": { commands: 57, hash: "5ddc518f8d24304a", svcName: "" },
+    "realm:tcp": { commands: 48, hash: "3abff0c6c0faaacb", svcName: "forwardx-realm-tcp-20007" },
+    "realm:udp": { commands: 45, hash: "a0be6cb612f9c6ec", svcName: "forwardx-realm-udp-20008" },
+    "realm:both": { commands: 56, hash: "7c6034ed7055fbae", svcName: "forwardx-realm-both-20009" },
+    "socat:tcp": { commands: 45, hash: "d2828f892bd22bda", svcName: "" },
+    "socat:udp": { commands: 44, hash: "1b89cfed65696324", svcName: "" },
+    "socat:both": { commands: 53, hash: "025278b32dd51730", svcName: "" },
+    "nginx:tcp": { commands: 41, hash: "5fd6bb71564d5460", svcName: "" },
+    "nginx:udp": { commands: 41, hash: "c91b3d01413dfc6a", svcName: "" },
+    "nginx:both": { commands: 49, hash: "fa8e1162ea1a4df6", svcName: "" },
+    "gost:tcp": { commands: 43, hash: "0c8eedc223530d1a", svcName: "" },
+    "gost:udp": { commands: 43, hash: "c882ef45db2a1be4", svcName: "" },
+    "gost:both": { commands: 56, hash: "24466b271f24790e", svcName: "" },
+  },
+  protocolOff: {
+    "iptables:tcp": { commands: 35, hash: "66782e9b849c3a63", svcName: "" },
+    "iptables:udp": { commands: 35, hash: "da0a75ee3c12d204", svcName: "" },
+    "iptables:both": { commands: 43, hash: "1935fd50346029ab", svcName: "" },
+    "nftables:tcp": { commands: 43, hash: "fbcba88bad9ac232", svcName: "" },
+    "nftables:udp": { commands: 43, hash: "69f524f426873090", svcName: "" },
+    "nftables:both": { commands: 57, hash: "5ddc518f8d24304a", svcName: "" },
+    "realm:tcp": { commands: 48, hash: "9059a7f61400c5c5", svcName: "forwardx-realm-tcp-20007" },
+    "realm:udp": { commands: 45, hash: "dfc41670c8c8fd8c", svcName: "forwardx-realm-udp-20008" },
+    "realm:both": { commands: 56, hash: "675213b5e75c4190", svcName: "forwardx-realm-both-20009" },
+    "socat:tcp": { commands: 45, hash: "d2828f892bd22bda", svcName: "" },
+    "socat:udp": { commands: 44, hash: "1b89cfed65696324", svcName: "" },
+    "socat:both": { commands: 53, hash: "025278b32dd51730", svcName: "" },
+    "nginx:tcp": { commands: 41, hash: "5fd6bb71564d5460", svcName: "" },
+    "nginx:udp": { commands: 41, hash: "c91b3d01413dfc6a", svcName: "" },
+    "nginx:both": { commands: 49, hash: "fa8e1162ea1a4df6", svcName: "" },
+    "gost:tcp": { commands: 43, hash: "0c8eedc223530d1a", svcName: "" },
+    "gost:udp": { commands: 43, hash: "c882ef45db2a1be4", svcName: "" },
+    "gost:both": { commands: 56, hash: "24466b271f24790e", svcName: "" },
+  },
+};
+
+const TYPES = ["iptables", "nftables", "realm", "socat", "nginx", "gost"] as const;
+const PROTOCOLS = ["tcp", "udp", "both"] as const;
+
+function collect(protocolsEnabled: boolean): Record<string, Fingerprint> {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-remove-baseline-"));
+  const databasePath = path.join(directory, "remove.db");
+  const script = String.raw`
+    import crypto from "node:crypto";
+    import http from "node:http";
+    import path from "node:path";
+    import { pathToFileURL } from "node:url";
+
+    const SEP = String.fromCharCode(1);
+    const url = (file) => pathToFileURL(path.join(process.cwd(), file)).href;
+    const runtime = await import(url("server/dbRuntime.ts"));
+    const schema = await import(url("server/dbSchema.ts"));
+    await runtime.connectDatabase({ type: "sqlite", sqlite: { path: process.env.FORWARDX_TEST_DB } });
+    await schema.ensureDatabaseSchema();
+    const exec = (sql, params = []) => runtime.executeRaw(sql, params);
+
+    const TYPES = ["iptables", "nftables", "realm", "socat", "nginx", "gost"];
+    const PROTOCOLS = ["tcp", "udp", "both"];
+    const enabled = process.env.PROTOCOLS_ENABLED === "1";
+
+    await exec("INSERT INTO users (id, username, password, role) VALUES (1, 'admin', 'hash', 'admin')");
+    await exec(
+      'INSERT INTO hosts (id, name, ip, ipv4, "hostType", "agentToken", "userId", "isOnline") VALUES (1, ?, ?, ?, ?, ?, 1, 1)',
+      ["入口机", "203.0.113.1", "203.0.113.1", "slave", "tok1"],
+    );
+    await exec(
+      "INSERT INTO system_settings (key, value) VALUES (?, ?)",
+      ["forwardProtocols", JSON.stringify(Object.fromEntries(TYPES.map((t) => [t, enabled])))],
+    );
+
+    /** 六种类型乘三种协议，端口固定，好让哈希稳定。都已停用，但 Agent 还报着在跑。 */
+    const keyById = {};
+    const localRules = [];
+    let id = 0;
+    for (const forwardType of TYPES) {
+      for (const protocol of PROTOCOLS) {
+        id += 1;
+        keyById[id] = forwardType + ":" + protocol;
+        await exec(
+          'INSERT INTO forward_rules (id, "hostId", name, "forwardType", protocol, "sourcePort", "targetIp", "targetPort", "userId", "isEnabled", "isRunning")'
+            + ' VALUES (?, 1, ?, ?, ?, ?, ?, ?, 1, 0, 1)',
+          [id, forwardType + "-" + protocol, forwardType, protocol, 20000 + id, "198.51.100.7", 443],
+        );
+        localRules.push({ port: 20000 + id, protocol, ruleId: id, forwardType });
+      }
+    }
+
+    const express = (await import("express")).default;
+    const heartbeat = await import(url("server/agentHeartbeatRoute.ts"));
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      const authorization = String(req.headers.authorization || "");
+      req.agentToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+      next();
+    });
+    heartbeat.registerAgentHeartbeatRoute(app);
+    const server = http.createServer(app);
+    await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+
+    const response = await fetch("http://127.0.0.1:" + server.address().port + "/api/agent/heartbeat", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok1" },
+      // 不报 localState 的话面板认为「Agent 还没说话」，会直接把规则标成停了而不下发清理。
+      body: JSON.stringify({
+        agentVersion: "2.3.362", uptime: 1000, cpuUsage: 1, memoryUsage: 1, diskUsage: 1,
+        localState: { rules: localRules, services: [], tunnels: [] },
+      }),
+    });
+    const body = await response.json();
+    server.close();
+    if (response.status !== 200) throw new Error("心跳没通: " + response.status);
+
+    const out = {};
+    for (const action of (body.desiredState && body.desiredState.actions) || []) {
+      const ruleId = Number(action.ruleId || 0);
+      if (ruleId <= 0 || !keyById[ruleId]) continue;
+      const commands = (action.commands || []).map(String);
+      out[keyById[ruleId]] = {
+        commands: commands.length,
+        hash: crypto.createHash("sha256").update(commands.join(SEP)).digest("hex").slice(0, 16),
+        svcName: String(action.svcName == null ? "" : action.svcName),
+      };
+    }
+    console.log("REMOVAL " + JSON.stringify(out));
+  `;
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+    cwd: path.resolve(import.meta.dirname, ".."),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      DATABASE_TYPE: "sqlite",
+      FORWARDX_TEST_DB: databasePath,
+      PROTOCOLS_ENABLED: protocolsEnabled ? "1" : "0",
+    },
+  });
+  fs.rmSync(directory, { recursive: true, force: true });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const line = result.stdout.split("\n").find((row) => row.startsWith("REMOVAL "));
+  assert.ok(line, `没拿到基线输出：\n${result.stdout}`);
+  return JSON.parse(line.slice("REMOVAL ".length)) as Record<string, Fingerprint>;
+}
+
+const actual = { disabled: collect(true), protocolOff: collect(false) };
+
+if (process.env.FORWARDX_RECORD_REMOVAL_BASELINE === "1") {
+  console.log("RECORD " + JSON.stringify(actual));
+}
+
+for (const pathName of ["disabled", "protocolOff"] as const) {
+  test(`${pathName}：每种转发方式下发的清理命令保持基线`, () => {
+    for (const forwardType of TYPES) {
+      for (const protocol of PROTOCOLS) {
+        const key = `${forwardType}:${protocol}`;
+        const expected = BASELINE[pathName][key];
+        const got = actual[pathName][key];
+        if (!expected) {
+          assert.ok(!got, `${key} 这一种原来不产出清理动作，现在产出了 —— 更新基线并说明为什么`);
+          continue;
+        }
+        assert.ok(got, `${key} 这一种不再产出清理动作了 —— 停用之后机器上的东西没人收`);
+        assert.equal(
+          got.commands,
+          expected.commands,
+          `${pathName} 的 ${key} 清理命令条数从 ${expected.commands} 变成了 ${got.commands}`,
+        );
+        assert.equal(
+          got.hash,
+          expected.hash,
+          `${pathName} 的 ${key} 清理命令内容或顺序变了（条数没变）；如果是故意改的，更新基线并在提交信息里说清楚`,
+        );
+        assert.equal(got.svcName, expected.svcName, `${pathName} 的 ${key} 服务名变了`);
+      }
+    }
+  });
+}
+
+/**
+ * 两条路径当下**只有 realm 不一致**，而且只差顺序。
+ *
+ * 这件事单独订一条，因为它是「十几份手抄列表」这个结构问题留下的最后一处痕迹：
+ * 同样一条 realm 规则，手动停用和关协议下发的 48 条命令集合完全相同，只有
+ * 「删自己的配置文件」那一条排在不同位置（一个在清守护后端之前，一个在之后）。
+ * 两条都在线上跑着，功能上等价。
+ *
+ * 把这几条路径合并成一处之后，这里应该变成「一处都不差」。到那时这条断言会红 ——
+ * 那是好事，改掉它，别绕过它。
+ */
+test("两条停用路径的差异只剩 realm 的命令顺序", () => {
+  const mismatched = Object.keys(actual.disabled)
+    .filter((key) => JSON.stringify(actual.disabled[key]) !== JSON.stringify(actual.protocolOff[key]))
+    .sort();
+  assert.deepEqual(
+    mismatched,
+    ["realm:both", "realm:tcp", "realm:udp"],
+    "两条停用路径的分歧范围变了 —— 要么合并做完了（那就把这条改掉），要么又岔开了一处新的",
+  );
+  for (const key of mismatched) {
+    assert.equal(
+      actual.disabled[key].commands,
+      actual.protocolOff[key].commands,
+      `${key} 两条路径连条数都不一样了，那就不只是顺序问题`,
+    );
+  }
+});
