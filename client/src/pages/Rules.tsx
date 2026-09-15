@@ -85,6 +85,7 @@ import {
   type EntryAddressFamily,
 } from "@/lib/ruleEntryDisplay";
 import { cn } from "@/lib/utils";
+import { autoForwardRuleName } from "@shared/forwardRuleName";
 import {
   Plus,
   Trash2,
@@ -3057,17 +3058,19 @@ function RulesContent() {
         : "还没选转发组";
     }
     if (form.routeMode === "local" && !canUseLocalForward) return "没有可用的端口转发资源";
+    if (form.routeMode === "chain" && !canUseForwardChain) return "没有可用的转发链";
+    if (form.routeMode === "group" && !canUseFailoverGroup) return "没有可用的转发组";
+    if (form.routeMode === "tunnel" && !canUseGost) return "当前账号没有隧道转发权限";
     if (!isForwardGroupRouteMode && !form.hostId) return "还没选线路";
     if (portStatus === "used") return "源端口已被占用";
     if (!form.targetIp) return "还缺目标地址";
     if (!form.targetPort) return "还缺目标端口";
-    if (!form.name) return "还缺规则名称";
     if (form.failoverEnabled && form.protocol !== "tcp") return "出站策略只支持 TCP";
     return null;
   }, [
     form.routeMode, form.tunnelId, form.forwardGroupId, form.hostId, form.targetIp,
-    form.targetPort, form.name, form.failoverEnabled, form.protocol,
-    isForwardGroupRouteMode, canUseLocalForward, portStatus,
+    form.targetPort, form.failoverEnabled, form.protocol,
+    isForwardGroupRouteMode, canUseLocalForward, canUseForwardChain, canUseFailoverGroup, canUseGost, portStatus,
   ]);
   const routeModeTabItems: SlidingTabItem<RuleRouteMode>[] = [
     {
@@ -3636,32 +3639,13 @@ function RulesContent() {
 
   const handleSubmit = async () => {
     const submitForwardType = effectiveRouteForwardType;
-    if (!form.name || !form.targetIp || !form.targetPort || (!isForwardGroupRouteMode && !form.hostId)) {
-      toast.error("请填写所有必填字段（目标端口必须填写）");
-      return;
-    }
-    if (isForwardGroupRouteMode && !form.forwardGroupId) {
-      toast.error(form.routeMode === "local" ? "请选择端口转发" : form.routeMode === "chain" ? "请选择转发链" : "请选择转发组");
-      return;
-    }
-    if (form.routeMode === "local" && !canUseLocalForward) {
-      toast.error("暂无可用端口转发或按量计费资源");
-      return;
-    }
-    if (form.routeMode === "chain" && !canUseForwardChain) {
-      toast.error("暂无可用转发链");
-      return;
-    }
-    if (form.routeMode === "group" && !canUseFailoverGroup) {
-      toast.error("暂无可用转发组");
-      return;
-    }
-    if (form.routeMode === "tunnel" && !canUseGost) {
-      toast.error("当前账号没有隧道转发权限");
-      return;
-    }
-    if (form.routeMode === "tunnel" && !form.tunnelId) {
-      toast.error("请选择要使用的隧道");
+    /*
+      缺什么由 submitBlocker 说了算 —— 按钮的禁用、footer 的提示、这里的拦截，
+      三处读同一个值。原来这里另写了一份七段 if，和按钮那份各自演化，结果是
+      「按钮亮着、点下去说缺目标端口」这种自相矛盾。
+    */
+    if (submitBlocker) {
+      toast.error(submitBlocker);
       return;
     }
     if (form.routeMode === "local" && !isProtocolEnabled(form.forwardType)) {
@@ -7442,8 +7426,8 @@ function RulesContent() {
               字段顺序按「线路 → 端口 → 出口 → 名称」排：先是这条转发在哪走（上面的线路块），
               再是进来的端口和出去的地址，最后才是名字。
               原来「规则名称」排在第二，但它既不是这条转发「走哪儿」也不是「去哪儿」，
-              是最后才需要想的东西；端口和目标才是。名称本身是必填的（创建按钮会等它），
-              所以和其它三个一样标星号 —— 不标的话按钮一直灰着，用户看不出缺什么。
+              是最后才需要想的东西；端口和目标才是。现在它也不再必填 —— 留空由服务端
+              按目标地址生成，占位符里直接显示会生成成什么，不用猜。
             */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
@@ -7539,9 +7523,9 @@ function RulesContent() {
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
-              <Label>规则名称 <span className="text-destructive">*</span></Label>
+              <Label className="flex items-baseline gap-1.5">规则名称<span className="text-xs font-normal text-muted-foreground">留空自动生成</span></Label>
               <Input
-              placeholder="例如: Web 服务转发"
+              placeholder={autoForwardRuleName(form) || "例如: Web 服务转发"}
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
