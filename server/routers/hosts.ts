@@ -1516,6 +1516,13 @@ export const hostsRouter = router({
         await db.updateHost(id, data as any);
         if (ddnsConfigChanged) {
           scheduleHostDdnsUpdate({ ...host, ...(data as any), id }, "host-ddns-config-updated", { force: true });
+          /**
+           * 开关 DDNS、换 DDNS 域名都会改变这台机器的入口地址（见 getHostEntryAddresses
+           * 的优先级），订阅里派生出来的节点得跟着改。这里不走整套
+           * refreshHostAddressRuntime：转发链和隧道各自认的是 DDNS 域名本身，
+           * 不需要因为一次配置变更被重置。
+           */
+          await db.syncProxyNodesForHostAddress(id);
         }
         if (entryChanged) {
           await refreshHostAddressRuntime(id, host, "host-address-updated");
