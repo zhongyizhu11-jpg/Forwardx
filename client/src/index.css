@@ -1523,3 +1523,45 @@
   position: absolute;
   inset: -17px -13px;
 }
+
+/*
+  触摸设备上，按钮的命中区不小于 44×44。
+
+  量出来的现状：桌面那套控件高度是 32 / 36 / 40px，搬到手机上命中区只有
+  35~39px，差 5~9px；头部那两个图标按钮是 35×35。手册的硬指标是
+  「任何可以点的东西，实际可点面积不能小于 44×44px」—— 这是手指能舒服按中的
+  最小尺寸，不是审美问题。
+
+  只在 `pointer: coarse`（触屏）下生效，**桌面端一个像素都不动** —— 桌面用鼠标，
+  32px 的密集工具栏是对的，全局抬高只会把列表撑散。
+
+  没有用「透明 ::after 撑命中区」那招：量过同一批控件之间只隔 4px（手册要求
+  ≥8px），撑出去会盖住旁边的按钮，把误触从「点不中」变成「点错个」。抬高实际
+  高度不会让相邻元素靠得更近，是这里唯一安全的做法。
+
+  列表里那些 scale-75 的紧凑开关不在此列：它们已经由 .switch-compact 的 ::after
+  把命中区撑到约 49×40，而且四周有 28~53px 空当（量过），单独调它自己的 inset 即可。
+*/
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  [role="tab"] {
+    min-height: 44px;
+  }
+
+  /* 方形图标按钮两个方向都要够 */
+  button:where(.size-8, .size-9, .h-8, .h-9, [data-icon-button]),
+  [role="button"]:where(.size-8, .size-9, .h-8, .h-9) {
+    min-width: 44px;
+  }
+
+  /* 开关本体是被 transform 缩过的，min-height 对它没意义，走 ::after 那条路。 */
+  button[role="switch"] {
+    min-height: 0;
+  }
+}
+
+/* 紧凑开关的命中区再补 4px：量下来是 49×40，纵向差一点点。 */
+.switch-compact::after {
+  inset: -20px -13px;
+}

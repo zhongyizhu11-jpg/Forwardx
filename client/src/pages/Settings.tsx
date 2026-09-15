@@ -3817,7 +3817,7 @@ function PersonalizationSettingsSection() {
 
               {backgroundEnabled && (
                 <div className="space-y-3">
-                  <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
                     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
                       <div className="space-y-2">
                         <Label>背景不透明度</Label>
@@ -4950,7 +4950,7 @@ function SystemInfoSection() {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -5816,7 +5816,7 @@ function SystemInfoSection() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         {/* 版本升级 */}
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
