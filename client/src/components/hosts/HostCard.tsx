@@ -498,7 +498,8 @@ export default function HostCard({
     <div className={`mt-0.5 min-w-0 space-y-1 ${isOnline ? "" : "opacity-70 grayscale"}`}>
       <p className="min-w-0 truncate font-mono text-xs leading-5" title={hostPrimaryAddressText(host)}>
         <span className="mr-1.5 text-muted-foreground">地址</span>
-        {hostPrimaryAddressText(host)}
+        {/* 排障第一件事就是复制这个地址，所以它要从 select-guard 里单独放出来。 */}
+        <span className="selectable">{hostPrimaryAddressText(host)}</span>
       </p>
       <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5">
         <span className="shrink-0 text-muted-foreground">国家/地区：</span>
@@ -553,7 +554,7 @@ export default function HostCard({
   }, [host.id, metrics]);
 
   return (
-    <Card className={`${cardMinHeightClass} host-card-shell ${dragHandle ? "group/sortable" : ""} ${sortableClassName || ""} backdrop-blur-md transition-[min-height,border-color,background-color,box-shadow,opacity] duration-200 ease-out ${
+    <Card className={`${cardMinHeightClass} select-guard host-card-shell ${dragHandle ? "group/sortable" : ""} ${sortableClassName || ""} backdrop-blur-md transition-[min-height,border-color,background-color,box-shadow,opacity] duration-200 ease-out ${
       isOnline
         ? "border-border/40 bg-card/60 hover:border-border/60"
         : "border-muted-foreground/20 bg-muted/35 shadow-none hover:border-muted-foreground/30"
@@ -608,7 +609,7 @@ export default function HostCard({
                   className={`h-2 w-2 shrink-0 rounded-full ${isOnline ? "bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" : "bg-destructive shadow-sm shadow-destructive/50"}`}
                   title={isOnline ? "在线" : "离线"}
                 />
-                <span className="min-w-0 truncate text-sm font-semibold leading-5" title={hostName}>{hostName}</span>
+                <span className="selectable min-w-0 truncate text-sm font-semibold leading-5" title={hostName}>{hostName}</span>
                 <span
                   className={`shrink-0 rounded border bg-background/40 px-1.5 py-0.5 font-mono text-[10px] font-normal leading-none text-muted-foreground ${
                     isOnline ? "border-border/50" : "border-muted-foreground/20 bg-muted/20"
@@ -640,7 +641,7 @@ export default function HostCard({
                   className={`h-2 w-2 shrink-0 rounded-full ${isOnline ? "bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" : "bg-destructive shadow-sm shadow-destructive/50"}`}
                   title={isOnline ? "在线" : "离线"}
                 />
-                <span className="min-w-0 truncate text-sm font-semibold leading-5" title={hostName}>{hostName}</span>
+                <span className="selectable min-w-0 truncate text-sm font-semibold leading-5" title={hostName}>{hostName}</span>
                 <span
                   className={`shrink-0 rounded border bg-background/40 px-1.5 py-0.5 font-mono text-[10px] font-normal leading-none text-muted-foreground ${
                     isOnline ? "border-border/50" : "border-muted-foreground/20 bg-muted/20"
