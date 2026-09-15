@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNotNull, or, sql, type SQLWrapper } from "drizzle-orm";
-import { isFreshHostHeartbeat } from "../hostHeartbeatPolicy";
+import { isFreshHostHeartbeat, isHostConsideredOnline } from "../hostHeartbeatPolicy";
 export { isFreshHostHeartbeat } from "../hostHeartbeatPolicy";
 import {
   agentTokens,
@@ -34,7 +34,6 @@ import { HOST_ONLINE_TTL_MS } from "../hostHeartbeatPolicy";
 import { invalidateAgentAuthTokenCandidates } from "./tokenRepository";
 import { getSetting, setSetting } from "./settingsRepository";
 import {
-  isPresenceCapableHostConfirmedOffline,
   removePresenceCapableHost,
 } from "../agentFastLiveness";
 import {
@@ -50,12 +49,7 @@ import {
 export { HOST_ONLINE_TTL_MS };
 
 function withComputedOnline<T extends { id?: unknown; isOnline?: boolean; lastHeartbeat?: unknown }>(host: T): T {
-  return {
-    ...host,
-    isOnline: !!host.isOnline
-      && isFreshHostHeartbeat(host.lastHeartbeat)
-      && !isPresenceCapableHostConfirmedOffline(host.id),
-  };
+  return { ...host, isOnline: isHostConsideredOnline(host) };
 }
 
 export async function getHosts(userId?: number) {

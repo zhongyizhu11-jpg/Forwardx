@@ -2,10 +2,10 @@ import * as db from "./db";
 import { ENV } from "./env";
 import { sendTelegramMessage } from "./telegramBot";
 import { clearTunnelRuntimeStatusForHost } from "./tunnelRuntimeStatus";
+import { isHostConsideredOnline } from "./hostHeartbeatPolicy";
 import { partitionHostsByRecentAgentActivity } from "./agentActivity";
 import {
   getPresenceCapableHostLivenessSnapshot,
-  isPresenceCapableHostConfirmedOffline,
   subscribeAgentFastLiveness,
   type AgentFastLivenessTransition,
 } from "./agentFastLiveness";
@@ -77,12 +77,7 @@ function hostStatusMessage(host: any, status: HostStatus) {
 }
 
 export function isHostStatusOnline(host: any) {
-  if (!host?.lastHeartbeat) return false;
-  const last = new Date(host.lastHeartbeat as any).getTime();
-  return !!host?.isOnline
-    && Number.isFinite(last)
-    && Date.now() - last <= db.HOST_ONLINE_TTL_MS
-    && !isPresenceCapableHostConfirmedOffline(host?.id);
+  return isHostConsideredOnline(host);
 }
 
 async function telegramHostStatusEnabled() {
