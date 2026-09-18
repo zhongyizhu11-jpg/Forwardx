@@ -3760,6 +3760,8 @@ function TunnelsContent() {
               variant={activeViewMode === "card" ? "secondary" : "ghost"}
               size="icon"
               className="h-8 w-8 rounded-none"
+              aria-label="卡片视图"
+              aria-pressed={activeViewMode === "card"}
               onClick={() => handleActiveViewModeChange("card")}
             >
               <LayoutGrid className="h-4 w-4" />
@@ -3768,6 +3770,8 @@ function TunnelsContent() {
               variant={activeViewMode === "table" ? "secondary" : "ghost"}
               size="icon"
               className="h-8 w-8 rounded-none"
+              aria-label="列表视图"
+              aria-pressed={activeViewMode === "table"}
               onClick={() => handleActiveViewModeChange("table")}
             >
               <List className="h-4 w-4" />
@@ -3777,6 +3781,8 @@ function TunnelsContent() {
               size="icon"
               className="h-8 w-8 rounded-none"
               title="3D 地球视图"
+              aria-label="3D 地球视图"
+              aria-pressed={activeViewMode === "globe"}
               onClick={() => handleActiveViewModeChange("globe")}
             >
               <Globe className="h-4 w-4" />
@@ -3919,13 +3925,13 @@ function TunnelsContent() {
                     <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
                       {supported && (
                         <>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" aria-label={`查看隧道 ${tunnel.name} 的延迟`} onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
                             <Activity className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" aria-label={`测试隧道 ${tunnel.name} 的延迟`} onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
                             <Stethoscope className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(tunnel)}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         </>
@@ -3935,6 +3941,7 @@ function TunnelsContent() {
                         size="icon"
                         className="h-8 w-8 text-destructive hover:text-destructive"
                         title={!supported ? unsupportedProtocolTitle : undefined}
+                        aria-label={`删除隧道 ${tunnel.name}`}
                         onClick={() => setDeleteTunnel(tunnel)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -4015,13 +4022,13 @@ function TunnelsContent() {
                     <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
                       {supported && (
                         <>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" aria-label={`查看隧道 ${tunnel.name} 的延迟`} onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
                             <Activity className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" aria-label={`测试隧道 ${tunnel.name} 的延迟`} onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
                             <Stethoscope className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(tunnel)}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         </>
@@ -4031,6 +4038,7 @@ function TunnelsContent() {
                         size="icon"
                         className="h-8 w-8 text-destructive hover:text-destructive"
                         title={!supported ? unsupportedProtocolTitle : undefined}
+                        aria-label={`删除隧道 ${tunnel.name}`}
                         onClick={() => setDeleteTunnel(tunnel)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -4130,6 +4138,7 @@ function TunnelsContent() {
                                 size="icon"
                                 className="h-8 w-8"
                                 title="查看入口到出口延迟"
+                                aria-label={`查看隧道 ${tunnel.name} 的延迟`}
                                 onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}
                               >
                                 <Activity className="h-3.5 w-3.5" />
@@ -4139,11 +4148,12 @@ function TunnelsContent() {
                                 size="icon"
                                 className="h-8 w-8"
                                 title="测试入口到出口延迟"
+                                aria-label={`测试隧道 ${tunnel.name} 的延迟`}
                                 onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}
                               >
                                 <Stethoscope className="h-3.5 w-3.5" />
                               </Button>
-                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(tunnel)}>
+                              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
                                 <Pencil className="h-3.5 w-3.5" />
                               </Button>
                             </>
@@ -4153,6 +4163,7 @@ function TunnelsContent() {
                             size="icon"
                             className="h-8 w-8 text-destructive hover:text-destructive"
                             title={!supported ? unsupportedProtocolTitle : undefined}
+                            aria-label={`删除隧道 ${tunnel.name}`}
                             onClick={() => setDeleteTunnel(tunnel)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />

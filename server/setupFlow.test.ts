@@ -147,32 +147,24 @@ test("concurrent admin creation prevents a stale setup reset from deleting the n
 
 test("an active panel migration keeps setup open after administrator rows arrive", () => {
   runSetupFlow(String.raw`
-    const http = await import("node:http");
-    const os = await import("node:os");
-    const localAddress = Object.values(os.networkInterfaces())
-      .flat()
-      .find((entry) => entry?.family === "IPv4" && !entry.internal)?.address;
-    assert.ok(localAddress, "a non-loopback IPv4 address is required for the migration test");
+    // Exercise real setup/migration state without requiring a non-loopback NIC
+    // or making network requests. URL validation still runs normally.
+    const originalFetch = globalThis.fetch;
     let finishRequest = () => {};
     let markRequestSeen;
     const requestSeen = new Promise((resolve) => { markRequestSeen = resolve; });
-    const server = http.createServer((_request, response) => {
-      finishRequest = () => {
-        if (response.writableEnded) return;
-        response.statusCode = 503;
-        response.end("migration test finished");
-      };
-      markRequestSeen();
-    });
-    await new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "0.0.0.0", resolve);
-    });
+    globalThis.fetch = async (url, options) => {
+      assert.equal(String(url), "http://10.0.0.1:9810/api/migration/export");
+      assert.equal(options.method, "POST");
+      assert.equal(JSON.parse(options.body).migrationCode, "migration-test-code");
+      return new Promise((resolve) => {
+        finishRequest = () => resolve(new Response("migration test finished", { status: 503 }));
+        markRequestSeen();
+      });
+    };
     try {
-      const address = server.address();
-      assert.ok(address && typeof address === "object");
       const job = await caller.startMigration({
-        oldPanelUrl: "http://" + localAddress + ":" + address.port,
+        oldPanelUrl: "http://10.0.0.1:9810",
         migrationCode: "migration-test-code",
         targetPanelUrl: "http://127.0.0.1:9810",
         dataScope: "essential",
@@ -196,7 +188,7 @@ test("an active panel migration keeps setup open after administrator rows arrive
       assert.equal(migration.getMigrationJob(job.id)?.status, "failed");
     } finally {
       finishRequest();
-      await new Promise((resolve) => server.close(resolve));
+      globalThis.fetch = originalFetch;
     }
   `);
 });

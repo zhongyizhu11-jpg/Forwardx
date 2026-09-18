@@ -1900,6 +1900,8 @@ export function ForwardGroupsContent({
               variant={viewMode === "card" ? "secondary" : "ghost"}
               size="icon"
               className="h-8 w-8 rounded-none"
+              aria-label="卡片视图"
+              aria-pressed={viewMode === "card"}
               onClick={() => handleViewModeChange("card")}
             >
               <LayoutGrid className="h-4 w-4" />
@@ -1908,6 +1910,8 @@ export function ForwardGroupsContent({
               variant={viewMode === "table" ? "secondary" : "ghost"}
               size="icon"
               className="h-8 w-8 rounded-none"
+              aria-label="列表视图"
+              aria-pressed={viewMode === "table"}
               onClick={() => handleViewModeChange("table")}
             >
               <List className="h-4 w-4" />
@@ -1999,16 +2003,17 @@ export function ForwardGroupsContent({
 
                   <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
                     {chainLatencyActions(group)}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => syncMutation.mutate({ id: group.id })}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
                       <RefreshCw className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(group)}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-destructive hover:text-destructive"
+                      aria-label={`删除链路 ${group.name}`}
                       onClick={() => setDeleteGroup(group)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -2097,16 +2102,17 @@ export function ForwardGroupsContent({
 
                   <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
                     {chainLatencyActions(group)}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => syncMutation.mutate({ id: group.id })}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
                       <RefreshCw className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(group)}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-destructive hover:text-destructive"
+                      aria-label={`删除链路 ${group.name}`}
                       onClick={() => setDeleteGroup(group)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -2178,16 +2184,17 @@ export function ForwardGroupsContent({
                       <TableCell className="py-3 text-right">
                         <div className="flex justify-end gap-1">
                           {chainLatencyActions(group)}
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => syncMutation.mutate({ id: group.id })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
                             <RefreshCw className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(group)}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 text-destructive hover:text-destructive"
+                            aria-label={`删除链路 ${group.name}`}
                             onClick={() => setDeleteGroup(group)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -2833,7 +2840,7 @@ export function ForwardGroupsContent({
                             }} title={member.isEnabled ? "关闭后该成员不参与转发组切换" : "开启后该成员可参与转发组切换"} />
                           </div>
                           <div className="flex h-7 w-9 items-center justify-end">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => removeMember(member.key)}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" aria-label={`移除成员 ${memberLabel(member)}`} onClick={() => removeMember(member.key)}>
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>

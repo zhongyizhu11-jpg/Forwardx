@@ -20,6 +20,7 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
+    "test:all": "node scripts/test-all.mjs",
     "test:migration": "node --import tsx --test server/legacyMigration.test.ts",
     "test:mimic": "node --import tsx --test server/mimicEnvironment.test.ts server/mimicRuntimeLifecycle.test.ts",
     "test:selftest-dispatch": "node --import tsx --test server/forwardTestDispatch.test.ts",

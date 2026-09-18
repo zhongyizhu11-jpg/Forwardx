@@ -2241,6 +2241,8 @@ function HostsContent() {
                   size="icon"
                   className="h-8 w-8 rounded-none"
                   title="精简卡片"
+                  aria-label="精简卡片"
+                  aria-pressed={viewMode === "compact-card"}
                   onClick={() => handleViewModeChange("compact-card")}
                 >
                   <Rows3 className="h-4 w-4" />
@@ -2250,6 +2252,8 @@ function HostsContent() {
                   size="icon"
                   className="h-8 w-8 rounded-none"
                   title="标准卡片"
+                  aria-label="标准卡片"
+                  aria-pressed={viewMode === "card"}
                   onClick={() => handleViewModeChange("card")}
                 >
                   <LayoutGrid className="h-4 w-4" />
@@ -2259,6 +2263,8 @@ function HostsContent() {
                   size="icon"
                   className="h-8 w-8 rounded-none"
                   title="列表视图"
+                  aria-label="列表视图"
+                  aria-pressed={viewMode === "table"}
                   onClick={() => handleViewModeChange("table")}
                 >
                   <List className="h-4 w-4" />
@@ -2268,6 +2274,8 @@ function HostsContent() {
                   size="icon"
                   className="hidden h-8 w-8 rounded-none md:inline-flex"
                   title="3D 地球视图"
+                  aria-label="3D 地球视图"
+                  aria-pressed={viewMode === "map"}
                   onClick={() => handleViewModeChange("map")}
                 >
                   <Globe className="h-4 w-4" />
@@ -2277,6 +2285,8 @@ function HostsContent() {
                   size="icon"
                   className="hidden h-8 w-8 rounded-none md:inline-flex"
                   title="平面地图视图"
+                  aria-label="平面地图视图"
+                  aria-pressed={viewMode === "flat-map"}
                   onClick={() => handleViewModeChange("flat-map")}
                 >
                   <MapPinned className="h-4 w-4" />
@@ -2291,6 +2301,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="卡片视图"
+                aria-label="卡片视图"
+                aria-pressed={tokenViewMode === "card"}
                 onClick={() => handleTokenViewModeChange("card")}
               >
                 <LayoutGrid className="h-4 w-4" />
@@ -2300,6 +2312,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="列表视图"
+                aria-label="列表视图"
+                aria-pressed={tokenViewMode === "table"}
                 onClick={() => handleTokenViewModeChange("table")}
               >
                 <List className="h-4 w-4" />
@@ -2313,6 +2327,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="卡片视图"
+                aria-label="卡片视图"
+                aria-pressed={hostGroupViewMode === "card"}
                 onClick={() => handleHostGroupViewModeChange("card")}
               >
                 <LayoutGrid className="h-4 w-4" />
@@ -2322,6 +2338,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="列表视图"
+                aria-label="列表视图"
+                aria-pressed={hostGroupViewMode === "table"}
                 onClick={() => handleHostGroupViewModeChange("table")}
               >
                 <List className="h-4 w-4" />
@@ -2335,6 +2353,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="卡片视图"
+                aria-label="卡片视图"
+                aria-pressed={serviceViewMode === "card"}
                 onClick={() => handleServiceViewModeChange("card")}
               >
                 <LayoutGrid className="h-4 w-4" />
@@ -2344,6 +2364,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="列表视图"
+                aria-label="列表视图"
+                aria-pressed={serviceViewMode === "table"}
                 onClick={() => handleServiceViewModeChange("table")}
               >
                 <List className="h-4 w-4" />
