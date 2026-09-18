@@ -1565,3 +1565,11 @@
 .switch-compact::after {
   inset: -20px -13px;
 }
+
+/* Touch action rows need spacing as well as large targets. */
+@media (pointer: coarse) {
+  .action-card-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}

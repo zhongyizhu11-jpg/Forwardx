@@ -471,9 +471,9 @@ export default function Subscriptions() {
                           自动续费开在这里而不是设置页：决定要不要自动扣钱的时候，
                           人正看着这条订阅的价格和到期时间。
                         */
-                        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                           <Switch
-                            className="scale-90"
+                            aria-label={`自动续费 ${sub.planName || `套餐 #${sub.planId}`}`}
                             checked={!!sub.autoRenew}
                             disabled={setAutoRenew.isPending}
                             onCheckedChange={(checked) => setAutoRenew.mutate({ id: Number(sub.id), autoRenew: checked })}
