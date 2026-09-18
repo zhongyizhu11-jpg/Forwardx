@@ -1,3 +1,5 @@
+import { FormField } from "@/components/ui/form-field";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "@shared/formatBytes";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -372,7 +374,7 @@ function PluginSettingInput({
 
   if (field.type === "select") {
     return (
-      <div className="space-y-2">
+      <FormField className="space-y-2">
         <Label>{field.label}</Label>
         <Select value={String(value || "")} onValueChange={onChange} disabled={disabled}>
           <SelectTrigger>
@@ -387,7 +389,7 @@ function PluginSettingInput({
           </SelectContent>
         </Select>
         {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
-      </div>
+      </FormField>
     );
   }
 
@@ -428,7 +430,7 @@ function PluginSettingInput({
 
   if (field.type === "textarea") {
     return (
-      <div className="space-y-2">
+      <FormField className="space-y-2">
         <Label>{field.label}</Label>
         <Textarea
           value={String(value || "")}
@@ -438,12 +440,12 @@ function PluginSettingInput({
           className="min-h-28 resize-y"
         />
         {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
-      </div>
+      </FormField>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <FormField className="space-y-2">
       <Label>{field.label}</Label>
       <Input
         type={field.type === "password" ? "password" : field.type === "number" ? "number" : "text"}
@@ -455,7 +457,7 @@ function PluginSettingInput({
         disabled={disabled}
       />
       {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
-    </div>
+    </FormField>
   );
 }
 
@@ -498,7 +500,7 @@ function PluginUsageFieldInput({
 
   if (field.type === "select") {
     return (
-      <div className="space-y-2">
+      <FormField className="space-y-2">
         <Label>{field.label}</Label>
         <Select value={String(value || "")} onValueChange={onChange} disabled={disabled}>
           <SelectTrigger>
@@ -513,7 +515,7 @@ function PluginUsageFieldInput({
           </SelectContent>
         </Select>
         {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
-      </div>
+      </FormField>
     );
   }
 
@@ -554,7 +556,7 @@ function PluginUsageFieldInput({
 
   if (field.type === "textarea") {
     return (
-      <div className="space-y-2">
+      <FormField className="space-y-2">
         <Label>{field.label}</Label>
         <Textarea
           value={String(value || "")}
@@ -564,12 +566,12 @@ function PluginUsageFieldInput({
           className="min-h-28 resize-y"
         />
         {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
-      </div>
+      </FormField>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <FormField className="space-y-2">
       <Label>{field.label}</Label>
       <Input
         value={String(value || "")}
@@ -578,7 +580,7 @@ function PluginUsageFieldInput({
         disabled={disabled}
       />
       {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
-    </div>
+    </FormField>
   );
 }
 
@@ -1612,7 +1614,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
         {(isChinaRegionWhitelist || usageOperationOptions.length > 0 || renderedUsageFields.length > 0) && (
           <div className="rounded-xl border border-border/40 bg-muted/20 p-4">
             {usageOperationOptions.length > 0 && (
-              <div className="mb-4 space-y-2">
+              <FormField className="mb-4 space-y-2">
                 <Label>{hostAssetSyncUsageView?.operationSelector?.label || "执行方式"}</Label>
                 <Select
                   value={usageDraft.operation || usageOperationOptions[0]?.value || ""}
@@ -1634,7 +1636,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                     {usageOperationOptions.find((option: any) => option.value === usageDraft.operation)?.description || hostAssetSyncUsageView?.operationSelector?.description}
                   </p>
                 )}
-              </div>
+              </FormField>
             )}
             {isChinaRegionWhitelist && chinaRegionField && (
               <div className="mb-4">
@@ -1808,7 +1810,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
           </div>}
         </div>
 
-        <div className="space-y-2">
+        <FormField className="space-y-2">
           <Label>{hostAssetSyncUsageView?.noteField?.label || "备注"}</Label>
           <Textarea
             value={usageDraft.note}
@@ -1816,7 +1818,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
             placeholder={hostAssetSyncUsageView?.noteField?.placeholder || "例如：说明这个配置会用在哪些主机或脚本里"}
             className="min-h-20"
           />
-        </div>
+        </FormField>
 
         {usageAgentActions.length > 0 && (
           <div className="space-y-3 rounded-xl border border-border/40 bg-muted/20 p-4">
@@ -1921,14 +1923,10 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
         <div className="space-y-4">
           <div className="flex min-w-0 items-center gap-3">
             {selectedPlugin && <PluginLogo logo={selectedManifest.sidebar?.icon || selectedManifest.logo} name={selectedPlugin.name} />}
-            <div className="min-w-0">
-              <h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">
-                {selectedManifest.sidebar?.label || selectedPlugin?.name || "插件页面"}
-              </h1>
-              {selectedPlugin?.description && <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{selectedPlugin.description}</p>}
-            </div>
+            <WorkspaceHeader title={selectedManifest.sidebar?.label || selectedPlugin?.name || "插件页面"}
+              description={selectedPlugin?.description} />
           </div>
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+          <Card className="border-border bg-card">
             <CardContent className="p-4 sm:p-6">
               {pluginListLoading ? (
                 <DataSectionLoading label="正在加载插件页面" minHeight="min-h-[260px]" />
@@ -1981,10 +1979,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
       ) : (
       <div className="space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">插件</h1>
-            <p className="mt-1 text-sm text-muted-foreground">安装、更新和调试插件能力。</p>
-          </div>
+          <WorkspaceHeader title={<>插件</>} description={<>安装、更新和调试插件能力。</>} />
           <Button className="w-full gap-2 sm:w-auto" onClick={() => setCustomInstallOpen(true)}>
             <PackagePlus className="h-4 w-4" />
             插件来源
@@ -1997,7 +1992,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
 
         {activeSection === "usage" && (
           <div className="grid gap-4 xl:grid-cols-[minmax(260px,0.55fr)_minmax(0,1.45fr)]">
-            <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+            <Card className="border-border bg-card">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Puzzle className="h-4 w-4 text-primary" />
@@ -2044,7 +2039,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
               </CardContent>
             </Card>
 
-            <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+            <Card className="border-border bg-card">
               <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex min-w-0 gap-3">
                   {selectedPlugin && <PluginLogo logo={selectedManifest.logo} name={selectedPlugin.name} />}
@@ -2065,7 +2060,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
 
         {activeSection === "store" && (
         <div className="grid gap-4">
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+          <Card className="border-border bg-card">
             <CardHeader className="flex-row items-start justify-between gap-3">
               <div>
                 <CardTitle className="flex items-center gap-2 text-base">
@@ -2179,7 +2174,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                 <TabsTrigger value="upload">上传</TabsTrigger>
               </TabsList>
               <TabsContent value="store" className="space-y-4">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>GitHub 商店仓库</Label>
                   <Textarea
                     value={storeRepositoryList}
@@ -2188,7 +2183,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                     className="min-h-28 font-mono text-sm"
                   />
                   <p className="text-xs text-muted-foreground">每行一个仓库，默认读取 main 分支根目录的 forwardx-store.json。</p>
-                </div>
+                </FormField>
                 <Button className="w-full gap-2" onClick={handleAddStoreSources} disabled={addStoreSourcesMutation.isPending}>
                   {addStoreSourcesMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Github className="h-4 w-4" />}
                   添加并同步商店来源
@@ -2352,7 +2347,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
 
         {activeSection === "manage" && (
         <div className="grid gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.2fr)]">
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+          <Card className="border-border bg-card">
             <CardHeader className="flex-row items-start justify-between gap-3">
               <div>
                 <CardTitle className="flex items-center gap-2 text-base">
@@ -2441,7 +2436,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
             </CardContent>
           </Card>
 
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+          <Card className="border-border bg-card">
             {selectedPlugin ? (
               <>
                 <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">

@@ -1,3 +1,4 @@
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DashboardLayout from "@/components/DashboardLayout";
 import { quotaSourceLabel, subscriptionSourceLabel, subscriptionStatusLabel } from "@shared/ledgerLabels";
 import { formatQuotaBytes } from "@shared/formatBytes";
@@ -271,12 +272,7 @@ export default function Subscriptions() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">我的套餐</h1>
-            <p className="text-sm text-muted-foreground">已购买和已分配的套餐。</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+        <WorkspaceHeader title={<>我的套餐</>} description={<>已购买和已分配的套餐。</>} actions={<>
             {storeStatus?.enabled && (
               <Button type="button" size="sm" onClick={() => setLocation("/store")}>
                 <ShoppingBag className="mr-2 h-3.5 w-3.5" /> 去商店
@@ -292,8 +288,7 @@ export default function Subscriptions() {
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
               {activeCount} 个生效套餐
             </Badge>
-          </div>
-        </div>
+          </>} />
 
         {!isLoading && quota.hasQuota && (
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-y border-border/50 py-3 sm:flex sm:flex-wrap sm:items-center sm:gap-x-8">

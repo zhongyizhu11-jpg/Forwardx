@@ -234,7 +234,7 @@ function AgentTokenCard({
   const createdAtText = new Date(tokenItem.createdAt).toLocaleString();
 
   return (
-    <Card className={cn("action-card group/sortable border-border/40 bg-card/60 backdrop-blur-md", sortableClassName)}>
+    <Card className={cn("action-card group/sortable border-border bg-card", sortableClassName)}>
       <CardContent className="action-card-content space-y-4 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -691,7 +691,7 @@ export default function AgentTokenManager({
         <AlertTitle>通讯已加密</AlertTitle>
       </Alert>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-4">
@@ -820,7 +820,7 @@ export default function AgentTokenManager({
                 <Key className="h-8 w-8 opacity-40" />
               </div>
               <p className="text-lg font-medium">{isTextFiltered && tokenItems.length > 0 ? "未找到匹配 Token" : "暂无 Token"}</p>
-              <p className="text-sm mt-1 text-muted-foreground/60">
+              <p className="text-sm mt-1 text-muted-foreground">
                 {isTextFiltered && tokenItems.length > 0 ? "调整筛选内容或清空搜索" : "添加主机后会生成 Agent 安装命令"}
               </p>
               {showCreateButton && (

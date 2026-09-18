@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "../../shared/design-tokens.css";
+@import "./styles/workspace.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -40,44 +42,44 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-sans: var(--fx-font);
 }
 
 /* ===== Light theme (default) ===== */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(0.98 0.002 260);
-  --foreground: oklch(0.15 0.01 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.15 0.01 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.15 0.01 260);
+  --radius: 0.75rem;
+  --background: var(--fx-canvas);
+  --foreground: var(--fx-text);
+  --card: var(--fx-surface);
+  --card-foreground: var(--fx-text);
+  --popover: var(--fx-raised);
+  --popover-foreground: var(--fx-text);
   --primary: oklch(0.18 0.012 260);
   --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.94 0.01 260);
-  --secondary-foreground: oklch(0.25 0.015 260);
-  --muted: oklch(0.94 0.008 260);
-  --muted-foreground: oklch(0.48 0.02 260);
-  --accent: oklch(0.94 0.01 260);
-  --accent-foreground: oklch(0.15 0.01 260);
+  --secondary: var(--fx-subtle);
+  --secondary-foreground: var(--fx-text);
+  --muted: var(--fx-subtle);
+  --muted-foreground: var(--fx-muted);
+  --accent: var(--fx-subtle);
+  --accent-foreground: var(--fx-text);
   --destructive: oklch(0.55 0.22 25);
   --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.88 0.01 260);
-  --input: oklch(0.88 0.01 260);
-  --ring: oklch(0.42 0.02 260);
+  --border: var(--fx-stroke);
+  --input: var(--fx-stroke);
+  --ring: var(--fx-brand);
   --chart-1: oklch(0.56 0.12 170);
   --chart-2: oklch(0.6 0.18 165);
   --chart-3: oklch(0.6 0.16 300);
   --chart-4: oklch(0.65 0.16 80);
   --chart-5: oklch(0.55 0.22 25);
-  --sidebar: oklch(0.97 0.003 260);
-  --sidebar-foreground: oklch(0.25 0.01 260);
+  --sidebar: var(--fx-surface);
+  --sidebar-foreground: var(--fx-muted);
   --sidebar-primary: oklch(0.18 0.012 260);
   --sidebar-primary-foreground: oklch(0.98 0 0);
-  --sidebar-accent: oklch(0.93 0.012 260);
-  --sidebar-accent-foreground: oklch(0.15 0.01 260);
-  --sidebar-border: oklch(0.88 0.01 260);
-  --sidebar-ring: oklch(0.42 0.02 260);
+  --sidebar-accent: var(--fx-brand-soft);
+  --sidebar-accent-foreground: var(--fx-brand);
+  --sidebar-border: var(--fx-stroke);
+  --sidebar-ring: var(--fx-brand);
   --forwardx-safe-area-top: env(safe-area-inset-top, 0px);
   --forwardx-safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --forwardx-mobile-header-offset: calc(3.5rem + var(--forwardx-safe-area-top));
@@ -85,38 +87,38 @@
 
 /* ===== Dark theme ===== */
 .dark {
-  --background: oklch(0.13 0.01 260);
-  --foreground: oklch(0.93 0.005 260);
-  --card: oklch(0.17 0.012 260);
-  --card-foreground: oklch(0.93 0.005 260);
-  --popover: oklch(0.19 0.014 260);
-  --popover-foreground: oklch(0.93 0.005 260);
+  --background: var(--fx-canvas);
+  --foreground: var(--fx-text);
+  --card: var(--fx-surface);
+  --card-foreground: var(--fx-text);
+  --popover: var(--fx-raised);
+  --popover-foreground: var(--fx-text);
   --primary: oklch(0.92 0.004 260);
   --primary-foreground: oklch(0.14 0.01 260);
-  --secondary: oklch(0.22 0.015 260);
-  --secondary-foreground: oklch(0.85 0.005 260);
-  --muted: oklch(0.22 0.012 260);
-  --muted-foreground: oklch(0.6 0.02 260);
-  --accent: oklch(0.24 0.018 260);
-  --accent-foreground: oklch(0.93 0.005 260);
+  --secondary: var(--fx-subtle);
+  --secondary-foreground: var(--fx-text);
+  --muted: var(--fx-subtle);
+  --muted-foreground: var(--fx-muted);
+  --accent: var(--fx-subtle);
+  --accent-foreground: var(--fx-text);
   --destructive: oklch(0.65 0.2 25);
   --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.28 0.015 260);
-  --input: oklch(0.25 0.015 260);
-  --ring: oklch(0.74 0.02 260);
+  --border: var(--fx-stroke);
+  --input: var(--fx-stroke);
+  --ring: var(--fx-brand);
   --chart-1: oklch(0.72 0.14 165);
   --chart-2: oklch(0.75 0.2 155);
   --chart-3: oklch(0.7 0.15 300);
   --chart-4: oklch(0.72 0.18 45);
   --chart-5: oklch(0.65 0.2 25);
-  --sidebar: oklch(0.15 0.012 260);
-  --sidebar-foreground: oklch(0.85 0.005 260);
+  --sidebar: var(--fx-surface);
+  --sidebar-foreground: var(--fx-muted);
   --sidebar-primary: oklch(0.92 0.004 260);
   --sidebar-primary-foreground: oklch(0.14 0.01 260);
-  --sidebar-accent: oklch(0.22 0.018 260);
-  --sidebar-accent-foreground: oklch(0.93 0.005 260);
-  --sidebar-border: oklch(0.25 0.015 260);
-  --sidebar-ring: oklch(0.74 0.02 260);
+  --sidebar-accent: var(--fx-brand-soft);
+  --sidebar-accent-foreground: var(--fx-brand);
+  --sidebar-border: var(--fx-stroke);
+  --sidebar-ring: var(--fx-brand);
 }
 
 @layer base {
@@ -248,10 +250,7 @@
   body {
     @apply bg-background text-foreground;
     position: relative;
-    background:
-      radial-gradient(circle at 18% -10%, color-mix(in oklch, var(--chart-1) 16%, transparent) 0, transparent 34rem),
-      radial-gradient(circle at 92% 8%, color-mix(in oklch, var(--chart-2) 14%, transparent) 0, transparent 30rem),
-      linear-gradient(135deg, color-mix(in oklch, var(--background) 90%, white 10%) 0%, var(--background) 48%, color-mix(in oklch, var(--background) 88%, var(--chart-4) 12%) 100%);
+    background: var(--background);
     min-height: 100vh;
   }
 
@@ -775,26 +774,10 @@
   }
 
   .glass-panel {
-    @apply border text-card-foreground shadow-sm;
-    background:
-      linear-gradient(145deg, color-mix(in oklch, var(--card) 70%, white 30%) 0%, color-mix(in oklch, var(--card) 62%, transparent) 54%, color-mix(in oklch, var(--card) 72%, var(--chart-2) 8%) 100%);
-    border-color: color-mix(in oklch, var(--border) 42%, white 58%);
-    box-shadow:
-      inset 0 1px 0 color-mix(in oklch, white 72%, transparent),
-      inset 0 -1px 0 color-mix(in oklch, var(--foreground) 5%, transparent),
-      0 18px 60px color-mix(in oklch, var(--foreground) 9%, transparent);
-    backdrop-filter: blur(28px) saturate(1.55);
-    -webkit-backdrop-filter: blur(28px) saturate(1.55);
-  }
-
-  .dark .glass-panel {
-    background:
-      linear-gradient(145deg, color-mix(in oklch, var(--card) 72%, white 8%) 0%, color-mix(in oklch, var(--card) 64%, transparent) 54%, color-mix(in oklch, var(--card) 78%, var(--chart-3) 10%) 100%);
-    border-color: color-mix(in oklch, var(--border) 64%, white 18%);
-    box-shadow:
-      inset 0 1px 0 color-mix(in oklch, white 18%, transparent),
-      inset 0 -1px 0 color-mix(in oklch, black 22%, transparent),
-      0 18px 60px color-mix(in oklch, black 36%, transparent);
+    @apply border text-card-foreground;
+    background: var(--fx-surface);
+    border-color: var(--fx-stroke);
+    box-shadow: var(--fx-shadow);
   }
 
   @keyframes dialog-overlay-in {
@@ -926,19 +909,13 @@
 
   .dialog-panel {
     color: var(--popover-foreground);
-    background-color: var(--popover);
-    background:
-      linear-gradient(145deg, color-mix(in oklch, var(--popover) 98%, white 2%) 0%, color-mix(in oklch, var(--popover) 99%, var(--chart-2) 1%) 100%);
-    border: 1px solid color-mix(in oklch, var(--border) 78%, white 18%);
-    box-shadow:
-      inset 0 1px 0 color-mix(in oklch, white 64%, transparent),
-      0 24px 90px color-mix(in oklch, var(--foreground) 22%, transparent);
+    background: var(--fx-raised);
+    border: 1px solid var(--fx-stroke);
+    box-shadow: var(--fx-shadow-raised), 0 24px 72px rgb(0 0 0 / 16%);
     isolation: isolate;
     opacity: 0;
     transform: translateY(0);
-    text-rendering: geometricPrecision;
     -webkit-font-smoothing: antialiased;
-    will-change: opacity;
   }
 
   .dialog-panel[data-state="open"] {
@@ -950,13 +927,7 @@
   }
 
   .dark .dialog-panel {
-    background-color: var(--popover);
-    background:
-      linear-gradient(145deg, color-mix(in oklch, var(--popover) 96%, white 3%) 0%, color-mix(in oklch, var(--popover) 99%, var(--chart-3) 1%) 100%);
-    border-color: color-mix(in oklch, var(--border) 78%, white 10%);
-    box-shadow:
-      inset 0 1px 0 color-mix(in oklch, white 12%, transparent),
-      0 24px 90px color-mix(in oklch, black 58%, transparent);
+    box-shadow: var(--fx-shadow-raised), 0 24px 72px rgb(0 0 0 / 32%);
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -973,88 +944,58 @@
     }
   }
   .glass-surface {
-    background: color-mix(in oklch, var(--background) 64%, transparent);
-    border-color: color-mix(in oklch, var(--border) 48%, white 30%);
-    box-shadow: inset 0 1px 0 color-mix(in oklch, white 44%, transparent);
-    backdrop-filter: blur(24px) saturate(1.45);
-    -webkit-backdrop-filter: blur(24px) saturate(1.45);
+    background: var(--fx-surface);
+    border-color: var(--fx-stroke);
+    box-shadow: 0 1px 3px rgb(24 37 54 / 4%);
   }
 
   .auth-shell,
   .public-home-shell {
-    background:
-      linear-gradient(118deg, color-mix(in oklch, var(--chart-1) 14%, transparent) 0%, transparent 36%),
-      linear-gradient(246deg, color-mix(in oklch, var(--chart-2) 11%, transparent) 0%, transparent 42%),
-      linear-gradient(135deg, color-mix(in oklch, var(--background) 96%, white 4%) 0%, var(--background) 54%, color-mix(in oklch, var(--background) 92%, var(--chart-4) 8%) 100%);
+    background: var(--fx-canvas);
   }
 
-  .dark .auth-shell,
-  .dark .public-home-shell {
-    background:
-      linear-gradient(118deg, color-mix(in oklch, var(--chart-1) 13%, transparent) 0%, transparent 36%),
-      linear-gradient(246deg, color-mix(in oklch, var(--chart-2) 9%, transparent) 0%, transparent 42%),
-      linear-gradient(135deg, color-mix(in oklch, var(--background) 92%, white 3%) 0%, var(--background) 54%, color-mix(in oklch, var(--background) 88%, var(--chart-4) 8%) 100%);
-  }
+
 
   html[data-personalization-background="image"] .auth-shell,
   html[data-personalization-background="video"] .auth-shell,
   html[data-personalization-background="image"] .public-home-shell,
   html[data-personalization-background="video"] .public-home-shell {
-    background:
-      linear-gradient(118deg, color-mix(in oklch, var(--chart-1) 14%, transparent) 0%, transparent 38%),
-      linear-gradient(246deg, color-mix(in oklch, var(--chart-2) 12%, transparent) 0%, transparent 44%),
-      color-mix(in oklch, var(--background) 42%, transparent);
+    background: color-mix(in srgb, var(--background) 60%, transparent);
   }
 
   .dark[data-personalization-background="image"] .auth-shell,
   .dark[data-personalization-background="video"] .auth-shell,
   .dark[data-personalization-background="image"] .public-home-shell,
   .dark[data-personalization-background="video"] .public-home-shell {
-    background:
-      linear-gradient(118deg, color-mix(in oklch, var(--chart-1) 12%, transparent) 0%, transparent 38%),
-      linear-gradient(246deg, color-mix(in oklch, var(--chart-2) 10%, transparent) 0%, transparent 44%),
-      color-mix(in oklch, var(--background) 56%, transparent);
+    background: color-mix(in srgb, var(--background) 70%, transparent);
   }
 
   .auth-grid-overlay {
-    background-image:
-      linear-gradient(90deg, color-mix(in oklch, var(--foreground) 10%, transparent) 1px, transparent 1px),
-      linear-gradient(0deg, color-mix(in oklch, var(--foreground) 8%, transparent) 1px, transparent 1px);
-    background-size: 96px 96px;
-    mask-image: linear-gradient(90deg, black 0%, rgb(0 0 0 / 0.72) 48%, transparent 100%);
+    display: none;
   }
 
   .auth-card-surface {
-    background: color-mix(in oklch, var(--card) 76%, transparent);
-    border-color: color-mix(in oklch, var(--border) 58%, transparent);
-    box-shadow:
-      inset 0 1px 0 color-mix(in oklch, white 52%, transparent),
-      0 24px 70px color-mix(in oklch, var(--foreground) 8%, transparent);
-    backdrop-filter: blur(28px) saturate(1.45);
-    -webkit-backdrop-filter: blur(28px) saturate(1.45);
+    background: var(--fx-surface);
+    border-color: var(--fx-stroke);
+    box-shadow: var(--fx-shadow-raised);
   }
 
-  .dark .auth-card-surface {
-    background: color-mix(in oklch, var(--card) 80%, transparent);
-    box-shadow:
-      inset 0 1px 0 color-mix(in oklch, white 16%, transparent),
-      0 24px 70px color-mix(in oklch, black 34%, transparent);
-  }
+
 
   .auth-route-enter {
-    animation: auth-route-fade 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: auth-mode-fade 180ms ease-out both;
   }
 
   .auth-route-enter-left {
-    animation: auth-panel-rise 780ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: auth-mode-fade 180ms ease-out both;
   }
 
   .auth-route-enter-panel {
-    animation: auth-card-rise 820ms cubic-bezier(0.22, 1, 0.36, 1) 90ms both;
+    animation: auth-mode-fade 180ms ease-out both;
   }
 
   .auth-mode-panel {
-    animation: auth-mode-fade 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: auth-mode-fade 180ms ease-out both;
   }
 
   .auth-telegram-slot iframe {
@@ -1081,28 +1022,15 @@
   }
 
   .action-menu-content {
-    background-color: var(--popover);
-    background-image: linear-gradient(
-      145deg,
-      color-mix(in oklch, var(--popover) 97%, white 3%) 0%,
-      color-mix(in oklch, var(--popover) 97%, var(--primary) 3%) 100%
-    );
-    border-color: color-mix(in oklch, var(--border) 82%, white 18%);
-    box-shadow:
-      inset 0 1px 0 color-mix(in oklch, white 58%, transparent),
-      0 14px 36px color-mix(in oklch, var(--foreground) 16%, transparent);
+    background: var(--fx-raised);
+    border-color: var(--fx-stroke);
+    box-shadow: var(--fx-shadow-raised);
   }
 
   .dark .action-menu-content {
-    background-image: linear-gradient(
-      145deg,
-      color-mix(in oklch, var(--popover) 96%, white 4%) 0%,
-      color-mix(in oklch, var(--popover) 96%, var(--chart-3) 4%) 100%
-    );
-    border-color: color-mix(in oklch, var(--border) 78%, white 10%);
-    box-shadow:
-      inset 0 1px 0 color-mix(in oklch, white 12%, transparent),
-      0 14px 38px color-mix(in oklch, black 48%, transparent);
+    background: var(--fx-raised);
+    border-color: var(--fx-stroke);
+    box-shadow: var(--fx-shadow-raised);
   }
 
   .action-menu-item {

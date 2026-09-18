@@ -1,3 +1,5 @@
+import WorkspaceHeader from "@/components/WorkspaceHeader";
+import { FormField } from "@/components/ui/form-field";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { formatBytes } from "@shared/formatBytes";
@@ -756,11 +758,7 @@ function SettingsContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">系统设置</h1>
-        </div>
-      </div>
+      <WorkspaceHeader title="系统设置" description="配置面板、通知、外观与数据维护。" />
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
         <SlidingTabsList items={settingsTabItems} activeValue={activeTab} ariaLabel="系统设置" minItemWidthRem={7.5} />
@@ -895,7 +893,7 @@ function PanelLogsSection() {
   const logEmptyClass = "flex h-full items-center justify-center text-muted-foreground";
   return (
     <div className="flex flex-col gap-4">
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -1609,7 +1607,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
           { label: "当前隧道", value: displayBackupSummary.tunnelCount },
           { label: "转发组", value: displayBackupSummary.forwardGroupCount },
         ].map((item) => (
-          <Card key={item.label} className="border-border/40 bg-card/60 backdrop-blur-md">
+          <Card key={item.label} className="border-border bg-card">
             <CardContent className="min-h-[80px] p-4">
               <p className="text-xs text-muted-foreground">{item.label}</p>
               <div className="mt-1 flex h-7 items-center">
@@ -1637,7 +1635,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
       </Alert>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Key className="h-4 w-4 text-primary" />
@@ -1717,7 +1715,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
           </CardContent>
         </Card>
 
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <MoveRight className="h-4 w-4 text-primary" />
@@ -1746,31 +1744,31 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>旧面板地址</Label>
                 <Input
                   value={onlineMigration.oldPanelUrl}
                   onChange={(e) => setOnlineMigration({ ...onlineMigration, oldPanelUrl: e.target.value })}
                   placeholder="https://old.example.com"
                 />
-              </div>
-              <div className="space-y-2">
+              </FormField>
+              <FormField className="space-y-2">
                 <Label>旧面板迁移码</Label>
                 <Input
                   value={onlineMigration.migrationCode}
                   onChange={(e) => setOnlineMigration({ ...onlineMigration, migrationCode: e.target.value.toUpperCase() })}
                   placeholder="迁移码"
                 />
-              </div>
+              </FormField>
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>新面板访问地址</Label>
               <Input
                 value={onlineMigration.targetPanelUrl}
                 onChange={(e) => setOnlineMigration({ ...onlineMigration, targetPanelUrl: e.target.value })}
                 placeholder={panelUrl}
               />
-            </div>
+            </FormField>
             {migrationJob && (
               <div className="rounded-lg border border-primary/15 bg-primary/5 p-4">
                 <div className="flex items-center justify-between text-sm">
@@ -1791,7 +1789,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
         </Card>
       </div>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Database className="h-4 w-4 text-primary" />
@@ -1868,7 +1866,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
             )}
 
             {databaseSwitchType === "sqlite" ? (
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>SQLite 数据文件</Label>
                 <Input
                   value={databaseSwitchSqlitePath}
@@ -1878,11 +1876,11 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                   }}
                   placeholder={actualDefaultSqlitePath}
                 />
-              </div>
+              </FormField>
             ) : (
               <div className="grid gap-4">
                 <div className="grid gap-4 sm:grid-cols-[1fr_120px]">
-                  <div className="space-y-2">
+                  <FormField className="space-y-2">
                     <Label>地址</Label>
                     <Input
                       value={databaseSwitchExternal.host}
@@ -1892,8 +1890,8 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                       }}
                       placeholder="127.0.0.1"
                     />
-                  </div>
-                  <div className="space-y-2">
+                  </FormField>
+                  <FormField className="space-y-2">
                     <Label>端口</Label>
                     <Input
                       type="number"
@@ -1908,10 +1906,10 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                         setTestedDatabaseSwitchKey("");
                       }}
                     />
-                  </div>
+                  </FormField>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
+                  <FormField className="space-y-2">
                     <Label>数据库名</Label>
                     <Input
                       value={databaseSwitchExternal.database}
@@ -1920,8 +1918,8 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                         setTestedDatabaseSwitchKey("");
                       }}
                     />
-                  </div>
-                  <div className="space-y-2">
+                  </FormField>
+                  <FormField className="space-y-2">
                     <Label>用户名</Label>
                     <Input
                       value={databaseSwitchExternal.user}
@@ -1930,9 +1928,9 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                         setTestedDatabaseSwitchKey("");
                       }}
                     />
-                  </div>
+                  </FormField>
                 </div>
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>密码</Label>
                   <Input
                     type="password"
@@ -1942,7 +1940,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                       setTestedDatabaseSwitchKey("");
                     }}
                   />
-                </div>
+                </FormField>
                 <div className="flex items-center justify-between rounded-md border border-border/50 bg-background/40 p-3">
                   <div>
                     <p className="text-sm font-medium">启用 SSL</p>
@@ -2083,7 +2081,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
       </Card>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Download className="h-4 w-4 text-primary" />
@@ -2095,14 +2093,14 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>备份密码</Label>
                 <Input type="password" value={backupPassword} onChange={(e) => setBackupPassword(e.target.value)} placeholder="至少 8 位" />
-              </div>
-              <div className="space-y-2">
+              </FormField>
+              <FormField className="space-y-2">
                 <Label>确认备份密码</Label>
                 <Input type="password" value={backupPasswordConfirm} onChange={(e) => setBackupPasswordConfirm(e.target.value)} />
-              </div>
+              </FormField>
             </div>
             <Alert>
               <Lock className="h-4 w-4" />
@@ -2125,7 +2123,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
           </CardContent>
         </Card>
 
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Upload className="h-4 w-4 text-primary" />
@@ -2136,7 +2134,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>备份文件</Label>
               <Input
                 ref={fileInputRef}
@@ -2145,11 +2143,11 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                 onChange={(e) => handleBackupFileChange(e.target.files?.[0])}
               />
               {importFilename && <p className="text-xs text-muted-foreground">已选择：{importFilename}</p>}
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>备份密码</Label>
               <Input type="password" value={importPassword} onChange={(e) => setImportPassword(e.target.value)} />
-            </div>
+            </FormField>
             <BackupTaskProgressView progress={importProgress} />
             <Button className="gap-2" onClick={openImportConfirm} disabled={importBackupMutation.isPending}>
               {importBackupMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
@@ -2407,7 +2405,7 @@ function TelegramBotSettingsCard() {
         ) : (
           <>
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>Bot Token</Label>
                 <Input
                   type="text"
@@ -2429,7 +2427,7 @@ function TelegramBotSettingsCard() {
                 <p className="text-xs text-muted-foreground">
                   来源：{tokenSourceLabel}
                 </p>
-              </div>
+              </FormField>
               <div className="rounded-lg border border-border/40 bg-background/50 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -2472,7 +2470,7 @@ function TelegramBotSettingsCard() {
                   />
                 </div>
                 <div className="mt-3 space-y-1.5">
-                  <div className="flex items-center gap-2">
+                  <FormField className="flex items-center gap-2">
                     <Label className="shrink-0 text-xs text-muted-foreground">提前天数</Label>
                     <Input
                       className="h-8"
@@ -2480,7 +2478,7 @@ function TelegramBotSettingsCard() {
                       onChange={(event) => setExpiryReminderDays(event.target.value)}
                       placeholder="7,3,1"
                     />
-                  </div>
+                  </FormField>
                   {/* 说清这个值管着三处，免得有人以为它只影响 Telegram。 */}
                   <p className="text-xs text-muted-foreground">
                     逗号分隔，在这几天各发一次。邮件提醒和面板顶上的到期横幅共用这个值；填 0 表示当天也发。
@@ -2512,7 +2510,7 @@ function TelegramBotSettingsCard() {
                     onCheckedChange={setTelegramTrafficReminder}
                   />
                 </div>
-                <div className="mt-3 flex items-center gap-2">
+                <FormField className="mt-3 flex items-center gap-2">
                   <Label className="shrink-0 text-xs text-muted-foreground">阈值</Label>
                   <Input
                     type="number"
@@ -2523,7 +2521,7 @@ function TelegramBotSettingsCard() {
                     className="h-8 w-24"
                   />
                   <span className="text-xs text-muted-foreground">%</span>
-                </div>
+                </FormField>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -2799,7 +2797,7 @@ function DeepSeekSettingsCard() {
           ) : (
             <>
               <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>提供商</Label>
                   <Select value={deepseekProvider} onValueChange={handleProviderChange}>
                     <SelectTrigger className="h-10">
@@ -2811,7 +2809,7 @@ function DeepSeekSettingsCard() {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
+                </FormField>
                 <div className="space-y-2">
                   <Label>启用 AI 助手</Label>
                   <div className="flex h-10 items-center justify-between rounded-md border border-border/40 bg-background/50 px-3">
@@ -2835,7 +2833,7 @@ function DeepSeekSettingsCard() {
               </div>
 
               <div className="grid gap-3 lg:grid-cols-12">
-                <div className="space-y-2 lg:col-span-5">
+                <FormField className="space-y-2 lg:col-span-5">
                   <Label>API Key</Label>
                   <Input
                     type="text"
@@ -2856,8 +2854,8 @@ function DeepSeekSettingsCard() {
                   <p className="text-xs text-muted-foreground">
                     按提供商分别保存 API Key，切换提供商时会自动带出对应配置。
                   </p>
-                </div>
-                <div className="space-y-2 lg:col-span-3">
+                </FormField>
+                <FormField className="space-y-2 lg:col-span-3">
                   <Label>接口地址</Label>
                   <Input
                     type="text"
@@ -2866,8 +2864,8 @@ function DeepSeekSettingsCard() {
                     placeholder={activeProviderDefaults.baseUrl}
                     className="font-mono"
                   />
-                </div>
-                <div className="space-y-2 lg:col-span-4">
+                </FormField>
+                <FormField className="space-y-2 lg:col-span-4">
                   <Label>模型</Label>
                   <Input
                     type="text"
@@ -2876,7 +2874,7 @@ function DeepSeekSettingsCard() {
                     placeholder={activeProviderDefaults.model}
                     className="font-mono"
                   />
-                </div>
+                </FormField>
               </div>
 
               <div className="rounded-lg border border-border/40 bg-background/50 p-2.5">
@@ -2926,7 +2924,7 @@ function DeepSeekSettingsCard() {
               </div>
 
               <div className="grid gap-3 sm:max-w-[560px] sm:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>最大输出</Label>
                   <Input
                     type="number"
@@ -2935,8 +2933,8 @@ function DeepSeekSettingsCard() {
                     value={deepseekMaxTokens}
                     onChange={(e) => setDeepseekMaxTokens(Math.min(8192, Math.max(128, Number(e.target.value) || 1024)))}
                   />
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>温度</Label>
                   <Input
                     type="number"
@@ -2946,7 +2944,7 @@ function DeepSeekSettingsCard() {
                     value={deepseekTemperature}
                     onChange={(e) => setDeepseekTemperature(Math.min(2, Math.max(0, Number(e.target.value) || 0)))}
                   />
-                </div>
+                </FormField>
               </div>
 
               <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px]">
@@ -2978,7 +2976,7 @@ function DeepSeekSettingsCard() {
                     />
                   </div>
                 </div>
-                <div className="space-y-2 rounded-lg border border-border/40 bg-background/50 p-3">
+                <FormField className="space-y-2 rounded-lg border border-border/40 bg-background/50 p-3">
                   <Label className="text-xs text-muted-foreground">撤回时间（秒）</Label>
                   <Input
                     type="number"
@@ -2988,7 +2986,7 @@ function DeepSeekSettingsCard() {
                     onChange={(e) => setDeepseekTelegramAutoRecallSeconds(Math.min(1200, Math.max(30, Number(e.target.value) || 60)))}
                   />
                   <p className="text-xs text-muted-foreground">范围 30-1200 秒，默认 60 秒。</p>
-                </div>
+                </FormField>
               </div>
 
               <div className="flex flex-wrap gap-2">
@@ -3495,7 +3493,7 @@ function PersonalizationSettingsSection() {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Globe className="h-4 w-4 text-primary" />
@@ -3524,7 +3522,7 @@ function PersonalizationSettingsSection() {
           </CardContent>
         </Card>
 
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <ImageIcon className="h-4 w-4 text-primary" />
@@ -3577,7 +3575,7 @@ function PersonalizationSettingsSection() {
         </Card>
       </div>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1.5">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -3661,7 +3659,7 @@ function PersonalizationSettingsSection() {
         </CardContent>
       </Card>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1.5">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -3729,7 +3727,7 @@ function PersonalizationSettingsSection() {
         </CardContent>
       </Card>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1.5">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -4027,7 +4025,7 @@ function PersonalizationSettingsSection() {
         </CardContent>
       </Card>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1.5">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -4124,7 +4122,7 @@ function PersonalizationSettingsSection() {
                   placeholder="例如：监控中心"
                 />
               </div>
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>可见角色</Label>
                 <Select
                   value={customSidebarDraft.visibility}
@@ -4139,7 +4137,7 @@ function PersonalizationSettingsSection() {
                     <SelectItem value="all">所有用户</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
             </div>
             <div className="space-y-2">
               <Label htmlFor="custom-sidebar-url">页面 URL</Label>
@@ -4153,7 +4151,7 @@ function PersonalizationSettingsSection() {
               />
               <p className="text-xs text-muted-foreground">支持完整网址、裸域名和面板相对路径（例如 /monitor）。</p>
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>打开方式</Label>
               <Select
                 value={customSidebarDraft.openMode}
@@ -4169,7 +4167,7 @@ function PersonalizationSettingsSection() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">目标网站设置了 X-Frame-Options 或 CSP 时，请选择新窗口打开。</p>
-            </div>
+            </FormField>
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Label htmlFor="custom-sidebar-svg">SVG 图标</Label>
@@ -4951,7 +4949,7 @@ function SystemInfoSection() {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Wifi className="h-4 w-4 text-primary" />
@@ -4976,7 +4974,7 @@ function SystemInfoSection() {
             </Button>
           </CardContent>
         </Card>
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1.5">
               <CardTitle className="flex items-center gap-2 text-base">
@@ -5012,7 +5010,7 @@ function SystemInfoSection() {
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
         {/* 面板公开访问地址 */}
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Globe className="h-4 w-4 text-primary" />
@@ -5046,7 +5044,7 @@ function SystemInfoSection() {
           </CardContent>
         </Card>
 
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Wifi className="h-4 w-4 text-primary" />
@@ -5095,7 +5093,7 @@ function SystemInfoSection() {
           </CardContent>
         </Card>
 
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md xl:col-span-2">
+        <Card className="border-border bg-card xl:col-span-2">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Lock className="h-4 w-4 text-primary" />
@@ -5304,7 +5302,7 @@ function SystemInfoSection() {
       </Dialog>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <UserPlus className="h-4 w-4 text-primary" />
@@ -5332,7 +5330,7 @@ function SystemInfoSection() {
           </CardContent>
         </Card>
 
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Shield className="h-4 w-4 text-primary" />
@@ -5361,7 +5359,7 @@ function SystemInfoSection() {
         </Card>
       </div>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Cloud className="h-4 w-4 text-primary" />
@@ -5407,7 +5405,7 @@ function SystemInfoSection() {
             </div>
           </div>
 
-          <div className="space-y-2">
+          <FormField className="space-y-2">
             <Label>TTL</Label>
             <Input
               value={ddnsTtl}
@@ -5416,11 +5414,11 @@ function SystemInfoSection() {
               inputMode="numeric"
             />
             <p className="text-xs text-muted-foreground">TTL 范围：60-86400 秒。Webhook 会原样传递该值。</p>
-          </div>
+          </FormField>
 
           {ddnsProvider === "cloudflare" && (
             <div className="space-y-2">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>API Token</Label>
                 <Input
                   value={ddnsCloudflareApiToken}
@@ -5429,18 +5427,18 @@ function SystemInfoSection() {
                   type="password"
                 />
                 <p className="text-xs text-muted-foreground">自动识别 Zone；Token 留空时保留原值。</p>
-              </div>
+              </FormField>
             </div>
           )}
 
           {ddnsProvider === "huaweicloud" && (
             <div className="space-y-3">
               <div className="grid gap-3 lg:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>Access Key ID</Label>
                   <Input value={ddnsHuaweiCloudAccessKeyId} onChange={(e) => setDdnsHuaweiCloudAccessKeyId(e.target.value)} placeholder="华为云 AK" />
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>Secret Access Key</Label>
                   <Input
                     value={ddnsHuaweiCloudSecretKey}
@@ -5448,27 +5446,27 @@ function SystemInfoSection() {
                     placeholder={settings?.ddns?.huaweicloudSecretKeyMasked || "留空保留已保存密钥"}
                     type="password"
                   />
-                </div>
+                </FormField>
               </div>
               <div className="grid gap-3 lg:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>公网 Zone ID</Label>
                   <Input value={ddnsHuaweiCloudZoneId} onChange={(e) => setDdnsHuaweiCloudZoneId(e.target.value)} placeholder="公网域名 Zone ID" />
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>区域</Label>
                   <Input value={ddnsHuaweiCloudRegion} onChange={(e) => setDdnsHuaweiCloudRegion(e.target.value)} placeholder="cn-north-4" />
-                </div>
+                </FormField>
               </div>
               <div className="grid gap-3 lg:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>默认线路</Label>
                   <Input value={ddnsHuaweiCloudLine} onChange={(e) => setDdnsHuaweiCloudLine(e.target.value)} placeholder="default_view" />
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>Endpoint</Label>
                   <Input value={ddnsHuaweiCloudEndpoint} onChange={(e) => setDdnsHuaweiCloudEndpoint(e.target.value)} placeholder="留空使用区域默认 Endpoint" />
-                </div>
+                </FormField>
               </div>
             </div>
           )}
@@ -5476,11 +5474,11 @@ function SystemInfoSection() {
           {ddnsProvider === "aliyun" && (
             <div className="space-y-3">
               <div className="grid gap-3 lg:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>AccessKey ID</Label>
                   <Input value={ddnsAliyunAccessKeyId} onChange={(e) => setDdnsAliyunAccessKeyId(e.target.value)} placeholder="阿里云 AccessKey ID" />
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>AccessKey Secret</Label>
                   <Input
                     value={ddnsAliyunAccessKeySecret}
@@ -5488,23 +5486,23 @@ function SystemInfoSection() {
                     placeholder={settings?.ddns?.aliyunAccessKeySecretMasked || "留空保留已保存密钥"}
                     type="password"
                   />
-                </div>
+                </FormField>
               </div>
               <div className="grid gap-3 lg:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>主域名</Label>
                   <Input value={ddnsAliyunDomainName} onChange={(e) => setDdnsAliyunDomainName(e.target.value)} placeholder="example.com" />
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>Endpoint</Label>
                   <Input value={ddnsAliyunEndpoint} onChange={(e) => setDdnsAliyunEndpoint(e.target.value)} placeholder="https://alidns.aliyuncs.com" />
-                </div>
+                </FormField>
               </div>
               <div className="grid gap-3 lg:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>默认线路</Label>
                   <Input value={ddnsAliyunLine} onChange={(e) => setDdnsAliyunLine(e.target.value)} placeholder="default" />
-                </div>
+                </FormField>
               </div>
             </div>
           )}
@@ -5512,11 +5510,11 @@ function SystemInfoSection() {
           {ddnsProvider === "tencentcloud" && (
             <div className="space-y-3">
               <div className="grid gap-3 lg:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>SecretId</Label>
                   <Input value={ddnsTencentCloudSecretId} onChange={(e) => setDdnsTencentCloudSecretId(e.target.value)} placeholder="腾讯云 SecretId" />
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>SecretKey</Label>
                   <Input
                     value={ddnsTencentCloudSecretKey}
@@ -5524,23 +5522,23 @@ function SystemInfoSection() {
                     placeholder={settings?.ddns?.tencentcloudSecretKeyMasked || "留空保留已保存密钥"}
                     type="password"
                   />
-                </div>
+                </FormField>
               </div>
               <div className="grid gap-3 lg:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>主域名</Label>
                   <Input value={ddnsTencentCloudDomainName} onChange={(e) => setDdnsTencentCloudDomainName(e.target.value)} placeholder="example.com" />
-                </div>
+                </FormField>
               </div>
               <div className="grid gap-3 lg:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>默认线路名称</Label>
                   <Input value={ddnsTencentCloudRecordLine} onChange={(e) => setDdnsTencentCloudRecordLine(e.target.value)} placeholder="默认" />
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>默认线路 ID</Label>
                   <Input value={ddnsTencentCloudRecordLineId} onChange={(e) => setDdnsTencentCloudRecordLineId(e.target.value)} placeholder="可留空" />
-                </div>
+                </FormField>
               </div>
             </div>
           )}
@@ -5548,7 +5546,7 @@ function SystemInfoSection() {
           {ddnsProvider === "webhook" && (
             <div className="space-y-3">
               <div className="grid gap-3 lg:grid-cols-[160px_minmax(0,1fr)]">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>请求方法</Label>
                   <Select value={ddnsWebhookMethod} onValueChange={(v) => setDdnsWebhookMethod(v as any)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
@@ -5558,17 +5556,17 @@ function SystemInfoSection() {
                       <SelectItem value="GET">GET</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>Webhook URL</Label>
                   <Input
                     value={ddnsWebhookUrl}
                     onChange={(e) => setDdnsWebhookUrl(e.target.value)}
                     placeholder="https://ddns.example.com/update?domain={{domain}}&value={{value}}"
                   />
-                </div>
+                </FormField>
               </div>
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>请求头</Label>
                 <Textarea
                   value={ddnsWebhookHeaders}
@@ -5577,7 +5575,7 @@ function SystemInfoSection() {
                   className="min-h-20 font-mono text-xs"
                 />
                 <p className="text-xs text-muted-foreground">支持 JSON 或每行一个 Header。</p>
-              </div>
+              </FormField>
             </div>
           )}
 
@@ -5590,7 +5588,7 @@ function SystemInfoSection() {
         </CardContent>
       </Card>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Monitor className="h-4 w-4 text-primary" />
@@ -5606,7 +5604,7 @@ function SystemInfoSection() {
           </div>
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
-            <div className="space-y-2 lg:col-span-2">
+            <FormField className="space-y-2 lg:col-span-2">
               <Label>展示标题</Label>
               <Input
                 value={publicHostMonitorTitle}
@@ -5614,8 +5612,8 @@ function SystemInfoSection() {
                 placeholder="留空默认使用站点标题 + 主机监控"
                 maxLength={80}
               />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>主机监控面板路径</Label>
               <Input
                 value={publicHostMonitorPath}
@@ -5625,7 +5623,7 @@ function SystemInfoSection() {
               <p className="text-xs text-muted-foreground">
                 支持字母、数字、短横线和下划线。
               </p>
-            </div>
+            </FormField>
             <div className="space-y-2">
               <Label>访问地址</Label>
               <div className="flex min-w-0 gap-2">
@@ -5649,7 +5647,7 @@ function SystemInfoSection() {
       </Card>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <ShieldCheck className="h-4 w-4 text-primary" />
@@ -5678,7 +5676,7 @@ function SystemInfoSection() {
           </CardContent>
         </Card>
 
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1.5">
               <CardTitle className="flex items-center gap-2 text-base">
@@ -5818,7 +5816,7 @@ function SystemInfoSection() {
 
       <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         {/* 版本升级 */}
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1.5">
               <CardTitle className="flex items-center gap-2 text-base">
@@ -6079,7 +6077,7 @@ function SystemInfoSection() {
           )}
         </CardContent>
       </Card>
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Github className="h-4 w-4 text-primary" />
@@ -6123,7 +6121,7 @@ function SystemInfoSection() {
               />
             </div>
           </div>
-          <div className="space-y-2">
+          <FormField className="space-y-2">
             <Label>GitHub 加速地址</Label>
             <Input
               value={githubAcceleratorUrlInput}
@@ -6134,7 +6132,7 @@ function SystemInfoSection() {
             <p className="text-xs text-muted-foreground">
               格式示例：https://mirror.example.com。未填写或未开启对应开关时使用直连 GitHub。
             </p>
-          </div>
+          </FormField>
           <div className="flex justify-end">
             <Button onClick={handleSaveAgentInstall} disabled={isSavingSetting("agentInstall")}>
               保存 GitHub 下载配置
@@ -6229,7 +6227,7 @@ function SystemInfoSection() {
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>回退到面板版本</Label>
                 <Select
                   value={rollbackType === "panel" ? selectedRollbackVersion : ""}
@@ -6247,7 +6245,7 @@ function SystemInfoSection() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
 
               {rollbackPanelVersions.length === 0 && !rollbackVersionsQuery.isLoading && (
                 <Alert>
@@ -6288,7 +6286,7 @@ function SystemInfoSection() {
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>回退到 Agent 版本</Label>
                 <Select
                   value={rollbackType === "agent" ? selectedRollbackVersion : ""}
@@ -6306,7 +6304,7 @@ function SystemInfoSection() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
 
               {rollbackAgentVersions.length === 0 && !rollbackVersionsQuery.isLoading && (
                 <Alert>
@@ -6399,7 +6397,7 @@ function SystemInfoSection() {
         </DialogContent>
       </Dialog>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Settings2 className="h-4 w-4 text-primary" />

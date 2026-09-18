@@ -1,3 +1,5 @@
+import { FormField } from "@/components/ui/form-field";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -129,12 +131,9 @@ export default function Announcements() {
     <DashboardLayout>
       <div className="space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{isAdmin ? "公告管理" : "公告"}</h1>
-            <p className="text-sm text-muted-foreground">
+          <WorkspaceHeader title={<>{isAdmin ? "公告管理" : "公告"}</>} description={<>
               {isAdmin ? "管理普通公告和登录弹窗。" : "查看管理员发布的公告信息。"}
-            </p>
-          </div>
+            </>} />
           {isAdmin && (
             <Button onClick={() => { setForm(emptyForm); setOpen(true); }}>
               <Plus className="mr-2 h-4 w-4" /> 新增公告
@@ -200,11 +199,11 @@ export default function Announcements() {
             </DialogHeader>
             <div className="grid gap-4">
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>标题</Label>
                   <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>类型</Label>
                   <Select
                     value={form.type}
@@ -222,7 +221,7 @@ export default function Announcements() {
                       <SelectItem value="popup">登录弹窗</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+                </FormField>
               </div>
 
               <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-muted/15 p-3 sm:flex-row sm:items-center sm:justify-between">

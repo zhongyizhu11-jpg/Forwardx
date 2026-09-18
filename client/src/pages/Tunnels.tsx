@@ -1,3 +1,7 @@
+import { FormField } from "@/components/ui/form-field";
+import EmptyState from "@/components/EmptyState";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
+import ConnectionPath from "@/components/ConnectionPath";
 import DataSectionError from "@/components/DataSectionError";
 import { sameNullableStringArray } from "@/lib/multiHopAddress";
 import { normalizeLatencySeriesKey } from "@shared/latencyProbe";
@@ -2523,34 +2527,17 @@ function TunnelsContent() {
       entryGroupLabel ? `入口组：${entryGroupLabel}` : "",
       getTunnelRouteText(tunnel, hosts),
     ].filter(Boolean).join("；");
-    return (
-      <div
-        className={`flex min-w-0 items-center gap-1.5 text-xs ${compact || exitNames.length > 0 ? "flex-wrap" : "whitespace-nowrap"}`}
-        title={routeTitle}
-      >
-        {entryGroupLabel && (
-          <span className="flex min-w-0 items-center gap-1 rounded border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-primary">
-            <span className="shrink-0">入口组</span>
-            <span className={compact ? "max-w-[10rem] truncate" : "min-w-0 truncate"}>{entryGroupLabel}</span>
-          </span>
-        )}
-        {visibleHopIds.map((hostId: number, index: number) => (
-          <Fragment key={`${tunnel.id || "tunnel"}-${hostId}-${index}`}>
-            {(index > 0 || entryGroupLabel) && <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
-            <span className={compact ? "max-w-[8rem] truncate" : "truncate"}>
-              {tunnelHopHostName(tunnel, hostId, hosts)}
-            </span>
-          </Fragment>
-        ))}
-        {exitNames.length > 0 && (
-          <span className="flex min-w-0 items-center gap-1 rounded border border-border/50 bg-muted/30 px-1.5 py-0.5 text-muted-foreground">
-            <span className="shrink-0">出口</span>
-            <span className="min-w-0 truncate">{exitNames.join(" / ")}</span>
-          </span>
-        )}
-      </div>
-    );
+    const steps = [
+      ...(entryGroupLabel ? [{ label: "入口组", content: entryGroupLabel, key: "entry-group" }] : []),
+      ...visibleHopIds.map((hostId: number, index: number) => ({
+        label: !entryGroupLabel && index === 0 ? "入口主机" : index === visibleHopIds.length - 1 ? "出口主机" : `中继 ${index + (entryGroupLabel ? 1 : 0)}`,
+        content: tunnelHopHostName(tunnel, hostId, hosts), key: `${hostId}-${index}`,
+      })),
+      ...(exitNames.length ? [{ label: "负载均衡出口", content: exitNames.join(" / "), key: "extra-exits" }] : []),
+    ];
+    return <div title={routeTitle}><ConnectionPath steps={steps} /></div>;
   };
+
   const resetForm = () => {
     const fallbackMode = resolveDefaultTunnelMode();
     setForm({ ...defaultForm, mode: fallbackMode });
@@ -3174,10 +3161,10 @@ function TunnelsContent() {
       onDragLeave={handleNginxCertDragLeave}
       onDrop={handleNginxCertDrop}
     >
-      <div className="space-y-2">
+      <FormField className="space-y-2">
         <Label>证书域名 / SNI</Label>
         <Input value={form.certDomain} onChange={(e) => setForm({ ...form, certDomain: e.target.value })} placeholder="example.com" />
-      </div>
+      </FormField>
       <input
         ref={nginxCertFileInputRef}
         type="file"
@@ -3207,7 +3194,7 @@ function TunnelsContent() {
         </span>
       </button>
       <div className="grid gap-3 lg:grid-cols-2">
-        <div className="space-y-2">
+        <FormField className="space-y-2">
           <Label>自定义证书 PEM</Label>
           <Textarea
             value={form.certPem}
@@ -3215,8 +3202,8 @@ function TunnelsContent() {
             placeholder={"-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"}
             className="min-h-[132px] font-mono text-xs"
           />
-        </div>
-        <div className="space-y-2">
+        </FormField>
+        <FormField className="space-y-2">
           <Label>私钥 PEM</Label>
           <Textarea
             value={form.certKeyPem}
@@ -3224,7 +3211,7 @@ function TunnelsContent() {
             placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
             className="min-h-[132px] font-mono text-xs"
           />
-        </div>
+        </FormField>
       </div>
       <p className="text-xs text-muted-foreground">
         证书和私钥必须同时填写。填写后 TCP 使用 TLS，UDP 仍使用 Stream 转发。
@@ -3256,7 +3243,7 @@ function TunnelsContent() {
         {chainAdvancedOpen && (
           <div className="space-y-3 border-t border-border/45 px-3 pb-3 pt-2">
             <div className="space-y-2">
-              <div className="flex min-w-0 items-center justify-between gap-3">
+              <FormField className="flex min-w-0 items-center justify-between gap-3">
                 <Label className="text-sm">PROXY Protocol</Label>
                 <Select
                   value={String(chainCreateForm.proxyProtocolVersion)}
@@ -3269,7 +3256,7 @@ function TunnelsContent() {
                     <SelectItem value="2">V2</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2" title={!proxySupported ? "仅 GOST 和 Realm 支持" : undefined}>
                   <span className="min-w-0 truncate text-sm">接收 PROXY</span>
@@ -3347,7 +3334,7 @@ function TunnelsContent() {
           </div>
         </div>
         {form.forwardxVersion === "v2" && (
-          <div className="space-y-2">
+          <FormField className="space-y-2">
             <Label>WireGuard UDP 端口</Label>
             <Input
               type="number"
@@ -3361,7 +3348,7 @@ function TunnelsContent() {
                 setForm((prev) => ({ ...prev, mimicPort: value === "" ? 0 : Number.parseInt(value, 10) || 0 }));
               }}
             />
-          </div>
+          </FormField>
         )}
       </>
     );
@@ -3738,14 +3725,7 @@ function TunnelsContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">链路管理</h1>
-          <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
-            管理隧道、端口转发、转发链及入口/出口组
-          </p>
-        </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:justify-end">
+      <WorkspaceHeader title="链路管理" description="管理隧道、端口转发和多节点线路" status={
           <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
             <Activity className="h-3 w-3 text-current" />
             <AnimatedStatValue
@@ -3755,6 +3735,7 @@ function TunnelsContent() {
               fallbackValue={headerStat.fallback}
             />
           </Badge>
+      } actions={<>
           <div className="hidden items-center overflow-hidden rounded-md border border-border/40 sm:flex">
             <Button
               variant={activeViewMode === "card" ? "secondary" : "ghost"}
@@ -3795,23 +3776,21 @@ function TunnelsContent() {
             onClick={openCreateTypeDialog}
           >
             <Plus className="h-4 w-4" />
-            新增
+            新建链路
           </Button>
-        </div>
-      </div>
+      </>} />
 
-      <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">筛选：</span>
-        </div>
-        <div className="relative w-full sm:w-[260px] lg:w-[320px]">
+      <Tabs value={activeSection} onValueChange={(value) => setActiveSection(value as TunnelSection)} className="space-y-4">
+        <SlidingTabsList items={TUNNEL_SECTION_ITEMS} activeValue={activeSection} ariaLabel="链路管理" minItemWidthRem={7.75} />
+
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={linkSearchQuery}
             onChange={(event) => setLinkSearchQuery(event.target.value)}
-            placeholder="搜索链路、主机、IP、工具或端口"
-            className="h-8 w-full pl-8 pr-8 text-xs"
+            aria-label="搜索链路" placeholder="搜索链路、主机或 IP"
+            className="h-10 w-full pl-8 pr-10 text-sm"
           />
           {linkSearchQuery ? (
             <button
@@ -3824,20 +3803,16 @@ function TunnelsContent() {
             </button>
           ) : null}
         </div>
-        <span className="text-xs tabular-nums text-muted-foreground">
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
           {linkSearchStats.filtered} / {linkSearchStats.total} {linkSearchStats.unit}
         </span>
       </div>
 
-      <Tabs value={activeSection} onValueChange={(value) => setActiveSection(value as TunnelSection)} className="space-y-4">
-        <SlidingTabsList items={TUNNEL_SECTION_ITEMS} activeValue={activeSection} ariaLabel="链路管理" minItemWidthRem={7.75} />
+
 
         <TabsContent value="tunnels" className="space-y-4">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold tracking-tight sm:text-xl">隧道链路</h2>
-            <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
-              管理 GOST、ForwardX 和 Nginx 隧道。
-            </p>
           </div>
           <SectionTransition transitionKey={activeSectionTransitionKey}>
       {viewMode === "globe" ? (
@@ -3871,7 +3846,7 @@ function TunnelsContent() {
                   <Card
                     {...itemProps}
                     className={cn(
-                      "group/sortable relative action-card border-border/40 bg-card/60 backdrop-blur-md transition-[box-shadow,opacity]",
+                      "group/sortable relative action-card border-border bg-card transition-[box-shadow,opacity]",
                       !supported && "opacity-70",
                       isDragging && "opacity-55 ring-1 ring-primary/35",
                       isDropTarget && "ring-1 ring-primary/45",
@@ -3885,7 +3860,8 @@ function TunnelsContent() {
                           {renderTunnelStatusDot(tunnel, supported)}
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate font-medium">{tunnel.name}</p>
+                          <p className="truncate font-semibold">{tunnel.name}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{!supported ? "协议未启用" : ({ available: "运行正常", degraded: "部分可用", pending: "等待检测", unavailable: "连接异常", disabled: "已停用" } as Record<string, string>)[tunnelAvailabilityById.get(Number(tunnel.id))?.status || "disabled"]}</p>
                           {!supported && (
                             <p className="mt-1 text-[11px] text-destructive">
                               {tunnelProtocolLabel(protocolKey)} 当前不支持
@@ -3908,7 +3884,7 @@ function TunnelsContent() {
                       </div>
                     </div>
 
-                    <div className="space-y-2 rounded-md bg-muted/25 p-2.5 text-xs">
+                    <div className="space-y-2 text-xs">
                       {renderTunnelRoute(tunnel, true)}
                       <div className="flex flex-wrap gap-1.5">
                         <Badge variant="outline" className="text-[10px]">
@@ -3968,7 +3944,7 @@ function TunnelsContent() {
                   <Card
                     {...itemProps}
                     className={cn(
-                      "group/sortable relative action-card border-border/40 bg-card/60 backdrop-blur-md transition-[box-shadow,opacity]",
+                      "group/sortable relative action-card border-border bg-card transition-[box-shadow,opacity]",
                       !supported && "opacity-70",
                       isDragging && "opacity-55 ring-1 ring-primary/35",
                       isDropTarget && "ring-1 ring-primary/45",
@@ -3982,7 +3958,8 @@ function TunnelsContent() {
                           {renderTunnelStatusDot(tunnel, supported)}
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate font-medium">{tunnel.name}</p>
+                          <p className="truncate font-semibold">{tunnel.name}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{!supported ? "协议未启用" : ({ available: "运行正常", degraded: "部分可用", pending: "等待检测", unavailable: "连接异常", disabled: "已停用" } as Record<string, string>)[tunnelAvailabilityById.get(Number(tunnel.id))?.status || "disabled"]}</p>
                           {!supported && (
                             <p className="mt-1 text-[11px] text-destructive">
                               {tunnelProtocolLabel(protocolKey)} 当前不支持
@@ -4005,7 +3982,7 @@ function TunnelsContent() {
                       </div>
                     </div>
 
-                    <div className="space-y-2 rounded-md bg-muted/25 p-2.5 text-xs">
+                    <div className="space-y-2 text-xs">
                       {renderTunnelRoute(tunnel, true)}
                       <div className="flex flex-wrap gap-1.5">
                         <Badge variant="outline" className="text-[10px]">
@@ -4052,7 +4029,7 @@ function TunnelsContent() {
             })}
           </div>
           </SortableReorderContext>
-          <Card className="hidden border-border/40 bg-card/60 backdrop-blur-md sm:block">
+          <Card className="hidden border-border bg-card sm:block">
           <CardContent className="p-0">
             <div className="overflow-x-auto">
               <Table>
@@ -4186,7 +4163,7 @@ function TunnelsContent() {
           <PersistentPagination pagination={tunnelPagination} itemName="条隧道" />
         </>
       ) : (
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardContent className="p-0">
             {/* 「暂无隧道」读失败时是假话，而照着它去重建会撞端口。 */}
             {tunnelPageQuery.error ? (
@@ -4199,13 +4176,7 @@ function TunnelsContent() {
                 minHeight="min-h-[260px]"
               />
             ) : (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/30">
-                <Network className="h-8 w-8 opacity-40" />
-              </div>
-              <p className="text-lg font-medium">暂无隧道</p>
-              <p className="mt-1 text-sm text-muted-foreground/60">选择两台 Agent 创建第一条隧道</p>
-            </div>
+            <EmptyState icon={<Network className="h-8 w-8 opacity-40" />} title={<>暂无隧道</>} description={<>选择两台 Agent 创建第一条隧道</>} />
             )}
           </CardContent>
         </Card>
@@ -4390,11 +4361,11 @@ function TunnelsContent() {
           <div className="dialog-scroll-area min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain px-3.5 py-2.5 sm:px-4">
                 {selectedCreateType === "tunnel" ? (
                   <>
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>隧道名称</Label>
                       <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如: 华东-香港隧道" />
-                    </div>
-                    <div className="space-y-2">
+                    </FormField>
+                    <FormField className="space-y-2">
                       <Label>入口组</Label>
                       <Select
                         value={form.entryGroupId ? String(form.entryGroupId) : "none"}
@@ -4420,7 +4391,7 @@ function TunnelsContent() {
                       <p className="text-xs text-muted-foreground">
                         {form.entryGroupId ? "入口组提供入口，下方主机从中转或出口开始配置。" : "未使用入口组时，下方第一台主机作为入口。"}
                       </p>
-                    </div>
+                    </FormField>
                     <div className="space-y-2">
                       <MultiHopEditor
                         hosts={hosts || []}
@@ -4470,7 +4441,7 @@ function TunnelsContent() {
                         }}
                       />
                     </div>
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>出口组</Label>
                       <Select
                         value={form.exitGroupId ? String(form.exitGroupId) : "none"}
@@ -4500,7 +4471,7 @@ function TunnelsContent() {
                       ) : (
                         <p className="text-xs text-muted-foreground">按出口组顺序使用成员，首个成员为主出口。</p>
                       )}
-                    </div>
+                    </FormField>
                     <div className="space-y-2">
                       <Label>隧道类型</Label>
                       <div className={`${segmentedControlClassName} grid ${nginxTunnelEnabled ? "grid-cols-3" : "grid-cols-2"} gap-1`}>
@@ -4546,7 +4517,7 @@ function TunnelsContent() {
                       </p>
                     )}
                     {gostTunnelModes.includes(form.mode) && (
-                      <div className="space-y-2">
+                      <FormField className="space-y-2">
                         <Label>GOST 协议</Label>
                         <Select value={form.mode} onValueChange={(v) => setTunnelMode(v as TunnelForm["mode"])}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
@@ -4556,38 +4527,38 @@ function TunnelsContent() {
                             ))}
                           </SelectContent>
                         </Select>
-                      </div>
+                      </FormField>
                     )}
                     {nginxTunnelEnabled && isNginxTunnelModeValue(form.mode) && renderNginxCertFields()}
                     {renderTunnelRuntimeOptions()}
                     {renderForwardXVersionOptions()}
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      <div className="space-y-2">
+                      <FormField className="space-y-2">
                         <Label>出口监听端口</Label>
                         <Input type="number" min={0} max={65535} step={1} value={form.listenPort || ""} onChange={(e) => { setListenPortExplicit(true); setForm({ ...form, listenPort: Number(e.target.value) || 0 }); }} placeholder="自动分配" />
-                      </div>
-                      <div className="space-y-2">
+                      </FormField>
+                      <FormField className="space-y-2">
                         <Label>隧道限速 (Mbps)</Label>
                         <Input type="number" min={0} max={1000000} step={1} value={form.rateLimitMbps || ""} onChange={(e) => setForm({ ...form, rateLimitMbps: Number(e.target.value) || 0 })} placeholder="不限速" />
-                      </div>
-                      <div className="space-y-2">
+                      </FormField>
+                      <FormField className="space-y-2">
                         <Label>流量倍率</Label>
                         <Input type="number" min={0.01} max={50} step={0.01} value={form.trafficMultiplier || ""} onChange={(e) => setForm({ ...form, trafficMultiplier: Number(e.target.value) || 1 })} placeholder="1" />
-                      </div>
+                      </FormField>
                     </div>
                   </>
                 ) : (
                   <>
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>转发链名称</Label>
                       <Input
                         value={chainCreateForm.name}
                         onChange={(e) => setChainCreateForm({ ...chainCreateForm, name: e.target.value })}
                         placeholder="例如: 华东-香港转发链"
                       />
-                    </div>
+                    </FormField>
                     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px_110px]">
-                      <div className="space-y-2">
+                      <FormField className="space-y-2">
                         <Label>转发工具</Label>
                         <Select
                           value={chainCreateForm.forwardType}
@@ -4601,11 +4572,11 @@ function TunnelsContent() {
                             ))}
                           </SelectContent>
                         </Select>
-                      </div>
-                      <div className="space-y-2">
+                      </FormField>
+                      <FormField className="space-y-2">
                         <Label>流量倍率</Label>
                         <Input type="number" min={0.01} max={50} step={0.01} value={chainCreateForm.trafficMultiplier || ""} onChange={(e) => setChainCreateForm({ ...chainCreateForm, trafficMultiplier: Number(e.target.value) || 1 })} placeholder="1" />
-                      </div>
+                      </FormField>
                       <div className="flex items-end">
                         <label className="flex h-10 w-full items-center justify-between rounded-md border border-border/60 px-3">
                           <span className="text-sm">启用</span>
@@ -4617,7 +4588,7 @@ function TunnelsContent() {
                       </div>
                     </div>
                     {renderChainRuntimeOptions()}
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>入口组</Label>
                       <Select
                         value={chainCreateForm.entryGroupId ? String(chainCreateForm.entryGroupId) : "none"}
@@ -4643,7 +4614,7 @@ function TunnelsContent() {
                       <p className="text-xs text-muted-foreground">
                         {chainCreateForm.entryGroupId ? "入口组提供入口，下方主机从中转或出口开始配置。" : "未使用入口组时，下方第一台主机作为入口。"}
                       </p>
-                    </div>
+                    </FormField>
                     <div className="space-y-2">
                       <Label>链路主机顺序</Label>
                       <MultiHopEditor
@@ -4699,11 +4670,11 @@ function TunnelsContent() {
             <DialogTitle>{editingId ? "编辑隧道" : "添加链路"}</DialogTitle>
           </DialogHeader>
           <div className="dialog-scroll-area min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain px-3.5 py-2.5 sm:px-4">
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>隧道名称</Label>
               <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如: 华东-香港隧道" />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>入口组</Label>
               <Select
                 value={form.entryGroupId ? String(form.entryGroupId) : "none"}
@@ -4729,7 +4700,7 @@ function TunnelsContent() {
               <p className="text-xs text-muted-foreground">
                 {form.entryGroupId ? "入口组提供入口，下方主机从中转或出口开始配置。" : "未使用入口组时，下方第一台主机作为入口。"}
               </p>
-            </div>
+            </FormField>
             <div className="space-y-2">
               <MultiHopEditor
                 hosts={hosts || []}
@@ -4779,7 +4750,7 @@ function TunnelsContent() {
                 }}
               />
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>出口组</Label>
               <Select
                 value={form.exitGroupId ? String(form.exitGroupId) : "none"}
@@ -4809,7 +4780,7 @@ function TunnelsContent() {
               ) : (
                 <p className="text-xs text-muted-foreground">按出口组顺序使用成员，首个成员为主出口。</p>
               )}
-            </div>
+            </FormField>
             <div className="space-y-2">
               <Label>隧道类型</Label>
               <div className={`${segmentedControlClassName} grid ${nginxTunnelEnabled ? "grid-cols-3" : "grid-cols-2"} gap-1`}>
@@ -4855,7 +4826,7 @@ function TunnelsContent() {
               </p>
             )}
             {gostTunnelModes.includes(form.mode) && (
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>GOST 协议</Label>
                 <Select value={form.mode} onValueChange={(v) => setTunnelMode(v as TunnelForm["mode"])}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -4865,24 +4836,24 @@ function TunnelsContent() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
             )}
             {nginxTunnelEnabled && isNginxTunnelModeValue(form.mode) && renderNginxCertFields()}
             {renderTunnelRuntimeOptions()}
             {renderForwardXVersionOptions()}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>出口监听端口</Label>
                 <Input type="number" min={0} max={65535} step={1} value={form.listenPort || ""} onChange={(e) => { setListenPortExplicit(true); setForm({ ...form, listenPort: Number(e.target.value) || 0 }); }} placeholder="自动分配" />
-              </div>
-              <div className="space-y-2">
+              </FormField>
+              <FormField className="space-y-2">
                 <Label>隧道限速 (Mbps)</Label>
                 <Input type="number" min={0} max={1000000} step={1} value={form.rateLimitMbps || ""} onChange={(e) => setForm({ ...form, rateLimitMbps: Number(e.target.value) || 0 })} placeholder="不限速" />
-              </div>
-              <div className="space-y-2">
+              </FormField>
+              <FormField className="space-y-2">
                 <Label>流量倍率</Label>
                 <Input type="number" min={0.01} max={50} step={0.01} value={form.trafficMultiplier || ""} onChange={(e) => setForm({ ...form, trafficMultiplier: Number(e.target.value) || 1 })} placeholder="1" />
-              </div>
+              </FormField>
             </div>
           </div>
           <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-background/95 px-3.5 py-3 sm:px-4">

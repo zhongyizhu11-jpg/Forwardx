@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
 interface Props {
@@ -23,18 +24,17 @@ export default class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="flex items-center justify-center min-h-screen bg-background">
-          <div className="text-center p-8">
-            <h1 className="text-2xl font-bold text-foreground mb-4">出错了</h1>
-            <p className="text-muted-foreground mb-4">
+        <div className="flex min-h-svh items-center justify-center bg-background p-4">
+          <div className="w-full max-w-md rounded-xl border bg-card p-8 text-center shadow-sm">
+            <h1 className="mb-3 text-xl font-semibold text-foreground">页面暂时无法显示</h1>
+            <p className="mb-5 break-words text-sm leading-6 text-muted-foreground">
               {this.state.error?.message || "发生了未知错误"}
             </p>
-            <button
+            <Button
               onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
             >
               刷新页面
-            </button>
+            </Button>
           </div>
         </div>
       );

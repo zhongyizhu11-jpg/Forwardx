@@ -16,9 +16,9 @@ export default function RouteFallback() {
   }, []);
   if (!visible) return null;
   return (
-    <div className="flex min-h-[60svh] items-center justify-center" role="status" aria-live="polite">
+    <div className="flex min-h-[60svh] flex-col gap-3 items-center justify-center" role="status" aria-live="polite">
       <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      <span className="sr-only">正在加载页面</span>
+      <span className="text-sm text-muted-foreground">正在加载页面</span>
     </div>
   );
 }

@@ -123,7 +123,7 @@ const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive
         className 里显式传了 overflow-hidden，tailwind-merge 会让后传的那个赢。
         这里只是把「没人管」时的默认从裁切改成可滚。
       */}
-      <DialogPrimitive.Content ref={ref} data-forwardx-dialog-content="" className={cn("dialog-panel pointer-events-auto grid max-h-[92svh] w-[calc(100vw-1.5rem)] max-w-lg gap-4 overflow-y-auto overflow-x-hidden overscroll-contain rounded-md p-4 sm:w-full sm:p-6", className)} {...props}>
+      <DialogPrimitive.Content ref={ref} data-forwardx-dialog-content="" className={cn("dialog-panel pointer-events-auto grid max-h-[92svh] w-[calc(100vw-1.5rem)] max-w-lg gap-5 overflow-y-auto overflow-x-hidden overscroll-contain rounded-2xl p-4 sm:w-full sm:p-6", className)} {...props}>
         {children}
         {/*
           关闭按钮跟着内容滚，没有钉住。
@@ -136,7 +136,7 @@ const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive
         */}
         <DialogPrimitive.Close className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-70 ring-offset-background transition-colors hover:bg-destructive/10 hover:text-destructive hover:opacity-100 focus:bg-destructive/10 focus:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive/40 focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
           <X className="h-4 w-4" />
-          <span className="sr-only">Close</span>
+          <span className="sr-only">关闭</span>
         </DialogPrimitive.Close>
       </DialogPrimitive.Content>
     </div>
@@ -148,14 +148,14 @@ DialogContent.displayName = DialogPrimitive.Content.displayName
 // 压到比自身内容还矮时，里面的东西就溢出自己的盒子、画到相邻内容上。表现是
 // 标签行盖住说明文字、保存按钮压在正文上。页头页脚本来就不该被压。
 const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex shrink-0 flex-col space-y-1.5 text-center sm:text-left", className)} {...props} />
+  <div data-slot="dialog-header" className={cn("flex shrink-0 flex-col space-y-2 pr-8 text-left", className)} {...props} />
 )
 DialogHeader.displayName = "DialogHeader"
 
 // gap-2 而不是 sm:space-x-2：原来的写法只在桌面端给间距，手机上按钮竖排时
 // 两个按钮之间一点缝都没有，糊成一整块。gap 横竖都管。
 const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex shrink-0 flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)} {...props} />
+  <div data-slot="dialog-footer" className={cn("flex shrink-0 flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end", className)} {...props} />
 )
 DialogFooter.displayName = "DialogFooter"
 

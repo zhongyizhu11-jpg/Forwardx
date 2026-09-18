@@ -14,8 +14,9 @@ export default function DataSectionLoading({
 }: DataSectionLoadingProps) {
   return (
     <div
+      role="status" aria-live="polite"
       className={cn(
-        "flex w-full items-center justify-center rounded-lg border border-border/40 bg-card/55 text-muted-foreground",
+        "flex w-full items-center justify-center rounded-lg border border-border bg-card text-muted-foreground",
         minHeight,
         className,
       )}

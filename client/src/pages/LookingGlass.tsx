@@ -1,3 +1,5 @@
+import WorkspaceHeader from "@/components/WorkspaceHeader";
+import { FormField } from "@/components/ui/form-field";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -141,7 +143,7 @@ function ResultOutput({
   const statusLabel = isRunning ? "执行中" : result ? (ok ? "完成" : result.timedOut ? "超时" : "异常") : "等待";
 
   return (
-    <Card className="flex h-[480px] min-w-0 flex-col overflow-hidden border-border/40 bg-card/60 backdrop-blur-md sm:h-[520px] xl:h-[560px]">
+    <Card className="flex h-[480px] min-w-0 flex-col overflow-hidden border-border bg-card sm:h-[520px] xl:h-[560px]">
       <CardHeader className="shrink-0 border-b border-border/40 bg-muted/20 px-4 py-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex min-w-0 items-center gap-2 text-sm">
@@ -213,7 +215,7 @@ function Iperf3Output({
   const commands = status?.commands;
 
   return (
-    <Card className="flex h-[560px] min-w-0 flex-col overflow-hidden border-border/40 bg-card/60 backdrop-blur-md sm:h-[600px] xl:h-[640px]">
+    <Card className="flex h-[560px] min-w-0 flex-col overflow-hidden border-border bg-card sm:h-[600px] xl:h-[640px]">
       <CardHeader className="shrink-0 border-b border-border/40 bg-muted/20 px-4 py-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex min-w-0 items-center gap-2 text-sm">
@@ -543,35 +545,18 @@ export default function LookingGlass() {
   return (
     <DashboardLayout>
       <div className="space-y-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="gap-1.5 border-chart-1/30 bg-chart-1/10 text-chart-1">
-                <Globe2 className="h-3.5 w-3.5" />
-                网络测试
-              </Badge>
-              <Badge variant="outline" className="gap-1.5 border-chart-4/30 bg-chart-4/10 text-chart-4">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                公网目标限定
-              </Badge>
-            </div>
-            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">网络测试</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              从已添加的 Agent 主机发起 Ping、Traceroute、MTR、TCPing，或临时启动 iperf3 服务端进行直连测试。
-            </p>
-          </div>
-        </div>
+        <WorkspaceHeader title="网络测试" description="从 Agent 主机发起 Ping、Traceroute、MTR、TCPing 或 iperf3 测试。" />
 
-        <Alert className="border-chart-1/25 bg-chart-1/10 text-foreground [&>svg]:text-chart-1">
+        <Alert className="border-border bg-card text-foreground [&>svg]:text-muted-foreground">
           <Globe2 className="h-4 w-4" />
-          <AlertTitle className="text-chart-1">网络测试</AlertTitle>
+          <AlertTitle>测试范围与时限</AlertTitle>
           <AlertDescription>
             同一时间只允许执行一个测试。普通网络测试会拒绝内网、环回、链路本地或保留地址；iperf3 服务端空闲 3 分钟后会自动停止。
           </AlertDescription>
         </Alert>
 
         <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,420px)_1fr]">
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+          <Card className="border-border bg-card">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
                 <Icon className="h-5 w-5 text-primary" />
@@ -579,7 +564,7 @@ export default function LookingGlass() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>测试主机</Label>
                 <Select value={hostId} onValueChange={setHostId}>
                   <SelectTrigger>
@@ -597,9 +582,9 @@ export default function LookingGlass() {
                 {availableHosts.length === 0 && (
                   <p className="text-xs text-muted-foreground">暂无可用主机，请先添加并连接 Agent。</p>
                 )}
-              </div>
+              </FormField>
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>测试类型</Label>
                 <Select value={method} onValueChange={(value) => setMethod(value as Method)}>
                   <SelectTrigger>
@@ -620,7 +605,7 @@ export default function LookingGlass() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">{selected.description}</p>
-              </div>
+              </FormField>
 
               {!isIperf3Method && (
                 <div className="space-y-2">
@@ -737,7 +722,7 @@ export default function LookingGlass() {
         </div>
 
         {history.length > 0 && (
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+          <Card className="border-border bg-card">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">最近测试</CardTitle>
             </CardHeader>

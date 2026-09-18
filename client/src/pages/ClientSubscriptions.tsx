@@ -1,3 +1,5 @@
+import { FormField } from "@/components/ui/form-field";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import MyHostsSection from "@/components/proxy/MyHostsSection";
@@ -911,11 +913,8 @@ export default function ClientSubscriptionsPage() {
     return (
       <DashboardLayout>
         <div className="space-y-6">
-          <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight">订阅管理</h1>
-            <p className="text-sm text-muted-foreground">你有哪些线路，以及怎么把它们带进客户端。</p>
-          </div>
-          <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md">
+          <WorkspaceHeader title={<>订阅管理</>} description={<>你有哪些线路，以及怎么把它们带进客户端。</>} />
+          <Card className="relative overflow-hidden border-border bg-card">
             <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
             <CardContent className="py-10 text-center">
               {/*
@@ -941,12 +940,7 @@ export default function ClientSubscriptionsPage() {
     <DashboardLayout>
       <div className="space-y-6">
         <div className="flex items-center justify-between gap-4">
-          <div>
-            {/* 排版跟仪表盘对齐：同一个面板里不该有两种页头气质。 */}
-            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">订阅管理</h1>
-            {/* 一句话说清这一页是什么：上面是带走的东西，下面是你有的东西。 */}
-            <p className="mt-1 text-xs text-muted-foreground sm:text-sm">你有哪些线路，以及怎么把它们带进客户端。</p>
-          </div>
+          <WorkspaceHeader title={<>订阅管理</>} description={<>你有哪些线路，以及怎么把它们带进客户端。</>} />
           {healthSummary.badge ? (
             <Badge
               variant="outline"
@@ -1031,7 +1025,7 @@ export default function ClientSubscriptionsPage() {
           空状态里就写着「先在下面加节点，再回来建链接」，等于把顺序讲了一遍。
         */}
         {/* 玻璃卡 + 顶部一道高光，和仪表盘那几张同一种做法。 */}
-        <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="relative overflow-hidden border-border bg-card">
           <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
           {/*
             手机上原来三层内边距叠着吃宽度：外层 main 12px + 卡片 24px + 每行自己的
@@ -1050,7 +1044,7 @@ export default function ClientSubscriptionsPage() {
               </span>
               订阅链接
               {tokens.length > 0 ? (
-                <span className="text-xs font-normal text-muted-foreground/70">{tokens.length} 条</span>
+                <span className="text-xs font-normal text-muted-foreground">{tokens.length} 条</span>
               ) : null}
             </CardTitle>
             <Button
@@ -1833,7 +1827,7 @@ export default function ClientSubscriptionsPage() {
             <div className="space-y-2 rounded-lg border p-3">
               <Label>这台落地机的套餐</Label>
               <div className="grid grid-cols-2 gap-2">
-                <div className="min-w-0 space-y-1">
+                <FormField className="min-w-0 space-y-1">
                   <Label className="text-xs text-muted-foreground">带宽（Mbps）</Label>
                   <Input
                     type="number"
@@ -1842,8 +1836,8 @@ export default function ClientSubscriptionsPage() {
                     onChange={(event) => setNodeBandwidthMbps(event.target.value)}
                     placeholder="500"
                   />
-                </div>
-                <div className="min-w-0 space-y-1">
+                </FormField>
+                <FormField className="min-w-0 space-y-1">
                   <Label className="text-xs text-muted-foreground">总流量（GB）</Label>
                   <Input
                     type="number"
@@ -1852,7 +1846,7 @@ export default function ClientSubscriptionsPage() {
                     onChange={(event) => setNodeTrafficLimitGb(event.target.value)}
                     placeholder="1000"
                   />
-                </div>
+                </FormField>
               </div>
               {editingNodeId ? (
                 <div className="space-y-1">
@@ -1924,7 +1918,7 @@ export default function ClientSubscriptionsPage() {
               </button>
               {nodeAdvancedOpen ? (
                 <div className="space-y-4 pt-1">
-                  <div className="space-y-2">
+                  <FormField className="space-y-2">
                     <Label>自动选路</Label>
                     <Select
                       value={nodeAutoGroup}
@@ -1945,8 +1939,8 @@ export default function ClientSubscriptionsPage() {
                       多条中转指向这个落地时，订阅里额外生成一个选路组。
                       {PROXY_NODE_AUTO_GROUP_HINTS[nodeAutoGroup]}
                     </p>
-                  </div>
-                  <div className="space-y-2">
+                  </FormField>
+                  <FormField className="space-y-2">
                     <Label>前置代理</Label>
                     <Select
                       value={String(nodeFrontProxyId)}
@@ -1974,7 +1968,7 @@ export default function ClientSubscriptionsPage() {
                         </span>
                       ) : null}
                     </p>
-                  </div>
+                  </FormField>
                 </div>
               ) : null}
             </div>

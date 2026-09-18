@@ -1,3 +1,5 @@
+import { FormField } from "@/components/ui/form-field";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import { resourceStatusTone } from "@/lib/statusDot";
 import { StatusDot } from "@/lib/statusDot";
@@ -1070,12 +1072,7 @@ export default function Plans() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">套餐管理</h1>
-            <p className="text-sm text-muted-foreground">配置套餐、资源和端口。</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
+        <WorkspaceHeader title={<>套餐管理</>} description={<>配置套餐、资源和端口。</>} actions={<>
             <Button variant="outline" onClick={() => setAssignOpen(true)}>
               <Settings2 className="mr-2 h-4 w-4" /> 手动分配
             </Button>
@@ -1085,8 +1082,7 @@ export default function Plans() {
                 <Plus className="mr-2 h-4 w-4" /> 新增套餐
               </Button>
             )}
-          </div>
-        </div>
+          </>} />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {/*
@@ -1349,11 +1345,11 @@ export default function Plans() {
             <div className="min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
               <TabsContent value="settings" className="mt-4 space-y-4">
                 <div className="grid gap-4 md:grid-cols-3">
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>套餐名称</Label>
               <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如：基础套餐" />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>价格</Label>
               <Input
                 type="number"
@@ -1366,8 +1362,8 @@ export default function Plans() {
               {form.priceTiers.length > 0 ? (
                 <p className="text-xs text-muted-foreground">下面选了多种周期，这里由最便宜那一档决定。</p>
               ) : null}
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>有效期</Label>
               <Select
                 value={form.durationDays}
@@ -1384,7 +1380,7 @@ export default function Plans() {
               <p className="text-xs text-muted-foreground">
                 {form.priceTiers.length > 0 ? "同上：由下面选的周期决定。" : "超过一个月按月重置流量。"}
               </p>
-            </div>
+            </FormField>
             <div className="space-y-3 sm:col-span-2">
               <Label>卖哪几种周期</Label>
               {/*
@@ -1504,41 +1500,41 @@ export default function Plans() {
                 </div>
               ) : null}
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>连续端口数</Label>
               <Input type="number" min={1} max={1024} value={form.portCount} onChange={(e) => setForm({ ...form, portCount: e.target.value })} />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>总流量（GB，0 为不限）</Label>
               <Input type="number" min={0} value={form.trafficGB} onChange={(e) => setForm({ ...form, trafficGB: e.target.value })} />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>限速（Mbps，0 为不限）</Label>
               <Input type="number" min={0} max={1000000} step={1} value={form.rateLimitMbps} onChange={(e) => setForm({ ...form, rateLimitMbps: e.target.value })} />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>最大规则数（0 为不限）</Label>
               <Input type="number" min={0} value={form.maxRules} onChange={(e) => setForm({ ...form, maxRules: e.target.value })} />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>最大落地节点数（0 为不限）</Label>
               <Input type="number" min={0} value={form.maxProxyInbounds} onChange={(e) => setForm({ ...form, maxProxyInbounds: e.target.value })} />
               <p className="text-xs text-muted-foreground">买了这个套餐能自己开几个落地节点。只在套餐开了客户端订阅时才有意义。</p>
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>最大订阅地址数（0 为不限）</Label>
               <Input type="number" min={0} value={form.maxProxySubTokens} onChange={(e) => setForm({ ...form, maxProxySubTokens: e.target.value })} />
               <p className="text-xs text-muted-foreground">能生成几条订阅地址。同样只在开了客户端订阅时才有意义。</p>
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>最大连接数</Label>
               <Input type="number" min={0} value={form.maxConnections} onChange={(e) => setForm({ ...form, maxConnections: e.target.value })} />
               <p className="text-xs text-muted-foreground">按主机或隧道聚合。</p>
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>单 IP 接入限制</Label>
               <Input type="number" min={0} value={form.maxIPs} onChange={(e) => setForm({ ...form, maxIPs: e.target.value })} />
-            </div>
+            </FormField>
             <div className="space-y-2 sm:col-span-2">
               <div className="flex items-start justify-between gap-3 rounded-md border p-3">
                 <div className="min-w-0">
@@ -1555,10 +1551,10 @@ export default function Plans() {
               </div>
               <p className="text-xs text-muted-foreground">同组规则共享限制。</p>
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>排序</Label>
               <Input type="number" min={0} value={form.sortOrder} onChange={(e) => setForm({ ...form, sortOrder: e.target.value })} />
-            </div>
+            </FormField>
                 </div>
 
                 <div className="grid gap-3 rounded-lg border border-border/60 p-3 sm:grid-cols-2">
@@ -1609,10 +1605,10 @@ export default function Plans() {
                   )}
                 </div>
 
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>说明</Label>
                   <Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="展示给用户看的套餐说明" />
-                </div>
+                </FormField>
               </TabsContent>
 
               <TabsContent value="resources" className="mt-3 space-y-3">
@@ -1871,14 +1867,14 @@ export default function Plans() {
             <div className="space-y-2">
               {form.trafficAddons.map((addon, index) => (
                 <div key={index} className="grid gap-2 rounded-md border border-border/50 p-3 sm:grid-cols-[1fr_1fr_110px_auto] sm:items-end">
-                  <div className="space-y-1.5">
+                  <FormField className="space-y-1.5">
                     <Label className="text-xs">流量（GB）</Label>
                     <Input type="number" min={0} step="0.01" value={addon.trafficGB} onChange={(e) => updateTrafficAddon(index, { trafficGB: e.target.value })} />
-                  </div>
-                  <div className="space-y-1.5">
+                  </FormField>
+                  <FormField className="space-y-1.5">
                     <Label className="text-xs">价格（元）</Label>
                     <Input type="number" min={0} step="0.01" value={addon.price} onChange={(e) => updateTrafficAddon(index, { price: e.target.value })} />
-                  </div>
+                  </FormField>
                   <label className="flex h-10 items-center justify-between gap-2 rounded-md border px-3 text-sm">
                     启用
                     <Switch checked={addon.isActive} onCheckedChange={(isActive) => updateTrafficAddon(index, { isActive })} />
@@ -1918,7 +1914,7 @@ export default function Plans() {
             <DialogDescription>手动给用户分配套餐。</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>用户</Label>
               <Select value={assignUserId} onValueChange={setAssignUserId}>
                 <SelectTrigger><SelectValue placeholder="选择用户" /></SelectTrigger>
@@ -1926,8 +1922,8 @@ export default function Plans() {
                   {users.map((user: any) => <SelectItem key={user.id} value={String(user.id)}>{user.name || user.username}</SelectItem>)}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>套餐</Label>
               <Select value={assignPlanId} onValueChange={(value) => {
                 setAssignPlanId(value);
@@ -1944,9 +1940,9 @@ export default function Plans() {
                   {planOptions.map((plan: any) => <SelectItem key={plan.id} value={String(plan.id)}>{plan.name}</SelectItem>)}
                 </SelectContent>
               </Select>
-            </div>
+            </FormField>
             {selectedAssignPlan && assignDurationChoices.length > 0 ? (
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>分配周期</Label>
                 <Select value={assignDurationDays} onValueChange={setAssignDurationDays}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1959,7 +1955,7 @@ export default function Plans() {
                 <p className="text-xs text-muted-foreground">
                   套餐挂着的周期都能选；选「永久」不设到期时间。手动分配不扣钱，也不走折扣。
                 </p>
-              </div>
+              </FormField>
             ) : null}
           </div>
           <DialogFooter>

@@ -1,3 +1,9 @@
+import { FormField } from "@/components/ui/form-field";
+import EmptyState from "@/components/EmptyState";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
+import FilterToolbar from "@/components/FilterToolbar";
+import ConnectionPath from "@/components/ConnectionPath";
+import TrafficOverview from "@/components/TrafficOverview";
 import { useAuth } from "@/_core/hooks/useAuth";
 import SectionTransition from "@/components/SectionTransition";
 import { forwardGroupModeOf } from "@shared/forwardTypes";
@@ -37,6 +43,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { OptimisticSwitch, Switch } from "@/components/ui/switch";
@@ -5804,50 +5811,18 @@ function RulesContent() {
       </Badge>
     ) : null;
 
-    const panelClass = compact
-      ? "rounded-md border border-border/50 bg-background/55 px-2 py-1.5"
-      : "rounded-md border border-border/50 bg-background/55 px-2.5 py-2";
-    const labelClass = "mb-1 flex items-center gap-1 text-[10px] font-medium text-muted-foreground";
-    const valueClass = compact
-      ? "min-w-0 break-all text-[11px] leading-4"
-      : "min-w-0 break-all text-xs leading-5";
-
-    return (
-      <div className="min-w-0 space-y-1.5 font-mono text-xs">
-        <div className={panelClass}>
-          <div className={labelClass}>入口</div>
-          <div className="flex min-w-0 flex-col gap-1">
-            {entryAddresses.map((entry) => (
-              <button
-                key={`${entry.label}:${entry.value}`}
-                type="button"
-                onClick={() => entry.copyable && copyEntryAddress(rule, entry.value)}
-                disabled={!entry.copyable}
-                className="group flex max-w-full min-w-0 items-start justify-between gap-1.5 rounded bg-muted/35 px-1.5 py-1 text-left transition-colors enabled:hover:bg-muted/70 disabled:cursor-default disabled:text-muted-foreground"
-                title={entry.copyable ? `${entryTitle}${entryAddresses.length > 1 ? ` (${entry.label})` : ""}` : entry.text}
-              >
-                <code className={valueClass}>{entry.text}</code>
-                {entry.copyable && <Copy className="mt-0.5 h-3 w-3 flex-shrink-0 text-muted-foreground opacity-60 group-hover:opacity-100" />}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="flex justify-center">
-          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border/50 bg-background text-muted-foreground shadow-sm">
-            <ArrowDownToLine className="h-3 w-3" />
-          </span>
-        </div>
-        <div className={panelClass}>
-          <div className={labelClass}>出口</div>
-          <div className="flex min-w-0 items-start gap-1.5">
-            <code className={`${valueClass} flex-1 rounded bg-muted/35 px-1.5 py-1`} title={targetAddress}>
-              {targetAddress}
-            </code>
-            {failoverBadge}
-          </div>
-        </div>
-      </div>
-    );
+    return <ConnectionPath steps={[
+      { label: "入口 · 点击复制", content: <div className="flex min-w-0 flex-col gap-1">{entryAddresses.map((entry) => (
+        <button key={`${entry.label}:${entry.value}`} type="button"
+          onClick={() => entry.copyable && copyEntryAddress(rule, entry.value)} disabled={!entry.copyable}
+          className="group flex min-h-8 w-full min-w-0 items-center justify-between gap-2 rounded text-left hover:text-primary disabled:text-muted-foreground"
+          title={entry.copyable ? entryTitle : entry.text}>
+          <code className="min-w-0 break-all text-xs">{entry.text}</code>
+          {entry.copyable && <Copy className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+        </button>
+      ))}</div> },
+      { label: "目标出口", content: <div className="flex min-w-0 flex-wrap items-center gap-2"><code className="break-all text-xs">{targetAddress}</code>{failoverBadge}</div> },
+    ]} />;
   };
 
   const renderTableTransferEntry = (rule: any) => {
@@ -6472,7 +6447,7 @@ function RulesContent() {
           key={rule.id}
           {...(sortable?.itemProps || {})}
           className={cn(
-            "group/sortable relative action-card border-border/40 bg-card/60 backdrop-blur-md transition-[box-shadow,opacity]",
+            "group/sortable relative action-card border-border bg-card transition-[box-shadow,opacity]",
             !supported && "opacity-70",
             sortable?.isDragging && "opacity-55 ring-1 ring-primary/35",
             sortable?.isDropTarget && "ring-1 ring-primary/45",
@@ -6553,7 +6528,7 @@ function RulesContent() {
         key={rule.id}
         {...(sortable?.itemProps || {})}
         className={cn(
-          "group/sortable relative action-card border-border/40 bg-card/60 backdrop-blur-md transition-[box-shadow,opacity]",
+          "group/sortable relative action-card border-border bg-card transition-[box-shadow,opacity]",
           !supported && "opacity-70",
           sortable?.isDragging && "opacity-55 ring-1 ring-primary/35",
           sortable?.isDropTarget && "ring-1 ring-primary/45",
@@ -6640,14 +6615,7 @@ function RulesContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-        <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">转发规则</h1>
-          <p className="text-muted-foreground mt-1 text-xs sm:text-sm">
-            管理转发规则和运行状态
-          </p>
-        </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
+      <WorkspaceHeader title="转发规则" description="管理转发规则和运行状态" status={
           <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
             <Zap className="h-3 w-3 text-chart-2" />
             <AnimatedStatValue
@@ -6657,6 +6625,7 @@ function RulesContent() {
               fallbackValue="0 / 0 已启用"
             />
           </Badge>
+      } actions={<>
           <div className="hidden items-center overflow-hidden rounded-md border border-border/40 md:flex">
             <Button
               variant={displayMode === "compact" ? "secondary" : "ghost"}
@@ -6695,50 +6664,39 @@ function RulesContent() {
               <Globe className="h-4 w-4" />
             </Button>
           </div>
-          <Button
-            variant="outline"
-            onClick={() => setResetTrafficTarget({ scope: "all" })}
-            className="gap-2"
-            disabled={visibleRuleIdsForMetrics.length === 0 || resetTrafficMutation.isPending}
-          >
-            {resetTrafficMutation.isPending && resetTrafficTarget?.scope === "all"
-              ? <Loader2 className="h-4 w-4 animate-spin" />
-              : <RotateCcw className="h-4 w-4" />}
-            重置数据
-          </Button>
-          <Button
-            variant="outline"
-            onClick={openCopyDialog}
-            className="gap-2"
-            disabled={!transferSourceRules.length && !canAdd}
-            title={!transferSourceRules.length && !canAdd ? "暂无可批量管理或导入的规则" : undefined}
-          >
-            <ClipboardCopy className="h-4 w-4" />
-            批量管理
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild><Button variant="outline" size="icon" aria-label="更多规则操作"><span aria-hidden="true">•••</span></Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={openCopyDialog} disabled={!transferSourceRules.length && !canAdd}><ClipboardCopy className="h-4 w-4" />批量管理</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setResetTrafficTarget({ scope: "all" })} disabled={visibleRuleIdsForMetrics.length === 0 || resetTrafficMutation.isPending}><RotateCcw className="h-4 w-4" />重置数据</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {rulePermissionLoading ? (
-            <Button disabled className="col-span-2 gap-2 sm:col-span-1">
+            <Button disabled className="gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
               权限加载中
             </Button>
           ) : canAdd ? (
             <Button
               onClick={() => openCreate()}
-              className="col-span-2 gap-2 sm:col-span-1"
+              className="gap-2"
               disabled={!canCreateRule}
               title={!canCreateRule ? "暂无可用转发资源" : undefined}
             >
               <Plus className="h-4 w-4" />
-              添加规则
+              新建规则
             </Button>
           ) : (
-            <Button disabled className="col-span-2 gap-2 sm:col-span-1" title="需要管理员授权后才能添加规则">
+            <Button disabled className="gap-2" title="需要管理员授权后才能新建规则">
               <Plus className="h-4 w-4" />
-              添加规则
+              新建规则
             </Button>
           )}
-        </div>
-      </div>
+      </>} />
+
+      <TrafficOverview total={totalTrafficTotals} daily={dailyTrafficTotals}
+        totalLoading={totalTrafficTotalsLoading} dailyLoading={dailyTrafficTotalsLoading}
+        scope={trafficTotalsCacheScope} lastScope={trafficTotalsLastCacheScope} />
 
       {!canAdd && !rulePermissionLoading && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm text-amber-700 dark:text-amber-400">
@@ -6749,17 +6707,16 @@ function RulesContent() {
 
       {(user?.role === "admin" || ruleScopeTotal > 0 || hasActiveRuleFilter || (rules && rules.length > 0)) && (
         <div className="space-y-3">
-          <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">筛选：</span>
-            </div>
-            <div className="relative w-full sm:w-[260px] lg:w-[320px]">
+          <Tabs value={ruleCategory} onValueChange={handleRuleCategoryChange}>
+            <SlidingTabsList items={ruleCategoryItems} activeValue={ruleCategory} ariaLabel="转发规则分类" minItemWidthRem={8.5} />
+          </Tabs>
+          <FilterToolbar activeCount={Number(hasActiveUserFilter) + Number(filterResource !== "all")} search={
+            <div className="relative w-full">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={ruleSearchQuery}
                 onChange={(event) => setRuleSearchQuery(event.target.value)}
-                placeholder="搜索端口、IP、域名或备注"
+                aria-label="搜索转发规则" placeholder="搜索端口、IP、域名或备注"
                 className="h-8 w-full pl-8 pr-8 text-xs"
               />
               {ruleSearchQuery ? (
@@ -6773,6 +6730,7 @@ function RulesContent() {
                 </button>
               ) : null}
             </div>
+          }>
             {user?.role === "admin" && (
               <Select value={filterUser} onValueChange={handleFilterUserChange}>
                 <SelectTrigger className="h-8 w-full text-xs sm:w-[160px]">
@@ -6882,137 +6840,11 @@ function RulesContent() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </FilterToolbar>
 
-          <Tabs value={ruleCategory} onValueChange={handleRuleCategoryChange}>
-            <SlidingTabsList items={ruleCategoryItems} activeValue={ruleCategory} ariaLabel="转发规则分类" minItemWidthRem={8.5} />
-          </Tabs>
+
         </div>
       )}
-
-      {/* 转发流量汇总 */}
-      <div className="grid grid-cols-3 gap-1.5 sm:gap-4">
-        <Card className="group relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-[0.035] transition-opacity group-hover:opacity-[0.07]" />
-          <CardContent className="relative flex min-w-0 items-center justify-between p-2 sm:gap-3 sm:p-4">
-            <div className="w-full min-w-0 sm:flex-1">
-              <p className="whitespace-nowrap text-[10px] text-muted-foreground sm:text-xs">入向流量</p>
-              <div className="mt-1 grid min-w-0 gap-0.5 sm:mt-0.5 sm:flex sm:flex-wrap sm:items-baseline sm:gap-x-2 sm:gap-y-1">
-                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-1 sm:inline-flex">
-                  <span className="shrink-0 whitespace-nowrap text-[8px] font-medium uppercase text-muted-foreground sm:text-[10px]">
-                    <span className="sm:hidden">总</span>
-                    <span className="hidden sm:inline">累计</span>
-                  </span>
-                  <AnimatedStatValue
-                    as="span"
-                    value={formatBytes(totalTrafficTotals.bytesIn)}
-                    loading={totalTrafficTotalsLoading}
-                    cacheKey={`rules.traffic.${trafficTotalsCacheScope}.total.bytesIn`}
-                    fallbackCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.total.last.bytesIn`, "rules.traffic.total.last.bytesIn"]}
-                    mirrorCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.total.last.bytesIn`, "rules.traffic.total.last.bytesIn"]}
-                    fallbackValue="0 B"
-                    className="min-w-0 whitespace-nowrap text-[10px] font-semibold tabular-nums sm:truncate sm:text-xl"
-                  />
-                </div>
-                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-1 sm:inline-flex">
-                  <span className="shrink-0 whitespace-nowrap text-[8px] font-medium uppercase text-muted-foreground sm:text-[10px]">24H</span>
-                  <AnimatedStatValue
-                    as="span"
-                    value={formatBytes(dailyTrafficTotals.bytesIn)}
-                    loading={dailyTrafficTotalsLoading}
-                    cacheKey={`rules.traffic.${trafficTotalsCacheScope}.daily.bytesIn`}
-                    fallbackCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.daily.last.bytesIn`, "rules.traffic.daily.last.bytesIn"]}
-                    mirrorCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.daily.last.bytesIn`, "rules.traffic.daily.last.bytesIn"]}
-                    fallbackValue="0 B"
-                    className="min-w-0 whitespace-nowrap text-[9px] font-semibold tabular-nums text-foreground sm:truncate sm:text-xs"
-                  />
-                </div>
-              </div>
-            </div>
-            <ArrowDownToLine className="hidden h-6 w-6 shrink-0 text-chart-2 sm:block" />
-          </CardContent>
-        </Card>
-        <Card className="group relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-[0.035] transition-opacity group-hover:opacity-[0.07]" />
-          <CardContent className="relative flex min-w-0 items-center justify-between p-2 sm:gap-4 sm:p-4">
-            <div className="w-full min-w-0 sm:flex-1">
-              <p className="whitespace-nowrap text-[10px] text-muted-foreground sm:text-xs">出向流量</p>
-              <div className="mt-1 grid min-w-0 gap-0.5 sm:mt-0.5 sm:flex sm:flex-wrap sm:items-baseline sm:gap-x-2 sm:gap-y-1">
-                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-1 sm:inline-flex">
-                  <span className="shrink-0 whitespace-nowrap text-[8px] font-medium uppercase text-muted-foreground sm:text-[10px]">
-                    <span className="sm:hidden">总</span>
-                    <span className="hidden sm:inline">累计</span>
-                  </span>
-                  <AnimatedStatValue
-                    as="span"
-                    value={formatBytes(totalTrafficTotals.bytesOut)}
-                    loading={totalTrafficTotalsLoading}
-                    cacheKey={`rules.traffic.${trafficTotalsCacheScope}.total.bytesOut`}
-                    fallbackCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.total.last.bytesOut`, "rules.traffic.total.last.bytesOut"]}
-                    mirrorCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.total.last.bytesOut`, "rules.traffic.total.last.bytesOut"]}
-                    fallbackValue="0 B"
-                    className="min-w-0 whitespace-nowrap text-[10px] font-semibold tabular-nums sm:truncate sm:text-xl"
-                  />
-                </div>
-                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-1 sm:inline-flex">
-                  <span className="shrink-0 whitespace-nowrap text-[8px] font-medium uppercase text-muted-foreground sm:text-[10px]">24H</span>
-                  <AnimatedStatValue
-                    as="span"
-                    value={formatBytes(dailyTrafficTotals.bytesOut)}
-                    loading={dailyTrafficTotalsLoading}
-                    cacheKey={`rules.traffic.${trafficTotalsCacheScope}.daily.bytesOut`}
-                    fallbackCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.daily.last.bytesOut`, "rules.traffic.daily.last.bytesOut"]}
-                    mirrorCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.daily.last.bytesOut`, "rules.traffic.daily.last.bytesOut"]}
-                    fallbackValue="0 B"
-                    className="min-w-0 whitespace-nowrap text-[9px] font-semibold tabular-nums text-foreground sm:truncate sm:text-xs"
-                  />
-                </div>
-              </div>
-            </div>
-            <ArrowUpFromLine className="hidden h-6 w-6 shrink-0 text-chart-4 sm:block" />
-          </CardContent>
-        </Card>
-        <Card className="group relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-[0.035] transition-opacity group-hover:opacity-[0.07]" />
-          <CardContent className="relative flex min-w-0 items-center justify-between p-2 sm:gap-4 sm:p-4">
-            <div className="w-full min-w-0 sm:flex-1">
-              <p className="whitespace-nowrap text-[10px] text-muted-foreground sm:text-xs">连接次数</p>
-              <div className="mt-1 grid min-w-0 gap-0.5 sm:mt-0.5 sm:flex sm:flex-wrap sm:items-baseline sm:gap-x-2 sm:gap-y-1">
-                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-1 sm:inline-flex">
-                  <span className="shrink-0 whitespace-nowrap text-[8px] font-medium uppercase text-muted-foreground sm:text-[10px]">
-                    <span className="sm:hidden">总</span>
-                    <span className="hidden sm:inline">累计</span>
-                  </span>
-                  <AnimatedStatValue
-                    as="span"
-                    value={totalTrafficTotals.connections.toLocaleString()}
-                    loading={totalTrafficTotalsLoading}
-                    cacheKey={`rules.traffic.${trafficTotalsCacheScope}.total.connections`}
-                    fallbackCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.total.last.connections`, "rules.traffic.total.last.connections"]}
-                    mirrorCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.total.last.connections`, "rules.traffic.total.last.connections"]}
-                    fallbackValue="0"
-                    className="min-w-0 whitespace-nowrap text-[10px] font-semibold tabular-nums sm:truncate sm:text-xl"
-                  />
-                </div>
-                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-1 sm:inline-flex">
-                  <span className="shrink-0 whitespace-nowrap text-[8px] font-medium uppercase text-muted-foreground sm:text-[10px]">24H</span>
-                  <AnimatedStatValue
-                    as="span"
-                    value={dailyTrafficTotals.connections.toLocaleString()}
-                    loading={dailyTrafficTotalsLoading}
-                    cacheKey={`rules.traffic.${trafficTotalsCacheScope}.daily.connections`}
-                    fallbackCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.daily.last.connections`, "rules.traffic.daily.last.connections"]}
-                    mirrorCacheKeys={[`rules.traffic.${trafficTotalsLastCacheScope}.daily.last.connections`, "rules.traffic.daily.last.connections"]}
-                    fallbackValue="0"
-                    className="min-w-0 whitespace-nowrap text-[9px] font-semibold tabular-nums text-foreground sm:truncate sm:text-xs"
-                  />
-                </div>
-              </div>
-            </div>
-            <Activity className="hidden h-6 w-6 shrink-0 text-chart-3 sm:block" />
-          </CardContent>
-        </Card>
-      </div>
 
       <SectionTransition transitionKey={ruleContentTransitionKey}>
       {isLoading || (!ruleStatusSnapshotReady && !hasCachedRuleStatus) ? (
@@ -7092,7 +6924,7 @@ function RulesContent() {
                   </SortableReorderContext>
                 )}
               </RuleCardModeTransition>
-              <Card className="hidden border-border/40 bg-card/60 backdrop-blur-md sm:block">
+              <Card className="hidden border-border bg-card sm:block">
                 <CardContent className="p-0">
                   <div className="overflow-x-auto">
                     <Table className={cn(ruleSortingEnabled ? (user?.role === "admin" ? "min-w-[1764px]" : "min-w-[1654px]") : (user?.role === "admin" ? "min-w-[1720px]" : "min-w-[1610px]"), "table-fixed")}>
@@ -7166,7 +6998,7 @@ function RulesContent() {
           <PersistentPagination pagination={rulePagination} itemName="条规则" />
         </>
       ) : (
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardContent className="p-0">
             {/*
               列表没读到时不能画成「暂无转发规则」。转发页是这套面板的主页，那句话意味着
@@ -7182,35 +7014,23 @@ function RulesContent() {
                 minHeight="min-h-[260px]"
               />
             ) : (rules && rules.length > 0) || ruleScopeTotal > 0 || hasActiveRuleFilter ? (
-              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-                <Filter className="h-10 w-10 mb-3 opacity-30" />
-                <p className="text-base font-medium">没有匹配的规则</p>
-                <p className="text-sm mt-1 text-muted-foreground/60">尝试调整筛选条件</p>
-                {hasActiveRuleFilter && (
+              <EmptyState icon={<Filter className="h-10 w-10 mb-3 opacity-30" />} title={<>没有匹配的规则</>} description={<>尝试调整筛选条件</>} actions={<>{hasActiveRuleFilter && (
                   <Button type="button" variant="outline" className="mt-4 gap-2" onClick={clearRuleFilters}>
                     <XCircle className="h-4 w-4" />
                     清除筛选
                   </Button>
-                )}
-              </div>
+                )}</>} />
             ) : (
-              <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-                <div className="h-16 w-16 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
-                  <ArrowRightLeft className="h-8 w-8 opacity-40" />
-                </div>
-                <p className="text-lg font-medium">暂无转发规则</p>
-                <p className="text-sm mt-1 text-muted-foreground/60">
+              <EmptyState icon={<ArrowRightLeft className="h-8 w-8 opacity-40" />} title={<>暂无转发规则</>} description={<>
                   {canCreateRule
                     ? "创建第一条转发规则"
                     : "当前账号没有可用的转发资源"}
-                </p>
-                {canAdd && canCreateRule && (
+                </>} actions={<>{canAdd && canCreateRule && (
                   <Button onClick={() => openCreate()} variant="outline" className="mt-4 gap-2">
                     <Plus className="h-4 w-4" />
                     创建第一条规则
                   </Button>
-                )}
-              </div>
+                )}</>} />
             )}
           </CardContent>
         </Card>
@@ -7275,7 +7095,7 @@ function RulesContent() {
               {form.routeMode === "tunnel" && (
                 <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>使用隧道</Label>
                       <Select
                         value={form.tunnelId ? String(form.tunnelId) : undefined}
@@ -7299,7 +7119,7 @@ function RulesContent() {
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
+                    </FormField>
                     <Badge variant="outline" className="h-9 justify-center gap-1.5 px-3 text-muted-foreground">
                       <Network className="h-3.5 w-3.5" />
                       {selectedTunnelDisplay.shortLabel}
@@ -7320,7 +7140,7 @@ function RulesContent() {
               {isForwardGroupRouteMode && (
                 <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>{form.routeMode === "local" ? (isLegacyLocalRuleEdit ? "迁移到新版端口转发" : "使用端口转发") : form.routeMode === "chain" ? "使用转发链" : "使用转发组"}</Label>
                       <Select
                         value={form.forwardGroupId ? String(form.forwardGroupId) : undefined}
@@ -7347,7 +7167,7 @@ function RulesContent() {
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
+                    </FormField>
                     <Badge variant="outline" className="h-9 justify-center gap-1.5 px-3 text-muted-foreground">
                       {form.routeMode === "local" ? <ArrowRightLeft className="h-3.5 w-3.5" /> : form.routeMode === "chain" ? <GitBranch className="h-3.5 w-3.5" /> : <Layers3 className="h-3.5 w-3.5" />}
                       {isLegacyLocalRuleEdit && !selectedForwardGroup ? "待选择" : FORWARD_TYPE_LABELS[effectiveRouteForwardType] || effectiveRouteForwardType}
@@ -7377,7 +7197,7 @@ function RulesContent() {
               {form.routeMode === "local" && !isForwardGroupRouteMode && (
                 <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>使用按量计费资源</Label>
                       <Select
                         value={form.hostId ? String(form.hostId) : undefined}
@@ -7404,7 +7224,7 @@ function RulesContent() {
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
+                    </FormField>
                     <Badge variant="outline" className="h-9 justify-center gap-1.5 px-3 text-muted-foreground">
                       <ArrowRightLeft className="h-3.5 w-3.5" />
                       按量计费
@@ -7482,15 +7302,15 @@ function RulesContent() {
               </Button>
               </div>
               </div>
-              <div className="space-y-2">
+              <FormField className="space-y-2">
               <Label>目标地址 <span className="text-destructive">*</span></Label>
               <Input
               placeholder="例如: 10.0.0.1 或 example.com"
               value={form.targetIp}
               onChange={(e) => setForm({ ...form, targetIp: e.target.value })}
               />
-              </div>
-              <div className="space-y-2">
+              </FormField>
+              <FormField className="space-y-2">
               <Label>目标端口 <span className="text-destructive">*</span></Label>
               <Input
               type="number"
@@ -7501,8 +7321,8 @@ function RulesContent() {
               value={form.targetPort || ""}
               onChange={(e) => setForm({ ...form, targetPort: parseInt(e.target.value) || 0 })}
               />
-              </div>
-              <div className="space-y-2">
+              </FormField>
+              <FormField className="space-y-2">
               <Label>协议</Label>
               <Select
               value={form.protocol}
@@ -7519,17 +7339,17 @@ function RulesContent() {
               <SelectItem value="both">TCP+UDP</SelectItem>
               </SelectContent>
               </Select>
-              </div>
+              </FormField>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
               <Label className="flex items-baseline gap-1.5">规则名称<span className="text-xs font-normal text-muted-foreground">留空自动生成</span></Label>
               <Input
               placeholder={autoForwardRuleName(form) || "例如: Web 服务转发"}
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
-              </div>
+              </FormField>
               {!isForwardGroupRouteMode && form.routeMode === "local" && (
               <div className="space-y-2">
               <Label>转发工具</Label>
@@ -7617,7 +7437,7 @@ function RulesContent() {
               </div>
               {form.failoverEnabled && (
                 <div className="space-y-2">
-                  <div className="space-y-2">
+                  <FormField className="space-y-2">
                     <Label>备用出站（每行一个，最多 10 个）</Label>
                     <Textarea
                       value={form.failoverTargetsText}
@@ -7626,9 +7446,9 @@ function RulesContent() {
                       className="min-h-24 font-mono text-sm"
                       spellCheck={false}
                     />
-                  </div>
+                  </FormField>
                   <div className="grid gap-2 sm:grid-cols-3">
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>切换时间（秒）</Label>
                       <Input
                         type="number"
@@ -7638,8 +7458,8 @@ function RulesContent() {
                         value={form.failoverSeconds || ""}
                         onChange={(event) => setForm({ ...form, failoverSeconds: parseInt(event.target.value) || 0 })}
                       />
-                    </div>
-                    <div className="space-y-2">
+                    </FormField>
+                    <FormField className="space-y-2">
                       <Label>恢复观察（秒）</Label>
                       <Input
                         type="number"
@@ -7649,7 +7469,7 @@ function RulesContent() {
                         value={form.recoverSeconds || ""}
                         onChange={(event) => setForm({ ...form, recoverSeconds: parseInt(event.target.value) || 0 })}
                       />
-                    </div>
+                    </FormField>
                     {form.failoverStrategy === "fallback" && (
                       <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
                         <div>
@@ -7700,7 +7520,7 @@ function RulesContent() {
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="grid gap-4 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)]">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>{"类型"}</Label>
                 <Select
                   value={exportScopeType}
@@ -7721,7 +7541,7 @@ function RulesContent() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
               {renderTransferResourcePicker({
                 type: exportScopeType,
                 resources: exportResources,
@@ -7767,7 +7587,7 @@ function RulesContent() {
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="grid gap-4 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)]">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>{"类型"}</Label>
                 <Select
                   value={importScopeType}
@@ -7789,7 +7609,7 @@ function RulesContent() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
               {renderTransferResourcePicker({
                 type: importScopeType,
                 resources: importResources,
@@ -7803,10 +7623,10 @@ function RulesContent() {
                 stackedList: true,
               })}
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>{"规则文件"}</Label>
               <Input key={importFileInputKey} type="file" accept=".json,application/json" onChange={handleImportFileChange} />
-            </div>
+            </FormField>
             <div
               className={`rounded-md border px-3 py-2 text-sm ${
                 importValidation.ok
@@ -8156,7 +7976,7 @@ function RulesContent() {
                         {hasBatchEditRouteSelection ? "已设置新入口" : "保持原入口"}
                       </span>
                     </div>
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>入口类型</Label>
                       <Select
                         value={batchEditForm.routeMode}
@@ -8173,10 +7993,10 @@ function RulesContent() {
                           <SelectItem value="group" disabled={!canUseFailoverGroup}>转发组</SelectItem>
                         </SelectContent>
                       </Select>
-                    </div>
+                    </FormField>
 
                     {batchEditForm.routeMode === "tunnel" ? (
-                      <div className="space-y-2">
+                      <FormField className="space-y-2">
                         <Label>使用隧道</Label>
                         <Select
                           value={batchEditForm.tunnelId ? String(batchEditForm.tunnelId) : "none"}
@@ -8207,9 +8027,9 @@ function RulesContent() {
                             <span className="rounded bg-background/60 px-1.5 py-0.5">{selectedBatchEditTunnelDisplay.shortLabel}</span>
                           </div>
                         )}
-                      </div>
+                      </FormField>
                     ) : (
-                      <div className="space-y-2">
+                      <FormField className="space-y-2">
                         <Label>{batchEditForm.routeMode === "local" ? "使用端口转发" : batchEditForm.routeMode === "chain" ? "使用转发链" : "使用转发组"}</Label>
                         <Select
                           value={batchEditForm.forwardGroupId ? String(batchEditForm.forwardGroupId) : "none"}
@@ -8245,7 +8065,7 @@ function RulesContent() {
                             {(selectedBatchEditForwardGroup.members || []).length > 4 && <span>+{(selectedBatchEditForwardGroup.members || []).length - 4}</span>}
                           </div>
                         )}
-                      </div>
+                      </FormField>
                     )}
                   </div>
 
@@ -8257,7 +8077,7 @@ function RulesContent() {
                       </span>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="space-y-2">
+                      <FormField className="space-y-2">
                         <Label>目标地址</Label>
                         <Input
                           placeholder="留空则保持原目标地址"
@@ -8265,8 +8085,8 @@ function RulesContent() {
                           onChange={(event) => setBatchEditForm((prev) => ({ ...prev, targetIp: event.target.value }))}
                           disabled={copyActionPending}
                         />
-                      </div>
-                      <div className="space-y-2">
+                      </FormField>
+                      <FormField className="space-y-2">
                         <Label>目标端口</Label>
                         <Input
                           type="number"
@@ -8278,11 +8098,11 @@ function RulesContent() {
                           onChange={(event) => setBatchEditForm((prev) => ({ ...prev, targetPort: parseInt(event.target.value) || 0 }))}
                           disabled={copyActionPending}
                         />
-                      </div>
+                      </FormField>
                     </div>
                   </div>
 
-                  <div className="space-y-2">
+                  <FormField className="space-y-2">
                     <Label>端口冲突处理</Label>
                     <Select value={copyConflictStrategy} onValueChange={(value) => setCopyConflictStrategy(value as any)} disabled={!hasBatchEditRouteSelection}>
                       <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
@@ -8293,7 +8113,7 @@ function RulesContent() {
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">仅在替换入口资源且原源端口冲突时生效。</p>
-                  </div>
+                  </FormField>
                 </div>
                 ) : (
                 <div className="space-y-3 rounded-md border border-border/60 bg-background/55 p-3">
@@ -8345,7 +8165,7 @@ function RulesContent() {
                       ) : null}
                     </div>
                   </div>
-                  <div className="space-y-2">
+                  <FormField className="space-y-2">
                     <Label>端口冲突处理</Label>
                     <Select value={copyConflictStrategy} onValueChange={(value) => setCopyConflictStrategy(value as any)} disabled={copyActionPending}>
                       <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
@@ -8355,7 +8175,7 @@ function RulesContent() {
                         <SelectItem value="error">遇到冲突时报错</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
+                  </FormField>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
                       type="button"

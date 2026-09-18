@@ -3,20 +3,7 @@ import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { formatBytes } from "@shared/formatBytes";
 import { cn } from "@/lib/utils";
 
-/**
- * 首页最上面那一行：现在系统是否正常。
- *
- * 这里原来是一个写死的绿色「系统在线」徽章 —— 后面没有任何数据，掉多少台机器
- * 它都是绿的。整个首页唯一该回答那个问题的地方，是个装饰。
- *
- * 现在的规矩很简单：**有异常就说异常，没有才说正常**，而且异常数点得出来自哪。
- * 三类分开数，因为处理方式不一样：掉线要去看机器，线路不健康要去看链路，
- * 转发该跑没跑通常是配置没下发下去。
- *
- * 刻意不做的事：不加渐变、不加阴影、不加动效。一行字号拉开层级，其余靠留白。
- * 状态色只用在真正表示状态的那一个点上 —— 四张卡片各配一种渐变色的做法，
- * 会让人分不清哪个颜色是有含义的。
- */
+/** Health reflects current API data; status colors are reserved for actual conditions. */
 
 export type SystemHealth = {
   hosts: { total: number; online: number; offline: number; neverConnected: number };
@@ -77,7 +64,7 @@ export default function SystemStatusHeader({ health, recentBytes, loading, isAdm
   }
 
   return (
-    <section className="rounded-lg border bg-card p-4 sm:p-5">
+    <section className="system-health p-4 sm:p-5">
       <div className="flex items-start gap-3">
         {loading || !health ? (
           <span className="mt-0.5 h-5 w-5 shrink-0 rounded-full bg-muted" aria-hidden="true" />
@@ -87,9 +74,9 @@ export default function SystemStatusHeader({ health, recentBytes, loading, isAdm
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden="true" />
         )}
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
+          <h2 className="text-lg font-semibold tracking-tight sm:text-xl">
             {loading || !health ? "检查中" : healthy ? "运行正常" : `${issues} 处异常`}
-          </h1>
+          </h2>
           {/*
             正常时不再补一句「一切都好」—— 那是废话。异常时才需要这一行，
             而它必须说清是哪一类，不然这个数字只是让人去三个页面挨个找。

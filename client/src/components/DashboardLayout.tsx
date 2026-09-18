@@ -369,7 +369,7 @@ export default function DashboardLayout({
   }
 
   return (
-    <SidebarProvider>
+    <SidebarProvider className="workspace-layout">
       <DashboardLayoutContent>
         {children}
       </DashboardLayoutContent>
@@ -1387,7 +1387,7 @@ function DashboardLayoutContent({
                   <button
                     onClick={toggleTheme}
                     className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
-                    aria-label="Toggle theme"
+                    aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"}
                     title={resolvedTheme === "dark" ? "切换到白天模式" : "切换到黑夜模式"}
                   >
                     {resolvedTheme === "dark" ? (
@@ -1421,7 +1421,7 @@ function DashboardLayoutContent({
         <SidebarContent className="gap-1 pb-2 mobile-sidebar-content">
           {primaryMenuItems.length > 0 && (
             <SidebarGroup className={cn("pb-2 mobile-sidebar-group", mobileAuth.isNative && "pb-1.5")}>
-              <SidebarGroupLabel className="text-xs text-muted-foreground/60 uppercase tracking-wider">
+              <SidebarGroupLabel className="text-xs text-muted-foreground uppercase tracking-wider">
                 主菜单
               </SidebarGroupLabel>
               <SidebarMenu className={cn("py-1 mobile-sidebar-menu", isDesktopCollapsed ? "items-center px-0" : "px-2")}>
@@ -1432,7 +1432,7 @@ function DashboardLayoutContent({
 
           {managementMenuItems.length > 0 && (
             <SidebarGroup className={cn("mt-1 shrink-0 pt-2 mobile-sidebar-group mobile-sidebar-admin-group", !mobileAuth.isNative && "border-t border-sidebar-border/50", mobileAuth.isNative && "mt-0 pt-2 border-t border-sidebar-border/50")}>
-              <SidebarGroupLabel className="text-xs text-muted-foreground/60 uppercase tracking-wider">
+              <SidebarGroupLabel className="text-xs text-muted-foreground uppercase tracking-wider">
                 管理
               </SidebarGroupLabel>
               <SidebarMenu className={cn("py-1 mobile-sidebar-menu", isDesktopCollapsed ? "items-center px-0" : "px-2")}>
@@ -1443,7 +1443,7 @@ function DashboardLayoutContent({
 
           {otherMenuItems.length > 0 && (
             <SidebarGroup className={cn("mt-1 shrink-0 pt-2 mobile-sidebar-group mobile-sidebar-admin-group", !mobileAuth.isNative && "border-t border-sidebar-border/50", mobileAuth.isNative && "mt-0 pt-2 border-t border-sidebar-border/50")}>
-              <SidebarGroupLabel className="text-xs text-muted-foreground/60 uppercase tracking-wider">
+              <SidebarGroupLabel className="text-xs text-muted-foreground uppercase tracking-wider">
                 其他
               </SidebarGroupLabel>
               <SidebarMenu className={cn("py-1 mobile-sidebar-menu", isDesktopCollapsed ? "items-center px-0" : "px-2")}>
@@ -1633,6 +1633,7 @@ function DashboardLayoutContent({
       </Sidebar>
 
       <SidebarInset>
+        <a className="workspace-skip-link" href="#workspace-content">跳到主要内容</a>
         {isMobile && (
           <div ref={mobileHeaderRef} data-mobile-header="true" className="glass-surface fixed inset-x-0 top-0 z-40 flex min-h-14 items-center justify-between border-b px-2 md:sticky">
             <div className="flex items-center gap-2">
@@ -1648,7 +1649,7 @@ function DashboardLayoutContent({
             <button
               onClick={toggleTheme}
               className="h-9 w-9 flex items-center justify-center hover:bg-accent rounded-lg transition-colors"
-              aria-label="Toggle theme"
+              aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"}
             >
               {resolvedTheme === "dark" ? (
                 <Sun className="h-4 w-4" />
@@ -1658,7 +1659,7 @@ function DashboardLayoutContent({
             </button>
           </div>
         )}
-        <main data-mobile-main="true" className="flex-1 px-3 pb-3 pt-3 sm:p-6">
+        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className="workspace-main flex-1 px-4 pb-6 pt-4 sm:p-6 lg:p-8">
           {/*
             兜底的「没读到」提示。
             各个列表自己会画失败态，但一页上挂着十几个查询，不可能每个都单独接一遍；

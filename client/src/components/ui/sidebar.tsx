@@ -228,14 +228,14 @@ const SidebarTrigger = React.forwardRef<React.ComponentRef<typeof Button>, React
   return (
     <Button ref={ref} data-sidebar="trigger" variant="ghost" size="icon" className={cn("h-7 w-7", className)} onClick={(event) => { onClick?.(event); toggleSidebar() }} {...props}>
       <PanelLeft />
-      <span className="sr-only">Toggle Sidebar</span>
+      <span className="sr-only">切换导航栏</span>
     </Button>
   )
 })
 SidebarTrigger.displayName = "SidebarTrigger"
 
-const SidebarInset = React.forwardRef<HTMLDivElement, React.ComponentProps<"main">>(({ className, ...props }, ref) => {
-  return <main ref={ref} className={cn("relative flex min-h-svh flex-1 flex-col bg-transparent", className)} {...props} />
+const SidebarInset = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(({ className, ...props }, ref) => {
+  return <div ref={ref} className={cn("relative flex min-h-svh flex-1 flex-col bg-transparent", className)} {...props} />
 })
 SidebarInset.displayName = "SidebarInset"
 

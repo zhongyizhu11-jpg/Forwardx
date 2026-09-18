@@ -911,9 +911,9 @@ export default function Login() {
                 />
                 <span className="text-lg font-semibold tracking-tight">{siteTitle}</span>
               </div>
-              <CardTitle className="text-2xl font-bold tracking-tight">
+              <h1 className="text-2xl font-semibold tracking-tight">
                 {mode === "login" ? "欢迎回来" : "创建账号"}
-              </CardTitle>
+              </h1>
               <CardDescription className="mt-1 text-sm text-muted-foreground">
                 {isTelegramPending ? "正在通过 Telegram 登录" : mode === "login" ? "登录账号以继续" : "使用邮箱注册 ForwardX 账户"}
               </CardDescription>
@@ -922,10 +922,10 @@ export default function Login() {
           <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={mode}
-            className={`auth-mode-panel ${mode === "login" ? "min-h-[470px]" : "min-h-[660px]"}`}
-            initial={{ opacity: 0, y: 12, filter: "blur(4px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            exit={{ opacity: 0, y: -10, filter: "blur(4px)" }}
+            className="auth-mode-panel"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
           >
           {isTelegramPending ? (

@@ -6,7 +6,7 @@ export function segmentedOptionClassName(active: boolean, disabled = false, clas
   return cn(
     "group flex h-9 min-w-0 items-center justify-center gap-2 rounded-sm border px-3 text-center text-sm font-medium ring-1 ring-transparent transition-all",
     active
-      ? "border-primary bg-primary/15 text-primary shadow-md shadow-primary/15 ring-primary/35"
+      ? "border-border bg-card text-foreground shadow-sm ring-transparent"
       : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground",
     disabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground",
     className,
