@@ -61,7 +61,7 @@ jobs:
         run: pnpm exec tsc --noEmit
 
       - name: Run panel tests
-        run: pnpm test:server
+        run: pnpm test:all
 
       - name: Run Agent tests and vet
         shell: bash

@@ -1,6 +1,13 @@
 # Changelog
 
-## [未发布]
+## [2.3.363] - 2026-09-18
+
+### 发布摘要
+
+- 汇总上一正式版以来的重构：共享逻辑归一、首屏按需加载、查询性能修复、转发清理一致性及移动端界面优化。
+- Phase 7 全量测试入口已纳入 CI 和面板/APK 发布检查；此前提交的 1455 项测试、Agent/FXP 测试与静态检查均在 GitHub runner 通过。
+- 面板与 APK Release `2.3.363`，Android APP `2.3.98`，Agent `2.2.195`，ForwardX FXP runtime `2.2.118`。Agent 与 FXP 源码未变化，已安装的 Agent 无需升级。
+- 验收边界：未进行真实 VPS 吞吐、实际付款或 iOS Safari 真机测试，详见 `docs/PHASE7_VALIDATION_CN.md`。
 
 ### 修复
 
