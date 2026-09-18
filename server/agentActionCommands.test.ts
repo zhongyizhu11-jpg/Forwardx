@@ -5,6 +5,7 @@ import {
   buildIptablesTransitionCleanupCmds,
   buildKernelForwardTransitionCleanupCmds,
   buildNftCleanupCmds,
+  buildKernelForwardCmds,
   buildNftForwardCmds,
   buildNftTransitionCleanupCmds,
   restartMimicServiceIfConfigChangedCmd,
@@ -202,4 +203,41 @@ test("Mimic service reconciliation cleans stale hooks and has an skb fallback", 
   assert.match(commands, /service is active but XDP\/TC hooks were not detected/);
   assert.doesNotMatch(commands, /\/sys\/class\/net\/'eth0'\//);
   assert.doesNotMatch(commands, /systemctl disable 'mimic@eth0'/);
+});
+
+/**
+ * 内核态转发两种的差别必须留着。
+ *
+ * iptables 和 nftables 原来在心跳路由里各写一遍 else-if，合并时最容易顺手抹平的
+ * 就是那条「计数链只有 iptables 下」—— nft 构造器自带计数器，再下一遍 iptables
+ * 计数链会把同一份流量数两次，而账面上看不出来。
+ */
+test("内核态转发：nftables 不下 iptables 计数链，iptables 要下", () => {
+  const rule = {
+    id: 1,
+    sourcePort: 20001,
+    targetIp: "198.51.100.7",
+    targetPort: 443,
+    protocol: "tcp",
+    userId: 1,
+    hostId: 1,
+  };
+
+  const iptablesCmds = buildKernelForwardCmds({ ...rule, forwardType: "iptables" }, "iptables").join("\n");
+  const nftablesCmds = buildKernelForwardCmds({ ...rule, forwardType: "nftables" }, "nftables").join("\n");
+
+  const countingChain = buildCountingChainCmds(20001, "198.51.100.7", 443, "tcp", "iptables");
+  assert.ok(countingChain.length > 0, "这一组的前提是 iptables 确实有计数链");
+  assert.ok(
+    iptablesCmds.includes(countingChain[0]),
+    "iptables 这一路要下计数链 —— 它的转发规则本身不带计数器",
+  );
+  assert.ok(
+    !nftablesCmds.includes(countingChain[0]),
+    "nftables 不该再下一遍 iptables 计数链：nft 构造器自带计数器，下两遍等于同一份流量数两次",
+  );
+
+  /** 访问限制由调用方传进来，传什么就该原样出现在末尾。 */
+  const withLimits = buildKernelForwardCmds({ ...rule, forwardType: "nftables" }, "nftables", ["LIMIT-A", "LIMIT-B"]);
+  assert.deepEqual(withLimits.slice(-2), ["LIMIT-A", "LIMIT-B"], "访问限制要接在最后");
 });

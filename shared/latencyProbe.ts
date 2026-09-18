@@ -58,3 +58,15 @@ export function normalizeProbeCounts(input: {
   probeSuccesses = Math.max(0, Math.min(probeCount, probeSuccesses));
   return { probeCount, probeSuccesses };
 }
+
+/**
+ * 延迟曲线的系列键（total / primary / exit-N）归一。
+ *
+ * 服务端写进库、客户端画图时各存过一份一模一样的实现 —— 而这两边**必须对同一个
+ * 字符串达成一致**：服务端按归一后的键存点，客户端按归一后的键取点，任何一边的
+ * 规则变了，图上就会凭空多出一条空曲线、原来那条同时不见了，而且不报错。
+ */
+export function normalizeLatencySeriesKey(value: unknown) {
+  const key = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return key || "total";
+}

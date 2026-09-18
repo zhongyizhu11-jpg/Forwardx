@@ -1,9 +1,4 @@
-import { timestampMillis } from "./timestamp";
-
-import {
-  LINK_PROBE_FRESH_MS,
-  LINK_PROBE_MAX_FUTURE_SKEW_MS,
-} from "@shared/linkProbePolicy";
+import { isLinkProbeFresh } from "@shared/linkProbePolicy";
 
 export type ForwardRuleVisualState = "disabled" | "running" | "pending" | "error";
 
@@ -57,10 +52,7 @@ export function resolveForwardRuleVisualStatus(input: {
   if (runtimeStatus === "disabled") {
     return { state: "disabled", title: "托管规则已停用" };
   }
-  const probeAt = timestampMillis(input.latestLatencyAt);
-  const probeIsRecent = probeAt > 0
-    && probeAt <= now + LINK_PROBE_MAX_FUTURE_SKEW_MS
-    && now - probeAt <= LINK_PROBE_FRESH_MS;
+  const probeIsRecent = isLinkProbeFresh(input.latestLatencyAt, now);
   if (probeIsRecent && input.latestLatencyIsTimeout) {
     return { state: "error", title: "最近一次端到端探测超时" };
   }

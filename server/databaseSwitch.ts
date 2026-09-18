@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { quoteIdentifierFor } from "./dbRuntime";
 import { normalizeRawValue } from "./dbRuntime";
 import fs from "fs";
 import path from "path";
@@ -402,11 +403,6 @@ async function closeTarget(handle: TargetHandle | null) {
   }
 }
 
-function quote(kind: DatabaseKind, id: string) {
-  if (kind === "mysql") return `\`${id.replace(/`/g, "``")}\``;
-  return `"${id.replace(/"/g, "\"\"")}"`;
-}
-
 export function databaseSwitchProbeValueType(kind: DatabaseKind) {
   // MySQL cannot index TEXT without a prefix length. The probe only stores a
   // short marker, so use the same utf8mb4-safe indexed width as the schema.
@@ -471,34 +467,34 @@ async function verifyTargetWriteAccess(handle: TargetHandle) {
   const table = `_forwardx_switch_probe_${suffix}`;
   const index = `_forwardx_switch_probe_idx_${suffix}`;
   await withTargetSession(handle, async (session) => {
-    const tableName = quote(session.kind, table);
+    const tableName = quoteIdentifierFor(session.kind, table);
     let created = false;
     let operationError: unknown;
     try {
       await targetExecute(
         session,
-        `CREATE TABLE ${tableName} (${quote(session.kind, "id")} INTEGER PRIMARY KEY, ${quote(session.kind, "value")} ${databaseSwitchProbeValueType(session.kind)} NOT NULL)`,
+        `CREATE TABLE ${tableName} (${quoteIdentifierFor(session.kind, "id")} INTEGER PRIMARY KEY, ${quoteIdentifierFor(session.kind, "value")} ${databaseSwitchProbeValueType(session.kind)} NOT NULL)`,
       );
       created = true;
       await targetExecute(
         session,
-        `INSERT INTO ${tableName} (${quote(session.kind, "id")}, ${quote(session.kind, "value")}) VALUES (?, ?)`,
+        `INSERT INTO ${tableName} (${quoteIdentifierFor(session.kind, "id")}, ${quoteIdentifierFor(session.kind, "value")}) VALUES (?, ?)`,
         [1, "forwardx-write-check"],
       );
       await targetExecute(
         session,
-        `UPDATE ${tableName} SET ${quote(session.kind, "value")} = ? WHERE ${quote(session.kind, "id")} = ?`,
+        `UPDATE ${tableName} SET ${quoteIdentifierFor(session.kind, "value")} = ? WHERE ${quoteIdentifierFor(session.kind, "id")} = ?`,
         ["forwardx-update-check", 1],
       );
       await targetExecute(
         session,
-        `ALTER TABLE ${tableName} ADD COLUMN ${quote(session.kind, "checked")} INTEGER DEFAULT 0`,
+        `ALTER TABLE ${tableName} ADD COLUMN ${quoteIdentifierFor(session.kind, "checked")} INTEGER DEFAULT 0`,
       );
       await targetExecute(
         session,
-        `CREATE INDEX ${quote(session.kind, index)} ON ${tableName} (${quote(session.kind, "value")})`,
+        `CREATE INDEX ${quoteIdentifierFor(session.kind, index)} ON ${tableName} (${quoteIdentifierFor(session.kind, "value")})`,
       );
-      await targetExecute(session, `DELETE FROM ${tableName} WHERE ${quote(session.kind, "id")} = ?`, [1]);
+      await targetExecute(session, `DELETE FROM ${tableName} WHERE ${quoteIdentifierFor(session.kind, "id")} = ?`, [1]);
     } catch (error) {
       operationError = error;
     }
@@ -540,7 +536,7 @@ function normalizeColumnValue(value: any, kind: DatabaseKind, column: ColumnDef)
 async function targetTableCount(session: TargetSession, table: string) {
   const rows = await targetQuery<{ count: number | string }>(
     session,
-    `SELECT COUNT(*) as ${quote(session.kind, "count")} FROM ${quote(session.kind, table)}`,
+    `SELECT COUNT(*) as ${quoteIdentifierFor(session.kind, "count")} FROM ${quoteIdentifierFor(session.kind, table)}`,
   );
   return Number(rows[0]?.count || 0);
 }
@@ -564,16 +560,16 @@ async function insertTargetRow(session: TargetSession, table: string, row: Recor
   if (table === "system_settings") {
     const key = String(row.key || "");
     if (!key) return false;
-    await targetExecute(session, `DELETE FROM ${quote(session.kind, table)} WHERE ${quote(session.kind, "key")} = ?`, [key]);
+    await targetExecute(session, `DELETE FROM ${quoteIdentifierFor(session.kind, table)} WHERE ${quoteIdentifierFor(session.kind, "key")} = ?`, [key]);
   }
   const columns = tableDef.columns.filter((column) => row[column.name] !== undefined);
   if (columns.length === 0) return false;
-  const columnSql = columns.map((column) => quote(session.kind, column.name)).join(", ");
+  const columnSql = columns.map((column) => quoteIdentifierFor(session.kind, column.name)).join(", ");
   const placeholders = columns.map(() => "?").join(", ");
   const values = columns.map((column) => normalizeColumnValue(row[column.name], session.kind, column));
   await targetExecute(
     session,
-    `INSERT INTO ${quote(session.kind, table)} (${columnSql}) VALUES (${placeholders})`,
+    `INSERT INTO ${quoteIdentifierFor(session.kind, table)} (${columnSql}) VALUES (${placeholders})`,
     values,
   );
   return true;
@@ -605,10 +601,10 @@ async function syncTargetPostgresqlSequences(session: TargetSession) {
   for (const table of MIGRATION_TABLES) {
     const tableDef = tableDefs.get(table);
     if (!tableDef?.columns.some((column) => column.type === "id")) continue;
-    const tableName = quote("postgresql", table);
+    const tableName = quoteIdentifierFor("postgresql", table);
     await targetExecute(
       session,
-      `SELECT setval(pg_get_serial_sequence(?, 'id')::regclass, GREATEST((SELECT COALESCE(MAX(${quote("postgresql", "id")}), 0) FROM ${tableName}), 1), (SELECT COALESCE(MAX(${quote("postgresql", "id")}), 0) FROM ${tableName}) > 0)`,
+      `SELECT setval(pg_get_serial_sequence(?, 'id')::regclass, GREATEST((SELECT COALESCE(MAX(${quoteIdentifierFor("postgresql", "id")}), 0) FROM ${tableName}), 1), (SELECT COALESCE(MAX(${quoteIdentifierFor("postgresql", "id")}), 0) FROM ${tableName}) > 0)`,
       [table],
     ).catch(() => undefined);
   }
@@ -808,7 +804,7 @@ export function startDatabaseSwitch(target: DatabaseConfig) {
       const result = await runTargetTransaction(handle, async (session) => {
         setJobStage(job, "target-check", { progress: 32 });
         await assertTargetHasNoBusinessData(session);
-        await targetExecute(session, `DELETE FROM ${quote(session.kind, "system_settings")}`);
+        await targetExecute(session, `DELETE FROM ${quoteIdentifierFor(session.kind, "system_settings")}`);
         return copySnapshotIntoTarget(session, target, job);
       });
 

@@ -1476,3 +1476,100 @@
 .dark .host-table-frozen-right::before {
   background: linear-gradient(to left, rgb(0 0 0 / 24%), transparent);
 }
+
+/*
+  列表卡片上不要在手指底下冒出「拷贝 / 搜索 / 翻译」。
+
+  真机上的表现：手指按在主机卡上想往下滑，浏览器判成长按，把「计费： 走套餐流量」
+  整行连标签带徽章一起选中，弹出系统菜单挡住半张卡 —— 而那一行根本没人想复制，
+  「计费：」是个标签，「走套餐流量」是个状态徽章。
+
+  所以默认关掉选择，再给**真正值得复制的那几个**单独开回来：机器名、IP 地址。
+  一刀切地全关会把 IP 也锁死，那才是真的碍事 —— 排障时第一件事就是复制地址。
+
+  -webkit-touch-callout 是 iOS 专门那一道：光有 user-select: none，Safari 在图片和
+  链接上仍会弹菜单。
+*/
+.select-guard {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.select-guard .selectable {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/*
+  紧凑开关：视觉缩到 75%，但手指要点的那块不跟着缩。
+
+  转发规则、链路、转发组这些密集列表上，开关用 `scale-75` 压小以免把行撑高。
+  问题是 transform 连**命中区**一起缩了：44×24 变成实测 33×18。18px 高的目标
+  在手机上根本点不准 —— 而这是全站最常点的那个开关（启用/停用一条转发），
+  点偏了要么没反应，要么点到旁边那行去。
+
+  这里把缩放和命中区拆开：视觉仍是 0.75，另外用一个透明的 ::after 把可点范围
+  撑回去。撑多少是量出来的 —— 列表里开关到最近的其它可点元素有 28~53px，
+  所以四周各撑 13~17px（缩放后约 10~13px），撑完约 52×44，够一根手指。
+*/
+.switch-compact {
+  transform: scale(0.75);
+}
+
+.switch-compact::after {
+  content: "";
+  position: absolute;
+  inset: -17px -13px;
+}
+
+/*
+  触摸设备上，按钮的命中区不小于 44×44。
+
+  量出来的现状：桌面那套控件高度是 32 / 36 / 40px，搬到手机上命中区只有
+  35~39px，差 5~9px；头部那两个图标按钮是 35×35。手册的硬指标是
+  「任何可以点的东西，实际可点面积不能小于 44×44px」—— 这是手指能舒服按中的
+  最小尺寸，不是审美问题。
+
+  只在 `pointer: coarse`（触屏）下生效，**桌面端一个像素都不动** —— 桌面用鼠标，
+  32px 的密集工具栏是对的，全局抬高只会把列表撑散。
+
+  没有用「透明 ::after 撑命中区」那招：量过同一批控件之间只隔 4px（手册要求
+  ≥8px），撑出去会盖住旁边的按钮，把误触从「点不中」变成「点错个」。抬高实际
+  高度不会让相邻元素靠得更近，是这里唯一安全的做法。
+
+  列表里那些 scale-75 的紧凑开关不在此列：它们已经由 .switch-compact 的 ::after
+  把命中区撑到约 49×40，而且四周有 28~53px 空当（量过），单独调它自己的 inset 即可。
+*/
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  [role="tab"] {
+    min-height: 44px;
+  }
+
+  /* 方形图标按钮两个方向都要够 */
+  button:where(.size-8, .size-9, .h-8, .h-9, [data-icon-button]),
+  [role="button"]:where(.size-8, .size-9, .h-8, .h-9) {
+    min-width: 44px;
+  }
+
+  /* 开关本体是被 transform 缩过的，min-height 对它没意义，走 ::after 那条路。 */
+  button[role="switch"] {
+    min-height: 0;
+  }
+}
+
+/* 紧凑开关的命中区再补 4px：量下来是 49×40，纵向差一点点。 */
+.switch-compact::after {
+  inset: -20px -13px;
+}
+
+/* Touch action rows need spacing as well as large targets. */
+@media (pointer: coarse) {
+  .action-card-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}

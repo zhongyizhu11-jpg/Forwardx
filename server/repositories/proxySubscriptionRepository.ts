@@ -7,6 +7,7 @@ import {
   proxyNodes,
   proxyNodeShares,
   proxySubTokens,
+  subscriptionPlanProxyNodes,
   type InsertProxyNode,
   type InsertProxySubToken,
 } from "../../drizzle/schema";
@@ -93,7 +94,34 @@ export async function deleteProxyNode(id: number) {
   // 分享记录跟着一起删：留着的话对方订阅里会指向一个不存在的节点 id，
   // 而管理端的「已分享给谁」还照旧显示，看不出人已经拿不到了。
   await db.delete(proxyNodeShares).where(eq(proxyNodeShares.nodeId, id));
+  /**
+   * 套餐里绑着它的那一行同理。
+   *
+   * 留着的话套餐会继续宣称带着一个已经不存在的落地节点：商店页上的「落地节点
+   * 3 个」多算一个，管理端的套餐编辑里显示成「节点 #7」这样一个只有编号的空壳，
+   * 而买了这个套餐的人会拿到一条指向不存在节点的授权。主机那一路一直是这么
+   * 删的，节点这一路当初漏了。
+   */
+  await db.delete(subscriptionPlanProxyNodes).where(eq(subscriptionPlanProxyNodes.nodeId, id));
   await db.delete(proxyNodes).where(eq(proxyNodes.id, id));
+}
+
+/**
+ * 有几个套餐正在卖这个节点。
+ *
+ * 删节点时会顺手把套餐里的绑定一起清掉（不清的话套餐会继续宣称带着一个不存在
+ * 的节点）。但那一下是**静悄悄**的：管理员删的是一个节点，被改掉的是几个在卖
+ * 的套餐 —— 商店页上的数量当场就变了，而他不知道。返回个数，和「解绑了几条
+ * 转发」一样说出来。
+ */
+export async function countPlansUsingProxyNode(id: number) {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db
+    .select({ planId: subscriptionPlanProxyNodes.planId })
+    .from(subscriptionPlanProxyNodes)
+    .where(eq(subscriptionPlanProxyNodes.nodeId, Number(id)));
+  return new Set((rows as any[]).map((row) => Number(row.planId))).size;
 }
 
 export async function countRulesUsingProxyNode(id: number) {
@@ -296,10 +324,36 @@ export async function getProxyNodeShareSelectionForUser(userId: number): Promise
 }
 
 /**
+ * 订阅行上冻结的那份套餐快照里记的节点清单。
+ *
+ * 管理员改套餐时可以勾掉「同步已有订阅者」，那一下会把套餐当时的内容冻进
+ * user_subscriptions.planSnapshot。主机、隧道、转发组一直认这份快照，节点这
+ * 一项以前不在里面 —— 所以老快照里没有这个字段，返回 null 表示「这条订阅没
+ * 冻过节点」，让调用方退回按套餐当前内容算，也就是加这一列之前的行为。
+ */
+function snapshotProxyNodeIds(planSnapshot: unknown): number[] | null {
+  if (!planSnapshot || typeof planSnapshot !== "string") return null;
+  try {
+    const parsed = JSON.parse(planSnapshot);
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.proxyNodeIds)) return null;
+    return Array.from(new Set(parsed.proxyNodeIds
+      .map((id: unknown) => Number(id))
+      .filter((id: number) => Number.isInteger(id) && id > 0)));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 这个人的有效套餐一共带了哪些落地节点。
  *
  * 只算还生效的订阅 —— 到期那一条带的节点不该再算数，否则「到期自动收回」
  * 收完下一次同步又发回去了。
+ *
+ * 冻结过快照的订阅按快照算。不这样的话「不同步已有订阅者」只兑现了一半：
+ * 主机、隧道、转发组都按老套餐留着，节点却跟着套餐当前内容走 —— 老客户身上
+ * 随便发生一件小事（充值、流量重置）触发一次权益重算，就会把他买的时候送的
+ * 节点悄悄收走，而管理员明明说了不要动老客户。
  */
 export async function getPlanGrantedProxyNodeIdsForUser(
   userId: number,
@@ -308,27 +362,57 @@ export async function getPlanGrantedProxyNodeIdsForUser(
   if (!db) return [];
   const { subscriptionPlanProxyNodes, subscriptionPlans, userSubscriptions } = await import("../../drizzle/schema");
   const nowSec = Math.floor(Date.now() / 1000);
-  const rows = await db
+
+  /** 这个人还生效的订阅，连同各自冻没冻过快照、是不是独享端口。 */
+  const subscriptionRows = await db
     .select({
-      nodeId: subscriptionPlanProxyNodes.nodeId,
+      planId: userSubscriptions.planId,
+      planSnapshot: userSubscriptions.planSnapshot,
       dedicated: subscriptionPlans.dedicatedProxyPort,
     })
     .from(userSubscriptions)
-    .innerJoin(subscriptionPlanProxyNodes, eq(subscriptionPlanProxyNodes.planId, userSubscriptions.planId))
     .innerJoin(subscriptionPlans, eq(subscriptionPlans.id, userSubscriptions.planId))
     .where(and(
       eq(userSubscriptions.userId, Number(userId)),
       eq(userSubscriptions.status, "active"),
       sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${nowSec})`,
     ));
+  if ((subscriptionRows as any[]).length === 0) return [];
+
+  /**
+   * 没冻过快照的那些订阅，才需要去查套餐当前绑了哪些节点。一条都不需要时
+   * 整个查询省掉 —— 冻结是管理员的常规操作，不该每次都白跑一条 join。
+   */
+  const livePlanIds = Array.from(new Set((subscriptionRows as any[])
+    .filter((row) => snapshotProxyNodeIds(row.planSnapshot) === null)
+    .map((row) => Number(row.planId))
+    .filter((id) => id > 0)));
+  const liveNodeIdsByPlan = new Map<number, number[]>();
+  if (livePlanIds.length > 0) {
+    const planRows = await db
+      .select({ planId: subscriptionPlanProxyNodes.planId, nodeId: subscriptionPlanProxyNodes.nodeId })
+      .from(subscriptionPlanProxyNodes)
+      .where(inArray(subscriptionPlanProxyNodes.planId, livePlanIds));
+    for (const row of planRows as any[]) {
+      const planId = Number(row.planId);
+      const nodeId = Number(row.nodeId);
+      if (!(planId > 0) || !(nodeId > 0)) continue;
+      const list = liveNodeIdsByPlan.get(planId) || [];
+      list.push(nodeId);
+      liveNodeIdsByPlan.set(planId, list);
+    }
+  }
+
   const byNode = new Map<number, boolean>();
-  for (const row of rows as any[]) {
-    const nodeId = Number(row.nodeId);
-    if (!(nodeId > 0)) continue;
+  for (const row of subscriptionRows as any[]) {
+    const frozen = snapshotProxyNodeIds(row.planSnapshot);
+    const nodeIds = frozen ?? liveNodeIdsByPlan.get(Number(row.planId)) ?? [];
     const dedicated = row.dedicated === true || row.dedicated === 1;
-    // 两个套餐给了同一个节点、口径不同时按「独享」算：能分账的那种是花了钱的，
-    // 降级成共享等于把已经卖出去的计量能力收回去。
-    byNode.set(nodeId, (byNode.get(nodeId) || false) || dedicated);
+    for (const nodeId of nodeIds) {
+      // 两个套餐给了同一个节点、口径不同时按「独享」算：能分账的那种是花了钱的，
+      // 降级成共享等于把已经卖出去的计量能力收回去。
+      byNode.set(nodeId, (byNode.get(nodeId) || false) || dedicated);
+    }
   }
   return Array.from(byNode.entries()).map(([nodeId, dedicated]) => ({ nodeId, dedicated }));
 }

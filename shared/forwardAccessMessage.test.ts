@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { forwardAccessBlockedReasonText, forwardAccessResultMessage } from "./forwardAccessMessage";
+import { forwardAccessBlockedReasonText, forwardAccessRestoredNote, forwardAccessResultMessage } from "./forwardAccessMessage";
 
 test("真的开起来了才说已开启", () => {
   assert.deepEqual(
@@ -57,4 +57,20 @@ test("请求关却还开着，也要说出来", () => {
   const message = forwardAccessResultMessage({ requested: false, effective: true });
   assert.equal(message.tone, "warning");
   assert.match(message.text, /关闭没有生效/);
+});
+
+test("恢复提示：没恢复就别加废话", () => {
+  assert.equal(forwardAccessRestoredNote(false), null);
+  assert.equal(forwardAccessRestoredNote(undefined), null);
+  assert.equal(forwardAccessRestoredNote(null), null);
+});
+
+test("恢复提示分得清对谁说", () => {
+  /*
+    同一个信号，管理员那边是「该用户的转发回来了」，租户自己那边是「你的转发回来了」。
+    用错人称在余额这种事上很刺眼 —— 租户充完值看到「该用户」，会以为扣错了人的钱。
+  */
+  assert.equal(forwardAccessRestoredNote(true, "user"), "该用户被暂停的转发已恢复");
+  assert.equal(forwardAccessRestoredNote(true, "self"), "你被暂停的转发已恢复");
+  assert.equal(forwardAccessRestoredNote(true), "该用户被暂停的转发已恢复", "默认按管理员视角，客户端那几处必须显式传 self");
 });

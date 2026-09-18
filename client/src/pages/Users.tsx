@@ -1,5 +1,16 @@
 import DataSectionError from "@/components/DataSectionError";
-import { subscriptionSourceLabel } from "@shared/ledgerLabels";
+import { forwardAccessRestoredNote } from "@shared/forwardAccessMessage";
+
+/**
+ * 管理员这边的四个动作（启用账户、重置流量、充值、改余额）服务端都会顺手
+ * 检查一遍「这个人的转发是不是被停了、现在够条件恢复吗」。恢复了就接在
+ * 原来那句话后面说出来 —— 不说的话管理员不知道自己顺带救回了什么。
+ */
+function withRestoredNote(base: string, restored: unknown) {
+  const note = forwardAccessRestoredNote(!!restored, "user");
+  return note ? `${base} · ${note}` : base;
+}
+import { subscriptionSourceLabel, subscriptionStatusLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as formatCurrencyCny } from "@shared/formatMoney";
 import { formatBytes } from "@shared/formatBytes";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -133,13 +144,6 @@ function billingDateTimeText(value?: string | Date | null) {
 
 function currentBillingResetDay() {
   return Math.min(billingCalendarParts(new Date()).day, 28);
-}
-
-function subscriptionStatusLabel(status?: string) {
-  if (status === "active") return "生效中";
-  if (status === "expired") return "已过期";
-  if (status === "cancelled") return "已取消";
-  return status || "-";
 }
 
 function isSubscriptionActive(sub: any) {
@@ -483,7 +487,7 @@ function UsersContent() {
     onSuccess: () => {
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
-      toast.success("用户创建成功");
+      toast.success("用户已创建");
       setShowCreateUser(false);
       setNewUsername("");
       setNewUserPassword("");
@@ -566,13 +570,13 @@ function UsersContent() {
   });
 
   const resetTrafficMutation = trpc.users.resetTraffic.useMutation({
-    onSuccess: (_, variables) => {
+    onSuccess: (data, variables) => {
       patchCachedUser(variables.userId, {
         trafficUsed: 0,
         trafficBillingUsed: 0,
       });
       utils.users.listPage.invalidate();
-      toast.success("流量统计已重置");
+      toast.success(withRestoredNote("流量统计已重置", (data as any)?.forwardAccessRestored));
       setShowResetTraffic(false);
       setResetTrafficUserId(null);
       setResetTrafficUserName("");
@@ -635,10 +639,14 @@ function UsersContent() {
       patchCachedUser(variables.userId, { accountEnabled: variables.enabled });
       return { previousUsers };
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (data, variables) => {
       patchCachedUser(variables.userId, { accountEnabled: variables.enabled });
       utils.rules.list.invalidate();
-      toast.success(variables.enabled ? "账户已启用" : "账户已禁用，已有规则已失效");
+      // 启用账户时服务端顺手做了「够条件就恢复转发」，恢复了就得说出来。
+      toast.success(withRestoredNote(
+        variables.enabled ? "账户已启用" : "账户已禁用，已有规则已失效",
+        (data as any)?.forwardAccessRestored,
+      ));
     },
     onError: (err, _variables, context) => {
       if (context?.previousUsers) utils.users.listPage.setData(userPageInput, context.previousUsers);
@@ -654,12 +662,12 @@ function UsersContent() {
   });
 
   const adminRechargeMutation = trpc.billing.adminRecharge.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
       utils.users.listPage.invalidate();
       utils.billing.me.invalidate();
       utils.billing.ledger.invalidate();
       utils.billing.listTransactions.invalidate();
-      toast.success("余额已充值");
+      toast.success(withRestoredNote("余额已充值", (data as any)?.forwardAccessRestored));
       setShowRecharge(false);
       setRechargeAmount("");
     },
@@ -672,7 +680,7 @@ function UsersContent() {
       utils.billing.me.invalidate();
       utils.billing.ledger.invalidate();
       utils.billing.listTransactions.invalidate();
-      toast.success(data.changed ? "余额已修改" : "余额未变化");
+      toast.success(withRestoredNote(data.changed ? "余额已修改" : "余额未变化", (data as any)?.forwardAccessRestored));
       setShowSetBalance(false);
       setSetBalanceAmount("");
     },

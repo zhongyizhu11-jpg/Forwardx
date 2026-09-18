@@ -251,6 +251,19 @@ export async function deleteProxyInbound(id: number) {
   const derived = await db.select().from(proxyNodes).where(eq(proxyNodes.inboundId, id));
   const { deleteProxyNode } = await import("./proxySubscriptionRepository");
   for (const node of derived) await deleteProxyNode(Number((node as any).id));
+  /**
+   * 这个端口上发出去的凭据也要删。
+   *
+   * 这张表存的是 uuid / password 本身。端口没了，凭据留着既连不上任何东西，也
+   * 再没有任何一条路会清它 —— 派生节点跟着入站走，分享记录跟着节点走，唯独这
+   * 一层谁都不管。管理员在弹窗里加的那些（sharedUserId = 0）尤其彻底：删完端口
+   * 它们就成了永远不会被回收的凭据。
+   *
+   * 「为分享单独发的」那些（sharedUserId > 0）本来会在下一次分享对账时被顺手
+   * 清掉，但那要等那个人身上恰好发生一次对账，而且对账要先对着一个已经不存在
+   * 的入站白跑一趟。就地删干净更直接。
+   */
+  await db.delete(proxyInboundUsers).where(eq(proxyInboundUsers.inboundId, id));
   await db.delete(proxyInbounds).where(eq(proxyInbounds.id, id));
   return { releasedNodes: derived.length };
 }
@@ -1033,6 +1046,62 @@ export async function syncProxyNodeFromInbound(inboundId: number): Promise<numbe
  * 的上报是一批进来的，而一台机器多个 Agent 进程、或者重试叠在一起时，先读后写会
  * 互相盖掉（订阅拉取次数就栽在这上面过）。
  */
+/**
+ * 主机的入口地址变了，把这台机器上派生出来的节点地址一起改过来。
+ *
+ * 派生节点的地址是**保存入站那一刻**主机的入口地址（见 syncProxyNodeFromInbound）。
+ * 之后主机换 IP、加了自定义入口、开了 DDNS 域名，转发链、隧道和 Agent 配置都会
+ * 跟着刷新（refreshHostAddressRuntime），唯独订阅里那一条没人动 —— 客户端拉到的
+ * 还是旧地址，连不上，而面板上从头到尾没有一个字提到这件事。这正是「改一个地方
+ * 要手动改五个地方」漏掉的那一处。
+ *
+ * 只重算地址真的变了的那些入站：这个函数挂在每一条地址变更路径上，绝大多数调用
+ * 应当什么都不做，不能每次都把整机的入站重新派生一遍。
+ *
+ * 地址算空时不动：syncProxyNodeFromInbound 会把派生节点停用，而「主机暂时没地址」
+ * 和「这个入站不该出现在订阅里」是两回事 —— 地址回来时没人会再保存一次入站。
+ */
+export async function syncProxyNodesForHostAddress(hostId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const id = Number(hostId);
+  if (!Number.isFinite(id) || id <= 0) return [];
+
+  const address = await getProxyInboundAddress(id);
+  if (!address) return [];
+
+  const rows = (await getProxyInboundsByHost(id)) as any[];
+  if (rows.length === 0) return [];
+
+  const inboundIds = rows.map((row) => Number(row.id)).filter((value) => value > 0);
+  if (inboundIds.length === 0) return [];
+
+  const derived = (await db
+    .select({ inboundId: proxyNodes.inboundId, address: proxyNodes.address })
+    .from(proxyNodes)
+    .where(inArray(proxyNodes.inboundId, inboundIds))) as any[];
+
+  const stale = new Set<number>();
+  for (const node of derived) {
+    if (text(node.address) !== address) stale.add(Number(node.inboundId));
+  }
+  if (stale.size === 0) return [];
+
+  const changed: number[] = [];
+  for (const inboundId of stale) {
+    try {
+      await syncProxyNodeFromInbound(inboundId);
+      changed.push(inboundId);
+    } catch (error) {
+      // 一个入站派生失败不该拖垮其余的：地址变更是主机层的动作，剩下的节点仍然要改过来。
+      console.warn(
+        `[ProxyInbound] 同步派生节点地址失败 inbound=${inboundId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return changed;
+}
+
 export async function addProxyInboundTraffic(entries: ReadonlyMap<number, number>) {
   if (entries.size === 0) return;
   const db = await getDb();
@@ -1049,6 +1118,31 @@ export async function addProxyInboundTraffic(entries: ReadonlyMap<number, number
 }
 
 /** 用量清零，并记下这次重置的时间（月度自动重置靠它判断本周期是否已经重置过）。 */
+/**
+ * 设了总流量的落地端口，给到量提醒用。
+ *
+ * 和 getProxyNodesWithTrafficQuota 一样只查设了上限的：没填总量的端口谈不上
+ * 「用了多少算多」，整表读回来再过滤是白读一遍。
+ */
+export async function getProxyInboundsWithTrafficQuota() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      id: proxyInbounds.id,
+      userId: proxyInbounds.userId,
+      hostId: proxyInbounds.hostId,
+      name: proxyInbounds.name,
+      port: proxyInbounds.port,
+      trafficLimit: proxyInbounds.trafficLimit,
+      trafficUsed: proxyInbounds.trafficUsed,
+      isEnabled: proxyInbounds.isEnabled,
+    })
+    .from(proxyInbounds)
+    .where(sql`${proxyInbounds.trafficLimit} > 0`)
+    .orderBy(asc(proxyInbounds.id));
+}
+
 export async function resetProxyInboundTraffic(id: number) {
   const db = await getDb();
   if (!db) return;

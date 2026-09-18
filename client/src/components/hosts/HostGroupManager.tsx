@@ -122,7 +122,7 @@ function HostGroupEnabledSwitch({
       onCheckedChangeAsync={(checked) => onToggle(group, checked)}
       onToggleSuccess={(checked) => toast.success(checked ? "主机分组已开启" : "主机分组已关闭")}
       onToggleError={(error) => toast.error(error instanceof Error ? error.message : "切换主机分组状态失败")}
-      className="scale-75"
+      className="switch-compact"
       title={`${enabled ? "停用" : "启用"}主机分组 ${group.name || ""}`}
       aria-label={`${enabled ? "停用" : "启用"}分组 ${group.name || ""}`}
     />

@@ -1,10 +1,11 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { quotaSourceLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import { formatBytes } from "@shared/formatBytes";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
-import StatCard from "@/components/StatCard";
 import DashboardLayout from "@/components/DashboardLayout";
 import MobileAppSettings from "@/components/MobileAppSettings";
+import SystemStatusHeader from "@/components/SystemStatusHeader";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -15,35 +16,28 @@ import { trafficQuotaBreakdown, type TrafficQuotaSourceKind } from "@/lib/traffi
 import { trpc } from "@/lib/trpc";
 import {
   Activity,
-  ArrowDownToLine,
-  ArrowRightLeft,
-  ArrowUpFromLine,
   BarChart3,
   Coins,
   Info,
   Package,
-  Server,
   Shield,
   WalletCards,
   Wifi,
   Zap,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import PublicHome, { CustomPublicHome } from "./PublicHome";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip as RTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+/*
+  两张图按需加载 —— recharts 不再进首屏包。
+
+  仪表盘是所有人的落地页，路由分包那一轮刻意留成同步的；但它 import 的
+  recharts 也跟着进了主包。这两张图本来就有不依赖 recharts 的加载态和空态，
+  数据没回来那段时间正好够把图表库取回来，所以按需加载在观感上是免费的。
+*/
+const TrafficPieChart = lazy(() => import("@/components/charts/DashboardTrafficCharts").then((m) => ({ default: m.TrafficPieChart })));
+const TrafficAreaChart = lazy(() => import("@/components/charts/DashboardTrafficCharts").then((m) => ({ default: m.TrafficAreaChart })));
 
 const LOGIN_WELCOME_TOAST_KEY = "forwardx.loginWelcome";
 const TRAFFIC_PIE_COLORS = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#14b8a6", "#ec4899", "#f97316", "#84cc16", "#64748b", "#a3a3a3"];
@@ -57,13 +51,6 @@ type TrafficPieDatum = {
   color: string;
   percent: number;
 };
-
-function quotaSourceLabel(kind: TrafficQuotaSourceKind) {
-  if (kind === "manual") return "手工额度";
-  if (kind === "addon") return "已购附加流量";
-  if (kind === "grant") return "管理员加赠";
-  return "套餐额度";
-}
 
 function formatTrafficTime(value: string | Date): string {
   const date = new Date(value);
@@ -125,47 +112,6 @@ function FixedColorProgress({ value, color, className = "" }: { value: number; c
   return (
     <div className={`relative h-4 w-full overflow-hidden rounded-full bg-secondary ${className}`}>
       <div className="h-full rounded-full transition-all" style={{ width: `${normalized}%`, backgroundColor: color }} />
-    </div>
-  );
-}
-
-function TrafficTooltipContent({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
-  const data = payload[0]?.payload;
-  if (!data) return null;
-  return (
-    <div className="rounded-lg border border-border bg-card px-3 py-2 shadow-md">
-      <p className="mb-1.5 text-xs text-muted-foreground">{data.fullLabel || label}</p>
-      <div className="space-y-1">
-        <p className="flex items-center gap-1.5 text-xs tabular-nums">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          <span className="text-muted-foreground">入站</span>
-          <span className="ml-auto font-semibold">{formatBytes(data.bytesIn)}</span>
-        </p>
-        <p className="flex items-center gap-1.5 text-xs tabular-nums">
-          <span className="h-2 w-2 rounded-full bg-amber-500" />
-          <span className="text-muted-foreground">出站</span>
-          <span className="ml-auto font-semibold">{formatBytes(data.bytesOut)}</span>
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function PieTooltipContent({ active, payload }: any) {
-  if (!active || !payload?.length) return null;
-  const item = payload[0]?.payload;
-  if (!item) return null;
-  return (
-    <div className="rounded-lg border border-border bg-card px-3 py-2 shadow-md">
-      <div className="flex items-center gap-2">
-        <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: item.color }} />
-        <p className="max-w-52 truncate text-xs font-medium">{item.name}</p>
-      </div>
-      <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground tabular-nums">
-        <span>{formatBytes(item.value)}</span>
-        <span>{item.percent}%</span>
-      </div>
     </div>
   );
 }
@@ -263,42 +209,15 @@ function TrafficPieCard({
         ) : (
           <div className="grid gap-3 sm:grid-cols-[170px_minmax(0,1fr)] lg:grid-cols-1 2xl:grid-cols-[170px_minmax(0,1fr)]">
             <div className="h-44 min-w-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-                  <Pie
-                    data={chartData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    startAngle={90}
-                    endAngle={-270}
-                    innerRadius="60%"
-                    outerRadius="80%"
-                    paddingAngle={2}
-                    minAngle={3}
-                    cornerRadius={6}
-                    label={false}
-                    labelLine={false}
-                    isAnimationActive={shouldAnimate}
-                    animationBegin={shouldAnimate ? 80 : 0}
-                    animationDuration={shouldAnimate ? 900 : 0}
-                    animationEasing="ease-out"
-                    onAnimationEnd={() => setHasAnimated(true)}
-                  >
-                    {chartData.map((item) => (
-                      <Cell key={item.id} fill={item.color} stroke="transparent" strokeWidth={0} />
-                    ))}
-                  </Pie>
-                  <text x="50%" y="46%" textAnchor="middle" dominantBaseline="central" className="fill-foreground text-sm font-semibold tabular-nums">
-                    {formatBytes(total)}
-                  </text>
-                  <text x="50%" y="59%" textAnchor="middle" dominantBaseline="central" className="fill-muted-foreground text-[10px]">
-                    合计
-                  </text>
-                  <RTooltip content={<PieTooltipContent />} wrapperStyle={{ pointerEvents: "none" }} />
-                </PieChart>
-              </ResponsiveContainer>
+              {/* 图表库还在路上时沿用同一个转圈，换过来看不出接缝。 */}
+              <Suspense fallback={<div className="flex h-full items-center justify-center"><div className="h-24 w-24 animate-spin rounded-full border-[14px] border-muted/70 border-r-blue-600/30 border-t-blue-600/80" /></div>}>
+                <TrafficPieChart
+                  chartData={chartData}
+                  total={total}
+                  shouldAnimate={shouldAnimate}
+                  onAnimationEnd={() => setHasAnimated(true)}
+                />
+              </Suspense>
             </div>
             <div className="max-h-44 min-w-0 overflow-y-auto text-xs">
               {chartData.map((item, index) => (
@@ -356,6 +275,24 @@ function DashboardContent() {
     { hours: 24, bucketMinutes: 60 },
     { refetchInterval: pollingInterval("slow"), staleTime: 25000, placeholderData: (previousData) => previousData },
   );
+
+  const { data: health, isLoading: healthLoading } = trpc.dashboard.health.useQuery(undefined, {
+    refetchInterval: pollingInterval("normal"),
+    placeholderData: (previousData) => previousData,
+  });
+
+  /*
+    近 24H 流量直接汇总上面那条 series —— 它本来就要取来画图，再为顶上那一个
+    数字发一次请求是白跑。series 还没回来时给 undefined 而不是 0：
+    「还没有数」和「真的是 0」在这一格上是两回事。
+  */
+  const recentBytes = useMemo(() => {
+    if (!trafficSeries) return undefined;
+    return (trafficSeries as any[]).reduce(
+      (total, point) => total + (Number(point.bytesIn) || 0) + (Number(point.bytesOut) || 0),
+      0,
+    );
+  }, [trafficSeries]);
 
   const chartData = useMemo(
     () =>
@@ -448,67 +385,31 @@ function DashboardContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">仪表盘</h1>
-          <p className="mt-1 text-xs text-muted-foreground sm:text-sm">欢迎回来，{user?.name || user?.username || "用户"}</p>
-        </div>
-        <Badge variant="outline" className="gap-1.5 border-emerald-500/30 px-3 py-1.5 text-emerald-600">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          系统在线
-        </Badge>
-      </div>
+      <SystemStatusHeader
+        health={health as any}
+        recentBytes={recentBytes}
+        loading={healthLoading}
+        isAdmin={isAdmin}
+      />
 
-      <div className={`grid grid-cols-2 gap-3 sm:gap-4 ${isAdmin ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
-        {isAdmin && (
-          <StatCard
-            title="主机总数"
-            value={stats?.totalHosts ?? 0}
-            subtitle={`${stats?.onlineHosts ?? 0} 台在线`}
-            icon={Server}
-            tone="bg-gradient-to-br from-teal-500 to-teal-600"
-            loading={isLoading}
-            cacheKey="home.stats.totalHosts"
-            fallbackValue={0}
-            index={0}
-          />
-        )}
-        <StatCard
-          title="转发规则"
-          value={stats?.totalRules ?? 0}
-          subtitle={`${stats?.activeRules ?? 0} 条已启用`}
-          icon={ArrowRightLeft}
-          tone="bg-gradient-to-br from-emerald-500 to-emerald-600"
-          loading={isLoading}
-          cacheKey="home.stats.totalRules"
-          fallbackValue={0}
-          index={isAdmin ? 1 : 0}
-        />
-        <StatCard
-          title="入站流量"
-          value={formatBytes(trafficTotals?.totalTrafficIn ?? 0)}
-          subtitle="累计入站"
-          icon={ArrowDownToLine}
-          tone="bg-gradient-to-br from-rose-500 to-rose-600"
-          loading={trafficTotalsLoading}
-          cacheKey="home.stats.totalTrafficIn"
-          fallbackValue="0 B"
-          className="col-span-2 sm:col-span-1"
-          index={isAdmin ? 2 : 1}
-        />
-        <StatCard
-          title="出站流量"
-          value={formatBytes(trafficTotals?.totalTrafficOut ?? 0)}
-          subtitle="累计出站"
-          icon={ArrowUpFromLine}
-          tone="bg-gradient-to-br from-amber-500 to-amber-600"
-          loading={trafficTotalsLoading}
-          cacheKey="home.stats.totalTrafficOut"
-          fallbackValue="0 B"
-          className="col-span-2 sm:col-span-1"
-          index={isAdmin ? 3 : 2}
-        />
-      </div>
+      {/*
+        主机和转发这两个数已经在顶上那一行里了，不再用一张渐变卡片重复一遍。
+        这里只留「累计流量」—— 它和顶上那个「近 24H」是两个口径，放一起才说得清。
+      */}
+      <section className="grid grid-cols-2 gap-4 rounded-lg border bg-card p-4 sm:p-5">
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground">累计入站</div>
+          <div className="mt-1 truncate text-xl font-semibold tabular-nums tracking-tight">
+            {trafficTotalsLoading && !trafficTotals ? "—" : formatBytes(trafficTotals?.totalTrafficIn ?? 0)}
+          </div>
+        </div>
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground">累计出站</div>
+          <div className="mt-1 truncate text-xl font-semibold tabular-nums tracking-tight">
+            {trafficTotalsLoading && !trafficTotals ? "—" : formatBytes(trafficTotals?.totalTrafficOut ?? 0)}
+          </div>
+        </div>
+      </section>
 
       <MobileAppSettings snapshot={mobileReminderSnapshot} />
 
@@ -787,32 +688,9 @@ function DashboardContent() {
             ) : chartData.length === 0 ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">暂无流量数据</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="trafficInGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="trafficOutGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                  <XAxis dataKey="label" tick={{ fontSize: 9 }} minTickGap={60} interval="preserveStartEnd" />
-                  <YAxis
-                    tick={{ fontSize: 9 }}
-                    tickFormatter={(value) => formatBytes(value)}
-                    width={56}
-                    domain={[0, (dataMax: number) => Math.max(1024, Math.ceil((dataMax || 0) * 1.2))]}
-                    allowDecimals={false}
-                  />
-                  <RTooltip content={<TrafficTooltipContent />} cursor={{ stroke: "var(--color-muted-foreground)", strokeDasharray: "3 3" }} />
-                  <Area type="monotone" dataKey="bytesIn" name="入站" stroke="#10b981" strokeWidth={2} fill="url(#trafficInGradient)" dot={false} />
-                  <Area type="monotone" dataKey="bytesOut" name="出站" stroke="#f59e0b" strokeWidth={2} fill="url(#trafficOutGradient)" dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
+              <Suspense fallback={<Skeleton className="h-full w-full" />}>
+                <TrafficAreaChart chartData={chartData} />
+              </Suspense>
             )}
           </div>
         </CardContent>

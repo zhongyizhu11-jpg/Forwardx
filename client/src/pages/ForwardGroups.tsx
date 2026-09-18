@@ -1,4 +1,5 @@
 import DataSectionError from "@/components/DataSectionError";
+import { sameNullableStringArray } from "@/lib/multiHopAddress";
 import { hostSearchParts } from "@/lib/hostSearchParts";
 import { formatLatencyTimeLabel } from "@/lib/latencyTimeLabel";
 import { hostIpv6Address, hostPrivateAddress, normalizeConnectHostForHost, sameAddress } from "@/lib/multiHopAddress";
@@ -52,7 +53,7 @@ import HostStatusLabel from "@/components/HostStatusLabel";
 import MultiHopEditor from "@/components/MultiHopEditor";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useOptimisticSortableOrder, useSortableReorder } from "@/components/SortableDragHandle";
 import { pollingInterval } from "@/lib/polling";
-import { buildLinkAvailabilityIndex } from "@/lib/linkAvailability";
+import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { handoffManualTestResult } from "@/lib/manualTestCache";
 import { getTunnelRouteText } from "@/lib/tunnelDisplay";
 import { trpc } from "@/lib/trpc";
@@ -381,14 +382,6 @@ function sameNumberArray(a: number[], b: number[]) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
-
-function sameNullableStringArray(a: Array<string | null>, b: Array<string | null>) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if ((a[i] || null) !== (b[i] || null)) return false;
   }
   return true;
 }
@@ -1621,7 +1614,7 @@ export function ForwardGroupsContent({
         onCheckedChangeAsync={(checked) => toggleMutation.mutateAsync({ id: groupId, isEnabled: checked })}
         onToggleSuccess={(checked) => toast.success(`${resourceLabel}已${checked ? "开启" : "关闭"}`)}
         onToggleError={(error) => toast.error(error instanceof Error ? error.message : `切换${resourceLabel}状态失败`)}
-        className="scale-75"
+        className="switch-compact"
         title={enabled ? "关闭后该资源及关联规则将停止下发和转发" : "开启后将恢复此前由该资源受控关闭的规则"}
         aria-label={`${enabled ? "停用" : "启用"}${group?.name || "链路资源"}`}
       />
@@ -1907,6 +1900,8 @@ export function ForwardGroupsContent({
               variant={viewMode === "card" ? "secondary" : "ghost"}
               size="icon"
               className="h-8 w-8 rounded-none"
+              aria-label="卡片视图"
+              aria-pressed={viewMode === "card"}
               onClick={() => handleViewModeChange("card")}
             >
               <LayoutGrid className="h-4 w-4" />
@@ -1915,6 +1910,8 @@ export function ForwardGroupsContent({
               variant={viewMode === "table" ? "secondary" : "ghost"}
               size="icon"
               className="h-8 w-8 rounded-none"
+              aria-label="列表视图"
+              aria-pressed={viewMode === "table"}
               onClick={() => handleViewModeChange("table")}
             >
               <List className="h-4 w-4" />
@@ -2006,16 +2003,17 @@ export function ForwardGroupsContent({
 
                   <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
                     {chainLatencyActions(group)}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => syncMutation.mutate({ id: group.id })}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
                       <RefreshCw className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(group)}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-destructive hover:text-destructive"
+                      aria-label={`删除链路 ${group.name}`}
                       onClick={() => setDeleteGroup(group)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -2104,16 +2102,17 @@ export function ForwardGroupsContent({
 
                   <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
                     {chainLatencyActions(group)}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => syncMutation.mutate({ id: group.id })}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
                       <RefreshCw className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(group)}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-destructive hover:text-destructive"
+                      aria-label={`删除链路 ${group.name}`}
                       onClick={() => setDeleteGroup(group)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -2185,16 +2184,17 @@ export function ForwardGroupsContent({
                       <TableCell className="py-3 text-right">
                         <div className="flex justify-end gap-1">
                           {chainLatencyActions(group)}
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => syncMutation.mutate({ id: group.id })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
                             <RefreshCw className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(group)}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 text-destructive hover:text-destructive"
+                            aria-label={`删除链路 ${group.name}`}
                             onClick={() => setDeleteGroup(group)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -2840,7 +2840,7 @@ export function ForwardGroupsContent({
                             }} title={member.isEnabled ? "关闭后该成员不参与转发组切换" : "开启后该成员可参与转发组切换"} />
                           </div>
                           <div className="flex h-7 w-9 items-center justify-end">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => removeMember(member.key)}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" aria-label={`移除成员 ${memberLabel(member)}`} onClick={() => removeMember(member.key)}>
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>

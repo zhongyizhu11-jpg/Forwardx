@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { forwardAccessRestoredNote } from "@shared/forwardAccessMessage";
 import { ledgerTone } from "@/lib/ledgerTone";
 import { balanceTypeLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
@@ -91,8 +92,13 @@ export default function Wallet() {
   });
 
   const redeem = trpc.billing.redeem.useMutation({
-    onSuccess: () => {
-      toast.success("兑换成功");
+    onSuccess: (data) => {
+      /*
+        余额耗尽被停了转发的人，兑换一张码往往就是为了把转发救回来。
+        服务端算出来了，这里必须说 —— 只说「兑换成功」他还得自己去试。
+      */
+      const note = forwardAccessRestoredNote((data as any)?.forwardAccessRestored, "self");
+      toast.success(note ? `已兑换 · ${note}` : "已兑换");
       setRedeemCode("");
       utils.billing.me.invalidate();
       utils.billing.ledger.invalidate();

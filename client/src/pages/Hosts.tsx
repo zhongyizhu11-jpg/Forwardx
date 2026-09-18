@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { renderHostMapTooltip } from "@/lib/hostMapTooltip";
 import { parseHostDateTime } from "@/components/hosts/HostCard";
 import { getStoredAgentTokenViewMode, storeAgentTokenViewMode, type AgentTokenViewMode } from "@/lib/agentTokenViewMode";
 import { formatMetricSizeDetail } from "@/lib/formatMetricSize";
@@ -310,35 +311,6 @@ function createHostGlobeLabelElement(
   return element;
 }
 
-function renderHostGlobeTooltip(point: HostGlobePoint) {
-  const rows = [
-    { label: "地址", value: point.addressText },
-    { label: "地区", value: point.regionText || "地区获取中" },
-    { label: "系统", value: point.host.osInfo || "系统信息未上报" },
-    { label: "Agent", value: point.host.agentVersion ? `v${point.host.agentVersion}` : "未上报" },
-  ];
-  const regionValue = point.flagUrl
-    ? `<span style="display:inline-flex;min-width:0;align-items:center;gap:7px;"><img src="${escapeTooltipHtml(point.flagUrl)}" alt="${escapeTooltipHtml(point.countryCode)}" referrerpolicy="no-referrer" style="width:20px;height:15px;flex:0 0 auto;border-radius:2px;object-fit:cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='inline';" /><span style="display:none;flex:0 0 auto;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace;font-size:11px;color:#cbd5e1;">${escapeTooltipHtml(point.countryCode)}</span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">${escapeTooltipHtml(point.regionText || "地区获取中")}</span></span>`
-    : escapeTooltipHtml(point.regionText || "地区获取中");
-  return `
-    <div style="min-width:260px;max-width:320px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:rgba(8,13,24,.92);box-shadow:0 18px 44px rgba(0,0,0,.4);backdrop-filter:blur(10px);color:#f8fafc;padding:12px;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;">
-        <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:700;">${escapeTooltipHtml(point.host.name || "-")}</div>
-        <div style="display:flex;align-items:center;gap:6px;color:#cbd5e1;font-size:12px;">
-          <span style="width:8px;height:8px;border-radius:999px;background:${point.color};box-shadow:0 0 14px ${point.glowColor};"></span>
-          ${escapeTooltipHtml(point.statusText)}
-        </div>
-      </div>
-      ${rows.map((row) => `
-        <div style="display:grid;grid-template-columns:42px minmax(0,1fr);gap:8px;align-items:start;margin-top:6px;font-size:12px;line-height:1.45;">
-          <span style="color:#94a3b8;">${escapeTooltipHtml(row.label)}</span>
-          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;color:#e2e8f0;${row.label === "地址" || row.label === "Agent" ? "font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace;" : ""}">${row.label === "地区" ? regionValue : escapeTooltipHtml(row.value)}</span>
-        </div>
-      `).join("")}
-    </div>
-  `;
-}
-
 function HostWorldMap({
   hosts,
   onEdit,
@@ -521,7 +493,21 @@ function HostWorldMap({
             htmlAltitude={0.12}
             htmlElement={(point) => createHostGlobeLabelElement(point as HostGlobePoint, onEdit, setHoveredPoint)}
             htmlTransitionDuration={0}
-            pointLabel={(point) => renderHostGlobeTooltip(point as HostGlobePoint)}
+            pointLabel={(point) => {
+              const p = point as HostGlobePoint;
+              return renderHostMapTooltip({
+                name: p.host.name || "-",
+                addressText: p.addressText,
+                regionText: p.regionText,
+                osInfo: p.host.osInfo || "",
+                agentVersion: p.host.agentVersion || "",
+                statusText: p.statusText,
+                color: p.color,
+                glowColor: p.glowColor,
+                countryCode: p.countryCode,
+                flagUrl: p.flagUrl,
+              });
+            }}
             onPointHover={(point) => setHoveredPoint(point as HostGlobePoint | null)}
             onPointClick={(point) => onEdit((point as HostGlobePoint).host)}
             showPointerCursor={(objectType) => objectType === "point"}
@@ -1617,7 +1603,7 @@ function HostsContent() {
       utils.hosts.summary.invalidate();
       setShowDialog(false);
       resetForm();
-      toast.success("主机添加成功");
+      toast.success("主机已添加");
     },
     onError: (err) => toast.error(err.message || "添加失败"),
   });
@@ -1631,7 +1617,7 @@ function HostsContent() {
       utils.hosts.summary.invalidate();
       setShowDialog(false);
       resetForm();
-      toast.success("主机更新成功");
+      toast.success("主机已更新");
     },
     onError: (err) => toast.error(err.message || "更新失败"),
   });
@@ -1717,7 +1703,7 @@ function HostsContent() {
       }
       if (tracked.has(host.id)) {
         tracked.delete(host.id);
-        toast.success(`${host.name} Agent 升级成功，当前版本 ${host.agentVersion ? `v${host.agentVersion}` : "已上报"}`);
+        toast.success(`${host.name} Agent 已升级，当前版本 ${host.agentVersion ? `v${host.agentVersion}` : "已上报"}`);
       }
     }
     for (const hostId of Array.from(tracked.keys())) {
@@ -2255,6 +2241,8 @@ function HostsContent() {
                   size="icon"
                   className="h-8 w-8 rounded-none"
                   title="精简卡片"
+                  aria-label="精简卡片"
+                  aria-pressed={viewMode === "compact-card"}
                   onClick={() => handleViewModeChange("compact-card")}
                 >
                   <Rows3 className="h-4 w-4" />
@@ -2264,6 +2252,8 @@ function HostsContent() {
                   size="icon"
                   className="h-8 w-8 rounded-none"
                   title="标准卡片"
+                  aria-label="标准卡片"
+                  aria-pressed={viewMode === "card"}
                   onClick={() => handleViewModeChange("card")}
                 >
                   <LayoutGrid className="h-4 w-4" />
@@ -2273,6 +2263,8 @@ function HostsContent() {
                   size="icon"
                   className="h-8 w-8 rounded-none"
                   title="列表视图"
+                  aria-label="列表视图"
+                  aria-pressed={viewMode === "table"}
                   onClick={() => handleViewModeChange("table")}
                 >
                   <List className="h-4 w-4" />
@@ -2282,6 +2274,8 @@ function HostsContent() {
                   size="icon"
                   className="hidden h-8 w-8 rounded-none md:inline-flex"
                   title="3D 地球视图"
+                  aria-label="3D 地球视图"
+                  aria-pressed={viewMode === "map"}
                   onClick={() => handleViewModeChange("map")}
                 >
                   <Globe className="h-4 w-4" />
@@ -2291,6 +2285,8 @@ function HostsContent() {
                   size="icon"
                   className="hidden h-8 w-8 rounded-none md:inline-flex"
                   title="平面地图视图"
+                  aria-label="平面地图视图"
+                  aria-pressed={viewMode === "flat-map"}
                   onClick={() => handleViewModeChange("flat-map")}
                 >
                   <MapPinned className="h-4 w-4" />
@@ -2305,6 +2301,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="卡片视图"
+                aria-label="卡片视图"
+                aria-pressed={tokenViewMode === "card"}
                 onClick={() => handleTokenViewModeChange("card")}
               >
                 <LayoutGrid className="h-4 w-4" />
@@ -2314,6 +2312,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="列表视图"
+                aria-label="列表视图"
+                aria-pressed={tokenViewMode === "table"}
                 onClick={() => handleTokenViewModeChange("table")}
               >
                 <List className="h-4 w-4" />
@@ -2327,6 +2327,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="卡片视图"
+                aria-label="卡片视图"
+                aria-pressed={hostGroupViewMode === "card"}
                 onClick={() => handleHostGroupViewModeChange("card")}
               >
                 <LayoutGrid className="h-4 w-4" />
@@ -2336,6 +2338,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="列表视图"
+                aria-label="列表视图"
+                aria-pressed={hostGroupViewMode === "table"}
                 onClick={() => handleHostGroupViewModeChange("table")}
               >
                 <List className="h-4 w-4" />
@@ -2349,6 +2353,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="卡片视图"
+                aria-label="卡片视图"
+                aria-pressed={serviceViewMode === "card"}
                 onClick={() => handleServiceViewModeChange("card")}
               >
                 <LayoutGrid className="h-4 w-4" />
@@ -2358,6 +2364,8 @@ function HostsContent() {
                 size="icon"
                 className="h-8 w-8 rounded-none"
                 title="列表视图"
+                aria-label="列表视图"
+                aria-pressed={serviceViewMode === "table"}
                 onClick={() => handleServiceViewModeChange("table")}
               >
                 <List className="h-4 w-4" />

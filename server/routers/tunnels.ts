@@ -472,8 +472,34 @@ async function attachTunnelEndpointHosts(tunnels: any[], options: { includeLaten
     if (entryGroupId > 0) endpointGroupIds.add(entryGroupId);
     if (exitGroupId > 0) endpointGroupIds.add(exitGroupId);
   }
-  await Promise.all(tunnels.map(async (tunnel) => {
-    const hops = await hopRepo.getTunnelHops(Number(tunnel.id));
+  /*
+    一次取回整页的中继和落地节点，而不是每条隧道各查一次。
+
+    这一页原来每行要打三次库（一次跳数、一次落地节点、一次主机），
+    翻一页 12 行就是 41 条；pageSize 上限是 100，那就是三百多条。
+    批量版本仓库里早就有了（心跳路由和可用性汇总都在用），只有这里还在循环。
+  */
+  const [allHops, allExitNodes] = await Promise.all([
+    hopRepo.getTunnelHopsByTunnelIds(tunnels.map((tunnel) => Number(tunnel.id))),
+    hopRepo.getTunnelExitNodesByTunnelIds(tunnels.map((tunnel) => Number(tunnel.id))),
+  ]);
+  // 批量查询按 (tunnelId, seq) 排序，所以分组之后每条隧道内部仍是 seq 顺序。
+  const hopsByTunnelId = new Map<number, any[]>();
+  for (const hop of allHops as any[]) {
+    const id = Number((hop as any).tunnelId);
+    const list = hopsByTunnelId.get(id);
+    if (list) list.push(hop);
+    else hopsByTunnelId.set(id, [hop]);
+  }
+  const exitNodeRowsByTunnelId = new Map<number, any[]>();
+  for (const node of allExitNodes as any[]) {
+    const id = Number((node as any).tunnelId);
+    const list = exitNodeRowsByTunnelId.get(id);
+    if (list) list.push(node);
+    else exitNodeRowsByTunnelId.set(id, [node]);
+  }
+  for (const tunnel of tunnels) {
+    const hops = hopsByTunnelId.get(Number(tunnel.id)) || [];
     const hopIds = (hops || []).map((hop: any) => Number(hop.hostId)).filter((id: number) => Number.isFinite(id) && id > 0);
     if (hopIds.length >= 2) {
       hopHostIdsByTunnel.set(Number(tunnel.id), hopIds);
@@ -484,7 +510,7 @@ async function attachTunnelEndpointHosts(tunnels: any[], options: { includeLaten
       return value ? value : null;
     });
     if (hopConnectHosts.length >= 2) hopConnectHostsByTunnel.set(Number(tunnel.id), hopConnectHosts);
-    const extraExitNodes = await hopRepo.getTunnelExitNodes(Number(tunnel.id));
+    const extraExitNodes = exitNodeRowsByTunnelId.get(Number(tunnel.id)) || [];
     const normalizedExtraExitNodes = (extraExitNodes || [])
       .map((node: any) => ({
         id: Number(node.id),
@@ -499,7 +525,7 @@ async function attachTunnelEndpointHosts(tunnels: any[], options: { includeLaten
       extraExitNodesByTunnel.set(Number(tunnel.id), normalizedExtraExitNodes);
       for (const node of normalizedExtraExitNodes) hostIds.add(Number(node.hostId));
     }
-  }));
+  }
   if (endpointGroupIds.size > 0) {
     const endpointGroups = await db.getForwardGroups(undefined, {
       includeRuntime: false,
@@ -517,10 +543,10 @@ async function attachTunnelEndpointHosts(tunnels: any[], options: { includeLaten
   const latestLatencySeriesByTunnel: Map<number, any[]> = options.includeLatencySeries === false
     ? new Map()
     : await db.getLatestTunnelLatencySeries(tunnels.map((tunnel) => Number(tunnel.id)));
-  await Promise.all(Array.from(hostIds).map(async (hostId) => {
-    const host = await db.getHostById(hostId);
-    if (host) hostMap.set(hostId, host);
-  }));
+  // 同理：整页用到的主机一次取回。getHostsByIds 和 getHostById 一样会算 isOnline。
+  for (const host of (await db.getHostsByIds(Array.from(hostIds))) as any[]) {
+    hostMap.set(Number((host as any).id), host);
+  }
   const hostSummary = (host: any) => host ? {
     id: host.id,
     name: host.name,

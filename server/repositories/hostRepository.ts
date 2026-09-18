@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNotNull, or, sql, type SQLWrapper } from "drizzle-orm";
-import { isFreshHostHeartbeat } from "../hostHeartbeatPolicy";
+import { isFreshHostHeartbeat, isHostConsideredOnline } from "../hostHeartbeatPolicy";
 export { isFreshHostHeartbeat } from "../hostHeartbeatPolicy";
 import {
   agentTokens,
@@ -11,6 +11,7 @@ import {
   hostMetrics,
   hostProbeServiceStats,
   hosts,
+  forwardRuleTrafficCounters,
   hostTrafficCounters,
   InsertHost,
   subscriptionPlanHosts,
@@ -34,7 +35,6 @@ import { HOST_ONLINE_TTL_MS } from "../hostHeartbeatPolicy";
 import { invalidateAgentAuthTokenCandidates } from "./tokenRepository";
 import { getSetting, setSetting } from "./settingsRepository";
 import {
-  isPresenceCapableHostConfirmedOffline,
   removePresenceCapableHost,
 } from "../agentFastLiveness";
 import {
@@ -50,12 +50,7 @@ import {
 export { HOST_ONLINE_TTL_MS };
 
 function withComputedOnline<T extends { id?: unknown; isOnline?: boolean; lastHeartbeat?: unknown }>(host: T): T {
-  return {
-    ...host,
-    isOnline: !!host.isOnline
-      && isFreshHostHeartbeat(host.lastHeartbeat)
-      && !isPresenceCapableHostConfirmedOffline(host.id),
-  };
+  return { ...host, isOnline: isHostConsideredOnline(host) };
 }
 
 export async function getHosts(userId?: number) {
@@ -538,6 +533,23 @@ export async function getHostsByIds(ids: readonly number[]) {
 }
 
 /**
+ * 只要名字。
+ *
+ * 提醒文案里「这个端口开在哪台机器上」只需要一个名字，而 getHostsByIds 会把
+ * agentToken、DDNS 配置、端口区间那一整行都读回来再扔掉 —— 定时任务每轮都跑。
+ */
+export async function getHostNamesByIds(ids: readonly number[]): Promise<Map<number, string>> {
+  const db = await getDb();
+  const result = new Map<number, string>();
+  if (!db) return result;
+  const wanted = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return result;
+  const rows = await db.select({ id: hosts.id, name: hosts.name }).from(hosts).where(inArray(hosts.id, wanted));
+  for (const row of rows as any[]) result.set(Number(row.id), String(row.name || ""));
+  return result;
+}
+
+/**
  * 只数个数，不把机器整行读出来。
  *
  * 自助加机器的配额检查原来写成 `(await getHosts(userId)).length` —— 为了得到
@@ -675,6 +687,19 @@ export async function deleteHost(id: number) {
   await db.delete(hostMetrics).where(eq(hostMetrics.hostId, id));
   await db.delete(hostProbeServiceStats).where(eq(hostProbeServiceStats.hostId, id));
   await db.delete(hostTrafficCounters).where(eq(hostTrafficCounters.hostId, id));
+  /**
+   * 按规则记的那份计数也要删。
+   *
+   * 上下这几行已经清了整机计数、流量明细和分桶统计，唯独这一张漏了 —— 而它是
+   * 四张里**唯一没有按时间清理的**：明细和分桶有 72 小时的保留期兜底，这张是
+   * 累计计数，没有时间戳可扫，只能靠删。
+   *
+   * 留着的后果不是多几行垃圾：重算用户总流量时是直接 SUM 这张表、不 join
+   * forward_rules 的，于是一台已经删掉的机器跑过的量会永远算在这个租户头上，
+   * 而管理员再也没法把它清掉 —— 「重置这条转发的流量」要按规则 id 来，规则
+   * 已经跟着主机一起没了。
+   */
+  await db.delete(forwardRuleTrafficCounters).where(eq(forwardRuleTrafficCounters.hostId, id));
   await db.delete(trafficStats).where(eq(trafficStats.hostId, id));
   await db.delete(trafficStatBuckets).where(eq(trafficStatBuckets.hostId, id));
   await db.delete(trafficBillingConfigs).where(and(

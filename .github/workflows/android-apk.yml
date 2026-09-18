@@ -90,7 +90,7 @@ jobs:
       - name: Type check and test shared application code
         run: |
           pnpm exec tsc --noEmit
-          pnpm test:server
+          pnpm test:all
 
       - name: Check existing Android APK
         id: existing_apk

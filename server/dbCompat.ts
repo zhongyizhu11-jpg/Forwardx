@@ -75,3 +75,7 @@ export function bucketExpression(alias: string, column: string, bucketSeconds: n
     : `FLOOR(${alias}.${q(column)} / ${bucketSeconds})`;
   return `${castInteger(divided)} * ${bucketSeconds}`;
 }
+
+// 定义在 dbRuntime（更底层，dbCompat 本来就依赖它；反过来引会成环），这里再导出
+// 一份，免得调用方为了一个小函数多认一个模块。
+export { quoteIdentifierFor } from "./dbRuntime";

@@ -367,4 +367,3 @@ export function getAgentFastLivenessState(hostId: unknown) {
 }
 
 export const getPresenceCapableHostLivenessSnapshot = getAgentFastLivenessState;
-export const isPresenceCapableHostConfirmedOffline = isAgentFastLivenessConfirmedOffline;

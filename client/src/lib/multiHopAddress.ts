@@ -87,3 +87,20 @@ export function normalizeConnectHostForHost(value: unknown, host: any, fallback:
   if (ipv6Addr && sameAddress(text, ipv6Addr)) return ipv6Addr;
   return fallback;
 }
+
+/**
+ * 两个「可空字符串数组」是不是等价。链路管理和转发组原来各存一份，一字不差。
+ *
+ * 用在「表单改过没有」的判断上：判错成「没改」就会静默丢掉用户刚填的东西。
+ *
+ * 注意 `|| null` 不是 `?? null` —— 原实现把**空串也当成 null**，也就是「没填」和
+ * 「填了又清空」视为同一件事。这里照搬，不顺手改：那两页的表单初值本来就混用
+ * null 和 ""，改成区分会让一批本来相等的表单突然被判成「改过了」。
+ */
+export function sameNullableStringArray(a: Array<string | null>, b: Array<string | null>) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if ((a[i] || null) !== (b[i] || null)) return false;
+  }
+  return true;
+}

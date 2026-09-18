@@ -443,11 +443,11 @@ export default function Login() {
       if (error.message === ACCOUNT_DISABLED_ERR_MSG && mobileAuth.isNative) mobileAuth.clear();
       const msg = error.message || "";
       if (msg === "TELEGRAM_NOT_BOUND") {
-        toast.info("当前 Telegram 未绑定面板账号，请先使用账号密码登录并在面板完成绑定。");
+        toast.info("当前 Telegram 未绑定面板账号，请先使用账号密码登录并在面板完成绑定");
         return;
       }
       if (msg === "TELEGRAM_WEBAPP_REPLAYED") {
-        toast.info("自动登录请求已失效，请返回机器人重新打开 WebApp。");
+        toast.info("自动登录请求已失效，请返回机器人重新打开 WebApp");
         return;
       }
       if (msg === "TELEGRAM_WEBAPP_CHALLENGE_INVALID") {
@@ -461,15 +461,15 @@ export default function Login() {
           });
           return;
         }
-        toast.info("登录入口已失效，请返回机器人重新点击“打开面板”。");
+        toast.info("登录入口已失效，请返回机器人重新点击“打开面板”");
         return;
       }
       if (msg === "TELEGRAM_WEBAPP_VERIFY_FAILED") {
-        toast.error("Telegram 自动登录校验失败，请在机器人中重新打开 WebApp。");
+        toast.error("Telegram 自动登录校验失败，请在机器人中重新打开 WebApp");
         return;
       }
       if (msg === "TELEGRAM_LOGIN_DISABLED") {
-        toast.error("Telegram 登录未启用，请改用账号密码登录。");
+        toast.error("Telegram 登录未启用，请改用账号密码登录");
         return;
       }
       toast.error(msg || "Telegram 自动登录失败，请使用账号密码登录。");
@@ -627,7 +627,7 @@ export default function Login() {
       timeoutId = window.setTimeout(() => {
         if (cancelled || telegramWebAppAutoLoginTriedRef.current) return;
         if (intervalId) window.clearInterval(intervalId);
-        toast.info("未获取到 Telegram 登录凭证，请返回机器人重新点击“打开面板”。");
+        toast.info("未获取到 Telegram 登录凭证，请返回机器人重新点击“打开面板”");
       }, TELEGRAM_WEBAPP_INIT_WAIT_MS);
     }
 

@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { normalizeLatencySeriesKey } from "../../shared/latencyProbe";
 import {
   hostMetrics, InsertHostMetric,
   trafficStats, InsertTrafficStat,
@@ -2513,11 +2514,6 @@ export async function getLatestTunnelLatencies(tunnelIds: number[]) {
   return latest;
 }
 
-function normalizeTunnelLatencySeriesKey(value: unknown) {
-  const key = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  return key || "total";
-}
-
 function tunnelLatencySeriesSortRank(key: string) {
   if (key === "total") return [0, 0];
   if (key === "primary") return [1, 0];
@@ -2560,7 +2556,7 @@ export async function getLatestTunnelLatencySeries(tunnelIds: number[]) {
   for (const row of rows) {
     const tunnelId = Number(row.tunnelId);
     if (!Number.isFinite(tunnelId) || tunnelId <= 0) continue;
-    const seriesKey = normalizeTunnelLatencySeriesKey(row.seriesKey);
+    const seriesKey = normalizeLatencySeriesKey(row.seriesKey);
     const series = grouped.get(tunnelId) || [];
     series.push({
       seriesKey,
@@ -2631,7 +2627,7 @@ export async function getTunnelLatencyBranchSeriesForTotal(tunnelId: number, tot
   );
   return rows.map((row) => ({
     ...mappedProbeCounts(row),
-    seriesKey: normalizeTunnelLatencySeriesKey(row.seriesKey),
+    seriesKey: normalizeLatencySeriesKey(row.seriesKey),
     seriesLabel: row.seriesLabel ? String(row.seriesLabel) : null,
     latencyMs: row.latencyMs === null || row.latencyMs === undefined ? null : Number(row.latencyMs),
     isTimeout: rowBool(row.isTimeout),
@@ -2910,6 +2906,13 @@ export async function getGlobalTcpingSeries(opts: { bucketMinutes?: number; sinc
 }
 
 /** Clean expired TCPing data, keeping the most recent N hours. */
+/**
+ * 名字只提了 tcping，实际上连转发组的延迟历史一起清 —— 两张表是同一轮探测写下的。
+ *
+ * 写在这里说一句，是因为按名字找不到它：`forward_group_latency_stats` 看上去
+ * 像一张没人清的表（它的兄弟 tunnel_latency_stats 有自己的清理函数），照着名字
+ * 搜一遍会得出「漏了」的结论，然后再加一个重复的清理。
+ */
 export async function cleanOldTcpingStats(retainHours: number = 72) {
   const db = await getDb();
   if (!db) return;

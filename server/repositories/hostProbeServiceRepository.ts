@@ -7,7 +7,7 @@ import {
 } from "../../drizzle/schema";
 import { executeRaw, getDb, insertAndGetId, nowDate, queryRaw } from "../dbRuntime";
 import { boolLiteral, bucketExpression, inList, quoteIdentifier } from "../dbCompat";
-import { clampPositiveInt, epochSeconds } from "./repositoryUtils";
+import { clampPositiveInt, epochSeconds, reorderRowsBySortOrder } from "./repositoryUtils";
 import { normalizeAgentProbeCounts } from "../../shared/agentDtos";
 
 export type HostProbeMethod = "tcping" | "ping";
@@ -136,34 +136,13 @@ export async function deleteHostProbeService(id: number) {
 }
 
 export async function reorderHostProbeServices(ids: number[], userId?: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const orderedIds = Array.from(ids || [])
-    .map((id) => Math.floor(Number(id)))
-    .filter((id) => Number.isInteger(id) && id > 0);
-  if (orderedIds.length === 0 || new Set(orderedIds).size !== orderedIds.length) throw new Error("排序数据无效");
-  const q = quoteIdentifier;
-  const list = inList(orderedIds);
-  const params: any[] = [...list.params];
-  let userWhere = "";
-  if (userId) {
-    userWhere = ` AND ${q("userId")} = ?`;
-    params.push(userId);
-  }
-  const rows = await queryRaw<{ id: number }>(
-    `SELECT ${q("id")} FROM ${q("host_probe_services")} WHERE ${q("id")} IN ${list.sql}${userWhere}`,
-    params,
-  );
-  if (rows.length !== orderedIds.length) throw new Error("排序中包含无权操作或不存在的服务");
-  const now = Math.floor(Date.now() / 1000);
-  for (const [index, id] of orderedIds.entries()) {
-    await executeRaw(
-      `UPDATE ${q("host_probe_services")}
-          SET ${q("sortOrder")} = ?, ${q("updatedAt")} = ?
-        WHERE ${q("id")} = ?`,
-      [index, now, id],
-    );
-  }
+  return reorderRowsBySortOrder({
+    table: "host_probe_services",
+    ids,
+    userId,
+    notFoundMessage: "排序中包含无权操作或不存在的服务",
+    deps: { getDb, queryRaw, executeRaw, quoteIdentifier, inList },
+  });
 }
 
 function serviceAppliesToHost(service: any, hostId: number) {

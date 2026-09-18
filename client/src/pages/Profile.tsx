@@ -130,7 +130,7 @@ function ProfileContent() {
 
   const changePasswordMutation = trpc.auth.changePassword.useMutation({
     onSuccess: () => {
-      toast.success("密码修改成功");
+      toast.success("密码已修改");
       setOldPassword("");
       setNewPassword("");
       setConfirmPassword("");

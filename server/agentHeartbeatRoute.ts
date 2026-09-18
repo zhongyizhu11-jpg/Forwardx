@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { parseFailoverTargets } from "../shared/failoverTargets";
 import * as db from "./db";
 import { AGENT_VERSION } from "./_core/systemRouter";
 import { clearHostTcpingRequest, hasHostTcpingRequest, isHostMetricsWatching, pushAgentDesiredState } from "./agentEvents";
@@ -65,6 +66,7 @@ import {
   buildIptablesTransitionCleanupCmds,
   buildManagedPortCleanupCmds,
   buildNftCleanupCmds,
+  buildKernelForwardCmds,
   buildNftForwardCmds,
   buildNftTransitionCleanupCmds,
   killByPatternCmd,
@@ -76,6 +78,24 @@ import {
   stopManagedServiceCmd,
   writeManagedServiceCmd,
 } from "./agentActionCommands";
+import {
+  REALM_CONFIG_DIR,
+  buildRealmConfigToml,
+  buildRealmServiceUnit,
+  buildSocatServiceUnit,
+  cleanEndpointHost,
+  endpointHostPort,
+  isIpv6Literal,
+  legacyRealmConfigPathForPort,
+  legacyRealmServiceNameForPort,
+  legacySocatServiceNameForPort,
+  realmConfigPathForPort,
+  realmServiceNameForPort,
+  realmTomlString,
+  serviceProtocolSuffix,
+  socatDialEndpoint,
+  socatServiceNameForPort,
+} from "./forwardRuntimeConfigs";
 import { handleHostAddressChanged, hostIngressAddress, refreshAgentsAffectedByHostAddress } from "./hostAddressRuntime";
 import { isHostStatusOnline, notifyHostOnlineIfNeeded } from "./hostStatusNotifier";
 import { normalizeLinkProbeMethod } from "@shared/latencyProbe";
@@ -213,7 +233,6 @@ const NGINX_CONFIG_PATH = "/etc/forwardx/nginx/nginx.conf";
 const NGINX_CERT_DIR = "/etc/forwardx/nginx/certs";
 const NGINX_ERROR_LOG_PATH = "/var/log/forwardx-agent/forwardx-nginx-error.log";
 const NGINX_SESSION_LOG_PATH = "/var/log/forwardx-agent/forwardx-nginx-session.log";
-const REALM_CONFIG_DIR = "/etc/forwardx/realm";
 const LEGACY_GOST_SERVICE_NAME = "forwardx-gost";
 const LEGACY_TUNNEL_SERVICE_NAME = "forwardx-tunnels";
 const MIMIC_CONFIG_DIR = "/etc/mimic";
@@ -1048,14 +1067,6 @@ function actionMayAffectRuntimeFamily(action: any, forwardTypes: Set<string>) {
   return forwardTypes.has(runtimeForwardType);
 }
 
-function cleanEndpointHost(value: unknown) {
-  return String(value || "").trim().replace(/^\[([^\]]+)\]$/, "$1");
-}
-
-function isIpv6Literal(value: unknown) {
-  return isIP(cleanEndpointHost(value)) === 6;
-}
-
 function isForwardXTunnelMode(tunnel: any) {
   return String(tunnel?.mode || "").toLowerCase() === "forwardx";
 }
@@ -1068,41 +1079,6 @@ function isGostTunnelMode(tunnel: any) {
   return !!tunnel && GOST_TUNNEL_MODES.has(String(tunnel?.mode || "").toLowerCase());
 }
 
-function endpointHostPort(host: unknown, port: unknown) {
-  const clean = cleanEndpointHost(host);
-  return isIpv6Literal(clean) ? `[${clean}]:${Number(port) || 0}` : `${clean}:${Number(port) || 0}`;
-}
-
-function socatDialEndpoint(protocol: "TCP" | "UDP", host: unknown, port: unknown) {
-  const clean = cleanEndpointHost(host);
-  const dialProtocol = isIpv6Literal(clean) ? `${protocol}6` : protocol;
-  return `${dialProtocol}:${endpointHostPort(clean, port)}`;
-}
-
-function realmTomlString(value: unknown) {
-  return JSON.stringify(String(value ?? ""));
-}
-
-function serviceProtocolSuffix(protocol: unknown) {
-  return normalizeForwardRuleProtocol(protocol, "both");
-}
-
-function realmServiceNameForPort(port: unknown, protocol: unknown) {
-  return `forwardx-realm-${serviceProtocolSuffix(protocol)}-${Number(port) || 0}`;
-}
-
-function legacyRealmServiceNameForPort(port: unknown) {
-  return `forwardx-realm-${Number(port) || 0}`;
-}
-
-function realmConfigPathForPort(port: unknown, protocol: unknown) {
-  return `${REALM_CONFIG_DIR}/${realmServiceNameForPort(port, protocol)}.toml`;
-}
-
-function legacyRealmConfigPathForPort(port: unknown) {
-  return `${REALM_CONFIG_DIR}/${legacyRealmServiceNameForPort(port)}.toml`;
-}
-
 function legacyRealmCleanupCmds(port: unknown, protocol: unknown) {
   const normalized = normalizeForwardRuleProtocol(protocol, "both");
   if (normalized === "udp") return [];
@@ -1113,14 +1089,6 @@ function legacyRealmCleanupCmds(port: unknown, protocol: unknown) {
     killByPatternCmd(`[r]ealm .*${configPath}`),
     `rm -f ${shQuote(configPath)} ${shQuote(`${configPath}.sha256`)} 2>/dev/null || true`,
   ];
-}
-
-function socatServiceNameForPort(port: unknown, protocol: unknown) {
-  return `forwardx-socat-${serviceProtocolSuffix(protocol)}-${Number(port) || 0}`;
-}
-
-function legacySocatServiceNameForPort(port: unknown) {
-  return `forwardx-socat-${Number(port) || 0}`;
 }
 
 function legacySocatCleanupCmds(port: unknown, protocol: unknown) {
@@ -1287,20 +1255,6 @@ function addDnsWatch(watches: Map<string, AgentDnsWatch>, host: string, scope: s
   if (!isHostnameAddress(value)) return;
   const key = `${scope}:${refId || 0}:${value.toLowerCase()}`;
   watches.set(key, { host: value, scope, ...(refId ? { refId } : {}) });
-}
-
-function parseFailoverTargets(raw: unknown) {
-  if (!raw || typeof raw !== "string") return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((target) => ({ targetIp: String(target?.targetIp || "").trim(), targetPort: Number(target?.targetPort) }))
-      .filter((target) => target.targetIp && target.targetPort >= 1 && target.targetPort <= 65535)
-      .slice(0, 10);
-  } catch {
-    return [];
-  }
 }
 
 async function resolveTargetIp(raw: string): Promise<string> {
@@ -5158,30 +5112,9 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
             forwardType: "guard",
             failover: guardFailover,
           });
-        } else if (rule.forwardType === "iptables") {
-          // Remove any stale nftables state left by a previous backend before
-          // installing iptables rules for this listener.
-          cmds.push(...buildNftTransitionCleanupCmds(rule));
-          cmds.push(...buildIptablesForwardCmds(rule));
-          for (const c of buildCountingChainCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol, rule.forwardType)) cmds.push(c);
-          for (const c of buildRuleAccessLimitCmds(rule)) cmds.push(c);
-          actions.push({
-            ruleId: rule.id,
-            op: "apply",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            networkInterface: hostInterface,
-            commands: cmds,
-          });
-        } else if (rule.forwardType === "nftables") {
-          // The nft builder self-cleans nftables; the transition helper also
-          // removes an older iptables DNAT/FORWARD layout.
-          cmds.push(...buildIptablesTransitionCleanupCmds(rule));
-          cmds.push(...buildNftForwardCmds(rule));
-          for (const c of buildRuleAccessLimitCmds(rule)) cmds.push(c);
+        } else if (rule.forwardType === "iptables" || rule.forwardType === "nftables") {
+          // 两种内核态转发只差三处，差别写在 buildKernelForwardCmds 里。
+          cmds.push(...buildKernelForwardCmds(rule, rule.forwardType, buildRuleAccessLimitCmds(rule)));
           actions.push({
             ruleId: rule.id,
             op: "apply",
@@ -5197,46 +5130,22 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           const svcName = realmServiceNameForPort(rule.sourcePort, rule.protocol);
           const realmConfigPath = realmConfigPathForPort(rule.sourcePort, rule.protocol);
           const realmRemote = endpointHostPort(processTarget(rule), rule.targetPort);
-          const realmConfig = [
-            "[log]",
-            'level = "warn"',
-            "",
-            "[network]",
-            `use_udp = ${isForwardRuleProtocolUdpEnabled(rule.protocol) ? "true" : "false"}`,
-            "tcp_timeout = 300",
-            "udp_timeout = 30",
-            "ipv6_only = false",
-            `send_proxy = ${proxyProtocolEnabled(rule, "send") ? "true" : "false"}`,
-            `send_proxy_version = ${proxyProtocolVersion(rule)}`,
-            `accept_proxy = ${proxyProtocolEnabled(rule, "receive") ? "true" : "false"}`,
-            "accept_proxy_timeout = 5",
-            "",
-            "[[endpoints]]",
-            `listen = ${realmTomlString(`[::0]:${Number(rule.sourcePort) || 0}`)}`,
-            `remote = ${realmTomlString(realmRemote)}`,
-            "",
-          ].join("\n");
+          const realmConfig = buildRealmConfigToml({
+            sourcePort: rule.sourcePort,
+            protocol: rule.protocol,
+            remote: realmRemote,
+            sendProxy: proxyProtocolEnabled(rule, "send"),
+            acceptProxy: proxyProtocolEnabled(rule, "receive"),
+            proxyVersion: proxyProtocolVersion(rule),
+          });
           const realmConfigB64 = Buffer.from(realmConfig, "utf8").toString("base64");
-          const ifaceFlag = hostInterface ? ` --interface ${hostInterface}` : "";
-          const realmCmd = `/usr/local/bin/realm -c ${realmConfigPath}${ifaceFlag}`;
-          const unit = [
-            "[Unit]",
-            `Description=ForwardX realm forwarder ${rule.sourcePort}->${rule.targetIp}:${rule.targetPort}`,
-            "After=network.target",
-            "StartLimitIntervalSec=60",
-            "StartLimitBurst=5",
-            "",
-            "[Service]",
-            "Type=simple",
-            `ExecStart=${realmCmd}`,
-            "Restart=always",
-            "RestartSec=5",
-            "LimitNOFILE=65535",
-            "",
-            "[Install]",
-            "WantedBy=multi-user.target",
-            "",
-          ].join("\n");
+          const unit = buildRealmServiceUnit({
+            sourcePort: rule.sourcePort,
+            targetIp: rule.targetIp,
+            targetPort: rule.targetPort,
+            configPath: realmConfigPath,
+            networkInterface: hostInterface,
+          });
           actions.push({
             ruleId: rule.id,
             op: "apply",
@@ -5277,40 +5186,17 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           // both: 需要两个 socat 进程
           if (normalizeForwardRuleProtocol(rule.protocol) === "both") {
             // 两个服务：一个 TCP 一个 UDP
-            const svcNameTcp = `forwardx-socat-tcp-${rule.sourcePort}`;
-            const svcNameUdp = `forwardx-socat-udp-${rule.sourcePort}`;
-            const unitTcp = [
-              "[Unit]",
-              `Description=ForwardX socat TCP forwarder ${rule.sourcePort}->${rule.targetIp}:${rule.targetPort}`,
-              "After=network.target",
-              "",
-              "[Service]",
-              "Type=simple",
-              `ExecStart=/usr/bin/socat TCP6-LISTEN:${rule.sourcePort},fork,reuseaddr,ipv6only=0 ${socatDialEndpoint("TCP", processTarget(rule), rule.targetPort)}`,
-              "Restart=always",
-              "RestartSec=5",
-              "LimitNOFILE=65535",
-              "",
-              "[Install]",
-              "WantedBy=multi-user.target",
-              "",
-            ].join("\n");
-            const unitUdp = [
-              "[Unit]",
-              `Description=ForwardX socat UDP forwarder ${rule.sourcePort}->${rule.targetIp}:${rule.targetPort}`,
-              "After=network.target",
-              "",
-              "[Service]",
-              "Type=simple",
-              `ExecStart=/usr/bin/socat UDP6-LISTEN:${rule.sourcePort},fork,reuseaddr,ipv6only=0 ${socatDialEndpoint("UDP", processTarget(rule), rule.targetPort)}`,
-              "Restart=always",
-              "RestartSec=5",
-              "LimitNOFILE=65535",
-              "",
-              "[Install]",
-              "WantedBy=multi-user.target",
-              "",
-            ].join("\n");
+            const svcNameTcp = socatServiceNameForPort(rule.sourcePort, "tcp");
+            const svcNameUdp = socatServiceNameForPort(rule.sourcePort, "udp");
+            const socatUnitBase = {
+              sourcePort: rule.sourcePort,
+              targetIp: rule.targetIp,
+              targetPort: rule.targetPort,
+              dialHost: processTarget(rule),
+              dialPort: rule.targetPort,
+            };
+            const unitTcp = buildSocatServiceUnit({ ...socatUnitBase, descriptionProtocol: "TCP", dialProtocol: "TCP" });
+            const unitUdp = buildSocatServiceUnit({ ...socatUnitBase, descriptionProtocol: "UDP", dialProtocol: "UDP" });
             // socat both 模式下为该端口挂入 mangle 计数链
             for (const c of buildCountingChainCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol)) socatPostCmds.push(c);
             for (const c of buildRuleAccessLimitCmds(rule)) socatPostCmds.push(c);
@@ -5333,25 +5219,17 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
             });
           } else {
             const protoUpper = normalizeForwardRuleProtocol(rule.protocol) === "udp" ? "UDP" : "TCP";
-            const listenProto = protoUpper === "UDP" ? "UDP6" : "TCP6";
-            const socatCmd = `/usr/bin/socat ${listenProto}-LISTEN:${rule.sourcePort},fork,reuseaddr,ipv6only=0 ${socatDialEndpoint(protoUpper, processTarget(rule), rule.targetPort)}`;
             const singleSvcName = socatServiceNameForPort(rule.sourcePort, rule.protocol);
-            const unit = [
-              "[Unit]",
-              `Description=ForwardX socat ${rule.protocol} forwarder ${rule.sourcePort}->${rule.targetIp}:${rule.targetPort}`,
-              "After=network.target",
-              "",
-              "[Service]",
-              "Type=simple",
-              `ExecStart=${socatCmd}`,
-              "Restart=always",
-              "RestartSec=5",
-              "LimitNOFILE=65535",
-              "",
-              "[Install]",
-              "WantedBy=multi-user.target",
-              "",
-            ].join("\n");
+            // Description 里沿用规则上的原始协议写法（小写），和 both 模式那两个单元不同。
+            const unit = buildSocatServiceUnit({
+              descriptionProtocol: rule.protocol,
+              dialProtocol: protoUpper,
+              sourcePort: rule.sourcePort,
+              targetIp: rule.targetIp,
+              targetPort: rule.targetPort,
+              dialHost: processTarget(rule),
+              dialPort: rule.targetPort,
+            });
             // socat 单协议模式下为该端口挂入 mangle 计数链
             for (const c of buildCountingChainCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol)) socatPostCmds.push(c);
             for (const c of buildRuleAccessLimitCmds(rule)) socatPostCmds.push(c);
@@ -5539,148 +5417,16 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           await settleStoppedRule(rule);
           continue;
         }
-        const cmds: string[] = [];
-        if (rule.forwardType === "iptables") {
-          cmds.push(
-            ...buildNftTransitionCleanupCmds(rule),
-            ...buildIptablesForwardCleanupCmds(rule),
-            ...buildCountingCleanupCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol),
-            ...buildAccessLimitCleanupCmds(rule.sourcePort, accessScopeForRule(rule)),
-          );
-          actions.push({
-            ruleId: rule.id,
-            op: "remove",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            commands: cmds,
-          });
-        } else if (rule.forwardType === "nftables") {
-          const removeAction = await buildDisabledRuleRemovalAction(rule);
-          if (removeAction) actions.push(removeAction);
-        } else if (rule.forwardType === "realm") {
-          const svcName = realmServiceNameForPort(rule.sourcePort, rule.protocol);
-          const realmConfigPath = realmConfigPathForPort(rule.sourcePort, rule.protocol);
-          actions.push({
-            ruleId: rule.id,
-            op: "remove",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            svcName,
-            commands: [
-              ...buildKernelForwardTransitionCleanupCmds(rule),
-              removeManagedServiceCmd(svcName),
-              killByPatternCmd(`[r]ealm .*${realmConfigPath}`),
-              ...legacyRealmCleanupCmds(rule.sourcePort, rule.protocol),
-              ...cleanupGuardBackendCmds(rule),
-              `rm -f ${shQuote(realmConfigPath)} ${shQuote(`${realmConfigPath}.sha256`)} 2>/dev/null || true`,
-              // 清理 conntrack 流量状态文件
-              `rm -f /var/lib/forwardx-agent/traffic_${rule.sourcePort}.prev 2>/dev/null || true`,
-              `rm -f /var/lib/forwardx-agent/port_${rule.sourcePort}.rule /var/lib/forwardx-agent/port_${rule.sourcePort}.tunnel 2>/dev/null || true`,
-              ...buildCountingCleanupCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol),
-              ...buildAccessLimitCleanupCmds(rule.sourcePort, accessScopeForRule(rule)),
-            ],
-          });
-        } else if (rule.forwardType === "socat") {
-          const removeCmds: string[] = [];
-          if (normalizeForwardRuleProtocol(rule.protocol) === "both") {
-            const svcTcp = `forwardx-socat-tcp-${rule.sourcePort}`;
-            const svcUdp = `forwardx-socat-udp-${rule.sourcePort}`;
-            removeCmds.push(removeManagedServiceCmd(svcTcp));
-            removeCmds.push(removeManagedServiceCmd(svcUdp));
-          } else {
-            const svcName = socatServiceNameForPort(rule.sourcePort, rule.protocol);
-            removeCmds.push(removeManagedServiceCmd(svcName));
-            removeCmds.push(...legacySocatCleanupCmds(rule.sourcePort, rule.protocol));
-          }
-          removeCmds.push(socatKillByProtocolCmd(rule.sourcePort, rule.protocol));
-          removeCmds.push(...buildKernelForwardTransitionCleanupCmds(rule));
-          removeCmds.push(...cleanupGuardBackendCmds(rule));
-          // 清理 conntrack 流量状态文件
-          removeCmds.push(`rm -f /var/lib/forwardx-agent/traffic_${rule.sourcePort}.prev 2>/dev/null || true`);
-          removeCmds.push(`rm -f /var/lib/forwardx-agent/port_${rule.sourcePort}.rule /var/lib/forwardx-agent/port_${rule.sourcePort}.tunnel 2>/dev/null || true`);
-          removeCmds.push(...buildCountingCleanupCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol));
-          for (const c of buildAccessLimitCleanupCmds(rule.sourcePort, accessScopeForRule(rule))) removeCmds.push(c);
-          actions.push({
-            ruleId: rule.id,
-            op: "remove",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            commands: removeCmds,
-          });
-        } else if (rule.forwardType === "nginx") {
-          actions.push({
-            ruleId: rule.id,
-            op: "remove",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            commands: [
-              ...buildKernelForwardTransitionCleanupCmds(rule),
-              ...buildNginxPortCleanupCmds(rule),
-            ],
-          });
-        } else if (rule.forwardType === "gost") {
-          const tunnel = (rule as any).tunnelId ? tunnelById.get((rule as any).tunnelId) as any : null;
-          if (tunnel && isNginxTunnelMode(tunnel)) {
-            actions.push({
-              tunnelId: tunnel.id,
-              statusType: "rule",
-              ruleId: rule.id,
-              op: "remove",
-              forwardType: "nginx-tunnel",
-              sourcePort: rule.sourcePort,
-              targetIp: rule.targetIp,
-              targetPort: rule.targetPort,
-              protocol: rule.protocol,
-              commands: [
-                ...buildKernelForwardTransitionCleanupCmds(rule),
-                ...buildNginxPortCleanupCmds(rule),
-                ...cleanupGuardBackendCmds(rule),
-              ],
-            });
-            continue;
-          }
-          const fxpRemoveKey = tunnel && isForwardXTunnel(tunnel)
-            ? (await forwardXEntryRoute(tunnel)).key
-            : "";
-          const removeCmds: string[] = [
-            ...buildKernelForwardTransitionCleanupCmds(rule),
-            ...buildManagedPortCleanupCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol),
-            ...cleanupGuardBackendCmds(rule),
-          ];
-          actions.push({
-            tunnelId: tunnel ? tunnel.id : 0,
-            statusType: tunnel ? "rule" : undefined,
-            ruleId: rule.id,
-            op: "remove",
-            forwardType: rule.forwardType,
-            sourcePort: rule.sourcePort,
-            targetIp: rule.targetIp,
-            targetPort: rule.targetPort,
-            protocol: rule.protocol,
-            commands: removeCmds,
-            fxp: tunnel && isForwardXTunnel(tunnel) ? {
-              role: "entry",
-              transportVersion: isForwardXWireGuardV2(tunnel) ? "v2" : "v1",
-              tunnelId: tunnel.id,
-              ruleId: rule.id,
-              listenPort: rule.sourcePort,
-              protocol: rule.protocol,
-              key: fxpRemoveKey || tunnelSecretSeed(tunnel),
-            } : undefined,
-          });
-        }
+        /*
+          停用和删除下发的清理命令是同一套，所以这里直接用同一个构造器。
+
+          原来这一段把 buildDisabledRuleRemovalAction 里那六种分支又手抄了一遍
+          （只有 nftables 一支是调过去的），两份各改各的，已经漏过一次：nginx
+          手动停用时不清故障转移的守护后端，而删除那条清。两份手抄的列表不可能
+          长期保持一致 —— 唯一的办法是只留一份。
+        */
+        const removeAction = await buildDisabledRuleRemovalAction(rule);
+        if (removeAction) actions.push(removeAction);
       }
     }
 

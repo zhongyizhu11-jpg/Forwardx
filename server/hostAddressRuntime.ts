@@ -45,6 +45,14 @@ export async function refreshAgentsAffectedByHostAddress(hostId: number, reason:
 export async function refreshHostAddressRuntime(hostId: number, previousHost: any, reason: string) {
   await db.syncForwardChainsForHost(hostId, previousHost);
   await db.syncTunnelsForHostAddress(hostId, previousHost);
+  /**
+   * 订阅这一层也要跟着走。
+   *
+   * 上面两行把转发链和隧道改到了新地址，Agent 也会收到新配置 —— 唯独这台机器上
+   * 派生出来的订阅节点还写着旧地址。它拿的是**同一个入口**，却是唯一一处没人
+   * 更新的：客户端拉到订阅连不上，而面板上转发和隧道都显示正常。
+   */
+  await db.syncProxyNodesForHostAddress(hostId);
   await db.resetAgentRuntimeStateForHost(hostId);
   clearTunnelRuntimeStatusForHost(hostId);
   await refreshAgentsAffectedByHostAddress(hostId, reason);

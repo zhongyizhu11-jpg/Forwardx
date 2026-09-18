@@ -392,11 +392,14 @@ export default function ClientSubscriptionsPage() {
   });
   const deleteNode = trpc.proxySubscriptions.deleteNode.useMutation({
     onSuccess: (result) => {
-      toast.success(
-        result.releasedRules > 0
-          ? `节点已删除，${result.releasedRules} 条转发已解绑（转发本身继续运行）`
-          : "节点已删除",
-      );
+      /**
+       * 删一个节点可能同时改掉两样别的东西：绑着它的转发，和正在卖它的套餐。
+       * 套餐那一头尤其要说 —— 商店页上的节点数量当场就变了，不说没人知道。
+       */
+      const notes: string[] = [];
+      if (result.releasedRules > 0) notes.push(`${result.releasedRules} 条转发已解绑（转发本身继续运行）`);
+      if (result.releasedPlans > 0) notes.push(`${result.releasedPlans} 个套餐已移除该节点`);
+      toast.success(notes.length > 0 ? `节点已删除，${notes.join("；")}` : "节点已删除");
       refresh();
     },
     onError: (error) => toast.error(error.message),

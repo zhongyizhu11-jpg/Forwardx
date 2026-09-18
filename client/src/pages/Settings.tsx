@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { useUrlTab } from "@/hooks/useUrlTab";
 import { formatBytes } from "@shared/formatBytes";
 import DashboardLayout from "@/components/DashboardLayout";
 import { EmailSettingsContent } from "./EmailSettings";
@@ -653,20 +654,29 @@ function encodeSvgDataUrl(svg: string) {
   return `data:image/svg+xml;base64,${globalThis.btoa(binary)}`;
 }
 
+const SETTINGS_TAB_STORAGE_KEY = "forwardx.settings.tab";
+
 function isSettingsTab(tab: string | null): tab is SettingsTab {
   return !!tab && settingsTabs.includes(tab as SettingsTab);
 }
 
-function getSettingsTab(location: string): SettingsTab {
-  const query = location.split("?")[1] || "";
-  const tab = new URLSearchParams(query).get("tab");
-  return isSettingsTab(tab) ? tab : "system";
-}
-
 function SettingsContent() {
   const { user } = useAuth();
-  const [location, setLocation] = useLocation();
-  const [activeTab, setActiveTab] = useState<SettingsTab>(() => getSettingsTab(location));
+  const [, setLocation] = useLocation();
+  /*
+    系统设置是最后一个还在手写 tab 判定的页，而那份手写的是坏的。
+
+    原来是 `useLocation()` 里 split("?") 取查询串 —— wouter 的那个值**只有路径**，
+    问号后面的部分根本不在里面，于是 `/settings?tab=email` 永远落回「系统配置」。
+    地址栏明明写着 email，页面却是系统配置；发链接给人说「去邮箱那个 tab 看一下」，
+    对方点开看到的是另一屏。别的七个带 tab 的页上一版已经统一到 useUrlTab 了，
+    这一页漏了，现在补上。
+  */
+  const [activeTab, setActiveTab] = useUrlTab<SettingsTab>({
+    values: settingsTabs,
+    defaultValue: "system",
+    storageKey: SETTINGS_TAB_STORAGE_KEY,
+  });
 
   useEffect(() => {
     if (user && user.role !== "admin") {
@@ -674,14 +684,9 @@ function SettingsContent() {
     }
   }, [user, setLocation]);
 
-  useEffect(() => {
-    setActiveTab(getSettingsTab(location));
-  }, [location]);
-
   const handleTabChange = (tab: string) => {
     if (!isSettingsTab(tab)) return;
     setActiveTab(tab);
-    setLocation(tab === "system" ? "/settings" : `/settings?tab=${tab}`);
   };
 
   // 面板地址统一使用「系统配置」Tab 中配置的 panelPublicUrl；未配置时回退 window.location.origin
@@ -3812,7 +3817,7 @@ function PersonalizationSettingsSection() {
 
               {backgroundEnabled && (
                 <div className="space-y-3">
-                  <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
                     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
                       <div className="space-y-2">
                         <Label>背景不透明度</Label>
@@ -4945,7 +4950,7 @@ function SystemInfoSection() {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -5811,7 +5816,7 @@ function SystemInfoSection() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         {/* 版本升级 */}
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">

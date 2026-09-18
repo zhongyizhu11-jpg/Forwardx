@@ -1,5 +1,6 @@
 import * as db from "./db";
 import { formatBytes } from "../shared/formatBytes";
+import { isLinkProbeFresh } from "../shared/linkProbePolicy";
 import { createDirectForwardRuleForActor, deleteForwardRuleForActor, toggleForwardRuleForActor } from "./routers/rules.crud";
 import { ENV } from "./env";
 import { ACCOUNT_DISABLED_ERR_MSG } from "../shared/const";
@@ -3854,8 +3855,15 @@ function hasRuleTraffic(summary?: AiRuleTrafficSummary) {
   return Math.max(0, Number(summary?.bytesIn || 0)) + Math.max(0, Number(summary?.bytesOut || 0)) > 0;
 }
 
-function effectiveRuleStatusInfo(rule: any, summary?: AiRuleTrafficSummary): { kind: AiEffectiveRuleStatusKind; label: string; detail?: string } {
-  const latencyMs = summary?.latestLatencyMs == null ? null : Number(summary.latestLatencyMs);
+export function effectiveRuleStatusInfo(rule: any, summary?: AiRuleTrafficSummary): { kind: AiEffectiveRuleStatusKind; label: string; detail?: string } {
+  /**
+   * 探测结果过了新鲜期就当作没探测过 —— 和面板同一把尺子（isLinkProbeFresh）。
+   *
+   * 不设这道门的话，一次陈年的超时会让这条规则在机器人里永远是「目标探测超时」，
+   * 而面板上它是绿的。延迟数字同理：三天前那个 30ms 现在说明不了任何事。
+   */
+  const probeIsFresh = isLinkProbeFresh(summary?.latestLatencyAt);
+  const latencyMs = !probeIsFresh || summary?.latestLatencyMs == null ? null : Number(summary.latestLatencyMs);
   const hasLatency = Number.isFinite(latencyMs) && latencyMs !== null && latencyMs >= 0;
   if (rule?.resourceAccessDenied || String(rule?.protocolBlockReason || "") === RULE_RESOURCE_AUTHORIZATION_REVOKED_REASON) {
     return {
@@ -3877,7 +3885,7 @@ function effectiveRuleStatusInfo(rule: any, summary?: AiRuleTrafficSummary): { k
     if (rule?.disabledByGroup) return { kind: "disabled", label: "转发资源停用" };
     return { kind: "disabled", label: "已停用" };
   }
-  if (summary?.latestLatencyIsTimeout) {
+  if (probeIsFresh && summary?.latestLatencyIsTimeout) {
     return {
       kind: "abnormal",
       label: "目标探测超时",
@@ -3956,12 +3964,20 @@ async function hostNameByIdMap(hostIds: number[]) {
   return new Map(entries.filter((entry) => entry[1]).map(([id, host]) => [id, host]));
 }
 
-type AiRuleTrafficSummary = {
+export type AiRuleTrafficSummary = {
   bytesIn: number;
   bytesOut: number;
   connections: number;
   latestLatencyMs?: number | null;
   latestLatencyIsTimeout?: boolean;
+  /**
+   * 这次探测是什么时候的。
+   *
+   * 原来这一列在这里被丢掉，于是机器人只看「上一次探测超没超时」，不问那是三分钟前
+   * 还是三天前的事 —— 同一条规则，面板按新鲜期判成「运行中」，机器人拿陈年那次超时
+   * 判成「目标探测超时」。两个地方对同一件事给两个答案。
+   */
+  latestLatencyAt?: Date | string | number | null;
 };
 
 type AiRuleFilters = {
@@ -3997,7 +4013,7 @@ function formatRuleTrafficSummaryLines(summary: AiRuleTrafficSummary | undefined
     connections > 0 ? `连接：<b>${connections}</b>` : "",
   ].filter(Boolean);
 }
-async function aiRuleTrafficSummaryMap(user: any, ruleIds: number[], options: { includeLatency?: boolean } = {}) {
+export async function aiRuleTrafficSummaryMap(user: any, ruleIds: number[], options: { includeLatency?: boolean } = {}) {
   const ids = Array.from(new Set(ruleIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)));
   const map = new Map<number, AiRuleTrafficSummary>();
   if (ids.length === 0) return map;
@@ -4016,6 +4032,7 @@ async function aiRuleTrafficSummaryMap(user: any, ruleIds: number[], options: { 
     if (options.includeLatency) {
       prev.latestLatencyIsTimeout = !!row?.latestLatencyIsTimeout;
       prev.latestLatencyMs = row?.latestLatencyMs == null ? null : Number(row.latestLatencyMs);
+      prev.latestLatencyAt = row?.latestLatencyAt ?? null;
     }
     map.set(ruleId, prev);
   }

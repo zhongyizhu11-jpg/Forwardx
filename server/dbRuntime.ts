@@ -845,14 +845,20 @@ export function normalizeRawValue(value: any, kind = _kind) {
   return value;
 }
 
-function quoteIdentifier(kind: DatabaseKind, id: string) {
+/**
+ * 按库类型给标识符加引号，三处原来各存一份（建表 DDL、库切换迁移、运行时裸 SQL）。
+ *
+ * 引号规则错了不会报「语法错误」那么清楚 —— 更常见的是一个带保留字或大写的表名
+ * 在 MySQL 上能跑、在 PostgreSQL 上找不到表。三份分头演化正是这类问题的温床。
+ */
+export function quoteIdentifierFor(kind: DatabaseKind | string, id: string) {
   if (kind === "mysql") return `\`${id.replace(/`/g, "``")}\``;
   return `"${id.replace(/"/g, "\"\"")}"`;
 }
 
 export function quoteDbIdentifier(id: string) {
   if (!_kind) return `"${id}"`;
-  return quoteIdentifier(_kind, id);
+  return quoteIdentifierFor(_kind, id);
 }
 
 export function rawAffectedRows(result: any) {
@@ -863,8 +869,8 @@ export async function insertAndGetId(tableName: string, values: Record<string, a
   if (_kind === "mysql" || _kind === "postgresql") {
     const columns = Object.keys(values).filter((key) => values[key] !== undefined);
     const placeholders = columns.map(() => "?").join(", ");
-    const quoted = columns.map((key) => quoteIdentifier(_kind as DatabaseKind, key)).join(", ");
-    const table = quoteIdentifier(_kind as DatabaseKind, tableName);
+    const quoted = columns.map((key) => quoteIdentifierFor(_kind as DatabaseKind, key)).join(", ");
+    const table = quoteIdentifierFor(_kind as DatabaseKind, tableName);
     const returning = _kind === "postgresql" ? " RETURNING id" : "";
     const result: any = await executeRaw(
       `INSERT INTO ${table} (${quoted}) VALUES (${placeholders})${returning}`,

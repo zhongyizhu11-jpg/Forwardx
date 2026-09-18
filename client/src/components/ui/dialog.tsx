@@ -111,8 +111,29 @@ const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive
   <DialogPortal>
     <DialogOverlay />
     <div className="dialog-positioner fixed inset-0 z-50 grid place-items-center p-3 pointer-events-none sm:p-6">
-      <DialogPrimitive.Content ref={ref} data-forwardx-dialog-content="" className={cn("dialog-panel pointer-events-auto grid max-h-[92svh] w-[calc(100vw-1.5rem)] max-w-lg gap-4 overflow-hidden overscroll-contain rounded-md p-4 sm:w-full sm:p-6", className)} {...props}>
+      {/*
+        默认可滚，不是默认裁掉。
+
+        原来这里是 `max-h-[92svh] overflow-hidden`：内容一超过屏高就直接切掉，而且
+        **没有任何办法滑到下面**。真机上「添加用户」那个弹窗最后一个「取消」按钮就
+        卡在屏幕边缘外，手指怎么划都不动 —— 表单填完了提交不了。全站 94 个弹窗里
+        只有 1 个自己加了滚动容器，剩下的在矮屏幕上都是这个下场。
+
+        改成 overflow-y-auto 之后，自己已经管好滚动的那 25 个弹窗不受影响：它们在
+        className 里显式传了 overflow-hidden，tailwind-merge 会让后传的那个赢。
+        这里只是把「没人管」时的默认从裁切改成可滚。
+      */}
+      <DialogPrimitive.Content ref={ref} data-forwardx-dialog-content="" className={cn("dialog-panel pointer-events-auto grid max-h-[92svh] w-[calc(100vw-1.5rem)] max-w-lg gap-4 overflow-y-auto overflow-x-hidden overscroll-contain rounded-md p-4 sm:w-full sm:p-6", className)} {...props}>
         {children}
+        {/*
+          关闭按钮跟着内容滚，没有钉住。
+
+          试过在网格第一行塞一个 0 高的 sticky 壳子把它钉在滚动区顶上，量下来
+          代价是全部 94 个弹窗的标题上方多出 17px 的缝，而且「×」会浮到标题上面
+          去 —— 那一行 gap 吃不掉：负 margin 只能压扁行高，压不掉行与行之间的
+          gap。为钉一个按钮把所有弹窗的间距改一遍不划算。
+          滚上去之后还有 ESC、点遮罩、底部的取消三条路可以关。
+        */}
         <DialogPrimitive.Close className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-70 ring-offset-background transition-colors hover:bg-destructive/10 hover:text-destructive hover:opacity-100 focus:bg-destructive/10 focus:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive/40 focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
           <X className="h-4 w-4" />
           <span className="sr-only">Close</span>

@@ -1,4 +1,5 @@
 import { protectedProcedure, router } from "../_core/trpc";
+import { MAX_FAILOVER_TARGETS, parseFailoverTargets } from "@shared/failoverTargets";
 import { dbBool } from "../repositories/repositoryUtils";
 import { z } from "zod";
 import { planProxyNodeBinding } from "@shared/proxyNodeAutoBind";
@@ -15,6 +16,7 @@ import {
 import { requireRuleProtocolEnabled } from "../forwardProtocolSettings";
 import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "../portPolicy";
 import { isTelegramBotReady } from "../telegramReady";
+import { resolveForwardRuleName } from "@shared/forwardRuleName";
 import {
   releaseHostPortReservations,
   reserveAvailableHostPort,
@@ -42,7 +44,6 @@ const strictFailoverTargetSchema = z.object({
   targetPort: z.number().int().min(1).max(65535),
 });
 const failoverStrategySchema = z.enum(["fallback", "round_robin", "random", "ip_hash"]);
-const MAX_FAILOVER_TARGETS = 10;
 const mainBackupGostTunnelModes = new Set(["tls", "wss", "tcp", "mtls", "mwss", "mtcp"]);
 
 function isMainBackupGostTunnelMode(mode: unknown) {
@@ -90,20 +91,6 @@ type FailoverInput = {
   recoverSeconds?: number;
   autoFailback?: boolean;
 };
-
-function parseFailoverTargets(raw: unknown) {
-  if (!raw || typeof raw !== "string") return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((target) => ({ targetIp: String(target?.targetIp || "").trim(), targetPort: Number(target?.targetPort) }))
-      .filter((target) => target.targetIp && target.targetPort >= 1 && target.targetPort <= 65535)
-      .slice(0, MAX_FAILOVER_TARGETS);
-  } catch {
-    return [];
-  }
-}
 
 export function normalizeFailoverInput(input: FailoverInput, protocol?: string | null) {
   const enabled = !!input.failoverEnabled;
@@ -959,6 +946,15 @@ export async function createDirectForwardRuleForActor(
   options: { reasonPrefix?: string } = {},
 ) {
   await requireRuleTelegramNotifyReady(!!input.telegramErrorNotifyEnabled);
+  /*
+    名字留空就替用户起一个。
+
+    放在这个 helper 里而不是 tRPC 那一层，是因为它是导出的：面板的创建走它，
+    Telegram 机器人建规则也走它。搁在调用方就得每个调用方各补一遍，漏一个
+    就会写进一条空名字的规则 —— 这正是第一版犯的错（当时只改了转发组那条路，
+    隧道那条照样落库空名，toast 还报成功）。
+  */
+  input = { ...input, name: resolveForwardRuleName(input.name, input) };
   const {
     currentUser,
     hostId,
@@ -1152,7 +1148,8 @@ export const crudRulesRouter = router({
   create: protectedProcedure
     .input(z.object({
       hostId: z.number().optional(),
-      name: z.string().min(1).max(128),
+      // 留空由服务端按目标地址兜底生成，见 resolveForwardRuleName。
+      name: z.string().max(128).optional(),
       forwardType: forwardTypeSchema.default("iptables"),
       protocol: z.enum(["tcp", "udp", "both"]).default("both"),
       gostMode: z.enum(["direct", "reverse"]).default("direct"),
@@ -1176,6 +1173,9 @@ export const crudRulesRouter = router({
       ...transportTuningInputShape,
     }))
     .mutation(async ({ input, ctx }) => {
+      // 转发组这条路自己落库，同样兜底一次；直连那条在
+      // createDirectForwardRuleForActor 里兜。两处都调同一个函数。
+      const ruleName = resolveForwardRuleName(input.name, input);
       await requireRuleTelegramNotifyReady(input.telegramErrorNotifyEnabled);
       // 权限检查：管理员或有 canAddRules 权限的用户
       let currentUser = await db.getUserById(ctx.user.id);
@@ -1291,7 +1291,7 @@ export const crudRulesRouter = router({
         await requireRuleProtocolEnabled({ forwardType, tunnelId: null });
         const createTemplateRule = () => db.createForwardRule({
           hostId,
-          name: input.name,
+          name: ruleName,
           forwardType,
           protocol: input.protocol,
           gostMode: "direct",

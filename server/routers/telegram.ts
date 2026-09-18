@@ -1,5 +1,6 @@
 ﻿import { z } from "zod";
 import jwt from "jsonwebtoken";
+import { maskToken } from "./helpers";
 import { createHash, createHmac, timingSafeEqual } from "crypto";
 import { ACCOUNT_DISABLED_ERR_MSG, COOKIE_NAME } from "../../shared/const";
 import { getSessionCookieOptions } from "../_core/cookies";
@@ -31,12 +32,6 @@ function randomCode(length = 24) {
 
 function isMobileLoginCode(code: string) {
   return /^APP[A-Z0-9]{20,64}$/.test(code.trim().toUpperCase());
-}
-
-function maskToken(token: string) {
-  if (!token) return "";
-  if (token.length <= 12) return `${token.slice(0, 4)}...`;
-  return `${token.slice(0, 8)}...${token.slice(-4)}`;
 }
 
 function compareByteOrder(a: string, b: string) {

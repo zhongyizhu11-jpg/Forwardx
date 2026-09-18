@@ -1,4 +1,6 @@
 import DataSectionError from "@/components/DataSectionError";
+import { sameNullableStringArray } from "@/lib/multiHopAddress";
+import { normalizeLatencySeriesKey } from "@shared/latencyProbe";
 import { hostSearchParts } from "@/lib/hostSearchParts";
 import { formatLatencyTimeLabel } from "@/lib/latencyTimeLabel";
 import { hostIpv6Address, hostPrivateAddress, normalizeConnectHostForHost, sameAddress } from "@/lib/multiHopAddress";
@@ -63,7 +65,7 @@ import { countryFeatureHasCode, normalizeCountryCode, type CountryFeatureLike } 
 import { applyLatencyPeakCut, clipLatencyForChart, getLatencyStabilityStats, getLatencyYAxisMax, getLatencyYAxisTicks, isLatencySeriesCacheFresh, normalizeLatencyProbeCounts } from "@/lib/latencyChart";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { addHostNodeMeta, hostAddressCandidates, hostDisplayName } from "@/lib/linkTestNodeMeta";
-import { buildLinkAvailabilityIndex, type LinkAvailabilityResult } from "@/lib/linkAvailability";
+import { buildLinkAvailabilityIndex, type LinkAvailabilityResult } from "@shared/linkAvailability";
 import { MAX_NGINX_PEM_FILES, MAX_NGINX_PEM_UPLOAD_BYTES, parseNginxPemFiles } from "@/lib/nginxPemFiles";
 import { pollingInterval } from "@/lib/polling";
 import { hasQuerySnapshotAfter } from "@/lib/manualTestCache";
@@ -272,11 +274,6 @@ const tunnelLatencyColors = [
   "#f97316",
 ];
 
-function normalizeTunnelLatencySeriesKey(value: unknown) {
-  const key = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  return key || "total";
-}
-
 function tunnelLatencySeriesDisplayName(key: string, label?: string | null) {
   const cleanLabel = String(label || "").trim();
   if (cleanLabel) return cleanLabel;
@@ -366,14 +363,6 @@ function sameNumberArray(a: number[], b: number[]) {
   return true;
 }
 
-function sameNullableStringArray(a: Array<string | null>, b: Array<string | null>) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if ((a[i] || null) !== (b[i] || null)) return false;
-  }
-  return true;
-}
-
 function normalizeHopConnectHosts(
   raw: Array<string | null>,
   hostCount: number,
@@ -457,8 +446,8 @@ function tunnelSeriesLatencyEntries(tunnel: any) {
   if (!Array.isArray(tunnel?.latestLatencySeries)) return [];
   return tunnel.latestLatencySeries
     .map((item: any) => ({
-      key: normalizeTunnelLatencySeriesKey(item?.seriesKey),
-      label: tunnelLatencySeriesDisplayName(normalizeTunnelLatencySeriesKey(item?.seriesKey), item?.seriesLabel),
+      key: normalizeLatencySeriesKey(item?.seriesKey),
+      label: tunnelLatencySeriesDisplayName(normalizeLatencySeriesKey(item?.seriesKey), item?.seriesLabel),
       latencyMs: typeof item?.latencyMs === "number" && Number.isFinite(item.latencyMs) ? Number(item.latencyMs) : null,
       isTimeout: !!item?.isTimeout,
     }))
@@ -1187,7 +1176,7 @@ function TunnelLatencyDialog({
     if (rangedSeriesData.length === 0) return [];
     const byKey = new Map<string, TunnelLatencySeriesMeta>();
     for (const item of rangedSeriesData) {
-      const key = normalizeTunnelLatencySeriesKey(item.seriesKey);
+      const key = normalizeLatencySeriesKey(item.seriesKey);
       if (byKey.has(key)) continue;
       byKey.set(key, {
         key,
@@ -1217,7 +1206,7 @@ function TunnelLatencyDialog({
         label: formatLatencyTimeLabel(at),
         fullLabel: formatLatencyTimeLabel(at),
       };
-      const key = normalizeTunnelLatencySeriesKey(item.seriesKey);
+      const key = normalizeLatencySeriesKey(item.seriesKey);
       const counts = normalizeLatencyProbeCounts(item);
       const isTimeout = counts.isTimeout;
       const latency = isTimeout ? 0 : (Number(item.latencyMs) || 0);
@@ -2789,7 +2778,7 @@ function TunnelsContent() {
         onCheckedChangeAsync={(checked) => toggleTunnelMutation.mutateAsync({ id: tunnel.id, isEnabled: checked })}
         onToggleSuccess={(checked) => toast.success(checked ? "隧道已开启" : "隧道已关闭")}
         onToggleError={(error) => toast.error(error instanceof Error ? error.message : "切换隧道状态失败")}
-        className="scale-75"
+        className="switch-compact"
         title={enabled ? "关闭后该隧道将停止下发和转发" : "开启后该隧道将重新下发并恢复转发"}
         aria-label={`${enabled ? "停用" : "启用"}隧道 ${tunnel?.name || ""}`}
       />
@@ -3771,6 +3760,8 @@ function TunnelsContent() {
               variant={activeViewMode === "card" ? "secondary" : "ghost"}
               size="icon"
               className="h-8 w-8 rounded-none"
+              aria-label="卡片视图"
+              aria-pressed={activeViewMode === "card"}
               onClick={() => handleActiveViewModeChange("card")}
             >
               <LayoutGrid className="h-4 w-4" />
@@ -3779,6 +3770,8 @@ function TunnelsContent() {
               variant={activeViewMode === "table" ? "secondary" : "ghost"}
               size="icon"
               className="h-8 w-8 rounded-none"
+              aria-label="列表视图"
+              aria-pressed={activeViewMode === "table"}
               onClick={() => handleActiveViewModeChange("table")}
             >
               <List className="h-4 w-4" />
@@ -3788,6 +3781,8 @@ function TunnelsContent() {
               size="icon"
               className="h-8 w-8 rounded-none"
               title="3D 地球视图"
+              aria-label="3D 地球视图"
+              aria-pressed={activeViewMode === "globe"}
               onClick={() => handleActiveViewModeChange("globe")}
             >
               <Globe className="h-4 w-4" />
@@ -3908,7 +3903,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="scale-75" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </div>
                     </div>
@@ -3930,13 +3925,13 @@ function TunnelsContent() {
                     <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
                       {supported && (
                         <>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" aria-label={`查看隧道 ${tunnel.name} 的延迟`} onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
                             <Activity className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" aria-label={`测试隧道 ${tunnel.name} 的延迟`} onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
                             <Stethoscope className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(tunnel)}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         </>
@@ -3946,6 +3941,7 @@ function TunnelsContent() {
                         size="icon"
                         className="h-8 w-8 text-destructive hover:text-destructive"
                         title={!supported ? unsupportedProtocolTitle : undefined}
+                        aria-label={`删除隧道 ${tunnel.name}`}
                         onClick={() => setDeleteTunnel(tunnel)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -4004,7 +4000,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="scale-75" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </div>
                     </div>
@@ -4026,13 +4022,13 @@ function TunnelsContent() {
                     <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
                       {supported && (
                         <>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" aria-label={`查看隧道 ${tunnel.name} 的延迟`} onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
                             <Activity className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" aria-label={`测试隧道 ${tunnel.name} 的延迟`} onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
                             <Stethoscope className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(tunnel)}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         </>
@@ -4042,6 +4038,7 @@ function TunnelsContent() {
                         size="icon"
                         className="h-8 w-8 text-destructive hover:text-destructive"
                         title={!supported ? unsupportedProtocolTitle : undefined}
+                        aria-label={`删除隧道 ${tunnel.name}`}
                         onClick={() => setDeleteTunnel(tunnel)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -4129,7 +4126,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="scale-75" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -4141,6 +4138,7 @@ function TunnelsContent() {
                                 size="icon"
                                 className="h-8 w-8"
                                 title="查看入口到出口延迟"
+                                aria-label={`查看隧道 ${tunnel.name} 的延迟`}
                                 onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}
                               >
                                 <Activity className="h-3.5 w-3.5" />
@@ -4150,11 +4148,12 @@ function TunnelsContent() {
                                 size="icon"
                                 className="h-8 w-8"
                                 title="测试入口到出口延迟"
+                                aria-label={`测试隧道 ${tunnel.name} 的延迟`}
                                 onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}
                               >
                                 <Stethoscope className="h-3.5 w-3.5" />
                               </Button>
-                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(tunnel)}>
+                              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
                                 <Pencil className="h-3.5 w-3.5" />
                               </Button>
                             </>
@@ -4164,6 +4163,7 @@ function TunnelsContent() {
                             size="icon"
                             className="h-8 w-8 text-destructive hover:text-destructive"
                             title={!supported ? unsupportedProtocolTitle : undefined}
+                            aria-label={`删除隧道 ${tunnel.name}`}
                             onClick={() => setDeleteTunnel(tunnel)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
