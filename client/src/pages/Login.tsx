@@ -3,6 +3,7 @@ import "@cap.js/widget";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MeshBackdrop } from "@/components/ui/mesh-backdrop";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Eye, EyeOff, Loader2, Sun, Moon, RefreshCw, UserPlus, LogIn, Send, Settings as SettingsIcon, Server, ShieldCheck, Zap } from "lucide-react";
@@ -832,7 +833,12 @@ export default function Login() {
 
   return (
     <div className="mobile-login-screen auth-shell relative min-h-screen overflow-hidden">
-      <div className="auth-grid-overlay pointer-events-none absolute inset-0 opacity-[0.14]" />
+      {/*
+        原来这里是 .auth-grid-overlay —— 它在 CSS 里是 display:none，也就是说这个
+        div 从头到尾什么都没画，是次改版留下的死元素。换成手册第七节的流动渐变背景：
+        登录页正是手册点名的用法之一（登录页 / Hero / 空状态）。
+      */}
+      <MeshBackdrop />
       {!mobileAuth.isNative && <Link href="/" className="auth-home-link">← 返回首页</Link>}
       <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
         {mobileAuth.isNative && (

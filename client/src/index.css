@@ -970,10 +970,6 @@
     background: color-mix(in srgb, var(--background) 70%, transparent);
   }
 
-  .auth-grid-overlay {
-    display: none;
-  }
-
   .auth-card-surface {
     background: var(--fx-surface);
     border-color: var(--fx-stroke);
@@ -1500,4 +1496,138 @@
     flex-wrap: wrap;
     gap: 8px;
   }
+}
+
+/*
+  手册第七节点名的两个效果：边框光束、流动渐变背景。
+
+  都写在这里而不是内联样式里，原因有两个：一是浅深色两套颜色只能靠令牌切换，
+  二是「减少动态效果」和移动端降级必须用媒体查询，内联写不了。
+
+  两个都是纯装饰，一律 aria-hidden，不进无障碍树。
+*/
+
+/* ---------- 边框光束 ---------- */
+
+/*
+  手册明确把「conic-gradient 旋转 + mask 只留边框」列为旧方案（「那是渐变」）。
+  新方案是让一颗发光的点沿 offset-path 走矩形边框，纯 CSS，零 JS，零渐变。
+*/
+@keyframes fx-beam {
+  from { offset-distance: 0%; }
+  to { offset-distance: 100%; }
+}
+
+.fx-beam-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /*
+    offset-path: rect() 是比较新的语法（Chrome 116+）。不支持的浏览器里
+    那颗点会停在元素左上角不动 —— 一个莫名其妙的小黑点，比没有更糟。
+    所以默认不显示，只在 @supports 命中时才亮出来。
+  */
+  display: none;
+}
+
+@supports (offset-path: rect(0 100% 100% 0 round 12px)) {
+  .fx-beam-layer { display: block; }
+}
+
+.fx-beam-dot {
+  position: absolute;
+  height: 8px;
+  width: 8px;
+  border-radius: 9999px;
+  background: var(--fx-beam);
+  box-shadow: 0 0 12px 2px var(--fx-beam-glow);
+  animation: fx-beam var(--fx-beam-duration, 4s) linear infinite;
+}
+
+/* ---------- 流动渐变背景 ---------- */
+
+@keyframes fx-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.fx-mesh {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.fx-mesh-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(64px);
+  animation: fx-float 4s ease-in-out infinite;
+  will-change: transform;
+}
+
+/*
+  负 animation-delay 错开相位 —— 这是手册强调的关键：三团同频呼吸是「呼吸」，
+  错开相位才是「流动」。
+*/
+.fx-mesh-blob:nth-child(1) {
+  inset-block-start: -2.5rem;
+  inset-inline-start: -2.5rem;
+  height: 13rem;
+  width: 13rem;
+  background: var(--fx-mesh-1);
+}
+
+.fx-mesh-blob:nth-child(2) {
+  inset-block-start: 1.5rem;
+  inset-inline-end: -2rem;
+  height: 11rem;
+  width: 11rem;
+  background: var(--fx-mesh-2);
+  animation-delay: -1.2s;
+}
+
+.fx-mesh-blob:nth-child(3) {
+  inset-block-end: 0;
+  inset-inline-start: 25%;
+  height: 12rem;
+  width: 12rem;
+  background: var(--fx-mesh-3);
+  animation-delay: -2.4s;
+}
+
+/*
+  手册：移动端大区域 blur-3xl 有开销，可降级为 radial-gradient。
+  这里按屏宽降级 —— 手机上三团 64px 模糊要在每帧重算，滚动时掉帧最明显。
+*/
+@media (max-width: 767px) {
+  .fx-mesh-blob { display: none; }
+
+  .fx-mesh {
+    background:
+      radial-gradient(38rem 22rem at 8% 0%, var(--fx-mesh-1), transparent 70%),
+      radial-gradient(30rem 18rem at 100% 12%, var(--fx-mesh-2), transparent 70%),
+      radial-gradient(32rem 20rem at 35% 100%, var(--fx-mesh-3), transparent 70%);
+  }
+}
+
+/*
+  用户设了自定义背景图/视频时不出现 —— 两层装饰叠在一起谁也看不清，
+  而且自定义背景是用户自己挑的，优先级高于我们的默认好看。
+*/
+html[data-personalization-background="image"] .fx-mesh,
+html[data-personalization-background="video"] .fx-mesh {
+  display: none;
+}
+
+/* ---------- 减少动态效果 ---------- */
+
+/*
+  手册规则三：用户关掉动效时立即呈现最终状态。
+  光束整个撤掉（它本身就是动效，静止的一颗点没有意义）；
+  渐变团保留但不再浮动 —— 背景还是那个背景，只是不动了。
+*/
+@media (prefers-reduced-motion: reduce) {
+  .fx-beam-layer { display: none; }
+  .fx-mesh-blob { animation: none; }
 }

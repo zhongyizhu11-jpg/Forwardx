@@ -15,6 +15,16 @@
   --fx-radius: 12px;
   --fx-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --fx-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  /*
+    手册点名的两个效果用的颜色。放在令牌里是因为文档站也共用这个文件，
+    而且浅深色两套值必须成对出现 —— 写死在组件里改一个忘一个是迟早的事。
+  */
+  --fx-beam: #20242b;                  /* 边框光束那颗点：浅色下是墨色 */
+  --fx-beam-glow: rgb(32 36 43 / 55%);
+  --fx-mesh-1: rgb(203 208 214 / 78%); /* 流动渐变的三团：手册要求浅色用低透明度灰 */
+  --fx-mesh-2: rgb(186 193 201 / 62%);
+  --fx-mesh-3: rgb(216 220 225 / 70%);
 }
 .dark {
   --fx-canvas: #101315;
@@ -29,4 +39,10 @@
   --fx-brand-soft: #213c35;
   --fx-shadow: 0 1px 2px rgb(0 0 0 / 12%), inset 0 1px 0 rgb(255 255 255 / 3%);
   --fx-shadow-raised: 0 12px 32px rgb(0 0 0 / 24%), inset 0 1px 0 rgb(255 255 255 / 5%);
+
+  --fx-beam: #edf0f3;                  /* 深色下反过来，点是亮的 */
+  --fx-beam-glow: rgb(237 240 243 / 70%);
+  --fx-mesh-1: rgb(66 76 88 / 62%);
+  --fx-mesh-2: rgb(52 61 72 / 58%);
+  --fx-mesh-3: rgb(78 89 102 / 46%);
 }
