@@ -1946,7 +1946,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                     <p className="text-sm font-medium">启用 SSL</p>
                     <p className="text-xs text-muted-foreground">远程数据库或云数据库可按需开启。</p>
                   </div>
-                  <Switch
+                  <Switch aria-label="启用 SSL"
                     checked={databaseSwitchExternal.ssl}
                     onCheckedChange={(ssl) => {
                       setDatabaseSwitchExternal({ ...databaseSwitchExternal, ssl });
@@ -2436,7 +2436,7 @@ function TelegramBotSettingsCard() {
                       {settings?.telegram?.botUsername ? `@${settings.telegram.botUsername}` : "保存 Token 后自动识别机器人"}
                     </p>
                   </div>
-                  <Switch
+                  <Switch aria-label="启用机器人"
                     checked={telegramEnabled}
                     onCheckedChange={(checked) => {
                       if (checked && !hasTelegramTokenForEnable) {
@@ -2463,7 +2463,7 @@ function TelegramBotSettingsCard() {
                     <p className="text-sm font-medium">到期提醒</p>
                     <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || `到期前第 ${expiryReminderDays} 天各提醒一次。`}</p>
                   </div>
-                  <Switch
+                  <Switch aria-label="到期提醒"
                     checked={telegramRemindersReady && telegramExpiryReminder}
                     disabled={!telegramRemindersReady}
                     onCheckedChange={setTelegramExpiryReminder}
@@ -2491,7 +2491,7 @@ function TelegramBotSettingsCard() {
                     <p className="text-sm font-medium">主机上线/离线通知</p>
                     <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || "仅发送给已绑定 Telegram 的管理员。"}</p>
                   </div>
-                  <Switch
+                  <Switch aria-label="主机上线/离线通知"
                     checked={telegramRemindersReady && telegramHostStatusNotify}
                     disabled={!telegramRemindersReady}
                     onCheckedChange={setTelegramHostStatusNotify}
@@ -2504,7 +2504,7 @@ function TelegramBotSettingsCard() {
                     <p className="text-sm font-medium">流量提醒</p>
                     <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || "低于阈值时提醒。"}</p>
                   </div>
-                  <Switch
+                  <Switch aria-label="流量提醒"
                     checked={telegramRemindersReady && telegramTrafficReminder}
                     disabled={!telegramRemindersReady}
                     onCheckedChange={setTelegramTrafficReminder}
@@ -2818,7 +2818,7 @@ function DeepSeekSettingsCard() {
                         ? `${providerLabel} · ${deepseekModel}${selectedModelMeta?.isFree === true ? " · Free" : (selectedModelMeta?.isFree === false ? " · Paid" : "")}`
                         : "保存 API Key 后启用"}
                     </p>
-                    <Switch
+                    <Switch aria-label="启用 AI 助手"
                       checked={deepseekEnabled}
                       onCheckedChange={(checked) => {
                         if (checked && !hasDeepSeekKeyForEnable) {
@@ -2956,7 +2956,7 @@ function DeepSeekSettingsCard() {
                         关闭后普通用户不能使用 AI 对话执行管理操作。
                       </p>
                     </div>
-                    <Switch
+                    <Switch aria-label="普通用户可用 AI 管理"
                       checked={deepseekTelegramUserManageEnabled}
                       onCheckedChange={setDeepseekTelegramUserManageEnabled}
                     />
@@ -2970,7 +2970,7 @@ function DeepSeekSettingsCard() {
                         仅对 AI 相关聊天内容生效，默认关闭。
                       </p>
                     </div>
-                    <Switch
+                    <Switch aria-label="机器人信息自动撤回"
                       checked={deepseekTelegramAutoRecallEnabled}
                       onCheckedChange={setDeepseekTelegramAutoRecallEnabled}
                     />
@@ -4048,14 +4048,14 @@ function PersonalizationSettingsSection() {
                 <p className="text-sm font-medium">启用公开首页</p>
                 <p className="text-xs text-muted-foreground">关闭后直接进入登录页。</p>
               </div>
-              <Switch checked={homepageEnabled} onCheckedChange={setHomepageEnabled} />
+              <Switch aria-label="启用公开首页" checked={homepageEnabled} onCheckedChange={setHomepageEnabled} />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
               <div>
                 <p className="text-sm font-medium">使用自定义 H5</p>
                 <p className="text-xs text-muted-foreground">优先展示自定义页面。</p>
               </div>
-              <Switch checked={homepageCustomEnabled} onCheckedChange={setHomepageCustomEnabled} />
+              <Switch aria-label="使用自定义 H5" checked={homepageCustomEnabled} onCheckedChange={setHomepageCustomEnabled} />
             </div>
           </div>
           {homepageCustomEnabled && (
@@ -4967,7 +4967,7 @@ function SystemInfoSection() {
                   关闭后侧边栏入口和接口都会对普通用户禁用。
                 </p>
               </div>
-              <Switch className="shrink-0" checked={lookingGlassUserEnabled} onCheckedChange={setLookingGlassUserEnabled} />
+              <Switch aria-label="普通用户可见网络测试" className="shrink-0" checked={lookingGlassUserEnabled} onCheckedChange={setLookingGlassUserEnabled} />
             </div>
             <Button onClick={handleSaveLookingGlass} disabled={isSavingSetting("networkTest")}>
               保存
@@ -5111,7 +5111,7 @@ function SystemInfoSection() {
                   当前协议：{settings?.panelSsl?.activeProtocol === "https" ? "HTTPS" : "HTTP"}，端口：{webPortDisplay}
                 </p>
               </div>
-              <Switch className="shrink-0" checked={panelSslEnabled} onCheckedChange={setPanelSslEnabled} />
+              <Switch aria-label="启用 HTTPS" className="shrink-0" checked={panelSslEnabled} onCheckedChange={setPanelSslEnabled} />
             </div>
             <div className="flex flex-col gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-start gap-2">
@@ -5320,7 +5320,7 @@ function SystemInfoSection() {
                   关闭后仅管理员可添加用户。
                 </p>
               </div>
-              <Switch checked={registrationEnabled} onCheckedChange={setRegistrationEnabled} />
+              <Switch aria-label="开放注册" checked={registrationEnabled} onCheckedChange={setRegistrationEnabled} />
             </div>
             <div className="flex justify-end">
               <Button onClick={handleSaveRegistration} disabled={isSavingSetting("registration")}>
@@ -5348,7 +5348,7 @@ function SystemInfoSection() {
                   关闭后隐藏绑定入口。
                 </p>
               </div>
-              <Switch checked={twoFactorEnabled} onCheckedChange={setTwoFactorEnabled} />
+              <Switch aria-label="启用 2FA 软件支持" checked={twoFactorEnabled} onCheckedChange={setTwoFactorEnabled} />
             </div>
             <div className="flex justify-end">
               <Button onClick={handleSaveTwoFactor} disabled={isSavingSetting("twoFactor")}>
@@ -5376,7 +5376,7 @@ function SystemInfoSection() {
                 <p className="text-sm font-medium">启用 DDNS</p>
                 <p className="text-xs text-muted-foreground">关闭后不更新域名。</p>
               </div>
-              <Switch className="shrink-0" checked={ddnsEnabled} onCheckedChange={setDdnsEnabled} />
+              <Switch aria-label="启用 DDNS" className="shrink-0" checked={ddnsEnabled} onCheckedChange={setDdnsEnabled} />
             </div>
             <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
@@ -5600,7 +5600,7 @@ function SystemInfoSection() {
             <div className="min-w-0">
               <p className="text-sm font-medium">允许免登录查看主机监控</p>
             </div>
-            <Switch className="shrink-0" checked={publicHostMonitorEnabled} onCheckedChange={setPublicHostMonitorEnabled} />
+            <Switch aria-label="允许免登录查看主机监控" className="shrink-0" checked={publicHostMonitorEnabled} onCheckedChange={setPublicHostMonitorEnabled} />
           </div>
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
@@ -5665,7 +5665,7 @@ function SystemInfoSection() {
                   关闭时后登录的设备会立即接管，正在使用的旧会话将退出；仅保留 Cookie 但未在使用的设备不会阻止新登录。
                 </p>
               </div>
-              <Switch className="shrink-0" checked={allowMultiDeviceLogin} onCheckedChange={setAllowMultiDeviceLogin} />
+              <Switch aria-label="允许多设备在线" className="shrink-0" checked={allowMultiDeviceLogin} onCheckedChange={setAllowMultiDeviceLogin} />
             </div>
             <div className="flex justify-end">
               <Button onClick={handleSaveSessionPolicy} disabled={isSavingSetting("sessionPolicy")}>
@@ -5736,7 +5736,7 @@ function SystemInfoSection() {
                       className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/40 bg-background/60 px-3 py-2"
                     >
                       <span className="min-w-0 truncate text-sm">{FORWARD_PROTOCOL_LABELS[key]}</span>
-                      <Switch className="shrink-0" checked={forwardProtocols[key]} onCheckedChange={(checked) => setForwardProtocolEnabled(key, checked)} />
+                      <Switch aria-label="端口转发" className="shrink-0" checked={forwardProtocols[key]} onCheckedChange={(checked) => setForwardProtocolEnabled(key, checked)} />
                     </div>
                   ))}
                 </div>
@@ -5753,7 +5753,7 @@ function SystemInfoSection() {
                       className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/40 bg-background/60 px-3 py-2"
                     >
                       <span className="min-w-0 truncate text-sm">{FORWARD_PROTOCOL_LABELS[key]}</span>
-                      <Switch className="shrink-0" checked={forwardProtocols[key]} onCheckedChange={(checked) => setForwardProtocolEnabled(key, checked)} />
+                      <Switch aria-label="隧道协议" className="shrink-0" checked={forwardProtocols[key]} onCheckedChange={(checked) => setForwardProtocolEnabled(key, checked)} />
                     </div>
                   ))}
                 </div>
@@ -5798,7 +5798,7 @@ function SystemInfoSection() {
                 className="flex items-center justify-between gap-3 rounded-md border border-border/40 bg-background/60 px-3 py-2"
               >
                 <span className="text-sm">{SIDEBAR_MENU_LABELS[key]}</span>
-                <Switch checked={sidebarMenu[key]} onCheckedChange={(checked) => setSidebarMenuEnabled(key, checked)} />
+                <Switch aria-label={SIDEBAR_MENU_LABELS[key]} checked={sidebarMenu[key]} onCheckedChange={(checked) => setSidebarMenuEnabled(key, checked)} />
               </div>
             ))}
           </div>
@@ -5843,7 +5843,7 @@ function SystemInfoSection() {
                   <p className="text-sm font-medium">自动检查更新</p>
                   <p className="text-xs text-muted-foreground">开启后定期检查面板和 Agent 更新。</p>
                 </div>
-                <OptimisticSwitch
+                <OptimisticSwitch aria-label="自动检查更新"
                   className="shrink-0"
                   checked={updateAutoCheckEnabled}
                   onCheckedChangeAsync={(checked) => updateAutoCheckMutation.mutateAsync({ updateAutoCheckEnabled: checked })}
@@ -6096,7 +6096,7 @@ function SystemInfoSection() {
                   开启并填写地址后，GitHub 真实地址会拼接在加速地址后面。
                 </p>
               </div>
-              <Switch className="shrink-0" checked={githubAcceleratorEnabled} onCheckedChange={setGithubAcceleratorEnabled} />
+              <Switch aria-label="启用 GitHub 加速地址" className="shrink-0" checked={githubAcceleratorEnabled} onCheckedChange={setGithubAcceleratorEnabled} />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
               <div className="min-w-0">
@@ -6105,7 +6105,7 @@ function SystemInfoSection() {
                   开启后先从面板拉取安装脚本和 Agent 程序，失败后回退 GitHub。
                 </p>
               </div>
-              <Switch className="shrink-0" checked={agentPreferPanelInstall} onCheckedChange={setAgentPreferPanelInstall} />
+              <Switch aria-label="优先连接面板安装 Agent" className="shrink-0" checked={agentPreferPanelInstall} onCheckedChange={setAgentPreferPanelInstall} />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 lg:col-span-2">
               <div className="min-w-0">
@@ -6114,7 +6114,7 @@ function SystemInfoSection() {
                   版本检查、Release 安装包、版本回退和升级脚本优先使用加速地址，失败时自动回退直连。
                 </p>
               </div>
-              <Switch
+              <Switch aria-label="面板更新使用加速站"
                 className="shrink-0"
                 checked={githubAcceleratorPanelUpdateEnabled}
                 onCheckedChange={setGithubAcceleratorPanelUpdateEnabled}

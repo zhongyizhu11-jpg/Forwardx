@@ -370,7 +370,7 @@ export default function TrafficBillingConfigManager({
               {configsLoading ? (
                 <Skeleton className="h-6 w-11 rounded-full" />
               ) : (
-                <OptimisticSwitch checked={!!data?.enabled} onCheckedChangeAsync={(checked) => setEnabledMutation.mutateAsync({ enabled: checked })} />
+                <OptimisticSwitch aria-label="功能开关" checked={!!data?.enabled} onCheckedChangeAsync={(checked) => setEnabledMutation.mutateAsync({ enabled: checked })} />
               )}
             </div>
             {!hideCreateButton && (
@@ -392,7 +392,7 @@ export default function TrafficBillingConfigManager({
             {configsLoading ? (
               <Skeleton className="h-6 w-11 rounded-full" />
             ) : (
-              <OptimisticSwitch checked={!!data?.enabled} onCheckedChangeAsync={(checked) => setEnabledMutation.mutateAsync({ enabled: checked })} />
+              <OptimisticSwitch aria-label="功能开关" checked={!!data?.enabled} onCheckedChangeAsync={(checked) => setEnabledMutation.mutateAsync({ enabled: checked })} />
             )}
           </div>
         </div>

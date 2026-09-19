@@ -507,7 +507,7 @@ function ProfileContent() {
                   默认关闭。开启后，新公告仅在管理员选择 TG 推送时发送到已绑定的 Telegram。
                 </p>
               </div>
-              <OptimisticSwitch
+              <OptimisticSwitch aria-label="公告 Telegram 推送"
                 checked={!!telegramStatus?.announcementSubscribed}
                 disabled={!telegramStatus?.bound}
                 onCheckedChangeAsync={handleTelegramAnnouncementSubscribedChange}

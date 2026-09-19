@@ -1117,7 +1117,7 @@ export default function Plans() {
               <CardDescription>商店状态</CardDescription>
               <CardTitle className="flex items-center justify-between">
                 <span>{storeEnabled ? "已开启" : "已关闭"}</span>
-                <OptimisticSwitch
+                <OptimisticSwitch aria-label="商店状态"
                   checked={storeEnabled}
                   disabled={storeStatusLoading}
                   onCheckedChangeAsync={(enabled) => setStoreEnabled.mutateAsync({ enabled })}

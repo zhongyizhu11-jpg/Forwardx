@@ -1287,7 +1287,7 @@ function UsersContent() {
 
         <div className="flex h-9 items-center justify-between rounded-md border border-border/50 px-2">
           <span className="text-xs text-muted-foreground">转发</span>
-          <OptimisticSwitch
+          <OptimisticSwitch aria-label={`允许 ${u.username} 添加转发`}
             checked={u.role === "admin" || !!u.canAddRules}
             disabled={u.role === "admin"}
             onCheckedChangeAsync={(checked) => updateForwardAccessMutation.mutateAsync({ userId: u.id, enabled: checked })}
@@ -1603,7 +1603,7 @@ function UsersContent() {
                               )}
                               {u.role !== "admin" && (
                                 <div className="mt-2 flex w-fit items-center gap-2 rounded-md border border-border/50 bg-muted/20 px-2 py-1 lg:hidden">
-                                  <OptimisticSwitch
+                                  <OptimisticSwitch aria-label={`允许 ${u.username} 添加转发`}
                                     checked={!!u.canAddRules}
                                     onCheckedChangeAsync={(checked) => updateForwardAccessMutation.mutateAsync({ userId: u.id, enabled: checked })}
                                     className="shrink-0"
@@ -1685,7 +1685,7 @@ function UsersContent() {
                         <TableCell className="hidden min-w-[160px] text-center lg:table-cell">
                           <div className="mx-auto flex w-fit min-w-[140px] flex-col items-center gap-1">
                             <div className="flex items-center justify-center gap-2 whitespace-nowrap">
-                              <OptimisticSwitch
+                              <OptimisticSwitch aria-label={`允许 ${u.username} 添加转发`}
                                 checked={u.role === "admin" || !!u.canAddRules}
                                 disabled={u.role === "admin"}
                                 onCheckedChangeAsync={(checked) => updateForwardAccessMutation.mutateAsync({ userId: u.id, enabled: checked })}
