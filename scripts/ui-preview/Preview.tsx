@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { Activity, ArrowRightLeft, BookOpen, Copy, Gift, LayoutDashboard, Link2, Moon, Network, Plus, Search, Server, Settings, ShieldCheck, Sun, Wallet, X } from "lucide-react";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
@@ -52,6 +52,19 @@ function Demo() {
   const logo=dark?(window as any).__PREVIEW_LOGO_DARK__:(window as any).__PREVIEW_LOGO__;
   const changePage=(name:string)=>{setPage(name);setNav(false);setTab(name==="链路管理"?"tunnel":"all");setQuery("");};
   const destinations=sections.map(({name,icon})=>({path:name,label:name,icon,group:"设计预览"}));
+  const handlePublicLink = (event: MouseEvent<HTMLDivElement>) => {
+    const href = (event.target as Element).closest("a")?.getAttribute("href");
+    // A srcdoc document inherits its parent's base URL; keep fragment links in this preview.
+    if (href?.startsWith("#")) {
+      event.preventDefault(); event.stopPropagation();
+      const target = document.getElementById(href.slice(1));
+      target?.scrollIntoView({ block: "start" });
+      if (target?.tabIndex === -1) target.focus({ preventScroll: true });
+    } else if (href?.startsWith("/")) {
+      event.preventDefault(); event.stopPropagation();
+      setMessage("这是设计预览，登录与注册请在正式面板操作。");
+    }
+  };
   useEffect(()=>{
     if(page==="公开首页")return;
     const shortcut=(event:KeyboardEvent)=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="k"&&!dialog){event.preventDefault();setCommand(value=>!value);}};
@@ -66,7 +79,7 @@ function Demo() {
     <FormField className="space-y-2"><Label>目标地址</Label><Input placeholder="example.com:443" /></FormField>
     <FormField className="space-y-2"><Label>规则名称（选填）</Label><Input placeholder="留空时按目标地址生成" /></FormField>
   </div>;
-  if(page==="公开首页")return <><div className="preview-return"><Button size="sm" variant="outline" onClick={()=>changePage("转发规则")}>查看工作台预览</Button><Button size="sm" variant="ghost" onClick={()=>setRegistration(value=>!value)}>模拟注册{registration?"关闭":"开放"}</Button><span role="status" className="text-xs text-muted-foreground">{message}</span></div><div onClickCapture={event => { const link = (event.target as Element).closest("a"); if (link?.getAttribute("href")?.startsWith("/")) { event.preventDefault(); event.stopPropagation(); setMessage("这是设计预览，登录与注册请在正式面板操作。"); } }}><PublicHomeView siteTitle="ForwardX" logoSrc={logo} repoUrl="https://github.com/zhongyizhu11-jpg/Forwardx" registrationEnabled={registration} dark={dark} onToggleTheme={toggleTheme}/></div></>;
+  if(page==="公开首页")return <><div className="preview-return"><Button size="sm" variant="outline" onClick={()=>changePage("转发规则")}>查看工作台预览</Button><Button size="sm" variant="ghost" onClick={()=>setRegistration(value=>!value)}>模拟注册{registration?"关闭":"开放"}</Button><span role="status" className="text-xs text-muted-foreground">{message}</span></div><div onClickCapture={handlePublicLink}><PublicHomeView siteTitle="ForwardX" logoSrc={logo} repoUrl="https://github.com/zhongyizhu11-jpg/Forwardx" registrationEnabled={registration} dark={dark} onToggleTheme={toggleTheme}/></div></>;
   return <div className="workspace-layout preview-layout">
     <aside className={`preview-sidebar ${nav?"is-open":""}`}>
       <div className="preview-brand"><img src={logo} alt=""/><strong>ForwardX</strong><Button className="ml-auto md:hidden" variant="ghost" size="icon" onClick={()=>setNav(false)} aria-label="关闭导航"><X className="h-4 w-4"/></Button></div>
