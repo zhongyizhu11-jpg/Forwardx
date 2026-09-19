@@ -1,3 +1,5 @@
+import { FormField } from "@/components/ui/form-field";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import { ledgerTone } from "@/lib/ledgerTone";
 import MobileInfoRow from "@/components/MobileInfoRow";
@@ -76,42 +78,22 @@ function BillingToggleCard({
   enabled,
   onCheckedChange,
   icon: Icon,
-  tone,
   loading = false,
 }: {
   title: string;
   enabled: boolean;
   onCheckedChange: (checked: boolean) => Promise<unknown>;
   icon: ElementType;
-  tone: string;
   loading?: boolean;
 }) {
   return (
-    <Card className="group relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-      <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
-      <CardContent className="relative p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
-            <AnimatedStatValue
-              as="p"
-              value={enabled ? "已开启" : "已关闭"}
-              loading={loading}
-              cacheKey={`billing.toggle.${title}`}
-              fallbackValue="已关闭"
-              className="break-words text-2xl font-bold tracking-tight"
-            />
-            <p className="break-words text-xs text-muted-foreground/80">入口状态</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-3">
-            <OptimisticSwitch checked={enabled} onCheckedChangeAsync={onCheckedChange} disabled={loading} />
-            <div className={`hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${tone}`}>
-              <Icon className="h-5 w-5 text-white" />
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="billing-entry-control">
+      <Icon className="h-4 w-4" />
+      <div className="min-w-0"><p>{title}</p>
+        <small>{loading ? "正在加载" : enabled ? "已开启 · 用户可使用" : "已关闭 · 用户不可使用"}</small>
+      </div>
+      <OptimisticSwitch aria-label={title} checked={enabled} onCheckedChangeAsync={onCheckedChange} disabled={loading} />
+    </div>
   );
 }
 
@@ -509,12 +491,8 @@ export default function Billing() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">余额与营销</h1>
-          <p className="text-sm text-muted-foreground">管理余额、兑换码和折扣码。</p>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <WorkspaceHeader title="账单与兑换" description="查看资金流水，管理用户兑换与折扣" />
+        <div className="grid grid-cols-3 gap-3">
           <StatCard
             title="用户余额总额"
             value={money(totalBalance)}
@@ -545,12 +523,13 @@ export default function Billing() {
             cacheKey="billing.activeDiscountCodes"
             fallbackValue={0}
           />
+        </div>
+        <div className="billing-entry-controls">
           <BillingToggleCard
             title="用户兑换入口"
             enabled={featureStatus?.redemptionEnabled ?? true}
             onCheckedChange={(redemptionEnabled) => setFeatureStatus.mutateAsync({ redemptionEnabled })}
             icon={Gift}
-            tone="bg-gradient-to-br from-amber-500 to-amber-600"
             loading={featureStatusLoading}
           />
           <BillingToggleCard
@@ -558,13 +537,12 @@ export default function Billing() {
             enabled={featureStatus?.discountEnabled ?? true}
             onCheckedChange={(discountEnabled) => setFeatureStatus.mutateAsync({ discountEnabled })}
             icon={TicketPercent}
-            tone="bg-gradient-to-br from-rose-500 to-rose-600"
             loading={featureStatusLoading}
           />
         </div>
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as BillingTab)}>
-          <SlidingTabsList items={BILLING_TAB_ITEMS} activeValue={activeTab} ariaLabel="余额与营销" minItemWidthRem={6.75} />
+          <SlidingTabsList items={BILLING_TAB_ITEMS} activeValue={activeTab} ariaLabel="账单与兑换" minItemWidthRem={6.75} />
 
           <TabsContent value="ledger" className="mt-4">
             <Card>
@@ -868,18 +846,18 @@ export default function Billing() {
                     <Input value={redeemCode} onChange={(e) => setRedeemCode(normalizeCodeInput(e.target.value))} placeholder="留空自动生成" />
                     <Button type="button" variant="outline" onClick={() => setRedeemCode(randomBillingCode("FXR"))}><Shuffle className="mr-2 h-4 w-4" /> 随机</Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">留空自动生成兑换码。</p>
+                  <p className="text-xs text-muted-foreground">选填；留空时生成随机码。</p>
                 </div>
-                <div className="space-y-2"><Label>类型</Label><Select value={redeemType} onValueChange={(v: "plan" | "balance") => setRedeemType(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="plan">套餐期限</SelectItem><SelectItem value="balance">余额</SelectItem></SelectContent></Select></div>
+                <FormField className="space-y-2"><Label>类型</Label><Select value={redeemType} onValueChange={(v: "plan" | "balance") => setRedeemType(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="plan">套餐期限</SelectItem><SelectItem value="balance">余额</SelectItem></SelectContent></Select></FormField>
                 {redeemType === "plan" ? (
                   <>
-                    <div className="space-y-2"><Label>套餐</Label><Select value={redeemPlanId} onValueChange={setRedeemPlanId}><SelectTrigger><SelectValue placeholder="选择套餐" /></SelectTrigger><SelectContent>{plans.map((plan: any) => <SelectItem key={plan.id} value={String(plan.id)}>{plan.name}</SelectItem>)}</SelectContent></Select></div>
-                    <div className="space-y-2"><Label>期限</Label><Select value={redeemDuration} onValueChange={setRedeemDuration}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30">1 个月</SelectItem><SelectItem value="90">3 个月</SelectItem><SelectItem value="180">6 个月</SelectItem><SelectItem value="365">1 年</SelectItem></SelectContent></Select></div>
+                    <FormField className="space-y-2"><Label>套餐</Label><Select value={redeemPlanId} onValueChange={setRedeemPlanId}><SelectTrigger><SelectValue placeholder="选择套餐" /></SelectTrigger><SelectContent>{plans.map((plan: any) => <SelectItem key={plan.id} value={String(plan.id)}>{plan.name}</SelectItem>)}</SelectContent></Select></FormField>
+                    <FormField className="space-y-2"><Label>期限</Label><Select value={redeemDuration} onValueChange={setRedeemDuration}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30">1 个月</SelectItem><SelectItem value="90">3 个月</SelectItem><SelectItem value="180">6 个月</SelectItem><SelectItem value="365">1 年</SelectItem></SelectContent></Select></FormField>
                   </>
                 ) : (
-                  <div className="space-y-2"><Label>余额金额</Label><Input type="number" min={0.01} step="0.01" value={redeemAmount} onChange={(e) => setRedeemAmount(e.target.value)} /></div>
+                  <FormField className="space-y-2"><Label>余额金额</Label><Input type="number" min={0.01} step="0.01" value={redeemAmount} onChange={(e) => setRedeemAmount(e.target.value)} /></FormField>
                 )}
-                <div className="space-y-2"><Label>数量</Label><Input type="number" min={1} max={500} value={redeemCount} onChange={(e) => setRedeemCount(e.target.value)} /></div>
+                <FormField className="space-y-2"><Label>数量</Label><Input type="number" min={1} max={500} value={redeemCount} onChange={(e) => setRedeemCount(e.target.value)} /></FormField>
                 <div className="space-y-2">
                   <Label>生效日期</Label>
                   <DatePickerInput value={redeemStartsAt} onChange={setRedeemStartsAt} placeholder="立即生效" />
@@ -1005,9 +983,9 @@ export default function Billing() {
                   </div>
                   <p className="text-xs text-muted-foreground">可手动填写或随机生成。</p>
                 </div>
-                <div className="space-y-2"><Label>类型</Label><Select value={discountType} onValueChange={(v: "percent" | "amount") => setDiscountType(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="percent">百分比</SelectItem><SelectItem value="amount">固定金额</SelectItem></SelectContent></Select></div>
-                <div className="space-y-2"><Label>{discountType === "percent" ? "折扣百分比" : "抵扣金额"}</Label><Input type="number" min={1} max={discountType === "percent" ? 100 : undefined} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} /></div>
-                <div className="space-y-2"><Label>可用次数</Label><Input type="number" min={0} value={discountMaxUses} onChange={(e) => setDiscountMaxUses(e.target.value)} placeholder="0=不限" /></div>
+                <FormField className="space-y-2"><Label>类型</Label><Select value={discountType} onValueChange={(v: "percent" | "amount") => setDiscountType(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="percent">百分比</SelectItem><SelectItem value="amount">固定金额</SelectItem></SelectContent></Select></FormField>
+                <FormField className="space-y-2"><Label>{discountType === "percent" ? "折扣百分比" : "抵扣金额"}</Label><Input type="number" min={1} max={discountType === "percent" ? 100 : undefined} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} /></FormField>
+                <FormField className="space-y-2"><Label>可用次数</Label><Input type="number" min={0} value={discountMaxUses} onChange={(e) => setDiscountMaxUses(e.target.value)} placeholder="0=不限" /></FormField>
                 <div className="space-y-2">
                   <Label>生效日期</Label>
                   <DatePickerInput value={discountStartsAt} onChange={setDiscountStartsAt} placeholder="立即生效" />

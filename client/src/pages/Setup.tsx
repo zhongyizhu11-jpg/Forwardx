@@ -1,3 +1,4 @@
+import { FormField } from "@/components/ui/form-field";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
@@ -316,7 +317,7 @@ export default function Setup() {
   };
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(135deg,#f8fbff_0%,#eef7f3_45%,#fff8ed_100%)] px-4 py-8 text-foreground">
+    <div className="setup-shell px-4 py-8 text-foreground">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
         <div className="text-center">
           <img src="/logo-light.png" alt="ForwardX" className="mx-auto h-14 w-14 object-contain dark:hidden" />
@@ -325,7 +326,7 @@ export default function Setup() {
           <p className="mt-2 text-sm text-muted-foreground">按步骤完成数据库初始化、旧面板迁移和管理员配置。</p>
         </div>
 
-        <div className="rounded-lg border border-white/70 bg-white/75 p-4 shadow-lg shadow-slate-200/60 backdrop-blur-xl">
+        <div className="setup-progress">
           <div className="grid gap-3 sm:grid-cols-3">
             {steps.map((item) => {
               const Icon = item.icon;
@@ -334,8 +335,9 @@ export default function Setup() {
               return (
                 <div
                   key={item.id}
+                  aria-current={active ? "step" : undefined}
                   className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-all duration-300 ${
-                    active ? "border-primary/40 bg-primary/10 text-primary" : done ? "border-emerald-500/25 bg-emerald-50 text-emerald-700" : "border-border/50 bg-white/60 text-muted-foreground"
+                    active ? "border-primary/40 bg-primary/10 text-primary" : done ? "border-emerald-500/25 bg-emerald-500/100/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-muted text-muted-foreground"
                   }`}
                 >
                   <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${done ? "bg-emerald-600 text-white" : active ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
@@ -371,7 +373,7 @@ export default function Setup() {
         <div className="overflow-hidden">
           <div className="transition-all duration-300 ease-out" key={step}>
             {step === 1 && (
-              <Card className="border-white/70 bg-white/85 shadow-xl shadow-slate-200/60 backdrop-blur-xl">
+              <Card className="border-border bg-card">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Database className="h-4 w-4" />
@@ -386,7 +388,7 @@ export default function Setup() {
                         key={type}
                         type="button"
                         onClick={() => setDatabaseType(type)}
-                        className={`rounded-lg border p-4 text-left transition ${databaseType === type ? "border-primary/50 bg-primary/10 shadow-sm" : "border-border bg-white/70 hover:border-primary/30"}`}
+                        className={`rounded-lg border p-4 text-left transition ${databaseType === type ? "border-primary/50 bg-primary/10 shadow-sm" : "border-border bg-card hover:border-primary/30"}`}
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="font-semibold">
@@ -410,7 +412,7 @@ export default function Setup() {
                   </Alert>
 
                   {dbReady && data?.databaseConfigured && (
-                    <Alert className="border-emerald-500/25 bg-emerald-50/80 text-emerald-950">
+                    <Alert className="border-emerald-500/25 bg-emerald-500/10/80 text-emerald-950">
                       <Database className="h-4 w-4 text-emerald-700" />
                       <AlertTitle>当前已连接 {configuredDatabaseLabel} 数据库</AlertTitle>
                       <AlertDescription>
@@ -420,37 +422,37 @@ export default function Setup() {
                   )}
 
                   {databaseType === "sqlite" ? (
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>SQLite 数据文件</Label>
                       <Input value={sqlitePath} onChange={(e) => setSqlitePath(e.target.value)} placeholder={defaultSqlitePath} />
-                    </div>
+                    </FormField>
                   ) : (
                     <div className="grid gap-4">
                       <div className="grid gap-4 sm:grid-cols-[1fr_120px]">
-                        <div className="space-y-2">
+                        <FormField className="space-y-2">
                           <Label>地址</Label>
                           <Input value={externalDatabase.host} onChange={(e) => setExternalDatabase({ ...externalDatabase, host: e.target.value })} placeholder="127.0.0.1" />
-                        </div>
-                        <div className="space-y-2">
+                        </FormField>
+                        <FormField className="space-y-2">
                           <Label>端口</Label>
                           <Input type="number" min={1} max={65535} value={externalDatabase.port} onChange={(e) => setExternalDatabase({ ...externalDatabase, port: Number(e.target.value || externalDefaultPort) })} />
-                        </div>
+                        </FormField>
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-2">
+                        <FormField className="space-y-2">
                           <Label>数据库名</Label>
                           <Input value={externalDatabase.database} onChange={(e) => setExternalDatabase({ ...externalDatabase, database: e.target.value })} />
-                        </div>
-                        <div className="space-y-2">
+                        </FormField>
+                        <FormField className="space-y-2">
                           <Label>用户名</Label>
                           <Input value={externalDatabase.user} onChange={(e) => setExternalDatabase({ ...externalDatabase, user: e.target.value })} />
-                        </div>
+                        </FormField>
                       </div>
-                      <div className="space-y-2">
+                      <FormField className="space-y-2">
                         <Label>密码</Label>
                         <Input type="password" value={externalDatabase.password} onChange={(e) => setExternalDatabase({ ...externalDatabase, password: e.target.value })} />
-                      </div>
-                      <div className="flex items-center justify-between rounded-md border border-border/50 bg-white/70 p-3">
+                      </FormField>
+                      <div className="flex items-center justify-between rounded-md border border-border/50 bg-card p-3">
                         <div>
                           <p className="text-sm font-medium">启用 SSL</p>
                           <p className="text-xs text-muted-foreground">远程数据库或云数据库可按需开启。</p>
@@ -472,7 +474,7 @@ export default function Setup() {
             )}
 
             {step === 2 && (
-              <Card className="border-white/70 bg-white/85 shadow-xl shadow-slate-200/60 backdrop-blur-xl">
+              <Card className="border-border bg-card">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Sparkles className="h-4 w-4" />
@@ -482,7 +484,7 @@ export default function Setup() {
                 </CardHeader>
                 <CardContent className="grid gap-5">
                   {dbReady && data?.databaseConfigured && (
-                    <div className="flex flex-col gap-3 rounded-lg border border-emerald-500/25 bg-emerald-50/80 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-col gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10/80 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 font-medium text-emerald-800">
                           <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -494,7 +496,7 @@ export default function Setup() {
                           </p>
                         )}
                       </div>
-                      <Button variant="outline" size="sm" className="shrink-0 bg-white/70" onClick={handleReviewDatabaseStep}>
+                      <Button variant="outline" size="sm" className="shrink-0 bg-card" onClick={handleReviewDatabaseStep}>
                         查看或修改数据库
                       </Button>
                     </div>
@@ -502,7 +504,7 @@ export default function Setup() {
 
                   {hasExistingData && hasAdmin && data?.setupDataChoice !== "new-panel" && (
                     <div className="grid gap-4 rounded-lg border border-amber-500/30 bg-amber-50/80 p-4">
-                      <Alert className="border-amber-500/30 bg-white/70">
+                      <Alert className="border-amber-500/30 bg-card">
                         <ShieldCheck className="h-4 w-4" />
                         <AlertTitle>检测到当前数据库已有面板业务数据</AlertTitle>
                         <AlertDescription>
@@ -510,22 +512,22 @@ export default function Setup() {
                         </AlertDescription>
                       </Alert>
                       <div className="grid gap-3 sm:grid-cols-4">
-                        <div className="rounded-md border bg-white/70 p-3">
+                        <div className="rounded-md border bg-card p-3">
                           <Users className="h-4 w-4 text-primary" />
                           <p className="mt-2 text-xs text-muted-foreground">用户</p>
                           <p className="text-lg font-semibold">{existingData?.userCount ?? 0}</p>
                         </div>
-                        <div className="rounded-md border bg-white/70 p-3">
+                        <div className="rounded-md border bg-card p-3">
                           <Server className="h-4 w-4 text-primary" />
                           <p className="mt-2 text-xs text-muted-foreground">主机</p>
                           <p className="text-lg font-semibold">{existingData?.hostCount ?? 0}</p>
                         </div>
-                        <div className="rounded-md border bg-white/70 p-3">
+                        <div className="rounded-md border bg-card p-3">
                           <Sparkles className="h-4 w-4 text-primary" />
                           <p className="mt-2 text-xs text-muted-foreground">规则</p>
                           <p className="text-lg font-semibold">{existingData?.ruleCount ?? 0}</p>
                         </div>
-                        <div className="rounded-md border bg-white/70 p-3">
+                        <div className="rounded-md border bg-card p-3">
                           <KeyRound className="h-4 w-4 text-primary" />
                           <p className="mt-2 text-xs text-muted-foreground">隧道</p>
                           <p className="text-lg font-semibold">{existingData?.tunnelCount ?? 0}</p>
@@ -564,19 +566,19 @@ export default function Setup() {
                       type="button"
                       disabled={hasExistingData && hasAdmin && data?.setupDataChoice !== "new-panel"}
                       onClick={() => setMode("new")}
-                      className={`rounded-lg border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${mode === "new" ? "border-emerald-500/50 bg-emerald-50" : "border-border bg-white/70 hover:border-emerald-400/40"}`}
+                      className={`rounded-lg border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${mode === "new" ? "border-emerald-500/50 bg-emerald-500/10" : "border-border bg-card hover:border-emerald-400/40"}`}
                     >
                       <div className="font-semibold">作为新面板使用</div>
                       <p className="mt-2 text-sm text-muted-foreground">不导入旧数据。</p>
                     </button>
-                    <button type="button" onClick={() => setMode("migrate")} className={`rounded-lg border p-4 text-left transition ${mode === "migrate" ? "border-primary/50 bg-primary/10" : "border-border bg-white/70 hover:border-primary/30"}`}>
+                    <button type="button" onClick={() => setMode("migrate")} className={`rounded-lg border p-4 text-left transition ${mode === "migrate" ? "border-primary/50 bg-primary/10" : "border-border bg-card hover:border-primary/30"}`}>
                       <div className="font-semibold">从旧面板导入数据</div>
                       <p className="mt-2 text-sm text-muted-foreground">使用旧面板迁移码导入。</p>
                     </button>
                   </div>
 
                   {mode === "migrate" && (
-                    <div className="grid gap-4 rounded-lg border bg-white/70 p-4">
+                    <div className="grid gap-4 rounded-lg border bg-card p-4">
                       <Alert>
                         <KeyRound className="h-4 w-4" />
                         <AlertTitle>迁移码规则</AlertTitle>
@@ -607,19 +609,19 @@ export default function Setup() {
                         </p>
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-2">
+                        <FormField className="space-y-2">
                           <Label>旧面板地址</Label>
                           <Input value={migration.oldPanelUrl} onChange={(e) => setMigration({ ...migration, oldPanelUrl: e.target.value })} placeholder="http://旧IP:3000 或 https://panel.example.com" />
-                        </div>
-                        <div className="space-y-2">
+                        </FormField>
+                        <FormField className="space-y-2">
                           <Label>旧面板迁移码</Label>
                           <Input value={migration.migrationCode} onChange={(e) => setMigration({ ...migration, migrationCode: e.target.value.toUpperCase() })} placeholder="24 位迁移码" />
-                        </div>
+                        </FormField>
                       </div>
-                      <div className="space-y-2">
+                      <FormField className="space-y-2">
                         <Label>新面板访问地址</Label>
                         <Input value={migration.targetPanelUrl} onChange={(e) => setMigration({ ...migration, targetPanelUrl: e.target.value })} />
-                      </div>
+                      </FormField>
                       {migrationStatus.data && (
                         <div className="rounded-lg border border-primary/15 bg-primary/5 p-4">
                           <div className="flex items-center justify-between text-sm">
@@ -653,7 +655,7 @@ export default function Setup() {
             )}
 
             {step === 3 && (
-              <Card className="border-white/70 bg-white/85 shadow-xl shadow-slate-200/60 backdrop-blur-xl">
+              <Card className="border-border bg-card">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
                     <UserCog className="h-4 w-4" />

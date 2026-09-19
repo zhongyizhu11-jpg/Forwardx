@@ -1,3 +1,6 @@
+import { FormField } from "@/components/ui/form-field";
+import EmptyState from "@/components/EmptyState";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DataSectionError from "@/components/DataSectionError";
 import { forwardAccessRestoredNote } from "@shared/forwardAccessMessage";
 
@@ -172,7 +175,7 @@ function UserStatCard({
   className?: string;
 }) {
   return (
-    <Card className={`group relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5 ${className || ""}`}>
+    <Card className={`group relative overflow-hidden border-border bg-card transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5 ${className || ""}`}>
       <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
       <CardContent className="relative p-3 sm:p-4">
         <div className="flex items-start justify-between gap-2 sm:gap-3">
@@ -193,7 +196,7 @@ function UserStatCard({
                 loading={loading}
                 cacheKey={`${cacheKey}.subtitle`}
                 fallbackValue=""
-                className="break-words text-xs text-muted-foreground/80"
+                className="break-words text-xs text-muted-foreground"
               />
             )}
           </div>
@@ -1388,14 +1391,9 @@ function UsersContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">用户管理</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
+      <WorkspaceHeader title={<>用户管理</>} description={<>
             管理系统用户、权限和流量配额
-          </p>
-        </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-3">
+          </>} actions={<>
           <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
             <ShieldCheck className="h-3 w-3 text-amber-400" />
             <AnimatedStatValue
@@ -1418,8 +1416,7 @@ function UsersContent() {
             <Plus className="h-4 w-4 mr-1" />
             添加用户
           </Button>
-        </div>
-      </div>
+        </>} />
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <UserStatCard
@@ -1545,13 +1542,7 @@ function UsersContent() {
       )}
 
       {!isLoading && (!users || users.length === 0) && !userPageQuery.error && (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-border/50 bg-card/60 py-16 text-muted-foreground sm:hidden">
-          <div className="h-14 w-14 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
-            <UsersIcon className="h-7 w-7 opacity-40" />
-          </div>
-          <p className="text-base font-medium">暂无其他用户</p>
-          <p className="mt-1 text-sm text-muted-foreground/60">点击添加用户创建账号</p>
-        </div>
+        <EmptyState icon={<UsersIcon className="h-7 w-7 opacity-40" />} title={<>暂无其他用户</>} description={<>点击添加用户创建账号</>} />
       )}
 
       <Card className="glass-panel hidden overflow-hidden sm:block">
@@ -1764,15 +1755,9 @@ function UsersContent() {
               minHeight="min-h-[260px]"
             />
           ) : (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <div className="h-16 w-16 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
-                <UsersIcon className="h-8 w-8 opacity-40" />
-              </div>
-              <p className="text-lg font-medium">暂无其他用户</p>
-              <p className="text-sm mt-1 text-muted-foreground/60">
+            <EmptyState icon={<UsersIcon className="h-8 w-8 opacity-40" />} title={<>暂无其他用户</>} description={<>
                 点击"添加用户"按钮创建新用户
-              </p>
-            </div>
+              </>} />
           )}
         </CardContent>
       </Card>
@@ -1785,13 +1770,7 @@ function UsersContent() {
           {subscriptionsLoading ? (
             <DataSectionLoading label="正在加载订阅数据" minHeight="min-h-[240px]" />
           ) : visibleSubscriptions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-lg border border-border/50 bg-card/60 py-16 text-muted-foreground">
-              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/30">
-                <Package className="h-7 w-7 opacity-40" />
-              </div>
-              <p className="text-base font-medium">暂无用户套餐</p>
-              <p className="mt-1 text-sm text-muted-foreground/60">分配或购买套餐后会显示在这里。</p>
-            </div>
+            <EmptyState icon={<Package className="h-7 w-7 opacity-40" />} title={<>暂无用户套餐</>} description={<>分配或购买套餐后会显示在这里。</>} />
           ) : (
             <>
               <AutoAnimateContainer className="standard-card-grid gap-3">
@@ -2102,7 +2081,7 @@ function UsersContent() {
           <DialogTitle>余额充值</DialogTitle>
           <DialogDescription>给 "{rechargeUserName}" 增加余额。</DialogDescription>
           <div className="space-y-4 py-2">
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>充值金额</Label>
               <Input
                 type="number"
@@ -2112,7 +2091,7 @@ function UsersContent() {
                 onChange={(e) => setRechargeAmount(e.target.value)}
                 placeholder="例如：50"
               />
-            </div>
+            </FormField>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowRecharge(false)}>
@@ -2130,7 +2109,7 @@ function UsersContent() {
           <DialogTitle>修改余额</DialogTitle>
           <DialogDescription>直接设置 "{setBalanceUserName}" 的当前余额。</DialogDescription>
           <div className="space-y-4 py-2">
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>当前余额</Label>
               <Input
                 type="number"
@@ -2140,7 +2119,7 @@ function UsersContent() {
                 onChange={(e) => setSetBalanceAmount(e.target.value)}
                 placeholder="例如：50"
               />
-            </div>
+            </FormField>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSetBalance(false)} disabled={adminSetBalanceMutation.isPending}>
@@ -2158,7 +2137,7 @@ function UsersContent() {
           <DialogTitle>发送邮件</DialogTitle>
           <DialogDescription>发送给用户 "{emailUserName}" 的已验证邮箱：{emailTo}</DialogDescription>
           <div className="space-y-4 py-2">
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>邮件标题</Label>
               <Input
                 value={emailSubject}
@@ -2166,7 +2145,7 @@ function UsersContent() {
                 onChange={(e) => setEmailSubject(e.target.value)}
                 placeholder="请输入邮件标题"
               />
-            </div>
+            </FormField>
             <div className="space-y-2">
               <Label>邮件内容</Label>
               <textarea
@@ -2361,7 +2340,7 @@ function UsersContent() {
                     placeholder="可选，留空则不显示"
                   />
                 </div>
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>最大规则数</Label>
                   <Input
                     type="number"
@@ -2370,8 +2349,8 @@ function UsersContent() {
                     placeholder="0=不限制"
                   />
                   <p className="text-xs text-muted-foreground">0 或留空表示不限制</p>
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>最大落地节点数</Label>
                   <Input
                     type="number"
@@ -2382,8 +2361,8 @@ function UsersContent() {
                   <p className="text-xs text-muted-foreground">
                     他自己能在被授权的主机上开几个落地节点。管理员替他开的也算在内。0 或留空表示不限制。
                   </p>
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>能自助加几台机器</Label>
                   <Input
                     type="number"
@@ -2399,8 +2378,8 @@ function UsersContent() {
                   <p className="text-xs text-muted-foreground">
                     他自己能在「我的机器」里加几台。<strong>留空</strong>＝跟随系统设置里的全局上限；<strong>填 0</strong>＝一台都不许加。
                   </p>
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>最大订阅地址数</Label>
                   <Input
                     type="number"
@@ -2411,8 +2390,8 @@ function UsersContent() {
                   <p className="text-xs text-muted-foreground">
                     他能生成几条订阅地址。每条都是一份完整凭据，发出去就只能靠吊销那一条收回。0 或留空表示不限制。
                   </p>
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>最大端口数</Label>
                   <Input
                     type="number"
@@ -2421,8 +2400,8 @@ function UsersContent() {
                     placeholder="0=不限制"
                   />
                   <p className="text-xs text-muted-foreground">0 或留空表示不限制</p>
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>最大连接数</Label>
                   <Input
                     type="number"
@@ -2432,8 +2411,8 @@ function UsersContent() {
                     placeholder="0=不限制"
                   />
                   <p className="text-xs text-muted-foreground">按主机或隧道聚合。</p>
-                </div>
-                <div className="space-y-2">
+                </FormField>
+                <FormField className="space-y-2">
                   <Label>单 IP 接入限制</Label>
                   <Input
                     type="number"
@@ -2443,7 +2422,7 @@ function UsersContent() {
                     placeholder="0=不限制"
                   />
                   <p className="text-xs text-muted-foreground">同一主机或同一隧道下，多条规则共享这个单 IP 接入上限。</p>
-                </div>
+                </FormField>
               </div>
               <Separator />
               <div className="flex items-start justify-between gap-3">
@@ -2589,7 +2568,7 @@ function UsersContent() {
                   />
                 </div>
                 {trafficAutoReset && (
-                  <div className="space-y-2 pt-1">
+                  <FormField className="space-y-2 pt-1">
                     <Label>重置日期（每月第几天）</Label>
                     <Select
                       value={String(trafficResetDay)}
@@ -2610,7 +2589,7 @@ function UsersContent() {
                     <p className="text-xs text-muted-foreground">
                       默认以启用当天作为重置日，可修改为每月 1–28 号中任意一天
                     </p>
-                  </div>
+                  </FormField>
                 )}
               </div>
             </TabsContent>

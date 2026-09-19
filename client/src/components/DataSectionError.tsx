@@ -33,6 +33,7 @@ export default function DataSectionError({
   const detail = queryErrorMessage(error);
   return (
     <div
+      role="status" aria-live="polite"
       className={cn(
         "flex w-full flex-col items-center justify-center gap-2 rounded-lg border border-destructive/25 bg-destructive/[0.04] px-4 py-6 text-center",
         minHeight,
@@ -41,13 +42,13 @@ export default function DataSectionError({
     >
       <div className="flex items-center gap-2 text-sm font-medium text-foreground">
         <AlertTriangle className="h-4 w-4 text-destructive" />
-        <span>没读到{label}</span>
+        <span>{label}加载失败</span>
       </div>
       <p className="max-w-md text-xs text-muted-foreground">
-        {hint || "这不代表没有，是这一次没取到。"}
+        {hint || "暂时无法获取数据，请重试。"}
       </p>
       {detail && (
-        <p className="max-w-md break-all font-mono text-[11px] leading-relaxed text-muted-foreground/70">{detail}</p>
+        <p className="max-w-md break-all font-mono text-[11px] leading-relaxed text-muted-foreground">{detail}</p>
       )}
       {onRetry && (
         <Button variant="outline" size="sm" className="mt-1" onClick={onRetry} disabled={retrying}>
@@ -75,10 +76,10 @@ export function DataTableErrorRow({
         <div className="flex flex-col items-center gap-1.5">
           <span className="flex items-center gap-2 text-sm font-medium text-foreground">
             <AlertTriangle className="h-4 w-4 text-destructive" />
-            没读到{label}
+            {label}加载失败
           </span>
-          <span className="text-xs text-muted-foreground">{hint || "这不代表没有，是这一次没取到。"}</span>
-          {detail && <span className="break-all font-mono text-[11px] text-muted-foreground/70">{detail}</span>}
+          <span className="text-xs text-muted-foreground">{hint || "暂时无法获取数据，请重试。"}</span>
+          {detail && <span className="break-all font-mono text-[11px] text-muted-foreground">{detail}</span>}
           {onRetry && (
             <Button variant="outline" size="sm" className="mt-1" onClick={onRetry} disabled={retrying}>
               <RefreshCw className={cn("mr-2 h-3.5 w-3.5", retrying && "forwardx-icon-spin")} />

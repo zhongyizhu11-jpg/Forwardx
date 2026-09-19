@@ -1,3 +1,7 @@
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { FormField } from "@/components/ui/form-field";
+import EmptyState from "@/components/EmptyState";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { renderHostMapTooltip } from "@/lib/hostMapTooltip";
 import { parseHostDateTime } from "@/components/hosts/HostCard";
@@ -919,10 +923,10 @@ function HostSummaryCard({
   className?: string;
 }) {
   return (
-    <Card className={`group relative h-full overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5 ${className || ""}`.trim()}>
+    <Card className={`group relative h-full overflow-hidden border-border bg-card ${className || ""}`.trim()}>
       <div className={`absolute inset-0 opacity-[0.035] transition-opacity group-hover:opacity-[0.07] ${tone}`} />
       <CardContent className="relative flex h-full min-h-[112px] flex-col justify-center p-3.5 sm:min-h-[112px] sm:p-4">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
+        <p className="text-xs font-medium text-muted-foreground">{title}</p>
         <div className={`absolute right-4 top-3.5 hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${iconTone}`}>
           <Icon className="h-5 w-5" />
         </div>
@@ -980,7 +984,7 @@ function HostTrafficDirectionStat({
           <Icon className="h-4 w-4 text-white" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
+          <p className="text-xs font-medium text-muted-foreground">{label}</p>
           {animated ? (
             <AnimatedStatValue
               as="p"
@@ -1029,12 +1033,11 @@ function HostTrafficSummaryCard({
   className?: string;
 }) {
   return (
-    <Card className={`group relative h-full overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5 ${className || ""}`.trim()}>
-      <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
+    <Card className={`group relative h-full overflow-hidden border-border bg-card ${className || ""}`.trim()}>
       <CardContent className="relative flex h-full flex-col justify-start p-3.5 sm:p-4">
         <div className="flex min-h-0 items-start justify-between gap-3">
           <div className="min-w-0 space-y-1 pr-12">
-            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
+            <p className="text-xs font-medium text-muted-foreground">{title}</p>
           </div>
           <div className={`pointer-events-none absolute right-4 top-3.5 hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${iconTone}`}>
             <Icon className="h-5 w-5" />
@@ -2175,15 +2178,9 @@ function HostsContent() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">主机管理</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
+      <WorkspaceHeader title={<>主机管理</>} description={<>
             管理 Agent 主机和运行状态
-          </p>
-        </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
-          <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
+          </>} status={<Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
             <Server className="h-3 w-3 text-chart-2" />
             <AnimatedStatValue
               value={`${onlineCount} / ${displayedHostTotal} 在线`}
@@ -2191,7 +2188,7 @@ function HostsContent() {
               cacheKey="hosts.header.online"
               fallbackValue="0 / 0 在线"
             />
-          </Badge>
+          </Badge>} actions={<>
           {/* 布局切换按钮 */}
           {/*
             「N 台发现新版本」也只给管理员看。升级是管理员专属的接口，租户看到
@@ -2212,28 +2209,16 @@ function HostsContent() {
                 都是管理员的事。
               */}
               {user?.role === "admin" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="col-span-2 w-full gap-2 sm:col-span-1 sm:w-auto"
-                  disabled={checkingAgentUpdate}
-                  onClick={handleCheckAgentUpdate}
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${checkingAgentUpdate ? "animate-spin" : ""}`} />
-                  检查 Agent 更新
-                </Button>
-              )}
-              {user?.role === "admin" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="col-span-2 w-full gap-2 sm:col-span-1 sm:w-auto"
-                  disabled={onlineOutdatedCount === 0 || upgradeAgentsMutation.isPending}
-                  onClick={requestAllAgentUpgrades}
-                >
-                  {upgradeAgentsMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                  一键升级 Agent
-                </Button>
+                <DropdownMenu><DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" aria-label="主机维护操作"><span aria-hidden="true">•••</span></Button>
+                </DropdownMenuTrigger><DropdownMenuContent align="end">
+                  <DropdownMenuItem disabled={checkingAgentUpdate} onSelect={handleCheckAgentUpdate}>
+                    <RefreshCw className={`h-4 w-4 ${checkingAgentUpdate ? "animate-spin" : ""}`} />检查 Agent 更新
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={onlineOutdatedCount === 0 || upgradeAgentsMutation.isPending} onSelect={requestAllAgentUpgrades}>
+                    <Download className="h-4 w-4" />升级在线 Agent
+                  </DropdownMenuItem>
+                </DropdownMenuContent></DropdownMenu>
               )}
               <div className="hidden items-center overflow-hidden rounded-md border border-border/40 sm:flex">
                 <Button
@@ -2391,15 +2376,18 @@ function HostsContent() {
               ) : null}
             </Button>
           )}
-        </div>
-      </div>
+        </>} />
 
-      <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">筛选:</span>
-        </div>
-        <div className="relative w-full sm:w-[260px] lg:w-[320px]">
+
+
+      <Tabs
+        value={activeManageTab}
+        onValueChange={(value) => setActiveManageTab(value as HostManageTab)}
+        className="space-y-4"
+      >
+        <SlidingTabsList items={hostManageTabItems} activeValue={activeManageTab} ariaLabel="主机管理" minItemWidthRem={7.5} />
+      <div className="flex items-center gap-3">
+        <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={activeManageSearchQuery}
@@ -2408,7 +2396,8 @@ function HostsContent() {
               setManageSearchQueries((current) => ({ ...current, [activeManageTab]: value }));
             }}
             placeholder={activeManageFilterConfig.placeholder}
-            className="h-8 w-full pl-8 pr-8 text-xs"
+            aria-label={activeManageFilterConfig.placeholder}
+            className="h-10 w-full pl-8 pr-8 text-sm"
           />
           {activeManageSearchQuery ? (
             <button
@@ -2421,17 +2410,10 @@ function HostsContent() {
             </button>
           ) : null}
         </div>
-        <span className="text-xs tabular-nums text-muted-foreground">
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
           {activeManageFilterStats.filtered} / {activeManageFilterStats.total} {activeManageFilterConfig.unit}
         </span>
       </div>
-
-      <Tabs
-        value={activeManageTab}
-        onValueChange={(value) => setActiveManageTab(value as HostManageTab)}
-        className="space-y-4"
-      >
-        <SlidingTabsList items={hostManageTabItems} activeValue={activeManageTab} ariaLabel="主机管理" minItemWidthRem={7.5} />
 
         <TabsContent value="hosts" className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -2487,7 +2469,7 @@ function HostsContent() {
       {isInitialLoadingWithoutCache ? (
         <DataSectionLoading label="正在加载主机数据" minHeight="min-h-[260px]" />
       ) : isError ? (
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardContent className="p-0">
             <div className="flex flex-col items-center justify-center px-4 py-20 text-center text-muted-foreground">
               <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
@@ -2603,7 +2585,7 @@ function HostsContent() {
                 {pagedHosts.map((host) => renderHostCard(host, { compact: false }))}
               </AutoAnimateContainer>
             )}
-            <Card className="host-table-shell hidden overflow-hidden border-border/40 bg-card/60 backdrop-blur-md sm:block">
+            <Card className="host-table-shell hidden overflow-hidden border-border bg-card sm:block">
               <CardContent className="p-0">
                 <Table className="host-management-table w-full min-w-[1340px] table-fixed">
                   <colgroup>
@@ -2792,7 +2774,7 @@ function HostsContent() {
         {viewMode !== "map" && viewMode !== "flat-map" && <PersistentPagination pagination={hostPagination} itemName="台主机" />}
         </>
       ) : (
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardContent className="p-0">
             {/* 「暂无主机」是结论；读失败时我们并不知道。别让人以为机器掉没了。 */}
             {hostPageQuery.error && !hostPageQuery.data ? (
@@ -2805,15 +2787,9 @@ function HostsContent() {
               minHeight="min-h-[260px]"
             />
             ) : (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <div className="h-16 w-16 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
-                <Server className="h-8 w-8 opacity-40" />
-              </div>
-              <p className="text-lg font-medium">{isHostTextFiltered ? "未找到匹配主机" : isHostGroupFiltered ? "当前分组暂无主机" : "暂无主机"}</p>
-              <p className="text-sm mt-1 text-muted-foreground/60">
+            <EmptyState icon={<Server className="h-8 w-8 opacity-40" />} title={<>{isHostTextFiltered ? "未找到匹配主机" : isHostGroupFiltered ? "当前分组暂无主机" : "暂无主机"}</>} description={<>
                 {isHostTextFiltered ? "调整筛选内容或清空搜索" : isHostGroupFiltered ? "可以在分组管理中为该分组添加主机" : canAddSelfServiceHost ? "点击添加主机生成 Agent 安装命令" : "已达管理员给你的台数上限，删掉一台才能再加"}
-              </p>
-            </div>
+              </>} />
             )}
           </CardContent>
         </Card>
@@ -3140,7 +3116,7 @@ function HostsContent() {
                     <span className="text-xs text-muted-foreground">主机连接</span>
                   </div>
                   <div className="grid gap-2.5 sm:grid-cols-2">
-                    <div className="space-y-1">
+                    <FormField className="space-y-1">
                       <Label className="text-sm">主机名称</Label>
                       <Input
                         className="h-8"
@@ -3148,14 +3124,14 @@ function HostsContent() {
                         value={form.name}
                         onChange={(e) => setForm({ ...form, name: e.target.value })}
                       />
-                    </div>
-                    <div className="space-y-1">
+                    </FormField>
+                    <FormField className="space-y-1">
                       <Label className="text-sm">Agent 检测 IP</Label>
                       <Input className="h-8 bg-muted/40" value={agentDetectedIpText(displayHosts.find((host: any) => host.id === editingId) || form)} readOnly />
-                    </div>
+                    </FormField>
                   </div>
                   <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
-                    <div className="space-y-1">
+                    <FormField className="space-y-1">
                       <Label className="text-sm">入口 IP / 域名</Label>
                       <Input
                         className="h-8"
@@ -3163,8 +3139,8 @@ function HostsContent() {
                         value={form.entryIp}
                         onChange={(e) => setForm({ ...form, entryIp: e.target.value })}
                       />
-                    </div>
-                    <div className="space-y-1">
+                    </FormField>
+                    <FormField className="space-y-1">
                       <Label className="text-sm">内网地址 <span className="text-xs text-muted-foreground">可选</span></Label>
                       <Input
                         className="h-8"
@@ -3172,10 +3148,10 @@ function HostsContent() {
                         value={form.tunnelEntryIp}
                         onChange={(e) => setForm({ ...form, tunnelEntryIp: e.target.value })}
                       />
-                    </div>
+                    </FormField>
                   </div>
                   <div className="mt-2.5 grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1">
+                    <FormField className="space-y-1">
                       <Label className="text-sm">网卡名称 <span className="text-xs text-muted-foreground">可选</span></Label>
                       <Input
                         className="h-8"
@@ -3183,7 +3159,7 @@ function HostsContent() {
                         value={form.networkInterface}
                         onChange={(e) => setForm({ ...form, networkInterface: e.target.value })}
                       />
-                    </div>
+                    </FormField>
                   </div>
                 </section>
 
@@ -3193,7 +3169,7 @@ function HostsContent() {
                     <span className="text-xs text-muted-foreground">留空不限</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2.5">
-                    <div className="space-y-1">
+                    <FormField className="space-y-1">
                       <Label className="text-xs text-muted-foreground">起始端口</Label>
                       <Input
                         className="h-8"
@@ -3208,8 +3184,8 @@ function HostsContent() {
                           setForm({ ...form, portRangeStart: v });
                         }}
                       />
-                    </div>
-                    <div className="space-y-1">
+                    </FormField>
+                    <FormField className="space-y-1">
                       <Label className="text-xs text-muted-foreground">结束端口</Label>
                       <Input
                         className="h-8"
@@ -3224,7 +3200,7 @@ function HostsContent() {
                           setForm({ ...form, portRangeEnd: v });
                         }}
                       />
-                    </div>
+                    </FormField>
                   </div>
                   <div className="mt-2.5 space-y-1">
                     <div className="flex items-center justify-between gap-3">
@@ -3302,7 +3278,7 @@ function HostsContent() {
                             align="end"
                           />
                         </div>
-                        <div className="min-w-0 space-y-1">
+                        <FormField className="min-w-0 space-y-1">
                           <Label className="text-sm">账单周期</Label>
                           <Select
                             value={String(normalizeHostBillingCycleMonths(form.billingCycleMonths))}
@@ -3320,7 +3296,7 @@ function HostsContent() {
                               <SelectItem value="36">三年付</SelectItem>
                             </SelectContent>
                           </Select>
-                        </div>
+                        </FormField>
                         <div className="min-w-0 space-y-1">
                           <Label className="text-sm">账单月日</Label>
                           <div className="grid min-w-0 grid-cols-2 gap-2">
@@ -3352,7 +3328,7 @@ function HostsContent() {
                             </Select>
                           </div>
                         </div>
-                        <div className="min-w-0 space-y-1">
+                        <FormField className="min-w-0 space-y-1">
                           <Label className="text-sm">机器到期处理</Label>
                           <Select
                             value={normalizeHostExpiryAction(form.expiryHandling)}
@@ -3366,7 +3342,7 @@ function HostsContent() {
                               <SelectItem value="extend_cycle">周期顺延</SelectItem>
                             </SelectContent>
                           </Select>
-                        </div>
+                        </FormField>
                         <div className="min-w-0 space-y-1">
                           <Label className="text-sm">套餐流量</Label>
                           <div className="flex h-8 min-w-0 overflow-hidden rounded-md border border-input bg-background focus-within:border-ring focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring">
@@ -3383,7 +3359,7 @@ function HostsContent() {
                             </span>
                           </div>
                         </div>
-                        <div className="min-w-0 space-y-1">
+                        <FormField className="min-w-0 space-y-1">
                           <Label className="text-sm">流量计算</Label>
                           <Select
                             value={form.trafficMeasureMode}
@@ -3398,7 +3374,7 @@ function HostsContent() {
                               <SelectItem value="max">取最大值</SelectItem>
                             </SelectContent>
                           </Select>
-                        </div>
+                        </FormField>
                       </div>
                       <div className="mt-2.5 flex min-h-9 flex-col gap-2 rounded-md bg-muted/35 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0 space-y-0.5">

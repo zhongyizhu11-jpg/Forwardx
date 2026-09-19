@@ -1,3 +1,4 @@
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { quotaSourceLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
@@ -188,14 +189,14 @@ function TrafficPieCard({
   const shouldAnimate = chartData.length > 0 && total > 0 && !hasAnimated;
 
   return (
-    <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+    <Card className="border-border bg-card">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <BarChart3 className="h-4 w-4" />
             {title}
           </CardTitle>
-          <span className="text-[10px] text-muted-foreground/70">近 24H</span>
+          <span className="text-[10px] text-muted-foreground">近 24H</span>
         </div>
       </CardHeader>
       <CardContent>
@@ -203,7 +204,7 @@ function TrafficPieCard({
           <TrafficPieLoadingState />
         ) : chartData.length === 0 || total <= 0 ? (
           <div className="flex h-56 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-            <BarChart3 className="h-5 w-5 text-muted-foreground/50" />
+            <BarChart3 className="h-5 w-5 text-muted-foreground" />
             暂无流量数据
           </div>
         ) : (
@@ -276,7 +277,7 @@ function DashboardContent() {
     { refetchInterval: pollingInterval("slow"), staleTime: 25000, placeholderData: (previousData) => previousData },
   );
 
-  const { data: health, isLoading: healthLoading } = trpc.dashboard.health.useQuery(undefined, {
+  const { data: health, isLoading: healthLoading, refetch: refetchHealth } = trpc.dashboard.health.useQuery(undefined, {
     refetchInterval: pollingInterval("normal"),
     placeholderData: (previousData) => previousData,
   });
@@ -385,11 +386,13 @@ function DashboardContent() {
 
   return (
     <div className="space-y-6">
+      <WorkspaceHeader title="总览" description="查看运行状态、资源使用和流量趋势。" />
       <SystemStatusHeader
         health={health as any}
         recentBytes={recentBytes}
         loading={healthLoading}
         isAdmin={isAdmin}
+        onRetry={() => { void refetchHealth(); }}
       />
 
       {/*
@@ -414,7 +417,7 @@ function DashboardContent() {
       <MobileAppSettings snapshot={mobileReminderSnapshot} />
 
       {isAdmin ? (
-        <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="relative overflow-hidden border-border bg-card">
           <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
           <CardHeader className="pb-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -505,7 +508,7 @@ function DashboardContent() {
           </CardContent>
         </Card>
       ) : (
-        <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="relative overflow-hidden border-border bg-card">
           <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
           <CardHeader className="pb-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -646,7 +649,7 @@ function DashboardContent() {
                 />
               </div>
               <Progress value={quotaProgressValue} className="h-2" />
-              <p className="text-[11px] text-muted-foreground/70">
+              <p className="text-[11px] text-muted-foreground">
                 {quota.sources.length > 0
                   ? `额度来源：${quota.sources.map((source) => quotaSourceLabel(source.kind)).join("、")}。`
                   : "暂无生效流量额度。"}
@@ -657,13 +660,13 @@ function DashboardContent() {
         </Card>
       )}
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
               <BarChart3 className="h-4 w-4" />
               近 24H 流量展示
-              <span className="text-[10px] font-normal text-muted-foreground/60">每小时汇总</span>
+              <span className="text-[10px] font-normal text-muted-foreground">每小时汇总</span>
             </CardTitle>
             <div className="flex items-center gap-3 text-[10px]">
               <span className="flex items-center gap-1">
@@ -676,7 +679,7 @@ function DashboardContent() {
               </span>
             </div>
           </div>
-          <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/60">
+          <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
             <Info className="h-3 w-3" />
             每小时汇总一次可见规则流量。
           </p>
@@ -704,7 +707,7 @@ function DashboardContent() {
 
       <div className={`grid grid-cols-1 gap-4 ${isAdmin ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
         {isAdmin && (
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+          <Card className="border-border bg-card">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                 <Wifi className="h-4 w-4" />
@@ -729,7 +732,7 @@ function DashboardContent() {
           </Card>
         )}
 
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
               <Zap className="h-4 w-4" />
@@ -753,7 +756,7 @@ function DashboardContent() {
           </CardContent>
         </Card>
 
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+        <Card className="border-border bg-card">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
               <Activity className="h-4 w-4" />

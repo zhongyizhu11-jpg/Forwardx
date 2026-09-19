@@ -1,80 +1,81 @@
-import { type ComponentType, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 export type SlidingTabItem<T extends string = string> = {
-  value: T;
-  label: string;
+  value: T; label: string;
   icon?: ComponentType<{ className?: string }>;
-  badge?: ReactNode;
-  disabled?: boolean;
+  badge?: ReactNode; disabled?: boolean;
 };
-
-const slidingTabTriggerClass = "group relative z-10 h-9 min-w-0 justify-center gap-1.5 rounded-md border-0 bg-transparent px-3 text-sm font-medium text-muted-foreground shadow-none ring-0 transition-colors duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:bg-transparent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/35 data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none data-[state=active]:ring-0 [&>svg]:shrink-0";
-
 type SlidingTabsListProps<T extends string> = {
-  items: readonly SlidingTabItem<T>[];
-  activeValue: T;
-  ariaLabel?: string;
-  className?: string;
-  listClassName?: string;
-  triggerClassName?: string;
-  iconClassName?: string;
-  badgeClassName?: string;
+  items: readonly SlidingTabItem<T>[]; activeValue: T; ariaLabel?: string;
+  className?: string; listClassName?: string; triggerClassName?: string;
+  iconClassName?: string; badgeClassName?: string;
+  /** Retained for callers; tabs now size to their labels. */
   minItemWidthRem?: number;
 };
 
+function revealActiveTab(element: HTMLDivElement) {
+  if (element.scrollWidth <= element.clientWidth) return;
+  const selected = element.querySelector<HTMLElement>('[data-state="active"]');
+  if (!selected) return;
+  const item = selected.getBoundingClientRect();
+  const frame = element.getBoundingClientRect();
+  // Leave room for the 44px touch scroll controls without moving the page.
+  if (item.left < frame.left + 44) element.scrollLeft -= frame.left + 44 - item.left;
+  else if (item.right > frame.right - 44) element.scrollLeft += item.right - frame.right + 44;
+}
 export function SlidingTabsList<T extends string>({
-  items,
-  activeValue,
-  ariaLabel,
-  className,
-  listClassName,
-  triggerClassName,
-  iconClassName,
-  badgeClassName,
-  minItemWidthRem = 7.25,
+  items, activeValue, ariaLabel, className, listClassName,
+  triggerClassName, iconClassName, badgeClassName,
 }: SlidingTabsListProps<T>) {
-  // Wrap into rows on narrow screens: no hidden tabs or horizontal swiping.
-  // Keep the existing prop/export names so callers need no migration.
-  const listStyle: CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${minItemWidthRem}rem), 1fr))`,
+  const viewport = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+    const measure = () => setEdges({
+      left: element.scrollLeft > 2,
+      right: element.scrollLeft + element.clientWidth < element.scrollWidth - 2,
+    });
+    const observer = new ResizeObserver(() => { revealActiveTab(element); measure(); });
+    observer.observe(element);
+    if (element.firstElementChild) observer.observe(element.firstElementChild);
+    element.addEventListener("scroll", measure, { passive: true });
+    measure();
+    return () => { observer.disconnect(); element.removeEventListener("scroll", measure); };
+  }, []);
+  useEffect(() => {
+    const element = viewport.current;
+    if (element) revealActiveTab(element);
+  }, [activeValue]);
+  const scroll = (direction: number) => {
+    const element = viewport.current;
+    if (element) element.scrollBy({ left: direction * element.clientWidth * 0.7, behavior: "instant" });
   };
-
   return (
-    <div className={cn("w-full min-w-0", className)}>
-      <TabsList
-        aria-label={ariaLabel}
-        className={cn(
-          "grid h-auto w-full gap-2 rounded-xl border border-border bg-background p-1 text-muted-foreground",
-          listClassName,
-        )}
-        style={listStyle}
-      >
-        {items.map((item) => {
-          const Icon = item.icon;
-          return (
-            <TabsTrigger
-              key={item.value}
-              value={item.value}
-              disabled={item.disabled}
-              data-active={item.value === activeValue ? "true" : undefined}
-              className={cn(slidingTabTriggerClass, triggerClassName)}
-            >
-              {Icon && <Icon className={cn("h-3.5 w-3.5 text-current", iconClassName)} />}
-              {item.label}
-              {item.badge !== undefined && item.badge !== null && (
-                <span className={cn(
-                  "ml-0.5 inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-muted px-1.5 text-[10px] font-semibold leading-none text-muted-foreground transition-colors group-data-[state=active]:bg-muted group-data-[state=active]:text-foreground",
-                  badgeClassName,
-                )}>
-                  {item.badge}
-                </span>
-              )}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
+    <div className={cn("workspace-tabs relative min-w-0", className)}>
+      <div ref={viewport} className="workspace-tabs-viewport">
+        <TabsList aria-label={ariaLabel} className={cn("workspace-tabs-list", listClassName)}>
+          {items.map((item) => {
+            const Icon = item.icon;
+            return (
+              <TabsTrigger key={item.value} value={item.value} disabled={item.disabled}
+                data-active={item.value === activeValue ? "true" : undefined}
+                className={cn("workspace-tab group", triggerClassName)}>
+                {Icon && <Icon className={cn("h-4 w-4 shrink-0", iconClassName)} />}
+                {item.label}
+                {item.badge !== undefined && item.badge !== null && (
+                  <span className={cn("workspace-tab-count", badgeClassName)}>{item.badge}</span>
+                )}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </div>
+      {edges.left && <button type="button" className="workspace-tab-scroll left-0" aria-label="查看前面的分类" onClick={() => scroll(-1)}><ChevronLeft className="h-4 w-4" /></button>}
+      {edges.right && <button type="button" className="workspace-tab-scroll right-0" aria-label="查看更多分类" onClick={() => scroll(1)}><ChevronRight className="h-4 w-4" /></button>}
     </div>
   );
 }

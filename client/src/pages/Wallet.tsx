@@ -1,3 +1,5 @@
+import { FormField } from "@/components/ui/form-field";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { forwardAccessRestoredNote } from "@shared/forwardAccessMessage";
 import { ledgerTone } from "@/lib/ledgerTone";
@@ -117,10 +119,7 @@ export default function Wallet() {
     <DashboardLayout>
       <div className="space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">账单中心</h1>
-            <p className="text-sm text-muted-foreground">余额、充值和订单记录。</p>
-          </div>
+          <WorkspaceHeader title={<>账单中心</>} description={<>余额、充值和订单记录。</>} />
           <Button onClick={openRecharge}>
             <CreditCard className="mr-2 h-4 w-4" />
             自助充值
@@ -372,11 +371,11 @@ export default function Wallet() {
               <DialogDescription>充值成功后自动入账。</DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>充值金额</Label>
                 <Input type="number" min={0.01} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} />
-              </div>
-              <div className="space-y-2">
+              </FormField>
+              <FormField className="space-y-2">
                 <Label>支付方式</Label>
                 <Select value={paymentType} onValueChange={(value: PaymentType) => setPaymentType(value)}>
                   <SelectTrigger>
@@ -390,7 +389,7 @@ export default function Wallet() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setRechargeOpen(false)}>

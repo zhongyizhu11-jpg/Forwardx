@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "docs/**"
+      - "shared/design-tokens.css"
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/docs.yml"

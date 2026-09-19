@@ -1,3 +1,5 @@
+import WorkspaceHeader from "@/components/WorkspaceHeader";
+import { FormField } from "@/components/ui/form-field";
 import DataSectionError from "@/components/DataSectionError";
 import { sameNullableStringArray } from "@/lib/multiHopAddress";
 import { hostSearchParts } from "@/lib/hostSearchParts";
@@ -1870,18 +1872,7 @@ export function ForwardGroupsContent({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          {embedded ? (
-            <h2 className="text-lg font-semibold tracking-tight sm:text-xl">{pageTitle}</h2>
-          ) : (
-            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{pageTitle}</h1>
-          )}
-          <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
-            {pageDescription}
-          </p>
-        </div>
-        {!hideHeaderActions && <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:justify-end">
+      <WorkspaceHeader level={embedded ? 2 : 1} title={pageTitle} description={pageDescription} actions={!hideHeaderActions && <>
           <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
             <Activity className="h-3 w-3 text-current" />
             <AnimatedStatValue
@@ -1921,8 +1912,7 @@ export function ForwardGroupsContent({
             <Plus className="h-4 w-4" />
             {addButtonText}
           </Button>
-        </div>}
-      </div>
+        </>} />
 
       <SectionTransition transitionKey={contentTransitionKey}>
         {isLoading ? (
@@ -2237,7 +2227,7 @@ export function ForwardGroupsContent({
               <Layers3 className="h-8 w-8 opacity-40" />
             </div>
             <p className="text-lg font-medium">{emptyTitle}</p>
-            <p className="mt-1 text-sm text-muted-foreground/60">
+            <p className="mt-1 text-sm text-muted-foreground">
               {emptyDescription}
             </p>
           </CardContent>
@@ -2255,17 +2245,17 @@ export function ForwardGroupsContent({
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             <div className={"grid gap-3 " + (isPortMode ? "sm:grid-cols-2" : isChainMode ? "sm:grid-cols-1" : "sm:grid-cols-2")}>
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>{isPortMode ? "端口转发名称" : isChainMode ? "转发链名称" : "组名称"}</Label>
                 <Input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder={isPortMode ? "例如: 洛杉矶-备用入口" : isChainMode ? "例如: 华东-香港转发链" : activeGroupMode === "exit" ? "例如: Web 高可用出口" : "例如: Web 高可用入口"}
                 />
-              </div>
+              </FormField>
 
               {isPortMode && (
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>所属主机</Label>
                   <Select
                     value={form.members[0]?.hostId ? String(form.members[0].hostId) : ""}
@@ -2294,11 +2284,11 @@ export function ForwardGroupsContent({
                       )}
                     </SelectContent>
                   </Select>
-                </div>
+                </FormField>
               )}
 
               {false && form.groupMode === "failover" && (
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label>组类型</Label>
                   <Select
                     value={form.groupType}
@@ -2315,7 +2305,7 @@ export function ForwardGroupsContent({
                       <SelectItem value="tunnel">隧道转发组</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+                </FormField>
               )}
 
               {isCollectionMode(form.groupMode) && (
@@ -2355,11 +2345,11 @@ export function ForwardGroupsContent({
             {(form.groupMode === "failover" || form.groupMode === "entry") && (
               <>
                 <div className={"grid gap-3 " + (form.groupMode === "entry" ? "sm:grid-cols-[minmax(0,1fr)_120px_140px]" : "sm:grid-cols-[minmax(0,1fr)_120px]")}>
-                  <div className="space-y-2">
+                  <FormField className="space-y-2">
                     <Label>{form.groupMode === "entry" ? "入口域名" : "DDNS 域名"}</Label>
                     <Input value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} placeholder="例如 app.example.com" />
-                  </div>
-                  <div className="space-y-2">
+                  </FormField>
+                  <FormField className="space-y-2">
                     <Label>记录类型</Label>
                     <Select value={form.recordType} onValueChange={(v) => setForm({ ...form, recordType: v as GroupForm["recordType"] })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
@@ -2369,7 +2359,7 @@ export function ForwardGroupsContent({
                         <SelectItem value="CNAME">CNAME</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
+                  </FormField>
                   {form.groupMode === "entry" && (
                     <label className="flex h-10 items-center justify-between rounded-md border border-border/60 px-3 sm:self-end">
                       <span className="text-sm">自动解析</span>
@@ -2397,7 +2387,7 @@ export function ForwardGroupsContent({
                     {form.bandwidthAggregationEnabled && (
                       <div className="space-y-3 border-t border-border/60 pt-3">
                         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px_140px]">
-                          <div className="space-y-2">
+                          <FormField className="space-y-2">
                             <Label>聚合策略</Label>
                             <Select
                               value={form.bandwidthAggregationStrategy}
@@ -2412,8 +2402,8 @@ export function ForwardGroupsContent({
                                 ))}
                               </SelectContent>
                             </Select>
-                          </div>
-                          <div className="space-y-2">
+                          </FormField>
+                          <FormField className="space-y-2">
                             <Label>解析条数</Label>
                             <Input
                               type="number"
@@ -2423,8 +2413,8 @@ export function ForwardGroupsContent({
                               onChange={(e) => setForm({ ...form, bandwidthAggregationSlots: e.target.value })}
                               placeholder="8"
                             />
-                          </div>
-                          <div className="space-y-2">
+                          </FormField>
+                          <FormField className="space-y-2">
                             <Label>最少健康前置</Label>
                             <Input
                               type="number"
@@ -2434,7 +2424,7 @@ export function ForwardGroupsContent({
                               onChange={(e) => setForm({ ...form, bandwidthAggregationMinMembers: e.target.value })}
                               placeholder="1"
                             />
-                          </div>
+                          </FormField>
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {BANDWIDTH_AGGREGATION_STRATEGY_HINTS[form.bandwidthAggregationStrategy]}
@@ -2452,14 +2442,14 @@ export function ForwardGroupsContent({
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">单位：秒，范围 10-3600。</p>
                     <div className="grid gap-3 sm:grid-cols-[minmax(0,130px)_minmax(0,130px)_minmax(0,1fr)]">
-                      <div className="space-y-2">
+                      <FormField className="space-y-2">
                         <Label>故障转移时间</Label>
                         <Input type="number" min={10} max={3600} value={form.failoverSeconds} onChange={(e) => setForm({ ...form, failoverSeconds: e.target.value })} placeholder="60" />
-                      </div>
-                      <div className="space-y-2">
+                      </FormField>
+                      <FormField className="space-y-2">
                         <Label>恢复观察时间</Label>
                         <Input type="number" min={10} max={3600} value={form.recoverSeconds} onChange={(e) => setForm({ ...form, recoverSeconds: e.target.value })} placeholder="120" />
-                      </div>
+                      </FormField>
                       <div className="flex items-end gap-2">
                         <label className="flex h-10 min-w-[128px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
                           <span className="whitespace-nowrap text-sm">恢复后切回</span>
@@ -2537,7 +2527,7 @@ export function ForwardGroupsContent({
             )}
 
             {form.groupMode === "chain" && (
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>入口组</Label>
                 <Select
                   value={form.entryGroupId ? String(form.entryGroupId) : "none"}
@@ -2560,7 +2550,7 @@ export function ForwardGroupsContent({
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
             )}
 
             {runtimeConfigMode && (
@@ -2570,7 +2560,7 @@ export function ForwardGroupsContent({
                   <p id="forward-group-rate-limit-help" className="text-xs text-muted-foreground">0 表示不限速</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(132px,160px)_112px] sm:items-end">
-                  <div className="space-y-2">
+                  <FormField className="space-y-2">
                     <Label>转发工具</Label>
                     <Select
                       value={form.forwardType}
@@ -2597,7 +2587,7 @@ export function ForwardGroupsContent({
                         ))}
                       </SelectContent>
                     </Select>
-                  </div>
+                  </FormField>
                   <div className="space-y-2">
                     <Label htmlFor="forward-group-rate-limit">资源限速</Label>
                     <div className="flex h-10 min-w-0 overflow-hidden rounded-md border border-input bg-background focus-within:border-ring focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring">
@@ -2617,7 +2607,7 @@ export function ForwardGroupsContent({
                       <span className="flex h-full shrink-0 items-center border-l border-border/60 bg-muted/50 px-2.5 text-xs text-muted-foreground">Mbps</span>
                     </div>
                   </div>
-                  <div className="space-y-2">
+                  <FormField className="space-y-2">
                     <Label>流量倍率</Label>
                     <Input
                       className="tabular-nums"
@@ -2629,7 +2619,7 @@ export function ForwardGroupsContent({
                       onChange={(event) => setForm({ ...form, trafficMultiplier: event.target.value })}
                       placeholder="1"
                     />
-                  </div>
+                  </FormField>
                 </div>
               </div>
             )}
@@ -2655,7 +2645,7 @@ export function ForwardGroupsContent({
                 {advancedSettingsOpen && (
                   <div className="space-y-3 border-t border-border/50 px-3 pb-3 pt-2">
                     <div className="space-y-2">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <FormField className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <Label className="text-sm">PROXY Protocol</Label>
                         <Select
                           value={String(form.proxyProtocolVersion)}
@@ -2668,7 +2658,7 @@ export function ForwardGroupsContent({
                             <SelectItem value="2">v2</SelectItem>
                           </SelectContent>
                         </Select>
-                      </div>
+                      </FormField>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <label className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
                           <span className="text-sm">接收 PROXY</span>
@@ -2860,14 +2850,14 @@ export function ForwardGroupsContent({
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">单位：秒，范围 10-3600。</p>
                   <div className="grid gap-3 sm:grid-cols-[minmax(0,130px)_minmax(0,130px)_minmax(0,1fr)]">
-                    <div className="space-y-2">
+                    <FormField className="space-y-2">
                       <Label>故障转移时间</Label>
                       <Input type="number" min={10} max={3600} value={form.failoverSeconds} onChange={(e) => setForm({ ...form, failoverSeconds: e.target.value })} placeholder="60" />
-                    </div>
-                    <div className="space-y-2">
+                    </FormField>
+                    <FormField className="space-y-2">
                       <Label>恢复观察时间</Label>
                       <Input type="number" min={10} max={3600} value={form.recoverSeconds} onChange={(e) => setForm({ ...form, recoverSeconds: e.target.value })} placeholder="120" />
-                    </div>
+                    </FormField>
                     <div className="flex items-end gap-2">
                       <label className="flex h-10 min-w-[128px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
                         <span className="whitespace-nowrap text-sm">恢复后切回</span>

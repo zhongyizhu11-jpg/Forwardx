@@ -1,3 +1,4 @@
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import MobileInfoRow from "@/components/MobileInfoRow";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -236,7 +237,7 @@ function PaymentStatCard({
   fallbackValue?: string | number;
 }) {
   return (
-    <Card className="group relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
+    <Card className="group relative overflow-hidden border-border bg-card transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
       <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
       <CardContent className="relative flex min-h-[82px] items-center justify-between gap-4 p-4 sm:p-5">
         <div className="min-w-0">
@@ -462,10 +463,7 @@ export default function Payments() {
     <DashboardLayout>
       <div className="space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">支付对接</h1>
-            <p className="text-sm text-muted-foreground">配置支付方式和订单。</p>
-          </div>
+          <WorkspaceHeader title={<>支付对接</>} description={<>配置支付方式和订单。</>} />
           <Button onClick={save} disabled={updateConfig.isPending || isLoading}>
             {updateConfig.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
             保存配置

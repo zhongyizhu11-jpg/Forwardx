@@ -1,3 +1,4 @@
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -370,10 +371,7 @@ function ProfileContent() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">个人资料</h1>
-          <p className="mt-1 text-sm text-muted-foreground">管理账号安全、头像和 Telegram。</p>
-        </div>
+        <WorkspaceHeader title={<>个人资料</>} description={<>管理账号安全、头像和 Telegram。</>} />
         <Badge variant="outline" className="w-fit gap-1.5 px-3 py-1.5">
           <UserRound className="h-3.5 w-3.5" />
           {isAdmin ? "管理员" : "用户"}

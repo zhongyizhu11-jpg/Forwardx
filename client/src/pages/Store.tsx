@@ -1,3 +1,4 @@
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DashboardLayout from "@/components/DashboardLayout";
 import { MILLI_CENTS_PER_CENT, pricePerGbMilliCentsOf } from "@shared/trafficBillingPrice";
 import { formatQuotaBytes } from "@shared/formatBytes";
@@ -367,10 +368,7 @@ export default function Store() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">商店</h1>
-          <p className="text-sm text-muted-foreground">购买套餐，开通资源。</p>
-        </div>
+        <WorkspaceHeader title={<>商店</>} description={<>购买套餐，开通资源。</>} />
 
         {storeStatusLoading && (
           <DataSectionLoading label="正在加载商店状态" />

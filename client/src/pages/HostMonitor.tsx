@@ -192,8 +192,7 @@ function HostMonitorStatCard({
   iconTone?: string;
 }) {
   return (
-    <Card className="group relative h-full overflow-hidden border-border/40 bg-card/70 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-      <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
+    <Card className="group relative h-full overflow-hidden border-border bg-card">
       <CardContent className="relative flex h-full min-h-[108px] flex-col justify-center p-4">
         <div className={`pointer-events-none absolute right-4 top-3.5 hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${iconTone}`}>
           <Icon className="h-5 w-5" />
@@ -257,8 +256,7 @@ function HostMonitorTrafficStatCard({
   iconTone?: string;
 }) {
   return (
-    <Card className="group relative h-full overflow-hidden border-border/40 bg-card/70 backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-      <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
+    <Card className="group relative h-full overflow-hidden border-border bg-card">
       <CardContent className="relative flex h-full min-h-[108px] flex-col justify-center p-4">
         <div className={`pointer-events-none absolute right-4 top-3.5 hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${iconTone}`}>
           <Icon className="h-5 w-5" />
@@ -332,7 +330,7 @@ function PublicHostCard({
           onSelect(host);
         }
       }}
-      className={`${cardMinHeightClass} border-border/40 bg-card/70 backdrop-blur-md transition-[border-color,background-color,box-shadow,transform] ${onSelect ? "cursor-pointer hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-lg hover:shadow-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" : ""} ${isOnline ? "hover:border-border/70" : "bg-muted/35 text-muted-foreground"}`}
+      className={`${cardMinHeightClass} border-border bg-card transition-[border-color,background-color,box-shadow,transform] ${onSelect ? "cursor-pointer hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-lg hover:shadow-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" : ""} ${isOnline ? "hover:border-border/70" : "bg-muted/35 text-muted-foreground"}`}
     >
       <CardContent className={`${compact ? "space-y-2" : "space-y-3"} ${cardPaddingClass}`}>
         <div className={`rounded-md border border-border/40 bg-background/35 ${sectionPaddingClass}`}>
@@ -441,7 +439,7 @@ function PublicHostListResourceMetric({
       </div>
       <Progress value={progressValue} className={progressClass} />
       {detail && (
-        <div className="truncate text-[10px] leading-none text-muted-foreground/70" title={detail}>
+        <div className="truncate text-[10px] leading-none text-muted-foreground" title={detail}>
           {detail}
         </div>
       )}
@@ -486,7 +484,7 @@ function PublicHostTable({
   onSelectHost?: (host: any) => void;
 }) {
   return (
-    <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+    <Card className="border-border bg-card">
       <CardContent className="p-0">
         <Table className="min-w-0 table-fixed">
           <TableHeader>
@@ -771,7 +769,7 @@ function HostMonitorDetail({
 
       <div className="my-5 h-px bg-border sm:my-7" />
 
-        <Card className="overflow-hidden border-border/40 bg-card/70 backdrop-blur-md">
+        <Card className="overflow-hidden border-border bg-card">
           <CardContent className="p-0">
             {services.length > 0 && (
               <div className="grid min-w-0 overflow-hidden border-b border-border/40 md:grid-cols-[minmax(0,180px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
@@ -931,8 +929,8 @@ export default function HostMonitor() {
   if (monitor.isError) return <NotFound />;
 
   return (
-    <div className="min-h-screen bg-background/65">
-      <header className="sticky top-0 z-20 border-b border-border/40 bg-background/75 backdrop-blur-xl">
+    <div className="min-h-screen bg-background">
+      <header className="sticky top-0 z-20 border-b border-border bg-card">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-border/50 bg-card/70 text-primary">
@@ -1083,7 +1081,7 @@ export default function HostMonitor() {
               </div>
               )
             ) : (
-              <Card className="border-border/40 bg-card/70 backdrop-blur-md">
+              <Card className="border-border bg-card">
                 <CardContent className="flex min-h-[240px] flex-col items-center justify-center p-8 text-center text-muted-foreground">
                   <Server className="mb-3 h-10 w-10 opacity-50" />
                   <p className="font-medium text-foreground">暂无主机</p>

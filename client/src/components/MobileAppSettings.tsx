@@ -72,7 +72,7 @@ export default function MobileAppSettings({ snapshot }: { snapshot: MobileRemind
   };
 
   return (
-    <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+    <Card className="border-border bg-card">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <Smartphone className="h-4 w-4" />

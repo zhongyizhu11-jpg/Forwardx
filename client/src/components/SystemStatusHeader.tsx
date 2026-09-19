@@ -1,22 +1,10 @@
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Layers } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 import { formatBytes } from "@shared/formatBytes";
 import { cn } from "@/lib/utils";
 
-/**
- * 首页最上面那一行：现在系统是否正常。
- *
- * 这里原来是一个写死的绿色「系统在线」徽章 —— 后面没有任何数据，掉多少台机器
- * 它都是绿的。整个首页唯一该回答那个问题的地方，是个装饰。
- *
- * 现在的规矩很简单：**有异常就说异常，没有才说正常**，而且异常数点得出来自哪。
- * 三类分开数，因为处理方式不一样：掉线要去看机器，线路不健康要去看链路，
- * 转发该跑没跑通常是配置没下发下去。
- *
- * 刻意不做的事：不加渐变、不加阴影、不加动效。一行字号拉开层级，其余靠留白。
- * 状态色只用在真正表示状态的那一个点上 —— 四张卡片各配一种渐变色的做法，
- * 会让人分不清哪个颜色是有含义的。
- */
+/** Health reflects current API data; status colors are reserved for actual conditions. */
 
 export type SystemHealth = {
   hosts: { total: number; online: number; offline: number; neverConnected: number };
@@ -37,6 +25,7 @@ type Props = {
   recentBytes?: number;
   loading?: boolean;
   isAdmin: boolean;
+  onRetry?: () => void;
 };
 
 /** 一项指标：主数字 + 一句从属说明。说明为空时不占位。 */
@@ -61,8 +50,9 @@ function Metric({ label, value, note, tone }: {
   );
 }
 
-export default function SystemStatusHeader({ health, recentBytes, loading, isAdmin }: Props) {
+export default function SystemStatusHeader({ health, recentBytes, loading, isAdmin, onRetry }: Props) {
   const issues = Math.max(0, Number(health?.issues) || 0);
+  const empty = !!health && health.hosts.total === 0 && health.links.total === 0 && health.forwards.total === 0;
   const healthy = !!health && issues === 0;
 
   /**
@@ -77,19 +67,21 @@ export default function SystemStatusHeader({ health, recentBytes, loading, isAdm
   }
 
   return (
-    <section className="rounded-lg border bg-card p-4 sm:p-5">
+    <section className="system-health p-4 sm:p-5">
       <div className="flex items-start gap-3">
-        {loading || !health ? (
+        {loading && !health ? (
           <span className="mt-0.5 h-5 w-5 shrink-0 rounded-full bg-muted" aria-hidden="true" />
+        ) : empty ? (
+          <Layers className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
         ) : healthy ? (
           <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden="true" />
         ) : (
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden="true" />
         )}
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
-            {loading || !health ? "检查中" : healthy ? "运行正常" : `${issues} 处异常`}
-          </h1>
+          <h2 className="text-lg font-semibold tracking-tight sm:text-xl">
+            {loading && !health ? "检查中" : !health ? "暂时无法读取状态" : empty ? "准备好，开始你的第一条连接" : healthy ? "运行正常" : `${issues} 处异常`}
+          </h2>
           {/*
             正常时不再补一句「一切都好」—— 那是废话。异常时才需要这一行，
             而它必须说清是哪一类，不然这个数字只是让人去三个页面挨个找。
@@ -97,6 +89,8 @@ export default function SystemStatusHeader({ health, recentBytes, loading, isAdm
           {!loading && health && parts.length > 0 ? (
             <p className="mt-1 text-sm text-muted-foreground">{parts.join(" · ")}</p>
           ) : null}
+          {empty && <p className="mt-2 text-sm leading-6 text-muted-foreground">{isAdmin ? "先接入主机，再配置链路，最后创建转发规则。" : "获得可用线路后，就可以创建转发规则。需要资源权限时请联系管理员。"}</p>}
+          {!loading && !health && onRetry && <Button variant="outline" size="sm" className="mt-3" onClick={onRetry}>重新读取</Button>}
         </div>
       </div>
 

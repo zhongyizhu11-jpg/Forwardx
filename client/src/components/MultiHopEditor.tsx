@@ -429,7 +429,7 @@ export default function MultiHopEditor({
               >
                 {isFixedExit || hopSortable.disabled ? (
                   <span
-                    className="inline-flex h-6 w-6 shrink-0 cursor-not-allowed items-center justify-center text-muted-foreground/40"
+                    className="inline-flex h-6 w-6 shrink-0 cursor-not-allowed items-center justify-center text-muted-foreground"
                     title={isFixedExit ? "固定出口不可排序" : "至少需要两台可排序主机"}
                   >
                     <GripVertical className="h-4 w-4" />
@@ -461,7 +461,7 @@ export default function MultiHopEditor({
                       </Tooltip>
                     </TooltipProvider>
                   ) : (
-                    <span className="text-[11px] text-muted-foreground/40">--</span>
+                    <span className="text-[11px] text-muted-foreground">--</span>
                   )}
                 </div>
 
@@ -478,7 +478,7 @@ export default function MultiHopEditor({
                       </Tooltip>
                     </TooltipProvider>
                   ) : (
-                    <span className="text-[11px] text-muted-foreground/40">--</span>
+                    <span className="text-[11px] text-muted-foreground">--</span>
                   )}
                 </div>
 

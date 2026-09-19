@@ -1,20 +1,14 @@
-import { useLocation } from "wouter";
+import { Link } from "wouter";
+import { FileQuestion } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
+import { Button } from "@/components/ui/button";
 
 export default function NotFound() {
-  const [, setLocation] = useLocation();
-
-  return (
-    <div className="flex items-center justify-center min-h-screen bg-background">
-      <div className="text-center p-8">
-        <h1 className="text-6xl font-bold text-foreground mb-4">404</h1>
-        <p className="text-xl text-muted-foreground mb-8">页面未找到</p>
-        <button
-          onClick={() => setLocation("/")}
-          className="px-6 py-3 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-        >
-          返回首页
-        </button>
-      </div>
-    </div>
-  );
+  return <main className="flex min-h-svh items-center justify-center bg-background p-4">
+    <section className="w-full max-w-md rounded-xl border bg-card p-6 shadow-sm">
+      <h1 className="text-center text-4xl font-semibold tracking-tight">404</h1>
+      <EmptyState icon={<FileQuestion />} title="页面未找到" description="地址可能已变更，或此页面已被移除。"
+        actions={<Button asChild><Link href="/">返回首页</Link></Button>} />
+    </section>
+  </main>;
 }

@@ -1,3 +1,4 @@
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { resourceStatusTone } from "@/lib/statusDot";
 import { MILLI_CENTS_PER_CENT, pricePerGbMilliCentsOf } from "@shared/trafficBillingPrice";
@@ -363,12 +364,7 @@ export default function TrafficBillingConfigManager({
   return (
     <div className="space-y-6">
       {showHeader && (
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">流量计费管理</h1>
-            <p className="text-sm text-muted-foreground">按资源设置流量单价。</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+        <WorkspaceHeader title={<>流量计费管理</>} description={<>按资源设置流量单价。</>} actions={<>
             <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-card/60 px-3 py-2">
               <span className="text-sm text-muted-foreground">功能开关</span>
               {configsLoading ? (
@@ -382,8 +378,7 @@ export default function TrafficBillingConfigManager({
                 <Plus className="mr-2 h-4 w-4" /> 新增计费资源
               </Button>
             )}
-          </div>
-        </div>
+          </>} />
       )}
 
       {!showHeader && showEmbeddedHeader && (

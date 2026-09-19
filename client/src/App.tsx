@@ -1,3 +1,4 @@
+import { MotionConfig } from "motion/react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfirmDialogProvider } from "@/components/ui/confirm-dialog";
@@ -207,6 +208,7 @@ function SetupGate() {
 
 function App() {
   return (
+    <MotionConfig reducedMotion="user">
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
@@ -219,6 +221,7 @@ function App() {
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
+    </MotionConfig>
   );
 }
 

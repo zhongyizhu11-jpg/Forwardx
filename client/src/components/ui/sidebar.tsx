@@ -1,4 +1,5 @@
 import * as React from "react"
+import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { Slot } from "@radix-ui/react-slot"
 import { cn } from "@/lib/utils"
 import { PanelLeft } from "lucide-react"
@@ -6,6 +7,7 @@ import { Button } from "./button"
 import { Separator } from "./separator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./tooltip"
 import { useIsMobile } from "@/hooks/useMobile"
+import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from "./dialog"
 
 const SIDEBAR_COOKIE_NAME = "sidebar:state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -71,7 +73,8 @@ const SidebarProvider = React.forwardRef<HTMLDivElement, React.ComponentProps<"d
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
+      if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+        if (document.querySelector('[role="dialog"][data-state="open"]:not([data-mobile-sidebar])')) return
         event.preventDefault()
         toggleSidebar()
       }
@@ -107,6 +110,7 @@ const Sidebar = React.forwardRef<HTMLDivElement, React.ComponentProps<"div"> & {
   collapsible?: "offcanvas" | "icon" | "none"
 }>(({ side = "left", variant = "sidebar", collapsible = "offcanvas", className, children, ...props }, ref) => {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+  const mobileTriggerRef = React.useRef<HTMLElement | null>(null)
 
   if (collapsible === "none") {
     return (
@@ -123,24 +127,34 @@ const Sidebar = React.forwardRef<HTMLDivElement, React.ComponentProps<"div"> & {
 
   if (isMobile) {
     return (
-      <>
-        {openMobile && <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[1px]" onClick={() => setOpenMobile(false)} />}
-        <div
+      <Dialog open={openMobile} onOpenChange={setOpenMobile}>
+        <DialogPortal>
+        <DialogOverlay />
+        <DialogPrimitive.Content
           data-mobile-sidebar="true"
-          data-state={openMobile ? "open" : "closed"}
+          aria-describedby={undefined}
           className={cn(
-            "fixed inset-y-0 z-50 flex h-dvh max-h-dvh flex-col overflow-hidden bg-sidebar text-sidebar-foreground transition-transform duration-200",
-            side === "left" ? "left-0" : "right-0",
-            openMobile ? "translate-x-0" : side === "left" ? "-translate-x-full" : "translate-x-full",
+            "fixed inset-y-0 z-50 flex h-dvh max-h-dvh flex-col overflow-hidden bg-sidebar text-sidebar-foreground outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-200 data-[state=closed]:duration-150",
+            side === "left" ? "left-0 data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left" : "right-0 data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right",
             className
           )}
           style={{ width: SIDEBAR_WIDTH_MOBILE }}
           ref={ref}
+          onOpenAutoFocus={() => { mobileTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null }}
+          onCloseAutoFocus={event => {
+            event.preventDefault()
+            // Another dialog may have been opened from a navigation action.
+            if (document.querySelector('[data-forwardx-dialog-content][data-state="open"]')) return
+            if (mobileTriggerRef.current?.isConnected) mobileTriggerRef.current.focus()
+            else document.querySelector<HTMLElement>('[data-sidebar="trigger"]')?.focus()
+          }}
           {...props}
         >
+          <DialogTitle className="sr-only">全部导航</DialogTitle>
           {children}
-        </div>
-      </>
+        </DialogPrimitive.Content>
+        </DialogPortal>
+      </Dialog>
     )
   }
 
@@ -224,18 +238,18 @@ const Sidebar = React.forwardRef<HTMLDivElement, React.ComponentProps<"div"> & {
 Sidebar.displayName = "Sidebar"
 
 const SidebarTrigger = React.forwardRef<React.ComponentRef<typeof Button>, React.ComponentProps<typeof Button>>(({ className, onClick, ...props }, ref) => {
-  const { toggleSidebar } = useSidebar()
+  const { toggleSidebar, isMobile, openMobile, open } = useSidebar()
   return (
-    <Button ref={ref} data-sidebar="trigger" variant="ghost" size="icon" className={cn("h-7 w-7", className)} onClick={(event) => { onClick?.(event); toggleSidebar() }} {...props}>
+    <Button ref={ref} data-sidebar="trigger" aria-expanded={isMobile ? openMobile : open} variant="ghost" size="icon" className={cn("h-7 w-7", className)} onClick={(event) => { onClick?.(event); if (!event.defaultPrevented) toggleSidebar() }} {...props}>
       <PanelLeft />
-      <span className="sr-only">Toggle Sidebar</span>
+      <span className="sr-only">切换导航栏</span>
     </Button>
   )
 })
 SidebarTrigger.displayName = "SidebarTrigger"
 
-const SidebarInset = React.forwardRef<HTMLDivElement, React.ComponentProps<"main">>(({ className, ...props }, ref) => {
-  return <main ref={ref} className={cn("relative flex min-h-svh flex-1 flex-col bg-transparent", className)} {...props} />
+const SidebarInset = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(({ className, ...props }, ref) => {
+  return <div ref={ref} className={cn("relative flex min-h-svh flex-1 flex-col bg-transparent", className)} {...props} />
 })
 SidebarInset.displayName = "SidebarInset"
 

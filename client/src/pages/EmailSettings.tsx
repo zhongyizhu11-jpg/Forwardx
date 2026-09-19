@@ -1,3 +1,5 @@
+import { FormField } from "@/components/ui/form-field";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useEffect, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -171,10 +173,7 @@ export function EmailSettingsContent() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">邮箱设置</h1>
-          <p className="mt-1 text-sm text-muted-foreground">配置验证码和提醒邮件。</p>
-        </div>
+        <WorkspaceHeader title={<>邮箱设置</>} description={<>配置验证码和提醒邮件。</>} />
         <Badge variant={form.enabled ? "outline" : "secondary"} className="w-fit gap-1.5 px-3 py-1.5 text-xs">
           <Mail className="h-3.5 w-3.5" />
           {form.enabled ? "已启用" : "未启用"}
@@ -187,7 +186,7 @@ export function EmailSettingsContent() {
         <AlertDescription>关闭邮箱服务后不发送验证码或提醒邮件；已保存的密码不会回显。</AlertDescription>
       </Alert>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Mail className="h-4 w-4 text-primary" />
@@ -205,33 +204,33 @@ export function EmailSettingsContent() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-[1fr_120px]">
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>SMTP 服务器</Label>
               <Input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder="smtp.example.com" />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>端口</Label>
               <Input type="number" min={1} max={65535} value={form.port} onChange={(e) => setForm({ ...form, port: Number(e.target.value || 587) })} />
-            </div>
+            </FormField>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>SMTP 用户名</Label>
               <Input value={form.user} onChange={(e) => setForm({ ...form, user: e.target.value })} placeholder="user@example.com" />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>SMTP 密码 / 授权码</Label>
               <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="留空表示不修改已保存密码" />
-            </div>
+            </FormField>
           </div>
 
           <div className="grid gap-4 md:grid-cols-[1fr_260px]">
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>发件邮箱</Label>
               <Input value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} placeholder="ForwardX <noreply@example.com>" />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>连接加密</Label>
               <Select value={form.security} onValueChange={(security: SmtpSecurityMode) => setForm({ ...form, security })}>
                 <SelectTrigger>
@@ -245,12 +244,12 @@ export function EmailSettingsContent() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">{securityDescription}</p>
-            </div>
+            </FormField>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <BellRing className="h-4 w-4 text-primary" />
@@ -274,7 +273,7 @@ export function EmailSettingsContent() {
               </div>
               <Switch checked={form.whitelistEnabled} onCheckedChange={(whitelistEnabled) => setForm({ ...form, whitelistEnabled })} />
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>允许的邮箱后缀</Label>
               <Input
                 value={form.whitelist}
@@ -282,7 +281,7 @@ export function EmailSettingsContent() {
                 placeholder="example.com，gmail.com"
                 disabled={!form.whitelistEnabled}
               />
-            </div>
+            </FormField>
           </div>
           <div className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 p-3">
             <div>
@@ -299,7 +298,7 @@ export function EmailSettingsContent() {
               </div>
               <Switch checked={form.trafficReminder} onCheckedChange={(trafficReminder) => setForm({ ...form, trafficReminder })} />
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>剩余阈值（%）</Label>
               <Input
                 type="number"
@@ -308,12 +307,12 @@ export function EmailSettingsContent() {
                 value={form.trafficReminderThreshold}
                 onChange={(e) => setForm({ ...form, trafficReminderThreshold: Number(e.target.value || 20) })}
               />
-            </div>
+            </FormField>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+      <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <KeyRound className="h-4 w-4 text-primary" />

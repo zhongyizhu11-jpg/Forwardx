@@ -1,3 +1,4 @@
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -53,10 +54,7 @@ export default function CustomSidebarPage({ pageId }: { pageId: string }) {
                   <Globe2 className="h-5 w-5 text-primary" />
                 )}
               </div>
-              <div className="min-w-0">
-                <h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{page.name}</h1>
-                <p className="mt-1 truncate text-xs text-muted-foreground" title={page.url}>{page.url}</p>
-              </div>
+              <WorkspaceHeader title={<>{page.name}</>} description={<>{page.url}</>} />
             </div>
             <Button variant="outline" className="shrink-0 gap-2" asChild>
               <a href={page.url} target="_blank" rel="noopener noreferrer">
