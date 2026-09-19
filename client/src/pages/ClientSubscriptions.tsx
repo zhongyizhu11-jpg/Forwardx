@@ -1891,7 +1891,7 @@ export default function ClientSubscriptionsPage() {
                       onChange={(event) => setNodeTrafficResetDay(event.target.value)}
                     />
                   ) : null}
-                  <Switch checked={nodeTrafficAutoReset} onCheckedChange={setNodeTrafficAutoReset} />
+                  <Switch aria-label="每月自动清零" checked={nodeTrafficAutoReset} onCheckedChange={setNodeTrafficAutoReset} />
                 </div>
               </div>
             </div>

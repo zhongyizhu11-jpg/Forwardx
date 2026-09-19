@@ -622,7 +622,7 @@ export default function HostProbeServiceManager({
             )}
             <label className="flex items-center justify-between gap-3 rounded-md border border-border/50 px-3 py-2.5">
               <span className="text-sm font-medium">启用服务</span>
-              <Switch checked={form.isEnabled} onCheckedChange={(checked) => setForm({ ...form, isEnabled: checked })} />
+              <Switch aria-label="启用服务" checked={form.isEnabled} onCheckedChange={(checked) => setForm({ ...form, isEnabled: checked })} />
             </label>
           </div>
           <DialogFooter>

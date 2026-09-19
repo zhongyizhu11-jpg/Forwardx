@@ -89,7 +89,7 @@ export default function MobileAppSettings({ snapshot }: { snapshot: MobileRemind
               </span>
               <span className="mt-1 block text-xs text-muted-foreground">低于阈值时提醒。</span>
             </span>
-            <Switch checked={settings.trafficEnabled} onCheckedChange={(trafficEnabled) => save({ ...settings, trafficEnabled })} />
+            <Switch aria-label="流量提醒" checked={settings.trafficEnabled} onCheckedChange={(trafficEnabled) => save({ ...settings, trafficEnabled })} />
           </label>
           <div className="space-y-2 rounded-lg border border-border/50 bg-background/35 p-3">
             <Label>剩余流量阈值 (%)</Label>
@@ -117,7 +117,7 @@ export default function MobileAppSettings({ snapshot }: { snapshot: MobileRemind
               </span>
               <span className="mt-1 block text-xs text-muted-foreground">到期前提醒。</span>
             </span>
-            <Switch checked={settings.expiryEnabled} onCheckedChange={(expiryEnabled) => save({ ...settings, expiryEnabled })} />
+            <Switch aria-label="到期提醒" checked={settings.expiryEnabled} onCheckedChange={(expiryEnabled) => save({ ...settings, expiryEnabled })} />
           </label>
           <div className="space-y-2 rounded-lg border border-border/50 bg-background/35 p-3">
             <Label>提前提醒天数</Label>

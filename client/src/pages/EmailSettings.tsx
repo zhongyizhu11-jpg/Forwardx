@@ -200,7 +200,7 @@ export function EmailSettingsContent() {
               <p className="text-sm font-medium">启用邮箱服务</p>
               <p className="text-xs text-muted-foreground">关闭后不发送任何邮件。</p>
             </div>
-            <Switch checked={form.enabled} onCheckedChange={(enabled) => setForm({ ...form, enabled })} />
+            <Switch aria-label="启用邮箱服务" checked={form.enabled} onCheckedChange={(enabled) => setForm({ ...form, enabled })} />
           </div>
 
           <div className="grid gap-4 md:grid-cols-[1fr_120px]">
@@ -263,7 +263,7 @@ export function EmailSettingsContent() {
               <p className="text-sm font-medium">强制邮箱验证码注册</p>
               <p className="text-xs text-muted-foreground">注册时必须验证邮箱。</p>
             </div>
-            <Switch checked={form.verifyRegistration} onCheckedChange={(verifyRegistration) => setForm({ ...form, verifyRegistration })} />
+            <Switch aria-label="强制邮箱验证码注册" checked={form.verifyRegistration} onCheckedChange={(verifyRegistration) => setForm({ ...form, verifyRegistration })} />
           </div>
           <div className="grid gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 md:grid-cols-[1fr_240px]">
             <div className="flex items-center justify-between gap-4">
@@ -271,7 +271,7 @@ export function EmailSettingsContent() {
                 <p className="text-sm font-medium">邮箱后缀白名单</p>
                 <p className="text-xs text-muted-foreground">仅允许指定邮箱后缀注册。</p>
               </div>
-              <Switch checked={form.whitelistEnabled} onCheckedChange={(whitelistEnabled) => setForm({ ...form, whitelistEnabled })} />
+              <Switch aria-label="邮箱后缀白名单" checked={form.whitelistEnabled} onCheckedChange={(whitelistEnabled) => setForm({ ...form, whitelistEnabled })} />
             </div>
             <FormField className="space-y-2">
               <Label>允许的邮箱后缀</Label>
@@ -288,7 +288,7 @@ export function EmailSettingsContent() {
               <p className="text-sm font-medium">账户临期提醒</p>
               <p className="text-xs text-muted-foreground">到期前 3 天提醒。</p>
             </div>
-            <Switch checked={form.expiryReminder} onCheckedChange={(expiryReminder) => setForm({ ...form, expiryReminder })} />
+            <Switch aria-label="账户临期提醒" checked={form.expiryReminder} onCheckedChange={(expiryReminder) => setForm({ ...form, expiryReminder })} />
           </div>
           <div className="grid gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 md:grid-cols-[1fr_180px]">
             <div className="flex items-center justify-between gap-4">
@@ -296,7 +296,7 @@ export function EmailSettingsContent() {
                 <p className="text-sm font-medium">流量不足提醒</p>
                 <p className="text-xs text-muted-foreground">低于阈值时提醒。</p>
               </div>
-              <Switch checked={form.trafficReminder} onCheckedChange={(trafficReminder) => setForm({ ...form, trafficReminder })} />
+              <Switch aria-label="流量不足提醒" checked={form.trafficReminder} onCheckedChange={(trafficReminder) => setForm({ ...form, trafficReminder })} />
             </div>
             <FormField className="space-y-2">
               <Label>剩余阈值（%）</Label>

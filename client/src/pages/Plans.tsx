@@ -1877,7 +1877,7 @@ export default function Plans() {
                   </FormField>
                   <label className="flex h-10 items-center justify-between gap-2 rounded-md border px-3 text-sm">
                     启用
-                    <Switch checked={addon.isActive} onCheckedChange={(isActive) => updateTrafficAddon(index, { isActive })} />
+                    <Switch aria-label="启用" checked={addon.isActive} onCheckedChange={(isActive) => updateTrafficAddon(index, { isActive })} />
                   </label>
                   <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => removeTrafficAddon(index)}>
                     <Trash2 className="h-4 w-4" />

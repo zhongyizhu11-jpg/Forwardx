@@ -531,7 +531,7 @@ export default function HostGroupManager({
                   <Power className="h-3.5 w-3.5 text-muted-foreground" />
                   启用
                 </span>
-                <Switch checked={form.isEnabled} onCheckedChange={(checked) => setForm({ ...form, isEnabled: checked })} />
+                <Switch aria-label="启用" checked={form.isEnabled} onCheckedChange={(checked) => setForm({ ...form, isEnabled: checked })} />
               </label>
             </div>
 

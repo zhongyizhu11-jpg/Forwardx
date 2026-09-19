@@ -367,7 +367,7 @@ function PluginSettingInput({
           <p className="text-sm font-medium">{field.label}</p>
           {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
         </div>
-        <Switch checked={value === true} onCheckedChange={onChange} disabled={disabled} />
+        <Switch aria-label={field.label} checked={value === true} onCheckedChange={onChange} disabled={disabled} />
       </div>
     );
   }
@@ -493,7 +493,7 @@ function PluginUsageFieldInput({
           <p className="text-sm font-medium">{field.label}</p>
           {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
         </div>
-        <Switch checked={value === true} onCheckedChange={onChange} disabled={disabled} />
+        <Switch aria-label={field.label} checked={value === true} onCheckedChange={onChange} disabled={disabled} />
       </div>
     );
   }

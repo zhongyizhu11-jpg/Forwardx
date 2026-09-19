@@ -1292,7 +1292,7 @@ export default function ProxyInboundsSection({
                 <Label className="text-xs">启用</Label>
                 <p className="mt-0.5 text-xs text-muted-foreground">停用后落地机不再监听，订阅里也不会有它。</p>
               </div>
-              <Switch checked={form.isEnabled} onCheckedChange={(checked) => setForm((prev) => ({ ...prev, isEnabled: checked }))} />
+              <Switch aria-label="启用" checked={form.isEnabled} onCheckedChange={(checked) => setForm((prev) => ({ ...prev, isEnabled: checked }))} />
             </div>
 
             {form.id > 0 ? (

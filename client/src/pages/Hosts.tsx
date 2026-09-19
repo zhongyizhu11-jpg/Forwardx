@@ -3239,15 +3239,15 @@ function HostsContent() {
                     <div className="grid gap-2 sm:grid-cols-3">
                       <label className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-muted/35 px-2.5 py-2">
                         <span className="min-w-0 truncate text-sm font-medium">HTTP</span>
-                        <Switch className="shrink-0" checked={form.blockHttp} onCheckedChange={(checked) => setForm({ ...form, blockHttp: checked })} />
+                        <Switch aria-label="拦截 HTTP" className="shrink-0" checked={form.blockHttp} onCheckedChange={(checked) => setForm({ ...form, blockHttp: checked })} />
                       </label>
                       <label className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-muted/35 px-2.5 py-2">
                         <span className="min-w-0 truncate text-sm font-medium">SOCKS</span>
-                        <Switch className="shrink-0" checked={form.blockSocks} onCheckedChange={(checked) => setForm({ ...form, blockSocks: checked })} />
+                        <Switch aria-label="拦截 SOCKS" className="shrink-0" checked={form.blockSocks} onCheckedChange={(checked) => setForm({ ...form, blockSocks: checked })} />
                       </label>
                       <label className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-muted/35 px-2.5 py-2">
                         <span className="min-w-0 truncate text-sm font-medium">TLS</span>
-                        <Switch className="shrink-0" checked={form.blockTls} onCheckedChange={(checked) => setForm({ ...form, blockTls: checked })} />
+                        <Switch aria-label="拦截 TLS" className="shrink-0" checked={form.blockTls} onCheckedChange={(checked) => setForm({ ...form, blockTls: checked })} />
                       </label>
                     </div>
                   </section>
@@ -3450,7 +3450,7 @@ function HostsContent() {
                               ))}
                             </SelectContent>
                           </Select>
-                          <Switch checked={form.trafficAutoReset} onCheckedChange={(checked) => setForm({ ...form, trafficAutoReset: checked })} />
+                          <Switch aria-label="每月自动清零" checked={form.trafficAutoReset} onCheckedChange={(checked) => setForm({ ...form, trafficAutoReset: checked })} />
                         </div>
                       </div>
                       <p className="mt-1.5 px-3 text-xs text-muted-foreground">当月没有该日期时按最后一天重置。</p>

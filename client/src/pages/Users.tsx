@@ -2446,23 +2446,23 @@ function UsersContent() {
                 <div className="grid grid-cols-[repeat(auto-fit,minmax(132px,1fr))] gap-2">
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">iptables</span>
-                    <Switch className="shrink-0" checked={allowIptables} onCheckedChange={setAllowIptables} />
+                    <Switch aria-label="允许使用 iptables" className="shrink-0" checked={allowIptables} onCheckedChange={setAllowIptables} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">nftables</span>
-                    <Switch className="shrink-0" checked={allowNftables} onCheckedChange={setAllowNftables} />
+                    <Switch aria-label="允许使用 nftables" className="shrink-0" checked={allowNftables} onCheckedChange={setAllowNftables} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">realm</span>
-                    <Switch className="shrink-0" checked={allowRealm} onCheckedChange={setAllowRealm} />
+                    <Switch aria-label="允许使用 realm" className="shrink-0" checked={allowRealm} onCheckedChange={setAllowRealm} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">socat</span>
-                    <Switch className="shrink-0" checked={allowSocat} onCheckedChange={setAllowSocat} />
+                    <Switch aria-label="允许使用 socat" className="shrink-0" checked={allowSocat} onCheckedChange={setAllowSocat} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">gost</span>
-                    <Switch className="shrink-0" checked={allowGost} onCheckedChange={setAllowGost} />
+                    <Switch aria-label="允许使用 gost" className="shrink-0" checked={allowGost} onCheckedChange={setAllowGost} />
                   </div>
                 </div>
               </div>

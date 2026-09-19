@@ -801,7 +801,7 @@ export function AgentResourceManager({
               <Label>{field.label}</Label>
               {field.description && <p className="mt-0.5 text-xs text-muted-foreground">{field.description}</p>}
             </div>
-            <Switch checked={value === true} disabled={disabled} onCheckedChange={setValue} />
+            <Switch aria-label={field.label} checked={value === true} disabled={disabled} onCheckedChange={setValue} />
           </div>
         ) : field.type === "select" ? (
           <Select value={String(value ?? "")} disabled={disabled} onValueChange={setValue}>

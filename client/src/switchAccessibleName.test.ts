@@ -52,56 +52,7 @@ function tagTextAt(lines: string[], start: number) {
   读屏用户听到一句和界面对不上的话，反而更难定位。
 */
 const 待补: readonly string[] = [
-  "App.tsx:121",
-  "App.tsx:57",
-  "components/MobileAppSettings.tsx:120",
-  "components/MobileAppSettings.tsx:92",
-  "components/TrafficBillingConfigManager.tsx:625",
-  "components/TrafficBillingConfigManager.tsx:632",
-  "components/hosts/HostGroupManager.tsx:534",
-  "components/hosts/HostProbeServiceManager.tsx:625",
-  "components/hosts/HostTrafficBillingDialog.tsx:200",
-  "components/plugins/AgentResourceManager.tsx:804",
-  "components/proxy/ProxyInboundsSection.tsx:1295",
-  "pages/ClientSubscriptions.tsx:1894",
-  "pages/EmailSettings.tsx:203",
-  "pages/EmailSettings.tsx:266",
-  "pages/EmailSettings.tsx:274",
-  "pages/EmailSettings.tsx:291",
-  "pages/EmailSettings.tsx:299",
-  "pages/ForwardGroups.tsx:2314",
-  "pages/ForwardGroups.tsx:2366",
-  "pages/ForwardGroups.tsx:2456",
-  "pages/ForwardGroups.tsx:2460",
-  "pages/ForwardGroups.tsx:2499",
-  "pages/ForwardGroups.tsx:2665",
-  "pages/ForwardGroups.tsx:2669",
-  "pages/ForwardGroups.tsx:2828",
-  "pages/ForwardGroups.tsx:2864",
-  "pages/ForwardGroups.tsx:2868",
-  "pages/ForwardGroups.tsx:2905",
-  "pages/Hosts.tsx:3242",
-  "pages/Hosts.tsx:3246",
-  "pages/Hosts.tsx:3250",
-  "pages/Hosts.tsx:3453",
-  "pages/Payments.tsx:538",
-  "pages/Payments.tsx:589",
-  "pages/Payments.tsx:635",
-  "pages/Payments.tsx:680",
-  "pages/Payments.tsx:739",
-  "pages/Payments.tsx:772",
-  "pages/Plans.tsx:1880",
-  "pages/Plugins.tsx:370",
-  "pages/Plugins.tsx:496",
-  "pages/Setup.tsx:460",
-  "pages/Tunnels.tsx:3882",
-  "pages/Tunnels.tsx:3980",
-  "pages/Tunnels.tsx:4106",
-  "pages/Users.tsx:2449",
-  "pages/Users.tsx:2453",
-  "pages/Users.tsx:2457",
-  "pages/Users.tsx:2461",
-  "pages/Users.tsx:2465",
+  // 已清空：全站开关都补上了可访问名称。新增的漏网会直接红。
 ];
 
 test("每个 Switch 都有可访问名称", () => {
@@ -110,7 +61,13 @@ test("每个 Switch 都有可访问名称", () => {
   for (const file of collectTsx(ROOT)) {
     // 组件自身的定义不算用法
     if (file.endsWith(path.join("ui", "switch.tsx"))) continue;
-    const lines = fs.readFileSync(file, "utf8").split("\n");
+    const source = fs.readFileSync(file, "utf8");
+    /*
+      wouter 的路由组件也叫 <Switch>，和开关同名。只认从 ui/switch 导入的那个 ——
+      不排除的话 App.tsx 里的路由会被当成没名字的开关报出来（第一版就误报了两处）。
+    */
+    if (!/from\s+["'][^"']*\/components\/ui\/switch["']/.test(source)) continue;
+    const lines = source.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       if (!/<(Switch|OptimisticSwitch)[\s/>]/.test(lines[i])) continue;
       total += 1;

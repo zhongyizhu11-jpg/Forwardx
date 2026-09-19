@@ -197,7 +197,7 @@ export default function HostTrafficBillingDialog({
                 关掉：面板上<strong>任何有余额的用户</strong>都能用这台机器。
               </p>
             </div>
-            <Switch className="shrink-0" checked={requiresPermission} onCheckedChange={setRequiresPermission} disabled={busy} />
+            <Switch aria-label="需要单独授权才能用" className="shrink-0" checked={requiresPermission} onCheckedChange={setRequiresPermission} disabled={busy} />
           </div>
         </div>
 

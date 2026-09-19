@@ -457,7 +457,7 @@ export default function Setup() {
                           <p className="text-sm font-medium">启用 SSL</p>
                           <p className="text-xs text-muted-foreground">远程数据库或云数据库可按需开启。</p>
                         </div>
-                        <Switch checked={externalDatabase.ssl} onCheckedChange={(ssl) => setExternalDatabase({ ...externalDatabase, ssl })} />
+                        <Switch aria-label="启用 SSL" checked={externalDatabase.ssl} onCheckedChange={(ssl) => setExternalDatabase({ ...externalDatabase, ssl })} />
                       </div>
                     </div>
                   )}

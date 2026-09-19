@@ -3879,7 +3879,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch aria-label="当前协议不支持" checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </div>
                     </div>
@@ -3977,7 +3977,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch aria-label="当前协议不支持" checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </div>
                     </div>
@@ -4103,7 +4103,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch aria-label="当前协议不支持" checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </TableCell>
                       <TableCell className="text-right">
