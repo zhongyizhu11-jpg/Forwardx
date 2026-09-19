@@ -1,8 +1,8 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import {
   MIN_PRICE_PER_GB_MILLI_CENTS,
@@ -197,7 +197,7 @@ export default function HostTrafficBillingDialog({
                 关掉：面板上<strong>任何有余额的用户</strong>都能用这台机器。
               </p>
             </div>
-            <Switch aria-label="需要单独授权才能用" className="shrink-0" checked={requiresPermission} onCheckedChange={setRequiresPermission} disabled={busy} />
+            <Checkbox aria-label="需要单独授权才能用" className="shrink-0" checked={requiresPermission} onCheckedChange={setRequiresPermission} disabled={busy} />
           </div>
         </div>
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import HostStatusLabel from "@/components/HostStatusLabel";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useSortableReorder } from "@/components/SortableDragHandle";
@@ -401,7 +401,7 @@ export default function MultiHopEditor({
             const showIpv6Switch = !isFirst && !isFixedExit;
             const tunnelEntryTip = hasTunnelEntryIp ? "使用内网IP / IX地址" : missingTunnelEntryIpTip;
             const tunnelEntrySwitch = (
-              <Switch
+              <Checkbox
                 checked={useTunnelEntryIp}
                 disabled={!hasTunnelEntryIp}
                 onCheckedChange={(checked) => updateUseTunnelEntryIp(idx, !!checked)}
@@ -409,7 +409,7 @@ export default function MultiHopEditor({
               />
             );
             const ipv6Switch = (
-              <Switch
+              <Checkbox
                 checked={useIpv6}
                 disabled={!hasIpv6}
                 onCheckedChange={(checked) => updateUseIpv6(idx, !!checked)}

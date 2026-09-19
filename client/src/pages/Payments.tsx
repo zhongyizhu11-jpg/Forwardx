@@ -5,6 +5,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +19,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -546,7 +546,7 @@ export default function Payments() {
                     <div className="font-medium">启用支付功能</div>
                     <div className="text-sm text-muted-foreground">关闭后无法下单</div>
                   </div>
-                  <Switch aria-label="启用支付功能" checked={form.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, enabled }))} />
+                  <Checkbox aria-label="启用支付功能" checked={form.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, enabled }))} />
                 </div>
                 <Field label="商品名称">
                   <Input value={form.productName} onChange={(e) => setForm((prev) => ({ ...prev, productName: e.target.value }))} />
@@ -597,7 +597,7 @@ export default function Payments() {
                     <div className="font-medium">启用易支付</div>
                     <div className="text-sm text-muted-foreground">支付宝、微信通道</div>
                   </div>
-                  <Switch aria-label="启用易支付" checked={form.easypay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, enabled } }))} />
+                  <Checkbox aria-label="启用易支付" checked={form.easypay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, enabled } }))} />
                 </div>
                 <Field label="接口地址">
                   <Input placeholder="https://pay.example.com" value={form.easypay.apiBase} onChange={(e) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, apiBase: e.target.value } }))} />
@@ -643,7 +643,7 @@ export default function Payments() {
                     <div className="font-medium">启用支付宝官方</div>
                     <div className="text-sm text-muted-foreground">需在基础设置中选择</div>
                   </div>
-                  <Switch aria-label="启用支付宝官方" checked={form.alipay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, alipay: { ...prev.alipay, enabled } }))} />
+                  <Checkbox aria-label="启用支付宝官方" checked={form.alipay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, alipay: { ...prev.alipay, enabled } }))} />
                 </div>
                 <Field label="AppID">
                   <Input value={form.alipay.appId} onChange={(e) => setForm((prev) => ({ ...prev, alipay: { ...prev.alipay, appId: e.target.value } }))} />
@@ -688,7 +688,7 @@ export default function Payments() {
                     <div className="font-medium">启用微信官方</div>
                     <div className="text-sm text-muted-foreground">需在基础设置中选择</div>
                   </div>
-                  <Switch aria-label="启用微信官方" checked={form.wxpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, enabled } }))} />
+                  <Checkbox aria-label="启用微信官方" checked={form.wxpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, enabled } }))} />
                 </div>
                 <Field label="AppID">
                   <Input value={form.wxpay.appId} onChange={(e) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, appId: e.target.value } }))} />
@@ -747,7 +747,7 @@ export default function Payments() {
                     <div className="font-medium">启用 Stripe</div>
                     <div className="text-sm text-muted-foreground">银行卡和钱包支付</div>
                   </div>
-                  <Switch aria-label="启用 Stripe" checked={form.stripe.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, enabled } }))} />
+                  <Checkbox aria-label="启用 Stripe" checked={form.stripe.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, enabled } }))} />
                 </div>
                 <Field label="Secret Key" hint={config?.stripe?.hasSecretKey ? "已保存密钥，留空表示不修改" : "尚未保存密钥"}>
                   <Input type="password" placeholder="sk_live_..." value={form.stripe.secretKey} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, secretKey: e.target.value } }))} />
@@ -780,7 +780,7 @@ export default function Payments() {
                     <div className="font-medium">启用 USDT 支付</div>
                     <div className="text-sm text-muted-foreground">通过独立部署的 GM Pay 网关收款</div>
                   </div>
-                  <Switch aria-label="启用 USDT 支付" checked={form.gmpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, enabled } }))} />
+                  <Checkbox aria-label="启用 USDT 支付" checked={form.gmpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, enabled } }))} />
                 </div>
                 <Field label="网关地址">
                   <Input placeholder="https://pay.example.com" value={form.gmpay.apiBase} onChange={(e) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, apiBase: e.target.value } }))} />

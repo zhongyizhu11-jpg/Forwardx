@@ -19,13 +19,13 @@ import {
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { pollingInterval } from "@/lib/polling";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
@@ -457,7 +457,7 @@ export default function Setup() {
                           <p className="text-sm font-medium">启用 SSL</p>
                           <p className="text-xs text-muted-foreground">远程数据库或云数据库可按需开启。</p>
                         </div>
-                        <Switch aria-label="启用 SSL" checked={externalDatabase.ssl} onCheckedChange={(ssl) => setExternalDatabase({ ...externalDatabase, ssl })} />
+                        <Checkbox aria-label="启用 SSL" checked={externalDatabase.ssl} onCheckedChange={(ssl) => setExternalDatabase({ ...externalDatabase, ssl })} />
                       </div>
                     </div>
                   )}

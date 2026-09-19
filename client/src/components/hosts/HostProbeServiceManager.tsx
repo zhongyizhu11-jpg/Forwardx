@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, LayoutGrid, List, Loader2, Pencil, RadioTower, Trash2 } from "lucide-react";
 import HostStatusLabel from "@/components/HostStatusLabel";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useOptimisticSortableOrder, useSortableReorder } from "@/components/SortableDragHandle";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -623,7 +624,7 @@ export default function HostProbeServiceManager({
             )}
             <label className="flex items-center justify-between gap-3 rounded-md border border-border/50 px-3 py-2.5">
               <span className="text-sm font-medium">启用服务</span>
-              <Switch aria-label="启用服务" checked={form.isEnabled} onCheckedChange={(checked) => setForm({ ...form, isEnabled: checked })} />
+              <Checkbox aria-label="启用服务" checked={form.isEnabled} onCheckedChange={(checked) => setForm({ ...form, isEnabled: checked })} />
             </label>
           </div>
           <DialogFooter>

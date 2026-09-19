@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import DataSectionError from "@/components/DataSectionError";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +11,6 @@ import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { ProxyNodeRow, proxyNodeMetaText, type ProxyNodeRowSpec } from "@/components/proxy/ProxyNodeRow";
 import { ProxyNodeShareDialog, type ProxyNodeShareTarget } from "@/components/proxy/ProxyNodeShareDialog";
 import { ProxyNodeQuotaDetail, ProxyNodeQuotaToggle } from "@/components/proxy/ProxyNodeQuotaCells";
@@ -598,7 +598,7 @@ export default function ProxyInboundsSection({
       />
     ),
     toggle: (
-      <Switch
+      <Checkbox
         className="shrink-0 scale-90"
         checked={!!row.includeDirect}
         title={row.includeDirect ? "已在订阅里，关掉就不出现" : "加进订阅"}
@@ -1280,7 +1280,7 @@ export default function ProxyInboundsSection({
                       onChange={(event) => setForm((prev) => ({ ...prev, trafficResetDay: event.target.value }))}
                     />
                   ) : null}
-                  <Switch aria-label="每月自动清零"
+                  <Checkbox aria-label="每月自动清零"
                     checked={form.trafficAutoReset}
                     onCheckedChange={(checked) => setForm((prev) => ({ ...prev, trafficAutoReset: checked }))}
                   />
@@ -1293,7 +1293,7 @@ export default function ProxyInboundsSection({
                 <Label className="text-xs">启用</Label>
                 <p className="mt-0.5 text-xs text-muted-foreground">停用后落地机不再监听，订阅里也不会有它。</p>
               </div>
-              <Switch aria-label="启用" checked={form.isEnabled} onCheckedChange={(checked) => setForm((prev) => ({ ...prev, isEnabled: checked }))} />
+              <Checkbox aria-label="启用" checked={form.isEnabled} onCheckedChange={(checked) => setForm((prev) => ({ ...prev, isEnabled: checked }))} />
             </div>
 
             {form.id > 0 ? (

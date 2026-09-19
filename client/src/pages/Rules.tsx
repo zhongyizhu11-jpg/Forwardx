@@ -17,6 +17,7 @@ import { LatencyRating } from "@/components/LatencyRating";
 import { LinkTestProbeView, parseLinkTestMessage, type LinkTestPlannedSegment } from "@/components/LinkTestLatencySummary";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useOptimisticSortableOrder, useSortableReorder } from "@/components/SortableDragHandle";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7391,7 +7392,7 @@ function RulesContent() {
             {telegramBotReady ? "规则运行异常时提醒已绑定 Telegram 的管理员。" : "请先在系统设置中配置并启用 TG 机器人。"}
             </p>
             </div>
-            <Switch
+            <Checkbox
             checked={telegramBotReady && form.telegramErrorNotifyEnabled}
             disabled={!telegramBotReady}
             onCheckedChange={(checked) => setForm({ ...form, telegramErrorNotifyEnabled: checked })}
@@ -7475,7 +7476,7 @@ function RulesContent() {
                         <div>
                           <Label className="text-sm">恢复后切回</Label>
                         </div>
-                        <Switch
+                        <Checkbox
                           checked={form.autoFailback}
                           onCheckedChange={(checked) => setForm({ ...form, autoFailback: checked })}
                         />

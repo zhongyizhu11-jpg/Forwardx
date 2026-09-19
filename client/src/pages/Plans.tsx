@@ -11,6 +11,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1543,7 +1544,7 @@ export default function Plans() {
                     开启后，购买该套餐的用户即可使用客户端订阅。与转发权限不同，这项不会因为有订阅就自动开启。
                   </p>
                 </div>
-                <Switch
+                <Checkbox
                   checked={form.allowProxySubscription}
                   onCheckedChange={(checked) => setForm({ ...form, allowProxySubscription: checked })}
                   className="mt-1 shrink-0"
@@ -1563,7 +1564,7 @@ export default function Plans() {
                       <p className="text-sm font-medium">套餐状态</p>
                       <p className="text-xs text-muted-foreground">关闭后该套餐不可购买或分配。</p>
                     </div>
-                    <Switch aria-label="套餐状态"
+                    <Checkbox aria-label="套餐状态"
                       className="shrink-0"
                       checked={form.isActive}
                       onCheckedChange={(isActive) => setForm((current) => ({
@@ -1582,7 +1583,7 @@ export default function Plans() {
                           : "商店总开关是关的，这里开了用户也看不到，得先去上面的「商店状态」打开。"}
                       </p>
                     </div>
-                    <Switch aria-label="购买入口"
+                    <Checkbox aria-label="购买入口"
                       className="shrink-0"
                       checked={form.isActive && form.isStoreVisible}
                       disabled={!form.isActive}
@@ -1595,7 +1596,7 @@ export default function Plans() {
                         <p className="text-sm font-medium">同步已购买用户</p>
                         <p className="text-xs text-muted-foreground">开启后保存套餐会同步已购买用户的生效权益；关闭后仅影响后续新购或新分配。</p>
                       </div>
-                      <Switch
+                      <Checkbox
                         className="shrink-0"
                         checked={form.syncExistingSubscribers}
                         onCheckedChange={(syncExistingSubscribers) => setForm({ ...form, syncExistingSubscribers })}
@@ -1839,7 +1840,7 @@ export default function Plans() {
                           关：大家共用原端口、各发一份凭据，省端口，但流量按端口统计、分不开。
                         </p>
                       </div>
-                      <Switch aria-label="给每人单开一个端口"
+                      <Checkbox aria-label="给每人单开一个端口"
                         className="shrink-0"
                         checked={form.dedicatedProxyPort}
                         onCheckedChange={(dedicatedProxyPort) => setForm({ ...form, dedicatedProxyPort })}
@@ -1877,7 +1878,7 @@ export default function Plans() {
                   </FormField>
                   <label className="flex h-10 items-center justify-between gap-2 rounded-md border px-3 text-sm">
                     启用
-                    <Switch aria-label="启用" checked={addon.isActive} onCheckedChange={(isActive) => updateTrafficAddon(index, { isActive })} />
+                    <Checkbox aria-label="启用" checked={addon.isActive} onCheckedChange={(isActive) => updateTrafficAddon(index, { isActive })} />
                   </label>
                   <Button type="button" variant="ghost" size="icon" aria-label="删除流量加购" className="text-destructive" onClick={() => removeTrafficAddon(index)}>
                     <Trash2 className="h-4 w-4" />

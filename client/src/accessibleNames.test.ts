@@ -41,6 +41,9 @@ const CONTROLS: Record<string, "input" | "switch" | "select"> = {
   Textarea: "input",
   Switch: "switch",
   OptimisticSwitch: "switch",
+  // 复选框渲染出来是 <input type="checkbox">，但 placeholder 对它没意义，
+  // 所以归到 switch 这一类（不给 placeholder 兜底）。
+  Checkbox: "switch",
   SelectTrigger: "select",
 };
 

@@ -28,6 +28,7 @@ import {
 import type { LinkCreateType } from "@/components/LinkCreateTypeSelector";
 import { getLinkTestDetailEndpointIds, LinkTestProbeView, getLinkTestTotalLatency, hasPendingLinkTestDetails, parseLinkTestMessage, type LinkTestPlannedSegment } from "@/components/LinkTestLatencySummary";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -3260,7 +3261,7 @@ function TunnelsContent() {
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2" title={!proxySupported ? "仅 GOST 和 Realm 支持" : undefined}>
                   <span className="min-w-0 truncate text-sm">接收 PROXY</span>
-                  <Switch
+                  <Checkbox
                     checked={proxySupported && chainCreateForm.proxyProtocolReceive}
                     disabled={!proxySupported}
                     onCheckedChange={(proxyProtocolReceive) => setChainCreateForm((prev) => ({ ...prev, proxyProtocolReceive }))}
@@ -3268,7 +3269,7 @@ function TunnelsContent() {
                 </label>
                 <label className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2" title={!proxySupported ? "仅 GOST 和 Realm 支持" : undefined}>
                   <span className="min-w-0 truncate text-sm">发送 PROXY</span>
-                  <Switch
+                  <Checkbox
                     checked={proxySupported && chainCreateForm.proxyProtocolSend}
                     disabled={!proxySupported}
                     onCheckedChange={(proxyProtocolSend) => setChainCreateForm((prev) => ({ ...prev, proxyProtocolSend }))}
@@ -3363,7 +3364,7 @@ function TunnelsContent() {
     const renderProxySwitch = (label: string, field: "proxyProtocolReceive" | "proxyProtocolSend" | "proxyProtocolExitReceive" | "proxyProtocolExitSend") => (
       <label className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2">
         <span className="min-w-0 truncate text-sm">{label}</span>
-        <Switch
+        <Checkbox
           checked={form[field]}
           onCheckedChange={(checked) => setForm((prev) => ({ ...prev, [field]: checked }))}
         />
@@ -3378,7 +3379,7 @@ function TunnelsContent() {
               {proxyAnyEnabled ? `已配置 V${form.proxyProtocolVersion}` : tunnelProxyPanelOpen ? "待配置" : "关闭"}
             </span>
           </div>
-          <Switch
+          <Checkbox
             checked={tunnelProxyPanelOpen}
             onCheckedChange={(checked) => {
               setTunnelProxyPanelOpen(checked);
@@ -3434,7 +3435,7 @@ function TunnelsContent() {
       tooltip?: string,
     ) => {
       const control = (
-        <Switch aria-label={title}
+        <Checkbox aria-label={title}
           checked={checked}
           onCheckedChange={onCheckedChange}
         />
@@ -4580,7 +4581,7 @@ function TunnelsContent() {
                       <div className="flex items-end">
                         <label className="flex h-10 w-full items-center justify-between rounded-md border border-border/60 px-3">
                           <span className="text-sm">启用</span>
-                          <Switch
+                          <Checkbox
                             checked={chainCreateForm.isEnabled}
                             onCheckedChange={(isEnabled) => setChainCreateForm({ ...chainCreateForm, isEnabled })}
                           />

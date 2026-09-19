@@ -1631,3 +1631,18 @@ html[data-personalization-background="video"] .fx-mesh {
   .fx-beam-layer { display: none; }
   .fx-mesh-blob { animation: none; }
 }
+
+/*
+  复选框在触屏下的命中区。
+
+  框本身 20px 是手册要的视觉尺寸，但手册同时要求触控目标 ≥44×44。
+  和 .switch-compact 一个办法：用 ::after 往外撑，不动视觉尺寸，也不占布局。
+  多数复选框外面包着整行的 <label>，本来就点哪都行；这条是给那些孤零零一个框的。
+*/
+@media (pointer: coarse) {
+  .fx-checkbox::after {
+    content: "";
+    position: absolute;
+    inset: -12px;
+  }
+}

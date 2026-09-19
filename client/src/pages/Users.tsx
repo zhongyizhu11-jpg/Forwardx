@@ -25,6 +25,7 @@ import { PersistentPagination, usePersistentPageRequest, useServerPagination } f
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { migrateLegacyAvatarValue } from "@/lib/avatar";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1916,7 +1917,7 @@ function UsersContent() {
                 <div className="min-w-0 pr-3">
                   <p className="text-xs text-muted-foreground">关闭后不能创建或启用规则。</p>
                 </div>
-                <Switch
+                <Checkbox
                   checked={newCanAddRules}
                   onCheckedChange={(checked) => {
                     setNewCanAddRules(checked);
@@ -1932,7 +1933,7 @@ function UsersContent() {
                     允许生成订阅地址导入客户端。与转发权限互不影响。
                   </p>
                 </div>
-                <Switch
+                <Checkbox
                   checked={newAllowProxySubscription}
                   onCheckedChange={setNewAllowProxySubscription}
                 />
@@ -2433,7 +2434,7 @@ function UsersContent() {
                     套餐已附带该权限的用户不受这里影响；流量用尽或账号被停时自动收回。
                   </p>
                 </div>
-                <Switch
+                <Checkbox
                   checked={allowProxySubscription}
                   onCheckedChange={setAllowProxySubscription}
                   className="mt-1 shrink-0"
@@ -2446,23 +2447,23 @@ function UsersContent() {
                 <div className="grid grid-cols-[repeat(auto-fit,minmax(132px,1fr))] gap-2">
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">iptables</span>
-                    <Switch aria-label="允许使用 iptables" className="shrink-0" checked={allowIptables} onCheckedChange={setAllowIptables} />
+                    <Checkbox aria-label="允许使用 iptables" className="shrink-0" checked={allowIptables} onCheckedChange={setAllowIptables} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">nftables</span>
-                    <Switch aria-label="允许使用 nftables" className="shrink-0" checked={allowNftables} onCheckedChange={setAllowNftables} />
+                    <Checkbox aria-label="允许使用 nftables" className="shrink-0" checked={allowNftables} onCheckedChange={setAllowNftables} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">realm</span>
-                    <Switch aria-label="允许使用 realm" className="shrink-0" checked={allowRealm} onCheckedChange={setAllowRealm} />
+                    <Checkbox aria-label="允许使用 realm" className="shrink-0" checked={allowRealm} onCheckedChange={setAllowRealm} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">socat</span>
-                    <Switch aria-label="允许使用 socat" className="shrink-0" checked={allowSocat} onCheckedChange={setAllowSocat} />
+                    <Checkbox aria-label="允许使用 socat" className="shrink-0" checked={allowSocat} onCheckedChange={setAllowSocat} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">gost</span>
-                    <Switch aria-label="允许使用 gost" className="shrink-0" checked={allowGost} onCheckedChange={setAllowGost} />
+                    <Checkbox aria-label="允许使用 gost" className="shrink-0" checked={allowGost} onCheckedChange={setAllowGost} />
                   </div>
                 </div>
               </div>
@@ -2555,7 +2556,7 @@ function UsersContent() {
                     </p>
                     <p className="text-xs text-muted-foreground">每月自动清零已用流量。</p>
                   </div>
-                  <Switch aria-label="启用月度自动重置"
+                  <Checkbox aria-label="启用月度自动重置"
                     checked={trafficAutoReset}
                     onCheckedChange={(checked) => {
                       setTrafficAutoReset(checked);

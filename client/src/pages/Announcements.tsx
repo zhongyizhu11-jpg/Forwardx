@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +12,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { renderMixedHtml, describeContentFormat } from "@/lib/htmlContent";
 import { trpc } from "@/lib/trpc";
@@ -231,7 +231,7 @@ export default function Announcements() {
                     仅发送给已绑定 Telegram 且在个人资料中开启公告推送的用户。
                   </p>
                 </div>
-                <Switch
+                <Checkbox
                   checked={form.telegramPush}
                   onCheckedChange={(telegramPush) => setForm({ ...form, telegramPush })}
                 />

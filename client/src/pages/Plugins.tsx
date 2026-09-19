@@ -7,6 +7,7 @@ import DataSectionLoading from "@/components/DataSectionLoading";
 import { AgentResourceManager } from "@/components/plugins/AgentResourceManager";
 import { PluginResultRenderer } from "@/components/plugins/PluginResultRenderer";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -367,7 +368,7 @@ function PluginSettingInput({
           <p className="text-sm font-medium">{field.label}</p>
           {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
         </div>
-        <Switch aria-label={field.label} checked={value === true} onCheckedChange={onChange} disabled={disabled} />
+        <Checkbox aria-label={field.label} checked={value === true} onCheckedChange={onChange} disabled={disabled} />
       </div>
     );
   }
@@ -493,7 +494,7 @@ function PluginUsageFieldInput({
           <p className="text-sm font-medium">{field.label}</p>
           {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
         </div>
-        <Switch aria-label={field.label} checked={value === true} onCheckedChange={onChange} disabled={disabled} />
+        <Checkbox aria-label={field.label} checked={value === true} onCheckedChange={onChange} disabled={disabled} />
       </div>
     );
   }
@@ -1594,7 +1595,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                 </p>
               )}
             </div>
-            <Switch
+            <Checkbox
               className="shrink-0"
               checked={usageDraft.enabled}
               onCheckedChange={(enabled) => setUsageDraft((current) => ({ ...current, enabled }))}

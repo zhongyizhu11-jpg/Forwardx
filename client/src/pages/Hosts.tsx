@@ -38,6 +38,7 @@ import {
 } from "@/components/hosts/hostDisplay";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useSortableReorder } from "@/components/SortableDragHandle";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -69,7 +70,6 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SlidingTabsList, type SlidingTabItem } from "@/components/ui/sliding-tabs";
-import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import DataSectionError from "@/components/DataSectionError";
@@ -3239,15 +3239,15 @@ function HostsContent() {
                     <div className="grid gap-2 sm:grid-cols-3">
                       <label className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-muted/35 px-2.5 py-2">
                         <span className="min-w-0 truncate text-sm font-medium">HTTP</span>
-                        <Switch aria-label="拦截 HTTP" className="shrink-0" checked={form.blockHttp} onCheckedChange={(checked) => setForm({ ...form, blockHttp: checked })} />
+                        <Checkbox aria-label="拦截 HTTP" className="shrink-0" checked={form.blockHttp} onCheckedChange={(checked) => setForm({ ...form, blockHttp: checked })} />
                       </label>
                       <label className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-muted/35 px-2.5 py-2">
                         <span className="min-w-0 truncate text-sm font-medium">SOCKS</span>
-                        <Switch aria-label="拦截 SOCKS" className="shrink-0" checked={form.blockSocks} onCheckedChange={(checked) => setForm({ ...form, blockSocks: checked })} />
+                        <Checkbox aria-label="拦截 SOCKS" className="shrink-0" checked={form.blockSocks} onCheckedChange={(checked) => setForm({ ...form, blockSocks: checked })} />
                       </label>
                       <label className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-muted/35 px-2.5 py-2">
                         <span className="min-w-0 truncate text-sm font-medium">TLS</span>
-                        <Switch aria-label="拦截 TLS" className="shrink-0" checked={form.blockTls} onCheckedChange={(checked) => setForm({ ...form, blockTls: checked })} />
+                        <Checkbox aria-label="拦截 TLS" className="shrink-0" checked={form.blockTls} onCheckedChange={(checked) => setForm({ ...form, blockTls: checked })} />
                       </label>
                     </div>
                   </section>
@@ -3400,7 +3400,7 @@ function HostsContent() {
                             />
                             <span className="flex h-8 shrink-0 items-center border-l border-border/60 bg-muted/50 px-1.5 text-sm text-muted-foreground">%</span>
                           </div>
-                          <Switch aria-label="流量耗尽提醒"
+                          <Checkbox aria-label="流量耗尽提醒"
                             checked={form.telegramTrafficAlertEnabled}
                             onCheckedChange={(checked) => setForm({ ...form, telegramTrafficAlertEnabled: checked })}
                           />
@@ -3426,7 +3426,7 @@ function HostsContent() {
                             />
                             <span className="flex h-8 shrink-0 items-center border-l border-border/60 bg-muted/50 px-2 text-sm text-muted-foreground">天</span>
                           </div>
-                          <Switch aria-label="续费提醒"
+                          <Checkbox aria-label="续费提醒"
                             checked={form.telegramRenewalReminderEnabled}
                             onCheckedChange={(checked) => setForm({ ...form, telegramRenewalReminderEnabled: checked })}
                           />
@@ -3450,7 +3450,7 @@ function HostsContent() {
                               ))}
                             </SelectContent>
                           </Select>
-                          <Switch aria-label="每月自动清零" checked={form.trafficAutoReset} onCheckedChange={(checked) => setForm({ ...form, trafficAutoReset: checked })} />
+                          <Checkbox aria-label="每月自动清零" checked={form.trafficAutoReset} onCheckedChange={(checked) => setForm({ ...form, trafficAutoReset: checked })} />
                         </div>
                       </div>
                       <p className="mt-1.5 px-3 text-xs text-muted-foreground">当月没有该日期时按最后一天重置。</p>
@@ -3463,7 +3463,7 @@ function HostsContent() {
                               <Badge variant="secondary" className="shrink-0 text-[11px]">未配置服务商</Badge>
                             ) : null}
                           </div>
-                          <Switch
+                          <Checkbox
                             checked={form.ddnsEnabled}
                             disabled={!ddnsProviderEnabled && !form.ddnsEnabled}
                             onCheckedChange={(checked) => setForm({ ...form, ddnsEnabled: checked })}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { valueAtPath } from "./agentResourceState";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -14,7 +15,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
@@ -801,7 +801,7 @@ export function AgentResourceManager({
               <Label>{field.label}</Label>
               {field.description && <p className="mt-0.5 text-xs text-muted-foreground">{field.description}</p>}
             </div>
-            <Switch aria-label={field.label} checked={value === true} disabled={disabled} onCheckedChange={setValue} />
+            <Checkbox aria-label={field.label} checked={value === true} disabled={disabled} onCheckedChange={setValue} />
           </div>
         ) : field.type === "select" ? (
           <Select value={String(value ?? "")} disabled={disabled} onValueChange={setValue}>
@@ -1042,7 +1042,7 @@ export function AgentResourceManager({
                     return (
                       <TableCell key={column.key} className="max-w-72">
                         {column.type === "boolean" ? (
-                          <Switch checked={value === true} disabled aria-label={column.label} />
+                          <Checkbox checked={value === true} disabled aria-label={column.label} />
                         ) : column.type === "status" ? (
                           <Badge variant="outline" className={taskStatusClass(valueStatus(value))}>
                             {typeof value === "boolean" ? (value ? column.trueLabel || "是" : column.falseLabel || "否") : displayValue(value)}

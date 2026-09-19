@@ -131,7 +131,9 @@
 .workspace-layout [data-sidebar="sidebar"] { background: var(--fx-surface); }
 [data-sidebar="menu-button"] { min-height: 38px; }
 [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-subtle); color: var(--fx-text); font-weight: 600; }
-[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] { background-color: var(--fx-surface); border-color: var(--fx-control-stroke); }
+/* 复选框也走控件描边：一个 20px 的空方框全靠边框才看得见，用 --fx-stroke 太淡。
+   选中时边框由 checked:border-primary 接管，所以这里只管没选中的状态。 */
+[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"], [data-slot="checkbox"]:not(:checked) { background-color: var(--fx-surface); border-color: var(--fx-control-stroke); }
 [data-slot="input"]:focus-visible, [data-slot="textarea"]:focus-visible, [data-slot="select-trigger"]:focus { border-color: var(--fx-brand); }
 [data-slot="textarea"] { line-height: 1.6; }
 [data-slot="dialog-header"] { min-width: 0; }

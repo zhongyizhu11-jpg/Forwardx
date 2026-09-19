@@ -9,6 +9,7 @@ import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import DataSectionError from "@/components/DataSectionError";
 import StatCard from "@/components/StatCard";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1817,7 +1818,7 @@ export default function ClientSubscriptionsPage() {
                     </span>
                   ) : null}
                 </p>
-                <Switch
+                <Checkbox
                   checked={nodeIncludeDirect}
                   onCheckedChange={setNodeIncludeDirect}
                   className="mt-0.5 shrink-0"
@@ -1891,7 +1892,7 @@ export default function ClientSubscriptionsPage() {
                       onChange={(event) => setNodeTrafficResetDay(event.target.value)}
                     />
                   ) : null}
-                  <Switch aria-label="每月自动清零" checked={nodeTrafficAutoReset} onCheckedChange={setNodeTrafficAutoReset} />
+                  <Checkbox aria-label="每月自动清零" checked={nodeTrafficAutoReset} onCheckedChange={setNodeTrafficAutoReset} />
                 </div>
               </div>
             </div>
