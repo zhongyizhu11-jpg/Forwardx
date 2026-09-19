@@ -9,7 +9,7 @@ import { Eye, EyeOff, Loader2, Sun, Moon, RefreshCw, UserPlus, LogIn, Send, Sett
 import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
 import { useTheme } from "@/contexts/ThemeContext";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { mobileAuth } from "@/lib/mobileAuth";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { ACCOUNT_DISABLED_ERR_MSG } from "@shared/const";
@@ -276,9 +276,14 @@ export default function Login() {
     retry: false,
     refetchOnWindowFocus: false,
   });
-  const registrationEnabled = emailConfig?.registrationEnabled !== false;
-  const siteTitle = "ForwardX";
-  const logoSrc = resolvedTheme === "dark" ? "/logo-dark.png" : "/logo-light.png";
+  const { data: publicInfo } = trpc.system.publicInfo.useQuery(undefined, {
+    enabled: hasMobilePanelUrl,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const registrationEnabled = emailConfig?.registrationEnabled !== false && publicInfo?.registrationEnabled !== false;
+  const siteTitle = publicInfo?.siteTitle?.trim() || "ForwardX";
+  const logoSrc = publicInfo?.siteLogoDataUrl || (resolvedTheme === "dark" ? "/logo-dark.png" : "/logo-light.png");
 
   useEffect(() => {
     if (mode === "register" && !registrationEnabled) {
@@ -828,6 +833,7 @@ export default function Login() {
   return (
     <div className="mobile-login-screen auth-shell relative min-h-screen overflow-hidden">
       <div className="auth-grid-overlay pointer-events-none absolute inset-0 opacity-[0.14]" />
+      {!mobileAuth.isNative && <Link href="/" className="auth-home-link">← 返回首页</Link>}
       <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
         {mobileAuth.isNative && (
           <button
@@ -864,16 +870,8 @@ export default function Login() {
                 <img src={logoSrc} alt={siteTitle} className="h-11 w-11 object-contain" />
                 <span className="text-2xl font-bold tracking-tight text-foreground">{siteTitle}</span>
               </div>
-              <p className="mt-7 max-w-lg text-lg leading-8 text-foreground/72">
-                管理多主机转发、隧道和流量。
-              </p>
-              <div className="mt-8 grid max-w-md grid-cols-3 gap-3">
-                {["转发", "隧道", "流量"].map((label) => (
-                  <div key={label} className="rounded-lg border border-border/45 bg-background/35 px-3 py-2 text-center text-sm font-medium text-foreground/85 shadow-sm backdrop-blur">
-                    {label}
-                  </div>
-                ))}
-              </div>
+              <h2 className="auth-intro-title">每一条连接，<br /><span>都有清晰的去处。</span></h2>
+              <p className="mt-4 max-w-lg text-base leading-7 text-muted-foreground">在同一个工作空间，管理主机、线路与流量。</p>
               <div className="mt-10 space-y-6">
                 {authHighlights.map((item, index) => {
                   const Icon = item.icon;
@@ -915,7 +913,7 @@ export default function Login() {
                 {mode === "login" ? "欢迎回来" : "创建账号"}
               </h1>
               <CardDescription className="mt-1 text-sm text-muted-foreground">
-                {isTelegramPending ? "正在通过 Telegram 登录" : mode === "login" ? "登录账号以继续" : "使用邮箱注册 ForwardX 账户"}
+                {isTelegramPending ? "正在通过 Telegram 登录" : mode === "login" ? `登录 ${siteTitle}，继续你的工作` : `使用邮箱创建 ${siteTitle} 账号`}
               </CardDescription>
             </CardHeader>
             <CardContent className="px-0">
@@ -1334,4 +1332,3 @@ export default function Login() {
     </div>
   );
 }
-

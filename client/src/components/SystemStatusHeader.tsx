@@ -1,4 +1,5 @@
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Layers } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 import { formatBytes } from "@shared/formatBytes";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,7 @@ type Props = {
   recentBytes?: number;
   loading?: boolean;
   isAdmin: boolean;
+  onRetry?: () => void;
 };
 
 /** 一项指标：主数字 + 一句从属说明。说明为空时不占位。 */
@@ -48,8 +50,9 @@ function Metric({ label, value, note, tone }: {
   );
 }
 
-export default function SystemStatusHeader({ health, recentBytes, loading, isAdmin }: Props) {
+export default function SystemStatusHeader({ health, recentBytes, loading, isAdmin, onRetry }: Props) {
   const issues = Math.max(0, Number(health?.issues) || 0);
+  const empty = !!health && health.hosts.total === 0 && health.links.total === 0 && health.forwards.total === 0;
   const healthy = !!health && issues === 0;
 
   /**
@@ -66,8 +69,10 @@ export default function SystemStatusHeader({ health, recentBytes, loading, isAdm
   return (
     <section className="system-health p-4 sm:p-5">
       <div className="flex items-start gap-3">
-        {loading || !health ? (
+        {loading && !health ? (
           <span className="mt-0.5 h-5 w-5 shrink-0 rounded-full bg-muted" aria-hidden="true" />
+        ) : empty ? (
+          <Layers className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
         ) : healthy ? (
           <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden="true" />
         ) : (
@@ -75,7 +80,7 @@ export default function SystemStatusHeader({ health, recentBytes, loading, isAdm
         )}
         <div className="min-w-0">
           <h2 className="text-lg font-semibold tracking-tight sm:text-xl">
-            {loading || !health ? "检查中" : healthy ? "运行正常" : `${issues} 处异常`}
+            {loading && !health ? "检查中" : !health ? "暂时无法读取状态" : empty ? "准备好，开始你的第一条连接" : healthy ? "运行正常" : `${issues} 处异常`}
           </h2>
           {/*
             正常时不再补一句「一切都好」—— 那是废话。异常时才需要这一行，
@@ -84,6 +89,8 @@ export default function SystemStatusHeader({ health, recentBytes, loading, isAdm
           {!loading && health && parts.length > 0 ? (
             <p className="mt-1 text-sm text-muted-foreground">{parts.join(" · ")}</p>
           ) : null}
+          {empty && <p className="mt-2 text-sm leading-6 text-muted-foreground">{isAdmin ? "先接入主机，再配置链路，最后创建转发规则。" : "获得可用线路后，就可以创建转发规则。需要资源权限时请联系管理员。"}</p>}
+          {!loading && !health && onRetry && <Button variant="outline" size="sm" className="mt-3" onClick={onRetry}>重新读取</Button>}
         </div>
       </div>
 

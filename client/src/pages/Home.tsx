@@ -277,7 +277,7 @@ function DashboardContent() {
     { refetchInterval: pollingInterval("slow"), staleTime: 25000, placeholderData: (previousData) => previousData },
   );
 
-  const { data: health, isLoading: healthLoading } = trpc.dashboard.health.useQuery(undefined, {
+  const { data: health, isLoading: healthLoading, refetch: refetchHealth } = trpc.dashboard.health.useQuery(undefined, {
     refetchInterval: pollingInterval("normal"),
     placeholderData: (previousData) => previousData,
   });
@@ -392,6 +392,7 @@ function DashboardContent() {
         recentBytes={recentBytes}
         loading={healthLoading}
         isAdmin={isAdmin}
+        onRetry={() => { void refetchHealth(); }}
       />
 
       {/*

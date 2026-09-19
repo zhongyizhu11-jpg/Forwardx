@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Activity, ArrowRightLeft, BookOpen, Copy, Gift, LayoutDashboard, Link2, Moon, Network, Plus, Search, Server, Settings, ShieldCheck, Sun, Wallet, X } from "lucide-react";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
@@ -10,6 +10,7 @@ import StatCard from "@/components/StatCard";
 import EmptyState from "@/components/EmptyState";
 import DataSectionError from "@/components/DataSectionError";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import { WorkspaceCommand, WorkspaceMobileNav } from "@/components/WorkspaceNavigation";
 import { PublicHomeView } from "@/pages/PublicHome";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -43,11 +44,20 @@ function SelectField({label, options}: {label:string;options:string[]}) {
   return <FormField className="space-y-2"><Label>{label}</Label><Select defaultValue={options[0]}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{options.map(x=><SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></FormField>;
 }
 function Demo() {
-  const [page,setPage] = useState("转发规则"), [dark,setDark] = useState(false), [tab,setTab] = useState("all");
+  const [page,setPage] = useState("公开首页"), [dark,setDark] = useState(false), [tab,setTab] = useState("all");
+  const [command,setCommand] = useState(false), [registration,setRegistration] = useState(true);
   const [query,setQuery]=useState(""),[dialog,setDialog]=useState(false),[nav,setNav]=useState(false),[redeem,setRedeem]=useState(true),[discount,setDiscount]=useState(true),[billingTab,setBillingTab]=useState("redeem");
   const [enabled,setEnabled]=useState<Record<string,boolean>>({}),[message,setMessage]=useState("");
   const toggleTheme=()=>{setDark(!dark);document.documentElement.classList.toggle("dark",!dark);};
+  const logo=dark?(window as any).__PREVIEW_LOGO_DARK__:(window as any).__PREVIEW_LOGO__;
   const changePage=(name:string)=>{setPage(name);setNav(false);setTab(name==="链路管理"?"tunnel":"all");setQuery("");};
+  const destinations=sections.map(({name,icon})=>({path:name,label:name,icon,group:"设计预览"}));
+  useEffect(()=>{
+    if(page==="公开首页")return;
+    const shortcut=(event:KeyboardEvent)=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="k"&&!dialog){event.preventDefault();setCommand(value=>!value);}};
+    window.addEventListener("keydown",shortcut);
+    return ()=>window.removeEventListener("keydown",shortcut);
+  },[page,dialog]);
   const names=page==="链路管理"?["华南 · 香港","华东 · 东京"]:["香港业务入口","东京备用入口","IPv6 业务入口"];
   const filtered=names.filter(x=>x.includes(query)&&["all","tunnel"].includes(tab));
   const createForm=<div className="space-y-5">
@@ -56,17 +66,18 @@ function Demo() {
     <FormField className="space-y-2"><Label>目标地址</Label><Input placeholder="example.com:443" /></FormField>
     <FormField className="space-y-2"><Label>规则名称（选填）</Label><Input placeholder="留空时按目标地址生成" /></FormField>
   </div>;
-  if(page==="公开首页")return <><div className="preview-return"><Button size="sm" variant="outline" onClick={()=>changePage("转发规则")}>返回控制台预览</Button><span role="status" className="ml-3 text-xs text-muted-foreground">{message}</span></div><div onClickCapture={event => { const link = (event.target as Element).closest("a"); if (link?.getAttribute("href")?.startsWith("/")) { event.preventDefault(); event.stopPropagation(); setMessage("这是设计预览，登录与注册请在正式面板操作。"); } }}><PublicHomeView siteTitle="ForwardX" logoSrc={(window as any).__PREVIEW_LOGO__} version="设计预览" repoUrl="https://github.com/zhongyizhu11-jpg/Forwardx" registrationEnabled={true} dark={dark} onToggleTheme={toggleTheme}/></div></>;
+  if(page==="公开首页")return <><div className="preview-return"><Button size="sm" variant="outline" onClick={()=>changePage("转发规则")}>查看工作台预览</Button><Button size="sm" variant="ghost" onClick={()=>setRegistration(value=>!value)}>模拟注册{registration?"关闭":"开放"}</Button><span role="status" className="text-xs text-muted-foreground">{message}</span></div><div onClickCapture={event => { const link = (event.target as Element).closest("a"); if (link?.getAttribute("href")?.startsWith("/")) { event.preventDefault(); event.stopPropagation(); setMessage("这是设计预览，登录与注册请在正式面板操作。"); } }}><PublicHomeView siteTitle="ForwardX" logoSrc={logo} repoUrl="https://github.com/zhongyizhu11-jpg/Forwardx" registrationEnabled={registration} dark={dark} onToggleTheme={toggleTheme}/></div></>;
   return <div className="workspace-layout preview-layout">
     <aside className={`preview-sidebar ${nav?"is-open":""}`}>
-      <div className="preview-brand"><img src={(window as any).__PREVIEW_LOGO__} alt=""/><strong>ForwardX</strong><Button className="ml-auto md:hidden" variant="ghost" size="icon" onClick={()=>setNav(false)} aria-label="关闭导航"><X className="h-4 w-4"/></Button></div>
+      <div className="preview-brand"><img src={logo} alt=""/><strong>ForwardX</strong><Button className="ml-auto md:hidden" variant="ghost" size="icon" onClick={()=>setNav(false)} aria-label="关闭导航"><X className="h-4 w-4"/></Button></div>
+      <button className="workspace-nav-search mt-6" onClick={()=>{setNav(false);setCommand(true);}}><Search size={16}/><span>查找功能</span><kbd>⌘ / Ctrl K</kbd></button>
       <p className="px-3 pb-3 pt-6 text-xs text-muted-foreground">工作空间</p>
       <nav aria-label="设计预览导航" className="space-y-1">{sections.map(({name,icon:Icon})=><button key={name} data-sidebar="menu-button" data-active={page===name} onClick={()=>changePage(name)} className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm"><Icon className="h-4 w-4"/>{name}</button>)}</nav>
       <div className="mt-auto border-t pt-4 text-xs text-muted-foreground">统一设计 · 交互预览</div>
     </aside>
-    <div className="min-w-0 flex-1">
-      <header className="preview-topbar"><Button variant="ghost" size="icon" className="md:hidden" onClick={()=>setNav(!nav)} aria-label="打开导航"><LayoutDashboard className="h-5 w-5"/></Button><span className="text-sm text-muted-foreground">工作空间 <span className="mx-2 text-border">/</span><span className="text-foreground">{page}</span></span><Button variant="ghost" size="icon" onClick={toggleTheme} aria-label={dark?"切换浅色模式":"切换深色模式"} className="ml-auto">{dark?<Sun className="h-4 w-4"/>:<Moon className="h-4 w-4"/>}</Button></header>
-      <main className="workspace-main space-y-6 p-4 sm:p-6 lg:p-8">
+    <div className="workspace-with-mobile-nav min-w-0 flex-1">
+      <header className="preview-topbar"><Button variant="ghost" size="icon" className="md:hidden" onClick={()=>setNav(!nav)} aria-label="打开导航"><LayoutDashboard className="h-5 w-5"/></Button><span className="min-w-0 truncate text-sm text-muted-foreground"><span className="hidden sm:inline">工作空间 <span className="mx-2 text-border">/</span></span><span className="text-foreground">{page}</span></span><Button variant="ghost" size="icon" onClick={()=>setCommand(true)} aria-label="查找功能" className="ml-auto"><Search size={16}/></Button><Button variant="ghost" size="icon" onClick={toggleTheme} aria-label={dark?"切换浅色模式":"切换深色模式"}>{dark?<Sun className="h-4 w-4"/>:<Moon className="h-4 w-4"/>}</Button></header>
+      <main id="workspace-content" tabIndex={-1} className="workspace-main space-y-6 p-4 sm:p-6 lg:p-8">
         {page==="总览"?<>
           <WorkspaceHeader title="总览" description="查看运行状态、资源使用和流量趋势。" />
           <SystemStatusHeader isAdmin health={{hosts:{total:4,online:4,offline:0,neverConnected:0},links:{total:2,healthy:2,unhealthy:0},forwards:{total:3,running:3,stalled:0,disabled:0},issues:0}} recentBytes={1717986918}/>
@@ -104,7 +115,9 @@ function Demo() {
         </>}
         <p role="status" className="text-sm text-muted-foreground">{message}</p>
       </main>
+      <WorkspaceMobileNav items={destinations.slice(0,4)} currentPath={page} onNavigate={item=>changePage(item.path)} onMore={()=>setNav(true)} moreOpen={nav}/>
     </div>
+    <WorkspaceCommand open={command} onOpenChange={setCommand} items={destinations} currentPath={page} onNavigate={item=>changePage(item.path)}/>
     <Dialog open={dialog} onOpenChange={setDialog}><DialogContent><DialogHeader><DialogTitle>创建转发规则</DialogTitle><DialogDescription>先选择线路，再设置入口端口与目标地址。</DialogDescription></DialogHeader>{createForm}<DialogFooter><Button variant="outline" onClick={()=>setDialog(false)}>取消</Button><Button onClick={()=>{setDialog(false);setMessage("演示预览不会创建实际资源");}}>完成预览</Button></DialogFooter></DialogContent></Dialog>
   </div>;
 }

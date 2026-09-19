@@ -1,32 +1,32 @@
 /* ForwardX surfaces and type scale. Shared by the app and documentation. */
 :root {
-  --fx-canvas: #f3f5f8;
+  --fx-canvas: #f5f6f7;
   --fx-surface: #ffffff;
-  --fx-subtle: #f5f7fa;
+  --fx-subtle: #f3f4f5;
   --fx-raised: #ffffff;
-  --fx-stroke: #dce2ea;
-  --fx-control-stroke: #8794a4;
-  --fx-text: #182536;
-  --fx-muted: #59697c;
-  --fx-brand: #07766a;
-  --fx-brand-soft: #e5f4ef;
-  --fx-shadow: 0 1px 2px rgb(24 37 54 / 4%), 0 4px 16px rgb(24 37 54 / 5%);
-  --fx-shadow-raised: 0 2px 4px rgb(24 37 54 / 6%), 0 12px 32px rgb(24 37 54 / 10%);
+  --fx-stroke: #dedfe3;
+  --fx-control-stroke: #858b95;
+  --fx-text: #20242b;
+  --fx-muted: #616976;
+  --fx-brand: #146f63;
+  --fx-brand-soft: #eaf4f1;
+  --fx-shadow: 0 1px 2px rgb(24 30 36 / 3%), 0 4px 12px rgb(24 30 36 / 3%);
+  --fx-shadow-raised: 0 2px 4px rgb(24 30 36 / 4%), 0 12px 32px rgb(24 30 36 / 8%);
   --fx-radius: 12px;
   --fx-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --fx-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 .dark {
-  --fx-canvas: #101720;
-  --fx-surface: #1a2430;
-  --fx-subtle: #141e29;
-  --fx-raised: #243140;
-  --fx-stroke: #344455;
-  --fx-control-stroke: #65788b;
-  --fx-text: #edf2f8;
-  --fx-muted: #a8b6c7;
-  --fx-brand: #6ad9c1;
-  --fx-brand-soft: #193d37;
+  --fx-canvas: #101315;
+  --fx-surface: #191d21;
+  --fx-subtle: #13171b;
+  --fx-raised: #252a30;
+  --fx-stroke: #353d46;
+  --fx-control-stroke: #728091;
+  --fx-text: #edf0f3;
+  --fx-muted: #a9b2bd;
+  --fx-brand: #78d8bd;
+  --fx-brand-soft: #213c35;
   --fx-shadow: 0 1px 2px rgb(0 0 0 / 12%), inset 0 1px 0 rgb(255 255 255 / 3%);
   --fx-shadow-raised: 0 12px 32px rgb(0 0 0 / 24%), inset 0 1px 0 rgb(255 255 255 / 5%);
 }

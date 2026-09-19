@@ -60,6 +60,7 @@ import {
   Globe2,
   BellOff,
   Puzzle,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 import { App as CapacitorApp } from "@capacitor/app";
@@ -85,6 +86,7 @@ import { AvatarPicker } from "@/components/AvatarPicker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { normalizeSidebarMenuSettings, type SidebarMenuKey } from "@shared/sidebarMenu";
 import { buildPanelInstallerCommand } from "@shared/githubAccelerator";
+import { WorkspaceCommand, WorkspaceMobileNav, type WorkspaceDestination } from "@/components/WorkspaceNavigation";
 
 const TWO_FACTOR_SETUP_SECONDS = 5 * 60;
 const SITE_LOGO_CACHE_KEY = "forwardx.siteLogoDataUrl";
@@ -100,7 +102,7 @@ type SidebarNavItem = {
 const announcementsMenuItem: SidebarNavItem = { icon: Megaphone, label: "公告", path: "/announcements", menuKey: "announcements" };
 
 const mainMenuItems: SidebarNavItem[] = [
-  { icon: LayoutDashboard, label: "仪表盘", path: "/", menuKey: "dashboard" },
+  { icon: LayoutDashboard, label: "总览", path: "/", menuKey: "dashboard" },
   { icon: Server, label: "主机管理", path: "/hosts" },
   { icon: Route, label: "链路管理", path: "/tunnels" },
   { icon: ArrowRightLeft, label: "转发规则", path: "/rules" },
@@ -388,6 +390,8 @@ function DashboardLayoutContent({
   const openMobileRef = useRef(openMobile);
   const mobileHeaderRef = useRef<HTMLDivElement | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const commandOpenRef = useRef(commandOpen);
   const accountMenuOpenRef = useRef(accountMenuOpen);
   const isDesktopCollapsed = !isMobile && state === "collapsed";
   const isAdmin = user?.role === "admin";
@@ -1212,6 +1216,12 @@ function DashboardLayoutContent({
   const managementMenuItems: SidebarNavItem[] = isAdmin
     ? [...visibleProfileMenuItems, ...visibleAdminMenuItems]
     : [...(canShowNetworkTest ? [lookingGlassMenuItem] : []), ...visibleProfileMenuItems];
+  const commandItems: WorkspaceDestination[] = [
+    ...primaryMenuItems.map(item => ({ ...item, group: "工作空间" })),
+    ...managementMenuItems.map(item => ({ ...item, group: isAdmin ? "管理与账户" : "工具与账户" })),
+    ...otherMenuItems.map(item => ({ ...item, group: "扩展" })),
+  ];
+  const mobileMenuItems = visibleMainMenuItems.slice(0, 4);
   const closeMobileNavigation = () => {
     if (isMobile) {
       setAccountMenuOpen(false);
@@ -1222,6 +1232,12 @@ function DashboardLayoutContent({
     closeMobileNavigation();
     if (path === currentPath) return;
     setLocation(path);
+  };
+  const navigateToDestination = (item: WorkspaceDestination) => {
+    if (item.externalUrl) {
+      closeMobileNavigation();
+      window.open(item.externalUrl, "_blank", "noopener,noreferrer");
+    } else navigateFromSidebar(item.path);
   };
   const navigateFromAccountMenu = (path: string) => {
     setAccountMenuOpen(false);
@@ -1294,6 +1310,20 @@ function DashboardLayoutContent({
     accountMenuOpenRef.current = accountMenuOpen;
   }, [accountMenuOpen]);
 
+  useEffect(() => { commandOpenRef.current = commandOpen; }, [commandOpen]);
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k" || event.isComposing) return;
+      // Do not cover a form or confirmation that is already open.
+      if (!commandOpenRef.current && document.querySelector('[role="dialog"][data-state="open"]:not([data-mobile-sidebar])')) return;
+      event.preventDefault();
+      setOpenMobile(false);
+      setCommandOpen(value => !value);
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [setOpenMobile]);
+
   useEffect(() => {
     if (isMobile && !openMobile) setAccountMenuOpen(false);
   }, [isMobile, openMobile]);
@@ -1344,6 +1374,7 @@ function DashboardLayoutContent({
     let disposed = false;
     let removeListener: (() => void) | undefined;
     CapacitorApp.addListener("backButton", (event) => {
+      if (commandOpenRef.current) { setCommandOpen(false); return; }
       if (accountMenuOpenRef.current || openMobileRef.current) {
         setAccountMenuOpen(false);
         setOpenMobile(false);
@@ -1399,7 +1430,7 @@ function DashboardLayoutContent({
                   <button
                     onClick={toggleSidebar}
                     className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
-                    aria-label="Toggle navigation"
+                    aria-label="收起导航"
                   >
                     <PanelLeft className="h-4 w-4 text-muted-foreground" />
                   </button>
@@ -1409,7 +1440,7 @@ function DashboardLayoutContent({
               <button
                 onClick={toggleSidebar}
                 className="collapsed-sidebar-logo-button flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label="Toggle navigation"
+                aria-label="展开导航"
                 title={siteTitle}
               >
                 {logoMark}
@@ -1419,10 +1450,17 @@ function DashboardLayoutContent({
         </SidebarHeader>
 
         <SidebarContent className="gap-1 pb-2 mobile-sidebar-content">
+          <div className={cn("px-4 pb-2", isDesktopCollapsed && "px-2")}>
+            <button type="button" className={cn("workspace-nav-search", isDesktopCollapsed && "is-collapsed")}
+              onClick={() => { closeMobileNavigation(); setCommandOpen(true); }} aria-label="查找功能" title="查找功能（Ctrl / ⌘ K）">
+              <Search size={16} aria-hidden="true" />
+              {!isDesktopCollapsed && <><span>查找功能</span><kbd>⌘ / Ctrl K</kbd></>}
+            </button>
+          </div>
           {primaryMenuItems.length > 0 && (
             <SidebarGroup className={cn("pb-2 mobile-sidebar-group", mobileAuth.isNative && "pb-1.5")}>
               <SidebarGroupLabel className="text-xs text-muted-foreground uppercase tracking-wider">
-                主菜单
+                工作空间
               </SidebarGroupLabel>
               <SidebarMenu className={cn("py-1 mobile-sidebar-menu", isDesktopCollapsed ? "items-center px-0" : "px-2")}>
                 {renderSidebarItems(primaryMenuItems)}
@@ -1433,7 +1471,7 @@ function DashboardLayoutContent({
           {managementMenuItems.length > 0 && (
             <SidebarGroup className={cn("mt-1 shrink-0 pt-2 mobile-sidebar-group mobile-sidebar-admin-group", !mobileAuth.isNative && "border-t border-sidebar-border/50", mobileAuth.isNative && "mt-0 pt-2 border-t border-sidebar-border/50")}>
               <SidebarGroupLabel className="text-xs text-muted-foreground uppercase tracking-wider">
-                管理
+                {isAdmin ? "管理与账户" : "工具与账户"}
               </SidebarGroupLabel>
               <SidebarMenu className={cn("py-1 mobile-sidebar-menu", isDesktopCollapsed ? "items-center px-0" : "px-2")}>
                 {renderSidebarItems(managementMenuItems)}
@@ -1444,7 +1482,7 @@ function DashboardLayoutContent({
           {otherMenuItems.length > 0 && (
             <SidebarGroup className={cn("mt-1 shrink-0 pt-2 mobile-sidebar-group mobile-sidebar-admin-group", !mobileAuth.isNative && "border-t border-sidebar-border/50", mobileAuth.isNative && "mt-0 pt-2 border-t border-sidebar-border/50")}>
               <SidebarGroupLabel className="text-xs text-muted-foreground uppercase tracking-wider">
-                其他
+                扩展
               </SidebarGroupLabel>
               <SidebarMenu className={cn("py-1 mobile-sidebar-menu", isDesktopCollapsed ? "items-center px-0" : "px-2")}>
                 {renderSidebarItems(otherMenuItems)}
@@ -1632,7 +1670,7 @@ function DashboardLayoutContent({
         </SidebarFooter>
       </Sidebar>
 
-      <SidebarInset>
+      <SidebarInset className="workspace-with-mobile-nav">
         <a className="workspace-skip-link" href="#workspace-content">跳到主要内容</a>
         {isMobile && (
           <div ref={mobileHeaderRef} data-mobile-header="true" className="glass-surface fixed inset-x-0 top-0 z-40 flex min-h-14 items-center justify-between border-b px-2 md:sticky">
@@ -1646,17 +1684,20 @@ function DashboardLayoutContent({
                 </div>
               </div>
             </div>
-            <button
-              onClick={toggleTheme}
-              className="h-9 w-9 flex items-center justify-center hover:bg-accent rounded-lg transition-colors"
-              aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"}
-            >
-              {resolvedTheme === "dark" ? (
-                <Sun className="h-4 w-4" />
-              ) : (
-                <Moon className="h-4 w-4" />
-              )}
-            </button>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="icon" onClick={() => setCommandOpen(true)} aria-label="查找功能"><Search className="h-4 w-4" /></Button>
+              <button
+                onClick={toggleTheme}
+                className="h-9 w-9 flex items-center justify-center hover:bg-accent rounded-lg transition-colors"
+                aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"}
+              >
+                {resolvedTheme === "dark" ? (
+                  <Sun className="h-4 w-4" />
+                ) : (
+                  <Moon className="h-4 w-4" />
+                )}
+              </button>
+            </div>
           </div>
         )}
         <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className="workspace-main flex-1 px-4 pb-6 pt-4 sm:p-6 lg:p-8">
@@ -1729,7 +1770,11 @@ function DashboardLayoutContent({
             ) : null}
           </div>
         </footer>
+        {isMobile && <WorkspaceMobileNav items={mobileMenuItems} currentPath={currentPath} onNavigate={navigateToDestination}
+          onMore={() => setOpenMobile(true)} moreOpen={openMobile} />}
       </SidebarInset>
+
+      <WorkspaceCommand open={commandOpen} onOpenChange={setCommandOpen} items={commandItems} currentPath={currentPath} onNavigate={navigateToDestination} />
 
       <Dialog open={showUpgradeDialog} onOpenChange={setShowUpgradeDialog}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[560px] overflow-x-hidden sm:max-w-xl">

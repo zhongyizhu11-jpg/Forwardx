@@ -4,7 +4,7 @@
 .preview-brand img { width: 30px; height: 30px; }
 .preview-brand strong { font-size: 18px; letter-spacing: -.025em; }
 .preview-topbar { display: flex; align-items: center; gap: 12px; height: 64px; padding: 12px 24px; border-bottom: 1px solid var(--fx-stroke); background: var(--fx-surface); }
-.preview-return { background: var(--fx-surface); padding: 8px 16px; border-bottom: 1px solid var(--fx-stroke); }
+.preview-return { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: var(--fx-subtle); padding: 8px 16px; border-bottom: 1px solid var(--fx-stroke); }
 @media(max-width:767px) {
   .preview-sidebar { display: none; }
   .preview-sidebar.is-open { display:flex; position: fixed; z-index: 40; left: 0; top: 0; width: min(288px,90vw); box-shadow: var(--fx-shadow-raised); }
