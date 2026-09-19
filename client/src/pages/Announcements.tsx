@@ -164,10 +164,10 @@ export default function Announcements() {
                       </div>
                       {isAdmin && (
                         <div className="flex gap-2">
-                          <Button variant="outline" size="icon" onClick={() => edit(item)}>
+                          <Button variant="outline" size="icon" aria-label={`编辑公告 ${item.title}`} onClick={() => edit(item)}>
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteAnnouncement.mutate({ id: item.id })}>
+                          <Button variant="ghost" size="icon" aria-label={`删除公告 ${item.title}`} className="text-destructive" onClick={() => deleteAnnouncement.mutate({ id: item.id })}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -224,7 +224,7 @@ export default function Announcements() {
                 </FormField>
               </div>
 
-              <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-muted/15 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <FormField className="flex flex-col gap-3 rounded-lg border border-border/40 bg-muted/15 p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <Label>同步 Telegram 推送</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -235,7 +235,7 @@ export default function Announcements() {
                   checked={form.telegramPush}
                   onCheckedChange={(telegramPush) => setForm({ ...form, telegramPush })}
                 />
-              </div>
+              </FormField>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">

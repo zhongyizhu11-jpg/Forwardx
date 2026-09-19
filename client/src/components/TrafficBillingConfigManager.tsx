@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -208,10 +209,10 @@ function BillingConfigCard({
           <span className="min-w-0 break-words text-sm font-medium">{config.resourceName}</span>
         </div>
         <div className="-mr-2 -mt-2 flex shrink-0 items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit}>
+          <Button variant="ghost" size="icon" aria-label={`编辑 ${config.resourceName}`} className="h-8 w-8" onClick={onEdit}>
             <Pencil className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={onDelete}>
+          <Button variant="ghost" size="icon" aria-label={`删除 ${config.resourceName}`} className="h-8 w-8 text-destructive" onClick={onDelete}>
             <Trash2 className="h-4 w-4" />
           </Button>
         </div>
@@ -503,8 +504,8 @@ export default function TrafficBillingConfigManager({
                           <TableCell><Badge variant={config.enabled ? "outline" : "secondary"}>{config.enabled ? "启用" : "停用"}</Badge></TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-1">
-                              <Button variant="ghost" size="icon" onClick={() => openEdit(config)}><Pencil className="h-4 w-4" /></Button>
-                              <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteConfig.mutate({ id: config.id })}><Trash2 className="h-4 w-4" /></Button>
+                              <Button variant="ghost" size="icon" aria-label={`编辑 ${config.resourceName}`} onClick={() => openEdit(config)}><Pencil className="h-4 w-4" /></Button>
+                              <Button variant="ghost" size="icon" aria-label={`删除 ${config.resourceName}`} className="text-destructive" onClick={() => deleteConfig.mutate({ id: config.id })}><Trash2 className="h-4 w-4" /></Button>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -531,7 +532,7 @@ export default function TrafficBillingConfigManager({
           </DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-3 sm:col-span-2 sm:grid-cols-[11rem_minmax(0,1fr)]">
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label>资源类型</Label>
                 <Select
                   value={configForm.resourceCategory}
@@ -557,8 +558,8 @@ export default function TrafficBillingConfigManager({
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="min-w-0 space-y-2">
+              </FormField>
+              <FormField className="min-w-0 space-y-2">
                 <Label>资源</Label>
               <Select
                   value={configForm.resourceId}
@@ -589,7 +590,7 @@ export default function TrafficBillingConfigManager({
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
             </div>
             <div className="space-y-2">
               <Label>单价 / GB</Label>

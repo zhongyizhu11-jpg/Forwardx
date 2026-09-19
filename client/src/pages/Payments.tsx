@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { FormField } from "@/components/ui/form-field";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -257,13 +258,23 @@ function PaymentStatCard({
   );
 }
 
-function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+/*
+  一个 label 配一个输入框 —— 而且是**真的关联上**，不只是摆在上面。
+
+  这页三十多个输入框原来只是把 <Label> 和 <Input> 摆在一起，没有 htmlFor/id 关联：
+  读屏念到输入框时只会说「编辑框，空」，不知道该填什么。
+
+  关联这件事项目里已经有现成的做法：FormField 用 context 发一个 id，
+  Label 拿它当 htmlFor，Input/Textarea/SelectTrigger 拿它当 id。
+  所以这里不再自己造一套 —— 换掉这个包装器的内部，三十八个调用处一个字都不用改。
+*/
+function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <div className="space-y-2">
+    <FormField className="space-y-2">
       <Label>{label}</Label>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-    </div>
+    </FormField>
   );
 }
 
@@ -277,7 +288,7 @@ function CallbackItem({ label, value }: { label: string; value: string }) {
       <div className="mb-1 text-xs text-muted-foreground">{label}</div>
       <div className="flex items-center gap-2">
         <code className="min-w-0 flex-1 truncate text-xs">{value}</code>
-        <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={copy}>
+        <Button type="button" variant="ghost" size="icon" aria-label={`复制${label}`} className="h-7 w-7" onClick={copy}>
           <Copy className="h-3.5 w-3.5" />
         </Button>
       </div>

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -711,7 +712,7 @@ export default function ProxyInboundsSection({
               {/* 分组只在真的有好几条时才给 —— 两条节点摆个分组下拉是噪音。 */}
               {groupMode && onGroupModeChange && groupModeOptions && totalRowCount > 1 ? (
                 <Select value={groupMode} onValueChange={(value) => onGroupModeChange(value as ProxyNodeGroupMode)}>
-                  <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label="节点分组方式" className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {groupModeOptions.map((option) => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
@@ -841,7 +842,7 @@ export default function ProxyInboundsSection({
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="min-w-0 space-y-1.5">
+              <FormField className="min-w-0 space-y-1.5">
                 <Label className="text-xs">主机</Label>
                 <Select value={String(form.hostId || "")} onValueChange={(value) => setForm((prev) => ({ ...prev, hostId: Number(value) }))}>
                   <SelectTrigger><SelectValue placeholder="选择主机" /></SelectTrigger>
@@ -851,7 +852,7 @@ export default function ProxyInboundsSection({
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
               <div className="min-w-0 space-y-1.5">
                 <Label className="text-xs">名称</Label>
                 <Input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} placeholder="HK 落地" />
@@ -882,7 +883,7 @@ export default function ProxyInboundsSection({
                 <p className="text-xs text-muted-foreground">线路是什么类型，分享出去的人也看得到。不进订阅。</p>
               </div>
               {isAdmin ? (
-                <div className="min-w-0 space-y-1.5 sm:col-span-2">
+                <FormField className="min-w-0 space-y-1.5 sm:col-span-2">
                   <Label className="text-xs">
                     <UserRound className="mr-1 inline h-3 w-3" />
                     归属用户
@@ -903,9 +904,9 @@ export default function ProxyInboundsSection({
                     一台机器上开多个端口分给不同人，各自只看得到自己那份用量。
                     灰掉的用户还没有客户端订阅权限，去「用户管理」里开通后才能选。
                   </p>
-                </div>
+                </FormField>
               ) : null}
-              <div className="min-w-0 space-y-1.5">
+              <FormField className="min-w-0 space-y-1.5">
                 <Label className="text-xs">协议</Label>
                 <Select value={form.protocol} onValueChange={(value) => setProtocol(value as ProxyInboundProtocol)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -917,17 +918,17 @@ export default function ProxyInboundsSection({
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="min-w-0 space-y-1.5">
+              </FormField>
+              <FormField className="min-w-0 space-y-1.5">
                 <Label className="text-xs">监听端口</Label>
                 <Input
                   type="number"
                   value={form.port || ""}
                   onChange={(event) => setForm((prev) => ({ ...prev, port: Number(event.target.value) || 0 }))}
                 />
-              </div>
+              </FormField>
               {hasTransportOptions ? (
-                <div className="min-w-0 space-y-1.5">
+                <FormField className="min-w-0 space-y-1.5">
                   <Label className="text-xs">传输</Label>
                   <Select value={form.transport} onValueChange={(value) => setForm((prev) => ({ ...prev, transport: value as ProxyNodeTransport }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
@@ -937,10 +938,10 @@ export default function ProxyInboundsSection({
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
+                </FormField>
               ) : null}
               {securities.length > 1 ? (
-                <div className="min-w-0 space-y-1.5">
+                <FormField className="min-w-0 space-y-1.5">
                   <Label className="text-xs">安全层</Label>
                   <Select value={form.security} onValueChange={(value) => setForm((prev) => ({ ...prev, security: value as ProxyInboundSecurity }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
@@ -950,10 +951,10 @@ export default function ProxyInboundsSection({
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
+                </FormField>
               ) : null}
               {form.protocol === "shadowsocks" ? (
-                <div className="min-w-0 space-y-1.5 sm:col-span-2">
+                <FormField className="min-w-0 space-y-1.5 sm:col-span-2">
                   <Label className="text-xs">加密方式</Label>
                   <Select value={form.method} onValueChange={(value) => setForm((prev) => ({ ...prev, method: value }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
@@ -977,10 +978,10 @@ export default function ProxyInboundsSection({
                       AES-128 不比 256 弱（128 位密钥没有可行攻击）而且更快，小机器上差别明显，所以默认它。
                     </p>
                   )}
-                </div>
+                </FormField>
               ) : null}
               {form.protocol === "snell" ? (
-                <div className="min-w-0 space-y-1.5">
+                <FormField className="min-w-0 space-y-1.5">
                   <Label className="text-xs">Snell 版本</Label>
                   <Select value={String(form.snellVersion)} onValueChange={(value) => setForm((prev) => ({ ...prev, snellVersion: Number(value) }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
@@ -990,7 +991,7 @@ export default function ProxyInboundsSection({
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
+                </FormField>
               ) : null}
             </div>
 
@@ -1105,17 +1106,17 @@ export default function ProxyInboundsSection({
                   <Input value={form.path} onChange={(event) => setForm((prev) => ({ ...prev, path: event.target.value }))} placeholder={form.transport === "grpc" ? "gsvc" : "/ray"} />
                 </div>
                 {form.transport !== "grpc" ? (
-                  <div className="min-w-0 space-y-1.5">
+                  <FormField className="min-w-0 space-y-1.5">
                     <Label className="text-xs">Host 头</Label>
                     <Input value={form.host} onChange={(event) => setForm((prev) => ({ ...prev, host: event.target.value }))} />
-                  </div>
+                  </FormField>
                 ) : null}
               </div>
             ) : null}
 
             {form.protocol === "hysteria2" ? (
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="min-w-0 space-y-1.5">
+                <FormField className="min-w-0 space-y-1.5">
                   <Label className="text-xs">混淆</Label>
                   <Select value={form.obfs || "none"} onValueChange={(value) => setForm((prev) => ({ ...prev, obfs: value === "none" ? "" : value }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1124,7 +1125,7 @@ export default function ProxyInboundsSection({
                       <SelectItem value="salamander">salamander</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+                </FormField>
                 {form.obfs ? (
                   <div className="min-w-0 space-y-1.5">
                     <Label className="text-xs">混淆密码</Label>
@@ -1271,7 +1272,7 @@ export default function ProxyInboundsSection({
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {form.trafficAutoReset ? (
-                    <Input
+                    <Input aria-label="每月自动清零日期"
                       type="number"
                       inputMode="numeric"
                       className="h-8 w-16"
@@ -1279,7 +1280,7 @@ export default function ProxyInboundsSection({
                       onChange={(event) => setForm((prev) => ({ ...prev, trafficResetDay: event.target.value }))}
                     />
                   ) : null}
-                  <Switch
+                  <Switch aria-label="每月自动清零"
                     checked={form.trafficAutoReset}
                     onCheckedChange={(checked) => setForm((prev) => ({ ...prev, trafficAutoReset: checked }))}
                   />

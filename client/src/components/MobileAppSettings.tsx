@@ -3,6 +3,7 @@ import { Bell, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -91,7 +92,7 @@ export default function MobileAppSettings({ snapshot }: { snapshot: MobileRemind
             </span>
             <Switch aria-label="流量提醒" checked={settings.trafficEnabled} onCheckedChange={(trafficEnabled) => save({ ...settings, trafficEnabled })} />
           </label>
-          <div className="space-y-2 rounded-lg border border-border/50 bg-background/35 p-3">
+          <FormField className="space-y-2 rounded-lg border border-border/50 bg-background/35 p-3">
             <Label>剩余流量阈值 (%)</Label>
             <Input
               type="number"
@@ -105,7 +106,7 @@ export default function MobileAppSettings({ snapshot }: { snapshot: MobileRemind
               }}
               disabled={!settings.trafficEnabled}
             />
-          </div>
+          </FormField>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -119,7 +120,7 @@ export default function MobileAppSettings({ snapshot }: { snapshot: MobileRemind
             </span>
             <Switch aria-label="到期提醒" checked={settings.expiryEnabled} onCheckedChange={(expiryEnabled) => save({ ...settings, expiryEnabled })} />
           </label>
-          <div className="space-y-2 rounded-lg border border-border/50 bg-background/35 p-3">
+          <FormField className="space-y-2 rounded-lg border border-border/50 bg-background/35 p-3">
             <Label>提前提醒天数</Label>
             <Input
               type="number"
@@ -133,11 +134,11 @@ export default function MobileAppSettings({ snapshot }: { snapshot: MobileRemind
               }}
               disabled={!settings.expiryEnabled}
             />
-          </div>
+          </FormField>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-2 rounded-lg border border-border/50 bg-background/35 p-3">
+          <FormField className="space-y-2 rounded-lg border border-border/50 bg-background/35 p-3">
             <Label>提醒时间</Label>
             <Input
               type="time"
@@ -145,7 +146,7 @@ export default function MobileAppSettings({ snapshot }: { snapshot: MobileRemind
               onChange={(e) => save({ ...settings, reminderTime: e.target.value })}
               disabled={!settings.trafficEnabled && !settings.expiryEnabled}
             />
-          </div>
+          </FormField>
         </div>
       </CardContent>
     </Card>

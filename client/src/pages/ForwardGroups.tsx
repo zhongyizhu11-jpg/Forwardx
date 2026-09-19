@@ -2317,7 +2317,7 @@ export function ForwardGroupsContent({
             </div>
 
             {form.groupMode === "exit" && (
-              <div className="grid gap-2 rounded-md border border-border/60 bg-muted/15 p-3 sm:grid-cols-[120px_minmax(0,1fr)] sm:items-center">
+              <FormField className="grid gap-2 rounded-md border border-border/60 bg-muted/15 p-3 sm:grid-cols-[120px_minmax(0,1fr)] sm:items-center">
                 <Label>出口策略</Label>
                 <div className="space-y-1.5">
                   <Select
@@ -2339,7 +2339,7 @@ export function ForwardGroupsContent({
                         : "按当前策略为新连接选择已启用的出口主机。"}
                   </p>
                 </div>
-              </div>
+              </FormField>
             )}
 
             {(form.groupMode === "failover" || form.groupMode === "entry") && (
@@ -2695,7 +2695,7 @@ export function ForwardGroupsContent({
                   <>
                     <div className="flex justify-end">
                       <Select onValueChange={(v) => addMember(Number(v))}>
-                        <SelectTrigger className="w-full sm:w-64">
+                        <SelectTrigger aria-label="添加成员" className="w-full sm:w-64">
                           <SelectValue placeholder={effectiveGroupType === "host" ? "添加主机成员" : "添加隧道成员"} />
                         </SelectTrigger>
                         <SelectContent>

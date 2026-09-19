@@ -562,7 +562,7 @@ export default function Billing() {
                     {showCancelledSubscriptions ? "隐藏已取消" : "查看已取消"}
                   </Button>
                   <Select value={ledgerUserId} onValueChange={setLedgerUserId}>
-                    <SelectTrigger className="w-full sm:w-56">
+                    <SelectTrigger aria-label="按用户筛选账单" className="w-full sm:w-56">
                       <SelectValue placeholder="筛选用户" />
                     </SelectTrigger>
                     <SelectContent>
@@ -878,7 +878,7 @@ export default function Billing() {
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap lg:justify-end">
                   <Select value={redemptionUsageFilter} onValueChange={(value: "all" | "unused" | "used") => setRedemptionUsageFilter(value)}>
-                    <SelectTrigger className="w-full sm:w-36">
+                    <SelectTrigger aria-label="按使用状态筛选兑换码" className="w-full sm:w-36">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -919,7 +919,7 @@ export default function Billing() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
                               <p className="min-w-0 break-all font-mono text-sm font-medium">{code.code}</p>
-                              <Button variant="ghost" size="icon" className="-mr-2 -mt-2 shrink-0 text-destructive" onClick={() => deleteRedemptionCode.mutate({ id: code.id })}>
+                              <Button variant="ghost" size="icon" aria-label="删除兑换码" className="-mr-2 -mt-2 shrink-0 text-destructive" onClick={() => deleteRedemptionCode.mutate({ id: code.id })}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
@@ -950,7 +950,7 @@ export default function Billing() {
                         <TableCell>{code.type === "plan" ? `${code.planName || `套餐 #${code.planId}`} / ${code.durationDays || 30} 天` : money(code.amountCents)}</TableCell>
                         <TableCell>{dateText(code.startsAt)} - {dateText(code.expiresAt)}</TableCell>
                         <TableCell>{code.usedAt ? `${code.usedByUsername || code.usedByUserId} 于 ${dateText(code.usedAt)}` : "未使用"}</TableCell>
-                        <TableCell className="text-right"><Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteRedemptionCode.mutate({ id: code.id })}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                        <TableCell className="text-right"><Button variant="ghost" size="icon" aria-label="删除兑换码" className="text-destructive" onClick={() => deleteRedemptionCode.mutate({ id: code.id })}><Trash2 className="h-4 w-4" /></Button></TableCell>
                       </TableRow>
                     ))}
                     {filteredRedemptionCodes.length === 0 && (
@@ -1026,7 +1026,7 @@ export default function Billing() {
                       <div key={code.id} className="rounded-lg border border-border/50 bg-background/40 p-3">
                         <div className="flex items-start justify-between gap-2">
                           <p className="min-w-0 break-all font-mono text-sm font-medium">{code.code}</p>
-                          <Button variant="ghost" size="icon" className="-mr-2 -mt-2 shrink-0 text-destructive" onClick={() => deleteDiscountCode.mutate({ id: code.id })}>
+                          <Button variant="ghost" size="icon" aria-label="删除折扣码" className="-mr-2 -mt-2 shrink-0 text-destructive" onClick={() => deleteDiscountCode.mutate({ id: code.id })}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -1058,7 +1058,7 @@ export default function Billing() {
                           <TableCell><Badge variant={status === "生效中" ? "default" : "secondary"}>{status}</Badge></TableCell>
                           <TableCell>{code.usedCount || 0} / {code.maxUses || "不限"}</TableCell>
                           <TableCell>{dateText(code.startsAt)} - {dateText(code.expiresAt)}</TableCell>
-                          <TableCell className="text-right"><Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteDiscountCode.mutate({ id: code.id })}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                          <TableCell className="text-right"><Button variant="ghost" size="icon" aria-label="删除折扣码" className="text-destructive" onClick={() => deleteDiscountCode.mutate({ id: code.id })}><Trash2 className="h-4 w-4" /></Button></TableCell>
                         </TableRow>
                       );
                     })}

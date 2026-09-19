@@ -3371,7 +3371,7 @@ function TunnelsContent() {
     );
     const proxyOptions = proxySupported ? (
       <div className="space-y-2">
-        <div className="flex min-w-0 items-center justify-between gap-3">
+        <FormField className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             <Label className="text-sm">PROXY Protocol</Label>
             <span className={`rounded-full border px-2 py-0.5 text-[11px] leading-none ${proxyAnyEnabled ? "border-primary/25 bg-primary/10 text-primary" : "border-border/50 bg-background/60 text-muted-foreground"}`}>
@@ -3394,7 +3394,7 @@ function TunnelsContent() {
               }
             }}
           />
-        </div>
+        </FormField>
         {tunnelProxyPanelOpen && (
           <div className="space-y-2 border-t border-border/45 pt-2">
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -3434,7 +3434,7 @@ function TunnelsContent() {
       tooltip?: string,
     ) => {
       const control = (
-        <Switch
+        <Switch aria-label={title}
           checked={checked}
           onCheckedChange={onCheckedChange}
         />

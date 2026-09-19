@@ -301,7 +301,7 @@ export default function MultiHopEditor({
       )}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         <Select value="" onValueChange={addHop} disabled={reachedMaxHops}>
-          <SelectTrigger className="h-8 min-w-0 flex-1 text-sm sm:max-w-sm">
+          <SelectTrigger aria-label="添加主机到链路" className="h-8 min-w-0 flex-1 text-sm sm:max-w-sm">
             <SelectValue placeholder={reachedMaxHops ? `最多 ${maxHops} 级` : "添加主机到链路..."} />
           </SelectTrigger>
           <SelectContent>

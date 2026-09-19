@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -535,7 +536,7 @@ export default function HostGroupManager({
               </label>
             </div>
 
-            <div className="space-y-3 rounded-md border border-border/50 p-3">
+            <FormField className="space-y-3 rounded-md border border-border/50 p-3">
               <div className="flex items-center justify-between gap-3">
                 <Label className="text-sm">添加主机</Label>
                 {form.hostIds.length > 0 && <span className="text-xs text-muted-foreground">{form.hostIds.length} 台</span>}
@@ -575,7 +576,7 @@ export default function HostGroupManager({
                   ))}
                 </div>
               )}
-            </div>
+            </FormField>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={pending}>取消</Button>

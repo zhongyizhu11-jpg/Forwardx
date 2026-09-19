@@ -1910,7 +1910,7 @@ function UsersContent() {
                 maxLength={24}
               />
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>转发总开关</Label>
               <div className="flex items-center justify-between rounded-lg border border-border/40 p-3">
                 <div className="min-w-0 pr-3">
@@ -1923,8 +1923,8 @@ function UsersContent() {
                   }}
                 />
               </div>
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>客户端订阅</Label>
               <div className="flex items-center justify-between rounded-lg border border-border/40 p-3">
                 <div className="min-w-0 pr-3">
@@ -1937,7 +1937,7 @@ function UsersContent() {
                   onCheckedChange={setNewAllowProxySubscription}
                 />
               </div>
-            </div>
+            </FormField>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateUser(false)}>
@@ -2425,7 +2425,7 @@ function UsersContent() {
                 </FormField>
               </div>
               <Separator />
-              <div className="flex items-start justify-between gap-3">
+              <FormField className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <Label>客户端订阅</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -2438,7 +2438,7 @@ function UsersContent() {
                   onCheckedChange={setAllowProxySubscription}
                   className="mt-1 shrink-0"
                 />
-              </div>
+              </FormField>
               <Separator />
               <div className="space-y-2">
                 <Label className="text-sm font-medium">允许使用的转发方式</Label>
@@ -2555,7 +2555,7 @@ function UsersContent() {
                     </p>
                     <p className="text-xs text-muted-foreground">每月自动清零已用流量。</p>
                   </div>
-                  <Switch
+                  <Switch aria-label="启用月度自动重置"
                     checked={trafficAutoReset}
                     onCheckedChange={(checked) => {
                       setTrafficAutoReset(checked);
@@ -2600,7 +2600,7 @@ function UsersContent() {
                 默认不展开全部资源，按需选择要授权给该用户的端口转发、转发链、转发组、隧道、网络测试主机和计费资源。
               </p>
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">端口转发授权</Label>
                   <Badge variant="outline" className="text-[10px]">{selectedAllowedPortForwards.length} 条</Badge>
@@ -2643,11 +2643,11 @@ function UsersContent() {
                     暂未授权端口转发，可从上方选择添加。
                   </p>
                 )}
-              </div>
+              </FormField>
 
               <Separator />
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">转发链/转发组授权</Label>
                   <Badge variant="outline" className="text-[10px]">{selectedAllowedChainAndFailoverGroups.length} 条</Badge>
@@ -2691,11 +2691,11 @@ function UsersContent() {
                     暂未授权转发链或转发组，可从上方选择添加。
                   </p>
                 )}
-              </div>
+              </FormField>
 
               <Separator />
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">隧道转发</Label>
                   <Badge variant="outline" className="text-[10px]">{allowedTunnelIds.length} 条</Badge>
@@ -2743,11 +2743,11 @@ function UsersContent() {
                     暂未授权隧道，可从上方选择添加。
                   </p>
                 )}
-              </div>
+              </FormField>
 
               <Separator />
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">订阅节点分享</Label>
                   <Badge variant="outline" className="text-[10px]">{sharedProxyNodeIds.length} 个</Badge>
@@ -2804,11 +2804,11 @@ function UsersContent() {
                     暂未分享节点。只租一两个落地、不值得单开端口的用户可以从上方选。
                   </p>
                 )}
-              </div>
+              </FormField>
 
               <Separator />
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">网络测试主机授权</Label>
                   <Badge variant="outline" className="text-[10px]">{allowedHostIds.length} 台</Badge>
@@ -2851,11 +2851,11 @@ function UsersContent() {
                     暂未额外授权网络测试主机。
                   </p>
                 )}
-              </div>
+              </FormField>
 
               <Separator />
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">流量计费转发资源</Label>
                   <Badge variant="outline" className="text-[10px]">{trafficBillingForwardGroupIds.length} 个</Badge>
@@ -2903,9 +2903,9 @@ function UsersContent() {
                     暂未授权计费转发资源，可从上方选择添加。
                   </p>
                 )}
-              </div>
+              </FormField>
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">历史计费主机</Label>
                   <Badge variant="outline" className="text-[10px]">{trafficBillingHostIds.length} 台</Badge>
@@ -2948,9 +2948,9 @@ function UsersContent() {
                     暂未授权历史计费主机。
                   </p>
                 )}
-              </div>
+              </FormField>
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">流量计费隧道</Label>
                   <Badge variant="outline" className="text-[10px]">{trafficBillingTunnelIds.length} 条</Badge>
@@ -2998,7 +2998,7 @@ function UsersContent() {
                     暂未授权计费隧道，可从上方选择添加。
                   </p>
                 )}
-              </div>
+              </FormField>
             </TabsContent>
           </Tabs>
           <DialogFooter className="shrink-0">

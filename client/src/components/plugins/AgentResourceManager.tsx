@@ -805,7 +805,7 @@ export function AgentResourceManager({
           </div>
         ) : field.type === "select" ? (
           <Select value={String(value ?? "")} disabled={disabled} onValueChange={setValue}>
-            <SelectTrigger><SelectValue placeholder={field.placeholder || "请选择"} /></SelectTrigger>
+            <SelectTrigger aria-label={field.label}><SelectValue placeholder={field.placeholder || "请选择"} /></SelectTrigger>
             <SelectContent>
               {options.map((option: any) => <SelectItem key={option.value} value={String(option.value)} disabled={option.disabled}>{option.label}</SelectItem>)}
             </SelectContent>
@@ -934,7 +934,7 @@ export function AgentResourceManager({
                   />
                 </div>
                 <Select value={selectedHostId ? String(selectedHostId) : ""} onValueChange={(value) => setSelectedHostId(Number(value))}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger aria-label="选择主机" className="w-full">
                     <span className="min-w-0 truncate text-left">
                       {selectedHost
                         ? `${selectedHost.name || `主机 ${selectedHost.id}`} · ${taskStatusLabel(resourceHostStatus(selectedHost, selectedState))}`

@@ -3894,7 +3894,7 @@ function RulesContent() {
       </div>
       <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)]">
         <Select value={copyRuleCategory} onValueChange={(value) => setCopyRuleCategory(value as RuleCategory)}>
-          <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label="规则类别" className="h-9 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">全部规则</SelectItem>
             <SelectItem value="local">端口转发</SelectItem>
@@ -6226,7 +6226,7 @@ function RulesContent() {
         </Button>
         <Button
           variant="ghost"
-          size="icon"
+          size="icon" aria-label={`编辑 ${rule.name}`}
           className="h-8 w-8"
           onClick={() => openEdit(rule)}
         >
@@ -6234,7 +6234,7 @@ function RulesContent() {
         </Button>
         <Button
           variant="ghost"
-          size="icon"
+          size="icon" aria-label={`删除 ${rule.name}`}
           className="h-8 w-8 text-destructive hover:text-destructive"
           onClick={() => setDeleteRule(rule)}
         >
@@ -6733,7 +6733,7 @@ function RulesContent() {
           }>
             {user?.role === "admin" && (
               <Select value={filterUser} onValueChange={handleFilterUserChange}>
-                <SelectTrigger className="h-8 w-full text-xs sm:w-[160px]">
+                <SelectTrigger aria-label="按用户筛选规则" className="h-8 w-full text-xs sm:w-[160px]">
                   <SelectValue placeholder="我的规则" />
                 </SelectTrigger>
                 <SelectContent>
@@ -6829,7 +6829,7 @@ function RulesContent() {
               </DropdownMenuContent>
             </DropdownMenu>
             <Select value={String(rulePageSize)} onValueChange={handleRulePageSizeChange}>
-              <SelectTrigger className="h-8 w-full text-xs sm:w-[120px]">
+              <SelectTrigger aria-label="每页数量" className="h-8 w-full text-xs sm:w-[120px]">
                 <SelectValue placeholder="每页数量" />
               </SelectTrigger>
               <SelectContent>
@@ -7351,7 +7351,7 @@ function RulesContent() {
               />
               </FormField>
               {!isForwardGroupRouteMode && form.routeMode === "local" && (
-              <div className="space-y-2">
+              <FormField className="space-y-2">
               <Label>转发工具</Label>
               {!routeModeLocked && form.routeMode === "local" ? (
               <Select
@@ -7380,11 +7380,11 @@ function RulesContent() {
               </Badge>
               </div>
               )}
-              </div>
+              </FormField>
               )}
             </div>
             {/* 异常提醒是可选的通知设置，不该和必填字段并排同级。 */}
-            <div className={`flex min-h-10 flex-col gap-2 rounded-md bg-muted/35 px-3 py-2 sm:flex-row sm:items-center sm:justify-between${telegramBotReady ? "" : " opacity-60"}`}>
+            <FormField className={`flex min-h-10 flex-col gap-2 rounded-md bg-muted/35 px-3 py-2 sm:flex-row sm:items-center sm:justify-between${telegramBotReady ? "" : " opacity-60"}`}>
             <div className="min-w-0 space-y-0.5">
             <Label className="text-sm font-medium">异常TG提醒</Label>
             <p className="text-xs text-muted-foreground">
@@ -7396,7 +7396,7 @@ function RulesContent() {
             disabled={!telegramBotReady}
             onCheckedChange={(checked) => setForm({ ...form, telegramErrorNotifyEnabled: checked })}
             />
-            </div>
+            </FormField>
             {kernelForwardWarning && (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
                 <div className="flex min-w-0 items-start gap-2">
@@ -7407,7 +7407,7 @@ function RulesContent() {
             )}
             {showMainBackupConfig && (
             <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <FormField className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <Label className="text-sm">出站策略</Label>
                 </div>
@@ -7434,7 +7434,7 @@ function RulesContent() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
               {form.failoverEnabled && (
                 <div className="space-y-2">
                   <FormField className="space-y-2">
@@ -7471,7 +7471,7 @@ function RulesContent() {
                       />
                     </FormField>
                     {form.failoverStrategy === "fallback" && (
-                      <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
+                      <FormField className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
                         <div>
                           <Label className="text-sm">恢复后切回</Label>
                         </div>
@@ -7479,7 +7479,7 @@ function RulesContent() {
                           checked={form.autoFailback}
                           onCheckedChange={(checked) => setForm({ ...form, autoFailback: checked })}
                         />
-                      </div>
+                      </FormField>
                     )}
                   </div>
                 </div>
@@ -7752,7 +7752,8 @@ function RulesContent() {
                       </button>
                     </div>
                   </div>
-                  <div className="space-y-2">
+                  {/* 文件框和手填框只会出现一个，共用一个 FormField 的 id 不会撞。 */}
+                  <FormField className="space-y-2">
                     <Label>{importSourceMode === "file" ? "规则文件" : "目标地址列表"}</Label>
                     {importSourceMode === "file" ? (
                       <Input key={importFileInputKey} type="file" accept=".json,application/json" onChange={handleImportFileChange} />
@@ -7764,7 +7765,7 @@ function RulesContent() {
                         className="min-h-[7.5rem] resize-y"
                       />
                     )}
-                  </div>
+                  </FormField>
                   {(importSourceMode === "file" || importFileName || importFileError || importValidation.ok || String(importManualText || "").trim()) && (
                     <div
                       className={`rounded-md border px-3 py-2 text-sm ${
@@ -7828,7 +7829,7 @@ function RulesContent() {
                         resetImportDialog();
                       }}
                     >
-                      <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectTrigger aria-label="导入来源类型" className="h-9 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {importRuleTransferScopeOptions.map((option) => (
                           <SelectItem key={option.value} value={option.value}>
@@ -8136,7 +8137,7 @@ function RulesContent() {
                         setCopyTargetSearch("");
                       }}
                     >
-                      <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectTrigger aria-label="复制目标类型" className="h-9 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {ruleTransferScopeOptions.map((option) => (
                           <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>

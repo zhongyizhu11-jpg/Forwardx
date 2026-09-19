@@ -2232,7 +2232,7 @@ function DashboardLayoutContent({
                         {telegramBindExpired ? "绑定码已过期，请重新生成。" : "5 分钟内有效，可复制备用，也可以直接打开 Telegram 完成绑定。"}
                       </p>
                     </div>
-                    <Button variant="outline" size="icon" onClick={() => copyText(telegramBind.code)} disabled={telegramBindExpired}>
+                    <Button variant="outline" size="icon" aria-label="复制绑定码" onClick={() => copyText(telegramBind.code)} disabled={telegramBindExpired}>
                       <Copy className="h-4 w-4" />
                     </Button>
                   </div>

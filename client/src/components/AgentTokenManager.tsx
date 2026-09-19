@@ -308,7 +308,7 @@ function CommandRow({
         </div>
         <Button
           variant="ghost"
-          size="icon"
+          size="icon" aria-label="复制安装命令"
           className="h-10 w-10 shrink-0"
           aria-disabled={copyDisabled}
           onClick={() => {

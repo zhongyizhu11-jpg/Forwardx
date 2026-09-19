@@ -906,7 +906,7 @@ function PanelLogsSection() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="flex items-center gap-2">
                 <Select value={exportLevel} onValueChange={(value) => setExportLevel(value as typeof exportLevel)}>
-                  <SelectTrigger className="h-9 w-28">
+                  <SelectTrigger aria-label="导出日志级别" className="h-9 w-28">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -2897,7 +2897,7 @@ function DeepSeekSettingsCard() {
                     value={models.some((item: any) => String(item?.id || "") === deepseekModel) ? deepseekModel : undefined}
                     onValueChange={(value) => updateActiveProviderConfig({ model: value })}
                   >
-                    <SelectTrigger className="h-9">
+                    <SelectTrigger aria-label="从列表选择模型" className="h-9">
                       <SelectValue placeholder="从列表选择模型" />
                     </SelectTrigger>
                     <SelectContent className="max-h-72">
@@ -3816,7 +3816,7 @@ function PersonalizationSettingsSection() {
               {backgroundEnabled && (
                 <div className="space-y-3">
                   <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-                    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
+                    <FormField className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
                       <div className="space-y-2">
                         <Label>背景不透明度</Label>
                         <input
@@ -3838,8 +3838,8 @@ function PersonalizationSettingsSection() {
                         inputMode="numeric"
                         className="sm:mt-6"
                       />
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
+                    </FormField>
+                    <FormField className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
                       <div className="space-y-2">
                         <Label>背景虚化程度</Label>
                         <input
@@ -3861,7 +3861,7 @@ function PersonalizationSettingsSection() {
                         inputMode="numeric"
                         className="sm:mt-6"
                       />
-                    </div>
+                    </FormField>
                   </div>
                   <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
                     {mobileBackgroundHint}
@@ -3998,7 +3998,7 @@ function PersonalizationSettingsSection() {
                   </div>
                   <div className="grid gap-2 lg:grid-cols-[9rem_minmax(0,1fr)_auto]">
                     <Select value={backgroundUrlType} onValueChange={(value) => setBackgroundUrlType(value as PersonalizationBackgroundUrlType)}>
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="背景链接类型">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -5056,7 +5056,7 @@ function SystemInfoSection() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
+              <Input aria-label="Web 服务监听端口"
                 type="number"
                 inputMode="numeric"
                 min={1}
@@ -5385,7 +5385,7 @@ function SystemInfoSection() {
               </div>
               <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-56">
                 <Select value={ddnsProvider} onValueChange={(v) => setDdnsProvider(v as any)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label="DDNS 服务商"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="disabled">不使用</SelectItem>
                     <SelectItem value="cloudflare">Cloudflare</SelectItem>
@@ -5624,7 +5624,7 @@ function SystemInfoSection() {
                 支持字母、数字、短横线和下划线。
               </p>
             </FormField>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>访问地址</Label>
               <div className="flex min-w-0 gap-2">
                 <Input value={publicHostMonitorUrl} readOnly className="font-mono text-xs" />
@@ -5634,7 +5634,7 @@ function SystemInfoSection() {
                   </a>
                 </Button>
               </div>
-            </div>
+            </FormField>
           </div>
 
           <div className="flex justify-end">

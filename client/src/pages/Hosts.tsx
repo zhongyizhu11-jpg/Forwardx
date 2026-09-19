@@ -3304,7 +3304,7 @@ function HostsContent() {
                               value={String(clampBillingMonth(form.billingMonth))}
                               onValueChange={(value) => setForm({ ...form, billingMonth: clampBillingMonth(Number(value)) })}
                             >
-                              <SelectTrigger className="h-8 min-w-0">
+                              <SelectTrigger aria-label="账单月" className="h-8 min-w-0">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -3317,7 +3317,7 @@ function HostsContent() {
                               value={String(clampBillingDay(form.billingDay))}
                               onValueChange={(value) => setForm({ ...form, billingDay: clampBillingDay(Number(value)) })}
                             >
-                              <SelectTrigger className="h-8 min-w-0">
+                              <SelectTrigger aria-label="账单日" className="h-8 min-w-0">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -3389,7 +3389,7 @@ function HostsContent() {
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <div className="flex h-8 w-20 overflow-hidden rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                            <Input
+                            <Input aria-label="流量耗尽提醒阈值（%）"
                               className="h-8 rounded-none border-0 px-2 text-right focus-visible:ring-0 focus-visible:ring-offset-0"
                               type="number"
                               min={1}
@@ -3400,7 +3400,7 @@ function HostsContent() {
                             />
                             <span className="flex h-8 shrink-0 items-center border-l border-border/60 bg-muted/50 px-1.5 text-sm text-muted-foreground">%</span>
                           </div>
-                          <Switch
+                          <Switch aria-label="流量耗尽提醒"
                             checked={form.telegramTrafficAlertEnabled}
                             onCheckedChange={(checked) => setForm({ ...form, telegramTrafficAlertEnabled: checked })}
                           />
@@ -3415,7 +3415,7 @@ function HostsContent() {
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <div className="flex h-8 w-24 overflow-hidden rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                            <Input
+                            <Input aria-label="续费提醒提前天数"
                               className="h-8 rounded-none border-0 px-2 text-right focus-visible:ring-0 focus-visible:ring-offset-0"
                               type="number"
                               min={1}
@@ -3426,7 +3426,7 @@ function HostsContent() {
                             />
                             <span className="flex h-8 shrink-0 items-center border-l border-border/60 bg-muted/50 px-2 text-sm text-muted-foreground">天</span>
                           </div>
-                          <Switch
+                          <Switch aria-label="续费提醒"
                             checked={form.telegramRenewalReminderEnabled}
                             onCheckedChange={(checked) => setForm({ ...form, telegramRenewalReminderEnabled: checked })}
                           />
@@ -3441,7 +3441,7 @@ function HostsContent() {
                             value={String(clampMonthlyResetDay(form.trafficResetDay))}
                             onValueChange={(value) => setForm({ ...form, trafficResetDay: clampMonthlyResetDay(Number(value)) })}
                           >
-                            <SelectTrigger className="h-8 w-24">
+                            <SelectTrigger aria-label="每月流量重置日" className="h-8 w-24">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -3455,7 +3455,7 @@ function HostsContent() {
                       </div>
                       <p className="mt-1.5 px-3 text-xs text-muted-foreground">当月没有该日期时按最后一天重置。</p>
                       <div className="mt-2.5 space-y-2 rounded-md bg-muted/35 px-3 py-2.5">
-                        <div className="flex min-h-8 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <FormField className="flex min-h-8 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <div className="flex min-w-0 items-center gap-2">
                             <RadioTower className="h-4 w-4 shrink-0 text-muted-foreground" />
                             <Label className="text-sm font-medium">DDNS 服务</Label>
@@ -3468,14 +3468,14 @@ function HostsContent() {
                             disabled={!ddnsProviderEnabled && !form.ddnsEnabled}
                             onCheckedChange={(checked) => setForm({ ...form, ddnsEnabled: checked })}
                           />
-                        </div>
+                        </FormField>
                         <div className="grid min-w-0 gap-2.5 sm:grid-cols-[8rem_minmax(0,1fr)]">
                           <Select
                             value={form.ddnsIpVersion}
                             disabled={!ddnsProviderEnabled}
                             onValueChange={(value) => setForm({ ...form, ddnsIpVersion: normalizeHostDdnsIpVersion(value) })}
                           >
-                            <SelectTrigger className="h-8 min-w-0">
+                            <SelectTrigger aria-label="DDNS 记录类型" className="h-8 min-w-0">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
