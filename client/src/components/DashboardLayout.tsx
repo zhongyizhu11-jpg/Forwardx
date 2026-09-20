@@ -80,7 +80,8 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { renderMixedHtml } from "@/lib/htmlContent";
 import { mobileAuth } from "@/lib/mobileAuth";
-import { checkMobileAppUpdate, openMobileReleasePage, type MobileAppUpdateResult } from "@/lib/mobileNotifications";
+import { openMobileReleasePage } from "@/lib/mobileNotifications";
+import { useMobileAppUpdateCheck } from "@/lib/mobileAppUpdateCheck";
 import { cn } from "@/lib/utils";
 import { getPanelChangelogUrl, getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_MS, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
 import { copyTextToClipboard } from "@/lib/clipboard";
@@ -127,7 +128,6 @@ const PANEL_UPGRADE_SESSION_KEY = "forwardx.panel.upgrade";
 const PANEL_UPGRADE_NOTICE_DISMISSED_KEY = "forwardx.panel.upgrade.dismissedVersion";
 const PANEL_UPGRADE_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const UPDATE_AUTO_CHECK_REFETCH_MS = 6 * 60 * 60 * 1000;
-const MOBILE_APP_UPDATE_SESSION_KEY = "forwardx.mobile.updateNotice";
 const POPUP_ANNOUNCEMENT_SESSION_KEY = "forwardx.popupAnnouncement.seen";
 const UPGRADE_ANNOUNCEMENT_VERSION_KEY = "forwardx.upgradeAnnouncement.lastSeenVersion";
 const UPGRADE_ANNOUNCEMENT_DISPLAY_SESSION_KEY = "forwardx.upgradeAnnouncement.displayed";
@@ -447,8 +447,11 @@ function DashboardLayoutContent({
   const [upgradeAnnouncementCountdown, setUpgradeAnnouncementCountdown] = useState(UPGRADE_ANNOUNCEMENT_COUNTDOWN_SECONDS);
   const [showTelegramDialog, setShowTelegramDialog] = useState(false);
   const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
-  const [checkingMobileUpdate, setCheckingMobileUpdate] = useState(false);
-  const [mobileUpdateInfo, setMobileUpdateInfo] = useState<MobileAppUpdateResult | null>(null);
+  const {
+    checking: checkingMobileUpdate,
+    updateInfo: mobileUpdateInfo,
+    check: handleMobileUpdateCheck,
+  } = useMobileAppUpdateCheck(() => setShowMobileUpdateDialog(true));
   const [showMobileUpdateDialog, setShowMobileUpdateDialog] = useState(false);
   const upgradeRefreshTimerRef = useRef<number | null>(null);
   const upgradeRefreshIntervalRef = useRef<number | null>(null);
@@ -975,29 +978,6 @@ function DashboardLayoutContent({
       password: twoFactorPassword,
       code: twoFactorCode,
     });
-  };
-
-  const handleMobileUpdateCheck = async () => {
-    if (!mobileAuth.isNative || checkingMobileUpdate) return;
-    try {
-      setCheckingMobileUpdate(true);
-      const result = await checkMobileAppUpdate({ silent: false });
-      setMobileUpdateInfo(result);
-      if (result?.hasUpdate) {
-        try {
-          window.sessionStorage.setItem(MOBILE_APP_UPDATE_SESSION_KEY, result.latestVersion);
-        } catch {
-          // Ignore storage failures.
-        }
-        setShowMobileUpdateDialog(true);
-      } else if (result) {
-        toast.success(result.hasPackage ? "当前 APP 已是最新版本" : `当前版本暂无 ${result.packageLabel} 更新`);
-      }
-    } catch (error: any) {
-      toast.error(error?.message || "APP 更新检查失败");
-    } finally {
-      setCheckingMobileUpdate(false);
-    }
   };
 
   const openDetectedMobileRelease = () => {

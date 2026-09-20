@@ -12,10 +12,12 @@ import test from "node:test";
  *   - `handleSaveAvatar`：个人资料页点保存前先查今天的额度，侧边栏没有 ——
  *     用户挑完裁完点保存，才被服务端顶回来。（已修：额度判断收进
  *     `lib/avatarQuota.ts`，两边共用。）
- *   - `handleMobileUpdateCheck`：发现新版本时，侧边栏弹一个更新对话框并记下
- *     版本号，个人资料页只弹一句 toast。同一个「检查更新」，按哪儿的结果不一样。
- *     **这个还没修** —— 该统一成哪种，是产品决定：个人资料页要不要也能开那个
- *     对话框（对话框现在挂在 DashboardLayout 的 JSX 里），还是干脆只留一处入口。
+ *   - `handleMobileUpdateCheck`：两边的「在途判断 / 状态 / 没更新怎么说 /
+ *     出错怎么说」逐字一样，改一句另一处就留在旧文案上。（已修：收进
+ *     `lib/mobileAppUpdateCheck.ts`。**发现新版本之后怎么呈现没有一起收**，
+ *     那两边是故意不同的：侧边栏是弹层、塞不下版本对比，所以弹带「前往下载」
+ *     的对话框；个人资料页是整页，检查完在卡片里常驻显示版本对比和下载按钮，
+ *     不打断用户。顺带删掉了那边一个写了从来没人读的 sessionStorage 键。）
  *
  * 这条测试不修问题，只**把账记住**：名单只许变短。再多抄一个同名处理函数就红，
  * 逼人先想清楚是不是该抽出去共用。
@@ -33,7 +35,6 @@ const 已知重复: readonly string[] = [
   "handleChangePassword",
   "handleDisableTwoFactor",
   "handleEnableTwoFactor",
-  "handleMobileUpdateCheck",
   "handleSaveAvatar",
 ];
 

@@ -14,7 +14,8 @@ import { OptimisticSwitch, Switch } from "@/components/ui/switch";
 import { migrateLegacyAvatarValue } from "@/lib/avatar";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { mobileAuth } from "@/lib/mobileAuth";
-import { checkMobileAppUpdate, openMobileReleasePage, type MobileAppUpdateResult } from "@/lib/mobileNotifications";
+import { openMobileReleasePage } from "@/lib/mobileNotifications";
+import { useMobileAppUpdateCheck } from "@/lib/mobileAppUpdateCheck";
 import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
@@ -59,8 +60,15 @@ function ProfileContent() {
   const [twoFactorSetupTick, setTwoFactorSetupTick] = useState(Date.now());
   const [twoFactorPassword, setTwoFactorPassword] = useState("");
   const [twoFactorCode, setTwoFactorCode] = useState("");
-  const [checkingMobileUpdate, setCheckingMobileUpdate] = useState(false);
-  const [mobileUpdateInfo, setMobileUpdateInfo] = useState<MobileAppUpdateResult | null>(null);
+  // 发现新版本时不弹对话框：这一页有地方常驻显示版本对比和「前往下载」，
+  // 见下面的卡片。toast 只是个「查完了」的确认。
+  const {
+    checking: checkingMobileUpdate,
+    updateInfo: mobileUpdateInfo,
+    check: handleMobileUpdateCheck,
+  } = useMobileAppUpdateCheck((result) => {
+    toast.success(`发现 APP 新版本 v${result.latestVersion.replace(/^v/i, "")}`);
+  });
 
   const isAdmin = user?.role === "admin";
 
@@ -352,21 +360,6 @@ function ProfileContent() {
   const handleTelegramAnnouncementSubscribedChange = (enabled: boolean) => (
     updateTelegramAnnouncementSubscriptionMutation.mutateAsync({ telegramAnnouncementSubscribed: enabled })
   );
-
-  const handleMobileUpdateCheck = async () => {
-    if (!mobileAuth.isNative || checkingMobileUpdate) return;
-    try {
-      setCheckingMobileUpdate(true);
-      const result = await checkMobileAppUpdate({ silent: false });
-      setMobileUpdateInfo(result);
-      if (result?.hasUpdate) toast.success(`发现 APP 新版本 v${result.latestVersion.replace(/^v/i, "")}`);
-      else if (result) toast.success(result.hasPackage ? "当前 APP 已是最新版本" : `当前版本暂无 ${result.packageLabel} 更新`);
-    } catch (error: any) {
-      toast.error(error?.message || "APP 更新检查失败");
-    } finally {
-      setCheckingMobileUpdate(false);
-    }
-  };
 
   return (
     <div className="space-y-6">
