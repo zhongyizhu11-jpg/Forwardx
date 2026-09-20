@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { classifyIpAddress, expandIpv6, isPrivateOrReservedAddress, isRestrictedOutboundAddress } from "./ipAddress";
+import { classifyIpAddress, expandIpv6, isPrivateOrReservedAddress, isRestrictedOutboundAddress, sameNetworkAddress } from "./ipAddress";
 
 /*
   这套判断原来在三个地方各一份，30 个样本里 13 个三方判定不一致。
@@ -112,4 +112,18 @@ test("没有人再自己写一份地址分类", () => {
     [],
     `这些文件又自己写了一份地址分类，请改用 shared/ipAddress.ts：\n  ${hits.join("\n  ")}`,
   );
+});
+
+test("同一个地址的不同写法要算同一个", () => {
+  // 界面一直这么比，服务端原来是精确字符串相等 —— 下面三对就是当时对不上的
+  assert.equal(sameNetworkAddress("2001:DB8::1", "2001:db8::1"), true, "大小写");
+  assert.equal(sameNetworkAddress("[2001:db8::1]", "2001:db8::1"), true, "带方括号");
+  assert.equal(sameNetworkAddress("2001:db8::1", "[2001:db8::1]"), true, "存的那份带方括号");
+  assert.equal(sameNetworkAddress(" 10.0.0.5 ", "10.0.0.5"), true, "两边空格");
+
+  // 不同的地址还是不同 —— 这条只统一写法，不放宽「哪些地址被允许」
+  assert.equal(sameNetworkAddress("10.0.0.5", "10.0.0.6"), false);
+  assert.equal(sameNetworkAddress("2001:db8::1", "2001:db8::2"), false);
+  assert.equal(sameNetworkAddress("", "10.0.0.5"), false, "空的不算和谁一样");
+  assert.equal(sameNetworkAddress(null, null), false);
 });

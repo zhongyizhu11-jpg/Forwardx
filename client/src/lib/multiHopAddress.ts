@@ -1,3 +1,5 @@
+import { networkAddressKey } from "@shared/ipAddress";
+
 export type MultiHopAddressHost = {
   ip?: string | null;
   ipv4?: string | null;
@@ -6,10 +8,9 @@ export type MultiHopAddressHost = {
   tunnelEntryIp?: string | null;
 };
 
+/** 和服务端共用同一套「算不算同一个地址」的判定，见 shared/ipAddress.ts。 */
 export function addressKey(value: unknown) {
-  const text = String(value || "").trim();
-  const unwrapped = text.startsWith("[") && text.endsWith("]") ? text.slice(1, -1).trim() : text;
-  return unwrapped.toLowerCase();
+  return networkAddressKey(value);
 }
 
 export function sameMultiHopAddress(a: unknown, b: unknown) {

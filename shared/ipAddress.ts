@@ -140,3 +140,26 @@ export function isRestrictedOutboundAddress(value: string, options: { allowPriva
   if (kind === "private" && options.allowPrivate === true) return false;
   return true;
 }
+
+/**
+ * 两个地址字符串指的是不是同一个地址。
+ *
+ * 大小写和方括号都不算数：`2001:DB8::1`、`2001:db8::1`、`[2001:db8::1]` 是同一个
+ * 地址的三种写法。界面一直是这么比的，服务端却是精确字符串相等 —— 6 个样本里
+ * 3 个结论不同：界面认为用户选的就是这台主机配好的 IPv6，服务端保存时报
+ * 「连接地址只能使用入口地址、已配置的内网IP或IPv6地址」，而它明明就是。
+ *
+ * 注意这只统一「两个写法是不是同一个地址」，不放宽**哪些地址被允许** ——
+ * 允许的仍然只有主机的入口地址、内网 IP 和 IPv6。
+ */
+export function networkAddressKey(value: unknown) {
+  const text = String(value || "").trim();
+  const unwrapped = text.startsWith("[") && text.endsWith("]") ? text.slice(1, -1).trim() : text;
+  return unwrapped.toLowerCase();
+}
+
+export function sameNetworkAddress(a: unknown, b: unknown) {
+  const left = networkAddressKey(a);
+  const right = networkAddressKey(b);
+  return !!left && !!right && left === right;
+}
