@@ -94,6 +94,13 @@ import {
 } from "@/lib/ruleEntryDisplay";
 import { cn } from "@/lib/utils";
 import { autoForwardRuleName } from "@shared/forwardRuleName";
+/*
+  端口策略以前在这个文件里另抄了一份，而且和服务端漂了：服务端的策略支持
+  多段 ranges（套餐发的端口段就是这么下来的），这边完全不认；「不限制」时
+  服务端说「不限制」，这边说「1-65535」—— 听着像有限制。合并那一步这边还是
+  逐个端口试 1..65535，实测 2.042ms，服务端的区间求交是 0.007ms。
+*/
+import { combinePortPolicies, describePortPolicy, isPortAllowedByPolicy, portPolicyFrom, type PortPolicy } from "@shared/portPolicy";
 import {
   Plus,
   Trash2,
@@ -186,84 +193,6 @@ function clearRuleTrafficStatCaches() {
   } catch {
     // Local UI cache only; ignore storage failures.
   }
-}
-
-type PortPolicy = {
-  rangeStart: number | null;
-  rangeEnd: number | null;
-  allowlist: number[];
-  denyAll?: boolean;
-};
-
-function parsePortAllowlist(value: unknown) {
-  const text = String(value || "").trim();
-  if (!text) return [];
-  return Array.from(new Set(text
-    .split(",")
-    .map((item) => Number(String(item).trim()))
-    .filter((port) => Number.isInteger(port) && port >= 1 && port <= 65535)))
-    .sort((a, b) => a - b);
-}
-
-function portPolicyFrom(source: any): PortPolicy {
-  const start = source?.portRangeStart != null ? Number(source.portRangeStart) : null;
-  const end = source?.portRangeEnd != null ? Number(source.portRangeEnd) : null;
-  const hasRange = start != null && end != null && start >= 1 && end <= 65535 && start <= end;
-  return {
-    rangeStart: hasRange ? start : null,
-    rangeEnd: hasRange ? end : null,
-    allowlist: parsePortAllowlist(source?.portAllowlist),
-  };
-}
-
-function hasPortRestriction(policy: PortPolicy) {
-  return !!policy.denyAll || (policy.rangeStart !== null && policy.rangeEnd !== null) || policy.allowlist.length > 0;
-}
-
-function isPortAllowedByPolicy(port: number, policy: PortPolicy) {
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
-  if (policy.denyAll) return false;
-  if (!hasPortRestriction(policy)) return true;
-  const inRange = policy.rangeStart !== null && policy.rangeEnd !== null && port >= policy.rangeStart && port <= policy.rangeEnd;
-  return inRange || policy.allowlist.includes(port);
-}
-
-function describePortPolicy(policy: PortPolicy) {
-  if (policy.denyAll) return "无可用端口";
-  const parts: string[] = [];
-  if (policy.rangeStart !== null && policy.rangeEnd !== null) parts.push(`${policy.rangeStart}-${policy.rangeEnd}`);
-  if (policy.allowlist.length > 0) parts.push(policy.allowlist.join(","));
-  return parts.length > 0 ? parts.join(" + ") : "1-65535";
-}
-
-function combinePortPolicies(...policies: PortPolicy[]): PortPolicy {
-  const restricted = policies.filter(hasPortRestriction);
-  if (restricted.length === 0) return portPolicyFrom(null);
-  const allowed: number[] = [];
-  for (let port = 1; port <= 65535; port++) {
-    if (restricted.every((policy) => isPortAllowedByPolicy(port, policy))) allowed.push(port);
-  }
-  if (allowed.length === 0) return { rangeStart: null, rangeEnd: null, allowlist: [], denyAll: true };
-  const ranges: Array<{ start: number; end: number }> = [];
-  let start = allowed[0];
-  let previous = allowed[0];
-  for (let i = 1; i <= allowed.length; i++) {
-    const current = allowed[i];
-    if (current === previous + 1) {
-      previous = current;
-      continue;
-    }
-    ranges.push({ start, end: previous });
-    start = current;
-    previous = current;
-  }
-  const best = ranges.reduce((acc, range) => (range.end - range.start > acc.end - acc.start ? range : acc), ranges[0]);
-  const useRange = best.end > best.start;
-  return {
-    rangeStart: useRange ? best.start : null,
-    rangeEnd: useRange ? best.end : null,
-    allowlist: allowed.filter((port) => !useRange || port < best.start || port > best.end),
-  };
 }
 
 type RuleProtocol = "tcp" | "udp" | "both";

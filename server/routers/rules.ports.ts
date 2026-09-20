@@ -7,7 +7,7 @@ import {
   requireTrafficBillingAccessIfConfigured,
   requireTunnelUseOrTrafficBillingAccess,
 } from "./helpers";
-import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "../portPolicy";
+import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "@shared/portPolicy";
 
 const randomPortInputSchema = z.object({
   hostId: z.number().optional(),

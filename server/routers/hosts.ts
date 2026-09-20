@@ -16,7 +16,7 @@ import { refreshHostAddressRuntime } from "../hostAddressRuntime";
 import { scheduleHostDdnsUpdate } from "../hostDdns";
 import { clearTunnelRuntimeStatusForHost } from "../tunnelRuntimeStatus";
 import { createQueryCache } from "../queryCache";
-import { describePortPolicy, normalizePortAllowlist, portPolicyFrom, portPolicyHasRestriction } from "../portPolicy";
+import { describePortPolicy, normalizePortAllowlist, portPolicyFrom, portPolicyHasRestriction } from "@shared/portPolicy";
 import { ENV } from "../env";
 import { isValidHostOrIp as isValidNetworkHostOrIp } from "../networkAddress";
 import { planAgentUpgradeWaves } from "../agentUpgradeRollout";

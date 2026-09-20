@@ -11,7 +11,7 @@ import * as hopRepo from "../repositories/tunnelRepository";
 import { createTunnelHopBatch, registerTunnelHopTest } from "../tunnelHopTestState";
 import { clearTunnelRuntimeStatus } from "../tunnelRuntimeStatus";
 import { createQueryCache } from "../queryCache";
-import { isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "../portPolicy";
+import { isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "@shared/portPolicy";
 import { structuredLinkTestMessage } from "../linkTestMessages";
 import { isValidHostOrIp } from "../networkAddress";
 import { normalizeTrafficMultiplier } from "../../shared/trafficMultiplier";

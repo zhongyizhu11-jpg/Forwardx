@@ -69,7 +69,7 @@ import {
 } from "./tunnelRepository";
 import { setUserForwardAccess } from "./userRepository";
 import { findTrafficBillingResourceForRule, settleTrafficBillingRuleOnDelete, trafficBillingResourceCandidatesForRule } from "./trafficBillingRepository";
-import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom, type PortPolicy } from "../portPolicy";
+import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom, type PortPolicy } from "@shared/portPolicy";
 import { clearTunnelRuntimeStatus } from "../tunnelRuntimeStatus";
 import { linkProbeMethodForProtocol, type LinkProbeMethod } from "@shared/latencyProbe";
 import {

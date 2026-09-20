@@ -14,7 +14,7 @@ import {
   requireTunnelUseOrTrafficBillingAccess,
 } from "./helpers";
 import { requireRuleProtocolEnabled } from "../forwardProtocolSettings";
-import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "../portPolicy";
+import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "@shared/portPolicy";
 import { isTelegramBotReady } from "../telegramReady";
 import { resolveForwardRuleName } from "@shared/forwardRuleName";
 import {
