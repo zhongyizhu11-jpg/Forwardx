@@ -45,11 +45,18 @@ func multipathEnabled(cfg config) bool {
 
 // multipathPendingLimit is the reorder bound for a session, defaulting when the
 // panel does not pin one.
+//
+// A pinned value is floored: the panel has no way to know how many chunks a
+// given link keeps in flight, and a bound below that makes the receiver
+// overdraw on nearly every chunk for no memory saved.
 func multipathPendingLimit(cfg config) int {
-	if cfg.MultipathMaxPending > 0 {
-		return cfg.MultipathMaxPending
+	if cfg.MultipathMaxPending <= 0 {
+		return multipathMaxPendingChunks
 	}
-	return multipathMaxPendingChunks
+	if cfg.MultipathMaxPending < multipathMinPendingChunks {
+		return multipathMinPendingChunks
+	}
+	return cfg.MultipathMaxPending
 }
 
 func multipathLegLabel(leg multipathLeg) string {

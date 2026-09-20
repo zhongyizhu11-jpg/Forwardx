@@ -118,34 +118,33 @@ func TestReorderBufferCopiesPayloadSoCallerBuffersCanBeReused(t *testing.T) {
 	}
 }
 
-func TestReorderBufferBlocksProducersAtTheBound(t *testing.T) {
+func TestReorderBufferBlocksProducersAtTheBoundWhileTheConsumerCanDrain(t *testing.T) {
+	// 挡住快腿只在**消费者是瓶颈**的时候才有意义：下一片就在缓冲里，它取走
+	// 一片这里就有位置。这时候满了就该等。
+	//
+	// 下一片不在缓冲里的那种「满」是另一回事，见 multipath_wedge_test.go。
 	buffer := newReorderBuffer(2)
-	// Seq 0 is missing, so these two occupy the whole bound.
-	if err := buffer.push(1, []byte("b")); err != nil {
+	if err := buffer.push(0, []byte("a")); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	if err := buffer.push(2, []byte("c")); err != nil {
+	if err := buffer.push(1, []byte("b")); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 
 	blocked := make(chan error, 1)
-	go func() { blocked <- buffer.push(3, []byte("d")) }()
+	go func() { blocked <- buffer.push(2, []byte("c")) }()
 	select {
 	case <-blocked:
-		t.Fatal("push past the bound should block")
+		t.Fatal("push past the bound should block while the consumer can drain")
 	case <-time.After(50 * time.Millisecond):
 	}
-
-	// The chunk due next is accepted even at the bound, so delivery can drain.
-	if err := buffer.push(0, []byte("a")); err != nil {
-		t.Fatalf("push of the next-due chunk: %v", err)
+	if count := buffer.overdraftCount(); count != 0 {
+		t.Fatalf("ordinary backpressure must not exceed the bound, got %d overdrafts", count)
 	}
-	// Draining back below the bound is what releases the producer; a single pop
-	// only undoes the over-bound admission above.
-	for i := 0; i < 2; i++ {
-		if _, err := buffer.pop(); err != nil {
-			t.Fatalf("pop: %v", err)
-		}
+
+	// Draining back below the bound is what releases the producer.
+	if _, err := buffer.pop(); err != nil {
+		t.Fatalf("pop: %v", err)
 	}
 	select {
 	case err := <-blocked:
@@ -154,6 +153,32 @@ func TestReorderBufferBlocksProducersAtTheBound(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("draining the buffer should release the blocked producer")
+	}
+	if count := buffer.overdraftCount(); count != 0 {
+		t.Fatalf("the producer was released by drainage, not by overdraft, got %d", count)
+	}
+}
+
+func TestReorderBufferAcceptsTheChunkDueNextAtTheBound(t *testing.T) {
+	// 界上也必须收下「下一个该交付的那片」，否则缓冲会跟唯一能排空它的那片
+	// 互相顶死。
+	buffer := newReorderBuffer(2)
+	for _, seq := range []uint64{1, 2} {
+		if err := buffer.push(seq, []byte{byte(seq)}); err != nil {
+			t.Fatalf("push %d: %v", seq, err)
+		}
+	}
+	if err := buffer.push(0, []byte{0}); err != nil {
+		t.Fatalf("push of the next-due chunk: %v", err)
+	}
+	for want := 0; want < 3; want++ {
+		got, err := buffer.pop()
+		if err != nil {
+			t.Fatalf("pop: %v", err)
+		}
+		if len(got) != 1 || got[0] != byte(want) {
+			t.Fatalf("expected chunk %d, got %v", want, got)
+		}
 	}
 }
 

@@ -227,6 +227,11 @@ func (s *multipathSession) legReader(leg *multipathLegConn) {
 			continue
 		}
 		if err := s.reorder.push(decoded.seq, decoded.payload); err != nil {
+			if errors.Is(err, errMultipathReorderGap) {
+				// 重排缓冲放弃等那一片了。整条会话跟着带原因收掉，上层重连，
+				// 而不是让两端各自挂着一条永远拼不完的流。
+				s.closeWith(err)
+			}
 			return
 		}
 	}
@@ -317,6 +322,13 @@ func (s *multipathSession) closeWith(reason error) {
 		for _, leg := range s.legs {
 			_ = leg.sec.conn.Close()
 		}
+		// 收场时把实际跑出来的分流记一笔。overdrafts 非零说明各条腿的到达
+		// 顺序比重排上限能容下的还散 —— 这是调 multipathMaxPending 唯一的
+		// 现场依据，不记下来就只能靠猜。
+		fxpVerbosef(
+			"multipath session closed: legs=%d/%d bytes=%v overdrafts=%d reason=%v",
+			s.aliveLegCount(), s.legCount(), s.legBytes(), s.reorder.overdraftCount(), reason,
+		)
 	})
 }
 
