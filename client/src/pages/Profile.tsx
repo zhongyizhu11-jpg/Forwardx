@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { OptimisticSwitch, Switch } from "@/components/ui/switch";
@@ -468,15 +469,15 @@ function ProfileContent() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="profile-old-password">当前密码</Label>
-              <Input id="profile-old-password" type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} placeholder="请输入当前密码" />
+              <PasswordInput id="profile-old-password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} placeholder="请输入当前密码" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="profile-new-password">新密码</Label>
-              <Input id="profile-new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 个字符" />
+              <PasswordInput id="profile-new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 个字符" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="profile-confirm-password">确认新密码</Label>
-              <Input id="profile-confirm-password" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="再次输入新密码" />
+              <PasswordInput id="profile-confirm-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="再次输入新密码" />
             </div>
             <Button className="w-full" onClick={handleChangePassword} disabled={changePasswordMutation.isPending}>
               {changePasswordMutation.isPending ? "修改中..." : "修改密码"}
@@ -622,7 +623,7 @@ function ProfileContent() {
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="profile-2fa-disable-password">当前密码</Label>
-                      <Input id="profile-2fa-disable-password" type="password" value={twoFactorPassword} onChange={(e) => setTwoFactorPassword(e.target.value)} placeholder="请输入当前密码" />
+                      <PasswordInput id="profile-2fa-disable-password" value={twoFactorPassword} onChange={(e) => setTwoFactorPassword(e.target.value)} placeholder="请输入当前密码" />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="profile-2fa-disable-code">动态验证码</Label>
@@ -677,7 +678,7 @@ function ProfileContent() {
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="profile-2fa-enable-password">当前密码</Label>
-                      <Input id="profile-2fa-enable-password" type="password" value={twoFactorPassword} onChange={(e) => setTwoFactorPassword(e.target.value)} placeholder="请输入当前密码" />
+                      <PasswordInput id="profile-2fa-enable-password" value={twoFactorPassword} onChange={(e) => setTwoFactorPassword(e.target.value)} placeholder="请输入当前密码" />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="profile-2fa-enable-code">动态验证码</Label>

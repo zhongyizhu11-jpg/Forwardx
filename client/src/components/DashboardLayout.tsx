@@ -70,6 +70,7 @@ import { useLocation } from "wouter";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "./ui/dialog";
+import { PasswordInput } from "./ui/password-input";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { useQueryFailureSignal } from "@/hooks/useQueryFailureSignal";
@@ -1917,9 +1918,8 @@ function DashboardLayoutContent({
           <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label htmlFor="old-password">当前密码</Label>
-              <Input
+              <PasswordInput
                 id="old-password"
-                type="password"
                 value={oldPassword}
                 onChange={(e) => setOldPassword(e.target.value)}
                 placeholder="请输入当前密码"
@@ -1927,9 +1927,8 @@ function DashboardLayoutContent({
             </div>
             <div className="space-y-2">
               <Label htmlFor="new-password">新密码</Label>
-              <Input
+              <PasswordInput
                 id="new-password"
-                type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="请输入新密码（至少6个字符）"
@@ -1937,9 +1936,8 @@ function DashboardLayoutContent({
             </div>
             <div className="space-y-2">
               <Label htmlFor="confirm-password">确认新密码</Label>
-              <Input
+              <PasswordInput
                 id="confirm-password"
-                type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="请再次输入新密码"
@@ -2001,9 +1999,8 @@ function DashboardLayoutContent({
               </div>
               <div className="space-y-2">
                 <Label htmlFor="two-factor-disable-password">当前密码</Label>
-                <Input
+                <PasswordInput
                   id="two-factor-disable-password"
-                  type="password"
                   value={twoFactorPassword}
                   onChange={(e) => setTwoFactorPassword(e.target.value)}
                   placeholder="请输入当前密码"
@@ -2071,9 +2068,8 @@ function DashboardLayoutContent({
               </div>
               <div className="space-y-2">
                 <Label htmlFor="two-factor-enable-password">当前密码</Label>
-                <Input
+                <PasswordInput
                   id="two-factor-enable-password"
-                  type="password"
                   value={twoFactorPassword}
                   onChange={(e) => setTwoFactorPassword(e.target.value)}
                   placeholder="请输入当前密码"

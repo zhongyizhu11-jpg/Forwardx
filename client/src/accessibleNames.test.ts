@@ -38,6 +38,7 @@ const ROOT = path.resolve(import.meta.dirname);
 /** 控件名 → 类别。输入框的 placeholder 能兜底，开关和下拉不能。 */
 const CONTROLS: Record<string, "input" | "switch" | "select"> = {
   Input: "input",
+  PasswordInput: "input",
   Textarea: "input",
   Switch: "switch",
   OptimisticSwitch: "switch",
@@ -118,6 +119,13 @@ function scan(source: string, relative: string) {
         || /\baria-labelledby=/.test(attrs)
         || /\btitle=/.test(attrs)
         || /\bid=/.test(attrs)
+        /*
+          透传 {...props} 的控件，名字是调用处给的，这里看不见也管不着。
+          PasswordInput 内部那个 <Input {...props} /> 就是这种：它自己没有名字，
+          但每个调用处都有（或者由 FormField 发 id）。不放过的话，
+          以后每加一个这样的包装组件都要来改一次名单。
+        */
+        || /\{\.\.\.(props|rest)\}/.test(attrs)
         || stack.some((frame) => frame.name === "Label" || frame.name === "label")
         || stack.some((frame) => frame.name === "FormField" && frame.hasLabel)
         || (kind === "input" && /\bplaceholder=/.test(attrs));

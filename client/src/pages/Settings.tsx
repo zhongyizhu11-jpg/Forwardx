@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -1866,8 +1867,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                 </div>
                 <FormField className="space-y-2">
                   <Label>密码</Label>
-                  <Input
-                    type="password"
+                  <PasswordInput
                     value={databaseSwitchExternal.password}
                     onChange={(e) => {
                       setDatabaseSwitchExternal({ ...databaseSwitchExternal, password: e.target.value });
@@ -2029,11 +2029,11 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
             <div className="grid gap-3 sm:grid-cols-2">
               <FormField className="space-y-2">
                 <Label>备份密码</Label>
-                <Input type="password" value={backupPassword} onChange={(e) => setBackupPassword(e.target.value)} placeholder="至少 8 位" />
+                <PasswordInput value={backupPassword} onChange={(e) => setBackupPassword(e.target.value)} placeholder="至少 8 位" />
               </FormField>
               <FormField className="space-y-2">
                 <Label>确认备份密码</Label>
-                <Input type="password" value={backupPasswordConfirm} onChange={(e) => setBackupPasswordConfirm(e.target.value)} />
+                <PasswordInput value={backupPasswordConfirm} onChange={(e) => setBackupPasswordConfirm(e.target.value)} />
               </FormField>
             </div>
             <Alert>
@@ -2080,7 +2080,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
             </FormField>
             <FormField className="space-y-2">
               <Label>备份密码</Label>
-              <Input type="password" value={importPassword} onChange={(e) => setImportPassword(e.target.value)} />
+              <PasswordInput value={importPassword} onChange={(e) => setImportPassword(e.target.value)} />
             </FormField>
             <BackupTaskProgressView progress={importProgress} />
             <Button className="gap-2" onClick={openImportConfirm} disabled={importBackupMutation.isPending}>
@@ -5354,11 +5354,10 @@ function SystemInfoSection() {
             <div className="space-y-2">
               <FormField className="space-y-2">
                 <Label>API Token</Label>
-                <Input
+                <PasswordInput
                   value={ddnsCloudflareApiToken}
                   onChange={(e) => setDdnsCloudflareApiToken(e.target.value)}
                   placeholder={settings?.ddns?.cloudflareTokenMasked || "需要 Zone:Read + DNS:Edit 权限"}
-                  type="password"
                 />
                 <p className="text-xs text-muted-foreground">自动识别 Zone；Token 留空时保留原值。</p>
               </FormField>
@@ -5374,11 +5373,10 @@ function SystemInfoSection() {
                 </FormField>
                 <FormField className="space-y-2">
                   <Label>Secret Access Key</Label>
-                  <Input
+                  <PasswordInput
                     value={ddnsHuaweiCloudSecretKey}
                     onChange={(e) => setDdnsHuaweiCloudSecretKey(e.target.value)}
                     placeholder={settings?.ddns?.huaweicloudSecretKeyMasked || "留空保留已保存密钥"}
-                    type="password"
                   />
                 </FormField>
               </div>
@@ -5414,11 +5412,10 @@ function SystemInfoSection() {
                 </FormField>
                 <FormField className="space-y-2">
                   <Label>AccessKey Secret</Label>
-                  <Input
+                  <PasswordInput
                     value={ddnsAliyunAccessKeySecret}
                     onChange={(e) => setDdnsAliyunAccessKeySecret(e.target.value)}
                     placeholder={settings?.ddns?.aliyunAccessKeySecretMasked || "留空保留已保存密钥"}
-                    type="password"
                   />
                 </FormField>
               </div>
@@ -5450,11 +5447,10 @@ function SystemInfoSection() {
                 </FormField>
                 <FormField className="space-y-2">
                   <Label>SecretKey</Label>
-                  <Input
+                  <PasswordInput
                     value={ddnsTencentCloudSecretKey}
                     onChange={(e) => setDdnsTencentCloudSecretKey(e.target.value)}
                     placeholder={settings?.ddns?.tencentcloudSecretKeyMasked || "留空保留已保存密钥"}
-                    type="password"
                   />
                 </FormField>
               </div>

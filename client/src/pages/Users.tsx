@@ -44,6 +44,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -1893,9 +1894,8 @@ function UsersContent() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="create-password">密码</Label>
-              <Input
+              <PasswordInput
                 id="create-password"
-                type="password"
                 value={newUserPassword}
                 onChange={(e) => setNewUserPassword(e.target.value)}
                 placeholder="请输入密码（至少6个字符）"
@@ -1979,9 +1979,8 @@ function UsersContent() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="reset-password">新密码</Label>
-              <Input
+              <PasswordInput
                 id="reset-password"
-                type="password"
                 value={resetNewPassword}
                 onChange={(e) => setResetNewPassword(e.target.value)}
                 placeholder="留空不修改密码"

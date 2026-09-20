@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/form-field";
 import { Label } from "@/components/ui/label";
@@ -606,7 +607,7 @@ export default function Payments() {
                   <Input value={form.easypay.pid} onChange={(e) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, pid: e.target.value } }))} />
                 </Field>
                 <Field label="商户密钥" hint={config?.easypay?.hasPkey ? "已保存密钥，留空表示不修改" : "尚未保存密钥"}>
-                  <Input type="password" value={form.easypay.pkey} onChange={(e) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, pkey: e.target.value } }))} />
+                  <PasswordInput value={form.easypay.pkey} onChange={(e) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, pkey: e.target.value } }))} />
                 </Field>
                 <Field label="下单方式">
                   <Select value={form.easypay.mode} onValueChange={(mode: "redirect" | "api") => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, mode } }))}>
@@ -703,7 +704,7 @@ export default function Payments() {
                   <Input value={form.wxpay.publicKeyId} onChange={(e) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, publicKeyId: e.target.value } }))} />
                 </Field>
                 <Field label="APIv3 密钥" hint={config?.wxpay?.hasApiV3Key ? "已保存密钥，留空表示不修改" : "尚未保存密钥"}>
-                  <Input type="password" value={form.wxpay.apiV3Key} onChange={(e) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, apiV3Key: e.target.value } }))} />
+                  <PasswordInput value={form.wxpay.apiV3Key} onChange={(e) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, apiV3Key: e.target.value } }))} />
                 </Field>
                 <Field label="支付模式" hint="JSAPI 需要用户 OpenID，当前版本暂未开放前台 OAuth 流程">
                   <Select value={form.wxpay.mode} onValueChange={(mode: "native" | "h5" | "jsapi") => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, mode } }))}>
@@ -750,13 +751,13 @@ export default function Payments() {
                   <Checkbox aria-label="启用 Stripe" checked={form.stripe.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, enabled } }))} />
                 </div>
                 <Field label="Secret Key" hint={config?.stripe?.hasSecretKey ? "已保存密钥，留空表示不修改" : "尚未保存密钥"}>
-                  <Input type="password" placeholder="sk_live_..." value={form.stripe.secretKey} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, secretKey: e.target.value } }))} />
+                  <PasswordInput placeholder="sk_live_..." value={form.stripe.secretKey} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, secretKey: e.target.value } }))} />
                 </Field>
                 <Field label="Publishable Key" hint="可选，用于前端展示或后续扩展">
                   <Input placeholder="pk_live_..." value={form.stripe.publishableKey} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, publishableKey: e.target.value } }))} />
                 </Field>
                 <Field label="Webhook Secret" hint={config?.stripe?.hasWebhookSecret ? "已保存签名密钥，留空表示不修改" : "尚未保存签名密钥"}>
-                  <Input type="password" placeholder="whsec_..." value={form.stripe.webhookSecret} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, webhookSecret: e.target.value } }))} />
+                  <PasswordInput placeholder="whsec_..." value={form.stripe.webhookSecret} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, webhookSecret: e.target.value } }))} />
                 </Field>
                 <Field label="币种">
                   <Input value={form.stripe.currency} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, currency: e.target.value.toLowerCase() } }))} />
@@ -789,7 +790,7 @@ export default function Payments() {
                   <Input value={form.gmpay.pid} onChange={(e) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, pid: e.target.value } }))} />
                 </Field>
                 <Field label="商户密钥" hint={config?.gmpay?.hasSecretKey ? "已保存密钥，留空表示不修改" : "尚未保存密钥"}>
-                  <Input type="password" value={form.gmpay.secretKey} onChange={(e) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, secretKey: e.target.value } }))} />
+                  <PasswordInput value={form.gmpay.secretKey} onChange={(e) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, secretKey: e.target.value } }))} />
                 </Field>
                 <Field label="USDT 网络">
                   <Select value={form.gmpay.network} onValueChange={(network: PaymentConfigForm["gmpay"]["network"]) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, network } }))}>

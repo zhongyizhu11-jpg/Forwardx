@@ -23,6 +23,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -450,7 +451,7 @@ export default function Setup() {
                       </div>
                       <FormField className="space-y-2">
                         <Label>密码</Label>
-                        <Input type="password" value={externalDatabase.password} onChange={(e) => setExternalDatabase({ ...externalDatabase, password: e.target.value })} />
+                        <PasswordInput value={externalDatabase.password} onChange={(e) => setExternalDatabase({ ...externalDatabase, password: e.target.value })} />
                       </FormField>
                       <div className="flex items-center justify-between rounded-md border border-border/50 bg-card p-3">
                         <div>
@@ -698,10 +699,9 @@ export default function Setup() {
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="setup-admin-password">{hasAdmin ? "新密码（留空不修改）" : "密码"}</Label>
-                      <Input
+                      <PasswordInput
                         id="setup-admin-password"
                         name="new-password"
-                        type="password"
                         value={admin.password}
                         onChange={(e) => setAdmin({ ...admin, password: e.target.value })}
                         placeholder="至少 8 位"
@@ -710,10 +710,9 @@ export default function Setup() {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="setup-admin-password-confirmation">{hasAdmin ? "确认新密码" : "确认密码"}</Label>
-                      <Input
+                      <PasswordInput
                         id="setup-admin-password-confirmation"
                         name="new-password-confirmation"
-                        type="password"
                         value={adminPasswordConfirmation}
                         onChange={(e) => setAdminPasswordConfirmation(e.target.value)}
                         placeholder={admin.password ? "再次输入密码" : hasAdmin ? "留空不修改" : "再次输入密码"}
