@@ -49,6 +49,12 @@ type helloFrame struct {
 	MultipathSessionID string `json:"multipathSessionId,omitempty"`
 	MultipathLegIndex  int    `json:"multipathLegIndex,omitempty"`
 	MultipathLegCount  int    `json:"multipathLegCount,omitempty"`
+	// MultipathExtended says the entry understands the extended multipath
+	// frame kinds, so the exit may use them. An older exit does not know the
+	// field and drops it, which is exactly the answer "no" — it then never
+	// sends one, and neither side uses anything the other cannot parse.
+	// Relays forward the hello verbatim, so this reaches the exit end to end.
+	MultipathExtended bool `json:"multipathExtended,omitempty"`
 }
 
 type protocolPolicy struct {

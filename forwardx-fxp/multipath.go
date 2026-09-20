@@ -48,7 +48,23 @@ import (
 const (
 	multipathKindData byte = 0
 	multipathKindFin  byte = 1
+	// multipathKindReady is the exit telling the entry that it understands the
+	// frame kinds below; multipathKindAck carries flow control. Neither is ever
+	// sent to a peer that has not proved it understands them, because a peer
+	// that does not treats an unknown kind as a protocol error and drops the
+	// session. See multipath_flow.go.
+	multipathKindReady byte = 2
+	multipathKindAck   byte = 3
 )
+
+// multipathKnownKind reports whether a received frame kind can be parsed.
+func multipathKnownKind(kind byte) bool {
+	switch kind {
+	case multipathKindData, multipathKindFin, multipathKindReady, multipathKindAck:
+		return true
+	}
+	return false
+}
 
 // multipathHeaderSize is the per-chunk overhead: one kind byte plus an 8 byte
 // sequence number.
@@ -99,6 +115,22 @@ const multipathReorderOverdraftChunks = 256
 // both ends hanging with no error.
 const multipathReorderGapTimeout = 15 * time.Second
 
+// multipathLegStallTimeout is how long one leg's write may sit still, while
+// other legs keep completing writes, before that leg is retired.
+//
+// The comparison against the other legs is what makes this safe: every leg
+// blocking together is ordinary backpressure and nothing is retired. Only a leg
+// that has stopped on its own is, and a leg that has moved nothing in this long
+// while its siblings drained is contributing no bandwidth anyway.
+const multipathLegStallTimeout = 10 * time.Second
+
+// multipathLegStallCheck is how often the watchdog looks.
+const multipathLegStallCheck = 2 * time.Second
+
+// multipathAckInterval is how often progress that the inline thresholds did not
+// report is reported anyway, so a lost acknowledgement cannot strand the sender.
+const multipathAckInterval = 500 * time.Millisecond
+
 // multipathMinLegs is the smallest number of legs that still counts as
 // multipath. A single leg is just an ordinary session.
 const multipathMinLegs = 2
@@ -133,7 +165,7 @@ func decodeMultipathFrame(frame []byte) (multipathFrame, error) {
 		return multipathFrame{}, errMultipathShortFrame
 	}
 	kind := frame[0]
-	if kind != multipathKindData && kind != multipathKindFin {
+	if !multipathKnownKind(kind) {
 		return multipathFrame{}, fmt.Errorf("%w: %d", errMultipathBadKind, kind)
 	}
 	return multipathFrame{
@@ -170,12 +202,23 @@ type reorderBuffer struct {
 	waiting    int
 	stallWaker bool
 
-	// stallSince is when the chunk due next was first found missing with the
-	// buffer full, and stallSeq which chunk that was. The clock belongs to the
-	// buffer, not to one producer: it measures how long the stream as a whole
-	// has been unable to move, and it restarts the moment nextSeq changes.
+	// stallSince is when the hole at nextSeq opened, and stallSeq which chunk
+	// it is waiting for. The clock belongs to the buffer, not to one caller:
+	// producers and the consumer are stuck on the same hole, and it restarts
+	// the moment nextSeq changes.
 	stallSince time.Time
 	stallSeq   uint64
+
+	// waitingConsumer is whether a consumer is parked in pop. The waker has to
+	// know, because a hole can starve the consumer with no producer parked at
+	// all — that is what happens once the legs have nothing left to deliver.
+	waitingConsumer int
+
+	// onDeliver, when set, is told after each chunk reaches the consumer: which
+	// chunk is due next, how many this buffer holds in total, and how many are
+	// waiting. It is called with the lock released, and it is how the session
+	// turns delivery into the acknowledgements that pace the far side.
+	onDeliver func(deliveredSeq uint64, window int, pending int)
 
 	// stallGrace, overdraftLimit and gapTimeout hold the three tuning
 	// constants above. They are fields rather than constants so the tests can
@@ -261,22 +304,15 @@ func (b *reorderBuffer) push(seq uint64, payload []byte) error {
 		if seq == b.nextSeq || len(b.pending) < b.maxItems {
 			break
 		}
-		if _, ok := b.pending[b.nextSeq]; ok {
+		stalled := b.holeAgeLocked()
+		if stalled == 0 {
 			// 消费者手上就有下一片，它是在慢，不是在等。这时候挡住快腿正是
 			// 缓冲上限存在的理由：等它取走一片，这里自然有位置。
 			b.parkLocked()
 			continue
 		}
-		if b.stallSince.IsZero() || b.stallSeq != b.nextSeq {
-			b.stallSince, b.stallSeq = time.Now(), b.nextSeq
-		}
-		stalled := time.Since(b.stallSince)
 		if stalled >= b.gapTimeout {
-			// 欠那一片的腿不是慢，是没了。这条流再也拼不回来了，收掉连接
-			// 让上层重连，比两端一起干挂着强。
-			b.closeLocked(fmt.Errorf("%w: waiting for seq %d for %s, %d chunks held",
-				errMultipathReorderGap, b.nextSeq, stalled.Round(time.Second), len(b.pending)))
-			return b.closeErrLocked()
+			return b.giveUpOnHoleLocked(stalled)
 		}
 		// 还没超时就先等一等：那条腿可能只是慢，让快腿等它正是上限的意义。
 		// 等过了宽限还不动，继续挂着就只会让这条还健康的链路一起停摆 ——
@@ -294,6 +330,40 @@ func (b *reorderBuffer) push(seq uint64, payload []byte) error {
 	b.pending[seq] = stored
 	b.ready.Broadcast()
 	return nil
+}
+
+// holeAgeLocked reports how long the chunk due next has been missing while
+// later chunks were already in hand, starting that clock the first time.
+//
+// Zero means there is no hole to worry about: the chunk is here, or the stream
+// has ended, or nothing at all has run ahead of it — an idle stream waiting for
+// its next chunk looks exactly like that, and must never be mistaken for one
+// that can no longer move.
+func (b *reorderBuffer) holeAgeLocked() time.Duration {
+	_, haveNext := b.pending[b.nextSeq]
+	ended := b.finalKnown && b.nextSeq >= b.finalSeq
+	if haveNext || ended || len(b.pending) == 0 {
+		b.stallSince = time.Time{}
+		return 0
+	}
+	if b.stallSince.IsZero() || b.stallSeq != b.nextSeq {
+		b.stallSince, b.stallSeq = time.Now(), b.nextSeq
+	}
+	// 洞刚开的那一瞬也得算「有洞」，否则调用方会把它当成没洞。
+	if age := time.Since(b.stallSince); age > 0 {
+		return age
+	}
+	return time.Nanosecond
+}
+
+// giveUpOnHoleLocked closes the buffer because the chunk due next is never
+// coming. Callers return what it returns.
+func (b *reorderBuffer) giveUpOnHoleLocked(stalled time.Duration) error {
+	// 欠那一片的腿不是慢，是没了。这条流再也拼不回来了，收掉连接让上层重连，
+	// 比两端一起干挂着强。
+	b.closeLocked(fmt.Errorf("%w: waiting for seq %d for %s, %d chunks held",
+		errMultipathReorderGap, b.nextSeq, stalled.Round(time.Second), len(b.pending)))
+	return b.closeErrLocked()
 }
 
 // parkLocked waits for room, making sure something will come back to wake it
@@ -320,13 +390,17 @@ func (b *reorderBuffer) startStallWakerLocked() {
 		for {
 			time.Sleep(grace)
 			b.mu.Lock()
-			if b.closed || b.waiting == 0 {
+			// 生产者挂着，或者消费者正卡在一个洞上，都还需要有人来叫醒。
+			// 两样都没有就退场 —— 空闲的流不该养着一个永远在转的协程。
+			stuck := b.waiting > 0 || (b.waitingConsumer > 0 && b.holeAgeLocked() > 0)
+			if b.closed || !stuck {
 				b.stallWaker = false
 				b.mu.Unlock()
 				return
 			}
 			grace = b.stallGrace
 			b.space.Broadcast()
+			b.ready.Broadcast()
 			b.mu.Unlock()
 		}
 	}()
@@ -358,15 +432,37 @@ func (b *reorderBuffer) setFinal(finalSeq uint64) {
 // sequence has been delivered, matching the half-close signal the single-path
 // frame readers already use.
 func (b *reorderBuffer) pop() ([]byte, error) {
+	// 交付回调必须在放锁之后才跑 —— 它会去发回执，那条路要再绕回缓冲。
+	// defer 是后进先出，所以这一条要抢在解锁那条前面注册。
+	var notify func()
+	defer func() {
+		if notify != nil {
+			notify()
+		}
+	}()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for !b.deliverable() {
+		// 后面的分片都到了、就差这一片，而且差了太久 —— 等下去没有意义了。
+		// 这一段必须在这里也有一份：腿上没东西可推时，push 根本不会再被调用，
+		// 光靠那边兜底的话，消费者会一直干等。
+		if stalled := b.holeAgeLocked(); stalled >= b.gapTimeout {
+			return nil, b.giveUpOnHoleLocked(stalled)
+		} else if stalled > 0 {
+			b.startStallWakerLocked()
+		}
+		b.waitingConsumer++
 		b.ready.Wait()
+		b.waitingConsumer--
 	}
 	if payload, ok := b.pending[b.nextSeq]; ok {
 		delete(b.pending, b.nextSeq)
 		b.nextSeq++
 		b.space.Broadcast()
+		if b.onDeliver != nil {
+			delivered, window, pending := b.nextSeq, b.maxItems, len(b.pending)
+			notify = func() { b.onDeliver(delivered, window, pending) }
+		}
 		return payload, nil
 	}
 	if b.finalKnown && b.nextSeq >= b.finalSeq {

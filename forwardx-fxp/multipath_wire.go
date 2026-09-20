@@ -321,6 +321,10 @@ func handleExitMultipath(sec *secureConn, hello helloFrame, cfg config) error {
 		hello.TargetPort,
 	)
 	session := newMultipathSession(legs, multipathPendingLimit(cfg))
+	if hello.MultipathExtended {
+		// 入口声明了它听得懂扩展帧，那就回一帧 ready，两边都可以开流控了。
+		session.enableExtended()
+	}
 	defer session.closeTransport()
 	return relayExitTCPToTarget(session, hello)
 }
@@ -337,6 +341,9 @@ func dialEntryMultipath(cfg config, hello helloFrame, client net.Conn) (*multipa
 	if err != nil {
 		return nil, err
 	}
+	// 告诉出口这边听得懂扩展帧。老出口会忽略这个字段，于是永远不会回 ready，
+	// 这边也就永远不发新类型的帧 —— 行为退回今天的样子。
+	hello.MultipathExtended = true
 	legs, err := dialMultipathLegs(cfg, hello, sessionID)
 	if err != nil {
 		return nil, err
