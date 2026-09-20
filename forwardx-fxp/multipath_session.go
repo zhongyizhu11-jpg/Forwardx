@@ -44,6 +44,11 @@ type multipathLegConn struct {
 	// write that was already finishing and a leftover deadline would then fail
 	// the following write on a leg that is perfectly healthy.
 	deadlineArmed atomic.Bool
+	// writeMu keeps the bookkeeping above matched to one write at a time. The
+	// secure connection serializes the writes themselves anyway; without this,
+	// two writers on one leg would overwrite each other's start time and the
+	// watchdog could lose sight of the one that is actually stuck.
+	writeMu sync.Mutex
 }
 
 // clearStaleDeadline undoes a write deadline the watchdog set on a write that
@@ -210,12 +215,7 @@ func (s *multipathSession) legWriter(leg *multipathLegConn) {
 		}
 		chunk := work.chunk
 		frame := encodeMultipathFrame(multipathKindData, chunk.seq, chunk.data)
-		leg.clearStaleDeadline()
-		leg.progressAtWrite.Store(s.writeProgress.Load())
-		leg.writeStartedAt.Store(time.Now().UnixNano())
-		err := leg.sec.writeFrame(frame)
-		leg.writeStartedAt.Store(0)
-		if err != nil {
+		if err := s.writeLegFrame(leg, frame); err != nil {
 			// Hand the chunk back so another leg carries it. The receiver drops
 			// duplicates by sequence number, so a write that partially landed
 			// is harmless.
@@ -223,15 +223,19 @@ func (s *multipathSession) legWriter(leg *multipathLegConn) {
 			s.legFailed(leg, err)
 			return
 		}
-		s.writeProgress.Add(1)
 		s.bytesPerLeg[leg.index].Add(uint64(len(chunk.data)))
 		s.inFlight.Done()
 	}
 }
 
-// writeLegFrame writes one protocol frame, tracked like a data write so the
-// watchdog can see a leg that stops part way through one.
+// writeLegFrame writes one frame to one leg.
+//
+// Every write to a leg goes through here, because a write that is not recorded
+// is a write the watchdog cannot see — and an unseen write on a leg whose far
+// side has stopped reading never returns.
 func (s *multipathSession) writeLegFrame(leg *multipathLegConn, frame []byte) error {
+	leg.writeMu.Lock()
+	defer leg.writeMu.Unlock()
 	leg.clearStaleDeadline()
 	leg.progressAtWrite.Store(s.writeProgress.Load())
 	leg.writeStartedAt.Store(time.Now().UnixNano())
@@ -525,14 +529,41 @@ func (s *multipathSession) writeFin() error {
 		// far side could end the stream early.
 		s.drainQueued()
 		frame := encodeMultipathFrame(multipathKindFin, s.sendSeq, nil)
-		delivered := 0
+		// 每条腿都发一份，但**同时**发，而且只要有一条送到就算数。
+		//
+		// 原来是挨个腿串行写的：一条腿要是还连着但对端不再读，这次写就永远
+		// 回不来，后面的腿根本轮不到 —— 结束标记发不出去，整条会话就挂在
+		// 这里。看门狗也救不了：它判「这条腿卡住了」靠的是别的腿还在往前走，
+		// 而串行的写法根本不给别的腿走的机会。
+		//
+		// 接收端本来就是「第一份 fin 说了算」，所以一条送到就可以返回；
+		// 剩下的腿写完或者被会话关闭掐断，都不影响结果。
+		var delivered atomic.Bool
+		landed := make(chan struct{})
+		var pending sync.WaitGroup
 		for _, leg := range s.legs {
-			if writeErr := leg.sec.writeFrame(frame); writeErr != nil {
-				continue
-			}
-			delivered++
+			pending.Add(1)
+			go func(leg *multipathLegConn) {
+				defer pending.Done()
+				if writeErr := s.writeLegFrame(leg, frame); writeErr != nil {
+					return
+				}
+				if delivered.CompareAndSwap(false, true) {
+					close(landed)
+				}
+			}(leg)
 		}
-		if delivered == 0 {
+		exhausted := make(chan struct{})
+		go func() {
+			pending.Wait()
+			close(exhausted)
+		}()
+		select {
+		case <-landed:
+		case <-exhausted:
+		case <-s.closed:
+		}
+		if !delivered.Load() {
 			err = errors.New("multipath fin could not be delivered on any leg")
 			s.setErr(err)
 		}

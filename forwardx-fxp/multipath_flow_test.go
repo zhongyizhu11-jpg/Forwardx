@@ -374,3 +374,66 @@ func TestSendWindowGivesUpWhenTheFarSideGoesSilent(t *testing.T) {
 		t.Fatalf("窗口一直在动，不该判成卡死：%v", err)
 	}
 }
+
+// 结束标记要发给每一条腿。原来是**串行**发的，一条腿还连着但对端不再读的时候，
+// 这次写永远回不来，后面的腿根本轮不到 —— 整条会话就挂在收尾这一步，两端都不报错。
+//
+// 看门狗也救不了这种：它判「这条腿卡住了」靠的是别的腿还在往前走，而串行的写法
+// 根本不给别的腿走的机会。
+func TestMultipathSessionEndsTheStreamEvenWhenOneLegBlackHoles(t *testing.T) {
+	client, server, hole := newBlackHolePair(t, 3, 64, 1)
+	server.enableExtended()
+	client.setLegStallTuning(200*time.Millisecond, 50*time.Millisecond)
+	server.setLegStallTuning(200*time.Millisecond, 50*time.Millisecond)
+
+	drained := make(chan struct{})
+	go func() { _, _ = drainStream(server); close(drained) }()
+
+	// 先正常跑几片，确认链路是通的。
+	for i := 0; i < 5; i++ {
+		if err := client.writeFrame(markedChunk(i, 64)); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+	// 这一刻一条腿不读了，紧接着就结束流。
+	hole.swallow.Store(true)
+	time.Sleep(50 * time.Millisecond)
+
+	done := make(chan error, 1)
+	go func() { done <- client.writeFrame(nil) }()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("writeFin 永久挂住：结束标记是挨个腿直接写的，看门狗看不见它")
+	}
+	<-drained
+}
+
+func TestMultipathSessionEndsAnIdleStreamWhenOneLegBlackHoles(t *testing.T) {
+	// 上一条里那条腿是先卡在一次数据写上的，看门狗从那儿就看得见它。
+	// 这一条更刁：连接一开就结束，那条腿**只**卡在结束标记这一次写上。
+	//
+	// 串行地挨个腿写，在这里必然挂死：看门狗判一条腿坏掉，靠的是「别的腿还在
+	// 往前走」，而卡住的那条腿之后的腿根本轮不到写。只有同时发才走得出去。
+	// 开关必须在会话起来之前就打开，否则那条腿的读取者会先正常读掉一帧。
+	client, server, _ := newBlackHolePairArmed(t, 3, 64, 1, true)
+	server.enableExtended()
+	client.setLegStallTuning(200*time.Millisecond, 50*time.Millisecond)
+	server.setLegStallTuning(200*time.Millisecond, 50*time.Millisecond)
+
+	drained := make(chan struct{})
+	go func() { _, _ = drainStream(server); close(drained) }()
+
+	done := make(chan error, 1)
+	go func() { done <- client.writeFrame(nil) }()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("空流收不了尾：结束标记卡在那条不读的腿上，后面的腿一直轮不到")
+	}
+	select {
+	case <-drained:
+	case <-time.After(15 * time.Second):
+		t.Fatal("接收端没等到结束标记")
+	}
+}

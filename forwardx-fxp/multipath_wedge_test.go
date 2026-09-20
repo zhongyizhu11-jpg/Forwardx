@@ -275,6 +275,16 @@ func (c *blackHoleConn) Read(p []byte) (int, error) {
 // to stop reading mid-stream.
 func newBlackHolePair(t *testing.T, legCount, maxPending, blackHole int) (*multipathSession, *multipathSession, *blackHoleConn) {
 	t.Helper()
+	return newBlackHolePairArmed(t, legCount, maxPending, blackHole, false)
+}
+
+// newBlackHolePairArmed can start with the hole already swallowing.
+//
+// 这个区别很要命：读取者一跑起来就停在一次 Read 里等数据，这时候才打开开关的话,
+// **那一次 Read 还是会正常读到东西**，要等它再进来一次才真的被吞掉。想让一条腿
+// 从第一帧起就不读，只能在会话起来之前就打开。
+func newBlackHolePairArmed(t *testing.T, legCount, maxPending, blackHole int, armed bool) (*multipathSession, *multipathSession, *blackHoleConn) {
+	t.Helper()
 	salt := make([]byte, fxpSaltSize)
 	for i := range salt {
 		salt[i] = byte(i + 3)
@@ -300,6 +310,9 @@ func newBlackHolePair(t *testing.T, legCount, maxPending, blackHole int) (*multi
 		clientConns = append(clientConns, entrySec)
 		serverConns = append(serverConns, exitSec)
 		labels = append(labels, fmt.Sprintf("leg-%d", i))
+	}
+	if armed {
+		hole.swallow.Store(true)
 	}
 	client := newMultipathSession(multipathLegsFromSecureConns(clientConns, labels), maxPending)
 	server := newMultipathSession(multipathLegsFromSecureConns(serverConns, labels), maxPending)
