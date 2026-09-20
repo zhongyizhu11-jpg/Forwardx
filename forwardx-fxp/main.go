@@ -365,44 +365,52 @@ func (s *exitEndpointSelector) pick(excluded map[int]bool, selectionKeys ...stri
 	if len(s.endpoints) == 0 {
 		return exitEndpoint{}, -1, false
 	}
-	// 「到点了」不再等于「可以用了」。一个连得上但不回话的出口，重新探一次
-	// 要等满整个握手超时 —— 让用户的连接去承担这次探测，就是每隔几秒钟就有
-	// 一条连接卡十几秒。实测确认过。坏节点由后台探测负责转回健康，用户路径
-	// 上只走确认健康的；真的一个都不剩时，下面的兜底循环照样会用它。
-	eligible := func(index int) bool {
-		return s.healthy[index] || s.retryAfter[index].IsZero()
+	now := time.Now()
+	// 分三档挑，而不是「够格/不够格」两档：
+	//
+	//	1. 确认健康的（含从没失败过的）
+	//	2. 挂过、但冷却已经到期的
+	//	3. 剩下的全部 —— 一个都不剩时总得选一个，否则等于直接断服
+	//
+	// 为什么要把第 2 档单独分出来：重新探一个「连得上但不回话」的出口，要等满
+	// 一整个握手超时。以前它和第 1 档混在一起，于是每过一个冷却窗口就有一条
+	// 用户连接被派去探那个死节点，卡满十几秒（实测）。分开之后，只要还有健康
+	// 的，用户就走健康的；死节点由后台探测去认领。
+	//
+	// 但第 2 档不能干脆去掉：像 UDP 直连那条路根本不拨号，只做一次地址解析，
+	// 没有后台探测可言。真把它去掉，一次 DNS 抖动就能把那条规则的出口永久停用。
+	tier := func(index int) int {
+		switch {
+		case s.healthy[index]:
+			return 1
+		case s.retryAfter[index].IsZero() || !now.Before(s.retryAfter[index]):
+			return 2
+		default:
+			return 3
+		}
 	}
 	if s.strategy == "fallback" {
-		for i := range s.endpoints {
-			if excluded != nil && excluded[i] {
-				continue
-			}
-			if eligible(i) {
-				return s.endpoints[i], i, true
-			}
-		}
-		for i := range s.endpoints {
-			if excluded == nil || !excluded[i] {
-				return s.endpoints[i], i, true
+		for wanted := 1; wanted <= 3; wanted++ {
+			for i := range s.endpoints {
+				if excluded != nil && excluded[i] {
+					continue
+				}
+				if wanted == 3 || tier(i) == wanted {
+					return s.endpoints[i], i, true
+				}
 			}
 		}
 		return exitEndpoint{}, -1, false
 	}
 	candidates := make([]int, 0, len(s.endpoints))
-	for i := range s.endpoints {
-		if excluded != nil && excluded[i] {
-			continue
-		}
-		if eligible(i) {
-			candidates = append(candidates, i)
-		}
-	}
-	if len(candidates) == 0 {
+	for wanted := 1; wanted <= 3 && len(candidates) == 0; wanted++ {
 		for i := range s.endpoints {
 			if excluded != nil && excluded[i] {
 				continue
 			}
-			candidates = append(candidates, i)
+			if wanted == 3 || tier(i) == wanted {
+				candidates = append(candidates, i)
+			}
 		}
 	}
 	if len(candidates) == 0 {

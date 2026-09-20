@@ -197,3 +197,32 @@ func TestExitSelectorStillUsesADownEndpointWhenNothingElseIsLeft(t *testing.T) {
 }
 
 var errTestEndpointDown = errors.New("endpoint down")
+
+func TestExitSelectorStillRecoversWhereNothingProbes(t *testing.T) {
+	/*
+	   不是每条路都有后台探测可用。
+
+	   UDP 直连那条路根本不拨号 —— 它只做一次地址解析就发包，没有「握手」这回事，
+	   也就没有探测可言。所以「挂过、但冷却已经到期」这一档不能干脆去掉：真去掉了，
+	   一次 DNS 抖动就能把那条规则的出口**永久**停用，而且日志上只会看到一次很久
+	   以前的失败。
+
+	   这条钉的就是这一档确实还在：两个出口都不健康，只有一个冷却到期，那就必须
+	   挑到期的那个，而不是靠「全都不健康就随便选一个」的兜底撞上去。
+	*/
+	selector := newExitEndpointSelector(
+		[]exitEndpoint{{Host: "127.0.0.1", Port: 2}},
+		exitEndpoint{Host: "127.0.0.1", Port: 1},
+		"fallback",
+	)
+	selector.markFailure(0, errTestEndpointDown)
+	selector.markFailure(1, errTestEndpointDown)
+	selector.mu.Lock()
+	selector.retryAfter[0] = time.Now().Add(time.Hour)  // 首选还在冷却里
+	selector.retryAfter[1] = time.Now().Add(-time.Hour) // 备用冷却到期了
+	selector.mu.Unlock()
+
+	if _, index, ok := selector.pick(nil); !ok || index != 1 {
+		t.Fatalf("冷却到期的那个没被挑中：index=%d ok=%v —— 没有探测的路子就再也回不来了", index, ok)
+	}
+}
