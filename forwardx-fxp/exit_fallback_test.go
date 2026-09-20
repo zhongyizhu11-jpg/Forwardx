@@ -226,3 +226,87 @@ func TestExitSelectorStillRecoversWhereNothingProbes(t *testing.T) {
 		t.Fatalf("冷却到期的那个没被挑中：index=%d ok=%v —— 没有探测的路子就再也回不来了", index, ok)
 	}
 }
+
+func TestRelayFallsBackToItsBackupDownstream(t *testing.T) {
+	/*
+	   中转这一跳和入口走的是同一个择优拨号函数，所以超时那套行为已经由上面
+	   那条钉住了，这里不重复付一次十秒。
+
+	   但「中转有没有真的接上择优」是独立的一件事 —— 它完全可以被人改成自己
+	   拨号而测试不红。所以这条用最便宜的方式验一下接线：下一跳直接拒绝连接，
+	   切备用应该是瞬间的。
+
+	   端口 1 上不会有人监听，connect 立刻被拒，不像「先占一个再放掉」那样
+	   存在被别的测试进程抢走的窗口。
+	*/
+	targetLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetLn.Close()
+	go func() {
+		for {
+			c, e := targetLn.Accept()
+			if e != nil {
+				return
+			}
+			go func() { defer c.Close(); _, _ = io.Copy(c, c) }()
+		}
+	}()
+	targetPort := targetLn.Addr().(*net.TCPAddr).Port
+
+	upstreamKey := "relay-fallback-up"
+	downstreamKey := "relay-fallback-down"
+	exitPort := freeTCPPort(t)
+	relayPort := freeTCPPort(t)
+	entryPort := freeTCPPort(t)
+	exitDone, relayDone, entryDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	defer close(exitDone)
+	defer close(relayDone)
+	defer close(entryDone)
+
+	go func() {
+		_ = runExit(exitDone, config{
+			Role: "exit", TunnelID: 3, ListenPort: exitPort, Protocol: "tcp", Key: downstreamKey,
+		})
+	}()
+	waitForTCP(t, exitPort)
+	go func() {
+		_ = runRelay(relayDone, config{
+			Role: "relay", TunnelID: 3, ListenPort: relayPort, Protocol: "tcp", Key: upstreamKey,
+			RelayExitHost: "127.0.0.1", RelayExitPort: 1, RelayKey: downstreamKey,
+			ExitStrategy: "fallback",
+			Exits:        []exitEndpoint{{Host: "127.0.0.1", Port: exitPort, Key: downstreamKey}},
+		})
+	}()
+	waitForTCP(t, relayPort)
+	go func() {
+		_ = runEntry(entryDone, config{
+			Role: "entry", TunnelID: 3, RuleID: 4, ListenPort: entryPort, Protocol: "tcp",
+			ExitHost: "127.0.0.1", ExitPort: relayPort, Key: upstreamKey,
+			TargetIP: "127.0.0.1", TargetPort: targetPort,
+		})
+	}()
+	waitForTCP(t, entryPort)
+
+	start := time.Now()
+	c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(entryPort)), 20*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
+	if _, err := c.Write([]byte("relay")); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, 5)
+	if _, err := io.ReadFull(c, reply); err != nil {
+		t.Fatalf("中转没有切到备用落地：%v", err)
+	}
+	if string(reply) != "relay" {
+		t.Fatalf("unexpected reply %q", reply)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("下一跳是直接拒绝连接，切备用却花了 %v", elapsed.Round(time.Millisecond))
+	}
+}
