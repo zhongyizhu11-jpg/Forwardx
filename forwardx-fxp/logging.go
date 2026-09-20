@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -107,4 +109,10 @@ func envTruthy(value string) bool {
 	default:
 		return false
 	}
+}
+
+// isNetTimeout reports whether an error is a network timeout.
+func isNetTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }

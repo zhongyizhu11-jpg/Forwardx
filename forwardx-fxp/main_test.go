@@ -132,12 +132,27 @@ func TestFallbackSelectorUsesPriorityAndRetriesPrimaryAfterCooldown(t *testing.T
 		t.Fatalf("expected backup during cooldown, index=%d endpoint=%+v ok=%v", backupIndex, backup, ok)
 	}
 
+	// 冷却到期**不再**把首选直接放回用户路径。
+	//
+	// 原来到点就放回去，于是每过一个冷却窗口，就有一条用户连接被派去探那个
+	// 死节点。探一个「连得上但不回话」的出口要等满整个握手超时 —— 实测是
+	// 每隔几秒就有人卡二十秒。现在到期只代表「可以去后台探一探了」，探通了
+	// 才回到用户路径。
 	selector.mu.Lock()
 	selector.retryAfter[0] = time.Now().Add(-time.Millisecond)
 	selector.mu.Unlock()
+	stillBackup, stillIndex, ok := selector.pick(nil)
+	if !ok || stillIndex != 1 || stillBackup.Port != 10002 {
+		t.Fatalf("冷却到期就把首选放回用户路径了：index=%d endpoint=%+v ok=%v", stillIndex, stillBackup, ok)
+	}
+	if _, probeIndex, claimed := selector.claimProbe(time.Now()); !claimed || probeIndex != 0 {
+		t.Fatalf("冷却到期后后台探测没认领到首选：index=%d claimed=%v", probeIndex, claimed)
+	}
+	selector.releaseProbe(0)
+	selector.markHealthy(0)
 	retried, retriedIndex, ok := selector.pick(nil)
 	if !ok || retriedIndex != 0 || retried.Port != 10001 {
-		t.Fatalf("expected primary retry after cooldown, index=%d endpoint=%+v ok=%v", retriedIndex, retried, ok)
+		t.Fatalf("探通之后没有回到首选，index=%d endpoint=%+v ok=%v", retriedIndex, retried, ok)
 	}
 }
 

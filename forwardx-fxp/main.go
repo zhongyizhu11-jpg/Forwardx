@@ -148,8 +148,11 @@ const (
 	fxpMasterContext     = "forwardx-fxp-v2 master"
 	fxpRuntimeVersion    = "2.2.118"
 	fxpFallbackRetry     = 5 * time.Second
-	fxpFallbackDial      = 3 * time.Second
-	fxpShutdownDrain     = 5 * time.Second
+	// A node that stays down is re-probed on a growing delay, because probing a
+	// peer that accepts but never answers costs a whole handshake timeout.
+	fxpFallbackRetryMax = 2 * time.Minute
+	fxpFallbackDial     = 3 * time.Second
+	fxpShutdownDrain    = 5 * time.Second
 
 	// Exit and relay ports are reachable by other nodes and must remain bounded
 	// even when user-facing access limits are disabled. The active limits are
@@ -190,9 +193,30 @@ type exitEndpointSelector struct {
 	endpoints  []exitEndpoint
 	healthy    []bool
 	retryAfter []time.Time
-	strategy   string
-	next       int
-	mu         sync.Mutex
+	// failures counts consecutive failures per endpoint, so a node that stays
+	// down is re-probed less and less often instead of every few seconds.
+	failures []int
+	// probing marks an endpoint that a background probe is already checking,
+	// so several connections cannot pile probes onto the same dead node.
+	probing  []bool
+	strategy string
+	next     int
+	mu       sync.Mutex
+}
+
+// fallbackRetryDelay backs off a repeatedly failing endpoint.
+//
+// 重新探一次挂掉的出口不是免费的：连得上但不回话的对端，一次探测要等满整个
+// 握手超时。固定 5 秒去探，等于把大部分时间都花在探一个死节点上。
+func fallbackRetryDelay(failures int) time.Duration {
+	delay := fxpFallbackRetry
+	for i := 1; i < failures && delay < fxpFallbackRetryMax; i++ {
+		delay *= 2
+	}
+	if delay > fxpFallbackRetryMax {
+		delay = fxpFallbackRetryMax
+	}
+	return delay
 }
 
 func newConnGate(maxConnections, maxIPs int) *connGate {
@@ -257,8 +281,70 @@ func newExitEndpointSelector(exits []exitEndpoint, fallback exitEndpoint, strate
 		endpoints:  endpoints,
 		healthy:    healthy,
 		retryAfter: retryAfter,
+		failures:   make([]int, len(endpoints)),
+		probing:    make([]bool, len(endpoints)),
 		strategy:   normalizeExitStrategy(strategy),
 	}
+}
+
+// claimProbe hands out one endpoint that is due to be re-checked, if any.
+//
+// 它把那个节点标成「正在探」，所以同时来的一堆连接只会派出一次探测，而不是
+// 一起往同一个死节点上撞。
+func (s *exitEndpointSelector) claimProbe(now time.Time) (exitEndpoint, int, bool) {
+	if s == nil {
+		return exitEndpoint{}, -1, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.endpoints {
+		if s.healthy[i] || s.probing[i] || s.retryAfter[i].IsZero() {
+			continue
+		}
+		if now.Before(s.retryAfter[i]) {
+			continue
+		}
+		s.probing[i] = true
+		return s.endpoints[i], i, true
+	}
+	return exitEndpoint{}, -1, false
+}
+
+func (s *exitEndpointSelector) releaseProbe(index int) {
+	if s == nil || index < 0 {
+		return
+	}
+	s.mu.Lock()
+	if index < len(s.probing) {
+		s.probing[index] = false
+	}
+	s.mu.Unlock()
+}
+
+// probeFailedEndpoint re-checks one endpoint that has been down, off the path
+// of any user connection.
+//
+// 探测本身可能要等满一个握手超时。放在后台，等多久都只是这一个协程的事；
+// 放在用户连接上，就是那条连接卡多久 —— 实测就是每隔几秒有人卡二十秒。
+func (s *exitEndpointSelector) probeFailedEndpoint(cfg config) {
+	endpoint, index, ok := s.claimProbe(time.Now())
+	if !ok {
+		return
+	}
+	go func() {
+		defer s.releaseProbe(index)
+		dialCfg := cfg
+		if endpoint.Key != "" {
+			dialCfg.Key = endpoint.Key
+		}
+		conn, _, err := dialSecureTCP(endpoint.Host, endpoint.Port, dialCfg)
+		if err != nil {
+			s.markFailure(index, err)
+			return
+		}
+		_ = conn.Close()
+		s.markHealthy(index)
+	}()
 }
 
 func (s *exitEndpointSelector) count() int {
@@ -279,9 +365,12 @@ func (s *exitEndpointSelector) pick(excluded map[int]bool, selectionKeys ...stri
 	if len(s.endpoints) == 0 {
 		return exitEndpoint{}, -1, false
 	}
-	now := time.Now()
+	// 「到点了」不再等于「可以用了」。一个连得上但不回话的出口，重新探一次
+	// 要等满整个握手超时 —— 让用户的连接去承担这次探测，就是每隔几秒钟就有
+	// 一条连接卡十几秒。实测确认过。坏节点由后台探测负责转回健康，用户路径
+	// 上只走确认健康的；真的一个都不剩时，下面的兜底循环照样会用它。
 	eligible := func(index int) bool {
-		return s.healthy[index] || s.retryAfter[index].IsZero() || !now.Before(s.retryAfter[index])
+		return s.healthy[index] || s.retryAfter[index].IsZero()
 	}
 	if s.strategy == "fallback" {
 		for i := range s.endpoints {
@@ -354,10 +443,12 @@ func (s *exitEndpointSelector) markFailure(index int, err error) {
 	endpoint := s.endpoints[index]
 	wasHealthy := s.healthy[index]
 	s.healthy[index] = false
-	s.retryAfter[index] = time.Now().Add(fxpFallbackRetry)
+	s.failures[index]++
+	delay := fallbackRetryDelay(s.failures[index])
+	s.retryAfter[index] = time.Now().Add(delay)
 	s.mu.Unlock()
 	if wasHealthy {
-		log.Printf("exit endpoint unhealthy index=%d endpoint=%s:%d reason=%v", index, endpoint.Host, endpoint.Port, err)
+		log.Printf("exit endpoint unhealthy index=%d endpoint=%s:%d retryIn=%s reason=%v", index, endpoint.Host, endpoint.Port, delay, err)
 	}
 }
 
@@ -373,6 +464,7 @@ func (s *exitEndpointSelector) markHealthy(index int) {
 	endpoint := s.endpoints[index]
 	wasHealthy := s.healthy[index]
 	s.healthy[index] = true
+	s.failures[index] = 0
 	s.retryAfter[index] = time.Time{}
 	s.mu.Unlock()
 	if !wasHealthy {
@@ -399,6 +491,9 @@ func dialSelectedSecureTCP(selector *exitEndpointSelector, cfg config, selection
 		conn, sec, err := dialSecureTCP(endpoint.Host, endpoint.Port, dialCfg)
 		if err == nil {
 			selector.markHealthy(index)
+			// 这条连接已经有着落了，顺手派一次后台探测去看看掉线的那些
+			// 回来没有 —— 探测的等待由后台协程扛，不占用户的时间。
+			selector.probeFailedEndpoint(cfg)
 			return conn, sec, endpoint, nil
 		}
 		lastErr = err
@@ -683,6 +778,12 @@ func dialSecureTCP(host string, port int, cfg config) (net.Conn, *secureConn, er
 		}
 		lastErr = err
 		_ = conn.Close()
+		if isNetTimeout(err) {
+			// 对端一个字节都没回。兼容上下文只决定**怎么解读**收到的字节，
+			// 换一个再来一遍还是同样地等满超时 —— 白白把「切备用」的时间
+			// 翻倍。实测主用是黑洞时，这一条就占了 20 秒里的 10 秒。
+			break
+		}
 	}
 	if lastErr == nil {
 		lastErr = errors.New("fxp secure connect failed")
