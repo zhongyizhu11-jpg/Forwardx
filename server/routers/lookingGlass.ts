@@ -1,3 +1,4 @@
+import { isPrivateOrReservedAddress } from "../../shared/ipAddress";
 import dns from "dns";
 import net from "net";
 import { TRPCError } from "@trpc/server";
@@ -48,41 +49,9 @@ function normalizeTarget(target: string) {
   return value.replace(/^\[|\]$/g, "");
 }
 
-function isPrivateIpv4(ip: string) {
-  const parts = ip.split(".").map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)) return true;
-  const [a, b] = parts;
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 198 && (b === 18 || b === 19)) ||
-    a >= 224
-  );
-}
-
-function isPrivateIpv6(ip: string) {
-  const normalized = ip.toLowerCase();
-  return (
-    normalized === "::1" ||
-    normalized === "::" ||
-    normalized.startsWith("fc") ||
-    normalized.startsWith("fd") ||
-    normalized.startsWith("fe80:") ||
-    normalized.startsWith("fec0:") ||
-    normalized.startsWith("ff")
-  );
-}
-
+/** 认不出来的一律当内网拦下 —— 网络测试是拿用户的 Agent 主机去发包的。 */
 function isPrivateAddress(address: string) {
-  const family = net.isIP(address);
-  if (family === 4) return isPrivateIpv4(address);
-  if (family === 6) return isPrivateIpv6(address);
-  return true;
+  return isPrivateOrReservedAddress(address);
 }
 
 async function resolvePublicTarget(target: string, method: LookingGlassMethod) {
