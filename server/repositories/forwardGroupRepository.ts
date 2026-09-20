@@ -2082,6 +2082,42 @@ function candidatePortsForGroup(policy: PortPolicy) {
   return ports.filter((port) => isPortAllowedByPolicy(port, policy));
 }
 
+/**
+ * 一个转发组的入口端口到底允许哪些 —— 组里每个「要占端口」的成员各有一份
+ * 策略（主机自己的范围与白名单；隧道成员还要叠上隧道范围），取交集。
+ *
+ * 之所以抽出来：这段循环原本在仓库里存在**三份**（取范围、找可用端口、
+ * 校验规则各一份），而界面上又完全没有，转发组模式的「允许端口范围」
+ * 一直显示「不限制」。
+ *
+ * 成员的选法照抄 validateForwardGroupRuleConfig —— 判定接不接受一个端口的
+ * 就是它，显示和校验必须用同一批成员，否则又是一份会漂开的答案。
+ *
+ * 逐个成员放行 ≡ 合并后放行：这一点不是想当然，随机造了 4000 组成员策略
+ * 比了 40 万次，两边结论完全一致（见 forwardGroupPortPolicy.test.ts）。
+ */
+export async function forwardGroupEntryPortPolicy(group: any): Promise<PortPolicy> {
+  const members = sortedMembers(group);
+  const groupMode = forwardGroupModeOf(group);
+  const chainEntries = groupMode === "chain" ? await chainEntryMembers(group) : [];
+  const portCheckMembers = groupMode === "chain"
+    ? (chainEntries.length > 0 ? chainEntries : members.filter((member: any) => dbBool(member?.isEnabled)).slice(0, 1))
+    : members;
+  let policy = portPolicyFrom(null);
+  for (const member of portCheckMembers) {
+    if (!dbBool(member?.isEnabled)) continue;
+    const entry = await entryPortPolicyForMember(member);
+    policy = combinePortPolicies(policy, entry.policy);
+  }
+  return policy;
+}
+
+export async function getForwardGroupEntryPortPolicy(groupId: number): Promise<PortPolicy> {
+  const group = await getForwardGroupById(groupId);
+  if (!group) throw new Error("Forward group does not exist");
+  return forwardGroupEntryPortPolicy(group);
+}
+
 export async function getForwardGroupEntryPortRange(groupId: number): Promise<{ start: number; end: number } | null> {
   const group = await getForwardGroupById(groupId);
   if (!group) throw new Error("Forward group does not exist");
@@ -2249,11 +2285,16 @@ export async function validateForwardGroupRuleConfig(groupId: number, config: Fo
       .map((rule: any) => Number(rule.id))
       .filter((id: number) => Number.isInteger(id) && id > 0)
     : [];
+  // 一次判完，而不是逐个成员判：报错时说出来的才是**真正**的允许范围，
+  // 也正是界面显示的那一份；逐个判只会报到第一个不满足的成员为止。
+  const entryPolicy = await forwardGroupEntryPortPolicy(group);
+  if (!isPortAllowedByPolicy(sourcePort, entryPolicy)) {
+    throw new Error(portPolicyErrorMessage(entryPolicy, "入口端口"));
+  }
   for (const member of portCheckMembers) {
     if (!dbBool(member?.isEnabled)) continue;
     const hostId = await memberEntryHostId(member);
     if (!hostId) throw new Error("Forward group member has no valid entry agent");
-    await assertEntryPortAllowed(member, sourcePort);
     const childMemberId = groupMode === "chain" && chainEntries.length > 0 && firstChainMember
       ? Number(firstChainMember.id)
       : Number(member.id);

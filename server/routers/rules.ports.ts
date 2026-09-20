@@ -69,21 +69,51 @@ async function resolveEntryPortPolicy(
   return { base, plan, effective: plan ? combinePortPolicies(base, plan) : base };
 }
 
+/**
+ * 转发组的入口端口允许哪些 —— 组里每个占端口的成员取交集，再叠上套餐端口段。
+ *
+ * 校验走的是 validateForwardGroupRuleConfig，它内部用的是同一个
+ * forwardGroupEntryPortPolicy，所以显示和判定同源。
+ */
+async function resolveForwardGroupPortPolicy(
+  ctx: { user: { id: number; role: string } },
+  forwardGroupId: number,
+): Promise<{ base: PortPolicy; plan: PortPolicy | null; effective: PortPolicy }> {
+  await requireForwardGroupPortAccess(ctx, forwardGroupId);
+  const base = await db.getForwardGroupEntryPortPolicy(forwardGroupId);
+  let plan: PortPolicy | null = null;
+  if (ctx.user.role !== "admin") {
+    const planRange = await db.getUserForwardGroupPlanPortRange(ctx.user.id, forwardGroupId);
+    if (planRange) plan = portPolicyFrom({ portRanges: planRange.ranges });
+  }
+  return { base, plan, effective: plan ? combinePortPolicies(base, plan) : base };
+}
+
 export const portsRulesRouter = router({
   /**
    * The effective entry port policy, for the dialog's hint.
    *
-   * 界面拿它来显示「允许端口范围」，并且**不再**自己算一遍。转发组那条路
-   * 的策略眼下嵌在取端口的大函数里、没单独抽出来，所以这里只服务主机/隧道
-   * 这一路；转发组维持原样（界面上显示不限制），等那份逻辑抽出来再接。
+   * 界面拿它来显示「允许端口范围」，并且**不再**自己算一遍。主机/隧道和
+   * 转发组两条路都走这里，各自和对应的校验同源。
    */
   entryPortPolicy: protectedProcedure
     .input(z.object({
-      hostId: z.number().int().positive(),
+      hostId: z.number().int().positive().optional(),
+      forwardGroupId: z.number().int().positive().optional(),
       tunnelId: z.number().nullable().optional(),
-    }))
+    }).refine(
+      (input) => !!input.hostId !== !!input.forwardGroupId,
+      { message: "请选择一个主机、隧道或转发组" },
+    ))
     .query(async ({ input, ctx }) => {
-      const { effective } = await resolveEntryPortPolicy(ctx, input);
+      if (input.forwardGroupId) {
+        const { effective } = await resolveForwardGroupPortPolicy(ctx, input.forwardGroupId);
+        return { policy: effective };
+      }
+      const { effective } = await resolveEntryPortPolicy(ctx, {
+        hostId: Number(input.hostId),
+        tunnelId: input.tunnelId,
+      });
       return { policy: effective };
     }),
   checkPort: protectedProcedure

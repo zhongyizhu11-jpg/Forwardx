@@ -2723,18 +2723,21 @@ function RulesContent() {
   // 22600-22600 + 白名单 23001、隧道 22600-22600，端口 23001 服务端放行、
   // 界面拒绝，而且界面**拒绝时根本不会去问服务端**，用户就被硬拦在一个
   // 自己有权用的端口上。界面这份还完全不知道套餐端口段的存在。
+  // isForwardGroupRouteMode 在下面才声明，这里照抄它的判定式（两个变量都已经
+  // 在上面了），避免为了一个查询把一大段 useMemo 往上搬。
+  const portPolicyForGroup = isForwardGroupBackedRouteModeValue(form.routeMode, form.forwardGroupId)
+    || (isLegacyLocalRuleEdit && form.routeMode === "local");
   const entryPortPolicyQuery = trpc.rules.entryPortPolicy.useQuery(
+    portPolicyForGroup
+      ? { forwardGroupId: Number(form.forwardGroupId) }
+      : {
+        hostId: Number(form.hostId),
+        tunnelId: form.routeMode === "tunnel" ? form.tunnelId ?? null : null,
+      },
     {
-      hostId: Number(form.hostId),
-      tunnelId: form.routeMode === "tunnel" ? form.tunnelId ?? null : null,
-    },
-    {
-      // isForwardGroupRouteMode 在下面才声明，这里照抄它的判定式（两个变量
-      // 都已经在上面了），避免为了一个查询把一大段 useMemo 往上搬。
-      // 少抄一半的话，遗留的本地规则编辑态会多发一次无用查询。
-      enabled: !(isForwardGroupBackedRouteModeValue(form.routeMode, form.forwardGroupId)
-        || (isLegacyLocalRuleEdit && form.routeMode === "local"))
-        && Number(form.hostId) > 0,
+      enabled: portPolicyForGroup
+        ? Number(form.forwardGroupId) > 0
+        : Number(form.hostId) > 0,
       staleTime: 30_000,
     },
   );
