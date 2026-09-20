@@ -81,6 +81,17 @@ async function refreshUserRuleAgents(userId: number, reason: string) {
   }
 }
 
+/*
+  下面这些定时任务原本是模块私有的，导出只为一件事：**能量它们打多少次库**。
+
+  它们都随面板规模增长（用户、主机、订阅、套餐），每几分钟到几小时跑一次，
+  而且从来没被量过 —— 这种东西退化了界面上完全看不出来，只会表现为「面板越用
+  越卡」。同一轮测量里，转发组详情那条就是这么揪出来的：每 5 分钟按组数放大。
+
+  导出之后 schedulerQueryCost.test.ts 会按两个数据规模各跑一遍，条数随规模涨
+  就红。生产代码不要直接调它们，调度器自己会安排。
+*/
+
 /**
  * 每月流量重置：用户、主机、落地节点、落地端口四路。
  *
@@ -163,7 +174,7 @@ export async function runMonthlyTrafficReset() {
   }
 }
 
-async function runSubscriptionExpirationCheck() {
+export async function runSubscriptionExpirationCheck() {
   try {
     /**
      * 先试自动续费，再做到期清扫。
@@ -184,7 +195,7 @@ async function runSubscriptionExpirationCheck() {
   }
 }
 
-async function runExpirationCheck() {
+export async function runExpirationCheck() {
   try {
     const expiredUsers = await db.getExpiredUsers();
     for (const user of expiredUsers) {
@@ -337,7 +348,7 @@ async function settleTimedOutTunnelTests(timedOutTests: TimedOutForwardTest[], d
   }
 }
 
-async function runSelfTestTimeoutSweep() {
+export async function runSelfTestTimeoutSweep() {
   if (!selfTestSweepActivity.shouldSweep()) return;
   try {
     const timedOutTests = await db.timeoutStaleForwardTests(
@@ -384,7 +395,7 @@ async function recoverPendingSelfTestSweep() {
   }
 }
 
-async function runTcpingCleanup() {
+export async function runTcpingCleanup() {
   try {
     await Promise.all([
       db.cleanOldHostMetrics(72),
@@ -406,7 +417,7 @@ function dayKey(prefix: string, userId: number) {
   return `${prefix}:${userId}:${new Date().toISOString().slice(0, 10)}`;
 }
 
-async function runEmailReminders() {
+export async function runEmailReminders() {
   try {
     const config = await getEmailConfig();
     if (!config.enabled) return;
@@ -561,7 +572,7 @@ async function runProxyTrafficEmailReminders(users: any[]) {
   }
 }
 
-async function runTelegramReminders() {
+export async function runTelegramReminders() {
   try {
     const settings = await db.getAllSettings();
     const envToken = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
@@ -720,7 +731,7 @@ async function runForwardGroupFailover() {
   }
 }
 
-async function runHostDdnsReconcile() {
+export async function runHostDdnsReconcile() {
   try {
     const queued = await reconcileHostDdnsRecords();
     if (queued > 0) console.log(`[Scheduler] Host DDNS reconcile queued ${queued} update(s)`);
@@ -738,7 +749,7 @@ async function runHostStatusSweep() {
   }
 }
 
-async function runHostBillingCycleExtension() {
+export async function runHostBillingCycleExtension() {
   try {
     const extendedHosts = await db.extendDueHostBillingPeriods();
     if (extendedHosts > 0) {
