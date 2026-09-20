@@ -4,6 +4,20 @@
 
 ### 修复
 
+- **面板跑在 http 上时，好几个复制按钮是死的**（易用性）。`navigator.clipboard` **只在安全上下文里存在**，而这个面板常常是 `http://IP:端口` 直接访问的 —— 那时它是 `undefined`，直接 `await` 它会抛 `TypeError`，按钮点了毫无反应，不弹提示也不报错。
+  - 项目里本来就有 `lib/clipboard.ts`，写得很仔细（判安全上下文、`contenteditable` + `Range` 回退、临时元素挂进打开着的弹窗以躲开焦点陷阱、如实回报成没成）。问题是**一半的调用点没走它**。全站 11 个调用点数下来：
+    - **3 处连 try/catch 都没有**：插件资源值、插件结果字段、**支付回调地址**。最后那个是要贴进支付平台后台的 —— 管理员以为复制上了，粘过去的是剪贴板里的旧内容。
+    - **1 处回退路径不看 `execCommand` 的返回值**，复制没成也照样弹「已复制入口地址」。提示比没提示更坏。
+    - **5 处各自抄了一份回退**，用的还是共享实现**已经换掉的** textarea 老写法（共享那份的注释写明：Chromium 会返回 true 其实复制了个空，iOS 直接不认），而且把临时元素挂在 `document.body` 上 —— 弹窗里的复制按钮会被焦点陷阱把焦点抢回去。
+  - 全部改走 `lib/clipboard.ts`。`Settings.tsx` 里那个本地函数还和共享实现**同名**，改成 `copyTextWithToast`，否则会遮蔽导入变成自己调自己。
+  - **在真面板里按 http 的条件验的**：把 `isSecureContext` 置 false、`navigator.clipboard` 置 undefined，再调真模块 —— `clipboardNeedsManualCopy()` 认出来了，`copyTextToClipboard` 回退成功且不抛；同样条件下旧写法抛 `TypeError: Cannot read properties of undefined (reading 'writeText')`。
+  - 新增 `clipboardSingleSource.test.ts`：`lib/clipboard.ts` 之外再碰 `navigator.clipboard` 或 `execCommand("copy")` 就红；另一条钉住共享实现自己的四个要点。反向对照验过。
+
+### 说明
+
+- 这一轮先查的其实是支付轮询（扫描器报 `poll` 三处 85% 相似）。查下来**不是问题**：`Store` 和 `Payments` 那两份的差异只是各自失效不同的缓存，属于正常；订单过期由 `scheduler.ts` 每 60 秒跑一次 `expireStalePendingOrders` 兜底，轮询不会空转。中途一度以为「过期任务根本没人调度」—— 那是我 grep 的范围没覆盖 `scheduler.ts`，差点报了个假警。
+
+
 - **侧边栏改头像，要等服务端顶回来才知道今天改不了了**（易用性）。账户面板做了两份 —— 侧边栏的账户菜单和个人资料页，各自定义同名的 **7 个 mutation 和 5 个处理函数**，一百多行几乎一样，而且已经漂了。
   - 个人资料页点保存前先查当天额度，直接说「今日头像修改次数已用完」；侧边栏**没有这个前置判断**，用户挑完、裁完、点了保存，才被服务端顶回来。
   - **额度本身服务端一直在管**（`userRepository` 里会抛「头像每天最多修改 N 次」），所以侧边栏那条路只是体验更差，**不是绕过了限制** —— 查过服务端才敢这么说。

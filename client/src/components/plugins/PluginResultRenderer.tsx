@@ -1,3 +1,4 @@
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { useState } from "react";
 import { valueAtPath } from "./agentResourceState";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -59,8 +60,8 @@ export function PluginResultRenderer({
   const base = valueAtPath(data, schema.resultPath);
 
   const copy = async (value: unknown, field: PluginResultFieldDefinition) => {
-    await navigator.clipboard.writeText(displayValue(value, field));
-    toast.success("已复制");
+    if (await copyTextToClipboard(displayValue(value, field))) toast.success("已复制");
+    else toast.error("复制失败，请手动复制");
   };
 
   const renderValue = (value: unknown, field: PluginResultFieldDefinition, revealKey: string) => {

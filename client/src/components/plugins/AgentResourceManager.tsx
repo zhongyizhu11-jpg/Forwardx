@@ -1,3 +1,4 @@
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { valueAtPath } from "./agentResourceState";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -779,8 +780,10 @@ export function AgentResourceManager({
   };
 
   const copyValue = async (value: unknown) => {
-    await navigator.clipboard.writeText(displayValue(value));
-    toast.success("已复制");
+    // navigator.clipboard 在非安全上下文（http://IP:端口）下根本不存在，
+    // 原来这里直接 await 它，面板跑在 http 上时点了毫无反应，连报错都没有。
+    if (await copyTextToClipboard(displayValue(value))) toast.success("已复制");
+    else toast.error("复制失败，请手动复制");
   };
 
   const renderField = (field: PluginResourceFieldDefinition) => {

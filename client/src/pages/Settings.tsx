@@ -1,3 +1,4 @@
+import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { FormField } from "@/components/ui/form-field";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -632,61 +633,21 @@ function SettingsContent() {
     || (typeof window !== "undefined" ? window.location.origin : "");
 
   const copyToClipboard = async (text: string) => {
-    // 优先使用 Clipboard API（仅在 https 或 localhost 下可用）
-    if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
-      try {
-        await navigator.clipboard.writeText(text);
-        toast.success("已复制到剪贴板");
-        return;
-      } catch (err) {
-        console.warn("[Clipboard] navigator.clipboard 失败，回退 execCommand:", err);
-      }
-    }
+    /*
+      走共享实现，不再在这里自己拼一遍 textarea。
 
-    // Fallback：HTTP / 非安全上下文 / 不支持 Clipboard API
-    // 关键修复：Radix Dialog 会抢焦点，必须将 textarea 挂到当前活跃 dialog 内部才能 select 成功。
-    let success = false;
-    const host =
-      (document.querySelector('[role="dialog"][data-state="open"]') as HTMLElement | null) ||
-      document.body;
-    const textarea = document.createElement("textarea");
-    try {
-      textarea.value = text;
-      textarea.setAttribute("readonly", "");
-      // 不能 display:none / left:-9999px，iOS 与部分浏览器会跳过选中
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      textarea.style.pointerEvents = "none";
-      textarea.style.left = "0";
-      textarea.style.top = "0";
-      textarea.style.width = "1px";
-      textarea.style.height = "1px";
-      host.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      textarea.setSelectionRange(0, text.length);
-      success = document.execCommand("copy");
-    } catch (err) {
-      console.error("[Clipboard] execCommand fallback 异常:", err);
-      success = false;
-    } finally {
-      if (textarea.parentNode) {
-        textarea.parentNode.removeChild(textarea);
-      }
-    }
-
-    if (success) {
+      共享那份的注释写明了为什么：textarea 那条路 Chromium 会返回 true 其实复制了个空，
+      iOS 直接不认 —— 它改用了 contenteditable + Range。这里原来抄的正是被换掉的旧写法。
+    */
+    if (await copyTextToClipboard(text)) {
       toast.success("已复制到剪贴板");
       return;
     }
-
-    // 最后兑底：弹 prompt 让用户手动 Ctrl+C，避免静默失败
-    try {
-      window.prompt("复制失败，请手动选中并复制 (Ctrl+C / Cmd+C)：", text);
-      toast.warning("未能自动写入剪贴板，已弹出手动复制窗口");
-    } catch {
-      toast.error("复制失败，请手动复制");
-    }
+    toast.error(
+      clipboardNeedsManualCopy()
+        ? "当前是 http 访问，浏览器限制了剪贴板，请长按选中内容复制"
+        : "复制失败，请手动复制",
+    );
   };
 
   if (user?.role !== "admin") return null;
@@ -1359,24 +1320,13 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
   });
 
   const copyMigrationCode = async (code: string) => {
-    let copied = false;
-    try {
-      await navigator.clipboard.writeText(code);
-      copied = true;
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = code;
-      textarea.setAttribute("readonly", "true");
-      textarea.style.position = "fixed";
-      textarea.style.left = "-9999px";
-      document.body.appendChild(textarea);
-      textarea.select();
-      copied = document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }
-
-    if (copied) toast.success("迁移码已复制");
-    else toast.error("复制失败，请手动选中迁移码复制");
+    /*
+      走共享实现。原来这里自己拼 textarea 挂到 document.body 上 ——
+      而这个复制按钮在弹窗里，弹窗有焦点陷阱，会把焦点抢回去。
+      共享那份专门把临时元素挂在打开着的弹窗内，就是为了这个。
+    */
+    if (await copyTextToClipboard(code)) toast.success("迁移码已复制");
+    else toast.error(clipboardNeedsManualCopy() ? "当前是 http 访问，浏览器限制了剪贴板，请手动选中复制" : "复制失败，请手动选中迁移码复制");
   };
 
   const migrationCountdown = getMigrationCodeCountdown(migrationCode, migrationCodeTick);
@@ -4699,24 +4649,14 @@ function SystemInfoSection() {
     setSidebarMenu((prev) => ({ ...prev, [key]: enabled }));
   };
 
-  const copyTextToClipboard = async (text: string) => {
-    let copied = false;
-    try {
-      await navigator.clipboard.writeText(text);
-      copied = true;
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.setAttribute("readonly", "true");
-      textarea.style.position = "fixed";
-      textarea.style.left = "-9999px";
-      document.body.appendChild(textarea);
-      textarea.select();
-      copied = document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }
-    if (copied) toast.success("已复制到剪贴板");
-    else toast.error("复制失败，请手动复制");
+  const copyTextWithToast = async (text: string) => {
+    /*
+      走共享实现。原来这里自己拼 textarea 挂到 document.body 上 ——
+      而这个复制按钮在弹窗里，弹窗有焦点陷阱，会把焦点抢回去。
+      共享那份专门把临时元素挂在打开着的弹窗内，就是为了这个。
+    */
+    if (await copyTextToClipboard(text)) toast.success("已复制到剪贴板");
+    else toast.error(clipboardNeedsManualCopy() ? "当前是 http 访问，浏览器限制了剪贴板，请手动选中复制" : "复制失败，请手动复制");
   };
 
   const startUpgradeMutation = trpc.system.startUpgrade.useMutation({
@@ -6274,7 +6214,7 @@ function SystemInfoSection() {
               onClick={() => {
                 if (!selectedRollbackVersion) return;
                 if (rollbackType === "panel" && !canRunPanelRollback) {
-                  copyTextToClipboard(selectedRollbackPanelCommand);
+                  copyTextWithToast(selectedRollbackPanelCommand);
                   return;
                 }
                 startRollbackMutation.mutate({ type: rollbackType, targetVersion: selectedRollbackVersion });
@@ -6319,7 +6259,7 @@ function SystemInfoSection() {
             <Button variant="outline" onClick={() => setShowDockerUpgradeScript(false)}>
               关闭
             </Button>
-            <Button className="gap-2" onClick={() => copyTextToClipboard(dockerPanelUpgradeCommand)}>
+            <Button className="gap-2" onClick={() => copyTextWithToast(dockerPanelUpgradeCommand)}>
               <Copy className="h-4 w-4" />
               复制脚本
             </Button>

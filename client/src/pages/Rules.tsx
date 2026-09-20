@@ -1,3 +1,4 @@
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { FormField } from "@/components/ui/form-field";
 import EmptyState from "@/components/EmptyState";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
@@ -5620,12 +5621,8 @@ function RulesContent() {
           return;
         }
         const text = formatAddressWithPort(entry, rule.sourcePort);
-        try {
-          await navigator.clipboard.writeText(text);
-          toast.success(`已复制入口地址: ${text}`);
-        } catch {
-          toast.error("复制失败，请手动复制");
-        }
+        if (await copyTextToClipboard(text)) toast.success(`已复制入口地址: ${text}`);
+        else toast.error("复制失败，请手动复制");
         return;
       }
       const entry = String(entryValue || getForwardGroupEntryAddresses(group)[0]?.value || "").trim();
@@ -5634,12 +5631,8 @@ function RulesContent() {
         return;
       }
       const text = formatAddressWithPort(entry, rule.sourcePort);
-      try {
-        await navigator.clipboard.writeText(text);
-        toast.success(`已复制入口地址: ${text}`);
-      } catch {
-        toast.error("复制失败，请手动复制");
-      }
+      if (await copyTextToClipboard(text)) toast.success(`已复制入口地址: ${text}`);
+      else toast.error("复制失败，请手动复制");
       return;
     }
     const entry = String(entryValue || getRuleEntry(rule)).trim();
@@ -5648,24 +5641,12 @@ function RulesContent() {
       return;
     }
     const text = formatAddressWithPort(entry, rule.sourcePort);
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        // 回退方案：临时 textarea
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-      toast.success(`已复制入口地址: ${text}`);
-    } catch {
-      toast.error("复制失败，请手动复制");
-    }
+    /*
+      原来这里的回退路径**不看 execCommand 的返回值**，所以无论复制成没成，
+      都照样弹「已复制入口地址」—— 提示比没有提示更坏。共享实现会如实回 false。
+    */
+    if (await copyTextToClipboard(text)) toast.success(`已复制入口地址: ${text}`);
+    else toast.error("复制失败，请手动复制");
   };
 
   const renderResolvedStatusDot = (visual: ReturnType<typeof resolveForwardRuleVisualStatus>) => {

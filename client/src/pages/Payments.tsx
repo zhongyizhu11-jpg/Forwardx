@@ -1,3 +1,4 @@
+import { copyTextToClipboard } from "@/lib/clipboard";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import MobileInfoRow from "@/components/MobileInfoRow";
@@ -281,8 +282,10 @@ function Field({ label, children, hint }: { label: string; children: ReactNode; 
 
 function CallbackItem({ label, value }: { label: string; value: string }) {
   const copy = async () => {
-    await navigator.clipboard.writeText(value);
-    toast.success("已复制");
+    // 这几个地址是要贴进支付平台后台的。原来没有任何兜底，面板跑在 http 上时
+    // 点了毫无反应 —— 管理员以为复制上了，粘过去的是剪贴板里的旧内容。
+    if (await copyTextToClipboard(value)) toast.success("已复制");
+    else toast.error("复制失败，请手动复制");
   };
   return (
     <div className="min-w-0 overflow-hidden rounded-lg border bg-background/70 px-3 py-2">
