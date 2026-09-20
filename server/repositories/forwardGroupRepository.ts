@@ -1109,11 +1109,13 @@ export async function getForwardGroupById(id: number) {
     .from(forwardGroupMembers)
     .where(eq(forwardGroupMembers.groupId, id))
     .orderBy(asc(forwardGroupMembers.priority));
-  const hydratedMembers = await Promise.all((members as any[]).map(async (member: any) => ({
-    ...member,
-    entryAddress: await memberEntryAddress(member).catch(() => ""),
-    ddnsValue: await memberDdnsValue(member, normalizeForwardGroupRecordType(group.recordType)).catch(() => ""),
-  })));
+  // 批量补齐，别一个成员打两次库。这个函数被路由、校验、故障转移巡检反复调用，
+  // 巡检那条尤其吃亏：每 5 分钟按组数线性打库，实测 25 个组要打 276 次，其中
+  // 200 次是在这里一条条查主机。
+  const hydratedMembers = await hydrateForwardGroupMemberEntryAddresses(members as any[], {
+    recordType: normalizeForwardGroupRecordType(group.recordType),
+    includeHost: false,
+  });
   return { ...group, groupMode: forwardGroupModeOf(group), members: hydratedMembers };
 }
 
@@ -1704,7 +1706,20 @@ async function memberEntryAddress(member: any) {
   return "";
 }
 
-async function hydrateForwardGroupMemberEntryAddresses(members: any[]) {
+/**
+ * 一次把一批成员的入口地址补齐，而不是一个成员打一次库。
+ *
+ * 成员要么挂主机、要么挂隧道（隧道再落到它的入口主机），所以只要两条 inArray：
+ * 先把隧道的入口主机 id 查出来，再把所有涉及的主机一次查回来。
+ *
+ * recordType 给了就顺带算 ddnsValue —— 它和 entryAddress 读的是同一批主机字段，
+ * 分两次算就等于把同一批主机再查一遍。实测：转发组详情页原来每个主机成员要打
+ * **两次**主机查询（entryAddress 一次、ddnsValue 一次），隧道成员四次。
+ */
+async function hydrateForwardGroupMemberEntryAddresses(
+  members: any[],
+  options: { recordType?: ForwardGroupRecordType; includeHost?: boolean } = {},
+) {
   if (members.length === 0) return [];
   const db = await getDb();
   if (!db) return members;
@@ -1746,13 +1761,19 @@ async function hydrateForwardGroupMemberEntryAddresses(members: any[]) {
     const hostId = member?.memberType === "host"
       ? Number(member?.hostId || 0)
       : tunnelEntryHostById.get(Number(member?.tunnelId || 0)) || 0;
+    const host = hostById.get(hostId);
     return {
       ...member,
-      entryAddress: entryAddressForHost(hostById.get(hostId)),
-      host: hostById.has(hostId) ? {
-        ...hostById.get(hostId),
-        isOnline: !!hostById.get(hostId)?.isOnline && isFreshHostHeartbeat(hostById.get(hostId)?.lastHeartbeat),
-      } : null,
+      entryAddress: entryAddressForHost(host),
+      ...(options.recordType ? { ddnsValue: ddnsValueForHostByRecordType(host, options.recordType) } : {}),
+      // host 这一层是给列表页用的。详情页不要 —— 它的返回结构是一大票调用方
+      // （路由、校验、故障转移）在吃的，凭空多挂一个主机对象不值当冒这个险。
+      ...(options.includeHost === false ? {} : {
+        host: hostById.has(hostId) ? {
+          ...host,
+          isOnline: !!host?.isOnline && isFreshHostHeartbeat(host?.lastHeartbeat),
+        } : null,
+      }),
     };
   });
 }
