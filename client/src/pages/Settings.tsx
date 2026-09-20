@@ -29,7 +29,7 @@ import { SlidingTabsList } from "@/components/ui/sliding-tabs";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
-import { getPanelChangelogUrl, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
+import { getPanelChangelogUrl, getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
 import { compressImageFile, imageDataUrlSize } from "@/lib/imageUpload";
 import { downloadTextFile, type TextDownloadFile } from "@/lib/fileDownload";
 import { applyPersonalizationTheme } from "@/lib/personalizationTheme";
@@ -119,73 +119,6 @@ import {
   type PersonalizationBackgroundImage,
   type PersonalizationBackgroundUrlType,
 } from "@shared/personalization";
-
-function getUpgradeProgress(job: any) {
-  const status = job?.status || "idle";
-  const isRollback = job?.mode === "rollback";
-  const actionLabel = isRollback ? "回退" : "升级";
-  const logs = Array.isArray(job?.logs) ? job.logs.join("\n") : "";
-  const matched = (patterns: RegExp[]) => patterns.some((pattern) => pattern.test(logs));
-  const steps = [
-    {
-      label: `准备${actionLabel}`,
-      done: status !== "idle" && matched([/开始升级/i, /开始回退/i, /Starting panel/i, /start/i]),
-    },
-    {
-      label: "检查发布资产",
-      done: matched([
-        /Release assets/i,
-        /not available yet/i,
-        /still building/i,
-        /发布资产/i,
-        /构建完成/i,
-        /Docker image/i,
-        /panel bundle/i,
-      ]),
-    },
-    {
-      label: "下载或拉取资产",
-      done: matched([
-        /Downloading panel bundle/i,
-        /Pulling image/i,
-        /Downloaded newer image/i,
-        /Image is up to date/i,
-        /load metadata/i,
-        /load build context/i,
-        /transferring context/i,
-        /pnpm install/i,
-        /npm install/i,
-        /Packages:/i,
-        /node_modules/i,
-        /downloaded/i,
-        /Lockfile is up to date/i,
-      ]),
-    },
-    {
-      label: "安装并重启",
-      done: matched([/Container .* (Creating|Created|Starting|Started)/i, /docker compose up/i, /systemctl restart/i, /已启动/i, /recreate/i]),
-    },
-  ];
-
-  if (status === "success") {
-    return { percent: 100, label: `${actionLabel}完成`, steps: steps.map((step) => ({ ...step, done: true, active: false })) };
-  }
-  if (status === "waiting_assets") {
-    return { percent: 34, label: "等待 GitHub Actions 构建发布资产", steps: steps.map((step, index) => ({ ...step, done: index === 0, active: index === 1 })) };
-  }
-  if (status === "error") {
-    const doneCount = steps.filter((step) => step.done).length;
-    const activeIndex = Math.min(doneCount, steps.length - 1);
-    return { percent: Math.max(10, doneCount * 22), label: `${actionLabel}异常`, steps: steps.map((step, index) => ({ ...step, active: index === activeIndex && !step.done })) };
-  }
-  if (status === "running") {
-    const doneCount = steps.filter((step) => step.done).length;
-    const activeIndex = Math.min(doneCount, steps.length - 1);
-    const activeStep = steps[activeIndex]?.label || "等待服务重启";
-    return { percent: Math.min(92, Math.max(12, doneCount * 22 + 8)), label: activeStep, steps: steps.map((step, index) => ({ ...step, active: index === activeIndex && !step.done })) };
-  }
-  return { percent: 0, label: `等待${actionLabel}`, steps: steps.map((step) => ({ ...step, active: false })) };
-}
 
 function formatDatabaseSwitchDuration(milliseconds: number) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -4921,7 +4854,7 @@ function SystemInfoSection() {
     }] : []),
   ];
   const isUpgradeRunning = upgradeStatus?.job.status === "running";
-  const upgradeProgress = getUpgradeProgress(upgradeStatus?.job);
+  const upgradeProgress = getPanelUpgradeProgress(upgradeStatus?.job);
   const upgradeErrorLogs = (upgradeStatus?.job?.logs || []).slice(-80).join("\n");
   const directProtocolEnabledCount = directForwardProtocolKeys.filter((key) => forwardProtocols[key]).length;
   const tunnelProtocolEnabledCount = tunnelForwardProtocolKeys.filter((key) => forwardProtocols[key]).length;
