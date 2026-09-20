@@ -16,7 +16,7 @@ const Toaster = ({ className, style, toastOptions, ...props }: ToasterProps) => 
       theme={resolvedTheme}
       position="bottom-right"
       className={cn("toaster group", className)}
-      style={{ zIndex: 200, ...style }}
+      style={{ zIndex: "var(--fx-z-in-overlay-toast)", ...style }}
       toastOptions={{
         ...toastOptions,
         classNames: {

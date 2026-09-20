@@ -134,7 +134,7 @@ const Sidebar = React.forwardRef<HTMLDivElement, React.ComponentProps<"div"> & {
           data-mobile-sidebar="true"
           aria-describedby={undefined}
           className={cn(
-            "fixed inset-y-0 z-50 flex h-dvh max-h-dvh flex-col overflow-hidden bg-sidebar text-sidebar-foreground outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-200 data-[state=closed]:duration-150",
+            "fixed inset-y-0 z-[var(--fx-z-in-overlay-base)] flex h-dvh max-h-dvh flex-col overflow-hidden bg-sidebar text-sidebar-foreground outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-200 data-[state=closed]:duration-150",
             side === "left" ? "left-0 data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left" : "right-0 data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right",
             className
           )}
