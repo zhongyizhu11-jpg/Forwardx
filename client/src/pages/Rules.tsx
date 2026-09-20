@@ -101,7 +101,7 @@ import { autoForwardRuleName } from "@shared/forwardRuleName";
   服务端说「不限制」，这边说「1-65535」—— 听着像有限制。合并那一步这边还是
   逐个端口试 1..65535，实测 2.042ms，服务端的区间求交是 0.007ms。
 */
-import { combinePortPolicies, describePortPolicy, isPortAllowedByPolicy, portPolicyFrom, type PortPolicy } from "@shared/portPolicy";
+import { describePortPolicy, portPolicyFrom, type PortPolicy } from "@shared/portPolicy";
 import {
   Plus,
   Trash2,
@@ -2715,20 +2715,34 @@ function RulesContent() {
     if (!form.tunnelId || !tunnels) return null;
     return tunnels.find((t: any) => t.id === form.tunnelId) || null;
   }, [form.tunnelId, tunnels]);
-  const selectedEntryPortPolicy = useMemo(() => {
-    if (!selectedHost) return portPolicyFrom(null);
-    let policy = portPolicyFrom(selectedHost);
-    if (form.routeMode === "tunnel" && selectedTunnel) {
-      policy = combinePortPolicies(
-        policy,
-        portPolicyFrom({
-          portRangeStart: (selectedTunnel as any).portRangeStart,
-          portRangeEnd: (selectedTunnel as any).portRangeEnd,
-        }),
-      );
-    }
-    return policy;
-  }, [form.routeMode, selectedHost, selectedTunnel]);
+  // 允许哪些端口由服务端说了算，界面只负责显示。
+  //
+  // 这里原来自己照着算了一份：主机策略直接和隧道范围求交。服务端用的是
+  // combineHostPortPolicyWithRange —— 隧道范围恰好等于主机范围时，它会保留
+  // 主机的完整策略，而求交会把主机白名单里那些额外端口吃掉。实测：主机
+  // 22600-22600 + 白名单 23001、隧道 22600-22600，端口 23001 服务端放行、
+  // 界面拒绝，而且界面**拒绝时根本不会去问服务端**，用户就被硬拦在一个
+  // 自己有权用的端口上。界面这份还完全不知道套餐端口段的存在。
+  const entryPortPolicyQuery = trpc.rules.entryPortPolicy.useQuery(
+    {
+      hostId: Number(form.hostId),
+      tunnelId: form.routeMode === "tunnel" ? form.tunnelId ?? null : null,
+    },
+    {
+      // isForwardGroupRouteMode 在下面才声明，这里照抄它的判定式（两个变量
+      // 都已经在上面了），避免为了一个查询把一大段 useMemo 往上搬。
+      // 少抄一半的话，遗留的本地规则编辑态会多发一次无用查询。
+      enabled: !(isForwardGroupBackedRouteModeValue(form.routeMode, form.forwardGroupId)
+        || (isLegacyLocalRuleEdit && form.routeMode === "local"))
+        && Number(form.hostId) > 0,
+      staleTime: 30_000,
+    },
+  );
+  const selectedEntryPortPolicy = useMemo(
+    // 还没拿到就先当作不限制：真正的把关在服务端，界面不该凭猜测拦人。
+    () => entryPortPolicyQuery.data?.policy ?? portPolicyFrom(null),
+    [entryPortPolicyQuery.data],
+  );
   const sourcePortRangeText = useMemo(() => describePortPolicy(selectedEntryPortPolicy), [selectedEntryPortPolicy]);
   const portStatusHint = useMemo(() => {
     if (portStatus === "used") {
@@ -3110,11 +3124,9 @@ function RulesContent() {
       setPortStatus("used");
       return;
     }
-    if (!isForwardGroupRouteMode && !isPortAllowedByPolicy(sourcePort, selectedEntryPortPolicy)) {
-      setPortRangeError(`端口必须在允许范围 ${describePortPolicy(selectedEntryPortPolicy)} 内`);
-      setPortStatus("used");
-      return;
-    }
+    // 超不超范围交给 checkPort 判 —— 它返回的 reason 就是服务端的原话。
+    // 以前这里会先用界面自己算的那份策略拦一道，拦下了就**直接返回**，
+    // 连请求都不发；而那份策略和服务端并不一致。
     setPortRangeError(null);
     setPortStatus("checking");
     try {

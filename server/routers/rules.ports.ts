@@ -7,7 +7,7 @@ import {
   requireTrafficBillingAccessIfConfigured,
   requireTunnelUseOrTrafficBillingAccess,
 } from "./helpers";
-import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "@shared/portPolicy";
+import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom, type PortPolicy } from "@shared/portPolicy";
 
 const randomPortInputSchema = z.object({
   hostId: z.number().optional(),
@@ -29,7 +29,63 @@ async function requireForwardGroupPortAccess(ctx: { user: { id: number; role: st
   if (!hasPermission) throw new Error("无权使用该转发组");
 }
 
+/**
+ * 一条规则的入口端口到底允许哪些 —— 只有这里说了算。
+ *
+ * 三样东西叠在一起：主机自己的范围与白名单、隧道配的范围、以及非管理员的
+ * 套餐端口段。之所以要单独抽出来，是因为界面上也要**显示**同一套答案：
+ * 界面以前自己照着算了一份，用的是直接求交而不是这里的
+ * combineHostPortPolicyWithRange —— 两者在「隧道范围恰好等于主机范围」时
+ * 结论不一样，主机白名单里那些额外端口会被界面吃掉。结果就是用户被拦在一个
+ * 服务端明明放行的端口上，连请求都发不出去。
+ *
+ * base 和 plan 分开返回，是因为 checkPort 要对这两类给不同的话术
+ * （「端口不在允许范围」和「套餐端口必须在…」）。
+ */
+async function resolveEntryPortPolicy(
+  ctx: { user: { id: number; role: string } },
+  input: { hostId: number; tunnelId?: number | null },
+): Promise<{ base: PortPolicy; plan: PortPolicy | null; effective: PortPolicy }> {
+  const hostId = Number(input.hostId);
+  let base = portPolicyFrom(null);
+  if (input.tunnelId) {
+    const { tunnel } = await requireTunnelUseOrTrafficBillingAccess(ctx, input.tunnelId);
+    if (tunnel.entryHostId !== hostId) throw new Error("隧道入口主机与规则主机不一致");
+    const host = await db.getHostById(hostId);
+    base = combineHostPortPolicyWithRange(
+      host as any,
+      (tunnel as any).portRangeStart,
+      (tunnel as any).portRangeEnd,
+    );
+  } else {
+    const { host } = await requireHostUseAccess(ctx, hostId);
+    base = portPolicyFrom(host as any);
+  }
+  let plan: PortPolicy | null = null;
+  if (ctx.user.role !== "admin") {
+    const planRange = await db.getUserPlanPortRange(ctx.user.id, hostId, input.tunnelId ?? undefined);
+    if (planRange) plan = portPolicyFrom({ portRanges: planRange.ranges });
+  }
+  return { base, plan, effective: plan ? combinePortPolicies(base, plan) : base };
+}
+
 export const portsRulesRouter = router({
+  /**
+   * The effective entry port policy, for the dialog's hint.
+   *
+   * 界面拿它来显示「允许端口范围」，并且**不再**自己算一遍。转发组那条路
+   * 的策略眼下嵌在取端口的大函数里、没单独抽出来，所以这里只服务主机/隧道
+   * 这一路；转发组维持原样（界面上显示不限制），等那份逻辑抽出来再接。
+   */
+  entryPortPolicy: protectedProcedure
+    .input(z.object({
+      hostId: z.number().int().positive(),
+      tunnelId: z.number().nullable().optional(),
+    }))
+    .query(async ({ input, ctx }) => {
+      const { effective } = await resolveEntryPortPolicy(ctx, input);
+      return { policy: effective };
+    }),
   checkPort: protectedProcedure
     .input(z.object({
       hostId: z.number().int().positive().optional(),
@@ -73,33 +129,15 @@ export const portsRulesRouter = router({
       }
 
       const hostId = Number(input.hostId);
-      let policy = portPolicyFrom(null);
-      if (input.tunnelId) {
-        const { tunnel } = await requireTunnelUseOrTrafficBillingAccess(ctx, input.tunnelId);
-        if (tunnel.entryHostId !== hostId) throw new Error("隧道入口主机与规则主机不一致");
-        const host = await db.getHostById(hostId);
-        policy = combineHostPortPolicyWithRange(
-          host as any,
-          (tunnel as any).portRangeStart,
-          (tunnel as any).portRangeEnd,
-        );
-      } else {
-        const { host } = await requireHostUseAccess(ctx, hostId);
-        policy = portPolicyFrom(host as any);
+      const { base, plan, effective } = await resolveEntryPortPolicy(ctx, {
+        hostId,
+        tunnelId: input.tunnelId,
+      });
+      if (!isPortAllowedByPolicy(input.sourcePort, base)) {
+        return { used: true, reason: portPolicyErrorMessage(base) };
       }
-      if (!isPortAllowedByPolicy(input.sourcePort, policy)) {
-        return { used: true, reason: portPolicyErrorMessage(policy) };
-      }
-      if (ctx.user.role !== "admin") {
-        const planRange = await db.getUserPlanPortRange(ctx.user.id, hostId, input.tunnelId ?? undefined);
-        if (planRange) {
-          policy = combinePortPolicies(policy, portPolicyFrom({
-            portRanges: planRange.ranges,
-          }));
-        }
-        if (planRange && !isPortAllowedByPolicy(input.sourcePort, policy)) {
-          return { used: true, reason: portPolicyErrorMessage(policy, "套餐端口") };
-        }
+      if (plan && !isPortAllowedByPolicy(input.sourcePort, effective)) {
+        return { used: true, reason: portPolicyErrorMessage(effective, "套餐端口") };
       }
       const excludeRuleIds = input.excludeRuleId
         ? [
