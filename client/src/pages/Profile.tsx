@@ -1,3 +1,4 @@
+import { avatarQuotaState } from "@/lib/avatarQuota";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { AvatarPicker } from "@/components/AvatarPicker";
@@ -231,9 +232,7 @@ function ProfileContent() {
     return () => window.clearInterval(timer);
   }, [telegramBind?.expiresAt]);
 
-  const avatarQuotaRemaining = avatarQuota?.remaining ?? 3;
-  const avatarQuotaUnlimited = !!avatarQuota?.unlimited || user?.role === "admin";
-  const avatarQuotaExhausted = !avatarQuotaUnlimited && avatarQuotaRemaining <= 0;
+  const { remaining: avatarQuotaRemaining, unlimited: avatarQuotaUnlimited, exhausted: avatarQuotaExhausted } = avatarQuotaState(avatarQuota, user?.role === "admin");
   const avatarBusy = updateAvatarMutation.isPending || randomAvatarMutation.isPending;
   const twoFactorSetupExpiresAt = twoFactorSetup?.expiresAt ? new Date(twoFactorSetup.expiresAt).getTime() : 0;
   const twoFactorSetupRemaining = twoFactorSetupExpiresAt ? Math.max(0, Math.ceil((twoFactorSetupExpiresAt - twoFactorSetupTick) / 1000)) : 0;

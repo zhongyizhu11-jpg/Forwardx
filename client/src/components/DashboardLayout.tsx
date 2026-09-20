@@ -1,3 +1,4 @@
+import { avatarQuotaState } from "@/lib/avatarQuota";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -741,9 +742,17 @@ function DashboardLayoutContent({
     },
   });
 
+  const { data: avatarQuota } = trpc.users.avatarQuota.useQuery(undefined, {
+    enabled: !!user,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const { exhausted: avatarQuotaExhausted } = avatarQuotaState(avatarQuota, (user as any)?.role === "admin");
+
   const updateAvatarMutation = trpc.users.updateAvatar.useMutation({
     onSuccess: () => {
       utils.auth.me.invalidate();
+      utils.users.avatarQuota.invalidate();
       toast.success("头像已更新");
       setShowAvatarDialog(false);
     },
@@ -759,6 +768,14 @@ function DashboardLayoutContent({
   const handleSaveAvatar = () => {
     if (!avatarDraft) {
       toast.error("请选择头像");
+      return;
+    }
+    /*
+      这一条原来只有个人资料页有。侧边栏这条路让用户挑完裁完点了保存，才被
+      服务端顶回来 —— 同一个功能，两个入口，一个提前说一个事后说。
+    */
+    if (avatarQuotaExhausted) {
+      toast.error("今日头像修改次数已用完");
       return;
     }
     updateAvatarMutation.mutate({ avatar: avatarDraft });
