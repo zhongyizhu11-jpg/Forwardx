@@ -150,18 +150,23 @@
   .workspace-main [data-slot="table-head"] { font-weight: 600; background: var(--fx-subtle); }
 
   /*
-    卡片改成「文档章节」：不要填充色差、不要投影，只留一条顶线和足够的
-    上边距。这样一列卡片读起来是一篇有小节的文档，而不是一堆盒子。
+    卡片回来。
+
+    上一轮我把卡片拆成「文档章节」（只留一条顶线），结果是一列规则读起来
+    分不出哪几行是一条 —— 有质感但看不清。清晰优先于克制：一条规则就该是
+    一张看得见边界的卡片。
+
+    但不走另一个极端：白底 + 一条细边框 + 10px 圆角，不要投影、不要填充
+    色差。边界感来自边框，不是来自一层灰底或一圈阴影。
   */
   .workspace-main [data-slot="card"] {
-    border: 0; border-radius: 0; background: transparent; box-shadow: none;
-    border-top: 1px solid var(--fx-stroke);
-    padding-top: 4px; margin-top: 4px;
+    border: 1px solid var(--fx-stroke); border-radius: 10px;
+    background: var(--fx-surface); box-shadow: none;
+    padding: 0; margin-top: 0;
   }
-  .workspace-main [data-slot="card"]:first-of-type { border-top: 0; }
-  .workspace-main [data-slot="card-header"] { padding: 8px 0 0; }
-  .workspace-main [data-slot="card-content"] { padding: 8px 0; }
-  .workspace-main [data-slot="card-footer"] { padding: 0 0 8px; }
+  .workspace-main [data-slot="card-header"] { padding: 12px 12px 0; }
+  .workspace-main [data-slot="card-content"] { padding: 12px; }
+  .workspace-main [data-slot="card-footer"] { padding: 0 12px 12px; }
   .workspace-main [data-slot="card-title"] { font-size: 17px; font-weight: 600; line-height: 1.5; }
 
   /* 标题分级。 */
@@ -185,15 +190,9 @@
       三、颜色：次要信息退到 muted，不和主角抢
   */
 
-  /* 一、把内外间距倒过来 */
-  .workspace-main [data-slot="card"] {
-    padding-top: 14px; margin-top: 0;
-  }
-  .workspace-main [data-slot="card"] + [data-slot="card"] { margin-top: 0; }
-  .workspace-main [data-slot="card-content"] { padding: 0 0 14px; }
-  .workspace-main [data-slot="card-content"] > * + * { margin-top: 5px; }
-  .workspace-main .action-card-content { padding: 0 0 14px; }
-  .workspace-main .action-card-content > * + * { margin-top: 5px; }
+  /* 一、组内紧、组间松。卡片自己有边框，组间靠网格 gap。 */
+  .workspace-main [data-slot="card-content"] > * + * { margin-top: 6px; }
+  .workspace-main .action-card-content > * + * { margin-top: 6px; }
 
   /* 二、一行里只有一个主角：名字重而深，其余轻而淡 */
   .workspace-main [data-slot="card"] .text-sm.font-medium,
@@ -206,7 +205,11 @@
   .workspace-main [data-slot="card"] .text-\[10px\] { font-size: 12px; }
 
   /* 三、地址、徽标、流量全部退到次要层 */
-  .workspace-main [data-slot="card"] code { font-size: 12.5px; color: var(--fx-muted); }
+  /*
+    地址是这条规则最要紧的信息，不该退到 muted。上一轮把它压成 12.5px 灰字，
+    结果一眼看不出这条转发到底通向哪儿。回到 13px 正文色。
+  */
+  .workspace-main [data-slot="card"] code { font-size: 13px; color: var(--fx-text); }
   .workspace-main [data-slot="card"] [data-slot="badge"] { font-size: 11px; }
 
   /*
@@ -228,11 +231,15 @@
     还在画框的东西，反而最抢眼。去掉底色和分隔线，图标本身退到 muted，
     只在这一条被点/悬停时才需要看见它们。
   */
+  /*
+    操作行：上面一条细线把它和数据分开（它是「能做什么」不是「是什么」），
+    但不给底色 —— 参考图里每个按钮一块彩底，那才是没质感的来源。
+    危险操作保留红色：那不是装饰，是唯一需要在点之前就看见的信息。
+  */
   .workspace-main .action-card-footer {
-    background: transparent; border-top: 0; margin: 0; padding: 4px 0 0;
-    border-radius: 0;
+    background: transparent; border-top: 1px solid var(--fx-stroke);
+    margin: 8px -12px 0; padding: 6px 12px 0; border-radius: 0;
   }
-  .workspace-main .action-card-footer [data-slot="button"] { color: var(--fx-muted); }
 
   /*
     ── 转发路径：竖排改横排 ──
