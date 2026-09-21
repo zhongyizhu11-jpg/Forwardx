@@ -1,0 +1,253 @@
+import type { ReactNode } from "react";
+
+import { cn } from "@/lib/utils";
+import { describeNetworkHealth, type NetworkHealth, type NetworkLineStyle } from "@shared/networkHealth";
+
+import { StatusDot } from "./StatusDot";
+
+/**
+ * ForwardX 的核心视觉语言：节点是点，链路是线，转发是流。
+ *
+ * 这个文件里的三个组件（NetworkNode / NetworkEdge / NetworkPath）是整个设计
+ * 系统的地基。**凡是表达网络关系的地方，都用它们，不再各写各的**。
+ *
+ * 为什么值得单独抽出来：
+ *
+ * 面板里「入口 → 出口」这件事，隧道页、规则页、转发链、转发组、链路诊断、
+ * 创建向导的预览，一共有六处在画，六处画法都不一样 —— 有的是两行带标题的
+ * 竖排，有的是一行加箭头，有的干脆写「入口主机：xxx / 出口主机：yyy」。
+ * 同一个概念在一个产品里有六种长相，用户每换一页就要重新认一次。
+ *
+ * 而且「入口主机：」这种写法本身就是在用文字解释空间关系。空间关系应该
+ * **由空间来表达**：左边那个点就是入口，右边那个点就是出口，中间那条线就是
+ * 它们之间的关系，不用读字。
+ *
+ * 状态怎么画由 shared/networkHealth.ts 统一给：
+ *
+ *   绿 = Healthy   琥珀 = Degraded   红 = Down   灰 = Standby
+ *   实线 = Active   虚线 = Standby   脉冲 = Switching
+ *
+ * 所以以后做主备线路、负载均衡、多出口，都不用重新设计 UI —— 一条 standby 的
+ * 备线就是「灰点 + 虚线」，切换的瞬间就是「脉冲」，这套规则已经在这里了。
+ */
+
+export type NetworkNodeSpec = {
+  id: string;
+  /** 节点名。主机名、落地名、「ForwardX」这种中继标识都算 */
+  name: string;
+  /** 名字底下那行：地区、地址、角色。不是第二个标题，是注脚 */
+  sublabel?: string;
+  health?: NetworkHealth;
+  /** 右上角挂一个小标记（协议、版本之类）。列表里慎用，会抢点的注意力 */
+  badge?: ReactNode;
+};
+
+export type NetworkEdgeSpec = {
+  /** 这一段经过谁：ForwardX、GOST、中继名。写在线的旁边 */
+  via?: string;
+  /** 这一段的延迟。数字本身是视觉元素，所以单独一档字号 */
+  latencyMs?: number | null;
+  health?: NetworkHealth;
+  /** 不传则由 health 决定；只有需要覆盖默认画法时才显式传 */
+  lineStyle?: NetworkLineStyle;
+};
+
+/** 一个节点：点 + 名字 + 注脚。 */
+export function NetworkNode({
+  node,
+  orientation,
+  className,
+}: {
+  node: NetworkNodeSpec;
+  orientation: "horizontal" | "vertical";
+  className?: string;
+}) {
+  const health = node.health || "unknown";
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 gap-2",
+        orientation === "horizontal" ? "flex-col items-start" : "flex-row items-start",
+        className,
+      )}
+    >
+      <span className={cn("flex shrink-0 items-center gap-2", orientation === "vertical" && "pt-1")}>
+        <StatusDot health={health} />
+      </span>
+      <span className="flex min-w-0 flex-col">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-primary-type font-medium text-foreground">{node.name}</span>
+          {node.badge}
+        </span>
+        {node.sublabel ? (
+          <span className="truncate text-meta text-muted-foreground">{node.sublabel}</span>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 一段连线。
+ *
+ * 横排时是一条横线，竖排时是一条竖线 —— 但线型、颜色、标注的规则完全一样，
+ * 只有方向不同。所以是同一个组件，不是两个。
+ */
+export function NetworkEdge({
+  edge,
+  orientation,
+  className,
+}: {
+  edge: NetworkEdgeSpec;
+  orientation: "horizontal" | "vertical";
+  className?: string;
+}) {
+  const descriptor = describeNetworkHealth(edge.health || "healthy");
+  const style = edge.lineStyle || descriptor.lineStyle;
+  const color = style === "dashed" ? "var(--fx-standby)" : `var(--fx-${descriptor.token})`;
+
+  const hasLabel = !!edge.via || typeof edge.latencyMs === "number";
+  const label = hasLabel ? (
+    <span
+      className={cn(
+        "flex min-w-0 flex-col leading-tight",
+        orientation === "horizontal" ? "items-center text-center" : "items-start",
+      )}
+    >
+      {edge.via ? <span className="truncate text-meta text-muted-foreground">{edge.via}</span> : null}
+      {typeof edge.latencyMs === "number" ? (
+        <span className="text-meta font-medium tabular-nums text-foreground">
+          {edge.latencyMs}
+          <span className="ml-0.5 font-normal text-muted-foreground">ms</span>
+        </span>
+      ) : null}
+    </span>
+  ) : null;
+
+  /*
+    线本身用 border 画而不是背景色：虚线只能靠 border-style 得到，用背景色
+    得去调 repeating-linear-gradient，换个颜色就要重算一次。
+  */
+  const line = (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "block shrink-0",
+        orientation === "horizontal" ? "w-full border-t" : "h-full min-h-4 border-l",
+        style === "dashed" && "border-dashed",
+        style === "pulse" && "fx-edge-pulse",
+      )}
+      style={{ borderColor: color, borderWidth: style === "pulse" ? 2 : 1 }}
+    />
+  );
+
+  if (orientation === "horizontal") {
+    return (
+      <span className={cn("flex min-w-0 flex-1 flex-col items-center gap-1", className)}>
+        {line}
+        {label}
+      </span>
+    );
+  }
+  return (
+    <span className={cn("flex min-h-6 items-stretch gap-2", className)}>
+      <span className="flex w-2 shrink-0 justify-center">{line}</span>
+      {label}
+    </span>
+  );
+}
+
+/**
+ * 一条完整路径：节点 — 线 — 节点 — 线 — 节点。
+ *
+ * edges[i] 连的是 nodes[i] 和 nodes[i+1]，所以 edges 比 nodes 少一个；少给了
+ * 就按默认实线补，多给的忽略。这样调用方只在真的有话要说（经过谁、多少 ms）
+ * 时才需要构造 edges。
+ *
+ * 方向默认自动：两个节点横排（一行放得下，而且左右天然就是「从这到那」），
+ * 三个及以上竖排（横排会把每个节点压到放不下名字）。需要固定时显式传。
+ */
+export function NetworkPath({
+  nodes,
+  edges = [],
+  orientation = "auto",
+  className,
+}: {
+  nodes: readonly NetworkNodeSpec[];
+  edges?: readonly NetworkEdgeSpec[];
+  orientation?: "auto" | "horizontal" | "vertical";
+  className?: string;
+}) {
+  if (nodes.length === 0) return null;
+
+  const direction: "horizontal" | "vertical" =
+    orientation === "auto" ? (nodes.length <= 2 ? "horizontal" : "vertical") : orientation;
+
+  if (nodes.length === 1) {
+    return <NetworkNode node={nodes[0]} orientation={direction} className={className} />;
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex min-w-0",
+        direction === "horizontal" ? "flex-row items-start gap-3" : "flex-col gap-0",
+        className,
+      )}
+    >
+      {nodes.map((node, index) => {
+        const edge = index < nodes.length - 1 ? (edges[index] || {}) : null;
+        return (
+          <div
+            key={node.id}
+            className={cn(
+              "flex min-w-0",
+              direction === "horizontal" ? "flex-1 flex-row items-start gap-3" : "flex-col",
+            )}
+          >
+            <NetworkNode
+              node={node}
+              orientation={direction}
+              className={direction === "horizontal" ? "flex-none" : undefined}
+            />
+            {edge ? (
+              <NetworkEdge
+                edge={edge}
+                orientation={direction}
+                className={direction === "horizontal" ? "mt-1.5" : "ml-1"}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * 创建流程的 Review 那一步用的预览：竖排、每个节点一行、不带交互。
+ *
+ * 单独包一层是因为它的职责不同 —— 列表里的 Path 是「看现状」，这个是
+ * 「确认你即将创建的东西」，所以它永远竖排（一行一个，读起来像一份清单），
+ * 也永远显示完整地址而不截断。
+ */
+export function PathPreview({
+  nodes,
+  edges,
+  className,
+}: {
+  nodes: readonly NetworkNodeSpec[];
+  edges?: readonly NetworkEdgeSpec[];
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-[var(--fx-radius-card)] border border-border bg-[var(--fx-l2-group)] p-4",
+        className,
+      )}
+    >
+      <NetworkPath nodes={nodes} edges={edges} orientation="vertical" />
+    </div>
+  );
+}

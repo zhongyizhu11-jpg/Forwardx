@@ -40,7 +40,7 @@
 .connection-value { margin-top: 4px; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; color: var(--fx-text); }
 .workspace-main .action-card { border-color: var(--fx-stroke); background: var(--fx-surface); backdrop-filter: none; }
 .workspace-main .action-card-content { padding: 16px; }
-.workspace-main .action-card-footer { background: var(--fx-subtle); margin: 4px -16px -16px; padding: 8px 12px; border-top: 1px solid var(--fx-stroke); border-radius: 0 0 var(--fx-radius) var(--fx-radius); }
+.workspace-main .action-card-footer { background: var(--fx-subtle); margin: 4px -16px -16px; padding: 8px 12px; border-top: 1px solid var(--fx-stroke); border-radius: 0 0 var(--fx-radius-card) var(--fx-radius-card); }
 .workspace-main .action-card [class*="animate-pulse"] { animation: none; }
 .workspace-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); box-shadow: var(--fx-shadow); overflow: hidden; }
 .workspace-metrics > div { min-width: 0; padding: 16px; }
@@ -167,7 +167,7 @@
     不要投影、不要填充色差。边界感来自边框，不是来自一层灰底或一圈阴影。
   */
   .workspace-main [data-slot="card"] {
-    border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius);
+    border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius-card);
     background: var(--fx-surface); box-shadow: none;
     padding: 0; margin-top: 0;
   }
@@ -450,7 +450,7 @@
   .dialog-panel {
     width: calc(100vw - 20px); max-width: calc(100vw - 20px);
     max-height: 84svh;
-    border-radius: 12px;
+    border-radius: var(--fx-radius-modal);
     padding: 14px 16px 16px;
     gap: 10px;
   }

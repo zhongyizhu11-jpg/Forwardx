@@ -1,83 +1,204 @@
-/* ForwardX surfaces and type scale. Shared by the app and documentation. */
+/*
+  ForwardX Design Tokens V2 —— Professional Network Control Plane
+
+  这个文件是整套界面唯一的取值来源，面板和文档站共用。
+
+  V2 和 V1 的根本差别不是换了几个颜色值，是**建立刻度**：
+  以前每加一个组件就当场拍一个「差不多的」数字，于是圆角散着 6/7/8/9/10/13、
+  字号散着 10/11/12/12.5/13/14/15/16/17/18，间距想到几就是几。数字一多就没有
+  层级可言 —— 所有东西都圆、所有字都差不多大，界面就摊平了。
+
+  V2 规定：**下面没有的值，组件里不许出现**。
+
+    表面    L0 页面 / L1 Surface / L2 分组 / L3 交互元素
+    字号    6 档：32 / 24 / 20 / 17 / 15 / 13
+    间距    4px 栅格：4 8 12 16 20 24 32 40 48
+    圆角    5 档：控件 10 / 卡片 12 / 表面 16 / 对话框 20 / 胶囊 999
+    高度    4 级：平面 / 卡片 / 下拉 / 对话框
+    颜色    中性 + 四个状态色 + 路径青 + 交付紫，每个都有语义，没有装饰色
+
+  移动端的密度差异写在文件末尾的媒体查询里，做法是**改令牌的值**，不是再写
+  一遍选择器去盖。上一版移动端密度靠 370 行覆盖规则实现，同一个选择器写两遍
+  互相盖的事故出了六次 —— 令牌只有一处定义，就不会有这个问题。
+
+  详细的用法和判断依据见 docs/UI_HANDBOOK_V2.md。
+*/
+
 :root {
-  /*
-    iOS 的浅色是「分组表格」那一套：页面底色是灰（systemGroupedBackground），
-    卡片是纯白浮在上面 —— 和之前「白底 + 灰卡」正好反过来。分隔线用 iOS 的
-    separator（半透明，压在白底上自然变浅），不用实色描边。
-  */
-  /*
-    对比度是算出来的，不是挑出来的。照搬 iOS 的字面值（separator 13%、
-    secondaryLabel 60%）在这个面板上测出来是：次要文字 3.44:1、分隔线 1.25:1、
-    白卡对页面灰 1.12:1 —— 七项里五项不达标，看上去就是一片发灰。iOS 那套
-    数值靠的是高素质屏幕和系统级的抗锯齿，搬到网页上撑不住。
+  /* ═══════════════════════════════════════════════════════
+     一、表面层级 L0 → L3
 
-    下面每个值都是解出来的，目标：正文/次要文字 ≥ 4.5:1（WCAG AA），
-    面之间 ≥ 1.18:1（看得出分层），分隔线 ≥ 1.55:1（看得见一根线），
-    输入框填充 ≥ 1.30:1（一眼是个能填的框）。实测值写在各行后面。
-  */
-  /*
-    中性色不用纯灰。上一版整套是单色灰 —— 灰底、灰填充、灰文字、灰分隔线，
-    每一项对比度都达标，合在一起还是闷。问题不在对比度在色相：一屏上只有
-    一个色相（无彩）时，界面读起来就是「没上色的线框图」。
+     核心规则：**不是所有信息都需要一个圆角矩形**。
 
-    这里把每个中性色往品牌青（#0a7c6e）掺一点点（5%～22%，越暗掺得越多），
-    灰就变成有温度的冷调，而对比度一项没掉 —— 下面每行后面是实测值。
+     L0 页面底色，极浅的中性灰，让 L1 浮得起来
+     L1 真正需要成为一个模块的区域才用白色 Surface
+     L2 内容分组：不画边框，用间距和分隔线分组
+     L3 交互元素：按钮、输入框、Segment、Chip、Switch
 
-    分层方式也跟着换了：页面底色现在几乎是白的（对白卡只有 1.09:1），
-    所以卡片靠**边框**分界而不是靠底色差，分隔线相应提到 1.60:1。
-  */
-  /*
-    页面底色是**纯白**。参考站（nsloon.bid，VitePress 文档主题）量下来就是
-    #ffffff，正文 rgb(60,60,67)，全站没有一块灰底 —— 章节之间靠一条细线和
-    大间距分层，不靠底色差，也不靠卡片。
+     L0 和 L1 只差 1.12:1 —— 故意的。分层主要靠边框和间距，底色差只是补一点
+     空间暗示。之前试过把差值拉到 1.19，结果是「一大块灰」而不是「浮起来的白」。
+     ═══════════════════════════════════════════════════════ */
+  --fx-l0-page: #f4f4f6;
+  --fx-l1-surface: #ffffff;
+  --fx-l2-group: #f7f7f9;      /* 表头、只读块这类「同一个 Surface 里再分一格」 */
+  --fx-l3-control: #ffffff;
+  --fx-l3-control-fill: #f1f1f4; /* 输入框那类「可以往里填东西」的填充 */
 
-    之前几版一直在调「页面灰对卡片白」该差多少，方向就错了：只要还有一块
-    大面积的灰底，界面就会闷，调到多少都一样。
-  */
-  --fx-canvas: #ffffff;
-  --fx-surface: #ffffff;
-  --fx-subtle: #f6f6f7;          /* 表头/输入框的浅填充，参考站表头就是这个值 */
-  --fx-raised: #ffffff;
-  /* 手册的主力边框是 1px oklch(0.92 0.004 286.32) ≈ #e4e4e7。 */
-  --fx-stroke: #e4e4e7;
-  --fx-stroke-strong: #d4d4d8;   /* 手册里更重的那一档 oklch(0.871) */
-  --fx-control-stroke: #8e8e93;
-  --fx-text: #1b1b1f;            /* 15.9:1 */
-  --fx-muted: #3c3c43;           /* 参考站正文色，白底 11.6:1 */
-  --fx-brand: #3451b2;           /* 参考站链接蓝，白底 8.1:1 */
-  --fx-brand-soft: rgb(52 81 178 / 10%);
-  /* iOS 的卡片不投影，靠底色差和圆角分层。留极淡的一层给悬浮元素。 */
-  --fx-shadow: 0 0 0 0 transparent;
-  --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 12%);
-  /* 12px 在密集列表上显得胖；9px 还是圆的，但不抢内容。 */
-  /*
-    圆角 6px —— UI Handbook 上量下来 6px 出现 459 次，是绝对主力（12px 235 次
-    用在大容器，胶囊只给徽标那一类）。之前用 10px 是照 iOS 分组表格来的，
-    手册这套更紧。
-  */
-  --fx-radius: 6px;
-  /*
-    iOS 的字体栈：-apple-system 在 Apple 设备上解析成 SF Pro，中文接苹方。
-    Inter 退到后面当非 Apple 平台的替身 —— 它本来就是照着 SF 的骨架做的，
-    两边换过去不会跳。
-  */
+  /* 分隔线两档：常规分组用弱线，需要划断一个区域时用强线 */
+  --fx-stroke-weak: #e9e9ec;
+  --fx-stroke-base: #e0e0e4;
+  --fx-stroke-strong: #c9c9d0;
+
+  /* ═══════════════════════════════════════════════════════
+     二、文字
+
+     三档而已：主文字、次要文字、弱化文字。
+     「弱化」是给单位、时间戳这类看一眼就够的东西，不是给正文降权用的。
+     ═══════════════════════════════════════════════════════ */
+  --fx-text: #16161a;          /* 白底 16.8:1 */
+  --fx-text-secondary: #55555f; /* 白底 7.9:1 */
+  --fx-text-muted: #7c7c88;    /* 白底 4.6:1，刚过 AA */
+  --fx-text-inverse: #ffffff;
+
+  /* ═══════════════════════════════════════════════════════
+     三、语义色
+
+     只有这几个，而且每一个都对应一件确定的事。
+     **颜色必须有语义，不能只是装饰** —— 一个颜色如果回答不了「它在说什么」，
+     就不该出现在界面上。
+
+     ForwardX 的品牌识别来自路径青（网络关系），不是到处刷一层品牌色。
+     ═══════════════════════════════════════════════════════ */
+
+  /* 健康：在线、正常、成功 */
+  --fx-healthy: #1a8c4a;
+  --fx-healthy-soft: rgb(26 140 74 / 12%);
+  --fx-healthy-text: #14743d;
+
+  /* 警告：降级、切换中、即将到期、超阈值 */
+  --fx-warn: #b26a00;
+  --fx-warn-soft: rgb(178 106 0 / 12%);
+  --fx-warn-text: #8f5500;
+
+  /* 故障：离线、错误、破坏性操作 */
+  --fx-down: #c8362f;
+  --fx-down-soft: rgb(200 54 47 / 12%);
+  --fx-down-text: #a62b25;
+
+  /* 待命：备线、已停用、未上报 —— 是中性的「没在跑」，不是坏 */
+  --fx-standby: #8a8a96;
+  --fx-standby-soft: rgb(138 138 150 / 12%);
+
+  /* 路径青：网络关系、选中态、正在流动的数据。ForwardX 的识别色 */
+  --fx-path: #0b7285;
+  --fx-path-soft: rgb(11 114 133 / 12%);
+  --fx-path-line: #2b8fa3;     /* 连线本身，比文字浅一档，不和节点抢 */
+
+  /* 交付紫：只给订阅 / 客户交付这一类功能 */
+  --fx-delivery: #6b4bb8;
+  --fx-delivery-soft: rgb(107 75 184 / 12%);
+
+  /* ═══════════════════════════════════════════════════════
+     四、字号 —— 严格 6 档
+
+     数据型产品里数字本身就是视觉元素。所以刻度是按「这个数字有多重要」分的，
+     不是按「这行字有多长」分的：
+
+       display   32  首屏那个最大的数（总流量、在线数）
+       metric    24  区块级的数（单台主机的 CPU、一条链路的延迟）
+       section   20  区块标题
+       primary   17  主要内容：名字、地址
+       secondary 15  次要内容：归属、说明
+       meta      13  标签、单位、时间戳
+
+     写法上：「延迟 8ms」不如「8 / ms」—— 数字用 metric，单位用 meta，
+     一眼看到的是 8 而不是「延迟」两个字。
+     ═══════════════════════════════════════════════════════ */
+  --fx-size-display: 32px;
+  --fx-size-metric: 24px;
+  --fx-size-section: 20px;
+  --fx-size-primary: 17px;
+  --fx-size-secondary: 15px;
+  --fx-size-meta: 13px;
+
+  --fx-line-display: 36px;
+  --fx-line-metric: 28px;
+  --fx-line-section: 28px;
+  --fx-line-primary: 24px;
+  --fx-line-secondary: 22px;
+  --fx-line-meta: 18px;
+
+  /* 字重也只有三档，靠字号和颜色分主次，不靠堆字重 */
+  --fx-weight-regular: 400;
+  --fx-weight-medium: 500;
+  --fx-weight-semibold: 600;
+
+  /* ═══════════════════════════════════════════════════════
+     五、间距 —— 4px 栅格
+
+     只允许这九个值。不同页面各自决定间距是上一版最大的不一致来源。
+     ═══════════════════════════════════════════════════════ */
+  --fx-space-1: 4px;
+  --fx-space-2: 8px;
+  --fx-space-3: 12px;
+  --fx-space-4: 16px;
+  --fx-space-5: 20px;
+  --fx-space-6: 24px;
+  --fx-space-8: 32px;
+  --fx-space-10: 40px;
+  --fx-space-12: 48px;
+
+  /* 常用组合，省得每处自己挑 */
+  --fx-gutter: var(--fx-space-4);        /* 页面左右 */
+  --fx-card-padding: var(--fx-space-4);  /* 卡片内边距 */
+  --fx-card-gap: var(--fx-space-3);      /* 卡片与卡片 */
+  --fx-section-gap: var(--fx-space-8);   /* 区块与区块 */
+
+  /* ═══════════════════════════════════════════════════════
+     六、圆角 —— 分级，不是一个值
+
+     所有东西都圆会失去层级，所有东西都是同一个圆角同样会。
+     半径必须跟着尺寸走：小控件小圆角，大面板大圆角。
+     ═══════════════════════════════════════════════════════ */
+  --fx-radius-control: 10px;   /* 按钮、输入框、Chip、Segment */
+  --fx-radius-card: 12px;      /* 列表卡、小面板 */
+  --fx-radius-surface: 16px;   /* 主 Surface、大容器 */
+  --fx-radius-modal: 20px;     /* 对话框、Bottom Sheet */
+  --fx-radius-pill: 999px;     /* 徽标、状态胶囊 */
+
+  /* ═══════════════════════════════════════════════════════
+     七、高度 —— 四级，靠它建立空间关系
+
+     高级感不靠 shadow。普通卡片就是平的，只有真正浮在页面之上的东西才投影。
+     用户看到投影就知道「这是盖在上面的」，不用解释。
+     ═══════════════════════════════════════════════════════ */
+  --fx-elevation-flat: none;
+  --fx-elevation-card: 0 1px 2px rgb(16 16 26 / 4%);
+  --fx-elevation-popover: 0 4px 16px rgb(16 16 26 / 10%), 0 1px 3px rgb(16 16 26 / 6%);
+  --fx-elevation-modal: 0 16px 48px rgb(16 16 26 / 18%), 0 2px 8px rgb(16 16 26 / 8%);
+
+  /* ═══════════════════════════════════════════════════════
+     八、字体
+
+     -apple-system 在 Apple 设备上解析成 SF Pro，中文接苹方；Inter 退到后面
+     当非 Apple 平台的替身，它本来就是照 SF 的骨架做的，换过去不跳。
+
+     IP、端口、版本号、流量这类值走 mono —— 等宽不只是好看，数字对齐之后
+     一列值扫下去能直接比大小。这也是基础设施类产品的气质来源。
+     ═══════════════════════════════════════════════════════ */
   --fx-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Inter", "Segoe UI", "Microsoft YaHei", sans-serif;
   --fx-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
-  /*
-    层级只有这几档。手册的原话是「用变量统一管理，禁止随手写大数字」——
-    以前 toast 是内联的 `zIndex: 200`、日期面板是 `z-[70]`，都是当场拍的数字，
-    下一个人再加浮层只能接着猜。
+  /* ═══════════════════════════════════════════════════════
+     九、层叠次序
 
-    前六档是**页面层**的（手册那张表）：
+     前六档是**页面层**：内容 0 · 悬浮卡片 10 · 下拉气泡 20 · 吸顶 40 ·
+     遮罩弹窗 50 · Toast 60。
 
-      内容 0 · 悬浮卡片 10 · 下拉气泡 20 · 吸顶导航 40 · 遮罩弹窗 50 · Toast 60
-
-    后三档是**浮层容器内部**的次序，和上面那六档不是一回事：所有浮层
-    （对话框、下拉、气泡、日期面板、toast）都 portal 进 #forwardx-overlay-root，
-    而那个容器是 `isolation: isolate`，自成一个层叠上下文 —— 里面的值只和
-    彼此比较，跟页面上的 0~60 没有可比性。所以单独一组，名字也写明是容器内。
-  */
+     后三档是**浮层容器内部**的次序，和上面那六档不是一回事：所有浮层都
+     portal 进 #forwardx-overlay-root，那个容器 isolation: isolate 自成一个
+     层叠上下文，里面的值只和彼此比较。
+     ═══════════════════════════════════════════════════════ */
   --fx-z-content: 0;
   --fx-z-raised: 10;
   --fx-z-popover: 20;
@@ -85,41 +206,129 @@
   --fx-z-overlay: 50;
   --fx-z-toast: 60;
 
-  --fx-z-in-overlay-base: 50;     /* 对话框、下拉、菜单、气泡：同一层，谁后挂上谁在上 */
-  --fx-z-in-overlay-popover: 70;  /* 日期面板：要盖住对话框，所以单独高一档 */
-  --fx-z-in-overlay-toast: 200;   /* 提示永远在最上 */
+  --fx-z-in-overlay-base: 50;     /* 对话框、下拉、菜单、气泡：同一层，谁后挂谁在上 */
+  --fx-z-in-overlay-popover: 70;  /* 日期面板：要盖住对话框 */
+  --fx-z-in-overlay-toast: 200;   /* 提示永远最上 */
+
+  /* ═══════════════════════════════════════════════════════
+     十、V1 兼容别名
+
+     下面这些是 V1 的名字，还有几百处在用。它们现在全部指向 V2 的刻度，
+     所以改 V2 的值这些会跟着变；迁移一页就删掉一批，不要新写。
+     ═══════════════════════════════════════════════════════ */
+  --fx-canvas: var(--fx-l0-page);
+  --fx-surface: var(--fx-l1-surface);
+  --fx-subtle: var(--fx-l2-group);
+  --fx-raised: var(--fx-l1-surface);
+  --fx-stroke: var(--fx-stroke-base);
+  --fx-control-stroke: var(--fx-stroke-strong);
+  --fx-muted: var(--fx-text-secondary);
+  --fx-brand: var(--fx-path);
+  --fx-brand-soft: var(--fx-path-soft);
+  --fx-shadow: var(--fx-elevation-card);
+  --fx-shadow-raised: var(--fx-elevation-popover);
+  --fx-radius: var(--fx-radius-control);
 
   /*
-    手册点名的两个效果用的颜色。放在令牌里是因为文档站也共用这个文件，
-    而且浅深色两套值必须成对出现 —— 写死在组件里改一个忘一个是迟早的事。
+    手册点名的两个效果用的颜色。浅深色两套值必须成对出现 —— 写死在组件里
+    改一个忘一个是迟早的事。
   */
-  --fx-beam: #20242b;                  /* 边框光束那颗点：浅色下是墨色 */
+  --fx-beam: #20242b;
   --fx-beam-glow: rgb(32 36 43 / 55%);
-  --fx-mesh-1: rgb(203 208 214 / 78%); /* 流动渐变的三团：手册要求浅色用低透明度灰 */
+  --fx-mesh-1: rgb(203 208 214 / 78%);
   --fx-mesh-2: rgb(186 193 201 / 62%);
   --fx-mesh-3: rgb(216 220 225 / 70%);
 }
-.dark {
-  /* iOS 深色：页面是纯黑，卡片比它亮一档（systemGroupedBackground 那一组）。 */
-  /* 同样是解出来的，目标和浅色一致。实测值见各行。 */
-  /* 深色同样掺品牌青，纯黑/纯灰在暗色下比浅色下更显得死。 */
-  /* 深色同样：一块底色到底，分层靠细线。 */
-  --fx-canvas: #1b1b1f;
-  --fx-surface: #1b1b1f;
-  --fx-subtle: #252529;
-  --fx-raised: #252529;
-  --fx-stroke: #4a4d54;
-  --fx-control-stroke: #8e8e93;
-  --fx-text: #ffffffdb;
-  --fx-muted: #ebebf599;
-  --fx-brand: #a8b1ff;           /* 深色下的链接蓝 */
-  --fx-brand-soft: rgb(168 177 255 / 14%);
-  --fx-shadow: 0 0 0 0 transparent;
-  --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 50%);
 
-  --fx-beam: #edf0f3;                  /* 深色下反过来，点是亮的 */
+.dark {
+  /*
+    深色不是把浅色反过来。控制台类产品的深色底要够暗才显得出状态色，
+    但纯黑会让白字发毛边 —— 用 #101014 这一档，L1 再亮一格。
+  */
+  --fx-l0-page: #0e0e12;
+  --fx-l1-surface: #17171d;
+  --fx-l2-group: #1f1f27;
+  --fx-l3-control: #17171d;
+  --fx-l3-control-fill: #23232c;
+
+  --fx-stroke-weak: #26262f;
+  --fx-stroke-base: #32323d;
+  --fx-stroke-strong: #45454f;
+
+  --fx-text: #f2f2f5;
+  --fx-text-secondary: #a8a8b4;
+  --fx-text-muted: #7e7e8c;
+  --fx-text-inverse: #16161a;
+
+  /* 状态色在暗底上要提亮，否则饱和度一样但看着发闷 */
+  --fx-healthy: #3ec27a;
+  --fx-healthy-soft: rgb(62 194 122 / 16%);
+  --fx-healthy-text: #5fd493;
+
+  --fx-warn: #e0a341;
+  --fx-warn-soft: rgb(224 163 65 / 16%);
+  --fx-warn-text: #edb95f;
+
+  --fx-down: #f0655c;
+  --fx-down-soft: rgb(240 101 92 / 16%);
+  --fx-down-text: #f78a83;
+
+  --fx-standby: #6e6e7c;
+  --fx-standby-soft: rgb(110 110 124 / 16%);
+
+  --fx-path: #3fb6cc;
+  --fx-path-soft: rgb(63 182 204 / 16%);
+  --fx-path-line: #2f8d9f;
+
+  --fx-delivery: #a68ae8;
+  --fx-delivery-soft: rgb(166 138 232 / 16%);
+
+  /* 暗色下投影几乎看不见，靠加深来做高度 */
+  --fx-elevation-card: 0 1px 2px rgb(0 0 0 / 30%);
+  --fx-elevation-popover: 0 4px 16px rgb(0 0 0 / 50%), 0 1px 3px rgb(0 0 0 / 40%);
+  --fx-elevation-modal: 0 16px 48px rgb(0 0 0 / 64%), 0 2px 8px rgb(0 0 0 / 44%);
+
+  --fx-beam: #edf0f3;
   --fx-beam-glow: rgb(237 240 243 / 70%);
   --fx-mesh-1: rgb(66 76 88 / 62%);
   --fx-mesh-2: rgb(52 61 72 / 58%);
   --fx-mesh-3: rgb(78 89 102 / 46%);
+}
+
+/*
+  ═══════════════════════════════════════════════════════════
+  移动端密度
+
+  这里**只改令牌的值**，不写一条组件选择器。
+
+  上一版的移动端密度是 370 行覆盖规则，同一个选择器写两遍互相盖的事故出了
+  六次（写了不生效，回头才发现被后面同名的那条盖掉）。令牌只有一处定义，
+  这类事故从结构上不会发生。
+
+  另外这不是等比缩小。桌面是 Control Plane，一屏同时要看列表、详情和拓扑；
+  手机是 Operations，看状态、看异常、开关、诊断。所以压的是间距和大标题，
+  正文那几档基本不动 —— 手机上把正文压小只会让人凑近看。
+  ═══════════════════════════════════════════════════════════
+*/
+@media (max-width: 767px) {
+  :root {
+    --fx-size-display: 28px;
+    --fx-size-metric: 22px;
+    --fx-size-section: 17px;
+    --fx-size-primary: 16px;
+    --fx-size-secondary: 14px;
+    --fx-size-meta: 12px;
+
+    --fx-line-display: 32px;
+    --fx-line-metric: 26px;
+    --fx-line-section: 24px;
+    --fx-line-primary: 22px;
+    --fx-line-secondary: 20px;
+    --fx-line-meta: 16px;
+
+    --fx-gutter: var(--fx-space-3);
+    --fx-card-padding: var(--fx-space-3);
+    --fx-card-gap: var(--fx-space-2);
+    --fx-section-gap: var(--fx-space-5);
+  }
 }
