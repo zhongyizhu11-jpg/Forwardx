@@ -196,9 +196,7 @@
   */
   .route-picker-row > [data-slot="badge"] { justify-self: start; height: 22px; padding-inline: 7px; font-size: 11px; }
 
-  [data-slot="form-field"] { gap: 5px; }
-  [data-slot="form-field"] > label { font-size: 12.5px; }
-  .workspace-main [data-slot="label"], [role="dialog"] [data-slot="label"] { font-size: 12.5px; }
+  [data-slot="form-field"] { gap: 6px; }
   /*
     顶栏那一行已经写着页面名字，所以 H1 在手机上只留给读屏 —— 文档大纲、
     「跳到主要内容」和 aria 关系都还指得到它，屏幕上不再重复一遍。
@@ -246,19 +244,41 @@
     底边、顶上两角圆、顶部一条 grabber。这样拇指够得到主操作，而且「往下推可以
     关掉」是不用教的。
   */
-  .dialog-positioner { place-items: end center; padding: 0; }
+  /*
+    对话框回到居中浮层，按参考站（nsloon.bid）量到的来：
+    浮层 373×304 于 393 宽的视口 —— 左右各留 10px，四边都看得见底下的页面。
+    之前做成贴底 sheet 是我按 iOS 原生的习惯选的，但参考站是居中的，以它为准。
+  */
+  .dialog-positioner { place-items: center; padding: 10px; }
   .dialog-panel {
-    width: 100vw; max-width: 100vw;
-    /*
-      82svh 而不是 92：iOS 的 sheet 从来不占满屏，后面永远露一条底色 ——
-      那一条就是「这是盖在上面的一层，不是换了一页」的全部提示。
-      实测原来 699px / 760px，几乎看不出是浮层。
-    */
-    max-height: 82svh;
-    border-radius: 14px 14px 0 0;
-    padding: 6px 14px calc(12px + env(safe-area-inset-bottom, 0px));
-    gap: 9px;
+    width: calc(100vw - 20px); max-width: calc(100vw - 20px);
+    max-height: 84svh;
+    border-radius: 20px;
+    padding: 14px 16px 16px;
+    gap: 10px;
   }
+
+  /*
+    按钮做成胶囊。参考站的两个按钮：40px 高、圆角 20px（正好是高的一半，
+    所以是完整胶囊）、字号 14px 字重 600、左右内边距 20px、**宽度按内容**
+    而不是拉满 —— 两个短词的按钮拉成整宽，看上去就是没想清楚要人做什么。
+  */
+  [data-slot="dialog-footer"] { justify-content: center; gap: 10px; border-top: 0; padding-top: 10px; }
+  [data-slot="dialog-footer"] [data-slot="button"] {
+    height: 40px; min-height: 40px; width: auto;
+    padding-inline: 20px; border-radius: 999px;
+    font-size: 14px; font-weight: 600;
+  }
+
+  /*
+    行高。参考站正文是 16px / 28px（1.75）—— 「字看起来大」的观感其实来自
+    这个，不是字号本身。之前这边是 1.4 上下，字挤在一起。
+  */
+  [data-slot="dialog-content"], .dialog-panel { line-height: 1.7; }
+  .workspace-main p, .dialog-panel p { line-height: 1.7; }
+
+  /* 标签跟着回到 14px：12.5px 是我上一轮压过头的。 */
+  [data-slot="label"], [data-slot="form-field"] > label { font-size: 14px; }
 
   /*
     表单控件：视觉高度 44 → 38，但命中区用 ::after 撑回 44 —— 和列表卡底部
@@ -273,14 +293,6 @@
   [data-slot="input"][class]::after, [data-slot="select-trigger"][class]::after {
     content: ""; position: absolute; inset: -3px 0;
   }
-  [data-slot="dialog-footer"] [data-slot="button"] { height: 38px; min-height: 38px; }
-  /* grabber：iOS 的抓手，36×5、居中、圆头。 */
-  .dialog-panel::before {
-    content: ""; display: block; flex: none;
-    width: 36px; height: 5px; margin: 0 auto 6px;
-    border-radius: 2.5px; background: var(--fx-control-stroke); opacity: .45;
-  }
-  [data-slot="dialog-footer"] { border-top: 0; padding-top: 8px; }
 
   /*
     分类条 → iOS 分段控件（UISegmentedControl）。
