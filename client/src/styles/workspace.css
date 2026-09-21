@@ -376,6 +376,34 @@
   .workspace-filter-search { grid-area: search; min-width: 0; }
   .workspace-filter-action [data-slot="button"] { white-space: nowrap; }
 
+  /*
+    ── 控件条收窄 ──
+    实测：分类条 48px（单项 44）、筛选区 90px（按钮各 44、搜索 38）。
+    44 是触摸命中区的下限，不是视觉高度的下限 —— 和列表卡底部那排图标、
+    地址行的复制按钮用同一个办法：视觉收窄，命中区用 ::after 只往**纵向**
+    撑回 44（横向不撑，免得盖住旁边那个）。
+
+    分类条 48 → 36，筛选/新建 44 → 34，搜索 38 → 34。三处加起来省 34px。
+  */
+  .workspace-tabs .workspace-tab { padding: 4px 10px; font-size: 13px; }
+
+  .workspace-filter > [data-slot="button"],
+  .workspace-filter-action [data-slot="button"],
+  .workspace-filter-options [data-slot="button"] {
+    position: relative; min-height: 34px; height: 34px;
+  }
+  .workspace-filter > [data-slot="button"]::after,
+  .workspace-filter-action [data-slot="button"]::after {
+    content: ""; position: absolute; inset: -5px 0;
+  }
+
+  /*
+    卡内两处也收：入口/目标那块 46px（两行各 22 + 间距），收到一行 20px；
+    操作行 37px，上下边距从 8/6 收到 5/3。
+  */
+  .workspace-main [data-slot="card"] .font-mono { line-height: 20px; }
+  .workspace-main .action-card-footer { margin-top: 6px; padding-top: 4px; }
+
   .workspace-command-footer { font-size: 10px; }
 
   /*
@@ -432,11 +460,15 @@
     字号保持 16px 不动：iOS Safari 在聚焦字号小于 16px 的输入框时会把整页
     放大，每点一个字段页面跳一下，比矮 6px 值钱得多。
   */
+  /*
+    这条当初是给对话框写的，但选择器没限定范围，全站输入框都吃到了 ——
+    正好也该统一：34px 视觉高度，命中区 ::after 撑到 44。
+  */
   [data-slot="input"][class], [data-slot="select-trigger"][class] {
-    position: relative; height: 38px; min-height: 38px;
+    position: relative; height: 34px; min-height: 34px;
   }
   [data-slot="input"][class]::after, [data-slot="select-trigger"][class]::after {
-    content: ""; position: absolute; inset: -3px 0;
+    content: ""; position: absolute; inset: -5px 0;
   }
 
   /*
@@ -499,8 +531,20 @@
 }
 @media (pointer: coarse) {
   .workspace-tab-scroll { width: 44px; }
-  .workspace-tabs .workspace-tab { min-height: 44px; }
-  [data-slot="input"], [data-slot="select-trigger"] { min-height: 44px; font-size: 16px; }
+  /*
+    44 是**命中区**的下限，不是视觉高度的下限。这里原来直接把视觉高度顶到
+    44px，分类条因此占 48px、输入框占 44px —— 在 393px 的屏幕上，光这两样
+    就是一屏的八分之一。
+
+    改成视觉收窄 + ::after 只往纵向撑回 44：手指按到的面积一点没少，占的版面
+    小了。横向不撑，免得盖住旁边那一项（分类条的项之间只隔 4px）。
+
+    字号 16px 保留：iOS Safari 聚焦字号小于 16px 的输入框会把整页放大。
+  */
+  .workspace-tabs .workspace-tab { position: relative; min-height: 30px; }
+  .workspace-tabs .workspace-tab::after { content: ""; position: absolute; inset: -7px 0; }
+  [data-slot="input"], [data-slot="select-trigger"] { position: relative; min-height: 34px; font-size: 16px; }
+  [data-slot="input"]::after, [data-slot="select-trigger"]::after { content: ""; position: absolute; inset: -5px 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
