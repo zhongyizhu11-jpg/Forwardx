@@ -249,10 +249,31 @@
   .dialog-positioner { place-items: end center; padding: 0; }
   .dialog-panel {
     width: 100vw; max-width: 100vw;
-    max-height: 92svh;
+    /*
+      82svh 而不是 92：iOS 的 sheet 从来不占满屏，后面永远露一条底色 ——
+      那一条就是「这是盖在上面的一层，不是换了一页」的全部提示。
+      实测原来 699px / 760px，几乎看不出是浮层。
+    */
+    max-height: 82svh;
     border-radius: 14px 14px 0 0;
-    padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    padding: 6px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+    gap: 9px;
   }
+
+  /*
+    表单控件：视觉高度 44 → 38，但命中区用 ::after 撑回 44 —— 和列表卡底部
+    那排图标同一个办法。一个对话框里七八个控件，每个省 6px 就是 50px。
+
+    字号保持 16px 不动：iOS Safari 在聚焦字号小于 16px 的输入框时会把整页
+    放大，每点一个字段页面跳一下，比矮 6px 值钱得多。
+  */
+  [data-slot="input"][class], [data-slot="select-trigger"][class] {
+    position: relative; height: 38px; min-height: 38px;
+  }
+  [data-slot="input"][class]::after, [data-slot="select-trigger"][class]::after {
+    content: ""; position: absolute; inset: -3px 0;
+  }
+  [data-slot="dialog-footer"] [data-slot="button"] { height: 38px; min-height: 38px; }
   /* grabber：iOS 的抓手，36×5、居中、圆头。 */
   .dialog-panel::before {
     content: ""; display: block; flex: none;
@@ -266,13 +287,13 @@
     底槽是一块浅灰圆角，选中项是一块白色滑块浮在上面，分隔靠的是滑块本身不是
     边框。iOS 的槽是 9px 圆角、滑块 7px。
   */
-  .workspace-tabs { padding: 2px; border-radius: 9px; border: 0; background: rgb(118 118 128 / 12%); }
+  .workspace-tabs { padding: 2px; border-radius: 9px; border: 0; background: var(--fx-subtle); }
   .workspace-tabs .workspace-tab { border: 0; border-radius: 7px; font-size: 13px; font-weight: 500; min-height: 30px; padding: 5px 10px; }
   .workspace-tabs .workspace-tab[data-state="active"] {
     background: var(--fx-surface); font-weight: 600;
     box-shadow: 0 3px 8px rgb(0 0 0 / 12%), 0 3px 1px rgb(0 0 0 / 4%);
   }
-  .workspace-tab-count { background: rgb(118 118 128 / 16%); border-radius: 9px; }
+  .workspace-tab-count { background: var(--fx-stroke); color: var(--fx-text); border-radius: 9px; }
 
   /*
     列表 → iOS 分组内嵌表格（inset grouped）。
@@ -289,7 +310,7 @@
   */
   [data-slot="input"][class], [data-slot="select-trigger"][class], [data-slot="textarea"][class] {
     border-color: transparent;
-    background: rgb(118 118 128 / 12%);
+    background: var(--fx-subtle);
   }
   [data-slot="input"][class]:focus-visible,
   [data-slot="select-trigger"][class]:focus,

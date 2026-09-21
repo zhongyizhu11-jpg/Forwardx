@@ -5,16 +5,26 @@
     卡片是纯白浮在上面 —— 和之前「白底 + 灰卡」正好反过来。分隔线用 iOS 的
     separator（半透明，压在白底上自然变浅），不用实色描边。
   */
-  --fx-canvas: #f2f2f7;          /* systemGroupedBackground */
-  --fx-surface: #ffffff;         /* secondarySystemGroupedBackground */
-  --fx-subtle: #f2f2f7;
+  /*
+    对比度是算出来的，不是挑出来的。照搬 iOS 的字面值（separator 13%、
+    secondaryLabel 60%）在这个面板上测出来是：次要文字 3.44:1、分隔线 1.25:1、
+    白卡对页面灰 1.12:1 —— 七项里五项不达标，看上去就是一片发灰。iOS 那套
+    数值靠的是高素质屏幕和系统级的抗锯齿，搬到网页上撑不住。
+
+    下面每个值都是解出来的，目标：正文/次要文字 ≥ 4.5:1（WCAG AA），
+    面之间 ≥ 1.18:1（看得出分层），分隔线 ≥ 1.55:1（看得见一根线），
+    输入框填充 ≥ 1.30:1（一眼是个能填的框）。实测值写在各行后面。
+  */
+  --fx-canvas: #ebebed;          /* 对白卡 1.19:1 */
+  --fx-surface: #ffffff;
+  --fx-subtle: #e1e1e4;          /* 输入框填充：对白卡 1.31:1 */
   --fx-raised: #ffffff;
-  --fx-stroke: rgb(60 60 67 / 13%);   /* separator */
-  --fx-control-stroke: rgb(60 60 67 / 30%);
-  --fx-text: #000000;            /* label */
-  --fx-muted: rgb(60 60 67 / 60%);    /* secondaryLabel */
-  --fx-brand: #0a7c6e;
-  --fx-brand-soft: rgb(10 124 110 / 10%);
+  --fx-stroke: #cfcfd2;          /* 对白卡 1.55:1 */
+  --fx-control-stroke: #8e8e93;
+  --fx-text: #000000;            /* 21:1 */
+  --fx-muted: #6a6a72;           /* 白底 5.36:1，灰底 4.50:1 */
+  --fx-brand: #0a7c6e;           /* 白底 5.10:1 */
+  --fx-brand-soft: rgb(10 124 110 / 14%);
   /* iOS 的卡片不投影，靠底色差和圆角分层。留极淡的一层给悬浮元素。 */
   --fx-shadow: 0 0 0 0 transparent;
   --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 12%);
@@ -66,16 +76,17 @@
 }
 .dark {
   /* iOS 深色：页面是纯黑，卡片比它亮一档（systemGroupedBackground 那一组）。 */
+  /* 同样是解出来的，目标和浅色一致。实测值见各行。 */
   --fx-canvas: #000000;
-  --fx-surface: #1c1c1e;
-  --fx-subtle: #1c1c1e;
-  --fx-raised: #2c2c2e;
-  --fx-stroke: rgb(84 84 88 / 65%);
-  --fx-control-stroke: rgb(84 84 88 / 90%);
+  --fx-surface: #272729;         /* 对纯黑 1.41:1 */
+  --fx-subtle: #3a3a3d;          /* 输入框填充：对卡片 1.32:1 */
+  --fx-raised: #323235;
+  --fx-stroke: #454549;          /* 对卡片 1.56:1 */
+  --fx-control-stroke: #8d8d93;
   --fx-text: #ffffff;
-  --fx-muted: rgb(235 235 245 / 60%);
+  --fx-muted: #8d8d93;           /* 对卡片 4.52:1 */
   --fx-brand: #5fd4bc;
-  --fx-brand-soft: rgb(95 212 188 / 15%);
+  --fx-brand-soft: rgb(95 212 188 / 18%);
   --fx-shadow: 0 0 0 0 transparent;
   --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 50%);
 
