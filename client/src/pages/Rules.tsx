@@ -6329,11 +6329,18 @@ function RulesContent() {
   const sortableRuleCardGridClass = effectiveRuleCardSize === "compact"
     ? "standard-card-grid-compact gap-3"
     : "standard-card-grid gap-4";
+  /*
+    手机上卡片已经没有边框和底色了，「这几行是一条规则」全靠间距说话。
+    实测过一版反的：两条规则之间 12px，而一条规则内部 22～30px —— 内紧外松
+    做反了，眼睛按接近性分组，于是十二条规则糊成一片。
+    这里把组间距放到 gap-0（由卡片自己的上下内边距 14px 撑开，等于组间 28px），
+    组内间距在 CSS 里收到 5px。
+  */
   const groupedRuleMobileGridClass = effectiveRuleCardSize === "compact"
-    ? "grid rule-card-grid-static rule-card-grid-static-compact gap-2"
+    ? "grid rule-card-grid-static rule-card-grid-static-compact gap-0"
     : "grid rule-card-grid-static rule-card-grid-static-standard gap-3";
   const sortableRuleMobileGridClass = effectiveRuleCardSize === "compact"
-    ? "grid gap-2"
+    ? "grid gap-0"
     : "grid gap-3";
   const ruleContentModeKey = effectiveViewMode === "card" ? "card" : displayMode;
   const ruleContentTransitionKey = `${ruleCategory}-${ruleContentModeKey}-${isLoading ? "loading" : filteredRules.length > 0 ? "list" : "empty"}`;

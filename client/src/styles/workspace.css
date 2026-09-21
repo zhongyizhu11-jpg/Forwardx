@@ -173,6 +173,68 @@
   .dialog-panel [data-slot="card"] { border-top: 0; padding-top: 0; margin-top: 0; }
 
   /*
+    ══ 层次 ══
+    量出来的问题：两条规则之间 12px，而一条规则**内部**的元素之间 22～30px。
+    内紧外松被做反了 —— 眼睛按接近性分组，靠得近的认成一组，所以十二条规则
+    糊成一片。再加上规则名 16px/400、地址也 16px/400，同样大同样粗，一行里
+    没有任何主次。
+
+    层次只靠三件事，这里三件一起给：
+      一、间距：组内紧（4px），组间松（22px）
+      二、字重和字号：一行里只有一个主角
+      三、颜色：次要信息退到 muted，不和主角抢
+  */
+
+  /* 一、把内外间距倒过来 */
+  .workspace-main [data-slot="card"] {
+    padding-top: 14px; margin-top: 0;
+  }
+  .workspace-main [data-slot="card"] + [data-slot="card"] { margin-top: 0; }
+  .workspace-main [data-slot="card-content"] { padding: 0 0 14px; }
+  .workspace-main [data-slot="card-content"] > * + * { margin-top: 5px; }
+  .workspace-main .action-card-content { padding: 0 0 14px; }
+  .workspace-main .action-card-content > * + * { margin-top: 5px; }
+
+  /* 二、一行里只有一个主角：名字重而深，其余轻而淡 */
+  .workspace-main [data-slot="card"] .text-sm.font-medium,
+  .workspace-main [data-slot="card-title"] {
+    font-size: 16px; font-weight: 600; line-height: 1.4; color: var(--fx-text);
+    letter-spacing: -.01em;
+  }
+  /* 名字底下那行归属（主机/隧道）是注脚，不是第二个标题 */
+  .workspace-main [data-slot="card"] .text-\[11px\],
+  .workspace-main [data-slot="card"] .text-\[10px\] { font-size: 12px; }
+
+  /* 三、地址、徽标、流量全部退到次要层 */
+  .workspace-main [data-slot="card"] code { font-size: 12.5px; color: var(--fx-muted); }
+  .workspace-main [data-slot="card"] [data-slot="badge"] { font-size: 11px; }
+
+  /*
+    地址那一行实测 44px 高，而它只有一行字 —— 被里面的复制按钮撑的：
+    触摸命中区规则给所有 button 定了 min-height:44px。视觉上收到 22px，
+    命中区用 ::after 撑回去（和操作图标同一个办法），这一行省 22px。
+  */
+  .workspace-main [data-slot="card"] .font-mono button,
+  .workspace-main [data-slot="card"] code + button,
+  .workspace-main [data-slot="card"] button:has(> code) {
+    position: relative; min-height: 22px; height: auto;
+  }
+  .workspace-main [data-slot="card"] button:has(> code)::after {
+    content: ""; position: absolute; inset: -11px -6px;
+  }
+
+  /*
+    操作图标行原来带一块灰底 —— 在一个已经没有盒子的列表里，那块灰是唯一
+    还在画框的东西，反而最抢眼。去掉底色和分隔线，图标本身退到 muted，
+    只在这一条被点/悬停时才需要看见它们。
+  */
+  .workspace-main .action-card-footer {
+    background: transparent; border-top: 0; margin: 0; padding: 4px 0 0;
+    border-radius: 0;
+  }
+  .workspace-main .action-card-footer [data-slot="button"] { color: var(--fx-muted); }
+
+  /*
     ── 转发路径：竖排改横排 ──
     `入口 ↓ 出口` 这一块在隧道卡、规则卡、转发链上到处都是。竖排要用 5 行去画
     2 个地址：两行小标题、两行值、中间一个箭头和一条竖线，实测 280px。在 393px
