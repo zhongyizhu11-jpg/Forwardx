@@ -175,7 +175,7 @@
     对话框：rounded-2xl(16px) + p-4，而真正吃掉高度的是 gap-5 —— 面板是个
     grid，每两个直接子元素之间恒定 20px。字段一多，光间距就比字段本身高。
   */
-  .dialog-panel { border-radius: 13px; padding: 14px; gap: 12px; }
+  .dialog-panel { gap: 12px; }  /* 圆角和内边距归下面的 iOS sheet 管 */
   [data-slot="dialog-title"] { font-size: 16px; }
   [data-slot="dialog-description"] { font-size: 12.5px; }
   [data-slot="dialog-footer"] { padding-top: 10px; }
@@ -234,6 +234,69 @@
   #workspace-topbar-actions [data-slot="button"] { height: 32px; padding-inline: 10px; font-size: 13px; box-shadow: none; }
   #workspace-topbar-actions [data-slot="button"] > svg { width: 15px; height: 15px; }
   .workspace-command-footer { font-size: 10px; }
+
+  /*
+    ══ iOS 形态 ══
+    下面这一组把几个控件换成 iOS 上对应的那个东西，而不是给现有控件描边改色。
+  */
+
+  /*
+    对话框 → 底部抽出的 sheet。
+    iOS 上「新建一条东西」从来不是屏幕中间弹一个方框，而是从下面抽上来、贴着
+    底边、顶上两角圆、顶部一条 grabber。这样拇指够得到主操作，而且「往下推可以
+    关掉」是不用教的。
+  */
+  .dialog-positioner { place-items: end center; padding: 0; }
+  .dialog-panel {
+    width: 100vw; max-width: 100vw;
+    max-height: 92svh;
+    border-radius: 14px 14px 0 0;
+    padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+  /* grabber：iOS 的抓手，36×5、居中、圆头。 */
+  .dialog-panel::before {
+    content: ""; display: block; flex: none;
+    width: 36px; height: 5px; margin: 0 auto 6px;
+    border-radius: 2.5px; background: var(--fx-control-stroke); opacity: .45;
+  }
+  [data-slot="dialog-footer"] { border-top: 0; padding-top: 8px; }
+
+  /*
+    分类条 → iOS 分段控件（UISegmentedControl）。
+    底槽是一块浅灰圆角，选中项是一块白色滑块浮在上面，分隔靠的是滑块本身不是
+    边框。iOS 的槽是 9px 圆角、滑块 7px。
+  */
+  .workspace-tabs { padding: 2px; border-radius: 9px; border: 0; background: rgb(118 118 128 / 12%); }
+  .workspace-tabs .workspace-tab { border: 0; border-radius: 7px; font-size: 13px; font-weight: 500; min-height: 30px; padding: 5px 10px; }
+  .workspace-tabs .workspace-tab[data-state="active"] {
+    background: var(--fx-surface); font-weight: 600;
+    box-shadow: 0 3px 8px rgb(0 0 0 / 12%), 0 3px 1px rgb(0 0 0 / 4%);
+  }
+  .workspace-tab-count { background: rgb(118 118 128 / 16%); border-radius: 9px; }
+
+  /*
+    列表 → iOS 分组内嵌表格（inset grouped）。
+    卡片本身不投影，靠「灰底 + 白卡 + 圆角」分层；卡与卡之间贴紧，
+    这是 iOS 列表读起来干净的关键 —— 一堆各自带影子的卡片才是安卓味。
+  */
+  .workspace-main [data-slot="card"] { box-shadow: none; }
+
+  /* 输入框在 iOS 上是填充块不是描边框。 */
+  /*
+    提权到两个选择器：Tailwind 的 bg-background 是单个类，同权重时写在后面的赢，
+    而 Tailwind 的工具类排在这个文件后面。加一层 [class] 把权重抬到 (0,2,0)，
+    第一版只写 [data-slot="input"] 所以输入框一直是白底描边。
+  */
+  [data-slot="input"][class], [data-slot="select-trigger"][class], [data-slot="textarea"][class] {
+    border-color: transparent;
+    background: rgb(118 118 128 / 12%);
+  }
+  [data-slot="input"][class]:focus-visible,
+  [data-slot="select-trigger"][class]:focus,
+  [data-slot="textarea"][class]:focus-visible {
+    background: var(--fx-surface);
+    border-color: var(--fx-brand);
+  }
 }
 @media (pointer: coarse) { .workspace-nav-search, .public-journey-switch button { min-height: 44px; } }
 @media (hover: hover) {

@@ -3112,7 +3112,16 @@ function RulesContent() {
     : form.protocol !== "tcp"
     ? "出站策略仅支持 TCP 协议。"
     : "";
-  const showMainBackupConfig = canUseMainBackup;
+  /*
+    主备这一块**永远渲染**，用不了就显示成禁用并写明原因。
+
+    原来是 `showMainBackupConfig = canUseMainBackup` —— 条件不满足时整块不渲染，
+    而不满足的情况包括默认的 iptables 端口转发和「协议不是纯 TCP」。于是打开
+    创建转发看到的是「主备这个功能不存在」，而不是「这条规则用不了，因为 X」。
+    mainBackupDisabledText 明明算出来了，却只在提交失败时弹一下 —— 等于把唯一
+    的解释藏在一次失败之后。
+  */
+  const showMainBackupConfig = true;
   const kernelForwardWarning = useMemo(() => buildKernelForwardWarning({
     rule: form,
     host: selectedHost,
@@ -7425,7 +7434,12 @@ function RulesContent() {
             <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
               <FormField className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
-                  <Label className="text-sm">出站策略</Label>
+                  {/* 面板以前叫它「出站策略」，而这件事本身叫主备线路 —— 两个名字指一件事，
+                      找不到它的人多半就是在找「主备」。 */}
+                  <Label className="text-sm">主备线路</Label>
+                  <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                    一条主线、若干备线，可按时段错峰
+                  </p>
                 </div>
                 <Select
                   value={form.failoverEnabled ? form.failoverStrategy : "disabled"}
@@ -7451,6 +7465,15 @@ function RulesContent() {
                   </SelectContent>
                 </Select>
               </FormField>
+              {/*
+                用不了的时候把原因摆出来。这句话本来就算好了，却只在提交失败时弹一下 ——
+                而这一块以前干脆整个不渲染，等于让人对着一个不存在的功能找原因。
+              */}
+              {!canUseMainBackup && mainBackupDisabledText && (
+                <p className="text-[11px] leading-4 text-amber-600 dark:text-amber-400">
+                  {mainBackupDisabledText}
+                </p>
+              )}
               {form.failoverEnabled && (
                 <div className="space-y-2">
                   <FormField className="space-y-2">

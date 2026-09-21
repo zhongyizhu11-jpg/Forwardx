@@ -1,20 +1,32 @@
 /* ForwardX surfaces and type scale. Shared by the app and documentation. */
 :root {
-  --fx-canvas: #f5f6f7;
-  --fx-surface: #ffffff;
-  --fx-subtle: #f3f4f5;
+  /*
+    iOS 的浅色是「分组表格」那一套：页面底色是灰（systemGroupedBackground），
+    卡片是纯白浮在上面 —— 和之前「白底 + 灰卡」正好反过来。分隔线用 iOS 的
+    separator（半透明，压在白底上自然变浅），不用实色描边。
+  */
+  --fx-canvas: #f2f2f7;          /* systemGroupedBackground */
+  --fx-surface: #ffffff;         /* secondarySystemGroupedBackground */
+  --fx-subtle: #f2f2f7;
   --fx-raised: #ffffff;
-  --fx-stroke: #dedfe3;
-  --fx-control-stroke: #858b95;
-  --fx-text: #20242b;
-  --fx-muted: #616976;
-  --fx-brand: #146f63;
-  --fx-brand-soft: #eaf4f1;
-  --fx-shadow: 0 1px 2px rgb(24 30 36 / 3%), 0 4px 12px rgb(24 30 36 / 3%);
-  --fx-shadow-raised: 0 2px 4px rgb(24 30 36 / 4%), 0 12px 32px rgb(24 30 36 / 8%);
+  --fx-stroke: rgb(60 60 67 / 13%);   /* separator */
+  --fx-control-stroke: rgb(60 60 67 / 30%);
+  --fx-text: #000000;            /* label */
+  --fx-muted: rgb(60 60 67 / 60%);    /* secondaryLabel */
+  --fx-brand: #0a7c6e;
+  --fx-brand-soft: rgb(10 124 110 / 10%);
+  /* iOS 的卡片不投影，靠底色差和圆角分层。留极淡的一层给悬浮元素。 */
+  --fx-shadow: 0 0 0 0 transparent;
+  --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 12%);
   /* 12px 在密集列表上显得胖；9px 还是圆的，但不抢内容。 */
-  --fx-radius: 9px;
-  --fx-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  /* iOS 分组表格的卡片圆角就是 10px。 */
+  --fx-radius: 10px;
+  /*
+    iOS 的字体栈：-apple-system 在 Apple 设备上解析成 SF Pro，中文接苹方。
+    Inter 退到后面当非 Apple 平台的替身 —— 它本来就是照着 SF 的骨架做的，
+    两边换过去不会跳。
+  */
+  --fx-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Inter", "Segoe UI", "Microsoft YaHei", sans-serif;
   --fx-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
   /*
@@ -53,18 +65,19 @@
   --fx-mesh-3: rgb(216 220 225 / 70%);
 }
 .dark {
-  --fx-canvas: #101315;
-  --fx-surface: #191d21;
-  --fx-subtle: #13171b;
-  --fx-raised: #252a30;
-  --fx-stroke: #353d46;
-  --fx-control-stroke: #728091;
-  --fx-text: #edf0f3;
-  --fx-muted: #a9b2bd;
-  --fx-brand: #78d8bd;
-  --fx-brand-soft: #213c35;
-  --fx-shadow: 0 1px 2px rgb(0 0 0 / 12%), inset 0 1px 0 rgb(255 255 255 / 3%);
-  --fx-shadow-raised: 0 12px 32px rgb(0 0 0 / 24%), inset 0 1px 0 rgb(255 255 255 / 5%);
+  /* iOS 深色：页面是纯黑，卡片比它亮一档（systemGroupedBackground 那一组）。 */
+  --fx-canvas: #000000;
+  --fx-surface: #1c1c1e;
+  --fx-subtle: #1c1c1e;
+  --fx-raised: #2c2c2e;
+  --fx-stroke: rgb(84 84 88 / 65%);
+  --fx-control-stroke: rgb(84 84 88 / 90%);
+  --fx-text: #ffffff;
+  --fx-muted: rgb(235 235 245 / 60%);
+  --fx-brand: #5fd4bc;
+  --fx-brand-soft: rgb(95 212 188 / 15%);
+  --fx-shadow: 0 0 0 0 transparent;
+  --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 50%);
 
   --fx-beam: #edf0f3;                  /* 深色下反过来，点是亮的 */
   --fx-beam-glow: rgb(237 240 243 / 70%);
