@@ -352,6 +352,30 @@
   #workspace-topbar-actions > [data-slot="badge"] { display: none; }
   #workspace-topbar-actions [data-slot="button"] { height: 32px; padding-inline: 10px; font-size: 13px; box-shadow: none; }
   #workspace-topbar-actions [data-slot="button"] > svg { width: 15px; height: 15px; }
+  /*
+    筛选行的主操作放在筛选按钮右边。
+
+    但三样东西（搜索 + 筛选 + 新建）在 393px 上挤不下 —— 实测搜索框被压到
+    只剩「搜索端口、I」。所以手机上换行：第一行是筛选和新建（都是动作），
+    搜索独占第二行拿满宽。flex-basis 100% 强制换行，比按像素猜断点可靠。
+  */
+  /*
+    order 不会强制断行 —— 第一版只调了 order，三样东西照样挤在一行，搜索框被
+    压到只剩「搜索端口、I」。用栅格代替 flex：第一行筛选和新建（都是动作），
+    第二行搜索占满。栅格的行是真的行，不用靠 flex-basis 去凑。
+  */
+  .workspace-filter {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-areas: "filter action" "search search";
+    gap: 8px;
+  }
+  .workspace-filter > [data-slot="button"] { grid-area: filter; justify-self: start; }
+  .workspace-filter-options { grid-area: filter; }
+  .workspace-filter-action { grid-area: action; justify-self: end; }
+  .workspace-filter-search { grid-area: search; min-width: 0; }
+  .workspace-filter-action [data-slot="button"] { white-space: nowrap; }
+
   .workspace-command-footer { font-size: 10px; }
 
   /*

@@ -38,7 +38,11 @@
   --fx-surface: #ffffff;
   --fx-subtle: #f6f6f7;          /* 表头/输入框的浅填充，参考站表头就是这个值 */
   --fx-raised: #ffffff;
-  --fx-stroke: #e2e2e3;          /* 参考站的分隔线，1.20:1 —— 一条细线不该抢戏 */
+  /*
+    1.20:1 太淡了 —— 分隔线够用，但用来给每条规则画边界时几乎看不见。
+    加重到 1.42:1：一眼能看出这是一张卡的边，又不至于变成格子纸。
+  */
+  --fx-stroke: #d4d4d8;
   --fx-control-stroke: #8e8e93;
   --fx-text: #1b1b1f;            /* 15.9:1 */
   --fx-muted: #3c3c43;           /* 参考站正文色，白底 11.6:1 */
@@ -102,7 +106,7 @@
   --fx-surface: #1b1b1f;
   --fx-subtle: #252529;
   --fx-raised: #252529;
-  --fx-stroke: #3c3f44;
+  --fx-stroke: #4a4d54;
   --fx-control-stroke: #8e8e93;
   --fx-text: #ffffffdb;
   --fx-muted: #ebebf599;

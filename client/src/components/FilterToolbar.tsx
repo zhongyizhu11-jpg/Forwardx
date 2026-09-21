@@ -3,8 +3,16 @@ import { SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export default function FilterToolbar({ search, children, activeCount = 0 }: {
+export default function FilterToolbar({ search, children, activeCount = 0, action }: {
   search: ReactNode; children?: ReactNode; activeCount?: number;
+  /**
+   * 这一页的主操作（「新建规则」这类）。
+   *
+   * 放在筛选按钮右边，而不是页面顶栏：手机上顶栏只有 393px，主操作挤在那儿
+   * 要和页面标题、搜索、主题切换抢位置，长一点的文案还会被截断。筛选这一行
+   * 本来就是「对这个列表做事」的地方，主操作和它并排才是同一类东西。
+   */
+  action?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
@@ -21,6 +29,7 @@ export default function FilterToolbar({ search, children, activeCount = 0 }: {
           {children}
         </div>
       </>}
+      {action && <div className="workspace-filter-action">{action}</div>}
     </div>
   );
 }

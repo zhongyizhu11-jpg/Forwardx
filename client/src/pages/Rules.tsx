@@ -6688,22 +6688,7 @@ function RulesContent() {
               <Loader2 className="h-4 w-4 animate-spin" />
               权限加载中
             </Button>
-          ) : canAdd ? (
-            <Button
-              onClick={() => openCreate()}
-              className="gap-2"
-              disabled={!canCreateRule}
-              title={!canCreateRule ? "暂无可用转发资源" : undefined}
-            >
-              <Plus className="h-4 w-4" />
-              新建规则
-            </Button>
-          ) : (
-            <Button disabled className="gap-2" title="需要管理员授权后才能新建规则">
-              <Plus className="h-4 w-4" />
-              新建规则
-            </Button>
-          )}
+          ) : null}
       </>} />
 
       <TrafficOverview total={totalTrafficTotals} daily={dailyTrafficTotals}
@@ -6722,7 +6707,32 @@ function RulesContent() {
           <Tabs value={ruleCategory} onValueChange={handleRuleCategoryChange}>
             <SlidingTabsList items={ruleCategoryItems} activeValue={ruleCategory} ariaLabel="转发规则分类" minItemWidthRem={8.5} />
           </Tabs>
-          <FilterToolbar activeCount={Number(hasActiveUserFilter) + Number(filterResource !== "all")} search={
+          <FilterToolbar
+            activeCount={Number(hasActiveUserFilter) + Number(filterResource !== "all")}
+            action={
+              /*
+                主操作挪到筛选右边。原来在页面顶栏 —— 手机上顶栏只有 393px，
+                它要和页面标题、搜索、主题切换抢位置。筛选这一行本来就是
+                「对这个列表做事」的地方，新建和它并排才是同一类东西。
+              */
+              rulePermissionLoading ? null : canAdd ? (
+                <Button
+                  onClick={() => openCreate()}
+                  className="gap-2"
+                  disabled={!canCreateRule}
+                  title={!canCreateRule ? "暂无可用转发资源" : undefined}
+                >
+                  <Plus className="h-4 w-4" />
+                  新建规则
+                </Button>
+              ) : (
+                <Button disabled className="gap-2" title="需要管理员授权后才能新建规则">
+                  <Plus className="h-4 w-4" />
+                  新建规则
+                </Button>
+              )
+            }
+            search={
             <div className="relative w-full">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
