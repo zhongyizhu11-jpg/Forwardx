@@ -89,7 +89,7 @@ import { AvatarPicker } from "@/components/AvatarPicker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { normalizeSidebarMenuSettings, type SidebarMenuKey } from "@shared/sidebarMenu";
 import { buildPanelInstallerCommand } from "@shared/githubAccelerator";
-import { WorkspaceCommand, WorkspaceMobileNav, type WorkspaceDestination } from "@/components/WorkspaceNavigation";
+import { WorkspaceCommand, type WorkspaceDestination } from "@/components/WorkspaceNavigation";
 
 const TWO_FACTOR_SETUP_SECONDS = 5 * 60;
 const SITE_LOGO_CACHE_KEY = "forwardx.siteLogoDataUrl";
@@ -1162,7 +1162,6 @@ function DashboardLayoutContent({
     ...managementMenuItems.map(item => ({ ...item, group: isAdmin ? "管理与账户" : "工具与账户" })),
     ...otherMenuItems.map(item => ({ ...item, group: "扩展" })),
   ];
-  const mobileMenuItems = visibleMainMenuItems.slice(0, 4);
   const closeMobileNavigation = () => {
     if (isMobile) {
       setAccountMenuOpen(false);
@@ -1614,22 +1613,22 @@ function DashboardLayoutContent({
       <SidebarInset className="workspace-with-mobile-nav">
         <a className="workspace-skip-link" href="#workspace-content">跳到主要内容</a>
         {isMobile && (
-          <div ref={mobileHeaderRef} data-mobile-header="true" className="glass-surface fixed inset-x-0 top-0 z-40 flex min-h-14 items-center justify-between border-b px-2 md:sticky">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger className="h-9 w-9 rounded-lg bg-background" />
-              <div className="flex items-center gap-3">
-                <div className="flex flex-col gap-1">
-                  <span className="tracking-tight text-foreground">
-                    {activeMenuItem?.label ?? siteTitle}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" onClick={() => setCommandOpen(true)} aria-label="查找功能"><Search className="h-4 w-4" /></Button>
+          <div ref={mobileHeaderRef} data-mobile-header="true" className="glass-surface fixed inset-x-0 top-0 z-40 flex min-h-12 items-center gap-1 border-b px-1.5 md:sticky">
+            <SidebarTrigger className="h-8 w-8 shrink-0 rounded-lg bg-background" />
+            {/*
+              这一行就是页面标题本身，所以页面里的 H1 在手机上只留给读屏（见
+              WorkspaceHeader）。同一个词在顶栏和正文各写一遍，白占 150px。
+            */}
+            <span className="min-w-0 flex-1 truncate font-medium tracking-tight text-foreground">
+              {activeMenuItem?.label ?? siteTitle}
+            </span>
+            {/* 页面的主操作挂到这里，不再单独占一行。 */}
+            <div id="workspace-topbar-actions" className="flex min-w-0 shrink items-center gap-1" />
+            <div className="flex shrink-0 items-center">
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCommandOpen(true)} aria-label="查找功能"><Search className="h-4 w-4" /></Button>
               <button
                 onClick={toggleTheme}
-                className="h-9 w-9 flex items-center justify-center hover:bg-accent rounded-lg transition-colors"
+                className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded-lg transition-colors"
                 aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"}
               >
                 {resolvedTheme === "dark" ? (
@@ -1641,7 +1640,7 @@ function DashboardLayoutContent({
             </div>
           </div>
         )}
-        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className="workspace-main flex-1 px-4 pb-6 pt-4 sm:p-6 lg:p-8">
+        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className="workspace-main flex-1 px-3 pb-4 pt-3 sm:p-6 lg:p-8">
           {/*
             兜底的「没读到」提示。
             各个列表自己会画失败态，但一页上挂着十几个查询，不可能每个都单独接一遍；
@@ -1677,7 +1676,7 @@ function DashboardLayoutContent({
             {children}
           </div>
         </main>
-        <footer className="pb-4 text-center text-xs text-muted-foreground">
+        <footer className="hidden pb-4 text-center text-xs text-muted-foreground md:block">
           <div className="inline-flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
             <a
               href={publicInfo?.repoUrl || "https://github.com/zhongyizhu11-jpg/Forwardx"}
@@ -1711,8 +1710,6 @@ function DashboardLayoutContent({
             ) : null}
           </div>
         </footer>
-        {isMobile && <WorkspaceMobileNav items={mobileMenuItems} currentPath={currentPath} onNavigate={navigateToDestination}
-          onMore={() => setOpenMobile(true)} moreOpen={openMobile} />}
       </SidebarInset>
 
       <WorkspaceCommand open={commandOpen} onOpenChange={setCommandOpen} items={commandItems} currentPath={currentPath} onNavigate={navigateToDestination} />

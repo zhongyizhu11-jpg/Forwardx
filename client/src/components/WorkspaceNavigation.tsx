@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { ArrowUpRight, LayoutGrid, Search, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Search, type LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 
 export type WorkspaceDestination = {
@@ -73,21 +73,4 @@ export function WorkspaceCommand({ open, onOpenChange, items, currentPath, onNav
       <div className="workspace-command-footer"><span>↑ ↓ 选择 · Enter 打开</span><span>{matches.length} 项功能</span></div>
     </DialogContent>
   </Dialog>;
-}
-
-export function WorkspaceMobileNav({ items, currentPath, onNavigate, onMore, moreOpen = false }: {
-  items: WorkspaceDestination[];
-  currentPath: string;
-  onNavigate: (item: WorkspaceDestination) => void;
-  onMore: () => void;
-  moreOpen?: boolean;
-}) {
-  const destinations = items.slice(0, 4);
-  return <nav aria-label="快捷导航" className="workspace-mobile-nav" style={{ gridTemplateColumns: `repeat(${destinations.length + 1}, minmax(0, 1fr))` }}>
-    {destinations.map(item => <a key={item.path} href={item.path} aria-current={currentPath === item.path ? "page" : undefined}
-      onClick={event => { if (event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) { event.preventDefault(); onNavigate(item); } }}>
-      <item.icon size={20} aria-hidden="true" /><span>{item.label}</span>
-    </a>)}
-    <button type="button" onClick={onMore} aria-expanded={moreOpen} aria-label="打开全部导航"><LayoutGrid size={20} aria-hidden="true" /><span>全部</span></button>
-  </nav>;
 }

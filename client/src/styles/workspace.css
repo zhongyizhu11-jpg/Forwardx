@@ -82,15 +82,22 @@
 .workspace-command-results small { display: block; font-size: 11px; color: var(--fx-muted); }
 .workspace-command-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--fx-stroke); color: var(--fx-muted); font-size: 11px; }
 .workspace-command-empty { flex: 1; display: grid; place-content: center; padding: 32px 20px; text-align: center; color: var(--fx-muted); font-size: 13px; }
-.workspace-mobile-nav { display: none; }
 @media (max-width: 767px) {
-  .workspace-with-mobile-nav { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
-  .workspace-mobile-nav { display: grid; position: fixed; z-index: var(--fx-z-sticky); inset: auto 0 0; gap: 4px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--fx-stroke); background: var(--fx-surface); box-shadow: 0 -2px 12px rgb(24 30 36 / 3%); }
-  .workspace-mobile-nav > :is(a, button) { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 0; min-height: 52px; border-radius: 8px; font-size: 10px; color: var(--fx-muted); }
-  .workspace-mobile-nav > a[aria-current="page"] { color: var(--fx-brand); font-weight: 600; }
-  .workspace-mobile-nav > :is(a, button):focus-visible { outline: 2px solid var(--fx-brand); outline-offset: -2px; }
-  /* Keep the virtual keyboard and form actions clear of persistent navigation. */
-  body:has(input:focus, textarea:focus, [contenteditable="true"]:focus) .workspace-mobile-nav { display: none; }
+  .workspace-with-mobile-nav { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  /*
+    顶栏那一行已经写着页面名字，所以 H1 在手机上只留给读屏 —— 文档大纲、
+    「跳到主要内容」和 aria 关系都还指得到它，屏幕上不再重复一遍。
+    整个标题块（H1 + 主操作）原来吃掉 150px。
+  */
+  .workspace-header-title { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .workspace-header { gap: 0; margin-bottom: 4px; }
+  .workspace-header:not(:has(.workspace-header-meta)) { display: none; }
+  .workspace-header-actions { display: none; }
+  .workspace-header-meta { margin-top: 0; font-size: 12px; }
+  /* 顶栏里的主操作：图标按钮维持可点面积，文字按钮收成一行小字。 */
+  #workspace-topbar-actions > * { min-width: 0; }
+  #workspace-topbar-actions [data-slot="button"] { height: 32px; padding-inline: 10px; font-size: 13px; box-shadow: none; }
+  #workspace-topbar-actions [data-slot="button"] > svg { width: 15px; height: 15px; }
   .workspace-command-footer { font-size: 10px; }
 }
 @media (pointer: coarse) { .workspace-nav-search, .public-journey-switch button { min-height: 44px; } }
