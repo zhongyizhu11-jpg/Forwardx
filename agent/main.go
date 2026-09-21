@@ -2483,6 +2483,11 @@ type failoverSpec struct {
 	FailoverSeconds int              `json:"failoverSeconds"`
 	RecoverSeconds  int              `json:"recoverSeconds"`
 	AutoFailback    bool             `json:"autoFailback"`
+	// 时段表：某几个时段里优先走哪一条出站（晚高峰错峰）。只对 fallback 生效。
+	Schedule *failoverSchedule `json:"schedule,omitempty"`
+	// 刚切过去之后至少待多久才允许再按优先级切回，防止线路来回抖。
+	// 当前这条**挂了**的时候不受它限制 —— 守着一条死路比抖动更糟。
+	MinHoldSeconds int `json:"minHoldSeconds,omitempty"`
 }
 
 type tunnelProbe struct {
@@ -11751,7 +11756,9 @@ type failoverProxy struct {
 	// 丢掉的 —— 数据一直在采，白扔了，而它正是「哪条线路更快」唯一的现成原料。
 	lastLatencyMs []int
 	rng            *mathrand.Rand
-	ln             net.Listener
+	// 上一次切换的时刻，最短驻留时间从这儿算。
+	lastSwitchAt time.Time
+	ln           net.Listener
 	done           chan struct{}
 	mu             sync.RWMutex
 }
@@ -11769,6 +11776,8 @@ func failoverSignature(spec failoverSpec) string {
 		strconv.Itoa(spec.FailoverSeconds),
 		strconv.Itoa(spec.RecoverSeconds),
 		strconv.FormatBool(spec.AutoFailback),
+		strconv.Itoa(spec.MinHoldSeconds),
+		failoverScheduleSignature(spec.Schedule),
 	}
 	for _, target := range spec.Targets {
 		parts = append(parts, target.TargetIP, strconv.Itoa(target.TargetPort), target.ProbeIP, strconv.Itoa(target.ProbePort))
@@ -11792,6 +11801,10 @@ func normalizeFailoverSpec(spec failoverSpec) failoverSpec {
 	if spec.RecoverSeconds <= 0 {
 		spec.RecoverSeconds = 120
 	}
+	if spec.MinHoldSeconds < 0 {
+		spec.MinHoldSeconds = 0
+	}
+	spec.Schedule = normalizeFailoverSchedule(spec.Schedule)
 	cleaned := make([]failoverTarget, 0, len(spec.Targets))
 	for _, target := range spec.Targets {
 		target.TargetIP = strings.TrimSpace(target.TargetIP)
@@ -12045,6 +12058,7 @@ func (p *failoverProxy) setActiveLocked(index int, reason string) {
 	}
 	old := p.activeIndex
 	p.activeIndex = index
+	p.lastSwitchAt = time.Now()
 	next := p.spec.Targets[index]
 	logf("failover switch rule=%d source=%d %d->%d target=%s:%d reason=%s", p.ruleID, p.sourcePort, old, index, next.TargetIP, next.TargetPort, reason)
 	from := ""
@@ -12077,26 +12091,84 @@ func (p *failoverProxy) latencyMsLocked(index int) int {
 	return p.lastLatencyMs[index]
 }
 
+/*
+出站的优先次序。
+
+没有时段表时就是数组顺序（也就是这个功能加进来之前的行为）。时段表命中时，把它
+指定的那一条提到最前，其余保持原来的相对次序 —— 时段表只改「谁是首选」，不重排
+剩下的兜底顺序。
+*/
+func (p *failoverProxy) priorityOrderLocked(now time.Time) []int {
+	count := len(p.spec.Targets)
+	order := make([]int, 0, count)
+	preferred := failoverScheduleTargetIndexAt(p.spec.Schedule, now)
+	if preferred >= 0 && preferred < count {
+		order = append(order, preferred)
+	}
+	for index := 0; index < count; index++ {
+		if len(order) > 0 && order[0] == index {
+			continue
+		}
+		order = append(order, index)
+	}
+	return order
+}
+
+// 刚切过去，还在最短驻留时间里。
+func (p *failoverProxy) holdingLocked(now time.Time) bool {
+	if p.spec.MinHoldSeconds <= 0 || p.lastSwitchAt.IsZero() {
+		return false
+	}
+	return now.Sub(p.lastSwitchAt) < time.Duration(p.spec.MinHoldSeconds)*time.Second
+}
+
 func (p *failoverProxy) updateFallbackActiveLocked(reason string) {
+	p.updateFallbackActiveAtLocked(time.Now(), reason)
+}
+
+/*
+把「现在几点」作为参数传进来，而不是在里面读 time.Now()。
+
+时段表的行为只有按指定时刻才测得准：读真实时钟的话，「18 点到了而那条线正挂着，
+不该切过去」这条用例只在真实时间落在 18-23 点时才真的走到判断，其余时候压根没有
+窗口命中 —— 测试照常绿，但什么都没验证。这种测试比没有更糟，因为它看起来在保护。
+*/
+func (p *failoverProxy) updateFallbackActiveAtLocked(now time.Time, reason string) {
 	if len(p.spec.Targets) == 0 || p.spec.Strategy != "fallback" {
 		return
 	}
 	p.ensureHealthStateLocked()
+	order := p.priorityOrderLocked(now)
+
 	if p.targetHealth[p.activeIndex] {
 		if !p.spec.AutoFailback {
 			return
 		}
-		for i := 0; i < p.activeIndex; i++ {
-			if p.targetHealth[i] {
-				p.setActiveLocked(i, reason)
+		for _, index := range order {
+			// 走到当前这条了，说明前面没有更优且健康的，保持不动。
+			if index == p.activeIndex {
+				return
+			}
+			if p.targetHealth[index] {
+				// 按优先级往回切是可以等的：刚切过来就被拽回去，线路会来回抖。
+				if p.holdingLocked(now) {
+					return
+				}
+				p.setActiveLocked(index, reason)
 				return
 			}
 		}
 		return
 	}
-	for i := range p.spec.Targets {
-		if p.targetHealth[i] {
-			p.setActiveLocked(i, reason)
+	/*
+		当前这条挂了：按优先级找第一条健康的，**不受最短驻留限制**。
+
+		守着一条死路比抖动更糟 —— 最短驻留是拿来防「好线路之间来回切」的，
+		不是拿来拖着不逃生的。
+	*/
+	for _, index := range order {
+		if p.targetHealth[index] {
+			p.setActiveLocked(index, reason)
 			return
 		}
 	}

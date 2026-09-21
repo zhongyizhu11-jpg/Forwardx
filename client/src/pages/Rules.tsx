@@ -96,6 +96,16 @@ import {
 import { cn } from "@/lib/utils";
 import { autoForwardRuleName } from "@shared/forwardRuleName";
 import {
+  BILLING_TIME_ZONE,
+} from "@shared/billingTime";
+import {
+  MAX_FAILOVER_SCHEDULE_WINDOWS,
+  describeFailoverScheduleWindow,
+  parseFailoverSchedule,
+  type FailoverSchedule,
+  type FailoverScheduleWindow,
+} from "@shared/failoverSchedule";
+import {
   describeFailoverLines,
   failoverLineHintText,
   type RelayCandidate,
@@ -241,6 +251,8 @@ type RuleFormData = {
   failoverStrategy: FailoverStrategy;
   failoverTargetsText: string;
   failoverProbeTarget: string;
+  failoverSchedule: FailoverSchedule | null;
+  failoverMinHoldSeconds: number;
   failoverSeconds: number;
   recoverSeconds: number;
   autoFailback: boolean;
@@ -286,6 +298,8 @@ const defaultForm: RuleFormData = {
   failoverStrategy: "fallback",
   failoverTargetsText: "",
   failoverProbeTarget: "",
+  failoverSchedule: null,
+  failoverMinHoldSeconds: 0,
   failoverSeconds: 60,
   recoverSeconds: 120,
   autoFailback: true,
@@ -2600,6 +2614,8 @@ function RulesContent() {
       failoverStrategy: normalizeFailoverStrategy(rule.failoverStrategy),
       failoverTargetsText: formatFailoverTargetsText(rule.failoverTargets),
       failoverProbeTarget: String(rule.failoverProbeTarget || ""),
+      failoverSchedule: parseFailoverSchedule(rule.failoverSchedule),
+      failoverMinHoldSeconds: Number(rule.failoverMinHoldSeconds || 0),
       failoverSeconds: Number(rule.failoverSeconds || 60),
       recoverSeconds: Number(rule.recoverSeconds || 120),
       autoFailback: rule.autoFailback !== false,
@@ -3634,6 +3650,8 @@ function RulesContent() {
       failoverStrategy: form.failoverStrategy,
       failoverTargets: canUseMainBackup && form.failoverEnabled ? failoverTargets : [],
       failoverProbeTarget: canUseMainBackup && form.failoverEnabled ? form.failoverProbeTarget.trim() || null : null,
+      failoverSchedule: canUseMainBackup && form.failoverEnabled ? form.failoverSchedule : null,
+      failoverMinHoldSeconds: canUseMainBackup && form.failoverEnabled ? form.failoverMinHoldSeconds : 0,
       failoverSeconds: form.failoverSeconds || 60,
       recoverSeconds: form.recoverSeconds || 120,
       autoFailback: form.autoFailback,
@@ -7394,7 +7412,7 @@ function RulesContent() {
                       setForm({ ...form, failoverTargetsText: existing ? `${existing}\n${value}` : value });
                       }}
                     >
-                      <SelectTrigger className="h-8 w-auto min-w-44 text-xs">
+                      <SelectTrigger className="h-8 w-auto min-w-44 text-xs" aria-label="从中转里选一条加进备用出站">
                       <SelectValue placeholder="从中转里选一条加进来" />
                       </SelectTrigger>
                       <SelectContent>
@@ -7450,7 +7468,111 @@ function RulesContent() {
                     不代表它到落地那段还通 —— 这时填个探测目标（每行第二个地址，空格隔开），
                     指向能反映整条路径的端口。
                   </p>
-                  <div className="grid gap-2 sm:grid-cols-3">
+                  {/*
+                    时段表：晚高峰错峰。
+
+                    它只决定「首选是谁」，切不切得过去仍然由健康检查说了算 ——
+                    18 点到了而那条线正挂着，不该机械地切过去。这两件事是正交的，
+                    所以时段表放在这儿，和下面的切换/恢复时间并列，而不是替代它们。
+                  */}
+                  <div className="space-y-2 rounded-md border border-border/50 bg-background/40 p-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label className="flex items-baseline gap-1.5">
+                    时段表
+                    <span className="text-xs font-normal text-muted-foreground">
+                    按 {BILLING_TIME_ZONE} 计时，没配就一直按优先级走
+                    </span>
+                    </Label>
+                    {(form.failoverSchedule?.windows.length || 0) < MAX_FAILOVER_SCHEDULE_WINDOWS && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => {
+                      const windows = [...(form.failoverSchedule?.windows || []), {
+                      days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1,
+                      } as FailoverScheduleWindow];
+                      setForm({ ...form, failoverSchedule: { timezone: BILLING_TIME_ZONE, windows } });
+                      }}
+                    >
+                      添加时段
+                    </Button>
+                    )}
+                    </div>
+                    {(form.failoverSchedule?.windows || []).map((window, index) => {
+                    const patch = (next: Partial<FailoverScheduleWindow>) => {
+                    const windows = (form.failoverSchedule?.windows || []).map((item, position) => (
+                    position === index ? { ...item, ...next } : item
+                    ));
+                    setForm({ ...form, failoverSchedule: { timezone: BILLING_TIME_ZONE, windows } });
+                    };
+                    return (
+                    <div key={index} className="flex flex-wrap items-center gap-1.5">
+                      <Select
+                      value={window.days.length === 0 ? "all" : window.days.length === 2 && window.days.includes(0) ? "weekend" : "weekday"}
+                      onValueChange={(value) => patch({
+                      days: value === "all" ? [] : value === "weekend" ? [0, 6] : [1, 2, 3, 4, 5],
+                      })}
+                      >
+                      <SelectTrigger className="h-8 w-24 text-xs" aria-label={`第 ${index + 1} 个时段：星期`}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                      <SelectItem value="all">每天</SelectItem>
+                      <SelectItem value="weekday">工作日</SelectItem>
+                      <SelectItem value="weekend">周末</SelectItem>
+                      </SelectContent>
+                      </Select>
+                      <Input
+                      type="time"
+                      value={window.from}
+                      onChange={(event) => patch({ from: event.target.value })}
+                      className="h-8 w-28 text-xs"
+                      aria-label={`第 ${index + 1} 个时段：开始时间`}
+                      />
+                      <span className="text-xs text-muted-foreground">至</span>
+                      <Input
+                      type="time"
+                      value={window.to}
+                      onChange={(event) => patch({ to: event.target.value })}
+                      className="h-8 w-28 text-xs"
+                      aria-label={`第 ${index + 1} 个时段：结束时间`}
+                      />
+                      <Select
+                      value={String(window.targetIndex)}
+                      onValueChange={(value) => patch({ targetIndex: Number(value) })}
+                      >
+                      <SelectTrigger className="h-8 w-28 text-xs" aria-label={`第 ${index + 1} 个时段：优先走哪条出站`}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                      <SelectItem value="0">主出站</SelectItem>
+                      {failoverLineHints.map((hint) => (
+                      <SelectItem key={hint.line} value={String(hint.line)}>备用 {hint.line}</SelectItem>
+                      ))}
+                      </SelectContent>
+                      </Select>
+                      <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      aria-label={`删除第 ${index + 1} 个时段`}
+                      onClick={() => {
+                      const windows = (form.failoverSchedule?.windows || []).filter((_, position) => position !== index);
+                      setForm({ ...form, failoverSchedule: windows.length > 0 ? { timezone: BILLING_TIME_ZONE, windows } : null });
+                      }}
+                      >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    );
+                    })}
+                    {/* 配好之后用一句话复述一遍：跨午夜那一段最容易理解反。 */}
+                    {(form.failoverSchedule?.windows || []).map((window, index) => (
+                    <p key={`hint-${index}`} className="text-xs leading-5 text-muted-foreground">
+                    {describeFailoverScheduleWindow(window)}
+                    </p>
+                    ))}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-4">
                     <FormField className="space-y-2">
                       <Label>切换时间（秒）</Label>
                       <Input
@@ -7471,6 +7593,24 @@ function RulesContent() {
                         step={1}
                         value={form.recoverSeconds || ""}
                         onChange={(event) => setForm({ ...form, recoverSeconds: parseInt(event.target.value) || 0 })}
+                      />
+                    </FormField>
+                    <FormField className="space-y-2">
+                      {/*
+                        最短驻留拦的是「好线路之间来回切」，不是「逃离一条死路」——
+                        当前这条挂了的时候它不生效，守着死路比抖动更糟。
+                      */}
+                      <Label className="flex items-baseline gap-1.5">
+                      最短驻留（秒）
+                      <span className="text-xs font-normal text-muted-foreground">0=不限</span>
+                      </Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={86400}
+                        step={1}
+                        value={form.failoverMinHoldSeconds || ""}
+                        onChange={(event) => setForm({ ...form, failoverMinHoldSeconds: parseInt(event.target.value) || 0 })}
                       />
                     </FormField>
                     {form.failoverStrategy === "fallback" && (

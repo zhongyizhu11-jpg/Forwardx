@@ -6,6 +6,12 @@ import {
   parseFailoverTargets,
   type FailoverTarget,
 } from "@shared/failoverTargets";
+import {
+  MAX_FAILOVER_SCHEDULE_WINDOWS,
+  parseFailoverSchedule,
+  serializeFailoverSchedule,
+  validateFailoverSchedule,
+} from "@shared/failoverSchedule";
 import { dbBool } from "../repositories/repositoryUtils";
 import { z } from "zod";
 import { planProxyNodeBinding } from "@shared/proxyNodeAutoBind";
@@ -85,6 +91,17 @@ const failoverInputShape = {
   failoverTargets: z.array(failoverTargetSchema).max(MAX_FAILOVER_TARGETS).optional(),
   /** 主出站的探测目标（`地址:端口`），留空就探出站地址本身。 */
   failoverProbeTarget: z.string().max(300).nullable().optional(),
+  /** 时段表：某几个时段里优先走哪一条出站。 */
+  failoverSchedule: z.object({
+    timezone: z.string().min(1).max(64),
+    windows: z.array(z.object({
+      days: z.array(z.number().int().min(0).max(6)).max(7),
+      from: z.string().max(5),
+      to: z.string().max(5),
+      targetIndex: z.number().int().min(0).max(MAX_FAILOVER_TARGETS),
+    })).max(MAX_FAILOVER_SCHEDULE_WINDOWS),
+  }).nullable().optional(),
+  failoverMinHoldSeconds: z.number().int().min(0).max(86400).optional(),
   failoverSeconds: z.number().int().min(10).max(3600).optional(),
   recoverSeconds: z.number().int().min(10).max(3600).optional(),
   autoFailback: z.boolean().optional(),
@@ -119,6 +136,8 @@ type FailoverInput = {
   failoverStrategy?: z.infer<typeof failoverStrategySchema>;
   failoverTargets?: Array<{ targetIp?: string; targetPort?: number; probeIp?: string; probePort?: number }>;
   failoverProbeTarget?: string | null;
+  failoverSchedule?: unknown;
+  failoverMinHoldSeconds?: number;
   failoverSeconds?: number;
   recoverSeconds?: number;
   autoFailback?: boolean;
@@ -134,6 +153,26 @@ function normalizeMainProbeTarget(raw: unknown): string | null {
   const checked = strictProbeTargetSchema.safeParse({ probeIp: parsed.host, probePort: parsed.port });
   if (!checked.success) throw new Error("主出站探测目标的地址或端口格式不正确");
   return formatFailoverEndpoint(checked.data.probeIp, checked.data.probePort);
+}
+
+/**
+ * 时段表落库前的校验。
+ *
+ * 两处必须报错、不能默默收下：
+ *
+ *   · **时段表只对主备模式生效**。轮询/随机/IP 哈希本来就不存在「首选是谁」，
+ *     收下一张永远不会被读的表，等于告诉用户「排好了」而什么都不会发生。
+ *   · **首选的出站得真的存在**。指向第 5 条而一共只配了 3 条，到点之后时段表
+ *     静默失效 —— 而这正是它唯一该干活的时刻。
+ */
+function normalizeFailoverScheduleInput(input: FailoverInput, backupCount: number): string | null {
+  const schedule = parseFailoverSchedule(input.failoverSchedule as any);
+  const error = validateFailoverSchedule(schedule, {
+    strategy: input.failoverStrategy || "fallback",
+    backupCount,
+  });
+  if (error) throw new Error(error);
+  return serializeFailoverSchedule(schedule);
 }
 
 export function normalizeFailoverInput(input: FailoverInput, protocol?: string | null) {
@@ -174,6 +213,8 @@ export function normalizeFailoverInput(input: FailoverInput, protocol?: string |
     failoverStrategy: input.failoverStrategy || "fallback",
     failoverTargets: enabled ? JSON.stringify(targets) : null,
     failoverProbeTarget: enabled ? normalizeMainProbeTarget(input.failoverProbeTarget) : null,
+    failoverSchedule: enabled ? normalizeFailoverScheduleInput(input, targets.length) : null,
+    failoverMinHoldSeconds: enabled ? Math.max(0, Math.floor(Number(input.failoverMinHoldSeconds || 0))) : 0,
     failoverSeconds: input.failoverSeconds ?? 60,
     recoverSeconds: input.recoverSeconds ?? 120,
     autoFailback: input.autoFailback ?? true,
@@ -422,6 +463,8 @@ function isFailoverHotUpdate(input: Record<string, unknown>, rule: any, nextHost
     "failoverStrategy",
     "failoverTargets",
     "failoverProbeTarget",
+    "failoverSchedule",
+    "failoverMinHoldSeconds",
     "failoverSeconds",
     "recoverSeconds",
     "autoFailback",
@@ -440,6 +483,8 @@ function isFailoverHotUpdate(input: Record<string, unknown>, rule: any, nextHost
     "failoverStrategy",
     "failoverTargets",
     "failoverProbeTarget",
+    "failoverSchedule",
+    "failoverMinHoldSeconds",
     "failoverSeconds",
     "recoverSeconds",
     "autoFailback",
@@ -1380,6 +1425,8 @@ export const crudRulesRouter = router({
             failoverEnabled: createFailoverEnabled,
             failoverTargets: createFailoverEnabled ? input.failoverTargets : [],
             failoverProbeTarget: createFailoverEnabled ? input.failoverProbeTarget : null,
+            failoverSchedule: createFailoverEnabled ? input.failoverSchedule : null,
+            failoverMinHoldSeconds: createFailoverEnabled ? input.failoverMinHoldSeconds : 0,
           }, input.protocol),
           isRunning: false,
           userId: ctx.user.id,
@@ -1838,6 +1885,8 @@ export const crudRulesRouter = router({
                 failoverStrategy: groupChanged ? "fallback" : input.failoverStrategy ?? (rule as any).failoverStrategy ?? "fallback",
                 failoverTargets: nextMainBackupEnabled && !groupChanged ? (input.failoverTargets ?? parseFailoverTargets((rule as any).failoverTargets)) : [],
                 failoverProbeTarget: nextMainBackupEnabled && !groupChanged ? (input.failoverProbeTarget ?? (rule as any).failoverProbeTarget) : null,
+                failoverSchedule: nextMainBackupEnabled && !groupChanged ? (input.failoverSchedule ?? parseFailoverSchedule((rule as any).failoverSchedule)) : null,
+                failoverMinHoldSeconds: nextMainBackupEnabled && !groupChanged ? (input.failoverMinHoldSeconds ?? Number((rule as any).failoverMinHoldSeconds || 0)) : 0,
                 failoverSeconds: groupChanged ? 60 : input.failoverSeconds ?? (rule as any).failoverSeconds,
                 recoverSeconds: groupChanged ? 120 : input.recoverSeconds ?? (rule as any).recoverSeconds,
                 autoFailback: groupChanged ? true : input.autoFailback ?? (rule as any).autoFailback,
@@ -1875,7 +1924,7 @@ export const crudRulesRouter = router({
           isForwardGroupTemplate: true,
         };
         delete data.id;
-        const watchedFields = ["sourcePort", "targetIp", "targetPort", "forwardType", "protocol", "proxyProtocolReceive", "proxyProtocolSend", "proxyProtocolExitReceive", "proxyProtocolExitSend", "proxyProtocolVersion", "tcpFastOpen", "zeroCopy", "udpOverTcp", "udpOverTcpPort", "failoverEnabled", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "failoverSeconds", "recoverSeconds", "autoFailback"] as const;
+        const watchedFields = ["sourcePort", "targetIp", "targetPort", "forwardType", "protocol", "proxyProtocolReceive", "proxyProtocolSend", "proxyProtocolExitReceive", "proxyProtocolExitSend", "proxyProtocolVersion", "tcpFastOpen", "zeroCopy", "udpOverTcp", "udpOverTcpPort", "failoverEnabled", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "failoverSchedule", "failoverMinHoldSeconds", "failoverSeconds", "recoverSeconds", "autoFailback"] as const;
         const keyFieldChanged = watchedFields.some((field) => data[field] !== undefined && data[field] !== (rule as any)[field]);
         if (dbBool(data.isEnabled)) {
           data.disabledByUser = false;
@@ -2139,6 +2188,8 @@ export const crudRulesRouter = router({
           failoverStrategy: routeChanged ? "fallback" : input.failoverStrategy ?? (rule as any).failoverStrategy ?? "fallback",
           failoverTargets: nextMainBackupEnabled && !routeChanged ? (input.failoverTargets ?? parseFailoverTargets((rule as any).failoverTargets)) : [],
           failoverProbeTarget: nextMainBackupEnabled && !routeChanged ? (input.failoverProbeTarget ?? (rule as any).failoverProbeTarget) : null,
+          failoverSchedule: nextMainBackupEnabled && !routeChanged ? (input.failoverSchedule ?? parseFailoverSchedule((rule as any).failoverSchedule)) : null,
+          failoverMinHoldSeconds: nextMainBackupEnabled && !routeChanged ? (input.failoverMinHoldSeconds ?? Number((rule as any).failoverMinHoldSeconds || 0)) : 0,
           failoverSeconds: routeChanged ? 60 : input.failoverSeconds ?? (rule as any).failoverSeconds,
           recoverSeconds: routeChanged ? 120 : input.recoverSeconds ?? (rule as any).recoverSeconds,
           autoFailback: routeChanged ? true : input.autoFailback ?? (rule as any).autoFailback,

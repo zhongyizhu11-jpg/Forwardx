@@ -22,8 +22,14 @@ import test from "node:test";
  */
 
 type DispatchedTarget = { targetIp: string; targetPort: number; probeIp?: string; probePort?: number };
+type DispatchedSchedule = { timezone: string; windows: Array<{ days: number[]; from: string; to: string; targetIndex: number }> };
 
-function dispatchFailoverSpec(): { targets: DispatchedTarget[]; strategy: string } {
+function dispatchFailoverSpec(): {
+  targets: DispatchedTarget[];
+  strategy: string;
+  schedule?: DispatchedSchedule;
+  minHoldSeconds?: number;
+} {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-failover-probe-"));
   const databasePath = path.join(directory, "failover-probe.db");
   const script = String.raw`
@@ -56,9 +62,10 @@ function dispatchFailoverSpec(): { targets: DispatchedTarget[]; strategy: string
     ];
     await exec(
       'INSERT INTO forward_rules (id, "hostId", name, "forwardType", protocol, "sourcePort", "targetIp", "targetPort", "userId", "isEnabled",'
-        + ' "failoverEnabled", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "failoverSeconds", "recoverSeconds", "autoFailback")'
-        + ' VALUES (1, 1, ?, ?, ?, ?, ?, ?, 1, 1, 1, ?, ?, ?, 30, 90, 1)',
-      ["主备规则", "gost", "tcp", 20001, "198.51.100.7", 443, "fallback", JSON.stringify(backups), "198.51.100.7:9443"],
+        + ' "failoverEnabled", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "failoverSchedule", "failoverMinHoldSeconds", "failoverSeconds", "recoverSeconds", "autoFailback")'
+        + ' VALUES (1, 1, ?, ?, ?, ?, ?, ?, 1, 1, 1, ?, ?, ?, ?, 600, 30, 90, 1)',
+      ["主备规则", "gost", "tcp", 20001, "198.51.100.7", 443, "fallback", JSON.stringify(backups), "198.51.100.7:9443",
+        JSON.stringify({ timezone: "Asia/Shanghai", windows: [{ days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1 }] })],
     );
 
     const express = (await import("express")).default;
@@ -135,4 +142,18 @@ test("出站清单本身没被探测目标搅乱", () => {
     ["198.51.100.7:443", "198.51.100.8:443", "198.51.100.9:443"],
   );
   assert.equal(spec.strategy, "fallback");
+});
+
+test("时段表和最短驻留也要下发到 Agent", () => {
+  /*
+    时段表必须在 Agent 本地判定：面板挂了、网络断了，晚高峰照样得切。漏在面板这边
+    的话，表现是「到点了没切」—— 而这正是它唯一该干活的时刻，也是最不容易被发现
+    的失效方式（平时一切正常）。
+  */
+  assert.deepEqual(
+    spec.schedule,
+    { timezone: "Asia/Shanghai", windows: [{ days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1 }] },
+    "时段表没走到 Agent —— 面板上排好了，机器上到点不会切",
+  );
+  assert.equal(spec.minHoldSeconds, 600, "最短驻留没走到 Agent，线路会来回抖");
 });

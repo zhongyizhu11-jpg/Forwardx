@@ -205,8 +205,9 @@ function canPreserveChildRuleRuntime(existing: any, payload: any, options: SyncF
     "proxyProtocolVersion",
     "failoverSeconds",
     "recoverSeconds",
+    "failoverMinHoldSeconds",
   ];
-  const stringKeys = ["forwardType", "protocol", "gostMode", "targetIp", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "protocolBlockReason"];
+  const stringKeys = ["forwardType", "protocol", "gostMode", "targetIp", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "failoverSchedule", "protocolBlockReason"];
   const boolKeys = [
     "proxyProtocolReceive",
     "proxyProtocolSend",
