@@ -155,17 +155,25 @@ DialogHeader.displayName = "DialogHeader"
 // gap-2 而不是 sm:space-x-2：原来的写法只在桌面端给间距，手机上按钮竖排时
 // 两个按钮之间一点缝都没有，糊成一整块。gap 横竖都管。
 const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div data-slot="dialog-footer" className={cn("flex shrink-0 flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end", className)} {...props} />
+  /*
+    手机上原来是 flex-col-reverse —— 两个整宽按钮竖着排，实测这一块 137px，
+    而 393×760 的屏幕上整个对话框才 730px。按钮并排之后是 56px，省下的 80px
+    直接还给表单字段（原来「协议」那一栏是被这块footer压出屏幕外的）。
+
+    竖排本来是为了窄屏放得下长按钮文案，但这里的文案是「创建」「取消」两个字，
+    并排绰绰有余；真放不下时 flex-wrap 会自己折回去。
+  */
+  <div data-slot="dialog-footer" className={cn("flex shrink-0 flex-row flex-wrap items-center justify-end gap-2 border-t pt-3", className)} {...props} />
 )
 DialogFooter.displayName = "DialogFooter"
 
 const DialogTitle = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Title>, React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>>(({ className, ...props }, ref) => (
-  <DialogPrimitive.Title ref={ref} className={cn("text-lg font-semibold leading-none tracking-tight", className)} {...props} />
+  <DialogPrimitive.Title data-slot="dialog-title" ref={ref} className={cn("text-lg font-semibold leading-none tracking-tight", className)} {...props} />
 ))
 DialogTitle.displayName = DialogPrimitive.Title.displayName
 
 const DialogDescription = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Description>, React.ComponentPropsWithoutRef<typeof DialogPrimitive.Description>>(({ className, ...props }, ref) => (
-  <DialogPrimitive.Description ref={ref} className={cn("text-sm text-muted-foreground", className)} {...props} />
+  <DialogPrimitive.Description data-slot="dialog-description" ref={ref} className={cn("text-sm text-muted-foreground", className)} {...props} />
 ))
 DialogDescription.displayName = DialogPrimitive.Description.displayName
 

@@ -2180,7 +2180,7 @@ function HostsContent() {
       {/* Header */}
       <WorkspaceHeader title={<>主机管理</>} description={<>
             管理 Agent 主机和运行状态
-          </>} status={<Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
+          </>} status={<><Badge variant="outline" className="justify-center gap-1.5 px-2.5 py-1 text-xs">
             <Server className="h-3 w-3 text-chart-2" />
             <AnimatedStatValue
               value={`${onlineCount} / ${displayedHostTotal} 在线`}
@@ -2188,19 +2188,23 @@ function HostsContent() {
               cacheKey="hosts.header.online"
               fallbackValue="0 / 0 在线"
             />
-          </Badge>} actions={<>
-          {/* 布局切换按钮 */}
-          {/*
+          </Badge>{/*
             「N 台发现新版本」也只给管理员看。升级是管理员专属的接口，租户看到
             这句黄字既升不了、也不知道该做什么 —— 一条看着要人动手却没有门的提示，
             比不提示更让人不安。
+
+            它放在 status 而不是 actions：这是一条状态，点不了。放进 actions 之后
+            手机上会被传送到顶栏那一行，而顶栏只有 393px 宽 —— 实测它在那儿会
+            折成三行，把顶栏从 48px 顶到 63px，截断之后还两头缺字。状态就该跟
+            「0 / 4 在线」待在同一行。
           */}
           {updateCount > 0 && user?.role === "admin" && (
-            <Badge variant="outline" className="justify-center gap-1.5 border-amber-500/30 px-3 py-1.5 text-xs text-amber-500">
+            <Badge variant="outline" className="justify-center gap-1.5 border-amber-500/30 px-2.5 py-1 text-xs text-amber-500">
               <AlertTriangle className="h-3 w-3" />
               {updateCount} 台发现新版本
             </Badge>
-          )}
+          )}</>} actions={<>
+          {/* 布局切换按钮 */}
           {activeManageTab === "hosts" && (
             <>
               {/*
@@ -2416,7 +2420,7 @@ function HostsContent() {
       </div>
 
         <TabsContent value="hosts" className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="stat-strip grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <HostSummaryCard
             title="在线状态"
             value={`${effectiveHostSummary?.onlineHosts ?? onlineCount} / ${effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length}`}

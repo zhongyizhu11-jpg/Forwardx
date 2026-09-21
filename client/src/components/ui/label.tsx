@@ -9,7 +9,7 @@ const labelVariants = cva("text-sm font-medium leading-none peer-disabled:cursor
 const Label = React.forwardRef<React.ComponentRef<typeof LabelPrimitive.Root>, React.ComponentPropsWithoutRef<typeof LabelPrimitive.Root> & VariantProps<typeof labelVariants>>(({ className, ...props }, ref) => {
   const fieldId = useFormFieldId();
   return (
-  <LabelPrimitive.Root htmlFor={fieldId} ref={ref} className={cn(labelVariants(), className)} {...props} />
+  <LabelPrimitive.Root data-slot="label" htmlFor={fieldId} ref={ref} className={cn(labelVariants(), className)} {...props} />
   );
 })
 Label.displayName = LabelPrimitive.Root.displayName

@@ -7082,7 +7082,7 @@ function RulesContent() {
             >
               {form.routeMode === "tunnel" && (
                 <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  <div className="route-picker-row grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                     <FormField className="space-y-2">
                       <Label>使用隧道</Label>
                       <Select
@@ -7127,7 +7127,7 @@ function RulesContent() {
 
               {isForwardGroupRouteMode && (
                 <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  <div className="route-picker-row grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                     <FormField className="space-y-2">
                       <Label>{form.routeMode === "local" ? (isLegacyLocalRuleEdit ? "迁移到新版端口转发" : "使用端口转发") : form.routeMode === "chain" ? "使用转发链" : "使用转发组"}</Label>
                       <Select
@@ -7184,7 +7184,7 @@ function RulesContent() {
 
               {form.routeMode === "local" && !isForwardGroupRouteMode && (
                 <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  <div className="route-picker-row grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                     <FormField className="space-y-2">
                       <Label>使用按量计费资源</Label>
                       <Select
