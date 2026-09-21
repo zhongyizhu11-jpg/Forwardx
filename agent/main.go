@@ -246,6 +246,68 @@ func fxpEndpointEventsSnapshot() []fxpEndpointEvent {
 	return result
 }
 
+/*
+主备切换的事件队列。
+
+setActiveLocked 早就把切换写进 Agent 自己的日志了，但那份日志留在机器上 —— 面板
+不知道这条规则什么时候切过、为什么切。而主备恰恰是「平时看不出来、出事才知道有没有
+用」的东西：切了没人知道，没切更没人知道。
+
+所以把切换和健康翻转攒起来，随心跳带回面板。攒的是**发生过的事**，不是当前状态，
+所以用追加队列而不是按键覆盖的映射 —— 一小时里切了三次和切了一次，是完全不同的
+两件事。
+
+心跳发失败的话这一批会丢（取快照即出队，和 fxpEndpointEvents 一样）。机器本地的
+日志仍然有，所以丢的是「面板上少一条记录」，不是「查不出来」。
+*/
+const failoverEventQueueMax = 128
+
+var failoverEventMu sync.Mutex
+var failoverEventQueue []failoverProxyEvent
+
+type failoverProxyEvent struct {
+	RuleID     int    `json:"ruleId"`
+	SourcePort int    `json:"sourcePort"`
+	// switch / unhealthy / recovered
+	Kind       string `json:"kind"`
+	FromTarget string `json:"fromTarget,omitempty"`
+	ToTarget   string `json:"toTarget"`
+	Reason     string `json:"reason,omitempty"`
+	// 这条出站最近一次探测的往返耗时（毫秒）；探不通是 0。
+	LatencyMs  int   `json:"latencyMs,omitempty"`
+	OccurredAt int64 `json:"occurredAt"`
+}
+
+func recordFailoverProxyEvent(event failoverProxyEvent) {
+	event.OccurredAt = time.Now().UnixMilli()
+	failoverEventMu.Lock()
+	defer failoverEventMu.Unlock()
+	// 队列满了丢最老的：面板更关心刚刚发生了什么，而不是一小时前的第一条。
+	if len(failoverEventQueue) >= failoverEventQueueMax {
+		failoverEventQueue = failoverEventQueue[len(failoverEventQueue)-failoverEventQueueMax+1:]
+	}
+	failoverEventQueue = append(failoverEventQueue, event)
+}
+
+func failoverProxyEventsSnapshot() []failoverProxyEvent {
+	failoverEventMu.Lock()
+	defer failoverEventMu.Unlock()
+	if len(failoverEventQueue) == 0 {
+		return []failoverProxyEvent{}
+	}
+	drained := failoverEventQueue
+	failoverEventQueue = nil
+	return drained
+}
+
+func failoverTargetLabel(target failoverTarget) string {
+	host := target.TargetIP
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+	return host + ":" + strconv.Itoa(target.TargetPort)
+}
+
 var protocolGuardMu sync.Mutex
 var protocolGuards = map[string]*protocolGuardServer{}
 var protocolGuardSyncMu sync.Mutex
@@ -3778,6 +3840,7 @@ func heartbeat(cfg Config, forceReconcile ...bool) (heartbeatResult, error) {
 	payload["agentLastReceivedHash"] = receivedHash
 	payload["agentLastAppliedHash"] = appliedHash
 	payload["fxpEndpointEvents"] = fxpEndpointEventsSnapshot()
+	payload["failoverEvents"] = failoverProxyEventsSnapshot()
 	if compactEnabled {
 		payload["m"] = []any{
 			cpuUsageValue,
@@ -3998,6 +4061,7 @@ func heartbeatKeepalive(cfg Config) (heartbeatResult, error) {
 		"agentLastReceivedHash":     receivedHash,
 		"agentLastAppliedHash":      appliedHash,
 		"fxpEndpointEvents":         fxpEndpointEventsSnapshot(),
+		"failoverEvents":            failoverProxyEventsSnapshot(),
 	}
 	payload["mimicEnvironment"] = mimicEnvironment(false)
 	if compactAgentReports.Load() {
@@ -11683,6 +11747,9 @@ type failoverProxy struct {
 	targetHealth   []bool
 	failureSince   []time.Time
 	recoveredSince []time.Time
+	// 每条出站最近一次探测的往返耗时（毫秒）。原来 tcpLatency 的返回值是直接
+	// 丢掉的 —— 数据一直在采，白扔了，而它正是「哪条线路更快」唯一的现成原料。
+	lastLatencyMs []int
 	rng            *mathrand.Rand
 	ln             net.Listener
 	done           chan struct{}
@@ -11878,6 +11945,9 @@ func stopFailoverProxyRuntime(ruleID int, sourcePort int) {
 
 func (p *failoverProxy) ensureHealthStateLocked() {
 	n := len(p.spec.Targets)
+	if len(p.lastLatencyMs) != n {
+		p.lastLatencyMs = make([]int, n)
+	}
 	if len(p.targetHealth) != n {
 		p.targetHealth = make([]bool, n)
 		for i := range p.targetHealth {
@@ -11977,6 +12047,34 @@ func (p *failoverProxy) setActiveLocked(index int, reason string) {
 	p.activeIndex = index
 	next := p.spec.Targets[index]
 	logf("failover switch rule=%d source=%d %d->%d target=%s:%d reason=%s", p.ruleID, p.sourcePort, old, index, next.TargetIP, next.TargetPort, reason)
+	from := ""
+	if old >= 0 && old < len(p.spec.Targets) {
+		from = failoverTargetLabel(p.spec.Targets[old])
+	}
+	recordFailoverProxyEvent(failoverProxyEvent{
+		RuleID: p.ruleID, SourcePort: p.sourcePort, Kind: "switch",
+		FromTarget: from, ToTarget: failoverTargetLabel(next),
+		Reason: reason, LatencyMs: p.latencyMsLocked(index),
+	})
+}
+
+// 调用方必须已经持有 p.mu。
+func (p *failoverProxy) recordTargetEventLocked(index int, kind string, reason string) {
+	if index < 0 || index >= len(p.spec.Targets) {
+		return
+	}
+	recordFailoverProxyEvent(failoverProxyEvent{
+		RuleID: p.ruleID, SourcePort: p.sourcePort, Kind: kind,
+		ToTarget: failoverTargetLabel(p.spec.Targets[index]),
+		Reason:   reason, LatencyMs: p.latencyMsLocked(index),
+	})
+}
+
+func (p *failoverProxy) latencyMsLocked(index int) int {
+	if index < 0 || index >= len(p.lastLatencyMs) || p.lastLatencyMs[index] <= 0 {
+		return 0
+	}
+	return p.lastLatencyMs[index]
 }
 
 func (p *failoverProxy) updateFallbackActiveLocked(reason string) {
@@ -12046,9 +12144,10 @@ func (p *failoverProxy) checkHealth() {
 		return
 	}
 	results := make([]bool, len(targets))
+	latencies := make([]int, len(targets))
 	for i, target := range targets {
 		probeHost, probePort := target.probeEndpoint()
-		_, results[i] = tcpLatency(probeHost, probePort, 2*time.Second)
+		latencies[i], results[i] = tcpLatency(probeHost, probePort, 2*time.Second)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -12056,6 +12155,11 @@ func (p *failoverProxy) checkHealth() {
 		return
 	}
 	p.ensureHealthStateLocked()
+	for i := range results {
+		if i < len(p.lastLatencyMs) {
+			p.lastLatencyMs[i] = latencies[i]
+		}
+	}
 	for i, ok := range results {
 		if i >= len(p.spec.Targets) {
 			break
@@ -12070,6 +12174,7 @@ func (p *failoverProxy) checkHealth() {
 					p.targetHealth[i] = true
 					p.recoveredSince[i] = time.Time{}
 					logf("failover target recovered rule=%d source=%d index=%d target=%s:%d", p.ruleID, p.sourcePort, i, target.TargetIP, target.TargetPort)
+					p.recordTargetEventLocked(i, "recovered", "health check")
 				}
 			} else {
 				p.recoveredSince[i] = time.Time{}
@@ -12084,6 +12189,7 @@ func (p *failoverProxy) checkHealth() {
 				p.targetHealth[i] = false
 				p.failureSince[i] = time.Time{}
 				logf("failover target unhealthy rule=%d source=%d index=%d target=%s:%d reason=health check", p.ruleID, p.sourcePort, i, target.TargetIP, target.TargetPort)
+				p.recordTargetEventLocked(i, "unhealthy", "health check")
 			}
 		}
 	}

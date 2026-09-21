@@ -1810,6 +1810,45 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       latestConfigRevision(),
     ]);
     const rules = await gateForwardRulesForRuntime(rawRules as any[]);
+    /*
+      主备切换：Agent 自己切完，面板才知道。
+
+      规则级的主备是**数据面**的 —— Agent 每 5 秒探一次、自己在出站之间切，毫秒级，
+      不经过面板。好处是快且面板挂了也照常工作；代价是切换这件事原来只留在机器本地的
+      日志里，面板一无所知。而主备恰恰是「平时看不出来、出事才知道有没有用」的东西：
+      切了没人知道，没切更没人知道。
+
+      所以 Agent 把切换和健康翻转攒着随心跳带回来，这里落进面板日志 —— 一条转发
+      什么时候从哪条线切到哪条、为什么切、当时那条线多少延迟，终于查得到了。
+
+      规则归属必须验：Agent 只能报自己机器上的规则，否则一台被攻陷的机器能往任意
+      规则上写日志。
+    */
+    const failoverEvents = Array.isArray(req.body?.failoverEvents) ? req.body.failoverEvents.slice(0, 128) : [];
+    if (failoverEvents.length > 0) {
+      const hostRuleIds = new Set(
+        (rawRules as any[]).map((rule: any) => Number(rule?.id || 0)).filter((id: number) => id > 0),
+      );
+      for (const rawEvent of failoverEvents) {
+        const ruleId = Math.max(0, Math.floor(Number(rawEvent?.ruleId || 0)));
+        if (!ruleId || !hostRuleIds.has(ruleId)) continue;
+        const kind = normalizeAgentText(rawEvent?.kind, 16);
+        if (kind !== "switch" && kind !== "unhealthy" && kind !== "recovered") continue;
+        const toTarget = normalizeAgentText(rawEvent?.toTarget, 256);
+        if (!toTarget) continue;
+        const fromTarget = normalizeAgentText(rawEvent?.fromTarget, 256);
+        const reason = normalizeAgentText(rawEvent?.reason, 256);
+        const latencyMs = Math.max(0, Math.floor(Number(rawEvent?.latencyMs || 0)));
+        const transition = kind === "switch"
+          ? `${fromTarget || "(无)"} -> ${toTarget}`
+          : toTarget;
+        appendPanelLog(
+          kind === "recovered" ? "info" : "warn",
+          `[Failover] host=${host.id} rule=${ruleId} ${kind} ${transition}`
+            + `${reason ? ` reason=${reason}` : ""}${latencyMs > 0 ? ` latencyMs=${latencyMs}` : ""}`,
+        );
+      }
+    }
     const actions: any[] = [];
     const dnsWatches = new Map<string, AgentDnsWatch>();
     const responseIssuedAt = Date.now();
