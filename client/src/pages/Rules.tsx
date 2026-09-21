@@ -95,6 +95,12 @@ import {
 } from "@/lib/ruleEntryDisplay";
 import { cn } from "@/lib/utils";
 import { autoForwardRuleName } from "@shared/forwardRuleName";
+import {
+  forwardRuleFormBlocker,
+  isForwardRuleSourcePortRequired,
+  isValidForwardPort,
+  type ForwardRuleFormContext,
+} from "@shared/forwardRuleForm";
 /*
   端口策略以前在这个文件里另抄了一份，而且和服务端漂了：服务端的策略支持
   多段 ranges（套餐发的端口段就是这么下来的），这边完全不认；「不限制」时
@@ -1814,10 +1820,6 @@ function routeModeOptionClass(active: boolean, disabled = false) {
   return segmentedOptionClassName(active, disabled, "gap-1.5 px-3");
 }
 
-function isValidPort(port: number, allowZero = false) {
-  return Number.isInteger(port) && port >= (allowZero ? 0 : 1) && port <= 65535;
-}
-
 function isValidTargetHost(value: string) {
   return /^[a-zA-Z0-9]([a-zA-Z0-9\-_.]*[a-zA-Z0-9])?$|^[a-fA-F0-9:.]+$/.test(value.trim());
 }
@@ -1881,7 +1883,7 @@ function parseRuleFailoverTargets(raw: unknown) {
         targetIp: String(target?.targetIp || "").trim(),
         targetPort: Number(target?.targetPort || 0),
       }))
-      .filter((target) => target.targetIp && isValidPort(target.targetPort))
+      .filter((target) => target.targetIp && isValidForwardPort(target.targetPort))
       .slice(0, 10);
   } catch {
     return [];
@@ -1967,7 +1969,7 @@ function normalizeFailoverTargetsForSubmit(text: string) {
     if (!isValidTargetHost(targetIp)) {
       return { error: `第 ${index + 1} 行：地址格式不正确` };
     }
-    if (!isValidPort(targetPort)) {
+    if (!isValidForwardPort(targetPort)) {
       return { error: `第 ${index + 1} 行：端口必须在 1-65535 之间` };
     }
     targets.push({ targetIp, targetPort });
@@ -2948,7 +2950,7 @@ function RulesContent() {
   const canCreateRule = canUseLocalForward || canUseGost || canUseForwardChain || canUseFailoverGroup;
 
   /*
-    创建按钮为什么点不了 —— 一处算，两处用。
+    创建按钮为什么点不了 —— 一处算，到处用（判断在 shared/forwardRuleForm）。
 
     原来这个判断只长在按钮的 disabled 上，于是按钮灰着但不说缺什么：用户盯着
     一张看起来填满了的表，无从下手。（曾经更糟：有一版把必填的「规则名称」
@@ -2960,28 +2962,23 @@ function RulesContent() {
     顺序按用户填表的顺序来（线路 → 源端口 → 目标 → 名称），只报第一个缺口：
     一次列三条缺失反而没人读。
   */
-  const submitBlocker = useMemo<string | null>(() => {
-    if (form.routeMode === "tunnel" && !form.tunnelId) return "还没选隧道";
-    if (isForwardGroupRouteMode && !form.forwardGroupId) {
-      return form.routeMode === "local" ? "还没选端口转发"
-        : form.routeMode === "chain" ? "还没选转发链"
-        : "还没选转发组";
-    }
-    if (form.routeMode === "local" && !canUseLocalForward) return "没有可用的端口转发资源";
-    if (form.routeMode === "chain" && !canUseForwardChain) return "没有可用的转发链";
-    if (form.routeMode === "group" && !canUseFailoverGroup) return "没有可用的转发组";
-    if (form.routeMode === "tunnel" && !canUseGost) return "当前账号没有隧道转发权限";
-    if (!isForwardGroupRouteMode && !form.hostId) return "还没选线路";
-    if (portStatus === "used") return "源端口已被占用";
-    if (!form.targetIp) return "还缺目标地址";
-    if (!form.targetPort) return "还缺目标端口";
-    if (form.failoverEnabled && form.protocol !== "tcp") return "出站策略只支持 TCP";
-    return null;
-  }, [
-    form.routeMode, form.tunnelId, form.forwardGroupId, form.hostId, form.targetIp,
-    form.targetPort, form.failoverEnabled, form.protocol,
-    isForwardGroupRouteMode, canUseLocalForward, canUseForwardChain, canUseFailoverGroup, canUseGost, portStatus,
+  const ruleFormContext = useMemo<ForwardRuleFormContext>(() => ({
+    editing: editingId !== null,
+    usesForwardGroup: isForwardGroupRouteMode,
+    canUseLocalForward,
+    canUseForwardChain,
+    canUseFailoverGroup,
+    canUseGost,
+    portStatus,
+  }), [
+    editingId, isForwardGroupRouteMode, canUseLocalForward,
+    canUseForwardChain, canUseFailoverGroup, canUseGost, portStatus,
   ]);
+  const submitBlocker = useMemo<string | null>(
+    () => forwardRuleFormBlocker(form, ruleFormContext),
+    [form, ruleFormContext],
+  );
+  const sourcePortRequired = isForwardRuleSourcePortRequired(ruleFormContext);
   const routeModeTabItems: SlidingTabItem<RuleRouteMode>[] = [
     {
       value: "local",
@@ -3077,7 +3074,7 @@ function RulesContent() {
     const sourcePort = form.sourcePort;
     if (!sourcePort || sourcePort < 1) return;
     if (isForwardGroupRouteMode ? !forwardGroupId : !hostId) return;
-    if (!isValidPort(sourcePort)) {
+    if (!isValidForwardPort(sourcePort)) {
       setPortRangeError("端口必须在 1-65535 之间");
       setPortStatus("used");
       return;
@@ -3572,14 +3569,6 @@ function RulesContent() {
       toast.error(unsupportedProtocolTitle);
       return;
     }
-    if (!isValidPort(form.sourcePort, !editingId)) {
-      toast.error(editingId ? "源端口必须在 1-65535 之间" : "源端口必须为 0 或 1-65535，0 表示随机分配");
-      return;
-    }
-    if (!isValidPort(form.targetPort)) {
-      toast.error("目标端口必须在 1-65535 之间");
-      return;
-    }
     if (form.telegramErrorNotifyEnabled && !telegramBotReady) {
       toast.error("请先在系统设置中配置并启用 Telegram 机器人，再开启异常TG提醒");
       return;
@@ -3918,7 +3907,7 @@ function RulesContent() {
     ? !!selectedBatchEditTunnel
     : !!selectedBatchEditForwardGroup;
   const hasBatchEditTargetIpChange = batchEditTargetIp.length > 0;
-  const hasBatchEditTargetPortChange = isValidPort(batchEditTargetPort);
+  const hasBatchEditTargetPortChange = isValidForwardPort(batchEditTargetPort);
   const hasBatchEditChanges = hasBatchEditRouteSelection || hasBatchEditTargetIpChange || hasBatchEditTargetPortChange;
   const batchCopyDisabled = !canAdd || copyActionPending || selectedBatchRuleCount === 0 || selectedBatchTargetCount === 0;
   const batchEditDisabled = copyActionPending || selectedBatchRuleCount === 0 || !hasBatchEditChanges;
@@ -5155,7 +5144,7 @@ function RulesContent() {
       if (!isValidTargetHost(targetIp)) {
         return { ok: false, message: `第 ${index + 1} 行：地址格式不正确`, rules: [] };
       }
-      if (!isValidPort(targetPort)) {
+      if (!isValidForwardPort(targetPort)) {
         return { ok: false, message: `第 ${index + 1} 行：端口必须在 1-65535 之间`, rules: [] };
       }
       rules.push({
@@ -7133,7 +7122,12 @@ function RulesContent() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-              <Label>源端口 <span className="text-destructive">*</span></Label>
+              <Label className="flex items-baseline gap-1.5">
+              源端口
+              {sourcePortRequired
+              ? <span className="text-destructive">*</span>
+              : <span className="text-xs font-normal text-muted-foreground">留空随机分配</span>}
+              </Label>
               <span className="truncate text-xs text-muted-foreground" title={`允许端口范围: ${sourcePortRangeText}`}>
               {sourcePortRangeText}
               </span>
@@ -7143,7 +7137,7 @@ function RulesContent() {
               <Input
               type="text"
               pattern="[0-9]*"
-              placeholder={isForwardGroupRouteMode ? "例如 8080" : "0=随机"}
+              placeholder={sourcePortRequired ? "例如 8080" : "留空随机分配"}
               value={form.sourcePort || ""}
               inputMode="numeric"
               onChange={(e) => {

@@ -67,6 +67,46 @@ test("创建转发的表单字段，每一个都得有人读", () => {
   );
 });
 
+/*
+  允许写死星号的标签：这些字段在 shared/forwardRuleForm 里是**无条件**必填的，
+  任何路由模式、新建还是编辑都一样，写死不会和拦截逻辑说反话。
+
+  源端口不在这里 —— 它只有编辑时才必填，所以必须跟着判断走。
+*/
+const ALWAYS_REQUIRED_LABELS = ["目标地址", "目标端口"];
+
+test("必填标记必须来自判断本身，不许手写", () => {
+  /*
+    源端口的红星曾经是硬编码的，而它说的和拦截逻辑正好相反：新建时留空（0）本来
+    合法 —— 面板会随机分配。用户照着红星去猜一个号，撞上占用，再猜一个，而这个
+    字段他本来可以完全不管。
+
+    这条盯两件事：源端口的星号还跟着判断走；以及没有人又往别的标签上写死一个星号
+    而不说明理由。
+  */
+  const source = fs.readFileSync(rulesPagePath, "utf8");
+  const dialog = /<DialogTitle>\{editingId \? "编辑规则"[\s\S]*?<\/DialogFooter>/.exec(source);
+  assert.ok(dialog, "找不到新建/编辑转发的对话框 —— 这条测试锚错了地方");
+
+  assert.match(
+    dialog[0],
+    /sourcePortRequired\s*\n?\s*\?\s*<span className="text-destructive">\*<\/span>/,
+    "源端口的必填标记不再跟着 isForwardRuleSourcePortRequired 走了。"
+      + "写死的话，新建时它会说「必填」，而留空其实完全合法。",
+  );
+
+  const hardcoded = dialog[0].split("\n")
+    .filter((line) => /<Label/.test(line) && /text-destructive">\*/.test(line))
+    .filter((line) => !ALWAYS_REQUIRED_LABELS.some((label) => line.includes(label)));
+  assert.deepEqual(
+    hardcoded,
+    [],
+    "这些标签里写死了必填星号，而它们不在「无条件必填」名单里：\n" + hardcoded.join("\n")
+      + "\n要么让星号跟着 shared/forwardRuleForm 的判断走，要么把字段加进"
+      + " ALWAYS_REQUIRED_LABELS 并说明它为什么永远必填。",
+  );
+});
+
 test("表单字段数守住上限，别再长回去", () => {
   /*
     这是个棘轮，不是硬性设计约束：17 是清理之后的实测值。
