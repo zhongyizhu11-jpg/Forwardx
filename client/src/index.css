@@ -47,7 +47,13 @@
 
 /* ===== Light theme (default) ===== */
 :root {
-  --radius: 0.75rem;
+  /*
+    圆角基准跟 UI Handbook 对齐：手册上 6px 出现 459 次（控件的主力），
+    12px 235 次（大容器）。这里把基准压到 8px，Tailwind 的四档就正好落在
+    sm 4 / md 6 / lg 8 / xl 12 —— rounded-md 直接等于手册的按钮圆角。
+    之前是 0.75rem，md 解析出来是 10px，和手册差一档。
+  */
+  --radius: 0.5rem;
   --background: var(--fx-canvas);
   --foreground: var(--fx-text);
   --card: var(--fx-surface);

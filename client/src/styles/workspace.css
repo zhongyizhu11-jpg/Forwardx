@@ -2,9 +2,9 @@
 .workspace-layout { min-width: 0; font-family: var(--fx-font); }
 .workspace-main { width: 100%; max-width: 1440px; margin-inline: auto; min-width: 0; }
 .workspace-main .route-content-enter > div { min-width: 0; }
-.workspace-main h1 { font-size: 24px; line-height: 1.33; font-weight: 650; letter-spacing: -.035em; }
+.workspace-main h1 { font-size: 24px; line-height: 1.33; font-weight: 600; letter-spacing: -.035em; }
 .workspace-main h2 { letter-spacing: -.02em; }
-.workspace-header h2 { font-size: 20px; line-height: 1.4; font-weight: 600; }
+.workspace-header h2 { font-size: 20px; line-height: 28px; font-weight: 600; }
 .workspace-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .workspace-header-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; color: var(--fx-muted); font-size: 13px; }
 .workspace-header-meta > [data-slot="badge"] { border: 0; padding: 0; background: transparent; font-weight: 500; }
@@ -17,19 +17,19 @@
 .workspace-tabs { isolation: isolate; border-radius: 12px; background: var(--fx-subtle); border: 1px solid var(--fx-stroke); padding: 4px; }
 .workspace-tabs-viewport { overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
 .workspace-tabs-viewport::-webkit-scrollbar { display: none; }
-.workspace-tabs .workspace-tabs-list { display: flex; width: max-content; min-width: 100%; height: auto; justify-content: flex-start; gap: 8px; padding: 0; border: 0; border-radius: 8px; background: transparent; }
-.workspace-tabs .workspace-tab { position: relative; flex: 1 0 auto; gap: 8px; min-height: 40px; border: 1px solid transparent; border-radius: 8px; padding: 8px 12px; color: var(--fx-muted); background: transparent; box-shadow: none; --tw-ring-shadow: 0 0 #0000; font-size: 13px; font-weight: 500; transition: color 150ms, background-color 150ms, box-shadow 150ms; }
-.workspace-tabs .workspace-tab[data-state="active"] { color: var(--fx-text); background: var(--fx-raised); border-color: var(--fx-stroke); box-shadow: var(--fx-shadow); font-weight: 650; }
+.workspace-tabs .workspace-tabs-list { display: flex; width: max-content; min-width: 100%; height: auto; justify-content: flex-start; gap: 8px; padding: 0; border: 0; border-radius: var(--fx-radius); background: transparent; }
+.workspace-tabs .workspace-tab { position: relative; flex: 1 0 auto; gap: 8px; min-height: 40px; border: 1px solid transparent; border-radius: var(--fx-radius); padding: 8px 12px; color: var(--fx-muted); background: transparent; box-shadow: none; --tw-ring-shadow: 0 0 #0000; font-size: 13px; font-weight: 500; transition: color 150ms, background-color 150ms, box-shadow 150ms; }
+.workspace-tabs .workspace-tab[data-state="active"] { color: var(--fx-text); background: var(--fx-raised); border-color: var(--fx-stroke); box-shadow: var(--fx-shadow); font-weight: 600; }
 .workspace-tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding-inline: 4px; border-radius: 6px; background: var(--fx-stroke); color: var(--fx-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .workspace-tab[data-state="active"] .workspace-tab-count { background: var(--fx-brand-soft); color: var(--fx-brand); }
-.workspace-tab-scroll { position: absolute; top: 4px; bottom: 4px; z-index: 1; width: 32px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--fx-stroke); border-radius: 8px; background: var(--fx-raised); color: var(--fx-text); box-shadow: var(--fx-shadow-raised); }
+.workspace-tab-scroll { position: absolute; top: 4px; bottom: 4px; z-index: 1; width: 32px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); background: var(--fx-raised); color: var(--fx-text); box-shadow: var(--fx-shadow-raised); }
 .workspace-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .workspace-filter-search { min-width: 0; flex: 1 1 240px; }
 .workspace-filter-search > div { width: 100%; }
 .workspace-filter-search input { height: 40px; font-size: 14px; background: var(--fx-surface); }
 .workspace-filter-options { flex-wrap: wrap; align-items: center; gap: 8px; }
 .workspace-filter-options > button { width: auto; max-width: 240px; min-width: 120px; }
-.connection-path { list-style: none; margin: 0; padding: 12px; border: 1px solid var(--fx-stroke); border-radius: 8px; background: var(--fx-subtle); }
+.connection-path { list-style: none; margin: 0; padding: 12px; border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); background: var(--fx-subtle); }
 .connection-step { display: flex; gap: 12px; min-width: 0; }
 .connection-step + .connection-step { padding-top: 12px; }
 .connection-rail { position: relative; width: 12px; flex: 0 0 12px; display: flex; justify-content: center; }
@@ -40,13 +40,13 @@
 .connection-value { margin-top: 4px; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; color: var(--fx-text); }
 .workspace-main .action-card { border-color: var(--fx-stroke); background: var(--fx-surface); backdrop-filter: none; }
 .workspace-main .action-card-content { padding: 16px; }
-.workspace-main .action-card-footer { background: var(--fx-subtle); margin: 4px -16px -16px; padding: 8px 12px; border-top: 1px solid var(--fx-stroke); border-radius: 0 0 12px 12px; }
+.workspace-main .action-card-footer { background: var(--fx-subtle); margin: 4px -16px -16px; padding: 8px 12px; border-top: 1px solid var(--fx-stroke); border-radius: 0 0 var(--fx-radius) var(--fx-radius); }
 .workspace-main .action-card [class*="animate-pulse"] { animation: none; }
 .workspace-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); box-shadow: var(--fx-shadow); overflow: hidden; }
 .workspace-metrics > div { min-width: 0; padding: 16px; }
 .workspace-metrics > div + div { border-left: 1px solid var(--fx-stroke); }
 .workspace-metric-label { display: flex; align-items: center; gap: 8px; color: var(--fx-muted); font-size: 12px; }
-.workspace-metric-value { display: block; margin-top: 8px; font-size: clamp(15px, 2vw, 24px); font-weight: 650; line-height: 1.25; letter-spacing: -.03em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.workspace-metric-value { display: block; margin-top: 8px; font-size: clamp(15px, 2vw, 24px); font-weight: 600; line-height: 1.25; letter-spacing: -.03em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .workspace-metric-detail { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; font-size: 11px; color: var(--fx-muted); font-variant-numeric: tabular-nums; }
 .billing-entry-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .billing-entry-control { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); }
@@ -54,7 +54,7 @@
 .billing-entry-control p { font-size: 13px; font-weight: 500; }
 .billing-entry-control small { display: block; margin-top: 4px; color: var(--fx-muted); font-size: 11px; }
 .billing-entry-control > button { margin-left: auto; }
-.stat-card-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 8px; background: var(--fx-subtle); color: var(--fx-muted); }
+.stat-card-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--fx-radius); background: var(--fx-subtle); color: var(--fx-muted); }
 [data-slot="card-title"] { line-height: 1.4; }
 [data-slot="table-header"] { background: var(--fx-subtle); }
 [data-slot="table"] { font-variant-numeric: tabular-nums; }
@@ -76,7 +76,7 @@
 .workspace-command-input input::placeholder { color: var(--fx-muted); }
 .workspace-command-results { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px; }
 .workspace-command-results:empty { flex: 0; padding: 0; }
-.workspace-command-results > button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 10px 12px; border-radius: 8px; text-align: left; font-size: 14px; }
+.workspace-command-results > button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 10px 12px; border-radius: var(--fx-radius); text-align: left; font-size: 14px; }
 .workspace-command-results > button > svg { flex-shrink: 0; color: var(--fx-muted); }
 .workspace-command-results > button[aria-selected="true"] { background: var(--fx-subtle); }
 .workspace-command-results small { display: block; font-size: 11px; color: var(--fx-muted); }
@@ -96,9 +96,9 @@
     说完了，图标在这里是装饰。去掉之后每项从约 80px 收到 55px，五项装得进
     一屏，右边那个箭头自然就不出现了。
   */
-  .workspace-tabs { padding: 3px; border-radius: 10px; }
+  .workspace-tabs { padding: 3px; border-radius: 9px; }
   .workspace-tabs .workspace-tabs-list { gap: 4px; }
-  .workspace-tabs .workspace-tab { gap: 5px; padding: 6px 9px; font-size: 12.5px; border-radius: 8px; }
+  .workspace-tabs .workspace-tab { gap: 5px; padding: 6px 9px; font-size: 12.5px; border-radius: var(--fx-radius); }
   .workspace-tabs .workspace-tab > svg { display: none; }
   .workspace-tab-count { min-width: 17px; height: 17px; font-size: 10.5px; border-radius: 5px; }
 
@@ -136,15 +136,22 @@
     一屏读起来是连着的。
   */
 
-  /* 正文：行高是「读起来舒服」的主要来源，字号本身没变。 */
-  .workspace-main { font-size: 16px; line-height: 1.75; }
+  /*
+    正文 16px / 24px（行高 1.5）—— UI Handbook 量下来就是这个。
+    之前用 1.75 是照文档站的正文排版抄的，但面板是一屏要放下十几条记录的
+    列表，不是一篇文章：1.75 等于每一行凭空多 4px，十二条规则就是 48px。
+  */
+  .workspace-main { font-size: 16px; line-height: 1.5; }
   .workspace-main p { margin-block: 12px; }
 
-  /* 数据密集的地方回到 14px —— 参考站的表格就是这么分的。 */
+  /*
+    手册的字号分布是 12px 1377 次、14px 815 次 —— 两档，没有中间值。
+    数据（表格、地址）走 14px，说明性的次要文字走 12px。
+  */
   .workspace-main [data-slot="table"],
-  .workspace-main [data-slot="card-description"],
-  .workspace-main .text-xs,
   .workspace-main code { font-size: 14px; }
+  .workspace-main [data-slot="card-description"],
+  .workspace-main .text-xs { font-size: 12px; }
   .workspace-main [data-slot="table-head"],
   .workspace-main [data-slot="table-cell"] { padding: 8px 16px; font-size: 14px; }
   .workspace-main [data-slot="table-head"] { font-weight: 600; background: var(--fx-subtle); }
@@ -156,25 +163,25 @@
     分不出哪几行是一条 —— 有质感但看不清。清晰优先于克制：一条规则就该是
     一张看得见边界的卡片。
 
-    但不走另一个极端：白底 + 一条细边框 + 10px 圆角，不要投影、不要填充
-    色差。边界感来自边框，不是来自一层灰底或一圈阴影。
+    但不走另一个极端：白底 + 一条细边框 + 6px 圆角（--fx-radius，手册主力值），
+    不要投影、不要填充色差。边界感来自边框，不是来自一层灰底或一圈阴影。
   */
   .workspace-main [data-slot="card"] {
-    border: 1px solid var(--fx-stroke); border-radius: 10px;
+    border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius);
     background: var(--fx-surface); box-shadow: none;
     padding: 0; margin-top: 0;
   }
   .workspace-main [data-slot="card-header"] { padding: 12px 12px 0; }
   .workspace-main [data-slot="card-content"] { padding: 12px; }
   .workspace-main [data-slot="card-footer"] { padding: 0 12px 12px; }
-  .workspace-main [data-slot="card-title"] { font-size: 17px; font-weight: 600; line-height: 1.5; }
+  .workspace-main [data-slot="card-title"] { font-size: 16px; font-weight: 600; line-height: 1.5; }
 
   /* 标题分级。 */
   .workspace-main h1 { font-size: 26px; line-height: 1.4; font-weight: 600; letter-spacing: -.02em; }
-  .workspace-main h2 { font-size: 20px; line-height: 1.5; font-weight: 600; letter-spacing: -.01em; }
+  .workspace-main h2 { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.01em; }
 
   /* 对话框里同样：纯白、细线、正文行高。 */
-  .dialog-panel { line-height: 1.7; }
+  .dialog-panel { line-height: 1.5; }
   .dialog-panel [data-slot="card"] { border-top: 0; padding-top: 0; margin-top: 0; }
 
   /*
@@ -190,7 +197,17 @@
       三、颜色：次要信息退到 muted，不和主角抢
   */
 
-  /* 一、组内紧、组间松。卡片自己有边框，组间靠网格 gap。 */
+  /*
+    一、组内紧、组间松。卡片自己有边框，组间靠网格 gap。
+
+    先把 Tailwind 的 space-y-* 清零再给值。v4 的 space-y-* 编译成
+    `> :not(:last-child) { margin-block-end }`，不再是 v3 的
+    `> * + * { margin-top }` —— 两条选择器命中的是不同的边，所以下面这条
+    margin-top 并没有**替掉**它，而是加在它上面：卡内两项之间实测 10+6=16px，
+    不是我以为的 6px。清零之后间距只由这一处决定。
+  */
+  .workspace-main [data-slot="card-content"] > :not(:last-child),
+  .workspace-main .action-card-content > :not(:last-child) { margin-block-end: 0; }
   .workspace-main [data-slot="card-content"] > * + * { margin-top: 6px; }
   .workspace-main .action-card-content > * + * { margin-top: 6px; }
 
@@ -238,7 +255,7 @@
   */
   .workspace-main .action-card-footer {
     background: transparent; border-top: 1px solid var(--fx-stroke);
-    margin: 8px -12px 0; padding: 6px 12px 0; border-radius: 0;
+    margin: 3px -12px 0; padding: 4px 12px 0; border-radius: 0;
   }
 
   /*
@@ -250,7 +267,7 @@
     横排之后标题跟值同一行、箭头替掉竖线，收到约 60px。改的是 .connection-path
     本身，所以隧道、规则、转发链一起受益 —— 不用每个调用方各改一遍。
   */
-  .connection-path { padding: 7px 9px; border-radius: 8px; }
+  .connection-path { padding: 7px 9px; border-radius: var(--fx-radius); }
   .connection-step { align-items: baseline; gap: 6px; }
   .connection-step + .connection-step { padding-top: 4px; }
   .connection-rail { display: none; }
@@ -403,11 +420,13 @@
   }
 
   /*
-    卡内两处也收：入口/目标那块 46px（两行各 22 + 间距），收到一行 20px；
-    操作行 37px，上下边距从 8/6 收到 5/3。
+    卡内：入口/目标那块 46px（两行各 22 + 间距），收到一行 20px。
+
+    操作行那条线的上下边距归上面那一条 .workspace-main .action-card-footer 管
+    （同样的选择器在这里再写一遍，只会把上面的值盖掉 —— 这种「写了不生效」
+    这一轮已经踩过六次了）。
   */
   .workspace-main [data-slot="card"] .font-mono { line-height: 20px; }
-  .workspace-main .action-card-footer { margin-top: 4px; padding-top: 4px; }
 
   .workspace-command-footer { font-size: 10px; }
 
@@ -431,29 +450,31 @@
   .dialog-panel {
     width: calc(100vw - 20px); max-width: calc(100vw - 20px);
     max-height: 84svh;
-    border-radius: 20px;
+    border-radius: 12px;
     padding: 14px 16px 16px;
     gap: 10px;
   }
 
   /*
-    按钮做成胶囊。参考站的两个按钮：40px 高、圆角 20px（正好是高的一半，
-    所以是完整胶囊）、字号 14px 字重 600、左右内边距 20px、**宽度按内容**
-    而不是拉满 —— 两个短词的按钮拉成整宽，看上去就是没想清楚要人做什么。
+    按钮照 UI Handbook 的尺寸：36px 高、6px 圆角、14px / 字重 500、左右内边距
+    16px、**宽度按内容**而不是拉满 —— 两个短词的按钮拉成整宽，看上去就是没
+    想清楚要人做什么。
+
+    上一轮做成胶囊是照另一个参考站来的；手册是这个项目自己的设计基准，以它为准。
   */
-  [data-slot="dialog-footer"] { justify-content: center; gap: 10px; border-top: 0; padding-top: 10px; }
+  [data-slot="dialog-footer"] { justify-content: center; gap: 8px; border-top: 0; padding-top: 10px; }
   [data-slot="dialog-footer"] [data-slot="button"] {
-    height: 40px; min-height: 40px; width: auto;
-    padding-inline: 20px; border-radius: 999px;
-    font-size: 14px; font-weight: 600;
+    height: 36px; min-height: 36px; width: auto;
+    padding-inline: 16px; border-radius: var(--fx-radius);
+    font-size: 14px; font-weight: 500;
   }
 
   /*
     行高。参考站正文是 16px / 28px（1.75）—— 「字看起来大」的观感其实来自
     这个，不是字号本身。之前这边是 1.4 上下，字挤在一起。
   */
-  [data-slot="dialog-content"], .dialog-panel { line-height: 1.7; }
-  .workspace-main p, .dialog-panel p { line-height: 1.7; }
+  [data-slot="dialog-content"], .dialog-panel { line-height: 1.5; }
+  .workspace-main p, .dialog-panel p { line-height: 1.5; }
 
   /* 标签跟着回到 14px：12.5px 是我上一轮压过头的。 */
   [data-slot="label"], [data-slot="form-field"] > label { font-size: 14px; }
@@ -481,8 +502,8 @@
     底槽是一块浅灰圆角，选中项是一块白色滑块浮在上面，分隔靠的是滑块本身不是
     边框。iOS 的槽是 9px 圆角、滑块 7px。
   */
-  .workspace-tabs { padding: 2px; border-radius: 9px; border: 0; background: var(--fx-subtle); }
-  .workspace-tabs .workspace-tab { border: 0; border-radius: 7px; font-size: 13px; font-weight: 500; min-height: 30px; padding: 5px 10px; }
+  .workspace-tabs { padding: 2px; border-radius: 8px; border: 0; background: var(--fx-subtle); }
+  .workspace-tabs .workspace-tab { border: 0; border-radius: var(--fx-radius); font-size: 13px; font-weight: 500; min-height: 30px; padding: 5px 10px; }
   .workspace-tabs .workspace-tab[data-state="active"] {
     background: var(--fx-surface); font-weight: 600;
     box-shadow: 0 3px 8px rgb(0 0 0 / 12%), 0 3px 1px rgb(0 0 0 / 4%);
@@ -524,7 +545,7 @@
   .workspace-header h1 { font-size: 22px; }
   .workspace-header-meta { font-size: 12px; }
   .workspace-filter-search { flex-basis: 0; }
-  .workspace-filter-options { flex-basis: 100%; padding: 12px; background: var(--fx-subtle); border: 1px solid var(--fx-stroke); border-radius: 8px; }
+  .workspace-filter-options { flex-basis: 100%; padding: 12px; background: var(--fx-subtle); border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); }
   .workspace-filter-options > button { flex: 1 1 120px; max-width: none; }
   .workspace-metrics > div { padding: 12px; }
   .workspace-metric-label > svg { display: none; }
@@ -548,7 +569,12 @@
   */
   .workspace-tabs .workspace-tab { position: relative; min-height: 30px; }
   .workspace-tabs .workspace-tab::after { content: ""; position: absolute; inset: -7px 0; }
-  [data-slot="input"], [data-slot="select-trigger"] { position: relative; min-height: 34px; font-size: 16px; }
+  /*
+    选择器带 [class] 是为了把特指度提到 (0,2,0)：搜索框那类控件上挂着
+    Tailwind 的 text-xs，裸的 [data-slot="input"] 只有 (0,1,0)，会输给它，
+    实测字号掉到 12px —— 正好踩中 iOS Safari 的放大阈值。
+  */
+  [data-slot="input"][class], [data-slot="select-trigger"][class] { position: relative; min-height: 34px; font-size: 16px; }
   [data-slot="input"]::after, [data-slot="select-trigger"]::after { content: ""; position: absolute; inset: -5px 0; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -578,7 +604,7 @@
   的主角。
 */
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 0; padding: 20px 16px; text-align: center; }
-.empty-state-icon { padding: 8px; border: 1px solid var(--fx-stroke); border-radius: 9px; background: var(--fx-subtle); color: var(--fx-muted); }
+.empty-state-icon { padding: 8px; border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); background: var(--fx-subtle); color: var(--fx-muted); }
 .empty-state-icon svg { width: 18px; height: 18px; margin: 0; opacity: 1; }
 .empty-state h2 { font-size: 14px; font-weight: 600; color: var(--fx-text); }
 .empty-state p { max-width: 340px; font-size: 12px; line-height: 1.6; color: var(--fx-muted); }
@@ -590,7 +616,7 @@
 .public-nav-link.hidden { display: none; }
 .public-home-hero { display: grid; align-items: center; gap: 48px; max-width: 1152px; margin: auto; padding: 72px 24px 64px; }
 .public-home-intro { min-width: 0; }
-.public-home-hero h1 { margin-block: 24px; font-size: clamp(36px, 4.5vw, 56px); font-weight: 650; letter-spacing: -.055em; line-height: 1.25; }
+.public-home-hero h1 { margin-block: 24px; font-size: clamp(36px, 4.5vw, 56px); font-weight: 600; letter-spacing: -.055em; line-height: 1.25; }
 .public-home-hero h1 > span { color: var(--fx-muted); }
 .public-home-hero .hero-kicker { display: flex; align-items: center; gap: 8px; color: var(--fx-muted); font-size: 10px; font-weight: 600; letter-spacing: .12em; }
 .hero-kicker > span { width: 6px; height: 6px; background: var(--fx-brand); }

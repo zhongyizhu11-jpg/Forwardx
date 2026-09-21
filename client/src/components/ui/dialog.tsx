@@ -123,7 +123,7 @@ const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive
         className 里显式传了 overflow-hidden，tailwind-merge 会让后传的那个赢。
         这里只是把「没人管」时的默认从裁切改成可滚。
       */}
-      <DialogPrimitive.Content ref={ref} data-forwardx-dialog-content="" className={cn("dialog-panel pointer-events-auto grid max-h-[92svh] w-[calc(100vw-1.5rem)] max-w-lg gap-5 overflow-y-auto overflow-x-hidden overscroll-contain rounded-2xl p-4 sm:w-full sm:p-6", className)} {...props}>
+      <DialogPrimitive.Content ref={ref} data-forwardx-dialog-content="" className={cn("dialog-panel pointer-events-auto grid max-h-[92svh] w-[calc(100vw-1.5rem)] max-w-lg gap-5 overflow-y-auto overflow-x-hidden overscroll-contain rounded-xl p-4 sm:w-full sm:p-6", className)} {...props}>
         {children}
         {/*
           关闭按钮跟着内容滚，没有钉住。

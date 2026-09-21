@@ -38,11 +38,9 @@
   --fx-surface: #ffffff;
   --fx-subtle: #f6f6f7;          /* 表头/输入框的浅填充，参考站表头就是这个值 */
   --fx-raised: #ffffff;
-  /*
-    1.20:1 太淡了 —— 分隔线够用，但用来给每条规则画边界时几乎看不见。
-    加重到 1.42:1：一眼能看出这是一张卡的边，又不至于变成格子纸。
-  */
-  --fx-stroke: #d4d4d8;
+  /* 手册的主力边框是 1px oklch(0.92 0.004 286.32) ≈ #e4e4e7。 */
+  --fx-stroke: #e4e4e7;
+  --fx-stroke-strong: #d4d4d8;   /* 手册里更重的那一档 oklch(0.871) */
   --fx-control-stroke: #8e8e93;
   --fx-text: #1b1b1f;            /* 15.9:1 */
   --fx-muted: #3c3c43;           /* 参考站正文色，白底 11.6:1 */
@@ -52,8 +50,12 @@
   --fx-shadow: 0 0 0 0 transparent;
   --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 12%);
   /* 12px 在密集列表上显得胖；9px 还是圆的，但不抢内容。 */
-  /* iOS 分组表格的卡片圆角就是 10px。 */
-  --fx-radius: 10px;
+  /*
+    圆角 6px —— UI Handbook 上量下来 6px 出现 459 次，是绝对主力（12px 235 次
+    用在大容器，胶囊只给徽标那一类）。之前用 10px 是照 iOS 分组表格来的，
+    手册这套更紧。
+  */
+  --fx-radius: 6px;
   /*
     iOS 的字体栈：-apple-system 在 Apple 设备上解析成 SF Pro，中文接苹方。
     Inter 退到后面当非 Apple 平台的替身 —— 它本来就是照着 SF 的骨架做的，
