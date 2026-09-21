@@ -210,27 +210,12 @@ type RuleFormData = {
   routeMode: RuleRouteMode;
   forwardType: ForwardType;
   protocol: "tcp" | "udp" | "both";
-  gostMode: "direct" | "reverse";
-  gostRelayHost: string;
-  gostRelayPort: number;
   tunnelId: number | null;
   forwardGroupId: number | null;
   sourcePort: number;
   targetIp: string;
   targetPort: number;
   telegramErrorNotifyEnabled: boolean;
-  blockHttp: boolean;
-  blockSocks: boolean;
-  blockTls: boolean;
-  proxyProtocolReceive: boolean;
-  proxyProtocolSend: boolean;
-  proxyProtocolExitReceive: boolean;
-  proxyProtocolExitSend: boolean;
-  proxyProtocolVersion: ProxyProtocolVersion;
-  tcpFastOpen: boolean;
-  zeroCopy: boolean;
-  udpOverTcp: boolean;
-  udpOverTcpPort: number;
   failoverEnabled: boolean;
   failoverStrategy: FailoverStrategy;
   failoverTargetsText: string;
@@ -269,27 +254,12 @@ const defaultForm: RuleFormData = {
   routeMode: "local",
   forwardType: "iptables",
   protocol: "both",
-  gostMode: "direct",
-  gostRelayHost: "",
-  gostRelayPort: 0,
   tunnelId: null,
   forwardGroupId: null,
   sourcePort: 0,
   targetIp: "",
   targetPort: 0,
   telegramErrorNotifyEnabled: false,
-  blockHttp: false,
-  blockSocks: false,
-  blockTls: false,
-  proxyProtocolReceive: false,
-  proxyProtocolSend: false,
-  proxyProtocolExitReceive: false,
-  proxyProtocolExitSend: false,
-  proxyProtocolVersion: 1,
-  tcpFastOpen: false,
-  zeroCopy: false,
-  udpOverTcp: false,
-  udpOverTcpPort: 0,
   failoverEnabled: false,
   failoverStrategy: "fallback",
   failoverTargetsText: "",
@@ -2623,27 +2593,12 @@ function RulesContent() {
       routeMode: rule.forwardGroupId ? (forwardGroupModeOf(editForwardGroup) === "port" ? "local" : isForwardChainGroup(editForwardGroup) ? "chain" : "group") : rule.forwardType === "gost" && rule.tunnelId ? "tunnel" : "local",
       forwardType: rule.forwardType,
       protocol: rule.protocol,
-      gostMode: "direct" as const,
-      gostRelayHost: "",
-      gostRelayPort: 0,
       tunnelId: rule.tunnelId || null,
       forwardGroupId: rule.forwardGroupId || null,
       sourcePort: rule.sourcePort,
       targetIp: rule.targetIp,
       targetPort: rule.targetPort,
       telegramErrorNotifyEnabled: !!rule.telegramErrorNotifyEnabled,
-      blockHttp: false,
-      blockSocks: false,
-      blockTls: false,
-      proxyProtocolReceive: !!rule.proxyProtocolReceive,
-      proxyProtocolSend: !!rule.proxyProtocolSend,
-      proxyProtocolExitReceive: !!rule.proxyProtocolExitReceive,
-      proxyProtocolExitSend: !!rule.proxyProtocolExitSend,
-      proxyProtocolVersion: normalizeProxyProtocolVersion(rule.proxyProtocolVersion),
-      tcpFastOpen: !!rule.tcpFastOpen,
-      zeroCopy: !!rule.zeroCopy,
-      udpOverTcp: !!rule.udpOverTcp,
-      udpOverTcpPort: Number(rule.udpOverTcpPort || 0),
       failoverEnabled: !!rule.failoverEnabled,
       failoverStrategy: normalizeFailoverStrategy(rule.failoverStrategy),
       failoverTargetsText: formatFailoverTargetsText(rule.failoverTargets),
@@ -7285,9 +7240,6 @@ function RulesContent() {
               onValueChange={(v) => setForm({
               ...form,
               forwardType: v as any,
-              gostMode: "direct" as const,
-              gostRelayHost: "",
-              gostRelayPort: 0,
               tunnelId: null,
               })}
               >

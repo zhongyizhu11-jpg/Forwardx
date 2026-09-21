@@ -30,6 +30,22 @@ import { trafficBillingUserLockKey, withKeyedTaskLock } from "../keyedTaskLock";
 import { mapWithConcurrency } from "../asyncPool";
 import { reserveRuleCreateQuota, type RuleQuotaReservation } from "../ruleQuotaReservations";
 
+/**
+ * 规则行上的协议封禁三列永远写 false。
+ *
+ * 真正生效的封禁只有**主机**那一层：下发给 Agent 的策略一律按 rule.hostId 去查主机
+ * （见 agentHeartbeatRoute 的 protocolPolicyFromHost / getHostProtocolPolicy），规则
+ * 自己的这三列全仓库没有任何地方读过。
+ *
+ * 那为什么不干脆不写？因为老库里可能存着 true。哪天有人把下发那一路接到规则这一层，
+ * 那些沉睡的 true 会毫无征兆地生效 —— 一条早就正常跑着的转发突然开始拦 HTTP，而
+ * 界面上没有任何开关能解释它。写死 false 就是不让这件事发生。
+ *
+ * 想给单条规则加协议封禁的话，得先把下发那一路接上，不能只往这三列里填值。
+ * server/ruleProtocolBlock.test.ts 盯着这件事。
+ */
+const RULE_PROTOCOL_BLOCK_COLUMNS = { blockHttp: false, blockSocks: false, blockTls: false } as const;
+
 const targetHostSchema = z.string().min(1).max(253).refine(
   (v) => /^[a-zA-Z0-9]([a-zA-Z0-9\-_.]*[a-zA-Z0-9])?$|^[a-fA-F0-9:.]+$/.test(v.trim()),
   "请输入有效的 IP 地址或域名"
@@ -1089,9 +1105,7 @@ export async function createDirectForwardRuleForActor(
       ...proxyProtocol,
       ...transportTuning,
       telegramErrorNotifyEnabled: !!input.telegramErrorNotifyEnabled,
-      blockHttp: false,
-      blockSocks: false,
-      blockTls: false,
+      ...RULE_PROTOCOL_BLOCK_COLUMNS,
       sourcePort,
       hostId,
       targetIp: normalizeRuleTargetIp(input.targetIp, { tunnelId }),
@@ -1165,9 +1179,6 @@ export const crudRulesRouter = router({
       targetPort: z.number().min(1).max(65535),
       isEnabled: z.boolean().optional().default(true),
       telegramErrorNotifyEnabled: z.boolean().optional().default(false),
-      blockHttp: z.boolean().optional(),
-      blockSocks: z.boolean().optional(),
-      blockTls: z.boolean().optional(),
       ...failoverInputShape,
       ...proxyProtocolInputShape,
       ...transportTuningInputShape,
@@ -1308,9 +1319,7 @@ export const crudRulesRouter = router({
           targetPort: input.targetPort,
           isEnabled: input.isEnabled,
           telegramErrorNotifyEnabled: !!input.telegramErrorNotifyEnabled,
-          blockHttp: false,
-          blockSocks: false,
-          blockTls: false,
+          ...RULE_PROTOCOL_BLOCK_COLUMNS,
           ...normalizeProxyProtocolInput(
             input,
             input.protocol,
@@ -1373,9 +1382,6 @@ export const crudRulesRouter = router({
       ).optional(),
       targetPort: z.number().min(1).max(65535).optional(),
       telegramErrorNotifyEnabled: z.boolean().optional(),
-      blockHttp: z.boolean().optional(),
-      blockSocks: z.boolean().optional(),
-      blockTls: z.boolean().optional(),
       ...failoverInputShape,
       ...proxyProtocolInputShape,
       ...transportTuningInputShape,
@@ -1669,9 +1675,7 @@ export const crudRulesRouter = router({
             targetIp: normalizeRuleTargetIp(input.targetIp ?? (rule as any).targetIp, { tunnelId: nextTunnelId }),
             targetPort: Number(input.targetPort ?? (rule as any).targetPort),
             telegramErrorNotifyEnabled: input.telegramErrorNotifyEnabled ?? (rule as any).telegramErrorNotifyEnabled,
-            blockHttp: false,
-            blockSocks: false,
-            blockTls: false,
+            ...RULE_PROTOCOL_BLOCK_COLUMNS,
             ...normalizeProxyProtocolInput({}, nextProtocol, nextForwardType, false, { clearUnsupported: true, tunnelRoute: !!nextTunnelId }),
             ...normalizeTransportTuningInput({}, nextProtocol, nextForwardType, false, {
               clearUnsupported: true,
@@ -1828,9 +1832,6 @@ export const crudRulesRouter = router({
           isForwardGroupTemplate: true,
         };
         delete data.id;
-        delete data.blockHttp;
-        delete data.blockSocks;
-        delete data.blockTls;
         const watchedFields = ["sourcePort", "targetIp", "targetPort", "forwardType", "protocol", "proxyProtocolReceive", "proxyProtocolSend", "proxyProtocolExitReceive", "proxyProtocolExitSend", "proxyProtocolVersion", "tcpFastOpen", "zeroCopy", "udpOverTcp", "udpOverTcpPort", "failoverEnabled", "failoverStrategy", "failoverTargets", "failoverSeconds", "recoverSeconds", "autoFailback"] as const;
         const keyFieldChanged = watchedFields.some((field) => data[field] !== undefined && data[field] !== (rule as any)[field]);
         if (dbBool(data.isEnabled)) {
@@ -1923,9 +1924,7 @@ export const crudRulesRouter = router({
           targetIp: normalizeRuleTargetIp(input.targetIp ?? (rule as any).targetIp, { tunnelId: !isForwardChain && (group as any).groupType === "tunnel" ? 1 : null }),
           targetPort: Number(input.targetPort ?? (rule as any).targetPort),
           telegramErrorNotifyEnabled: input.telegramErrorNotifyEnabled ?? (rule as any).telegramErrorNotifyEnabled,
-          blockHttp: false,
-          blockSocks: false,
-          blockTls: false,
+          ...RULE_PROTOCOL_BLOCK_COLUMNS,
           ...normalizeProxyProtocolInput(
             {},
             nextProtocol,
@@ -2080,9 +2079,6 @@ export const crudRulesRouter = router({
       }
 
       const { id, ...data } = input;
-      delete (data as any).blockHttp;
-      delete (data as any).blockSocks;
-      delete (data as any).blockTls;
       (data as any).hostId = nextHostIdForRule;
       if (input.targetIp !== undefined) (data as any).targetIp = normalizeRuleTargetIp(input.targetIp, { tunnelId: nextTunnelIdForRule });
       if (
