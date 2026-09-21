@@ -1,20 +1,67 @@
 /* ForwardX surfaces and type scale. Shared by the app and documentation. */
 :root {
-  --fx-canvas: #f5f6f7;
+  /*
+    iOS 的浅色是「分组表格」那一套：页面底色是灰（systemGroupedBackground），
+    卡片是纯白浮在上面 —— 和之前「白底 + 灰卡」正好反过来。分隔线用 iOS 的
+    separator（半透明，压在白底上自然变浅），不用实色描边。
+  */
+  /*
+    对比度是算出来的，不是挑出来的。照搬 iOS 的字面值（separator 13%、
+    secondaryLabel 60%）在这个面板上测出来是：次要文字 3.44:1、分隔线 1.25:1、
+    白卡对页面灰 1.12:1 —— 七项里五项不达标，看上去就是一片发灰。iOS 那套
+    数值靠的是高素质屏幕和系统级的抗锯齿，搬到网页上撑不住。
+
+    下面每个值都是解出来的，目标：正文/次要文字 ≥ 4.5:1（WCAG AA），
+    面之间 ≥ 1.18:1（看得出分层），分隔线 ≥ 1.55:1（看得见一根线），
+    输入框填充 ≥ 1.30:1（一眼是个能填的框）。实测值写在各行后面。
+  */
+  /*
+    中性色不用纯灰。上一版整套是单色灰 —— 灰底、灰填充、灰文字、灰分隔线，
+    每一项对比度都达标，合在一起还是闷。问题不在对比度在色相：一屏上只有
+    一个色相（无彩）时，界面读起来就是「没上色的线框图」。
+
+    这里把每个中性色往品牌青（#0a7c6e）掺一点点（5%～22%，越暗掺得越多），
+    灰就变成有温度的冷调，而对比度一项没掉 —— 下面每行后面是实测值。
+
+    分层方式也跟着换了：页面底色现在几乎是白的（对白卡只有 1.09:1），
+    所以卡片靠**边框**分界而不是靠底色差，分隔线相应提到 1.60:1。
+  */
+  /*
+    页面底色是**纯白**。参考站（nsloon.bid，VitePress 文档主题）量下来就是
+    #ffffff，正文 rgb(60,60,67)，全站没有一块灰底 —— 章节之间靠一条细线和
+    大间距分层，不靠底色差，也不靠卡片。
+
+    之前几版一直在调「页面灰对卡片白」该差多少，方向就错了：只要还有一块
+    大面积的灰底，界面就会闷，调到多少都一样。
+  */
+  --fx-canvas: #ffffff;
   --fx-surface: #ffffff;
-  --fx-subtle: #f3f4f5;
+  --fx-subtle: #f6f6f7;          /* 表头/输入框的浅填充，参考站表头就是这个值 */
   --fx-raised: #ffffff;
-  --fx-stroke: #dedfe3;
-  --fx-control-stroke: #858b95;
-  --fx-text: #20242b;
-  --fx-muted: #616976;
-  --fx-brand: #146f63;
-  --fx-brand-soft: #eaf4f1;
-  --fx-shadow: 0 1px 2px rgb(24 30 36 / 3%), 0 4px 12px rgb(24 30 36 / 3%);
-  --fx-shadow-raised: 0 2px 4px rgb(24 30 36 / 4%), 0 12px 32px rgb(24 30 36 / 8%);
+  /* 手册的主力边框是 1px oklch(0.92 0.004 286.32) ≈ #e4e4e7。 */
+  --fx-stroke: #e4e4e7;
+  --fx-stroke-strong: #d4d4d8;   /* 手册里更重的那一档 oklch(0.871) */
+  --fx-control-stroke: #8e8e93;
+  --fx-text: #1b1b1f;            /* 15.9:1 */
+  --fx-muted: #3c3c43;           /* 参考站正文色，白底 11.6:1 */
+  --fx-brand: #3451b2;           /* 参考站链接蓝，白底 8.1:1 */
+  --fx-brand-soft: rgb(52 81 178 / 10%);
+  /* iOS 的卡片不投影，靠底色差和圆角分层。留极淡的一层给悬浮元素。 */
+  --fx-shadow: 0 0 0 0 transparent;
+  --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 12%);
   /* 12px 在密集列表上显得胖；9px 还是圆的，但不抢内容。 */
-  --fx-radius: 9px;
-  --fx-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  /*
+    圆角 6px —— UI Handbook 上量下来 6px 出现 459 次，是绝对主力（12px 235 次
+    用在大容器，胶囊只给徽标那一类）。之前用 10px 是照 iOS 分组表格来的，
+    手册这套更紧。
+  */
+  --fx-radius: 6px;
+  /*
+    iOS 的字体栈：-apple-system 在 Apple 设备上解析成 SF Pro，中文接苹方。
+    Inter 退到后面当非 Apple 平台的替身 —— 它本来就是照着 SF 的骨架做的，
+    两边换过去不会跳。
+  */
+  --fx-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Inter", "Segoe UI", "Microsoft YaHei", sans-serif;
   --fx-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
   /*
@@ -53,18 +100,22 @@
   --fx-mesh-3: rgb(216 220 225 / 70%);
 }
 .dark {
-  --fx-canvas: #101315;
-  --fx-surface: #191d21;
-  --fx-subtle: #13171b;
-  --fx-raised: #252a30;
-  --fx-stroke: #353d46;
-  --fx-control-stroke: #728091;
-  --fx-text: #edf0f3;
-  --fx-muted: #a9b2bd;
-  --fx-brand: #78d8bd;
-  --fx-brand-soft: #213c35;
-  --fx-shadow: 0 1px 2px rgb(0 0 0 / 12%), inset 0 1px 0 rgb(255 255 255 / 3%);
-  --fx-shadow-raised: 0 12px 32px rgb(0 0 0 / 24%), inset 0 1px 0 rgb(255 255 255 / 5%);
+  /* iOS 深色：页面是纯黑，卡片比它亮一档（systemGroupedBackground 那一组）。 */
+  /* 同样是解出来的，目标和浅色一致。实测值见各行。 */
+  /* 深色同样掺品牌青，纯黑/纯灰在暗色下比浅色下更显得死。 */
+  /* 深色同样：一块底色到底，分层靠细线。 */
+  --fx-canvas: #1b1b1f;
+  --fx-surface: #1b1b1f;
+  --fx-subtle: #252529;
+  --fx-raised: #252529;
+  --fx-stroke: #4a4d54;
+  --fx-control-stroke: #8e8e93;
+  --fx-text: #ffffffdb;
+  --fx-muted: #ebebf599;
+  --fx-brand: #a8b1ff;           /* 深色下的链接蓝 */
+  --fx-brand-soft: rgb(168 177 255 / 14%);
+  --fx-shadow: 0 0 0 0 transparent;
+  --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 50%);
 
   --fx-beam: #edf0f3;                  /* 深色下反过来，点是亮的 */
   --fx-beam-glow: rgb(237 240 243 / 70%);

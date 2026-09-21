@@ -1614,7 +1614,7 @@ function DashboardLayoutContent({
         <a className="workspace-skip-link" href="#workspace-content">跳到主要内容</a>
         {isMobile && (
           <div ref={mobileHeaderRef} data-mobile-header="true" className="glass-surface fixed inset-x-0 top-0 z-40 flex min-h-12 items-center gap-1 border-b px-1.5 md:sticky">
-            <SidebarTrigger className="h-8 w-8 shrink-0 rounded-lg bg-background" />
+            <SidebarTrigger className="h-8 w-8 shrink-0 rounded-md bg-background" />
             {/*
               这一行就是页面标题本身，所以页面里的 H1 在手机上只留给读屏（见
               WorkspaceHeader）。同一个词在顶栏和正文各写一遍，白占 150px。

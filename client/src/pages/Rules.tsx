@@ -3112,7 +3112,16 @@ function RulesContent() {
     : form.protocol !== "tcp"
     ? "出站策略仅支持 TCP 协议。"
     : "";
-  const showMainBackupConfig = canUseMainBackup;
+  /*
+    主备这一块**永远渲染**，用不了就显示成禁用并写明原因。
+
+    原来是 `showMainBackupConfig = canUseMainBackup` —— 条件不满足时整块不渲染，
+    而不满足的情况包括默认的 iptables 端口转发和「协议不是纯 TCP」。于是打开
+    创建转发看到的是「主备这个功能不存在」，而不是「这条规则用不了，因为 X」。
+    mainBackupDisabledText 明明算出来了，却只在提交失败时弹一下 —— 等于把唯一
+    的解释藏在一次失败之后。
+  */
+  const showMainBackupConfig = true;
   const kernelForwardWarning = useMemo(() => buildKernelForwardWarning({
     rule: form,
     host: selectedHost,
@@ -5756,8 +5765,16 @@ function RulesContent() {
       光这一块就是 290px。一个 → 已经把方向说清楚了。
     */
     if (compact) {
+      /*
+        一行：`入口 ⧉ → 目标`。中间那一轮我把它拆成两行、各自加「入口」「目标」
+        前缀，理由是窄屏截断之后分不清谁是谁；但那是我自己在 393px 下推演的，
+        实机上一行放得下，而且两行会让每张卡多出一行的高度。
+
+        分不清的问题不靠加前缀解决，靠样式分主次：入口是正文色 + 可点复制，
+        目标退到 muted，一个箭头说明方向。两个 title 兜住截断的情况。
+      */
       return (
-        <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] leading-5">
+        <div className="flex min-w-0 items-center gap-1.5 font-mono text-[13px] leading-5">
           {entryAddresses.map((entry) => (
             <button key={`${entry.label}:${entry.value}`} type="button"
               onClick={() => entry.copyable && copyEntryAddress(rule, entry.value)} disabled={!entry.copyable}
@@ -5768,7 +5785,7 @@ function RulesContent() {
             </button>
           ))}
           <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="转发到" />
-          <code className="min-w-0 shrink truncate text-muted-foreground">{targetAddress}</code>
+          <code className="min-w-0 shrink truncate text-muted-foreground" title={targetAddress}>{targetAddress}</code>
         </div>
       );
     }
@@ -6320,11 +6337,18 @@ function RulesContent() {
   const sortableRuleCardGridClass = effectiveRuleCardSize === "compact"
     ? "standard-card-grid-compact gap-3"
     : "standard-card-grid gap-4";
+  /*
+    手机上卡片已经没有边框和底色了，「这几行是一条规则」全靠间距说话。
+    实测过一版反的：两条规则之间 12px，而一条规则内部 22～30px —— 内紧外松
+    做反了，眼睛按接近性分组，于是十二条规则糊成一片。
+    这里把组间距放到 gap-0（由卡片自己的上下内边距 14px 撑开，等于组间 28px），
+    组内间距在 CSS 里收到 5px。
+  */
   const groupedRuleMobileGridClass = effectiveRuleCardSize === "compact"
-    ? "grid rule-card-grid-static rule-card-grid-static-compact gap-2"
+    ? "grid rule-card-grid-static rule-card-grid-static-compact gap-0"
     : "grid rule-card-grid-static rule-card-grid-static-standard gap-3";
   const sortableRuleMobileGridClass = effectiveRuleCardSize === "compact"
-    ? "grid gap-2"
+    ? "grid gap-0"
     : "grid gap-3";
   const ruleContentModeKey = effectiveViewMode === "card" ? "card" : displayMode;
   const ruleContentTransitionKey = `${ruleCategory}-${ruleContentModeKey}-${isLoading ? "loading" : filteredRules.length > 0 ? "list" : "empty"}`;
@@ -6497,14 +6521,15 @@ function RulesContent() {
               「累计流量」「24H」原来各带一行标题、占两行栅格。数字自带单位，
               标题是在解释一个本来就看得懂的东西，删掉之后这一块从 4 行变 1 行。
             */}
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-border/40 pt-1.5 text-xs">
+            {/* 流量和上面的徽标是同一条规则的属性，中间不需要分界线。 */}
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
               {renderMobileRuleTotalTraffic(rule)}
               <span className="text-border">·</span>
               {renderRuleDailyTrafficValue(rule, "in")}
               {renderRuleDailyTrafficValue(rule, "out")}
             </div>
 
-            <div className="action-card-footer flex justify-end border-t border-border/40 pt-1.5">
+            <div className="action-card-footer flex justify-end border-t border-border/40 pt-1">
               {renderRuleActions(rule)}
             </div>
           </CardContent>
@@ -6664,22 +6689,7 @@ function RulesContent() {
               <Loader2 className="h-4 w-4 animate-spin" />
               权限加载中
             </Button>
-          ) : canAdd ? (
-            <Button
-              onClick={() => openCreate()}
-              className="gap-2"
-              disabled={!canCreateRule}
-              title={!canCreateRule ? "暂无可用转发资源" : undefined}
-            >
-              <Plus className="h-4 w-4" />
-              新建规则
-            </Button>
-          ) : (
-            <Button disabled className="gap-2" title="需要管理员授权后才能新建规则">
-              <Plus className="h-4 w-4" />
-              新建规则
-            </Button>
-          )}
+          ) : null}
       </>} />
 
       <TrafficOverview total={totalTrafficTotals} daily={dailyTrafficTotals}
@@ -6698,7 +6708,32 @@ function RulesContent() {
           <Tabs value={ruleCategory} onValueChange={handleRuleCategoryChange}>
             <SlidingTabsList items={ruleCategoryItems} activeValue={ruleCategory} ariaLabel="转发规则分类" minItemWidthRem={8.5} />
           </Tabs>
-          <FilterToolbar activeCount={Number(hasActiveUserFilter) + Number(filterResource !== "all")} search={
+          <FilterToolbar
+            activeCount={Number(hasActiveUserFilter) + Number(filterResource !== "all")}
+            action={
+              /*
+                主操作挪到筛选右边。原来在页面顶栏 —— 手机上顶栏只有 393px，
+                它要和页面标题、搜索、主题切换抢位置。筛选这一行本来就是
+                「对这个列表做事」的地方，新建和它并排才是同一类东西。
+              */
+              rulePermissionLoading ? null : canAdd ? (
+                <Button
+                  onClick={() => openCreate()}
+                  className="gap-2"
+                  disabled={!canCreateRule}
+                  title={!canCreateRule ? "暂无可用转发资源" : undefined}
+                >
+                  <Plus className="h-4 w-4" />
+                  新建规则
+                </Button>
+              ) : (
+                <Button disabled className="gap-2" title="需要管理员授权后才能新建规则">
+                  <Plus className="h-4 w-4" />
+                  新建规则
+                </Button>
+              )
+            }
+            search={
             <div className="relative w-full">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -7425,7 +7460,12 @@ function RulesContent() {
             <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
               <FormField className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
-                  <Label className="text-sm">出站策略</Label>
+                  {/* 面板以前叫它「出站策略」，而这件事本身叫主备线路 —— 两个名字指一件事，
+                      找不到它的人多半就是在找「主备」。 */}
+                  <Label className="text-sm">主备线路</Label>
+                  <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                    一条主线、若干备线，可按时段错峰
+                  </p>
                 </div>
                 <Select
                   value={form.failoverEnabled ? form.failoverStrategy : "disabled"}
@@ -7451,6 +7491,15 @@ function RulesContent() {
                   </SelectContent>
                 </Select>
               </FormField>
+              {/*
+                用不了的时候把原因摆出来。这句话本来就算好了，却只在提交失败时弹一下 ——
+                而这一块以前干脆整个不渲染，等于让人对着一个不存在的功能找原因。
+              */}
+              {!canUseMainBackup && mainBackupDisabledText && (
+                <p className="text-[11px] leading-4 text-amber-600 dark:text-amber-400">
+                  {mainBackupDisabledText}
+                </p>
+              )}
               {form.failoverEnabled && (
                 <div className="space-y-2">
                   <FormField className="space-y-2">
