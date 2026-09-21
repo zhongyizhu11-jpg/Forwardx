@@ -287,10 +287,15 @@
     130px，而一张紧凑规则卡总共才 500px。收成一行 34px 高的图标，命中区
     靠 ::after 往外撑，不占版面（同一批图标之间本来就有 28px 以上空当）。
   */
-  .action-card-footer { padding-top: 6px; margin-top: 2px; gap: 2px; }
-  .action-card-footer [data-slot="button"] { position: relative; height: 30px; min-height: 30px; width: 34px; min-width: 34px; }
-  .action-card-footer [data-slot="button"]::after { content: ""; position: absolute; inset: -7px -5px; }
-  .action-card-footer [data-slot="button"] > svg { width: 15px; height: 15px; }
+  /*
+    操作图标再缩一档：34×30 → 28×24，图标 15 → 14px。命中区仍由 ::after
+    撑到 44 —— 这排图标之间本来就有 28px 以上空当，往外撑不会盖到邻居。
+    整行从 35px 收到 27px。
+  */
+  .action-card-footer { padding-top: 4px; margin-top: 0; gap: 0; }
+  .action-card-footer [data-slot="button"] { position: relative; height: 24px; min-height: 24px; width: 28px; min-width: 28px; }
+  .action-card-footer [data-slot="button"]::after { content: ""; position: absolute; inset: -10px -8px; }
+  .action-card-footer [data-slot="button"] > svg { width: 14px; height: 14px; }
 
   /*
     对话框：rounded-2xl(16px) + p-4，而真正吃掉高度的是 gap-5 —— 面板是个
@@ -402,7 +407,7 @@
     操作行 37px，上下边距从 8/6 收到 5/3。
   */
   .workspace-main [data-slot="card"] .font-mono { line-height: 20px; }
-  .workspace-main .action-card-footer { margin-top: 6px; padding-top: 4px; }
+  .workspace-main .action-card-footer { margin-top: 4px; padding-top: 4px; }
 
   .workspace-command-footer { font-size: 10px; }
 

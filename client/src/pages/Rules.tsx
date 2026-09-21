@@ -6521,14 +6521,15 @@ function RulesContent() {
               「累计流量」「24H」原来各带一行标题、占两行栅格。数字自带单位，
               标题是在解释一个本来就看得懂的东西，删掉之后这一块从 4 行变 1 行。
             */}
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-border/40 pt-1.5 text-xs">
+            {/* 流量和上面的徽标是同一条规则的属性，中间不需要分界线。 */}
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
               {renderMobileRuleTotalTraffic(rule)}
               <span className="text-border">·</span>
               {renderRuleDailyTrafficValue(rule, "in")}
               {renderRuleDailyTrafficValue(rule, "out")}
             </div>
 
-            <div className="action-card-footer flex justify-end border-t border-border/40 pt-1.5">
+            <div className="action-card-footer flex justify-end border-t border-border/40 pt-1">
               {renderRuleActions(rule)}
             </div>
           </CardContent>
