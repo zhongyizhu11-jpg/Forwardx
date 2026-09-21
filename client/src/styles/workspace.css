@@ -112,7 +112,7 @@
 
     手机上去掉图标方块、放开最小高度、数字降一档。三张卡从 720px 收到约 240px。
   */
-  .stat-strip [data-slot="card-content"] { min-height: 0; padding: 10px 12px; }
+  [data-slot="card-content"]:has(> p + div [class*="rounded-"][class*="shadow-sm"]), .stat-strip [data-slot="card-content"] { min-height: 0; padding: 10px 12px; }
   .stat-strip [data-slot="card-content"] > div[class*="absolute"] { display: none; }
   .stat-strip [class*="rounded-xl"][class*="shadow-sm"],
   .stat-strip [class*="rounded-lg"][class*="shadow-sm"] { display: none; }
@@ -120,13 +120,56 @@
   .stat-strip [class*="pr-12"] { padding-right: 0; }
   .stat-strip p[class*="mt-2"] { margin-top: 2px; }
 
-  /* 卡片：24px 内边距在 393px 宽的屏幕上，左右就去掉了 1/8。 */
-  .workspace-main [data-slot="card"] { border-radius: 11px; }
-  .workspace-main [data-slot="card-header"] { padding: 12px 12px 0; gap: 2px; }
-  .workspace-main [data-slot="card-content"] { padding: 12px; }
-  .workspace-main [data-slot="card-footer"] { padding: 0 12px 12px; }
-  .workspace-main [data-slot="card-title"] { font-size: 15px; }
-  .workspace-main [data-slot="card-description"] { font-size: 12px; }
+  /*
+    ── 转发路径：竖排改横排 ──
+    `入口 ↓ 出口` 这一块在隧道卡、规则卡、转发链上到处都是。竖排要用 5 行去画
+    2 个地址：两行小标题、两行值、中间一个箭头和一条竖线，实测 280px。在 393px
+    的屏幕上，一张隧道卡有三分之一是它。
+
+    横排之后标题跟值同一行、箭头替掉竖线，收到约 60px。改的是 .connection-path
+    本身，所以隧道、规则、转发链一起受益 —— 不用每个调用方各改一遍。
+  */
+  .connection-path { padding: 7px 9px; border-radius: 8px; }
+  .connection-step { align-items: baseline; gap: 6px; }
+  .connection-step + .connection-step { padding-top: 4px; }
+  .connection-rail { display: none; }
+  .connection-step > div { display: flex; align-items: baseline; gap: 6px; }
+  .connection-label { flex: 0 0 auto; font-size: 10.5px; line-height: 17px; }
+  .connection-value { margin-top: 0; font-size: 12px; line-height: 17px; }
+  /* 竖线和箭头都归 rail 管，rail 收起来之后一并消失。 */
+
+  /*
+    ── 全站盒子密度 ──
+    卡片的默认内边距已经在 ui/card.tsx 里从 24px 改到 12px（手机）/16px（≥sm），
+    所以这里不再重复。剩下的是**调用方自己写死的**那些盒子 —— 全站有几十处
+    `rounded-md border bg-muted/30 p-2.5`、`rounded-lg border p-4` 这样的子盒子，
+    它们不走 Card，所以默认值改小碰不到它们。
+
+    只收内边距和圆角，不动边框和背景：那两样是「这是一组」的信号，去掉会让
+    密集的列表糊成一片。
+  */
+  .workspace-main [class*="rounded-"][class*="border"]:not([data-slot]):not(button):not(input):not(textarea):not([role="button"]),
+  [role="dialog"] [class*="rounded-"][class*="border"]:not([data-slot]):not(button):not(input):not(textarea):not([role="button"]) {
+    border-radius: 9px;
+  }
+
+  /*
+    页面竖向节奏。各页外层普遍是 space-y-6（24px），在 393px 宽的屏幕上，
+    四五个区块之间光空档就是一屏的六分之一。
+  */
+  .workspace-main > .route-content-enter > div > .space-y-6 > * + * { margin-top: 14px; }
+  .workspace-main .space-y-4 > * + * { margin-top: 10px; }
+  .workspace-main .space-y-3 > * + * { margin-top: 8px; }
+
+  /*
+    列表卡底部那排操作图标。每张卡 5 个 44px 的图标按钮独占一行 —— 实测
+    130px，而一张紧凑规则卡总共才 500px。收成一行 34px 高的图标，命中区
+    靠 ::after 往外撑，不占版面（同一批图标之间本来就有 28px 以上空当）。
+  */
+  .action-card-footer { padding-top: 6px; margin-top: 2px; gap: 2px; }
+  .action-card-footer [data-slot="button"] { position: relative; height: 30px; min-height: 30px; width: 34px; min-width: 34px; }
+  .action-card-footer [data-slot="button"]::after { content: ""; position: absolute; inset: -7px -5px; }
+  .action-card-footer [data-slot="button"] > svg { width: 15px; height: 15px; }
 
   /*
     对话框：rounded-2xl(16px) + p-4，而真正吃掉高度的是 gap-5 —— 面板是个
@@ -239,11 +282,16 @@
 [data-slot="dialog-header"] p { line-height: 1.6; }
 [data-slot="table"] th { color: var(--fx-muted); font-weight: 600; }
 [data-slot="table"] tbody tr:last-child { border-bottom: 0; }
-.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 200px; padding: 32px 20px; text-align: center; }
-.empty-state-icon { padding: 12px; border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-subtle); color: var(--fx-muted); }
-.empty-state-icon svg { width: 24px; height: 24px; margin: 0; opacity: 1; }
-.empty-state h2 { font-size: 16px; font-weight: 600; color: var(--fx-text); }
-.empty-state p { max-width: 360px; font-size: 13px; line-height: 1.7; color: var(--fx-muted); }
+/*
+  空状态原来是 200px 最小高度 + 32px 内边距 + 一个带边框的大图标方块 —— 一整张
+  屏幕的三分之一，只为了说一句「暂无出口组」。它是「这里现在没东西」，不是这一页
+  的主角。
+*/
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 0; padding: 20px 16px; text-align: center; }
+.empty-state-icon { padding: 8px; border: 1px solid var(--fx-stroke); border-radius: 9px; background: var(--fx-subtle); color: var(--fx-muted); }
+.empty-state-icon svg { width: 18px; height: 18px; margin: 0; opacity: 1; }
+.empty-state h2 { font-size: 14px; font-weight: 600; color: var(--fx-text); }
+.empty-state p { max-width: 340px; font-size: 12px; line-height: 1.6; color: var(--fx-muted); }
 .public-home-shell { font-family: var(--fx-font); background: var(--fx-surface); }
 .public-home-container { width: 100%; max-width: 1152px; margin-inline: auto; padding-inline: 24px; }
 .public-home-nav { border-bottom: 1px solid var(--fx-stroke); background: var(--fx-surface); }

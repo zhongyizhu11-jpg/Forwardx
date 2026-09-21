@@ -1102,13 +1102,23 @@ const HOST_VIEW_MODE_STORAGE_KEY = "forwardx.hosts.viewMode";
 const HOST_PROBE_SERVICE_VIEW_MODE_STORAGE_KEY = "forwardx.hostProbeServices.viewMode";
 const HOST_GROUP_VIEW_MODE_STORAGE_KEY = "forwardx.hostGroups.viewMode";
 
+/*
+  手机上默认走紧凑卡。大卡在 393px 宽的屏幕上一台机器要 1000px 以上 —— 一屏
+  连一台都看不全，而紧凑卡本来就是为这个宽度做的，默认值正好反了（转发规则
+  那边是同一个毛病）。桌面仍然按用户自己选过的来。
+*/
+function defaultHostViewMode(): HostViewMode {
+  if (typeof window === "undefined") return "card";
+  return window.matchMedia?.("(max-width: 767px)")?.matches ? "compact-card" : "card";
+}
+
 function getStoredHostViewMode(): HostViewMode {
   if (typeof window === "undefined") return "card";
   try {
     const value = window.localStorage.getItem(HOST_VIEW_MODE_STORAGE_KEY);
-    return value === "compact-card" || value === "table" || value === "map" || value === "flat-map" ? value : "card";
+    return value === "compact-card" || value === "table" || value === "map" || value === "flat-map" ? value : defaultHostViewMode();
   } catch {
-    return "card";
+    return defaultHostViewMode();
   }
 }
 

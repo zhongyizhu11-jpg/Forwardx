@@ -12,7 +12,8 @@
   --fx-brand-soft: #eaf4f1;
   --fx-shadow: 0 1px 2px rgb(24 30 36 / 3%), 0 4px 12px rgb(24 30 36 / 3%);
   --fx-shadow-raised: 0 2px 4px rgb(24 30 36 / 4%), 0 12px 32px rgb(24 30 36 / 8%);
-  --fx-radius: 12px;
+  /* 12px 在密集列表上显得胖；9px 还是圆的，但不抢内容。 */
+  --fx-radius: 9px;
   --fx-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --fx-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
