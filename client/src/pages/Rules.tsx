@@ -96,6 +96,13 @@ import {
 import { cn } from "@/lib/utils";
 import { autoForwardRuleName } from "@shared/forwardRuleName";
 import {
+  formatFailoverTargetLine,
+  parseFailoverEndpoint,
+  parseFailoverTargetLine,
+  parseFailoverTargets,
+  type FailoverTarget,
+} from "@shared/failoverTargets";
+import {
   forwardRuleFormBlocker,
   isAdvancedSectionBlocker,
   isForwardRuleSourcePortRequired,
@@ -227,6 +234,7 @@ type RuleFormData = {
   failoverEnabled: boolean;
   failoverStrategy: FailoverStrategy;
   failoverTargetsText: string;
+  failoverProbeTarget: string;
   failoverSeconds: number;
   recoverSeconds: number;
   autoFailback: boolean;
@@ -271,6 +279,7 @@ const defaultForm: RuleFormData = {
   failoverEnabled: false,
   failoverStrategy: "fallback",
   failoverTargetsText: "",
+  failoverProbeTarget: "",
   failoverSeconds: 60,
   recoverSeconds: 120,
   autoFailback: true,
@@ -752,7 +761,7 @@ function buildRuleSearchText(rule: any, filters: RuleFilterState) {
   addRuleSearchForwardGroupParts(parts, group, filters, sourcePort);
   addRuleSearchUserParts(parts, filters.userById.get(Number(rule?.userId || 0)));
 
-  parseRuleFailoverTargets(rule?.failoverTargets).forEach((target) => {
+  parseFailoverTargets(rule?.failoverTargets).forEach((target) => {
     addRuleSearchPart(parts, target.targetIp);
     addRuleSearchPort(parts, target.targetPort, "备用端口");
     if (target.targetIp && target.targetPort > 0) addRuleSearchPart(parts, formatAddressWithPort(target.targetIp, target.targetPort));
@@ -1860,46 +1869,12 @@ function sanitizeRuleTransferFilePart(value: string) {
     .slice(0, 48) || "rules";
 }
 
-function splitFailoverTargetLine(line: string) {
-  const value = line.trim();
-  if (!value) return null;
-  if (value.startsWith("[")) {
-    const end = value.indexOf("]");
-    if (end > 1 && value[end + 1] === ":") {
-      return { targetIp: value.slice(1, end).trim(), targetPort: Number(value.slice(end + 2).trim()) };
-    }
-    return { error: "IPv6 地址请使用 [地址]:端口 格式" };
-  }
-  const index = value.lastIndexOf(":");
-  if (index <= 0 || index === value.length - 1) return { error: "请按 地址:端口 格式填写" };
-  return { targetIp: value.slice(0, index).trim(), targetPort: Number(value.slice(index + 1).trim()) };
-}
-
-function parseRuleFailoverTargets(raw: unknown) {
-  if (!raw) return [];
-  try {
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((target: any) => ({
-        targetIp: String(target?.targetIp || "").trim(),
-        targetPort: Number(target?.targetPort || 0),
-      }))
-      .filter((target) => target.targetIp && isValidForwardPort(target.targetPort))
-      .slice(0, 10);
-  } catch {
-    return [];
-  }
-}
-
 function normalizeProxyProtocolVersion(value: unknown): ProxyProtocolVersion {
   return Number(value) === 2 ? 2 : 1;
 }
 
 function formatFailoverTargetsText(raw: unknown) {
-  return parseRuleFailoverTargets(raw)
-    .map((target) => `${target.targetIp.includes(":") ? `[${target.targetIp}]` : target.targetIp}:${target.targetPort}`)
-    .join("\n");
+  return parseFailoverTargets(raw).map(formatFailoverTargetLine).join("\n");
 }
 
 function exportRuleForTransfer(rule: any): RuleTransferFileRule {
@@ -1923,7 +1898,7 @@ function exportRuleForTransfer(rule: any): RuleTransferFileRule {
     udpOverTcpPort: Number(rule?.udpOverTcpPort || 0),
     failoverEnabled: Boolean(rule?.failoverEnabled),
     failoverStrategy: normalizeFailoverStrategy(rule?.failoverStrategy),
-    failoverTargets: parseRuleFailoverTargets(rule?.failoverTargets),
+    failoverTargets: parseFailoverTargets(rule?.failoverTargets),
     failoverSeconds: normalizeRuleTransferSeconds(rule?.failoverSeconds, 60),
     recoverSeconds: normalizeRuleTransferSeconds(rule?.recoverSeconds, 120),
     autoFailback: rule?.autoFailback !== false,
@@ -1959,22 +1934,23 @@ function downloadRuleTransferFiles(
 }
 
 function normalizeFailoverTargetsForSubmit(text: string) {
-  const targets: Array<{ targetIp: string; targetPort: number }> = [];
+  const targets: FailoverTarget[] = [];
   const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (lines.length > 10) return { error: "备用出站最多支持 10 个" };
   for (let index = 0; index < lines.length; index += 1) {
-    const parsed = splitFailoverTargetLine(lines[index]);
+    const parsed = parseFailoverTargetLine(lines[index]);
     if (!parsed) continue;
     if ("error" in parsed) return { error: `第 ${index + 1} 行：${parsed.error}` };
-    const targetIp = parsed.targetIp;
-    const targetPort = parsed.targetPort;
-    if (!isValidTargetHost(targetIp)) {
+    if (!isValidTargetHost(parsed.targetIp)) {
       return { error: `第 ${index + 1} 行：地址格式不正确` };
     }
-    if (!isValidForwardPort(targetPort)) {
+    if (!isValidForwardPort(parsed.targetPort)) {
       return { error: `第 ${index + 1} 行：端口必须在 1-65535 之间` };
     }
-    targets.push({ targetIp, targetPort });
+    if (parsed.probeIp && (!isValidTargetHost(parsed.probeIp) || !isValidForwardPort(parsed.probePort))) {
+      return { error: `第 ${index + 1} 行：探测地址格式不正确` };
+    }
+    targets.push(parsed);
   }
   return { targets };
 }
@@ -2617,6 +2593,7 @@ function RulesContent() {
       failoverEnabled: !!rule.failoverEnabled,
       failoverStrategy: normalizeFailoverStrategy(rule.failoverStrategy),
       failoverTargetsText: formatFailoverTargetsText(rule.failoverTargets),
+      failoverProbeTarget: String(rule.failoverProbeTarget || ""),
       failoverSeconds: Number(rule.failoverSeconds || 60),
       recoverSeconds: Number(rule.recoverSeconds || 120),
       autoFailback: rule.autoFailback !== false,
@@ -3300,7 +3277,7 @@ function RulesContent() {
       udpOverTcpPort: Number(rule.udpOverTcpPort || 0),
       failoverEnabled: keepFailover,
       failoverStrategy: normalizeFailoverStrategy(rule.failoverStrategy),
-      failoverTargets: keepFailover ? parseRuleFailoverTargets(rule.failoverTargets) : [],
+      failoverTargets: keepFailover ? parseFailoverTargets(rule.failoverTargets) : [],
       failoverSeconds: normalizePositiveRuleNumber(rule.failoverSeconds, 60),
       recoverSeconds: normalizePositiveRuleNumber(rule.recoverSeconds, 120),
       autoFailback: rule.autoFailback !== false,
@@ -3635,6 +3612,7 @@ function RulesContent() {
       failoverEnabled: canUseMainBackup ? form.failoverEnabled : false,
       failoverStrategy: form.failoverStrategy,
       failoverTargets: canUseMainBackup && form.failoverEnabled ? failoverTargets : [],
+      failoverProbeTarget: canUseMainBackup && form.failoverEnabled ? form.failoverProbeTarget.trim() || null : null,
       failoverSeconds: form.failoverSeconds || 60,
       recoverSeconds: form.recoverSeconds || 120,
       autoFailback: form.autoFailback,
@@ -5164,13 +5142,15 @@ function RulesContent() {
     }
     const rules: RuleTransferFileRule[] = [];
     for (let index = 0; index < lines.length; index += 1) {
-      const parsed = splitFailoverTargetLine(lines[index]);
+      // 这里每行只有一个地址（批量导入），所以用纯地址解析，
+      // 不要用主备那条「出站 [探测目标]」的行语法 —— 一行两个地址在这儿是错的。
+      const parsed = parseFailoverEndpoint(lines[index]);
       if (!parsed) continue;
       if ("error" in parsed) {
         return { ok: false, message: `第 ${index + 1} 行：${parsed.error}`, rules: [] };
       }
-      const targetIp = String(parsed.targetIp || "").trim();
-      const targetPort = Number(parsed.targetPort || 0);
+      const targetIp = String(parsed.host || "").trim();
+      const targetPort = Number(parsed.port || 0);
       if (!isValidTargetHost(targetIp)) {
         return { ok: false, message: `第 ${index + 1} 行：地址格式不正确`, rules: [] };
       }
@@ -5684,7 +5664,7 @@ function RulesContent() {
     const entryTitle = rule.forwardGroupId
       ? `复制${groupRouteLabel}入口: ${entryAddress}`
       : `复制入口地址: ${entryAddress}`;
-    const failoverCount = parseRuleFailoverTargets(rule.failoverTargets).filter((target) => target.targetIp && target.targetPort > 0).length;
+    const failoverCount = parseFailoverTargets(rule.failoverTargets).filter((target) => target.targetIp && target.targetPort > 0).length;
     return {
       entryAddresses,
       entryAddress,
@@ -7366,15 +7346,46 @@ function RulesContent() {
               {form.failoverEnabled && (
                 <div className="space-y-2">
                   <FormField className="space-y-2">
+                    <Label className="flex items-baseline gap-1.5">
+                    主出站探测目标
+                    <span className="text-xs font-normal text-muted-foreground">留空就探主出站地址本身</span>
+                    </Label>
+                    <Input
+                      value={form.failoverProbeTarget}
+                      onChange={(event) => setForm({ ...form, failoverProbeTarget: event.target.value })}
+                      placeholder="例如 10.0.0.1:9000"
+                      className="font-mono text-sm"
+                      spellCheck={false}
+                    />
+                  </FormField>
+                  <FormField className="space-y-2">
                     <Label>备用出站（每行一个，最多 10 个）</Label>
                     <Textarea
                       value={form.failoverTargetsText}
                       onChange={(event) => setForm({ ...form, failoverTargetsText: event.target.value })}
-                      placeholder={"10.0.0.1:80\nexample.com:443"}
+                      placeholder={"10.0.0.1:80\n10.0.0.2:80  10.0.0.2:9000"}
                       className="min-h-24 font-mono text-sm"
                       spellCheck={false}
                     />
                   </FormField>
+                  {/*
+                    这段必须说，而且必须说得具体。
+
+                    健康检查就是对出站地址做一次 TCP 连接。出站是 iptables/DNAT 类中转时，
+                    握手实际是和最终落地完成的 —— 这一次连接就是端到端的。出站是 gost、
+                    realm 这类用户态转发时，中转在本地就把连接收下了：连得上只能证明中转
+                    活着，证明不了它到落地那一段还通。
+
+                    后一种情况下中转的上游断了，主备**不会切**，流量继续往死路里送，而
+                    面板上一切正常 —— 用户的体感是「备用线路配了，关键时刻没兜住」。
+                    不写清楚的话，他根本不会知道去填探测目标。
+                  */}
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    健康检查是对出站地址连一次 TCP。中转用 iptables/DNAT 时这一连就是端到端的；
+                    中转用 gost、realm 这类用户态转发时，连得上只说明中转活着，
+                    不代表它到落地那段还通 —— 这时填个探测目标（每行第二个地址，空格隔开），
+                    指向能反映整条路径的端口。
+                  </p>
                   <div className="grid gap-2 sm:grid-cols-3">
                     <FormField className="space-y-2">
                       <Label>切换时间（秒）</Label>

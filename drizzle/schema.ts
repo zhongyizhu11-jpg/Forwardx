@@ -383,6 +383,9 @@ export const forwardRules = table("forward_rules", {
   failoverEnabled: boolean("failoverEnabled").notNull().default(false),
   failoverStrategy: varchar("failoverStrategy", { length: 32 }).notNull().default("fallback"),
   failoverTargets: text("failoverTargets"),
+  // 主出站的健康探测目标（`地址:端口`，留空就探出站地址本身）。备用出站的探测目标
+  // 存在 failoverTargets 的每一项里；主出站没地方放，所以单独一列。
+  failoverProbeTarget: text("failoverProbeTarget"),
   failoverSeconds: int("failoverSeconds").notNull().default(60),
   recoverSeconds: int("recoverSeconds").notNull().default(120),
   autoFailback: boolean("autoFailback").notNull().default(true),

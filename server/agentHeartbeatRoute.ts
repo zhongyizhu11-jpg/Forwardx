@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { parseFailoverTargets } from "../shared/failoverTargets";
+import { parseFailoverEndpoint, parseFailoverTargets } from "../shared/failoverTargets";
 import * as db from "./db";
 import { AGENT_VERSION } from "./_core/systemRouter";
 import { clearHostTcpingRequest, hasHostTcpingRequest, isHostMetricsWatching, pushAgentDesiredState } from "./agentEvents";
@@ -2626,6 +2626,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       if (rule.protocol !== "tcp") return undefined;
       const backupTargets = parseFailoverTargets(rule.failoverTargets);
       if (backupTargets.length === 0) return undefined;
+      const mainProbeFields = (source: any) => {
+        const parsed = parseFailoverEndpoint(source?.failoverProbeTarget);
+        if (!parsed || "error" in parsed) return {};
+        return { probeIp: parsed.host, probePort: parsed.port };
+      };
       const failoverProxyEnabled = proxyProtocolEnabled(rule, options?.proxyDirection || "send");
       return {
         enabled: true,
@@ -2636,7 +2641,9 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           ? String(rule.failoverStrategy)
           : "fallback",
         targets: [
-          { targetIp: processTarget(rule), targetPort: Number(rule.targetPort) },
+          // 主出站的探测目标单独存一列（备用出站的存在各自那一项里），
+          // 见 shared/failoverTargets 里为什么需要它。
+          { targetIp: processTarget(rule), targetPort: Number(rule.targetPort), ...mainProbeFields(rule) },
           ...backupTargets,
         ],
         failoverSeconds: Number(rule.failoverSeconds || 60),

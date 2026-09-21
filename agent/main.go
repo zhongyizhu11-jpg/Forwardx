@@ -2392,6 +2392,23 @@ type forwardGroupHealthSpec struct {
 type failoverTarget struct {
 	TargetIP   string `json:"targetIp"`
 	TargetPort int    `json:"targetPort"`
+	// 这条出站的健康探测目标；留空就探出站地址本身。
+	//
+	// 出站是 iptables/DNAT 类中转时，握手实际是和最终落地完成的，探出站地址就是
+	// 端到端的。出站是 gost、realm 这类用户态转发时，中转在本地就把连接收下了 ——
+	// 连得上只能证明中转活着，证明不了它到落地那一段还通。后一种情况下中转的上游
+	// 断了主备不会切，流量继续往死路里送，而面板上一切正常。
+	ProbeIP   string `json:"probeIp,omitempty"`
+	ProbePort int    `json:"probePort,omitempty"`
+}
+
+// 这条出站实际该探哪儿。和面板的 failoverProbeEndpoint 是同一条规则。
+func (t failoverTarget) probeEndpoint() (string, int) {
+	host := strings.TrimSpace(t.ProbeIP)
+	if host != "" && t.ProbePort >= 1 && t.ProbePort <= 65535 {
+		return host, t.ProbePort
+	}
+	return t.TargetIP, t.TargetPort
 }
 
 type failoverSpec struct {
@@ -11687,7 +11704,7 @@ func failoverSignature(spec failoverSpec) string {
 		strconv.FormatBool(spec.AutoFailback),
 	}
 	for _, target := range spec.Targets {
-		parts = append(parts, target.TargetIP, strconv.Itoa(target.TargetPort))
+		parts = append(parts, target.TargetIP, strconv.Itoa(target.TargetPort), target.ProbeIP, strconv.Itoa(target.ProbePort))
 	}
 	return strings.Join(parts, "|")
 }
@@ -11713,6 +11730,13 @@ func normalizeFailoverSpec(spec failoverSpec) failoverSpec {
 		target.TargetIP = strings.TrimSpace(target.TargetIP)
 		if target.TargetIP == "" || target.TargetPort <= 0 || target.TargetPort > 65535 {
 			continue
+		}
+		// 探测目标填得不合法时退回「探出站地址本身」，也就是老行为 —— 不能因为
+		// 一个填错的探测地址就让这条出站永远探不通、被当成挂了。
+		target.ProbeIP = strings.TrimSpace(target.ProbeIP)
+		if target.ProbeIP == "" || target.ProbePort <= 0 || target.ProbePort > 65535 {
+			target.ProbeIP = ""
+			target.ProbePort = 0
 		}
 		cleaned = append(cleaned, target)
 		if len(cleaned) >= 11 {
@@ -12023,7 +12047,8 @@ func (p *failoverProxy) checkHealth() {
 	}
 	results := make([]bool, len(targets))
 	for i, target := range targets {
-		_, results[i] = tcpLatency(target.TargetIP, target.TargetPort, 2*time.Second)
+		probeHost, probePort := target.probeEndpoint()
+		_, results[i] = tcpLatency(probeHost, probePort, 2*time.Second)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
