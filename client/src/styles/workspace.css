@@ -300,7 +300,12 @@
     卡片本身不投影，靠「灰底 + 白卡 + 圆角」分层；卡与卡之间贴紧，
     这是 iOS 列表读起来干净的关键 —— 一堆各自带影子的卡片才是安卓味。
   */
-  .workspace-main [data-slot="card"] { box-shadow: none; }
+  /*
+    页面底色现在几乎是白的（对白卡 1.09:1），底色差已经分不开层了，所以卡片
+    改用一条看得见的边框划界（分隔线令牌是 1.60:1）。iOS 不投影那条保留 ——
+    一堆各自带影子的卡片才是安卓味。
+  */
+  .workspace-main [data-slot="card"] { box-shadow: none; border: 1px solid var(--fx-stroke); }
 
   /* 输入框在 iOS 上是填充块不是描边框。 */
   /*
