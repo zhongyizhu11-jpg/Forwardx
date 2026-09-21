@@ -2488,6 +2488,27 @@ type failoverSpec struct {
 	// 刚切过去之后至少待多久才允许再按优先级切回，防止线路来回抖。
 	// 当前这条**挂了**的时候不受它限制 —— 守着一条死路比抖动更糟。
 	MinHoldSeconds int `json:"minHoldSeconds,omitempty"`
+	// 人工指定优先走第几条出站；nil 或负数表示交回自动。
+	//
+	// 语义是「把它排到最前」，**不是「只许走它」**：钉住的那条要是挂了，仍然按
+	// 优先级往下找。运维想要的是「现在走 B」，不是「B 死了也守着 B」—— 后者等于
+	// 用一个应急开关制造一次故障。
+	//
+	// **为什么是指针**：Go 的 int 零值是 0，而 0 是一个合法的出站序号（主出站）。
+	// 用 int 的话，任何没带这个字段的规格 —— 老 Agent 落在盘上的快照、面板漏传的
+	// 那一次 —— 都会被解成「钉死在主出站」，于是时段表和自动择优全部静默失效，
+	// 而面板上看不出任何异常。用例 TestPinnedIndexZeroValueIsNotAPin 钉住这件事。
+	PinnedIndex *int `json:"pinnedIndex,omitempty"`
+	// 钉到什么时候（Unix 毫秒）；0 表示一直钉着。
+	//
+	// 有期限这件事很要紧：应急处理完没人记得去关，那条线就一直被钉着，后面所有
+	// 自动切换（包括时段表）全部静默失效，而面板上看不出任何异常。
+	PinnedUntil int64 `json:"pinnedUntil,omitempty"`
+	// 按实测延迟自动择优。
+	//
+	// 不是「谁快切谁」：那样线路会一直漂。候选必须**明显**更快（同时满足绝对值和
+	// 百分比两个门槛），而且要连着好一阵子都更快，才会被提到最前。
+	PreferFastest bool `json:"preferFastest,omitempty"`
 }
 
 type tunnelProbe struct {
@@ -11758,6 +11779,9 @@ type failoverProxy struct {
 	rng            *mathrand.Rand
 	// 上一次切换的时刻，最短驻留时间从这儿算。
 	lastSwitchAt time.Time
+	// 自动择优的候选，以及它从什么时候开始一直是候选。
+	fastestCandidate int
+	fastestSince     time.Time
 	ln           net.Listener
 	done           chan struct{}
 	mu             sync.RWMutex
@@ -11777,6 +11801,14 @@ func failoverSignature(spec failoverSpec) string {
 		strconv.Itoa(spec.RecoverSeconds),
 		strconv.FormatBool(spec.AutoFailback),
 		strconv.Itoa(spec.MinHoldSeconds),
+		func() string {
+			if spec.PinnedIndex == nil {
+				return "-"
+			}
+			return strconv.Itoa(*spec.PinnedIndex)
+		}(),
+		strconv.FormatInt(spec.PinnedUntil, 10),
+		strconv.FormatBool(spec.PreferFastest),
 		failoverScheduleSignature(spec.Schedule),
 	}
 	for _, target := range spec.Targets {
@@ -11803,6 +11835,13 @@ func normalizeFailoverSpec(spec failoverSpec) failoverSpec {
 	}
 	if spec.MinHoldSeconds < 0 {
 		spec.MinHoldSeconds = 0
+	}
+	if spec.PinnedIndex != nil && (*spec.PinnedIndex < 0 || *spec.PinnedIndex >= len(spec.Targets)) {
+		spec.PinnedIndex = nil
+		spec.PinnedUntil = 0
+	}
+	if spec.PinnedIndex == nil {
+		spec.PinnedUntil = 0
 	}
 	spec.Schedule = normalizeFailoverSchedule(spec.Schedule)
 	cleaned := make([]failoverTarget, 0, len(spec.Targets))
@@ -12098,10 +12137,35 @@ func (p *failoverProxy) latencyMsLocked(index int) int {
 指定的那一条提到最前，其余保持原来的相对次序 —— 时段表只改「谁是首选」，不重排
 剩下的兜底顺序。
 */
+// 人工钉住的那条还算不算数。
+func (p *failoverProxy) pinnedIndexAt(now time.Time) int {
+	if p.spec.PinnedIndex == nil {
+		return -1
+	}
+	index := *p.spec.PinnedIndex
+	if index < 0 || index >= len(p.spec.Targets) {
+		return -1
+	}
+	if p.spec.PinnedUntil > 0 && now.UnixMilli() >= p.spec.PinnedUntil {
+		return -1
+	}
+	return index
+}
+
 func (p *failoverProxy) priorityOrderLocked(now time.Time) []int {
 	count := len(p.spec.Targets)
 	order := make([]int, 0, count)
-	preferred := failoverScheduleTargetIndexAt(p.spec.Schedule, now)
+	// 人工 > 时段表 > 自动择优 > 数组顺序。
+	//
+	// 人工钉住是运维拿来压过自动判断的，压不过就没有意义；时段表是人**事先**排好
+	// 的意图，也该压过机器自己算出来的择优。
+	preferred := p.pinnedIndexAt(now)
+	if preferred < 0 {
+		preferred = failoverScheduleTargetIndexAt(p.spec.Schedule, now)
+	}
+	if preferred < 0 {
+		preferred = p.fastestIndexLocked(now)
+	}
 	if preferred >= 0 && preferred < count {
 		order = append(order, preferred)
 	}
@@ -12112,6 +12176,73 @@ func (p *failoverProxy) priorityOrderLocked(now time.Time) []int {
 		order = append(order, index)
 	}
 	return order
+}
+
+/*
+自动择优：按实测延迟挑一条明显更快的。
+
+**不是「谁快切谁」** —— 那样线路会一直漂：两条线延迟在几毫秒之间来回，每次探测
+都能得出不同的结论，而每次切换都会让新连接换一条路。所以设了三道门槛：
+
+  · 绝对值：至少快 failoverFastestMarginMs 毫秒（小于它的差距在公网上就是噪声）
+  · 百分比：至少快 failoverFastestMarginRatio（同样是 200ms 的链路，快 20ms 不算
+    什么；同样是 30ms 的链路，快 20ms 是另一回事）
+  · 持续时间：连着 failoverFastestHoldSeconds 都是它，才算数
+
+三道门槛都是写死的常数，没有做成设置项：多一个旋钮就多一次「这个填多少合适」的
+为难，而这三个数的合理范围很窄。哪天真有人需要调，再暴露不迟。
+*/
+const failoverFastestMarginMs = 20
+const failoverFastestMarginRatio = 0.2
+const failoverFastestHoldSeconds = 180
+
+func (p *failoverProxy) fastestIndexLocked(now time.Time) int {
+	if !p.spec.PreferFastest || len(p.spec.Targets) < 2 {
+		return -1
+	}
+	p.ensureHealthStateLocked()
+	activeLatency := p.latencyMsLocked(p.activeIndex)
+	best := -1
+	bestLatency := 0
+	for index := range p.spec.Targets {
+		if !p.targetHealth[index] {
+			continue
+		}
+		latency := p.latencyMsLocked(index)
+		// 0 表示这一轮没探出耗时（探不通，或者还没探过），不能当成「快得不得了」。
+		if latency <= 0 {
+			continue
+		}
+		if best < 0 || latency < bestLatency {
+			best, bestLatency = index, latency
+		}
+	}
+	if best < 0 || best == p.activeIndex || activeLatency <= 0 {
+		p.fastestCandidate = -1
+		p.fastestSince = time.Time{}
+		return -1
+	}
+	margin := activeLatency - bestLatency
+	if margin < failoverFastestMarginMs || float64(margin) < float64(activeLatency)*failoverFastestMarginRatio {
+		p.fastestCandidate = -1
+		p.fastestSince = time.Time{}
+		return -1
+	}
+	// fastestSince 是零值时必须当成「还没开始计时」。
+	//
+	// fastestCandidate 的 Go 零值是 0，所以第一次评估如果恰好选中第 0 条，
+	// `p.fastestCandidate != best` 会是 false，而 now.Sub(零时刻) 是个巨大的数 ——
+	// 持续时间那道门槛会被整个跳过，第一次探测就切。这三道门槛里最重要的一道
+	// 就这么没了，而且只在「最快的恰好是第 0 条」时发生，最难查。
+	if p.fastestCandidate != best || p.fastestSince.IsZero() {
+		p.fastestCandidate = best
+		p.fastestSince = now
+		return -1
+	}
+	if now.Sub(p.fastestSince) < failoverFastestHoldSeconds*time.Second {
+		return -1
+	}
+	return best
 }
 
 // 刚切过去，还在最短驻留时间里。

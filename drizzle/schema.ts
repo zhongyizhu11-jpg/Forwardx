@@ -390,6 +390,11 @@ export const forwardRules = table("forward_rules", {
   failoverSchedule: text("failoverSchedule"),
   // 刚切过去之后至少待多久才允许按优先级切回；0 = 不限制。
   failoverMinHoldSeconds: int("failoverMinHoldSeconds").notNull().default(0),
+  // 人工指定优先走第几条出站；null = 交回自动。到期时间 null = 一直钉着。
+  failoverPinnedIndex: int("failoverPinnedIndex"),
+  failoverPinnedUntil: epoch("failoverPinnedUntil"),
+  // 按实测延迟自动择优（只在主备模式下生效）。
+  failoverPreferFastest: boolean("failoverPreferFastest").notNull().default(false),
   failoverSeconds: int("failoverSeconds").notNull().default(60),
   recoverSeconds: int("recoverSeconds").notNull().default(120),
   autoFailback: boolean("autoFailback").notNull().default(true),

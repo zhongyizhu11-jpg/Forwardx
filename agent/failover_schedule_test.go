@@ -282,3 +282,285 @@ func TestScheduleChangeRebuildsSignature(t *testing.T) {
 		t.Fatal("改了最短驻留，签名没变")
 	}
 }
+
+/*
+人工钉住某一条出站。
+
+语义是「把它排到最前」，不是「只许走它」—— 钉住的那条挂了仍然往下找。运维想要的是
+「现在走 B」，不是「B 死了也守着 B」，后者等于用一个应急开关制造一次故障。
+*/
+
+func TestPinnedIndexOutranksSchedule(t *testing.T) {
+	proxy := scheduleProxy(3, eveningSchedule(2), 0)
+	pinned := 1
+	proxy.spec.PinnedIndex = &pinned
+	evening := time.Date(2026, 9, 21, 19, 0, 0, 0, time.FixedZone("CST", 8*3600))
+
+	proxy.mu.Lock()
+	defer proxy.mu.Unlock()
+	// 前提确认：这个时刻时段表本来会选第 2 条。
+	if preferred := failoverScheduleTargetIndexAt(proxy.spec.Schedule, evening); preferred != 2 {
+		t.Fatalf("用例前提没成立：时段表该选第 2 条，拿到 %d", preferred)
+	}
+	if got := proxy.priorityOrderLocked(evening); got[0] != 1 {
+		t.Fatalf("人工钉住应当压过时段表，拿到 %v", got)
+	}
+}
+
+func TestPinnedIndexExpires(t *testing.T) {
+	/*
+		有期限这件事很要紧：应急处理完没人记得去关，那条线就一直被钉着，后面所有
+		自动切换（包括时段表）全部静默失效，而面板上看不出任何异常。
+	*/
+	proxy := scheduleProxy(3, eveningSchedule(2), 0)
+	evening := time.Date(2026, 9, 21, 19, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	pinned := 1
+	proxy.spec.PinnedIndex = &pinned
+	proxy.spec.PinnedUntil = evening.Add(time.Hour).UnixMilli()
+
+	proxy.mu.Lock()
+	defer proxy.mu.Unlock()
+	if got := proxy.priorityOrderLocked(evening); got[0] != 1 {
+		t.Fatalf("还没到期就该钉着，拿到 %v", got)
+	}
+	// 到点之后自动交回时段表。
+	afterExpiry := evening.Add(2 * time.Hour)
+	if preferred := failoverScheduleTargetIndexAt(proxy.spec.Schedule, afterExpiry); preferred != 2 {
+		t.Fatalf("用例前提没成立：21 点该还在晚高峰窗口里，拿到 %d", preferred)
+	}
+	if got := proxy.priorityOrderLocked(afterExpiry); got[0] != 2 {
+		t.Fatalf("钉住到期后应当交回时段表，拿到 %v", got)
+	}
+}
+
+func TestPinnedTargetStillFailsOverWhenDead(t *testing.T) {
+	// 钉住的那条挂了仍然要逃。用一个应急开关制造一次故障，是最糟的那种设计。
+	proxy := scheduleProxy(3, nil, 0)
+	pinned := 1
+	proxy.spec.PinnedIndex = &pinned
+	now := time.Now()
+
+	proxy.mu.Lock()
+	proxy.targetHealth[1] = false
+	proxy.updateFallbackActiveAtLocked(now, "health check")
+	active := proxy.activeIndex
+	proxy.mu.Unlock()
+	if active == 1 {
+		t.Fatal("钉住的出站挂了还守着它 —— 这是拿应急开关制造故障")
+	}
+}
+
+func TestPinnedIndexOutOfRangeIsIgnored(t *testing.T) {
+	// 越界的序号一律当成没钉：宁可交回自动，也不能让一条规则因为一个坏值走不通。
+	outOfRange := 7
+	spec := normalizeFailoverSpec(failoverSpec{
+		Enabled: true, ListenPort: 1, BindAddress: "127.0.0.1", Strategy: "fallback",
+		Targets:     []failoverTarget{{TargetIP: "10.0.0.1", TargetPort: 80}},
+		PinnedIndex: &outOfRange, PinnedUntil: time.Now().Add(time.Hour).UnixMilli(),
+	})
+	if spec.PinnedIndex != nil || spec.PinnedUntil != 0 {
+		t.Fatalf("越界的钉住没被清掉：%+v", spec)
+	}
+}
+
+func TestPinnedChangeRebuildsSignature(t *testing.T) {
+	base := normalizeFailoverSpec(failoverSpec{
+		ListenPort: 1, BindAddress: "127.0.0.1", Strategy: "fallback",
+		Targets: []failoverTarget{{TargetIP: "10.0.0.1", TargetPort: 80}, {TargetIP: "10.0.0.2", TargetPort: 80}},
+	})
+	pinnedIndex := 1
+	pinned := base
+	pinned.PinnedIndex = &pinnedIndex
+	if failoverSignature(base) == failoverSignature(pinned) {
+		t.Fatal("钉住了出站，签名没变 —— 改动不会下发到已经在跑的主备代理")
+	}
+	later := pinned
+	later.PinnedUntil = time.Now().Add(time.Hour).UnixMilli()
+	if failoverSignature(pinned) == failoverSignature(later) {
+		t.Fatal("改了钉住的期限，签名没变")
+	}
+}
+
+/*
+按实测延迟自动择优。
+
+不是「谁快切谁」—— 那样线路会一直漂：两条线延迟在几毫秒之间来回，每次探测都能得出
+不同的结论，而每次切换都会让新连接换一条路。三道门槛：绝对值、百分比、持续时间。
+*/
+
+func fastestProxy(latencies []int, active int) *failoverProxy {
+	targets := make([]failoverTarget, 0, len(latencies))
+	for i := range latencies {
+		targets = append(targets, failoverTarget{TargetIP: "10.0.0." + strconv.Itoa(i+1), TargetPort: 80})
+	}
+	proxy := &failoverProxy{
+		ruleID: 91, sourcePort: 21001,
+		spec: normalizeFailoverSpec(failoverSpec{
+			Enabled: true, ListenPort: 64001, BindAddress: "127.0.0.1", Strategy: "fallback",
+			AutoFailback: true, Targets: targets, PreferFastest: true,
+		}),
+	}
+	proxy.ensureHealthStateLocked()
+	copy(proxy.lastLatencyMs, latencies)
+	proxy.activeIndex = active
+	return proxy
+}
+
+/*
+先建立候选、再等够时间，才算真的问到了「值不值得切」。
+
+只调一次的话永远得到 -1（第一次调用只是把候选记下来并开始计时），于是「差距不够
+大就不该切」这类用例会**看起来通过而什么都没验证** —— 它被持续时间那道门槛挡住了，
+根本没走到差距判断。差点就这么写进去了：反向验证里把百分比门槛整个删掉，测试照样绿。
+*/
+func fastestAfterHold(proxy *failoverProxy, start time.Time) int {
+	proxy.fastestIndexLocked(start)
+	return proxy.fastestIndexLocked(start.Add((failoverFastestHoldSeconds + 1) * time.Second))
+}
+
+func TestFastestNeedsSustainedAdvantage(t *testing.T) {
+	// 第 1 条明显更快（200ms → 50ms），但得连着够久才算数。
+	proxy := fastestProxy([]int{200, 50}, 0)
+	start := time.Now()
+
+	proxy.mu.Lock()
+	defer proxy.mu.Unlock()
+	if got := proxy.fastestIndexLocked(start); got != -1 {
+		t.Fatalf("第一次看到就切，持续时间那道门槛没起作用：%d", got)
+	}
+	if got := proxy.fastestIndexLocked(start.Add(60 * time.Second)); got != -1 {
+		t.Fatalf("才 60 秒就切了：%d", got)
+	}
+	if got := proxy.fastestIndexLocked(start.Add((failoverFastestHoldSeconds + 1) * time.Second)); got != 1 {
+		t.Fatalf("连着 %d 秒都更快，应当选它，拿到 %d", failoverFastestHoldSeconds, got)
+	}
+}
+
+func TestFastestResetsWhenCandidateChanges(t *testing.T) {
+	// 候选换人就重新计时：两条线轮流领先的话，谁都不该被选中。
+	proxy := fastestProxy([]int{200, 50, 60}, 0)
+	start := time.Now()
+	proxy.mu.Lock()
+	defer proxy.mu.Unlock()
+	proxy.fastestIndexLocked(start)
+	proxy.lastLatencyMs[1] = 300 // 1 号变慢，2 号成了新候选
+	proxy.fastestIndexLocked(start.Add(100 * time.Second))
+	if got := proxy.fastestIndexLocked(start.Add((failoverFastestHoldSeconds + 1) * time.Second)); got != -1 {
+		t.Fatalf("候选换过人，计时该重来，拿到 %d", got)
+	}
+}
+
+func TestFastestIgnoresNoiseLevelDifferences(t *testing.T) {
+	start := time.Now()
+
+	proxy := fastestProxy([]int{60, 45}, 0) // 快 15ms，没到 20ms 的绝对门槛
+	proxy.mu.Lock()
+	absolute := fastestAfterHold(proxy, start)
+	proxy.mu.Unlock()
+	if absolute != -1 {
+		t.Fatalf("差距不到绝对门槛就切了：%d", absolute)
+	}
+
+	// 长肥链路上 25ms 的差距也不该算「明显更快」：过了绝对门槛，但只有 5%。
+	ratio := fastestProxy([]int{500, 475}, 0)
+	ratio.mu.Lock()
+	percentage := fastestAfterHold(ratio, start)
+	ratio.mu.Unlock()
+	if percentage != -1 {
+		t.Fatalf("差距不到百分比门槛就切了：%d", percentage)
+	}
+
+	// 对照：同样是 25ms 的差距，放在 60ms 的链路上就该算数（快 42%）。
+	meaningful := fastestProxy([]int{60, 35}, 0)
+	meaningful.mu.Lock()
+	defer meaningful.mu.Unlock()
+	if got := fastestAfterHold(meaningful, start); got != 1 {
+		t.Fatalf("两道门槛都过了却没选它：%d —— 对照组不成立的话，上面两条也证明不了什么", got)
+	}
+}
+
+func TestFastestSkipsUnprobedAndUnhealthy(t *testing.T) {
+	// 0 表示这一轮没探出耗时，不能当成「快得不得了」。
+	proxy := fastestProxy([]int{200, 0}, 0)
+	start := time.Now()
+	proxy.mu.Lock()
+	if got := fastestAfterHold(proxy, start); got != -1 {
+		proxy.mu.Unlock()
+		t.Fatalf("把「没探出耗时」当成了最快：%d", got)
+	}
+	proxy.mu.Unlock()
+
+	unhealthy := fastestProxy([]int{200, 50}, 0)
+	unhealthy.mu.Lock()
+	defer unhealthy.mu.Unlock()
+	unhealthy.targetHealth[1] = false
+	if got := fastestAfterHold(unhealthy, start); got != -1 {
+		t.Fatalf("选了一条不健康的出站：%d", got)
+	}
+}
+
+func TestFastestZeroValueCandidateDoesNotSkipHold(t *testing.T) {
+	/*
+		fastestCandidate 的 Go 零值是 0。第一次评估如果恰好选中第 0 条，
+		`fastestCandidate != best` 是 false，而 now.Sub(零时刻) 是个巨大的数 ——
+		持续时间那道门槛会被整个跳过，第一次探测就切。
+
+		只在「最快的恰好是第 0 条」时发生，最难查，所以单独钉一条。
+	*/
+	proxy := fastestProxy([]int{50, 200}, 1) // 当前走第 1 条，第 0 条更快
+	start := time.Now()
+	proxy.mu.Lock()
+	defer proxy.mu.Unlock()
+	if got := proxy.fastestIndexLocked(start); got != -1 {
+		t.Fatalf("第一次评估就选中了第 0 条，持续时间门槛被跳过了：%d", got)
+	}
+	if got := proxy.fastestIndexLocked(start.Add((failoverFastestHoldSeconds + 1) * time.Second)); got != 0 {
+		t.Fatalf("等够了之后应当选第 0 条，拿到 %d", got)
+	}
+}
+
+func TestScheduleOutranksFastest(t *testing.T) {
+	// 时段表是人事先排好的意图，该压过机器自己算出来的择优。
+	proxy := fastestProxy([]int{200, 50, 50}, 0)
+	proxy.spec.Schedule = normalizeFailoverSchedule(eveningSchedule(2))
+	evening := time.Date(2026, 9, 21, 19, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	proxy.mu.Lock()
+	defer proxy.mu.Unlock()
+	proxy.fastestIndexLocked(evening)
+	if got := proxy.priorityOrderLocked(evening.Add((failoverFastestHoldSeconds + 1) * time.Second)); got[0] != 2 {
+		t.Fatalf("时段表该压过自动择优，拿到 %v", got)
+	}
+}
+
+func TestPinnedIndexZeroValueIsNotAPin(t *testing.T) {
+	/*
+		Go 的 int 零值是 0，而 0 是一个合法的出站序号（主出站）。
+
+		这个字段要是用 int，任何没带它的规格 —— 老 Agent 落在盘上的快照、面板漏传
+		的那一次 —— 都会被解成「钉死在主出站」：时段表不生效、自动择优不生效、
+		故障之外的一切自动切换全部静默失效，而面板上看不出任何异常。
+
+		这条是被测试抓出来的：加完人工钉住之后，两条本来绿着的时段表用例突然红了，
+		原因就是构造出来的 spec 带着零值 PinnedIndex，把时段表压住了。
+	*/
+	spec := normalizeFailoverSpec(failoverSpec{
+		Enabled: true, ListenPort: 1, BindAddress: "127.0.0.1", Strategy: "fallback",
+		Targets: []failoverTarget{{TargetIP: "10.0.0.1", TargetPort: 80}, {TargetIP: "10.0.0.2", TargetPort: 80}},
+		Schedule: eveningSchedule(1),
+	})
+	if spec.PinnedIndex != nil {
+		t.Fatalf("没传钉住却被当成钉住了：%+v", spec.PinnedIndex)
+	}
+
+	proxy := &failoverProxy{ruleID: 92, sourcePort: 21002, spec: spec}
+	proxy.ensureHealthStateLocked()
+	evening := time.Date(2026, 9, 21, 19, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	proxy.mu.Lock()
+	defer proxy.mu.Unlock()
+	if got := proxy.pinnedIndexAt(evening); got != -1 {
+		t.Fatalf("零值被当成了「钉在主出站」：%d", got)
+	}
+	if got := proxy.priorityOrderLocked(evening); got[0] != 1 {
+		t.Fatalf("时段表被零值的钉住压住了，拿到 %v", got)
+	}
+}

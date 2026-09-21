@@ -29,6 +29,8 @@ function dispatchFailoverSpec(): {
   strategy: string;
   schedule?: DispatchedSchedule;
   minHoldSeconds?: number;
+  pinnedIndex?: number;
+  pinnedUntil?: number;
 } {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-failover-probe-"));
   const databasePath = path.join(directory, "failover-probe.db");
@@ -62,10 +64,12 @@ function dispatchFailoverSpec(): {
     ];
     await exec(
       'INSERT INTO forward_rules (id, "hostId", name, "forwardType", protocol, "sourcePort", "targetIp", "targetPort", "userId", "isEnabled",'
-        + ' "failoverEnabled", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "failoverSchedule", "failoverMinHoldSeconds", "failoverSeconds", "recoverSeconds", "autoFailback")'
-        + ' VALUES (1, 1, ?, ?, ?, ?, ?, ?, 1, 1, 1, ?, ?, ?, ?, 600, 30, 90, 1)',
+        + ' "failoverEnabled", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "failoverSchedule", "failoverMinHoldSeconds",'
+        + ' "failoverPinnedIndex", "failoverPinnedUntil", "failoverSeconds", "recoverSeconds", "autoFailback")'
+        + ' VALUES (1, 1, ?, ?, ?, ?, ?, ?, 1, 1, 1, ?, ?, ?, ?, 600, 2, ?, 30, 90, 1)',
       ["主备规则", "gost", "tcp", 20001, "198.51.100.7", 443, "fallback", JSON.stringify(backups), "198.51.100.7:9443",
-        JSON.stringify({ timezone: "Asia/Shanghai", windows: [{ days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1 }] })],
+        JSON.stringify({ timezone: "Asia/Shanghai", windows: [{ days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1 }] }),
+        Math.floor(Date.now() / 1000) + 3600],
     );
 
     const express = (await import("express")).default;
@@ -156,4 +160,17 @@ test("时段表和最短驻留也要下发到 Agent", () => {
     "时段表没走到 Agent —— 面板上排好了，机器上到点不会切",
   );
   assert.equal(spec.minHoldSeconds, 600, "最短驻留没走到 Agent，线路会来回抖");
+});
+
+test("人工钉住也要下发到 Agent，而且带着期限", () => {
+  /*
+    没有期限的钉子最危险：应急处理完没人记得关，那条线就一直被钉着，后面所有自动
+    切换（包括时段表）全部静默失效，而面板上看不出任何异常。所以期限必须一路带到
+    Agent —— 只带序号不带期限的话，到点交回自动这件事根本不会发生。
+  */
+  assert.equal(spec.pinnedIndex, 2, "钉住的出站序号没走到 Agent");
+  assert.ok(
+    Number(spec.pinnedUntil) > Date.now(),
+    `钉住的期限没走到 Agent（拿到 ${spec.pinnedUntil}）—— 到点不会自动交回`,
+  );
 });

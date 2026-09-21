@@ -206,6 +206,7 @@ function canPreserveChildRuleRuntime(existing: any, payload: any, options: SyncF
     "failoverSeconds",
     "recoverSeconds",
     "failoverMinHoldSeconds",
+    "failoverPinnedIndex",
   ];
   const stringKeys = ["forwardType", "protocol", "gostMode", "targetIp", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "failoverSchedule", "protocolBlockReason"];
   const boolKeys = [
@@ -217,6 +218,7 @@ function canPreserveChildRuleRuntime(existing: any, payload: any, options: SyncF
     "zeroCopy",
     "udpOverTcp",
     "failoverEnabled",
+    "failoverPreferFastest",
     "autoFailback",
     "isEnabled",
     "disabledByGroup",

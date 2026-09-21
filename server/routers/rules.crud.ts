@@ -102,6 +102,12 @@ const failoverInputShape = {
     })).max(MAX_FAILOVER_SCHEDULE_WINDOWS),
   }).nullable().optional(),
   failoverMinHoldSeconds: z.number().int().min(0).max(86400).optional(),
+  /** 人工指定优先走第几条出站；null = 交回自动。 */
+  failoverPinnedIndex: z.number().int().min(0).max(MAX_FAILOVER_TARGETS).nullable().optional(),
+  /** 钉到什么时候（Unix 秒）；null = 一直钉着。 */
+  failoverPinnedUntil: z.number().int().min(0).nullable().optional(),
+  /** 按实测延迟自动择优。 */
+  failoverPreferFastest: z.boolean().optional(),
   failoverSeconds: z.number().int().min(10).max(3600).optional(),
   recoverSeconds: z.number().int().min(10).max(3600).optional(),
   autoFailback: z.boolean().optional(),
@@ -138,6 +144,9 @@ type FailoverInput = {
   failoverProbeTarget?: string | null;
   failoverSchedule?: unknown;
   failoverMinHoldSeconds?: number;
+  failoverPinnedIndex?: number | null;
+  failoverPinnedUntil?: number | null;
+  failoverPreferFastest?: boolean;
   failoverSeconds?: number;
   recoverSeconds?: number;
   autoFailback?: boolean;
@@ -173,6 +182,33 @@ function normalizeFailoverScheduleInput(input: FailoverInput, backupCount: numbe
   });
   if (error) throw new Error(error);
   return serializeFailoverSchedule(schedule);
+}
+
+/**
+ * 人工钉住某一条出站。
+ *
+ * 钉住的是「排到最前」，不是「只许走它」—— 钉住的那条挂了仍然按优先级往下找。运维
+ * 想要的是「现在走 B」，不是「B 死了也守着 B」，后者等于用一个应急开关制造一次故障。
+ *
+ * 指向不存在的出站一律当成没钉：宁可交回自动，也不能让一条规则因为一个坏值走不通。
+ * 期限已经过去的也一样 —— 存一个从一开始就过期的钉子没有任何意义。
+ */
+/** 库里存的是 Date（或秒），入参统一用 Unix 秒。 */
+function epochSecondsOf(value: unknown): number | null {
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(value as any);
+  const seconds = Math.floor(date.getTime() / 1000);
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+function normalizeFailoverPinInput(input: FailoverInput, backupCount: number, enabled: boolean) {
+  const index = Number(input.failoverPinnedIndex);
+  if (!enabled || !Number.isInteger(index) || index < 0 || index > backupCount) {
+    return { failoverPinnedIndex: null, failoverPinnedUntil: null };
+  }
+  const until = Math.floor(Number(input.failoverPinnedUntil || 0));
+  const valid = Number.isInteger(until) && until > Math.floor(Date.now() / 1000);
+  return { failoverPinnedIndex: index, failoverPinnedUntil: valid ? new Date(until * 1000) : null };
 }
 
 export function normalizeFailoverInput(input: FailoverInput, protocol?: string | null) {
@@ -215,6 +251,11 @@ export function normalizeFailoverInput(input: FailoverInput, protocol?: string |
     failoverProbeTarget: enabled ? normalizeMainProbeTarget(input.failoverProbeTarget) : null,
     failoverSchedule: enabled ? normalizeFailoverScheduleInput(input, targets.length) : null,
     failoverMinHoldSeconds: enabled ? Math.max(0, Math.floor(Number(input.failoverMinHoldSeconds || 0))) : 0,
+    ...normalizeFailoverPinInput(input, targets.length, enabled),
+    // 自动择优只在主备模式下有意义：轮询/随机/哈希本来就不存在「首选是谁」。
+    failoverPreferFastest: enabled && (input.failoverStrategy || "fallback") === "fallback"
+      ? !!input.failoverPreferFastest
+      : false,
     failoverSeconds: input.failoverSeconds ?? 60,
     recoverSeconds: input.recoverSeconds ?? 120,
     autoFailback: input.autoFailback ?? true,
@@ -465,6 +506,7 @@ function isFailoverHotUpdate(input: Record<string, unknown>, rule: any, nextHost
     "failoverProbeTarget",
     "failoverSchedule",
     "failoverMinHoldSeconds",
+    "failoverPinnedIndex",
     "failoverSeconds",
     "recoverSeconds",
     "autoFailback",
@@ -485,6 +527,7 @@ function isFailoverHotUpdate(input: Record<string, unknown>, rule: any, nextHost
     "failoverProbeTarget",
     "failoverSchedule",
     "failoverMinHoldSeconds",
+    "failoverPinnedIndex",
     "failoverSeconds",
     "recoverSeconds",
     "autoFailback",
@@ -1427,6 +1470,9 @@ export const crudRulesRouter = router({
             failoverProbeTarget: createFailoverEnabled ? input.failoverProbeTarget : null,
             failoverSchedule: createFailoverEnabled ? input.failoverSchedule : null,
             failoverMinHoldSeconds: createFailoverEnabled ? input.failoverMinHoldSeconds : 0,
+            failoverPinnedIndex: createFailoverEnabled ? input.failoverPinnedIndex : null,
+            failoverPinnedUntil: createFailoverEnabled ? input.failoverPinnedUntil : null,
+            failoverPreferFastest: createFailoverEnabled ? input.failoverPreferFastest : false,
           }, input.protocol),
           isRunning: false,
           userId: ctx.user.id,
@@ -1887,6 +1933,9 @@ export const crudRulesRouter = router({
                 failoverProbeTarget: nextMainBackupEnabled && !groupChanged ? (input.failoverProbeTarget ?? (rule as any).failoverProbeTarget) : null,
                 failoverSchedule: nextMainBackupEnabled && !groupChanged ? (input.failoverSchedule ?? parseFailoverSchedule((rule as any).failoverSchedule)) : null,
                 failoverMinHoldSeconds: nextMainBackupEnabled && !groupChanged ? (input.failoverMinHoldSeconds ?? Number((rule as any).failoverMinHoldSeconds || 0)) : 0,
+                failoverPinnedIndex: nextMainBackupEnabled && !groupChanged ? (input.failoverPinnedIndex ?? (rule as any).failoverPinnedIndex) : null,
+                failoverPinnedUntil: nextMainBackupEnabled && !groupChanged ? (input.failoverPinnedUntil ?? epochSecondsOf((rule as any).failoverPinnedUntil)) : null,
+                failoverPreferFastest: nextMainBackupEnabled && !groupChanged ? (input.failoverPreferFastest ?? !!(rule as any).failoverPreferFastest) : false,
                 failoverSeconds: groupChanged ? 60 : input.failoverSeconds ?? (rule as any).failoverSeconds,
                 recoverSeconds: groupChanged ? 120 : input.recoverSeconds ?? (rule as any).recoverSeconds,
                 autoFailback: groupChanged ? true : input.autoFailback ?? (rule as any).autoFailback,
@@ -1924,7 +1973,7 @@ export const crudRulesRouter = router({
           isForwardGroupTemplate: true,
         };
         delete data.id;
-        const watchedFields = ["sourcePort", "targetIp", "targetPort", "forwardType", "protocol", "proxyProtocolReceive", "proxyProtocolSend", "proxyProtocolExitReceive", "proxyProtocolExitSend", "proxyProtocolVersion", "tcpFastOpen", "zeroCopy", "udpOverTcp", "udpOverTcpPort", "failoverEnabled", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "failoverSchedule", "failoverMinHoldSeconds", "failoverSeconds", "recoverSeconds", "autoFailback"] as const;
+        const watchedFields = ["sourcePort", "targetIp", "targetPort", "forwardType", "protocol", "proxyProtocolReceive", "proxyProtocolSend", "proxyProtocolExitReceive", "proxyProtocolExitSend", "proxyProtocolVersion", "tcpFastOpen", "zeroCopy", "udpOverTcp", "udpOverTcpPort", "failoverEnabled", "failoverStrategy", "failoverTargets", "failoverProbeTarget", "failoverSchedule", "failoverMinHoldSeconds", "failoverPinnedIndex", "failoverPinnedUntil", "failoverPreferFastest", "failoverSeconds", "recoverSeconds", "autoFailback"] as const;
         const keyFieldChanged = watchedFields.some((field) => data[field] !== undefined && data[field] !== (rule as any)[field]);
         if (dbBool(data.isEnabled)) {
           data.disabledByUser = false;
@@ -2190,6 +2239,9 @@ export const crudRulesRouter = router({
           failoverProbeTarget: nextMainBackupEnabled && !routeChanged ? (input.failoverProbeTarget ?? (rule as any).failoverProbeTarget) : null,
           failoverSchedule: nextMainBackupEnabled && !routeChanged ? (input.failoverSchedule ?? parseFailoverSchedule((rule as any).failoverSchedule)) : null,
           failoverMinHoldSeconds: nextMainBackupEnabled && !routeChanged ? (input.failoverMinHoldSeconds ?? Number((rule as any).failoverMinHoldSeconds || 0)) : 0,
+          failoverPinnedIndex: nextMainBackupEnabled && !routeChanged ? (input.failoverPinnedIndex ?? (rule as any).failoverPinnedIndex) : null,
+          failoverPinnedUntil: nextMainBackupEnabled && !routeChanged ? (input.failoverPinnedUntil ?? epochSecondsOf((rule as any).failoverPinnedUntil)) : null,
+          failoverPreferFastest: nextMainBackupEnabled && !routeChanged ? (input.failoverPreferFastest ?? !!(rule as any).failoverPreferFastest) : false,
           failoverSeconds: routeChanged ? 60 : input.failoverSeconds ?? (rule as any).failoverSeconds,
           recoverSeconds: routeChanged ? 120 : input.recoverSeconds ?? (rule as any).recoverSeconds,
           autoFailback: routeChanged ? true : input.autoFailback ?? (rule as any).autoFailback,

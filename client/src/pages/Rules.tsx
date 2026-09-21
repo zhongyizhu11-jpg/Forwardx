@@ -254,6 +254,9 @@ type RuleFormData = {
   failoverProbeTarget: string;
   failoverSchedule: FailoverSchedule | null;
   failoverMinHoldSeconds: number;
+  /** 人工钉住：走第几条出站、钉到什么时候（Unix 秒，null = 一直钉着）。 */
+  failoverPin: { index: number; until: number | null } | null;
+  failoverPreferFastest: boolean;
   failoverSeconds: number;
   recoverSeconds: number;
   autoFailback: boolean;
@@ -301,6 +304,8 @@ const defaultForm: RuleFormData = {
   failoverProbeTarget: "",
   failoverSchedule: null,
   failoverMinHoldSeconds: 0,
+  failoverPin: null,
+  failoverPreferFastest: false,
   failoverSeconds: 60,
   recoverSeconds: 120,
   autoFailback: true,
@@ -2617,6 +2622,13 @@ function RulesContent() {
       failoverProbeTarget: String(rule.failoverProbeTarget || ""),
       failoverSchedule: parseFailoverSchedule(rule.failoverSchedule),
       failoverMinHoldSeconds: Number(rule.failoverMinHoldSeconds || 0),
+      failoverPin: Number.isInteger(Number(rule.failoverPinnedIndex))
+        ? {
+          index: Number(rule.failoverPinnedIndex),
+          until: rule.failoverPinnedUntil ? Math.floor(new Date(rule.failoverPinnedUntil).getTime() / 1000) : null,
+        }
+        : null,
+      failoverPreferFastest: !!rule.failoverPreferFastest,
       failoverSeconds: Number(rule.failoverSeconds || 60),
       recoverSeconds: Number(rule.recoverSeconds || 120),
       autoFailback: rule.autoFailback !== false,
@@ -3655,6 +3667,11 @@ function RulesContent() {
         ? failoverSchedulePayload(form.failoverSchedule, form.failoverStrategy)
         : null,
       failoverMinHoldSeconds: canUseMainBackup && form.failoverEnabled ? form.failoverMinHoldSeconds : 0,
+      failoverPinnedIndex: canUseMainBackup && form.failoverEnabled ? (form.failoverPin?.index ?? null) : null,
+      failoverPinnedUntil: canUseMainBackup && form.failoverEnabled ? (form.failoverPin?.until ?? null) : null,
+      failoverPreferFastest: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback"
+        ? form.failoverPreferFastest
+        : false,
       failoverSeconds: form.failoverSeconds || 60,
       recoverSeconds: form.recoverSeconds || 120,
       autoFailback: form.autoFailback,
@@ -7478,6 +7495,64 @@ function RulesContent() {
                     18 点到了而那条线正挂着，不该机械地切过去。这两件事是正交的，
                     所以时段表放在这儿，和下面的切换/恢复时间并列，而不是替代它们。
                   */}
+                  {/*
+                    人工钉住：应急时压过所有自动判断，走指定的那一条。
+
+                    两件事写死在这儿：
+                      · 钉住是「排到最前」，不是「只许走它」—— 钉住的那条挂了仍然
+                        会往下找。用一个应急开关制造一次故障，是最糟的那种设计。
+                      · **必须有期限**。应急处理完没人记得关，那条线就一直被钉着，
+                        后面所有自动切换（包括时段表）全部静默失效，而面板上看不出
+                        任何异常。所以「一直钉着」不是默认项，要主动选。
+                  */}
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/50 bg-background/40 p-2.5">
+                    <Label className="text-sm">强制走</Label>
+                    <Select
+                      value={form.failoverPin ? String(form.failoverPin.index) : "auto"}
+                      onValueChange={(value) => setForm({
+                      ...form,
+                      failoverPin: value === "auto"
+                        ? null
+                        : { index: Number(value), until: form.failoverPin?.until ?? Math.floor(Date.now() / 1000) + 2 * 3600 },
+                      })}
+                    >
+                      <SelectTrigger className="h-8 w-28 text-xs" aria-label="强制走哪条出站"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                      <SelectItem value="auto">自动</SelectItem>
+                      <SelectItem value="0">主出站</SelectItem>
+                      {failoverLineHints.map((hint) => (
+                      <SelectItem key={hint.line} value={String(hint.line)}>备用 {hint.line}</SelectItem>
+                      ))}
+                      </SelectContent>
+                    </Select>
+                    {form.failoverPin && (
+                    <>
+                    <Label className="text-sm">持续</Label>
+                    <Select
+                      value={form.failoverPin.until === null ? "forever" : String(form.failoverPin.until)}
+                      onValueChange={(value) => setForm({
+                      ...form,
+                      failoverPin: { index: form.failoverPin!.index, until: value === "forever" ? null : Number(value) },
+                      })}
+                    >
+                      <SelectTrigger className="h-8 w-32 text-xs" aria-label="强制走这条出站持续多久"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                      {[["30 分钟", 1800], ["2 小时", 7200], ["12 小时", 43200], ["24 小时", 86400]].map(([label, seconds]) => (
+                      <SelectItem key={String(label)} value={String(Math.floor(Date.now() / 1000) + Number(seconds))}>
+                      {label}
+                      </SelectItem>
+                      ))}
+                      <SelectItem value="forever">一直钉着</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="w-full text-xs leading-5 text-amber-600 dark:text-amber-400">
+                      {form.failoverPin.until === null
+                        ? "一直钉着：时段表和自动切换都不会再改变走向，直到你在这里改回「自动」。"
+                        : `到 ${new Date(form.failoverPin.until * 1000).toLocaleString("zh-CN")} 自动交回。钉住的这条要是挂了，仍然会往下切。`}
+                    </p>
+                    </>
+                    )}
+                  </div>
                   {form.failoverStrategy !== "fallback" && (form.failoverSchedule?.windows.length || 0) > 0 && (
                   /*
                     配好时段表之后又把策略改成了轮询/随机/哈希。这几种策略本来就不存在
@@ -7631,6 +7706,24 @@ function RulesContent() {
                         onChange={(event) => setForm({ ...form, failoverMinHoldSeconds: parseInt(event.target.value) || 0 })}
                       />
                     </FormField>
+                    {form.failoverStrategy === "fallback" && (
+                      <FormField className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
+                        <div className="min-w-0">
+                          {/*
+                            不是「谁快切谁」：那样线路会一直漂。候选必须同时快过绝对
+                            门槛和百分比门槛，而且连着三分钟都更快，才会被提到最前。
+                            三个数写死在 Agent 里 —— 多一个旋钮就多一次「填多少合适」
+                            的为难，而它们的合理范围很窄。
+                          */}
+                          <Label className="text-sm">自动择优</Label>
+                          <p className="text-xs text-muted-foreground">按实测延迟挑明显更快的那条</p>
+                        </div>
+                        <Checkbox
+                          checked={form.failoverPreferFastest}
+                          onCheckedChange={(checked) => setForm({ ...form, failoverPreferFastest: checked })}
+                        />
+                      </FormField>
+                    )}
                     {form.failoverStrategy === "fallback" && (
                       <FormField className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
                         <div>
