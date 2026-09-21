@@ -5766,26 +5766,26 @@ function RulesContent() {
     */
     if (compact) {
       /*
-        两行，各自带前缀。原来是 `入口 → 出口` 挤在一行，两个地址一样的样式、
-        中间一个箭头 —— 在窄屏上两头都被截断之后，根本认不出哪个是入口哪个是
-        目标。前缀把这件事直接写出来，不用靠位置猜。
+        一行：`入口 ⧉ → 目标`。中间那一轮我把它拆成两行、各自加「入口」「目标」
+        前缀，理由是窄屏截断之后分不清谁是谁；但那是我自己在 393px 下推演的，
+        实机上一行放得下，而且两行会让每张卡多出一行的高度。
+
+        分不清的问题不靠加前缀解决，靠样式分主次：入口是正文色 + 可点复制，
+        目标退到 muted，一个箭头说明方向。两个 title 兜住截断的情况。
       */
       return (
-        <div className="min-w-0 space-y-1 font-mono text-[13px] leading-5">
+        <div className="flex min-w-0 items-center gap-1.5 font-mono text-[13px] leading-5">
           {entryAddresses.map((entry) => (
             <button key={`${entry.label}:${entry.value}`} type="button"
               onClick={() => entry.copyable && copyEntryAddress(rule, entry.value)} disabled={!entry.copyable}
-              className="group flex w-full min-w-0 items-center gap-1.5 rounded text-left enabled:hover:text-primary disabled:text-muted-foreground"
+              className="group inline-flex min-w-0 shrink items-center gap-1 rounded text-left enabled:hover:text-primary disabled:text-muted-foreground"
               title={entry.copyable ? entryTitle : entry.text}>
-              <span className="shrink-0 font-sans text-[11px] text-muted-foreground">入口</span>
-              <code className="min-w-0 flex-1 truncate">{entry.text}</code>
+              <code className="min-w-0 truncate">{entry.text}</code>
               {entry.copyable && <Copy className="h-3 w-3 shrink-0 text-muted-foreground opacity-60" />}
             </button>
           ))}
-          <div className="flex w-full min-w-0 items-center gap-1.5">
-            <span className="shrink-0 font-sans text-[11px] text-muted-foreground">目标</span>
-            <code className="min-w-0 flex-1 truncate">{targetAddress}</code>
-          </div>
+          <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="转发到" />
+          <code className="min-w-0 shrink truncate text-muted-foreground" title={targetAddress}>{targetAddress}</code>
         </div>
       );
     }
