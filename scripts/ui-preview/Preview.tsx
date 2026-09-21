@@ -10,7 +10,7 @@ import StatCard from "@/components/StatCard";
 import EmptyState from "@/components/EmptyState";
 import DataSectionError from "@/components/DataSectionError";
 import DataSectionLoading from "@/components/DataSectionLoading";
-import { WorkspaceCommand, WorkspaceMobileNav } from "@/components/WorkspaceNavigation";
+import { WorkspaceCommand } from "@/components/WorkspaceNavigation";
 import { PublicHomeView } from "@/pages/PublicHome";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -128,7 +128,6 @@ function Demo() {
         </>}
         <p role="status" className="text-sm text-muted-foreground">{message}</p>
       </main>
-      <WorkspaceMobileNav items={destinations.slice(0,4)} currentPath={page} onNavigate={item=>changePage(item.path)} onMore={()=>setNav(true)} moreOpen={nav}/>
     </div>
     <WorkspaceCommand open={command} onOpenChange={setCommand} items={destinations} currentPath={page} onNavigate={item=>changePage(item.path)}/>
     <Dialog open={dialog} onOpenChange={setDialog}><DialogContent><DialogHeader><DialogTitle>创建转发规则</DialogTitle><DialogDescription>先选择线路，再设置入口端口与目标地址。</DialogDescription></DialogHeader>{createForm}<DialogFooter><Button variant="outline" onClick={()=>setDialog(false)}>取消</Button><Button onClick={()=>{setDialog(false);setMessage("演示预览不会创建实际资源");}}>完成预览</Button></DialogFooter></DialogContent></Dialog>

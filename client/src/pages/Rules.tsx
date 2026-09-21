@@ -84,6 +84,8 @@ import {
   RULE_TRANSFER_MAX_FILE_SIZE,
   RULE_TRANSFER_MAX_IMPORT_COUNT,
   parseRuleTransferFile,
+  normalizeFailoverStrategy,
+  type FailoverStrategy,
   type RuleTransferFile,
   type RuleTransferFileRule,
 } from "@/lib/ruleTransfer";
@@ -119,6 +121,7 @@ import {
   parseFailoverTargets,
   type FailoverTarget,
 } from "@shared/failoverTargets";
+import { describeFailoverLineDisplay, type FailoverLineTone } from "@/lib/failoverLineDisplay";
 import {
   forwardRuleFormBlocker,
   isAdvancedSectionBlocker,
@@ -264,7 +267,6 @@ type RuleFormData = {
 
 type ProxyProtocolVersion = 1 | 2;
 
-type FailoverStrategy = "fallback" | "round_robin" | "random" | "ip_hash";
 type FailoverMode = "disabled" | FailoverStrategy;
 
 const failoverModeOptions: Array<{ value: FailoverMode; label: string }> = [
@@ -280,12 +282,6 @@ const failoverStrategyLabels: Record<FailoverStrategy, string> = {
   random: "随机",
   ip_hash: "IP哈希",
 };
-const normalizeFailoverStrategy = (value: unknown): FailoverStrategy => {
-  return value === "round_robin" || value === "random" || value === "ip_hash" || value === "fallback"
-    ? value
-    : "fallback";
-};
-
 const defaultForm: RuleFormData = {
   hostId: null,
   name: "",
@@ -2079,7 +2075,11 @@ function RulesContent() {
   const [viewMode, setViewMode] = useState<RuleViewMode>(() => getStoredRuleViewMode());
   const [ruleCardSize, setRuleCardSize] = useState<RuleCardSize>(() => getStoredRuleCardSize());
   const effectiveViewMode: RuleViewMode = isMobile ? "card" : viewMode;
-  const effectiveRuleCardSize: RuleCardSize = isMobile ? "standard" : ruleCardSize;
+  /*
+    手机上原来被写死成 standard —— 而 standard 卡在 390px 的屏幕上有 850px 高，
+    一屏连一条规则都放不下。紧凑卡本来就是为这种宽度做的，这里改成手机默认紧凑。
+  */
+  const effectiveRuleCardSize: RuleCardSize = isMobile ? "compact" : ruleCardSize;
   const [rulePageSize, setRulePageSize] = useState<RulePageSize>(() =>
     getStoredRulePageSize(getStoredRuleCardSize() === "compact" ? 24 : 12)
   );
@@ -5750,6 +5750,29 @@ function RulesContent() {
       </Badge>
     ) : null;
 
+    /*
+      紧凑卡里走一行：ConnectionPath 是竖排的，「入口 · 点击复制」和「目标出口」
+      两行标题加上中间那个箭头，要用 5 行去画 2 个地址 —— 在 390px 的屏幕上
+      光这一块就是 290px。一个 → 已经把方向说清楚了。
+    */
+    if (compact) {
+      return (
+        <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] leading-5">
+          {entryAddresses.map((entry) => (
+            <button key={`${entry.label}:${entry.value}`} type="button"
+              onClick={() => entry.copyable && copyEntryAddress(rule, entry.value)} disabled={!entry.copyable}
+              className="group inline-flex min-w-0 shrink items-center gap-1 rounded text-left enabled:hover:text-primary disabled:text-muted-foreground"
+              title={entry.copyable ? entryTitle : entry.text}>
+              <code className="min-w-0 truncate">{entry.text}</code>
+              {entry.copyable && <Copy className="h-3 w-3 shrink-0 text-muted-foreground opacity-60" />}
+            </button>
+          ))}
+          <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="转发到" />
+          <code className="min-w-0 shrink truncate text-muted-foreground">{targetAddress}</code>
+        </div>
+      );
+    }
+
     return <ConnectionPath steps={[
       { label: "入口 · 点击复制", content: <div className="flex min-w-0 flex-col gap-1">{entryAddresses.map((entry) => (
         <button key={`${entry.label}:${entry.value}`} type="button"
@@ -5895,6 +5918,34 @@ function RulesContent() {
       >
         <Zap className="mr-1 h-3 w-3" />
         {visible ? "订阅" : "订阅已隐藏"}
+      </Badge>
+    );
+  };
+
+  /*
+    规则行上的主备状态。
+    原来这里只有一个「主备 2」的计数徽标 —— 它回答的是「配了几条」，而人要
+    知道的是「现在走的哪条」。配了主备和没配在列表上几乎长一样，功能配完就
+    看不见了，这正是「主备到底在哪儿用」说不清楚的地方。
+  */
+  const failoverToneClass: Record<FailoverLineTone, string> = {
+    idle: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
+    backup: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    warn: "border-destructive/40 text-destructive",
+    unreported: "border-border text-muted-foreground",
+  };
+
+  const renderFailoverLineBadge = (rule: any) => {
+    const display = describeFailoverLineDisplay(rule);
+    if (!display) return null;
+    return (
+      <Badge
+        variant="outline"
+        className={cn("h-5 shrink-0 gap-1 px-1.5 text-[10px] font-medium", failoverToneClass[display.tone])}
+        title={display.title}
+      >
+        <GitBranch className="h-3 w-3" aria-hidden="true" />
+        {display.text}
       </Badge>
     );
   };
@@ -6424,6 +6475,7 @@ function RulesContent() {
             </div>
 
             <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+              {renderFailoverLineBadge(rule)}
               {renderRouteBadge(rule)}
               <Badge variant="secondary" className="h-5 whitespace-nowrap px-1.5 text-[10px]">
                 {formatForwardRuleProtocol(rule.protocol)}
@@ -6441,18 +6493,15 @@ function RulesContent() {
               </div>
             )}
 
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 border-t border-border/40 pt-1.5 text-xs">
-              <div className="min-w-0">
-                <div className="mb-0.5 text-[10px] text-muted-foreground">累计流量</div>
-                {renderMobileRuleTotalTraffic(rule)}
-              </div>
-              <div className="min-w-0 text-right">
-                <div className="mb-0.5 text-[10px] text-muted-foreground">24H</div>
-                <div className="flex flex-wrap justify-end gap-x-2 gap-y-0.5">
-                  {renderRuleDailyTrafficValue(rule, "in")}
-                  {renderRuleDailyTrafficValue(rule, "out")}
-                </div>
-              </div>
+            {/*
+              「累计流量」「24H」原来各带一行标题、占两行栅格。数字自带单位，
+              标题是在解释一个本来就看得懂的东西，删掉之后这一块从 4 行变 1 行。
+            */}
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-border/40 pt-1.5 text-xs">
+              {renderMobileRuleTotalTraffic(rule)}
+              <span className="text-border">·</span>
+              {renderRuleDailyTrafficValue(rule, "in")}
+              {renderRuleDailyTrafficValue(rule, "out")}
             </div>
 
             <div className="action-card-footer flex justify-end border-t border-border/40 pt-1.5">
@@ -7033,7 +7082,7 @@ function RulesContent() {
             >
               {form.routeMode === "tunnel" && (
                 <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  <div className="route-picker-row grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                     <FormField className="space-y-2">
                       <Label>使用隧道</Label>
                       <Select
@@ -7078,7 +7127,7 @@ function RulesContent() {
 
               {isForwardGroupRouteMode && (
                 <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  <div className="route-picker-row grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                     <FormField className="space-y-2">
                       <Label>{form.routeMode === "local" ? (isLegacyLocalRuleEdit ? "迁移到新版端口转发" : "使用端口转发") : form.routeMode === "chain" ? "使用转发链" : "使用转发组"}</Label>
                       <Select
@@ -7135,7 +7184,7 @@ function RulesContent() {
 
               {form.routeMode === "local" && !isForwardGroupRouteMode && (
                 <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  <div className="route-picker-row grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                     <FormField className="space-y-2">
                       <Label>使用按量计费资源</Label>
                       <Select

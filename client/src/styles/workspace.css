@@ -82,15 +82,157 @@
 .workspace-command-results small { display: block; font-size: 11px; color: var(--fx-muted); }
 .workspace-command-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--fx-stroke); color: var(--fx-muted); font-size: 11px; }
 .workspace-command-empty { flex: 1; display: grid; place-content: center; padding: 32px 20px; text-align: center; color: var(--fx-muted); font-size: 13px; }
-.workspace-mobile-nav { display: none; }
 @media (max-width: 767px) {
-  .workspace-with-mobile-nav { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
-  .workspace-mobile-nav { display: grid; position: fixed; z-index: var(--fx-z-sticky); inset: auto 0 0; gap: 4px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--fx-stroke); background: var(--fx-surface); box-shadow: 0 -2px 12px rgb(24 30 36 / 3%); }
-  .workspace-mobile-nav > :is(a, button) { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 0; min-height: 52px; border-radius: 8px; font-size: 10px; color: var(--fx-muted); }
-  .workspace-mobile-nav > a[aria-current="page"] { color: var(--fx-brand); font-weight: 600; }
-  .workspace-mobile-nav > :is(a, button):focus-visible { outline: 2px solid var(--fx-brand); outline-offset: -2px; }
-  /* Keep the virtual keyboard and form actions clear of persistent navigation. */
-  body:has(input:focus, textarea:focus, [contenteditable="true"]:focus) .workspace-mobile-nav { display: none; }
+  .workspace-with-mobile-nav { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+  /*
+    ── 手机端密度层 ──────────────────────────────────────────────
+    实测 393×760：分类条实际宽 406px，比对话框还宽，于是右边永远挂着一个
+    滚动箭头；一个「创建转发」对话框里真正的表单字段占不到一半高度。
+    量下来大头不是输入框（44px 是触摸命中区的正确值，不动），而是
+    每个控件周围的盒子、图标和间距。
+
+    图标先去掉：分类条上每一项都是「图标 + 文字 + 计数」，而文字已经把事情
+    说完了，图标在这里是装饰。去掉之后每项从约 80px 收到 55px，五项装得进
+    一屏，右边那个箭头自然就不出现了。
+  */
+  .workspace-tabs { padding: 3px; border-radius: 10px; }
+  .workspace-tabs .workspace-tabs-list { gap: 4px; }
+  .workspace-tabs .workspace-tab { gap: 5px; padding: 6px 9px; font-size: 12.5px; border-radius: 8px; }
+  .workspace-tabs .workspace-tab > svg { display: none; }
+  .workspace-tab-count { min-width: 17px; height: 17px; font-size: 10.5px; border-radius: 5px; }
+
+  /*
+    页面顶部那一排概览卡。实测每张 240px 高、三张 720px，而它们一共只说了
+    5 个数字 —— 在 393×760 的屏幕上，列表要翻过一整屏才开始。
+
+    占高度的是装饰不是数据：每张卡有一个 36px 的彩色圆角图标方块（有的两个），
+    外加 112px 的最小高度和 24px 的大号数字。标题已经写着「在线状态」
+    「累计流量」，那个图标方块再说一遍同一件事。
+
+    手机上去掉图标方块、放开最小高度、数字降一档。三张卡从 720px 收到约 240px。
+  */
+  [data-slot="card-content"]:has(> p + div [class*="rounded-"][class*="shadow-sm"]), .stat-strip [data-slot="card-content"] { min-height: 0; padding: 10px 12px; }
+  .stat-strip [data-slot="card-content"] > div[class*="absolute"] { display: none; }
+  .stat-strip [class*="rounded-xl"][class*="shadow-sm"],
+  .stat-strip [class*="rounded-lg"][class*="shadow-sm"] { display: none; }
+  .stat-strip [class*="text-2xl"] { font-size: 19px; line-height: 1.15; }
+  .stat-strip [class*="pr-12"] { padding-right: 0; }
+  .stat-strip p[class*="mt-2"] { margin-top: 2px; }
+
+  /*
+    ── 转发路径：竖排改横排 ──
+    `入口 ↓ 出口` 这一块在隧道卡、规则卡、转发链上到处都是。竖排要用 5 行去画
+    2 个地址：两行小标题、两行值、中间一个箭头和一条竖线，实测 280px。在 393px
+    的屏幕上，一张隧道卡有三分之一是它。
+
+    横排之后标题跟值同一行、箭头替掉竖线，收到约 60px。改的是 .connection-path
+    本身，所以隧道、规则、转发链一起受益 —— 不用每个调用方各改一遍。
+  */
+  .connection-path { padding: 7px 9px; border-radius: 8px; }
+  .connection-step { align-items: baseline; gap: 6px; }
+  .connection-step + .connection-step { padding-top: 4px; }
+  .connection-rail { display: none; }
+  .connection-step > div { display: flex; align-items: baseline; gap: 6px; }
+  .connection-label { flex: 0 0 auto; font-size: 10.5px; line-height: 17px; }
+  .connection-value { margin-top: 0; font-size: 12px; line-height: 17px; }
+  /* 竖线和箭头都归 rail 管，rail 收起来之后一并消失。 */
+
+  /*
+    ── 全站盒子密度 ──
+    卡片的默认内边距已经在 ui/card.tsx 里从 24px 改到 12px（手机）/16px（≥sm），
+    所以这里不再重复。剩下的是**调用方自己写死的**那些盒子 —— 全站有几十处
+    `rounded-md border bg-muted/30 p-2.5`、`rounded-lg border p-4` 这样的子盒子，
+    它们不走 Card，所以默认值改小碰不到它们。
+
+    只收内边距和圆角，不动边框和背景：那两样是「这是一组」的信号，去掉会让
+    密集的列表糊成一片。
+  */
+  .workspace-main [class*="rounded-"][class*="border"]:not([data-slot]):not(button):not(input):not(textarea):not([role="button"]),
+  [role="dialog"] [class*="rounded-"][class*="border"]:not([data-slot]):not(button):not(input):not(textarea):not([role="button"]) {
+    border-radius: 9px;
+  }
+
+  /*
+    页面竖向节奏。各页外层普遍是 space-y-6（24px），在 393px 宽的屏幕上，
+    四五个区块之间光空档就是一屏的六分之一。
+  */
+  .workspace-main > .route-content-enter > div > .space-y-6 > * + * { margin-top: 14px; }
+  .workspace-main .space-y-4 > * + * { margin-top: 10px; }
+  .workspace-main .space-y-3 > * + * { margin-top: 8px; }
+
+  /*
+    列表卡底部那排操作图标。每张卡 5 个 44px 的图标按钮独占一行 —— 实测
+    130px，而一张紧凑规则卡总共才 500px。收成一行 34px 高的图标，命中区
+    靠 ::after 往外撑，不占版面（同一批图标之间本来就有 28px 以上空当）。
+  */
+  .action-card-footer { padding-top: 6px; margin-top: 2px; gap: 2px; }
+  .action-card-footer [data-slot="button"] { position: relative; height: 30px; min-height: 30px; width: 34px; min-width: 34px; }
+  .action-card-footer [data-slot="button"]::after { content: ""; position: absolute; inset: -7px -5px; }
+  .action-card-footer [data-slot="button"] > svg { width: 15px; height: 15px; }
+
+  /*
+    对话框：rounded-2xl(16px) + p-4，而真正吃掉高度的是 gap-5 —— 面板是个
+    grid，每两个直接子元素之间恒定 20px。字段一多，光间距就比字段本身高。
+  */
+  .dialog-panel { border-radius: 13px; padding: 14px; gap: 12px; }
+  [data-slot="dialog-title"] { font-size: 16px; }
+  [data-slot="dialog-description"] { font-size: 12.5px; }
+  [data-slot="dialog-footer"] { padding-top: 10px; }
+
+  /*
+    表单的竖向节奏。标签 16px、输入框 44px，两者之间和字段之间原来各留
+    8px + 20px；字段一多，间距加起来比字段本身还高。标签贴紧自己的输入框，
+    字段之间留够就行。
+  */
+  /*
+    「选择一条线路 + 它是什么类型」这一组。sm 以下栅格塌成单列，于是那个
+    只读的类型徽标（iptables / gost / ForwardX）独占一整行，而且
+    `h-9 justify-center` 让它和上面的下拉框长得一模一样 —— 看上去是个能点的
+    控件，点下去什么也不会发生。
+
+    它是「你选中的那条线路是什么类型」这类元数据，不是一个字段。收到左边
+    贴着走，宽度按内容，高度降到标签那一档。
+  */
+  .route-picker-row > [data-slot="badge"] { justify-self: start; height: 22px; padding-inline: 7px; font-size: 11px; }
+
+  [data-slot="form-field"] { gap: 5px; }
+  [data-slot="form-field"] > label { font-size: 12.5px; }
+  .workspace-main [data-slot="label"], [role="dialog"] [data-slot="label"] { font-size: 12.5px; }
+  /*
+    顶栏那一行已经写着页面名字，所以 H1 在手机上只留给读屏 —— 文档大纲、
+    「跳到主要内容」和 aria 关系都还指得到它，屏幕上不再重复一遍。
+    整个标题块（H1 + 主操作）原来吃掉 150px。
+  */
+  .workspace-header-title { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .workspace-header { gap: 0; margin-bottom: 4px; }
+  .workspace-header:not(:has(.workspace-header-meta)) { display: none; }
+  .workspace-header-actions { display: none; }
+  .workspace-header-meta { margin-top: 0; font-size: 12px; }
+  /* 顶栏里的主操作：图标按钮维持可点面积，文字按钮收成一行小字。 */
+  /*
+    顶栏里的主操作不能换行。「1 台发现新版本」这类长文案一折行就把顶栏顶到
+    三行高（实测 125px），比它替掉的标题块还占地方。宽度给上限、超出省略。
+  */
+  #workspace-topbar-actions { flex-wrap: nowrap; overflow: hidden; }
+  #workspace-topbar-actions > * { min-width: 0; }
+  /*
+    对槽位里的所有直接子元素生效，不只是按钮 —— 「1 台发现新版本」是一个
+    badge，第一版只写了 [data-slot="button"]，于是它照样折成三行、把顶栏
+    顶到 63px。
+  */
+  #workspace-topbar-actions > :is([data-slot="button"], [data-slot="badge"], a, button) {
+    max-width: 38vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /*
+    状态徽标不该出现在顶栏 —— 顶栏放的是这一页能做的事。传进 actions 的状态
+    在 393px 宽度下会折行或被两头截断（「1 台发现新版本」实测折成三行，把顶栏
+    从 48px 顶到 63px）。正确的位置是页面的状态行，和「0 / 4 在线」并排。
+    这里兜住剩下还这么传的调用方，免得又把顶栏顶高。
+  */
+  #workspace-topbar-actions > [data-slot="badge"] { display: none; }
+  #workspace-topbar-actions [data-slot="button"] { height: 32px; padding-inline: 10px; font-size: 13px; box-shadow: none; }
+  #workspace-topbar-actions [data-slot="button"] > svg { width: 15px; height: 15px; }
   .workspace-command-footer { font-size: 10px; }
 }
 @media (pointer: coarse) { .workspace-nav-search, .public-journey-switch button { min-height: 44px; } }
@@ -140,11 +282,16 @@
 [data-slot="dialog-header"] p { line-height: 1.6; }
 [data-slot="table"] th { color: var(--fx-muted); font-weight: 600; }
 [data-slot="table"] tbody tr:last-child { border-bottom: 0; }
-.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 200px; padding: 32px 20px; text-align: center; }
-.empty-state-icon { padding: 12px; border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-subtle); color: var(--fx-muted); }
-.empty-state-icon svg { width: 24px; height: 24px; margin: 0; opacity: 1; }
-.empty-state h2 { font-size: 16px; font-weight: 600; color: var(--fx-text); }
-.empty-state p { max-width: 360px; font-size: 13px; line-height: 1.7; color: var(--fx-muted); }
+/*
+  空状态原来是 200px 最小高度 + 32px 内边距 + 一个带边框的大图标方块 —— 一整张
+  屏幕的三分之一，只为了说一句「暂无出口组」。它是「这里现在没东西」，不是这一页
+  的主角。
+*/
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 0; padding: 20px 16px; text-align: center; }
+.empty-state-icon { padding: 8px; border: 1px solid var(--fx-stroke); border-radius: 9px; background: var(--fx-subtle); color: var(--fx-muted); }
+.empty-state-icon svg { width: 18px; height: 18px; margin: 0; opacity: 1; }
+.empty-state h2 { font-size: 14px; font-weight: 600; color: var(--fx-text); }
+.empty-state p { max-width: 340px; font-size: 12px; line-height: 1.6; color: var(--fx-muted); }
 .public-home-shell { font-family: var(--fx-font); background: var(--fx-surface); }
 .public-home-container { width: 100%; max-width: 1152px; margin-inline: auto; padding-inline: 24px; }
 .public-home-nav { border-bottom: 1px solid var(--fx-stroke); background: var(--fx-surface); }
