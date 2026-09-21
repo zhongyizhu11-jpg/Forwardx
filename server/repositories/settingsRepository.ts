@@ -88,6 +88,35 @@ export async function getSetting(key: string): Promise<string | null> {
   return r[0]?.value ?? null;
 }
 
+/**
+ * 这一批键里，哪些已经存着非空值。
+ *
+ * 提醒类任务原来是「一个人问一次库」：到期提醒、流量提醒、主机流量、主机续费、
+ * 落地节点、落地端口各来一次 getSetting(精确键)，全是单行主键查。一千个用户加
+ * 一千台机器，一轮就是一万两千次往返，而这一轮每六小时跑一次、天天跑。
+ *
+ * 这些键全是当天的日标记，值只有「sent」一种，所以一次 IN 问清就够了 ——
+ * 剩下的判断在内存里做。分批 200 个：一条 IN 里塞几万个参数，MySQL 那边会直接拒绝。
+ *
+ * 值为空的行按「没发过」算，和原来 `!(await getSetting(key))` 的口径一致。
+ */
+export async function getSentSettingKeys(keys: string[]): Promise<Set<string>> {
+  const sent = new Set<string>();
+  const db = await getDb();
+  if (!db) return sent;
+  const unique = Array.from(new Set(keys.filter((key) => typeof key === "string" && key.length > 0)));
+  for (let i = 0; i < unique.length; i += 200) {
+    const batch = unique.slice(i, i + 200);
+    const rows = await db.select({ key: systemSettings.key, value: systemSettings.value })
+      .from(systemSettings)
+      .where(inArray(systemSettings.key, batch));
+    for (const row of rows as Array<{ key: string; value: string | null }>) {
+      if (row.value) sent.add(String(row.key));
+    }
+  }
+  return sent;
+}
+
 /** 批量读取所有系统设置 */
 export async function getAllSettings(): Promise<Record<string, string | null>> {
   const db = await getDb();

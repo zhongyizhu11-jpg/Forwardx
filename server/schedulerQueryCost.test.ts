@@ -33,6 +33,29 @@ import test from "node:test";
  *
  * 这条不修那个问题（计费这块不该凭一轮测量就动），只**把账钉住**：稳态的
  * 每用户成本只许降不许涨。
+ *
+ * ---
+ *
+ * 另外七个任务后来也逐个铺了数据量出来（过期订阅、过期用户、卡住的自检、配好的
+ * 邮件与 Telegram、到量的主机/节点/端口、过了停机日的机器）。稳态成本如下，
+ * 用户数 = 主机数 = 落地节点数 = 落地端口数 = N：
+ *
+ *     任务                            周期     N=4    N=16
+ *     runSubscriptionExpirationCheck   1 小时     3       3
+ *     runExpirationCheck               1 小时     1       1
+ *     runSelfTestTimeoutSweep          按需       1       1
+ *     runTcpingCleanup                 1 小时    11      11
+ *     runHostDdnsReconcile             5 分钟     1       1
+ *     runHostBillingCycleExtension     5 分钟     1       1
+ *     runEmailReminders                6 小时    31     103   ← 按规模涨
+ *     runTelegramReminders             6 小时    30     102   ← 按规模涨
+ *
+ * 前六个都是常数，符合预期：它们的首轮成本确实按规模走（每份到期订阅约 22 次、
+ * 每个到期用户 3 次、每条超时自检 2 次写、每台到期机器 1 次写），但那是**一次性**
+ * 的 —— 做完之后那一行就不再满足筛选条件了。
+ *
+ * 只有两路提醒是每轮都重新付一遍。它们已经修掉，由 server/reminderSweepCost.test.ts
+ * 把「常数」这件事钉住 —— 那条测试同时盯着六条提醒路一条都不能少。
  */
 
 /*

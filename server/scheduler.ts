@@ -11,6 +11,7 @@ import {
   proxyTrafficReminderTail,
   proxyTrafficReminderTitle,
 } from "./proxyTrafficReminders";
+import { dispatchReminders, type PendingReminder } from "./reminderDispatch";
 import { sendTelegramMessage } from "./telegramBot";
 import { recordTunnelHopTestResult } from "./tunnelHopTestState";
 import { recordHopTestResult } from "./hopTestState";
@@ -417,6 +418,61 @@ function dayKey(prefix: string, userId: number) {
   return `${prefix}:${userId}:${new Date().toISOString().slice(0, 10)}`;
 }
 
+/**
+ * 用户自己的两条提醒：套餐快到期、流量快用完。
+ *
+ * 只算「该发什么」，不发 —— 发不发由 dispatchReminders 按当天的去重键统一决定。
+ */
+function planUserEmailReminders(
+  config: Awaited<ReturnType<typeof getEmailConfig>>,
+  users: any[],
+  now: number,
+  reminderDays: number[],
+): PendingReminder[] {
+  const pending: PendingReminder[] = [];
+  for (const user of users) {
+    if (!user.email) continue;
+
+    if (config.expiryReminder && user.expiresAt) {
+      const expiresAt = new Date(user.expiresAt).getTime();
+      const daysLeft = Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000));
+      if (shouldSendExpiryReminder(daysLeft, reminderDays)) {
+        pending.push({
+          key: dayKey(`emailReminder:expiry:${daysLeft}`, user.id),
+          send: async () => {
+            await sendMail({
+              to: user.email,
+              subject: "ForwardX 套餐到期提醒",
+              text: daysLeft === 0
+                ? "你的 ForwardX 套餐今天到期，到期后订阅与转发都会停止，请及时续费或联系管理员。"
+                : `你的 ForwardX 套餐将在 ${daysLeft} 天后到期，请及时续费或联系管理员。`,
+            });
+          },
+        });
+      }
+    }
+
+    if (config.trafficReminder && Number(user.trafficLimit || 0) > 0) {
+      const used = Number(user.trafficUsed || 0);
+      const limit = Number(user.trafficLimit || 0);
+      const leftPercent = Math.max(0, Math.round(((limit - used) / limit) * 100));
+      if (leftPercent <= config.trafficReminderThreshold) {
+        pending.push({
+          key: dayKey("emailReminder:traffic", user.id),
+          send: async () => {
+            await sendMail({
+              to: user.email,
+              subject: "ForwardX 流量余量提醒",
+              text: `你的 ForwardX 流量剩余约 ${leftPercent}%，请及时续费或联系管理员。`,
+            });
+          },
+        });
+      }
+    }
+  }
+  return pending;
+}
+
 export async function runEmailReminders() {
   try {
     const config = await getEmailConfig();
@@ -425,43 +481,11 @@ export async function runEmailReminders() {
     const now = Date.now();
     const reminderDays = parseExpiryReminderDays(await db.getSetting("expiryReminderDays"));
 
-    for (const user of users as any[]) {
-      if (!user.email) continue;
-
-      if (config.expiryReminder && user.expiresAt) {
-        const expiresAt = new Date(user.expiresAt).getTime();
-        const daysLeft = Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000));
-        const key = dayKey(`emailReminder:expiry:${daysLeft}`, user.id);
-        if (shouldSendExpiryReminder(daysLeft, reminderDays) && !(await db.getSetting(key))) {
-          await sendMail({
-            to: user.email,
-            subject: "ForwardX 套餐到期提醒",
-            text: daysLeft === 0
-              ? "你的 ForwardX 套餐今天到期，到期后订阅与转发都会停止，请及时续费或联系管理员。"
-              : `你的 ForwardX 套餐将在 ${daysLeft} 天后到期，请及时续费或联系管理员。`,
-          });
-          await db.setSetting(key, "sent");
-        }
-      }
-
-      if (config.trafficReminder && Number(user.trafficLimit || 0) > 0) {
-        const used = Number(user.trafficUsed || 0);
-        const limit = Number(user.trafficLimit || 0);
-        const leftPercent = Math.max(0, Math.round(((limit - used) / limit) * 100));
-        const key = dayKey("emailReminder:traffic", user.id);
-        if (leftPercent <= config.trafficReminderThreshold && !(await db.getSetting(key))) {
-          await sendMail({
-            to: user.email,
-            subject: "ForwardX 流量余量提醒",
-            text: `你的 ForwardX 流量剩余约 ${leftPercent}%，请及时续费或联系管理员。`,
-          });
-          await db.setSetting(key, "sent");
-        }
-      }
-    }
-
-    await runHostEmailReminders(users as any[], now);
-    await runProxyTrafficEmailReminders(users as any[]);
+    await dispatchReminders([
+      ...planUserEmailReminders(config, users as any[], now, reminderDays),
+      ...await planHostEmailReminders(users as any[], now),
+      ...await planProxyTrafficEmailReminders(users as any[]),
+    ]);
   } catch (error) {
     console.error("[Scheduler] Email reminder error:", error);
   }
@@ -477,13 +501,15 @@ export async function runEmailReminders() {
  * 「该不该提醒」和 Telegram 那一路共用 shared/hostReminder，两个渠道不会算出不同的
  * 结论；日标记前缀分开，所以两边各发一次，不会互相顶掉。
  */
-async function runHostEmailReminders(users: any[], now: number) {
+async function planHostEmailReminders(users: any[], now: number): Promise<PendingReminder[]> {
   const usersById = new Map(users.map((user) => [Number(user.id), user]));
   const hostRows = await db.getHosts();
   const trafficHosts = (hostRows as any[]).filter((host) =>
     !!host.telegramTrafficAlertEnabled && Number(host.trafficLimit || 0) > 0);
   const renewalHosts = (hostRows as any[]).filter((host) => !!host.telegramRenewalReminderEnabled && !!host.stoppedAt);
-  if (trafficHosts.length === 0 && renewalHosts.length === 0) return;
+  if (trafficHosts.length === 0 && renewalHosts.length === 0) return [];
+
+  const pending: PendingReminder[] = [];
 
   if (trafficHosts.length > 0) {
     const rows = await db.getHostTrafficSummary(trafficHosts.map((host) => Number(host.id)));
@@ -496,21 +522,23 @@ async function runHostEmailReminders(users: any[], now: number) {
         hostTrafficUsageBytes(trafficByHostId.get(Number(host.id)), host.trafficMeasureMode),
       );
       if (!plan.due) continue;
-      const key = dayKey(`emailReminder:hostTraffic:${host.id}`, owner.id);
-      if (await db.getSetting(key)) continue;
-      await sendMail({
-        to: owner.email,
-        subject: "ForwardX 主机流量提醒",
-        text: [
-          `主机：${host.name || `#${host.id}`}`,
-          `剩余约 ${plan.leftPercent}%`,
-          `已用：${formatBytes(plan.usedBytes)} / ${formatBytes(plan.limitBytes)}`,
-          `计算方式：${hostTrafficMeasureModeLabel(host.trafficMeasureMode)}`,
-          "",
-          "流量跑超之后这台机器上的转发和落地节点会一起受影响，请及时处理。",
-        ].join("\n"),
+      pending.push({
+        key: dayKey(`emailReminder:hostTraffic:${host.id}`, owner.id),
+        send: async () => {
+          await sendMail({
+            to: owner.email,
+            subject: "ForwardX 主机流量提醒",
+            text: [
+              `主机：${host.name || `#${host.id}`}`,
+              `剩余约 ${plan.leftPercent}%`,
+              `已用：${formatBytes(plan.usedBytes)} / ${formatBytes(plan.limitBytes)}`,
+              `计算方式：${hostTrafficMeasureModeLabel(host.trafficMeasureMode)}`,
+              "",
+              "流量跑超之后这台机器上的转发和落地节点会一起受影响，请及时处理。",
+            ].join("\n"),
+          });
+        },
       });
-      await db.setSetting(key, "sent");
     }
   }
 
@@ -519,27 +547,31 @@ async function runHostEmailReminders(users: any[], now: number) {
     if (!owner?.email) continue;
     const renewal = planHostRenewalReminder(host, now);
     if (!renewal.due) continue;
-    // 带上到期时间戳：续了一期之后同样的提醒要能对新周期再发一次。
-    const key = dayKey(
-      `emailReminder:hostRenewal:${host.id}:${Math.floor(renewal.stoppedAtMs / 1000)}:${renewal.daysLeft}`,
-      owner.id,
-    );
-    if (await db.getSetting(key)) continue;
-    await sendMail({
-      to: owner.email,
-      subject: "ForwardX 主机续费提醒",
-      text: [
-        `主机：${host.name || `#${host.id}`}`,
-        renewal.daysLeft === 0
-          ? "今天到期停机。"
-          : `还有 ${renewal.daysLeft} 天到期停机。`,
-        `到期时间：${new Date(renewal.stoppedAtMs).toLocaleDateString("zh-CN")}`,
-        "",
-        "机器停了之后，它上面的转发和落地节点会一起断。",
-      ].join("\n"),
+    pending.push({
+      // 带上到期时间戳：续了一期之后同样的提醒要能对新周期再发一次。
+      key: dayKey(
+        `emailReminder:hostRenewal:${host.id}:${Math.floor(renewal.stoppedAtMs / 1000)}:${renewal.daysLeft}`,
+        owner.id,
+      ),
+      send: async () => {
+        await sendMail({
+          to: owner.email,
+          subject: "ForwardX 主机续费提醒",
+          text: [
+            `主机：${host.name || `#${host.id}`}`,
+            renewal.daysLeft === 0
+              ? "今天到期停机。"
+              : `还有 ${renewal.daysLeft} 天到期停机。`,
+            `到期时间：${new Date(renewal.stoppedAtMs).toLocaleDateString("zh-CN")}`,
+            "",
+            "机器停了之后，它上面的转发和落地节点会一起断。",
+          ].join("\n"),
+        });
+      },
     });
-    await db.setSetting(key, "sent");
   }
+
+  return pending;
 }
 
 /**
@@ -549,27 +581,31 @@ async function runHostEmailReminders(users: any[], now: number) {
  * Telegram 那一路遍历的是同一个清单，只是日标记前缀不同，所以两个渠道各发一次，
  * 不会互相顶掉。
  */
-async function runProxyTrafficEmailReminders(users: any[]) {
+async function planProxyTrafficEmailReminders(users: any[]): Promise<PendingReminder[]> {
   const usersById = new Map(users.map((user) => [Number(user.id), user]));
+  const pending: PendingReminder[] = [];
   for (const subject of await collectDueProxyTrafficReminders()) {
     const owner = usersById.get(subject.userId);
     if (!owner?.email) continue;
-    // 键里带状态：先发过「快满」，当天真跑满时那一封更要紧，不能被顶掉。
-    const key = dayKey(`emailReminder:${subject.dedupeKey}`, owner.id);
-    if (await db.getSetting(key)) continue;
     const { plan } = subject;
-    await sendMail({
-      to: owner.email,
-      subject: proxyTrafficReminderTitle(subject),
-      text: [
-        `${subject.kindText}：${subject.label}`,
-        `已用：${formatBytes(plan.usedBytes)} / ${formatBytes(plan.limitBytes)}（${plan.usedPercent}%）`,
-        "",
-        proxyTrafficReminderTail(subject),
-      ].join("\n"),
+    pending.push({
+      // 键里带状态：先发过「快满」，当天真跑满时那一封更要紧，不能被顶掉。
+      key: dayKey(`emailReminder:${subject.dedupeKey}`, owner.id),
+      send: async () => {
+        await sendMail({
+          to: owner.email,
+          subject: proxyTrafficReminderTitle(subject),
+          text: [
+            `${subject.kindText}：${subject.label}`,
+            `已用：${formatBytes(plan.usedBytes)} / ${formatBytes(plan.limitBytes)}（${plan.usedPercent}%）`,
+            "",
+            proxyTrafficReminderTail(subject),
+          ].join("\n"),
+        });
+      },
     });
-    await db.setSetting(key, "sent");
   }
+  return pending;
 }
 
 export async function runTelegramReminders() {
@@ -592,6 +628,7 @@ export async function runTelegramReminders() {
     const usersById = new Map((users as any[]).map((user) => [Number(user.id), user]));
     const now = Date.now();
     const reminderDays = parseExpiryReminderDays(settings.expiryReminderDays);
+    const pending: PendingReminder[] = [];
 
     for (const user of users as any[]) {
       if (!user.telegramId) continue;
@@ -599,19 +636,22 @@ export async function runTelegramReminders() {
       if (expiryReminder && user.expiresAt) {
         const expiresAt = new Date(user.expiresAt).getTime();
         const daysLeft = Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000));
-        const key = dayKey(`telegramReminder:expiry:${daysLeft}`, user.id);
-        if (shouldSendExpiryReminder(daysLeft, reminderDays) && !(await db.getSetting(key))) {
-          await sendTelegramMessage(
-            user.telegramId,
-            [
-              "ForwardX 到期提醒",
-              "",
-              daysLeft === 0 ? "你的套餐今天到期。" : `你的套餐将在 ${daysLeft} 天后到期。`,
-              `到期时间：${new Date(user.expiresAt).toLocaleDateString("zh-CN")}`,
-              "请及时续费或联系管理员。",
-            ].join("\n"),
-          );
-          await db.setSetting(key, "sent");
+        if (shouldSendExpiryReminder(daysLeft, reminderDays)) {
+          pending.push({
+            key: dayKey(`telegramReminder:expiry:${daysLeft}`, user.id),
+            send: async () => {
+              await sendTelegramMessage(
+                user.telegramId,
+                [
+                  "ForwardX 到期提醒",
+                  "",
+                  daysLeft === 0 ? "你的套餐今天到期。" : `你的套餐将在 ${daysLeft} 天后到期。`,
+                  `到期时间：${new Date(user.expiresAt).toLocaleDateString("zh-CN")}`,
+                  "请及时续费或联系管理员。",
+                ].join("\n"),
+              );
+            },
+          });
         }
       }
 
@@ -619,20 +659,23 @@ export async function runTelegramReminders() {
         const used = Number(user.trafficUsed || 0);
         const limit = Number(user.trafficLimit || 0);
         const leftPercent = Math.max(0, Math.round(((limit - used) / limit) * 100));
-        const key = dayKey("telegramReminder:traffic", user.id);
-        if (leftPercent <= trafficReminderThreshold && !(await db.getSetting(key))) {
-          await sendTelegramMessage(
-            user.telegramId,
-            [
-              "ForwardX 流量提醒",
-              "",
-              `你的流量剩余约 ${leftPercent}%。`,
-              `已用：${formatBytes(used)}`,
-              `总量：${formatBytes(limit)}`,
-              "请及时续费或联系管理员。",
-            ].join("\n"),
-          );
-          await db.setSetting(key, "sent");
+        if (leftPercent <= trafficReminderThreshold) {
+          pending.push({
+            key: dayKey("telegramReminder:traffic", user.id),
+            send: async () => {
+              await sendTelegramMessage(
+                user.telegramId,
+                [
+                  "ForwardX 流量提醒",
+                  "",
+                  `你的流量剩余约 ${leftPercent}%。`,
+                  `已用：${formatBytes(used)}`,
+                  `总量：${formatBytes(limit)}`,
+                  "请及时续费或联系管理员。",
+                ].join("\n"),
+              );
+            },
+          });
         }
       }
     }
@@ -649,23 +692,25 @@ export async function runTelegramReminders() {
         const traffic = trafficByHostId.get(Number(host.id));
         // 「该不该提醒」统一由 shared/hostReminder 判定，邮件那一路用的是同一份。
         const plan = planHostTrafficReminder(host, hostTrafficUsageBytes(traffic, host.trafficMeasureMode));
+        if (!plan.due) continue;
         const { leftPercent, usedBytes: used, limitBytes: limit } = plan;
-        const key = dayKey(`telegramReminder:hostTraffic:${host.id}`, owner.id);
-        if (plan.due && !(await db.getSetting(key))) {
-          await sendTelegramMessage(
-            owner.telegramId,
-            [
-              "ForwardX 主机流量提醒",
-              "",
-              `主机：${escapeHtmlLocal(host.name || `#${host.id}`)}`,
-              `剩余约 ${leftPercent}%`,
-              `已用：${formatBytes(used)}`,
-              `总量：${formatBytes(limit)}`,
-              `计算方式：${hostTrafficMeasureModeLabel(host.trafficMeasureMode)}`,
-            ].join("\n"),
-          );
-          await db.setSetting(key, "sent");
-        }
+        pending.push({
+          key: dayKey(`telegramReminder:hostTraffic:${host.id}`, owner.id),
+          send: async () => {
+            await sendTelegramMessage(
+              owner.telegramId,
+              [
+                "ForwardX 主机流量提醒",
+                "",
+                `主机：${escapeHtmlLocal(host.name || `#${host.id}`)}`,
+                `剩余约 ${leftPercent}%`,
+                `已用：${formatBytes(used)}`,
+                `总量：${formatBytes(limit)}`,
+                `计算方式：${hostTrafficMeasureModeLabel(host.trafficMeasureMode)}`,
+              ].join("\n"),
+            );
+          },
+        });
       }
     }
 
@@ -676,21 +721,23 @@ export async function runTelegramReminders() {
     for (const subject of await collectDueProxyTrafficReminders()) {
       const owner = usersById.get(subject.userId);
       if (!owner?.telegramId) continue;
-      const key = dayKey(`telegramReminder:${subject.dedupeKey}`, owner.id);
-      if (await db.getSetting(key)) continue;
       const { plan } = subject;
-      await sendTelegramMessage(
-        owner.telegramId,
-        [
-          proxyTrafficReminderTitle(subject),
-          "",
-          `${subject.kindText}：${escapeHtmlLocal(subject.label)}`,
-          `已用：${formatBytes(plan.usedBytes)} / ${formatBytes(plan.limitBytes)}（${plan.usedPercent}%）`,
-          "",
-          proxyTrafficReminderTail(subject),
-        ].join("\n"),
-      );
-      await db.setSetting(key, "sent");
+      pending.push({
+        key: dayKey(`telegramReminder:${subject.dedupeKey}`, owner.id),
+        send: async () => {
+          await sendTelegramMessage(
+            owner.telegramId,
+            [
+              proxyTrafficReminderTitle(subject),
+              "",
+              `${subject.kindText}：${escapeHtmlLocal(subject.label)}`,
+              `已用：${formatBytes(plan.usedBytes)} / ${formatBytes(plan.limitBytes)}（${plan.usedPercent}%）`,
+              "",
+              proxyTrafficReminderTail(subject),
+            ].join("\n"),
+          );
+        },
+      });
     }
 
     for (const host of hostRenewalReminderHosts as any[]) {
@@ -703,21 +750,25 @@ export async function runTelegramReminders() {
       // Include the expiry timestamp so a cycle extension can send the same
       // configured reminder again for the new billing period.
       const expiryKey = Math.floor(stoppedAt / 1000);
-      const key = dayKey(`telegramReminder:hostRenewal:${host.id}:${expiryKey}:${daysLeft}`, owner.id);
-      if (await db.getSetting(key)) continue;
-      await sendTelegramMessage(
-        owner.telegramId,
-        [
-          "ForwardX 主机续费提醒",
-          "",
-          `主机：${escapeHtmlLocal(host.name || `#${host.id}`)}`,
-          `剩余：${daysLeft} 天`,
-          `到期时间：${new Date(host.stoppedAt).toLocaleDateString("zh-CN")}`,
-          "请及时续费或联系管理员。",
-        ].join("\n"),
-      );
-      await db.setSetting(key, "sent");
+      pending.push({
+        key: dayKey(`telegramReminder:hostRenewal:${host.id}:${expiryKey}:${daysLeft}`, owner.id),
+        send: async () => {
+          await sendTelegramMessage(
+            owner.telegramId,
+            [
+              "ForwardX 主机续费提醒",
+              "",
+              `主机：${escapeHtmlLocal(host.name || `#${host.id}`)}`,
+              `剩余：${daysLeft} 天`,
+              `到期时间：${new Date(host.stoppedAt).toLocaleDateString("zh-CN")}`,
+              "请及时续费或联系管理员。",
+            ].join("\n"),
+          );
+        },
+      });
     }
+
+    await dispatchReminders(pending);
   } catch (error) {
     console.error("[Scheduler] Telegram reminder error:", error);
   }
