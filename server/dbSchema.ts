@@ -269,6 +269,7 @@ const tables: TableDef[] = [
       c("failoverMinHoldSeconds", "int", { notNull: true, default: 0 }),
       c("failoverPinnedIndex", "int"), c("failoverPinnedUntil", "epoch"),
       c("failoverPreferFastest", "bool", { notNull: true, default: false }),
+      c("failoverActiveTarget", "text"), c("failoverActiveAt", "epoch"),
       c("failoverStrategy", "varchar", { length: 32, notNull: true, default: "fallback" }),
       c("failoverSeconds", "int", { notNull: true, default: 60 }), c("recoverSeconds", "int", { notNull: true, default: 120 }),
       c("autoFailback", "bool", { notNull: true, default: true }),

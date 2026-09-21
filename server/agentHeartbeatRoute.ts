@@ -1830,6 +1830,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       const hostRuleIds = new Set(
         (rawRules as any[]).map((rule: any) => Number(rule?.id || 0)).filter((id: number) => id > 0),
       );
+      // 一次心跳里同一条规则可能连切几次，只有最后一次才是「现在」。
+      const switchedRuleLines = new Map<number, { target: string; at: number }>();
       for (const rawEvent of failoverEvents) {
         const ruleId = Math.max(0, Math.floor(Number(rawEvent?.ruleId || 0)));
         if (!ruleId || !hostRuleIds.has(ruleId)) continue;
@@ -1848,6 +1850,30 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           `[Failover] host=${host.id} rule=${ruleId} ${kind} ${transition}`
             + `${reason ? ` reason=${reason}` : ""}${latencyMs > 0 ? ` latencyMs=${latencyMs}` : ""}`,
         );
+        /*
+          只有 switch 改变「现在走哪条」。unhealthy / recovered 说的是某一条
+          出站的健康翻转 —— 一条备线恢复了不等于流量就回到它身上（最短驻留、
+          人工钉住都可能压着不切），拿它去写当前线路会显示成一个没有发生过的
+          切换。
+
+          写进库而不是只写日志：切换是数据面毫秒级完成的，不经面板，所以面板
+          原先只能事后去日志里翻。规则列表上要显示「这条现在走主线还是备线」，
+          就得有一个按规则存的地方。
+        */
+        if (kind === "switch") {
+          switchedRuleLines.set(ruleId, {
+            target: toTarget,
+            at: Math.max(0, Math.floor(Number(rawEvent?.occurredAt || 0))) || Math.floor(Date.now() / 1000),
+          });
+        }
+      }
+      for (const [ruleId, line] of switchedRuleLines) {
+        try {
+          await db.updateForwardRuleFailoverActiveLine(ruleId, line.target, line.at);
+        } catch (error) {
+          // 一条规则写不进去不该让整个心跳失败 —— 心跳还带着流量和运行状态。
+          appendPanelLog("warn", `[Failover] host=${host.id} rule=${ruleId} 当前线路写入失败: ${String((error as any)?.message || error)}`);
+        }
       }
     }
     const actions: any[] = [];

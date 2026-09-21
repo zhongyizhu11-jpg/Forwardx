@@ -84,6 +84,8 @@ import {
   RULE_TRANSFER_MAX_FILE_SIZE,
   RULE_TRANSFER_MAX_IMPORT_COUNT,
   parseRuleTransferFile,
+  normalizeFailoverStrategy,
+  type FailoverStrategy,
   type RuleTransferFile,
   type RuleTransferFileRule,
 } from "@/lib/ruleTransfer";
@@ -119,6 +121,7 @@ import {
   parseFailoverTargets,
   type FailoverTarget,
 } from "@shared/failoverTargets";
+import { describeFailoverLineDisplay, type FailoverLineTone } from "@/lib/failoverLineDisplay";
 import {
   forwardRuleFormBlocker,
   isAdvancedSectionBlocker,
@@ -264,7 +267,6 @@ type RuleFormData = {
 
 type ProxyProtocolVersion = 1 | 2;
 
-type FailoverStrategy = "fallback" | "round_robin" | "random" | "ip_hash";
 type FailoverMode = "disabled" | FailoverStrategy;
 
 const failoverModeOptions: Array<{ value: FailoverMode; label: string }> = [
@@ -280,12 +282,6 @@ const failoverStrategyLabels: Record<FailoverStrategy, string> = {
   random: "随机",
   ip_hash: "IP哈希",
 };
-const normalizeFailoverStrategy = (value: unknown): FailoverStrategy => {
-  return value === "round_robin" || value === "random" || value === "ip_hash" || value === "fallback"
-    ? value
-    : "fallback";
-};
-
 const defaultForm: RuleFormData = {
   hostId: null,
   name: "",
@@ -5926,6 +5922,34 @@ function RulesContent() {
     );
   };
 
+  /*
+    规则行上的主备状态。
+    原来这里只有一个「主备 2」的计数徽标 —— 它回答的是「配了几条」，而人要
+    知道的是「现在走的哪条」。配了主备和没配在列表上几乎长一样，功能配完就
+    看不见了，这正是「主备到底在哪儿用」说不清楚的地方。
+  */
+  const failoverToneClass: Record<FailoverLineTone, string> = {
+    idle: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
+    backup: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    warn: "border-destructive/40 text-destructive",
+    unreported: "border-border text-muted-foreground",
+  };
+
+  const renderFailoverLineBadge = (rule: any) => {
+    const display = describeFailoverLineDisplay(rule);
+    if (!display) return null;
+    return (
+      <Badge
+        variant="outline"
+        className={cn("h-5 shrink-0 gap-1 px-1.5 text-[10px] font-medium", failoverToneClass[display.tone])}
+        title={display.title}
+      >
+        <GitBranch className="h-3 w-3" aria-hidden="true" />
+        {display.text}
+      </Badge>
+    );
+  };
+
   const renderRouteBadge = (rule: any, compactRow = false) => {
     const tunnel = rule.forwardType === "gost" && rule.tunnelId ? tunnelById.get(Number(rule.tunnelId)) : null;
     const group = rule.forwardGroupId ? forwardGroupById.get(Number(rule.forwardGroupId)) : null;
@@ -6451,6 +6475,7 @@ function RulesContent() {
             </div>
 
             <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+              {renderFailoverLineBadge(rule)}
               {renderRouteBadge(rule)}
               <Badge variant="secondary" className="h-5 whitespace-nowrap px-1.5 text-[10px]">
                 {formatForwardRuleProtocol(rule.protocol)}

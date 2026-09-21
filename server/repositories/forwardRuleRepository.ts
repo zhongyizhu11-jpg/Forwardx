@@ -1077,6 +1077,26 @@ export async function reorderForwardRules(category: ForwardRuleSortCategory, ids
   }
 }
 
+/**
+ * 只写「当前走哪条出站」这两列。
+ *
+ * 刻意不走 updateForwardRule：那条会写配置审计、并把 updatedAt 顶起来。
+ * 主备切换是数据面的日常事件（一条线抖一下就切一次），当成配置变更记会把
+ * 审计流水淹掉，而 updatedAt 在这个项目里是「这条规则被人改过」的意思，
+ * 让 Agent 自己的上报去顶它，等于规则自己改自己。
+ */
+export async function updateForwardRuleFailoverActiveLine(id: number, target: string, atSeconds: number) {
+  const db = await getDb();
+  if (!db) return;
+  const value = String(target || "").trim().slice(0, 256);
+  if (!value) return;
+  // epoch 列在各方言下统一按 Date 写入（sqlite 存整数秒，由 drizzle 转换）。
+  const seconds = Math.max(0, Math.floor(Number(atSeconds) || 0)) || Math.floor(Date.now() / 1000);
+  await db.update(forwardRules)
+    .set({ failoverActiveTarget: value, failoverActiveAt: new Date(seconds * 1000) } as any)
+    .where(eq(forwardRules.id, id));
+}
+
 export async function updateForwardRule(id: number, data: Partial<InsertForwardRule>) {
   const db = await getDb();
   if (!db) return;

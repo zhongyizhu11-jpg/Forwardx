@@ -395,6 +395,14 @@ export const forwardRules = table("forward_rules", {
   failoverPinnedUntil: epoch("failoverPinnedUntil"),
   // 按实测延迟自动择优（只在主备模式下生效）。
   failoverPreferFastest: boolean("failoverPreferFastest").notNull().default(false),
+  /*
+    Agent 当前实际在走的那条出站（`地址:端口`），随心跳上报。
+    切换本身是数据面做的、毫秒级、不经面板，所以面板原先只能从日志里
+    事后翻 —— 规则列表上看不出「这条现在走的是主线还是备线」，等于配了
+    主备也不知道它有没有在起作用。这两列就是给列表用的。
+  */
+  failoverActiveTarget: text("failoverActiveTarget"),
+  failoverActiveAt: epoch("failoverActiveAt"),
   failoverSeconds: int("failoverSeconds").notNull().default(60),
   recoverSeconds: int("recoverSeconds").notNull().default(120),
   autoFailback: boolean("autoFailback").notNull().default(true),
