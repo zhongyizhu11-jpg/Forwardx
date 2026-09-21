@@ -8,6 +8,7 @@ import {
   failoverScheduleTargetIndexAt,
   parseFailoverSchedule,
   serializeFailoverSchedule,
+  failoverSchedulePayload,
   validateFailoverSchedule,
 } from "./failoverSchedule";
 
@@ -127,4 +128,37 @@ test("时段表指向不存在的出站要报错", () => {
 
 test("没有时段表就没有什么可校验的", () => {
   assert.equal(validateFailoverSchedule(null, { strategy: "round_robin", backupCount: 0 }), null);
+});
+
+test("策略不是主备时，发出去的那一份时段表归零", () => {
+  /*
+    界面上可以先配好时段表、再把策略改成轮询。照样发上去的话服务端会拒绝整次保存，
+    用户看到的是「改个策略而已，怎么报了个时段表的错」—— 一个看着能用的控件把保存
+    弄失败了，是最难受的那种坏法。
+  */
+  const schedule = parseFailoverSchedule({
+    timezone: "Asia/Shanghai",
+    windows: [{ days: [], from: "18:00", to: "23:00", targetIndex: 1 }],
+  });
+  assert.deepEqual(failoverSchedulePayload(schedule, "fallback"), schedule);
+  for (const strategy of ["round_robin", "random", "ip_hash"]) {
+    assert.equal(failoverSchedulePayload(schedule, strategy), null, `${strategy} 下不该把时段表发上去`);
+  }
+  assert.equal(failoverSchedulePayload(null, "fallback"), null);
+});
+
+test("归零之后再校验必定通过 —— 两处说的是同一件事", () => {
+  // 发送侧和校验侧对不上的话，要么保存莫名失败，要么配置悄悄不生效。
+  const schedule = parseFailoverSchedule({
+    timezone: "Asia/Shanghai",
+    windows: [{ days: [], from: "18:00", to: "23:00", targetIndex: 1 }],
+  });
+  for (const strategy of ["fallback", "round_robin", "random", "ip_hash"]) {
+    const payload = failoverSchedulePayload(schedule, strategy);
+    assert.equal(
+      validateFailoverSchedule(payload, { strategy, backupCount: 2 }),
+      null,
+      `${strategy}：按发送侧归零之后，校验侧不该再拦`,
+    );
+  }
 });

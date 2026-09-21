@@ -186,3 +186,21 @@ export function validateFailoverSchedule(
   }
   return null;
 }
+
+/**
+ * 这次保存该带上什么样的时段表。
+ *
+ * 界面上可以先配好时段表、再把出站策略改成轮询 —— 这时候时段表不适用了。如果照样
+ * 把它发上去，服务端会拒绝整次保存，用户看到的是「改个策略而已，怎么报了个时段表
+ * 的错」。所以在这儿就归零。
+ *
+ * 归零的是**发出去的那一份**，不是界面上的那一份：改回主备时它还在，不用重配一遍。
+ * 但保存之后确实就没了，所以界面必须提前把这句话说出来，不能等用户回来发现空了。
+ */
+export function failoverSchedulePayload(
+  schedule: FailoverSchedule | null | undefined,
+  strategy: string,
+): FailoverSchedule | null {
+  if (!schedule || schedule.windows.length === 0) return null;
+  return (strategy || "fallback") === "fallback" ? schedule : null;
+}

@@ -89,3 +89,27 @@ test("缺口指向折叠里的控件时会自动展开", () => {
   );
   assert.match(source, /isAdvancedSectionBlocker\(submitBlocker\)/);
 });
+
+test("时段表编辑器跟着出站策略走，发出去的那一份也归零", () => {
+  /*
+    时段表只在主备模式下生效。界面上可以先配好它、再把策略改成轮询 —— 这时候如果
+    照样把它发上去，服务端会拒绝整次保存，用户看到的是「改个策略而已，怎么报了个
+    时段表的错」。一个看着能用的控件把保存弄失败了，是最难受的那种坏法。
+
+    所以两件事都得做到：编辑器只在主备下渲染，提交前按策略归零。缺任何一件，
+    要么控件在那儿骗人，要么保存直接失败。
+  */
+  const source = fs.readFileSync(rulesPagePath, "utf8");
+  assert.match(
+    source,
+    /\{form\.failoverStrategy === "fallback" && \(\s*\n\s*<div className="space-y-2 rounded-md border border-border\/50 bg-background\/40 p-2\.5">/,
+    "时段表编辑器不再只在主备模式下渲染了",
+  );
+  assert.match(
+    source,
+    /failoverSchedulePayload\(form\.failoverSchedule, form\.failoverStrategy\)/,
+    "提交时没有按策略给时段表归零 —— 换成轮询之后保存会被服务端拒绝",
+  );
+  // 而且得提前把「保存后会清空」说出来：等用户回来发现空了，比现在多一行字糟得多。
+  assert.match(source, /保存后会清空/, "没有提前告诉用户时段表会被清空");
+});

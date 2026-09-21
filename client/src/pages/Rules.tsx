@@ -101,6 +101,7 @@ import {
 import {
   MAX_FAILOVER_SCHEDULE_WINDOWS,
   describeFailoverScheduleWindow,
+  failoverSchedulePayload,
   parseFailoverSchedule,
   type FailoverSchedule,
   type FailoverScheduleWindow,
@@ -3650,7 +3651,9 @@ function RulesContent() {
       failoverStrategy: form.failoverStrategy,
       failoverTargets: canUseMainBackup && form.failoverEnabled ? failoverTargets : [],
       failoverProbeTarget: canUseMainBackup && form.failoverEnabled ? form.failoverProbeTarget.trim() || null : null,
-      failoverSchedule: canUseMainBackup && form.failoverEnabled ? form.failoverSchedule : null,
+      failoverSchedule: canUseMainBackup && form.failoverEnabled
+        ? failoverSchedulePayload(form.failoverSchedule, form.failoverStrategy)
+        : null,
       failoverMinHoldSeconds: canUseMainBackup && form.failoverEnabled ? form.failoverMinHoldSeconds : 0,
       failoverSeconds: form.failoverSeconds || 60,
       recoverSeconds: form.recoverSeconds || 120,
@@ -7475,6 +7478,20 @@ function RulesContent() {
                     18 点到了而那条线正挂着，不该机械地切过去。这两件事是正交的，
                     所以时段表放在这儿，和下面的切换/恢复时间并列，而不是替代它们。
                   */}
+                  {form.failoverStrategy !== "fallback" && (form.failoverSchedule?.windows.length || 0) > 0 && (
+                  /*
+                    配好时段表之后又把策略改成了轮询/随机/哈希。这几种策略本来就不存在
+                    「首选出站」，时段表不适用 —— 提交时会被归零。
+
+                    必须提前说：等用户保存完回来发现时段表空了，比现在多一行字糟得多。
+                    界面上那份还留着，改回主备就在，不用重配。
+                  */
+                  <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                    {failoverModeOptions.find((option) => option.value === form.failoverStrategy)?.label || "当前策略"}
+                    下没有「首选出站」，时段表不适用，保存后会清空。改回主备模式可以继续用。
+                  </p>
+                  )}
+                  {form.failoverStrategy === "fallback" && (
                   <div className="space-y-2 rounded-md border border-border/50 bg-background/40 p-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                     <Label className="flex items-baseline gap-1.5">
@@ -7572,6 +7589,7 @@ function RulesContent() {
                     </p>
                     ))}
                   </div>
+                  )}
                   <div className="grid gap-2 sm:grid-cols-4">
                     <FormField className="space-y-2">
                       <Label>切换时间（秒）</Label>
