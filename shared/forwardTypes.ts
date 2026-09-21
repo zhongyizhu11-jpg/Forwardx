@@ -19,6 +19,28 @@ export const FORWARD_TYPE_LABELS: Record<ForwardType, string> = {
   nginx: "nginx",
 };
 
+/**
+ * 内核转发：连接在内核里被改写目的地，握手是和**最终落地**完成的。
+ *
+ * 这个区分只有一个用处，但那个用处很要紧：判断「对这台中转的转发端口连一次 TCP」
+ * 到底测到了什么。
+ *
+ *   · iptables / nftables（DNAT）：SYN 被改写目的地送出去，SYN-ACK 是落地回的 ——
+ *     这一连**就是端到端的**，中转的上游断了立刻探得出来。
+ *   · realm / socat / gost / nginx：中转在用户态 accept 下来，再自己另开一条去
+ *     落地。连得上只能证明**中转活着**，它的上游是死是活完全看不出来。
+ *
+ * 后一种情况下主备的健康检查有盲区：中转好好的、它到落地那段断了，不会切，流量
+ * 继续往死路里送。所以哪种转发方式用在中转上，直接决定了要不要另外配一个探测目标。
+ */
+export const KERNEL_FORWARD_TYPES = ["iptables", "nftables"] as const;
+
+export function isUserspaceForwardType(value: unknown): boolean {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return false;
+  return !(KERNEL_FORWARD_TYPES as readonly string[]).includes(normalized);
+}
+
 export const FORWARD_RULE_PROTOCOL_LABELS: Record<ForwardRuleProtocol, string> = {
   tcp: "TCP",
   udp: "UDP",

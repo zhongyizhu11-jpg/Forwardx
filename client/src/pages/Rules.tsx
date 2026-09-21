@@ -96,6 +96,12 @@ import {
 import { cn } from "@/lib/utils";
 import { autoForwardRuleName } from "@shared/forwardRuleName";
 import {
+  describeFailoverLines,
+  failoverLineHintText,
+  type RelayCandidate,
+} from "@/lib/failoverRelayHints";
+import {
+  formatFailoverEndpoint,
   formatFailoverTargetLine,
   parseFailoverEndpoint,
   parseFailoverTargetLine,
@@ -2984,6 +2990,21 @@ function RulesContent() {
     if (form.failoverEnabled) parts.push(`出站${failoverStrategyLabels[form.failoverStrategy]}`);
     return parts;
   }, [effectiveRouteForwardType, form.name, form.telegramErrorNotifyEnabled, form.failoverEnabled, form.failoverStrategy]);
+  /*
+    备用出站的候选中转。只在出站策略真的开着时才拉 —— 绝大多数规则用不到主备，
+    没必要为它们多打一次库。
+  */
+  const relayCandidatesQuery = trpc.rules.relayCandidates.useQuery(
+    { excludeRuleId: editingId ?? undefined },
+    { enabled: showDialog && form.failoverEnabled, staleTime: 30_000 },
+  );
+  const failoverLineHints = useMemo(() => describeFailoverLines({
+    text: form.failoverTargetsText,
+    candidates: (relayCandidatesQuery.data || []) as RelayCandidate[],
+    mainAddress: formatFailoverEndpoint(form.targetIp, form.targetPort),
+    parseLine: parseFailoverTargetLine as any,
+    formatEndpoint: formatFailoverEndpoint,
+  }), [form.failoverTargetsText, form.targetIp, form.targetPort, relayCandidatesQuery.data]);
   const advancedBlocked = isAdvancedSectionBlocker(submitBlocker);
   const advancedOpen = showAdvanced || advancedBlocked;
   const routeModeTabItems: SlidingTabItem<RuleRouteMode>[] = [
@@ -7359,7 +7380,33 @@ function RulesContent() {
                     />
                   </FormField>
                   <FormField className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                     <Label>备用出站（每行一个，最多 10 个）</Label>
+                    {/*
+                      从面板认得的中转里选，而不是让人照着别处抄一个 地址:端口 过来。
+                      抄错了没有任何提示，要等真出事那天才发现备用线路根本连不上。
+                    */}
+                    {(relayCandidatesQuery.data || []).length > 0 && (
+                    <Select
+                      value=""
+                      onValueChange={(value) => {
+                      const existing = form.failoverTargetsText.replace(/\s*$/, "");
+                      setForm({ ...form, failoverTargetsText: existing ? `${existing}\n${value}` : value });
+                      }}
+                    >
+                      <SelectTrigger className="h-8 w-auto min-w-44 text-xs">
+                      <SelectValue placeholder="从中转里选一条加进来" />
+                      </SelectTrigger>
+                      <SelectContent>
+                      {(relayCandidatesQuery.data || []).map((candidate: RelayCandidate) => (
+                      <SelectItem key={candidate.id} value={candidate.address}>
+                      {candidate.hostName} · {candidate.label}（{candidate.address}）
+                      </SelectItem>
+                      ))}
+                      </SelectContent>
+                    </Select>
+                    )}
+                    </div>
                     <Textarea
                       value={form.failoverTargetsText}
                       onChange={(event) => setForm({ ...form, failoverTargetsText: event.target.value })}
@@ -7367,6 +7414,23 @@ function RulesContent() {
                       className="min-h-24 font-mono text-sm"
                       spellCheck={false}
                     />
+                    {/*
+                      认出来的每一行在这儿说清楚：是哪台中转的哪条规则、探测有没有盲区、
+                      和主出站是不是同一个落地。这三件事手填时完全看不见，而任何一件出错
+                      都要等真出事那天才暴露。
+                    */}
+                    {failoverLineHints.map((hint) => {
+                    const text = failoverLineHintText(hint);
+                    if (!text) return null;
+                    return (
+                    <p
+                      key={hint.line}
+                      className={`text-xs leading-5 ${hint.probeBlindSpot || hint.sameDestination === false ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}
+                    >
+                      第 {hint.line} 行：{text}
+                    </p>
+                    );
+                    })}
                   </FormField>
                   {/*
                     这段必须说，而且必须说得具体。
