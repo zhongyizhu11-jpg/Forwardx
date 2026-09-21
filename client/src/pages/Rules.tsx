@@ -97,6 +97,7 @@ import { cn } from "@/lib/utils";
 import { autoForwardRuleName } from "@shared/forwardRuleName";
 import {
   forwardRuleFormBlocker,
+  isAdvancedSectionBlocker,
   isForwardRuleSourcePortRequired,
   isValidForwardPort,
   type ForwardRuleFormContext,
@@ -122,6 +123,7 @@ import {
   ArrowUpFromLine,
   Stethoscope,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   XCircle,
   Loader2,
@@ -2095,6 +2097,17 @@ function RulesContent() {
   const effectiveRulesQuery = selectedRulesQuery || undefined;
   const selectedScopeQueryEnabled = false as boolean;
   const [portStatus, setPortStatus] = useState<"idle" | "checking" | "available" | "used">("idle");
+  /*
+    「更多设置」默认收起。
+
+    这四项（规则名称、转发工具、异常提醒、出站策略）都有能用的默认值 —— 不管它们
+    也能把一条转发建出来。和真正要填的两项并排放着，等于让每个新手都当一次选择题：
+    「转发工具这三个我该选哪个？」而正确答案通常是「别动」。
+
+    收起不等于藏：折叠条上挂着当前值的摘要（见 advancedSummary），而且缺口指向
+    里面的控件时会自动展开 —— 读到一句自己看不见的提示，比什么都不说更糟。
+  */
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [portRangeError, setPortRangeError] = useState<string | null>(null);
   const latestPortCheckRef = useRef(0);
   const [copyRuleIds, setCopyRuleIds] = useState<number[]>([]);
@@ -2612,6 +2625,7 @@ function RulesContent() {
     setEditingOriginalProtocol(normalizeRuleProtocol(rule.protocol));
     setLegacyLocalRuleEditId(isLegacyLocalRule ? Number(rule.id) : null);
     setPortStatus("idle");
+    setShowAdvanced(false);
     setShowDialog(true);
   };
 
@@ -2979,6 +2993,22 @@ function RulesContent() {
     [form, ruleFormContext],
   );
   const sourcePortRequired = isForwardRuleSourcePortRequired(ruleFormContext);
+  /*
+    折叠条上写清楚里面现在是什么样 —— 折起来就看不见的话，那叫藏，不叫收纳。
+    只列「有内容可说」的：转发工具总是有值，其余填了/开了才出现。
+  */
+  const advancedSummary = useMemo(() => {
+    const parts: string[] = [];
+    const toolLabel = FORWARD_TYPE_LABELS[effectiveRouteForwardType] || effectiveRouteForwardType;
+    if (toolLabel) parts.push(String(toolLabel));
+    const trimmedName = form.name.trim();
+    if (trimmedName) parts.push(trimmedName);
+    if (form.telegramErrorNotifyEnabled) parts.push("异常提醒");
+    if (form.failoverEnabled) parts.push(`出站${failoverStrategyLabels[form.failoverStrategy]}`);
+    return parts;
+  }, [effectiveRouteForwardType, form.name, form.telegramErrorNotifyEnabled, form.failoverEnabled, form.failoverStrategy]);
+  const advancedBlocked = isAdvancedSectionBlocker(submitBlocker);
+  const advancedOpen = showAdvanced || advancedBlocked;
   const routeModeTabItems: SlidingTabItem<RuleRouteMode>[] = [
     {
       value: "local",
@@ -7216,6 +7246,40 @@ function RulesContent() {
               </Select>
               </FormField>
             </div>
+            {/* 警告留在外面：折进「更多设置」就等于折没了，而它恰恰是要被看见的。 */}
+            {kernelForwardWarning && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                <div className="flex min-w-0 items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span className="min-w-0 leading-5">{kernelForwardWarning}</span>
+                </div>
+              </div>
+            )}
+            {/*
+              要填的和可以不管的，不该并排放在同一片方格里。
+
+              上面是「这条转发走哪儿、去哪儿」—— 真正要填的东西；这里面四项都有
+              能用的默认值，不动也能建出来。分开之后第一屏只剩该填的，而不是让人
+              每次都当一次选择题（「转发工具这三个我该选哪个」，而答案通常是别动）。
+            */}
+            <div className="rounded-md border border-border/60 bg-muted/15">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm"
+                onClick={() => setShowAdvanced(!advancedOpen)}
+                aria-expanded={advancedOpen}
+              >
+                <span className="shrink-0 font-medium">更多设置</span>
+                {/* 折起来也得看得见里面是什么 —— 收纳不是藏。 */}
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  {advancedSummary.join(" · ")}
+                </span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${advancedOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              {advancedOpen && (
+              <div className="space-y-3 border-t border-border/60 p-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <FormField className="space-y-2">
               <Label className="flex items-baseline gap-1.5">规则名称<span className="text-xs font-normal text-muted-foreground">留空自动生成</span></Label>
@@ -7269,14 +7333,6 @@ function RulesContent() {
             onCheckedChange={(checked) => setForm({ ...form, telegramErrorNotifyEnabled: checked })}
             />
             </FormField>
-            {kernelForwardWarning && (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-                <div className="flex min-w-0 items-start gap-2">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span className="min-w-0 leading-5">{kernelForwardWarning}</span>
-                </div>
-              </div>
-            )}
             {showMainBackupConfig && (
             <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
               <FormField className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -7358,6 +7414,9 @@ function RulesContent() {
               )}
             </div>
             )}
+              </div>
+              )}
+            </div>
           </div>
           <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-background/95 pt-3 sm:items-center sm:justify-between">
             {/*

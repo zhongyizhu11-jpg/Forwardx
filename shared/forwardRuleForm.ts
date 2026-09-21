@@ -90,3 +90,19 @@ export function forwardRuleFormBlocker(
   if (form.failoverEnabled && form.protocol !== "tcp") return "出站策略只支持 TCP";
   return null;
 }
+
+/**
+ * 这句「还差什么」指向的控件，是不是在折起来的「更多设置」里。
+ *
+ * footer 说了缺什么、按钮也灰着，可那个控件被折叠藏住了 —— 用户读到一句自己看不见
+ * 的话，比什么都不说更糟。所以界面得替他展开。
+ *
+ * 这份名单必须和 forwardRuleFormBlocker 的返回值逐字对上，测试里逐条验证它确实
+ * 能被产生出来：改了文案而忘了改这里，名单会静默失效，而失效的表现正是上面那句
+ * 「看得见提示、找不到控件」。
+ */
+export const ADVANCED_SECTION_BLOCKERS = ["出站策略只支持 TCP"] as const;
+
+export function isAdvancedSectionBlocker(blocker: string | null | undefined): boolean {
+  return !!blocker && (ADVANCED_SECTION_BLOCKERS as readonly string[]).includes(blocker);
+}

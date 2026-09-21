@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ADVANCED_SECTION_BLOCKERS,
   forwardRuleFormBlocker,
+  isAdvancedSectionBlocker,
   isForwardRuleSourcePortRequired,
   isValidForwardPort,
   type ForwardRuleFormContext,
@@ -120,4 +122,32 @@ test("端口合法性只有一处定义", () => {
   assert.equal(isValidForwardPort(65536), false);
   assert.equal(isValidForwardPort(1.5), false);
   assert.equal(isValidForwardPort("80"), true, "表单里拿到的是字符串转出来的数，别在这儿挑剔类型");
+});
+
+test("「更多设置」里的缺口名单，每一条都真的产得出来", () => {
+  /*
+    这份名单是给界面用的：缺口指向折起来的控件时，得替用户展开，否则他读到一句
+    自己看不见的话。名单靠文案逐字匹配，所以改了 blocker 的措辞而忘了改名单，
+    它会**静默失效** —— 而失效的表现就是「提示看得见、控件找不到」。
+
+    所以这里逐条把它产出来一遍。产不出来就说明名单已经和实现脱节了。
+  */
+  const producible = new Set<string>();
+  const cases: Array<[Partial<ForwardRuleFormState>, Partial<ForwardRuleFormContext>]> = [
+    [{ failoverEnabled: true, protocol: "udp" }, {}],
+  ];
+  for (const [form, ctx] of cases) {
+    const blocker = forwardRuleFormBlocker({ ...base, ...form }, context(ctx));
+    if (blocker) producible.add(blocker);
+  }
+  for (const entry of ADVANCED_SECTION_BLOCKERS) {
+    assert.ok(
+      producible.has(entry),
+      `名单里的「${entry}」已经产不出来了 —— forwardRuleFormBlocker 的文案大概改了，`
+        + "而名单没跟上。这会让界面在该展开的时候不展开。",
+    );
+    assert.equal(isAdvancedSectionBlocker(entry), true);
+  }
+  assert.equal(isAdvancedSectionBlocker("还缺目标地址"), false, "主区的缺口不该触发展开");
+  assert.equal(isAdvancedSectionBlocker(null), false);
 });
