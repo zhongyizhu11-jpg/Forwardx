@@ -121,6 +121,58 @@
   .stat-strip p[class*="mt-2"] { margin-top: 2px; }
 
   /*
+    ══ 文档式排版 ══
+    按参考站（nsloon.bid / VitePress 主题）量到的值：
+
+      正文  16px / 行高 28px（1.75）
+      H1    28px / 40px / 600 / 字距 -0.56px
+      H2    24px / 32px / 600，上边距 48px + 顶部内边距 24px + 一条 1px 分隔线
+      表头  14px / 600，内边距 8×16，底色 #f6f6f7
+      单元格 14px，内边距 8×16，行间一条 1px 线
+      提示框 色块填充 14%，圆角 8px，无边框
+
+    关键不在具体数字，在**它根本不用卡片**：章节之间靠一条细线加大间距分层。
+    卡片一多，每张都有边框和内边距，内容就被切成一格一格；细线分层反而让
+    一屏读起来是连着的。
+  */
+
+  /* 正文：行高是「读起来舒服」的主要来源，字号本身没变。 */
+  .workspace-main { font-size: 16px; line-height: 1.75; }
+  .workspace-main p { margin-block: 12px; }
+
+  /* 数据密集的地方回到 14px —— 参考站的表格就是这么分的。 */
+  .workspace-main [data-slot="table"],
+  .workspace-main [data-slot="card-description"],
+  .workspace-main .text-xs,
+  .workspace-main code { font-size: 14px; }
+  .workspace-main [data-slot="table-head"],
+  .workspace-main [data-slot="table-cell"] { padding: 8px 16px; font-size: 14px; }
+  .workspace-main [data-slot="table-head"] { font-weight: 600; background: var(--fx-subtle); }
+
+  /*
+    卡片改成「文档章节」：不要填充色差、不要投影，只留一条顶线和足够的
+    上边距。这样一列卡片读起来是一篇有小节的文档，而不是一堆盒子。
+  */
+  .workspace-main [data-slot="card"] {
+    border: 0; border-radius: 0; background: transparent; box-shadow: none;
+    border-top: 1px solid var(--fx-stroke);
+    padding-top: 4px; margin-top: 4px;
+  }
+  .workspace-main [data-slot="card"]:first-of-type { border-top: 0; }
+  .workspace-main [data-slot="card-header"] { padding: 8px 0 0; }
+  .workspace-main [data-slot="card-content"] { padding: 8px 0; }
+  .workspace-main [data-slot="card-footer"] { padding: 0 0 8px; }
+  .workspace-main [data-slot="card-title"] { font-size: 17px; font-weight: 600; line-height: 1.5; }
+
+  /* 标题分级。 */
+  .workspace-main h1 { font-size: 26px; line-height: 1.4; font-weight: 600; letter-spacing: -.02em; }
+  .workspace-main h2 { font-size: 20px; line-height: 1.5; font-weight: 600; letter-spacing: -.01em; }
+
+  /* 对话框里同样：纯白、细线、正文行高。 */
+  .dialog-panel { line-height: 1.7; }
+  .dialog-panel [data-slot="card"] { border-top: 0; padding-top: 0; margin-top: 0; }
+
+  /*
     ── 转发路径：竖排改横排 ──
     `入口 ↓ 出口` 这一块在隧道卡、规则卡、转发链上到处都是。竖排要用 5 行去画
     2 个地址：两行小标题、两行值、中间一个箭头和一条竖线，实测 280px。在 393px
@@ -312,12 +364,7 @@
     卡片本身不投影，靠「灰底 + 白卡 + 圆角」分层；卡与卡之间贴紧，
     这是 iOS 列表读起来干净的关键 —— 一堆各自带影子的卡片才是安卓味。
   */
-  /*
-    页面底色现在几乎是白的（对白卡 1.09:1），底色差已经分不开层了，所以卡片
-    改用一条看得见的边框划界（分隔线令牌是 1.60:1）。iOS 不投影那条保留 ——
-    一堆各自带影子的卡片才是安卓味。
-  */
-  .workspace-main [data-slot="card"] { box-shadow: none; border: 1px solid var(--fx-stroke); }
+  /* 卡片的样式归下面「文档式排版」那一节管。 */
 
   /* 输入框在 iOS 上是填充块不是描边框。 */
   /*

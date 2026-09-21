@@ -26,16 +26,24 @@
     分层方式也跟着换了：页面底色现在几乎是白的（对白卡只有 1.09:1），
     所以卡片靠**边框**分界而不是靠底色差，分隔线相应提到 1.60:1。
   */
-  --fx-canvas: #f1f7f6;          /* 对白卡 1.09:1，分层交给边框 */
+  /*
+    页面底色是**纯白**。参考站（nsloon.bid，VitePress 文档主题）量下来就是
+    #ffffff，正文 rgb(60,60,67)，全站没有一块灰底 —— 章节之间靠一条细线和
+    大间距分层，不靠底色差，也不靠卡片。
+
+    之前几版一直在调「页面灰对卡片白」该差多少，方向就错了：只要还有一块
+    大面积的灰底，界面就会闷，调到多少都一样。
+  */
+  --fx-canvas: #ffffff;
   --fx-surface: #ffffff;
-  --fx-subtle: #dae5e4;          /* 输入框填充：对白卡 1.29:1 */
+  --fx-subtle: #f6f6f7;          /* 表头/输入框的浅填充，参考站表头就是这个值 */
   --fx-raised: #ffffff;
-  --fx-stroke: #bed0ce;          /* 对白卡 1.60:1 —— 现在是分层主力 */
-  --fx-control-stroke: #7d9693;
-  --fx-text: #0b1513;            /* 19.6:1 */
-  --fx-muted: #5d7673;           /* 白底 4.90:1，页面底 4.50:1 */
-  --fx-brand: #0a7c6e;           /* 白底 5.10:1 */
-  --fx-brand-soft: rgb(10 124 110 / 12%);
+  --fx-stroke: #e2e2e3;          /* 参考站的分隔线，1.20:1 —— 一条细线不该抢戏 */
+  --fx-control-stroke: #8e8e93;
+  --fx-text: #1b1b1f;            /* 15.9:1 */
+  --fx-muted: #3c3c43;           /* 参考站正文色，白底 11.6:1 */
+  --fx-brand: #3451b2;           /* 参考站链接蓝，白底 8.1:1 */
+  --fx-brand-soft: rgb(52 81 178 / 10%);
   /* iOS 的卡片不投影，靠底色差和圆角分层。留极淡的一层给悬浮元素。 */
   --fx-shadow: 0 0 0 0 transparent;
   --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 12%);
@@ -89,16 +97,17 @@
   /* iOS 深色：页面是纯黑，卡片比它亮一档（systemGroupedBackground 那一组）。 */
   /* 同样是解出来的，目标和浅色一致。实测值见各行。 */
   /* 深色同样掺品牌青，纯黑/纯灰在暗色下比浅色下更显得死。 */
-  --fx-canvas: #131a18;
-  --fx-surface: #2b3331;         /* 对页面 1.37:1 */
-  --fx-subtle: #394543;          /* 输入框填充：对卡片 1.30:1 */
-  --fx-raised: #333d3b;
-  --fx-stroke: #435451;          /* 对卡片 1.62:1 */
-  --fx-control-stroke: #889d99;
-  --fx-text: #f2f7f6;
-  --fx-muted: #889d99;           /* 对卡片 4.52:1 */
-  --fx-brand: #5fd4bc;
-  --fx-brand-soft: rgb(95 212 188 / 18%);
+  /* 深色同样：一块底色到底，分层靠细线。 */
+  --fx-canvas: #1b1b1f;
+  --fx-surface: #1b1b1f;
+  --fx-subtle: #252529;
+  --fx-raised: #252529;
+  --fx-stroke: #3c3f44;
+  --fx-control-stroke: #8e8e93;
+  --fx-text: #ffffffdb;
+  --fx-muted: #ebebf599;
+  --fx-brand: #a8b1ff;           /* 深色下的链接蓝 */
+  --fx-brand-soft: rgb(168 177 255 / 14%);
   --fx-shadow: 0 0 0 0 transparent;
   --fx-shadow-raised: 0 8px 28px rgb(0 0 0 / 50%);
 
