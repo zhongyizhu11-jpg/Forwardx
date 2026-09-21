@@ -558,7 +558,14 @@ function assertPluginId(value: unknown) {
   return id;
 }
 
-function normalizeVersion(value: unknown) {
+/*
+  这个**不是** shared/version.ts 里那个 normalizeVersion，别顺手换掉。
+
+  那个是给版本比较用的；这个是插件版本号入库前的字段清洗 —— 多了 64 字符上限
+  （挡住超长串写进列里）和「空就当 0.0.0」的兜底。名字撞在一起最容易被人
+  「顺手统一」掉，于是改个说得清的名字。
+*/
+function normalizePluginVersionField(value: unknown) {
   const text = String(value || "").trim().replace(/^v/i, "");
   return text.slice(0, 64) || "0.0.0";
 }
@@ -1403,7 +1410,7 @@ function normalizeManifest(input: any, fallback?: Partial<ForwardxPluginManifest
     schemaVersion: PLUGIN_MANIFEST_VERSION,
     id,
     name,
-    version: normalizeVersion(merged.version),
+    version: normalizePluginVersionField(merged.version),
     description: String(merged.description || "").trim().slice(0, 1000) || undefined,
     detailsMarkdown: normalizeOptionalText(merged.detailsMarkdown || merged.detailMarkdown || merged.longDescription, 5000),
     features: normalizePluginFeatures(merged.features),

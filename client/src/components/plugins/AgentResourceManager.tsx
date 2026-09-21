@@ -1,5 +1,7 @@
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { valueAtPath } from "./agentResourceState";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -14,7 +16,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
@@ -779,8 +780,10 @@ export function AgentResourceManager({
   };
 
   const copyValue = async (value: unknown) => {
-    await navigator.clipboard.writeText(displayValue(value));
-    toast.success("已复制");
+    // navigator.clipboard 在非安全上下文（http://IP:端口）下根本不存在，
+    // 原来这里直接 await 它，面板跑在 http 上时点了毫无反应，连报错都没有。
+    if (await copyTextToClipboard(displayValue(value))) toast.success("已复制");
+    else toast.error("复制失败，请手动复制");
   };
 
   const renderField = (field: PluginResourceFieldDefinition) => {
@@ -801,11 +804,11 @@ export function AgentResourceManager({
               <Label>{field.label}</Label>
               {field.description && <p className="mt-0.5 text-xs text-muted-foreground">{field.description}</p>}
             </div>
-            <Switch checked={value === true} disabled={disabled} onCheckedChange={setValue} />
+            <Checkbox aria-label={field.label} checked={value === true} disabled={disabled} onCheckedChange={setValue} />
           </div>
         ) : field.type === "select" ? (
           <Select value={String(value ?? "")} disabled={disabled} onValueChange={setValue}>
-            <SelectTrigger><SelectValue placeholder={field.placeholder || "请选择"} /></SelectTrigger>
+            <SelectTrigger aria-label={field.label}><SelectValue placeholder={field.placeholder || "请选择"} /></SelectTrigger>
             <SelectContent>
               {options.map((option: any) => <SelectItem key={option.value} value={String(option.value)} disabled={option.disabled}>{option.label}</SelectItem>)}
             </SelectContent>
@@ -934,7 +937,7 @@ export function AgentResourceManager({
                   />
                 </div>
                 <Select value={selectedHostId ? String(selectedHostId) : ""} onValueChange={(value) => setSelectedHostId(Number(value))}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger aria-label="选择主机" className="w-full">
                     <span className="min-w-0 truncate text-left">
                       {selectedHost
                         ? `${selectedHost.name || `主机 ${selectedHost.id}`} · ${taskStatusLabel(resourceHostStatus(selectedHost, selectedState))}`
@@ -1042,7 +1045,7 @@ export function AgentResourceManager({
                     return (
                       <TableCell key={column.key} className="max-w-72">
                         {column.type === "boolean" ? (
-                          <Switch checked={value === true} disabled aria-label={column.label} />
+                          <Checkbox checked={value === true} disabled aria-label={column.label} />
                         ) : column.type === "status" ? (
                           <Badge variant="outline" className={taskStatusClass(valueStatus(value))}>
                             {typeof value === "boolean" ? (value ? column.trueLabel || "是" : column.falseLabel || "否") : displayValue(value)}

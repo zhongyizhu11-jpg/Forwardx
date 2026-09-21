@@ -25,6 +25,7 @@ import { PersistentPagination, usePersistentPageRequest, useServerPagination } f
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { migrateLegacyAvatarValue } from "@/lib/avatar";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,6 +44,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -1287,7 +1289,7 @@ function UsersContent() {
 
         <div className="flex h-9 items-center justify-between rounded-md border border-border/50 px-2">
           <span className="text-xs text-muted-foreground">转发</span>
-          <OptimisticSwitch
+          <OptimisticSwitch aria-label={`允许 ${u.username} 添加转发`}
             checked={u.role === "admin" || !!u.canAddRules}
             disabled={u.role === "admin"}
             onCheckedChangeAsync={(checked) => updateForwardAccessMutation.mutateAsync({ userId: u.id, enabled: checked })}
@@ -1603,7 +1605,7 @@ function UsersContent() {
                               )}
                               {u.role !== "admin" && (
                                 <div className="mt-2 flex w-fit items-center gap-2 rounded-md border border-border/50 bg-muted/20 px-2 py-1 lg:hidden">
-                                  <OptimisticSwitch
+                                  <OptimisticSwitch aria-label={`允许 ${u.username} 添加转发`}
                                     checked={!!u.canAddRules}
                                     onCheckedChangeAsync={(checked) => updateForwardAccessMutation.mutateAsync({ userId: u.id, enabled: checked })}
                                     className="shrink-0"
@@ -1685,7 +1687,7 @@ function UsersContent() {
                         <TableCell className="hidden min-w-[160px] text-center lg:table-cell">
                           <div className="mx-auto flex w-fit min-w-[140px] flex-col items-center gap-1">
                             <div className="flex items-center justify-center gap-2 whitespace-nowrap">
-                              <OptimisticSwitch
+                              <OptimisticSwitch aria-label={`允许 ${u.username} 添加转发`}
                                 checked={u.role === "admin" || !!u.canAddRules}
                                 disabled={u.role === "admin"}
                                 onCheckedChangeAsync={(checked) => updateForwardAccessMutation.mutateAsync({ userId: u.id, enabled: checked })}
@@ -1892,9 +1894,8 @@ function UsersContent() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="create-password">密码</Label>
-              <Input
+              <PasswordInput
                 id="create-password"
-                type="password"
                 value={newUserPassword}
                 onChange={(e) => setNewUserPassword(e.target.value)}
                 placeholder="请输入密码（至少6个字符）"
@@ -1910,21 +1911,21 @@ function UsersContent() {
                 maxLength={24}
               />
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>转发总开关</Label>
               <div className="flex items-center justify-between rounded-lg border border-border/40 p-3">
                 <div className="min-w-0 pr-3">
                   <p className="text-xs text-muted-foreground">关闭后不能创建或启用规则。</p>
                 </div>
-                <Switch
+                <Checkbox
                   checked={newCanAddRules}
                   onCheckedChange={(checked) => {
                     setNewCanAddRules(checked);
                   }}
                 />
               </div>
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField className="space-y-2">
               <Label>客户端订阅</Label>
               <div className="flex items-center justify-between rounded-lg border border-border/40 p-3">
                 <div className="min-w-0 pr-3">
@@ -1932,12 +1933,12 @@ function UsersContent() {
                     允许生成订阅地址导入客户端。与转发权限互不影响。
                   </p>
                 </div>
-                <Switch
+                <Checkbox
                   checked={newAllowProxySubscription}
                   onCheckedChange={setNewAllowProxySubscription}
                 />
               </div>
-            </div>
+            </FormField>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateUser(false)}>
@@ -1978,9 +1979,8 @@ function UsersContent() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="reset-password">新密码</Label>
-              <Input
+              <PasswordInput
                 id="reset-password"
-                type="password"
                 value={resetNewPassword}
                 onChange={(e) => setResetNewPassword(e.target.value)}
                 placeholder="留空不修改密码"
@@ -2425,7 +2425,7 @@ function UsersContent() {
                 </FormField>
               </div>
               <Separator />
-              <div className="flex items-start justify-between gap-3">
+              <FormField className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <Label>客户端订阅</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -2433,12 +2433,12 @@ function UsersContent() {
                     套餐已附带该权限的用户不受这里影响；流量用尽或账号被停时自动收回。
                   </p>
                 </div>
-                <Switch
+                <Checkbox
                   checked={allowProxySubscription}
                   onCheckedChange={setAllowProxySubscription}
                   className="mt-1 shrink-0"
                 />
-              </div>
+              </FormField>
               <Separator />
               <div className="space-y-2">
                 <Label className="text-sm font-medium">允许使用的转发方式</Label>
@@ -2446,23 +2446,23 @@ function UsersContent() {
                 <div className="grid grid-cols-[repeat(auto-fit,minmax(132px,1fr))] gap-2">
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">iptables</span>
-                    <Switch className="shrink-0" checked={allowIptables} onCheckedChange={setAllowIptables} />
+                    <Checkbox aria-label="允许使用 iptables" className="shrink-0" checked={allowIptables} onCheckedChange={setAllowIptables} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">nftables</span>
-                    <Switch className="shrink-0" checked={allowNftables} onCheckedChange={setAllowNftables} />
+                    <Checkbox aria-label="允许使用 nftables" className="shrink-0" checked={allowNftables} onCheckedChange={setAllowNftables} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">realm</span>
-                    <Switch className="shrink-0" checked={allowRealm} onCheckedChange={setAllowRealm} />
+                    <Checkbox aria-label="允许使用 realm" className="shrink-0" checked={allowRealm} onCheckedChange={setAllowRealm} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">socat</span>
-                    <Switch className="shrink-0" checked={allowSocat} onCheckedChange={setAllowSocat} />
+                    <Checkbox aria-label="允许使用 socat" className="shrink-0" checked={allowSocat} onCheckedChange={setAllowSocat} />
                   </div>
                   <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/40 bg-background/50 px-3 py-2.5">
                     <span className="min-w-0 truncate text-xs font-medium">gost</span>
-                    <Switch className="shrink-0" checked={allowGost} onCheckedChange={setAllowGost} />
+                    <Checkbox aria-label="允许使用 gost" className="shrink-0" checked={allowGost} onCheckedChange={setAllowGost} />
                   </div>
                 </div>
               </div>
@@ -2555,7 +2555,7 @@ function UsersContent() {
                     </p>
                     <p className="text-xs text-muted-foreground">每月自动清零已用流量。</p>
                   </div>
-                  <Switch
+                  <Checkbox aria-label="启用月度自动重置"
                     checked={trafficAutoReset}
                     onCheckedChange={(checked) => {
                       setTrafficAutoReset(checked);
@@ -2600,7 +2600,7 @@ function UsersContent() {
                 默认不展开全部资源，按需选择要授权给该用户的端口转发、转发链、转发组、隧道、网络测试主机和计费资源。
               </p>
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">端口转发授权</Label>
                   <Badge variant="outline" className="text-[10px]">{selectedAllowedPortForwards.length} 条</Badge>
@@ -2643,11 +2643,11 @@ function UsersContent() {
                     暂未授权端口转发，可从上方选择添加。
                   </p>
                 )}
-              </div>
+              </FormField>
 
               <Separator />
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">转发链/转发组授权</Label>
                   <Badge variant="outline" className="text-[10px]">{selectedAllowedChainAndFailoverGroups.length} 条</Badge>
@@ -2691,11 +2691,11 @@ function UsersContent() {
                     暂未授权转发链或转发组，可从上方选择添加。
                   </p>
                 )}
-              </div>
+              </FormField>
 
               <Separator />
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">隧道转发</Label>
                   <Badge variant="outline" className="text-[10px]">{allowedTunnelIds.length} 条</Badge>
@@ -2743,11 +2743,11 @@ function UsersContent() {
                     暂未授权隧道，可从上方选择添加。
                   </p>
                 )}
-              </div>
+              </FormField>
 
               <Separator />
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">订阅节点分享</Label>
                   <Badge variant="outline" className="text-[10px]">{sharedProxyNodeIds.length} 个</Badge>
@@ -2804,11 +2804,11 @@ function UsersContent() {
                     暂未分享节点。只租一两个落地、不值得单开端口的用户可以从上方选。
                   </p>
                 )}
-              </div>
+              </FormField>
 
               <Separator />
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">网络测试主机授权</Label>
                   <Badge variant="outline" className="text-[10px]">{allowedHostIds.length} 台</Badge>
@@ -2851,11 +2851,11 @@ function UsersContent() {
                     暂未额外授权网络测试主机。
                   </p>
                 )}
-              </div>
+              </FormField>
 
               <Separator />
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">流量计费转发资源</Label>
                   <Badge variant="outline" className="text-[10px]">{trafficBillingForwardGroupIds.length} 个</Badge>
@@ -2903,9 +2903,9 @@ function UsersContent() {
                     暂未授权计费转发资源，可从上方选择添加。
                   </p>
                 )}
-              </div>
+              </FormField>
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">历史计费主机</Label>
                   <Badge variant="outline" className="text-[10px]">{trafficBillingHostIds.length} 台</Badge>
@@ -2948,9 +2948,9 @@ function UsersContent() {
                     暂未授权历史计费主机。
                   </p>
                 )}
-              </div>
+              </FormField>
 
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Label className="text-sm font-medium">流量计费隧道</Label>
                   <Badge variant="outline" className="text-[10px]">{trafficBillingTunnelIds.length} 条</Badge>
@@ -2998,7 +2998,7 @@ function UsersContent() {
                     暂未授权计费隧道，可从上方选择添加。
                   </p>
                 )}
-              </div>
+              </FormField>
             </TabsContent>
           </Tabs>
           <DialogFooter className="shrink-0">

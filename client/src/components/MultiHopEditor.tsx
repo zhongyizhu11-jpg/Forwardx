@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import HostStatusLabel from "@/components/HostStatusLabel";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useSortableReorder } from "@/components/SortableDragHandle";
@@ -301,7 +301,7 @@ export default function MultiHopEditor({
       )}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         <Select value="" onValueChange={addHop} disabled={reachedMaxHops}>
-          <SelectTrigger className="h-8 min-w-0 flex-1 text-sm sm:max-w-sm">
+          <SelectTrigger aria-label="添加主机到链路" className="h-8 min-w-0 flex-1 text-sm sm:max-w-sm">
             <SelectValue placeholder={reachedMaxHops ? `最多 ${maxHops} 级` : "添加主机到链路..."} />
           </SelectTrigger>
           <SelectContent>
@@ -401,7 +401,7 @@ export default function MultiHopEditor({
             const showIpv6Switch = !isFirst && !isFixedExit;
             const tunnelEntryTip = hasTunnelEntryIp ? "使用内网IP / IX地址" : missingTunnelEntryIpTip;
             const tunnelEntrySwitch = (
-              <Switch
+              <Checkbox
                 checked={useTunnelEntryIp}
                 disabled={!hasTunnelEntryIp}
                 onCheckedChange={(checked) => updateUseTunnelEntryIp(idx, !!checked)}
@@ -409,7 +409,7 @@ export default function MultiHopEditor({
               />
             );
             const ipv6Switch = (
-              <Switch
+              <Checkbox
                 checked={useIpv6}
                 disabled={!hasIpv6}
                 onCheckedChange={(checked) => updateUseIpv6(idx, !!checked)}

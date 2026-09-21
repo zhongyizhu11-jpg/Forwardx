@@ -113,7 +113,7 @@ export default function TrafficBillingSection() {
             {isLoading ? (
               <Skeleton className="h-6 w-11 rounded-full" />
             ) : (
-              <OptimisticSwitch
+              <OptimisticSwitch aria-label="总开关"
                 checked={enabled}
                 onCheckedChangeAsync={(checked: boolean) => setEnabled.mutateAsync({ enabled: checked })}
               />

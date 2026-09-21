@@ -1329,6 +1329,19 @@ async function subscriptionCycleRows(input: { userId?: number; autoResetOnly?: b
     .where(and(...conditions));
 }
 
+/**
+ * 这份订阅下一次该在什么时候清流量。
+ *
+ * 只有一处定义：对齐时按它写库，巡检时也按它判断「要不要进锁」。两边各算一套的话，
+ * 迟早出现「巡检说没事、进去之后又改了」或者反过来 —— 而这是计费。
+ */
+function computeSubscriptionTrafficResetAt(row: any, reference: Date, expiresAt: Date | null) {
+  if (subscriptionTrafficLimit(row) <= 0) return null;
+  return row.trafficAutoReset
+    ? nextConfiguredSubscriptionTrafficReset(row, row, reference, expiresAt)
+    : nextAnchoredSubscriptionTrafficReset(row.startedAt, reference, expiresAt);
+}
+
 async function alignSubscriptionTrafficCycles(
   reference: Date,
   input: { userId?: number; autoResetOnly?: boolean; preserveDue?: boolean } = {},
@@ -1341,17 +1354,70 @@ async function alignSubscriptionTrafficCycles(
       continue;
     }
     const expiresAt = validDate(row.expiresAt);
-    const nextTrafficResetAt = subscriptionTrafficLimit(row) > 0
-      ? row.trafficAutoReset
-        ? nextConfiguredSubscriptionTrafficReset(row, row, reference, expiresAt)
-        : nextAnchoredSubscriptionTrafficReset(row.startedAt, reference, expiresAt)
-      : null;
+    const nextTrafficResetAt = computeSubscriptionTrafficResetAt(row, reference, expiresAt);
     await updateActiveTrafficAddonCycleEnd(Number(row.id), nextTrafficResetAt, expiresAt);
     if (sameEpochSecond(row.nextTrafficResetAt, nextTrafficResetAt)) continue;
     await updateUserSubscription(Number(row.id), { nextTrafficResetAt } as any);
     updated += 1;
   }
   return updated;
+}
+
+type ActiveAddonCycle = { cycleResetAt: unknown; expiresAt: unknown };
+
+/** 所有生效中的流量加油包，按订阅归好 —— 一次问清，供巡检在内存里比对。 */
+async function activeTrafficAddonCycles(): Promise<Map<number, ActiveAddonCycle[]>> {
+  const cycles = new Map<number, ActiveAddonCycle[]>();
+  const db = await getDb();
+  if (!db) return cycles;
+  const rows = await db.select({
+    subscriptionId: userTrafficAddons.subscriptionId,
+    cycleResetAt: userTrafficAddons.cycleResetAt,
+    expiresAt: userTrafficAddons.expiresAt,
+  }).from(userTrafficAddons).where(eq(userTrafficAddons.status, "active"));
+  for (const row of rows as any[]) {
+    const subscriptionId = Number(row.subscriptionId || 0);
+    if (subscriptionId <= 0) continue;
+    const list = cycles.get(subscriptionId);
+    if (list) list.push(row);
+    else cycles.set(subscriptionId, [row]);
+  }
+  return cycles;
+}
+
+/**
+ * 这份订阅这一轮有没有活可做。
+ *
+ * 每小时的流量重置巡检原来是**每个用户都进一趟锁**：进去先重新对齐（一次查、一次
+ * 几乎必然命中 0 行的 UPDATE），再查一次「有没有到期该充的」，然后绝大多数时候
+ * 什么都没做就出来了。实测稳态是精确的 3N + 5 次查询、N 次写 —— 一千个用户就是
+ * 每小时三千次白跑的往返，而一个月里七百多次巡检都长这样。
+ *
+ * 但「有没有活」完全可以在外面那一次全量读里就看出来，判据只有三条：
+ *
+ *   1. 已经到了该清流量的时刻；
+ *   2. 算出来的下次重置时刻和库里存的不一样（比如用户改了重置日）；
+ *   3. 名下加油包的周期末尾和订阅对不上。
+ *
+ * 三条都不成立时，进锁之后那一趟一个字节都不会改 —— 对齐会被 sameEpochSecond 挡下，
+ * 加油包那条 UPDATE 的 WHERE 命中 0 行，到期查询返回空。所以这里跳过它是**等价**的，
+ * 不是近似。
+ *
+ * 真要做事的用户仍然照原样进锁、在锁里重新读一遍最新状态再算 —— 这里只负责把
+ * 明摆着没事的挑出去，权威计算一步没少。
+ */
+function subscriptionCycleNeedsWork(row: any, reference: Date, addons: ActiveAddonCycle[] | undefined) {
+  const existingResetAt = validDate(row.nextTrafficResetAt);
+  if (existingResetAt && existingResetAt.getTime() <= reference.getTime()) return true;
+
+  const expiresAt = validDate(row.expiresAt);
+  const nextTrafficResetAt = computeSubscriptionTrafficResetAt(row, reference, expiresAt);
+  if (!sameEpochSecond(row.nextTrafficResetAt, nextTrafficResetAt)) return true;
+
+  if (!addons || addons.length === 0) return false;
+  const cycleEnd = nextTrafficResetAt || expiresAt;
+  return addons.some((addon) =>
+    !sameEpochSecond(addon.cycleResetAt, cycleEnd) || !sameEpochSecond(addon.expiresAt, cycleEnd));
 }
 
 async function expireTrafficAddonsForSubscriptionIds(subscriptionIds: number[]) {
@@ -2478,10 +2544,19 @@ async function rechargeSubscriptionTrafficCyclesForUserUnlocked(userId: number, 
 
 export async function rechargeSubscriptionTrafficCycles() {
   const rows = await subscriptionCycleRows();
+  const now = nowDate();
+  /*
+    先把没事可做的订阅挑出去，再决定进谁的锁。
+
+    外面这一次全量读本来就带齐了判断所需的全部字段，加上一次把生效加油包问清，
+    整轮的固定开销是两次查询 —— 换掉原来的「每个用户三次」。判据见
+    subscriptionCycleNeedsWork：三条都不成立时进锁那一趟是空跑。
+  */
+  const addonCycles = await activeTrafficAddonCycles();
   const userIds = Array.from(new Set((rows as any[])
+    .filter((row) => subscriptionCycleNeedsWork(row, now, addonCycles.get(Number(row.id))))
     .map((row) => Number(row.userId || 0))
     .filter((userId) => userId > 0)));
-  const now = nowDate();
   let resetCount = 0;
   for (const userId of userIds) {
     const result = await withTrafficBillingUserLock(

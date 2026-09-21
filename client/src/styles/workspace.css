@@ -63,7 +63,7 @@
 [data-slot="button"] { transition: background-color 150ms, color 150ms, box-shadow 150ms; }
 [data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] { box-shadow: inset 0 1px 2px rgb(24 37 54 / 3%); }
 [data-slot="button"]:focus-visible, .workspace-tab:focus-visible, .workspace-tab-scroll:focus-visible { outline: 2px solid var(--fx-brand); outline-offset: 3px; }
-.workspace-skip-link { position: fixed; top: 8px; left: 8px; z-index: 60; transform: translateY(-160%); border-radius: 8px; background: var(--fx-surface); padding: 12px 16px; box-shadow: var(--fx-shadow-raised); }
+.workspace-skip-link { position: fixed; top: 8px; left: 8px; z-index: var(--fx-z-toast); transform: translateY(-160%); border-radius: 8px; background: var(--fx-surface); padding: 12px 16px; box-shadow: var(--fx-shadow-raised); }
 .workspace-skip-link:focus { transform: none; }
 .workspace-nav-search { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 8px 10px; border: 1px solid var(--fx-stroke); border-radius: 6px; background: var(--fx-subtle); color: var(--fx-muted); font-size: 12px; text-align: left; }
 .workspace-nav-search kbd { margin-left: auto; font-family: inherit; font-size: 10px; }
@@ -85,7 +85,7 @@
 .workspace-mobile-nav { display: none; }
 @media (max-width: 767px) {
   .workspace-with-mobile-nav { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
-  .workspace-mobile-nav { display: grid; position: fixed; z-index: 30; inset: auto 0 0; gap: 4px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--fx-stroke); background: var(--fx-surface); box-shadow: 0 -2px 12px rgb(24 30 36 / 3%); }
+  .workspace-mobile-nav { display: grid; position: fixed; z-index: var(--fx-z-sticky); inset: auto 0 0; gap: 4px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--fx-stroke); background: var(--fx-surface); box-shadow: 0 -2px 12px rgb(24 30 36 / 3%); }
   .workspace-mobile-nav > :is(a, button) { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 0; min-height: 52px; border-radius: 8px; font-size: 10px; color: var(--fx-muted); }
   .workspace-mobile-nav > a[aria-current="page"] { color: var(--fx-brand); font-weight: 600; }
   .workspace-mobile-nav > :is(a, button):focus-visible { outline: 2px solid var(--fx-brand); outline-offset: -2px; }
@@ -131,7 +131,9 @@
 .workspace-layout [data-sidebar="sidebar"] { background: var(--fx-surface); }
 [data-sidebar="menu-button"] { min-height: 38px; }
 [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-subtle); color: var(--fx-text); font-weight: 600; }
-[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] { background-color: var(--fx-surface); border-color: var(--fx-control-stroke); }
+/* 复选框也走控件描边：一个 20px 的空方框全靠边框才看得见，用 --fx-stroke 太淡。
+   选中时边框由 checked:border-primary 接管，所以这里只管没选中的状态。 */
+[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"], [data-slot="checkbox"]:not(:checked) { background-color: var(--fx-surface); border-color: var(--fx-control-stroke); }
 [data-slot="input"]:focus-visible, [data-slot="textarea"]:focus-visible, [data-slot="select-trigger"]:focus { border-color: var(--fx-brand); }
 [data-slot="textarea"] { line-height: 1.6; }
 [data-slot="dialog-header"] { min-width: 0; }
@@ -196,7 +198,7 @@
 .public-faq details p { margin-bottom: 24px; max-width: 520px; font-size: 14px; line-height: 1.8; color: var(--fx-muted); }
 .public-home-shell :is(a, button, summary):focus-visible { outline: 2px solid var(--fx-brand); outline-offset: 4px; border-radius: 4px; }
 .auth-route-enter-left { border-right: 1px solid var(--fx-stroke); background: var(--fx-subtle); }
-.auth-home-link { position: absolute; top: 16px; left: 16px; z-index: 20; display: inline-flex; align-items: center; min-height: 44px; padding-inline: 8px; font-size: 13px; color: var(--fx-muted); }
+.auth-home-link { position: absolute; top: 16px; left: 16px; z-index: var(--fx-z-popover); display: inline-flex; align-items: center; min-height: 44px; padding-inline: 8px; font-size: 13px; color: var(--fx-muted); }
 .auth-home-link:hover { color: var(--fx-text); }
 .auth-home-link:focus-visible { outline: 2px solid var(--fx-brand); outline-offset: 2px; border-radius: 6px; }
 .auth-intro-title { margin-top: 40px; font-size: clamp(32px, 3.5vw, 48px); line-height: 1.35; font-weight: 600; letter-spacing: -.045em; }

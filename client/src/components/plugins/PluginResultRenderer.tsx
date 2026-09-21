@@ -1,8 +1,9 @@
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { useState } from "react";
 import { valueAtPath } from "./agentResourceState";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import type { PluginResultFieldDefinition, PluginResultSchemaDefinition } from "@shared/pluginTypes";
@@ -59,8 +60,8 @@ export function PluginResultRenderer({
   const base = valueAtPath(data, schema.resultPath);
 
   const copy = async (value: unknown, field: PluginResultFieldDefinition) => {
-    await navigator.clipboard.writeText(displayValue(value, field));
-    toast.success("已复制");
+    if (await copyTextToClipboard(displayValue(value, field))) toast.success("已复制");
+    else toast.error("复制失败，请手动复制");
   };
 
   const renderValue = (value: unknown, field: PluginResultFieldDefinition, revealKey: string) => {
@@ -69,7 +70,7 @@ export function PluginResultRenderer({
     const text = secret && !isRevealed ? "••••••••" : displayValue(value, field);
     const url = field.openable ? safeExternalUrl(value) : "";
     if (field.type === "boolean") {
-      return <Switch checked={value === true} disabled aria-label={field.label} />;
+      return <Checkbox checked={value === true} disabled aria-label={field.label} />;
     }
     if (field.type === "statusBadge") {
       return <Badge variant="outline" className={statusTone(value)}>{text}</Badge>;

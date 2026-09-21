@@ -1,3 +1,4 @@
+import { copyTextToClipboard } from "@/lib/clipboard";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import MobileInfoRow from "@/components/MobileInfoRow";
@@ -5,10 +6,13 @@ import DashboardLayout from "@/components/DashboardLayout";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Input } from "@/components/ui/input";
+import { FormField } from "@/components/ui/form-field";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -17,7 +21,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -257,27 +260,39 @@ function PaymentStatCard({
   );
 }
 
-function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+/*
+  一个 label 配一个输入框 —— 而且是**真的关联上**，不只是摆在上面。
+
+  这页三十多个输入框原来只是把 <Label> 和 <Input> 摆在一起，没有 htmlFor/id 关联：
+  读屏念到输入框时只会说「编辑框，空」，不知道该填什么。
+
+  关联这件事项目里已经有现成的做法：FormField 用 context 发一个 id，
+  Label 拿它当 htmlFor，Input/Textarea/SelectTrigger 拿它当 id。
+  所以这里不再自己造一套 —— 换掉这个包装器的内部，三十八个调用处一个字都不用改。
+*/
+function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <div className="space-y-2">
+    <FormField className="space-y-2">
       <Label>{label}</Label>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-    </div>
+    </FormField>
   );
 }
 
 function CallbackItem({ label, value }: { label: string; value: string }) {
   const copy = async () => {
-    await navigator.clipboard.writeText(value);
-    toast.success("已复制");
+    // 这几个地址是要贴进支付平台后台的。原来没有任何兜底，面板跑在 http 上时
+    // 点了毫无反应 —— 管理员以为复制上了，粘过去的是剪贴板里的旧内容。
+    if (await copyTextToClipboard(value)) toast.success("已复制");
+    else toast.error("复制失败，请手动复制");
   };
   return (
     <div className="min-w-0 overflow-hidden rounded-lg border bg-background/70 px-3 py-2">
       <div className="mb-1 text-xs text-muted-foreground">{label}</div>
       <div className="flex items-center gap-2">
         <code className="min-w-0 flex-1 truncate text-xs">{value}</code>
-        <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={copy}>
+        <Button type="button" variant="ghost" size="icon" aria-label={`复制${label}`} className="h-7 w-7" onClick={copy}>
           <Copy className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -535,7 +550,7 @@ export default function Payments() {
                     <div className="font-medium">启用支付功能</div>
                     <div className="text-sm text-muted-foreground">关闭后无法下单</div>
                   </div>
-                  <Switch checked={form.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, enabled }))} />
+                  <Checkbox aria-label="启用支付功能" checked={form.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, enabled }))} />
                 </div>
                 <Field label="商品名称">
                   <Input value={form.productName} onChange={(e) => setForm((prev) => ({ ...prev, productName: e.target.value }))} />
@@ -586,7 +601,7 @@ export default function Payments() {
                     <div className="font-medium">启用易支付</div>
                     <div className="text-sm text-muted-foreground">支付宝、微信通道</div>
                   </div>
-                  <Switch checked={form.easypay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, enabled } }))} />
+                  <Checkbox aria-label="启用易支付" checked={form.easypay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, enabled } }))} />
                 </div>
                 <Field label="接口地址">
                   <Input placeholder="https://pay.example.com" value={form.easypay.apiBase} onChange={(e) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, apiBase: e.target.value } }))} />
@@ -595,7 +610,7 @@ export default function Payments() {
                   <Input value={form.easypay.pid} onChange={(e) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, pid: e.target.value } }))} />
                 </Field>
                 <Field label="商户密钥" hint={config?.easypay?.hasPkey ? "已保存密钥，留空表示不修改" : "尚未保存密钥"}>
-                  <Input type="password" value={form.easypay.pkey} onChange={(e) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, pkey: e.target.value } }))} />
+                  <PasswordInput value={form.easypay.pkey} onChange={(e) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, pkey: e.target.value } }))} />
                 </Field>
                 <Field label="下单方式">
                   <Select value={form.easypay.mode} onValueChange={(mode: "redirect" | "api") => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, mode } }))}>
@@ -632,7 +647,7 @@ export default function Payments() {
                     <div className="font-medium">启用支付宝官方</div>
                     <div className="text-sm text-muted-foreground">需在基础设置中选择</div>
                   </div>
-                  <Switch checked={form.alipay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, alipay: { ...prev.alipay, enabled } }))} />
+                  <Checkbox aria-label="启用支付宝官方" checked={form.alipay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, alipay: { ...prev.alipay, enabled } }))} />
                 </div>
                 <Field label="AppID">
                   <Input value={form.alipay.appId} onChange={(e) => setForm((prev) => ({ ...prev, alipay: { ...prev.alipay, appId: e.target.value } }))} />
@@ -677,7 +692,7 @@ export default function Payments() {
                     <div className="font-medium">启用微信官方</div>
                     <div className="text-sm text-muted-foreground">需在基础设置中选择</div>
                   </div>
-                  <Switch checked={form.wxpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, enabled } }))} />
+                  <Checkbox aria-label="启用微信官方" checked={form.wxpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, enabled } }))} />
                 </div>
                 <Field label="AppID">
                   <Input value={form.wxpay.appId} onChange={(e) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, appId: e.target.value } }))} />
@@ -692,7 +707,7 @@ export default function Payments() {
                   <Input value={form.wxpay.publicKeyId} onChange={(e) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, publicKeyId: e.target.value } }))} />
                 </Field>
                 <Field label="APIv3 密钥" hint={config?.wxpay?.hasApiV3Key ? "已保存密钥，留空表示不修改" : "尚未保存密钥"}>
-                  <Input type="password" value={form.wxpay.apiV3Key} onChange={(e) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, apiV3Key: e.target.value } }))} />
+                  <PasswordInput value={form.wxpay.apiV3Key} onChange={(e) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, apiV3Key: e.target.value } }))} />
                 </Field>
                 <Field label="支付模式" hint="JSAPI 需要用户 OpenID，当前版本暂未开放前台 OAuth 流程">
                   <Select value={form.wxpay.mode} onValueChange={(mode: "native" | "h5" | "jsapi") => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, mode } }))}>
@@ -736,16 +751,16 @@ export default function Payments() {
                     <div className="font-medium">启用 Stripe</div>
                     <div className="text-sm text-muted-foreground">银行卡和钱包支付</div>
                   </div>
-                  <Switch checked={form.stripe.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, enabled } }))} />
+                  <Checkbox aria-label="启用 Stripe" checked={form.stripe.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, enabled } }))} />
                 </div>
                 <Field label="Secret Key" hint={config?.stripe?.hasSecretKey ? "已保存密钥，留空表示不修改" : "尚未保存密钥"}>
-                  <Input type="password" placeholder="sk_live_..." value={form.stripe.secretKey} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, secretKey: e.target.value } }))} />
+                  <PasswordInput placeholder="sk_live_..." value={form.stripe.secretKey} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, secretKey: e.target.value } }))} />
                 </Field>
                 <Field label="Publishable Key" hint="可选，用于前端展示或后续扩展">
                   <Input placeholder="pk_live_..." value={form.stripe.publishableKey} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, publishableKey: e.target.value } }))} />
                 </Field>
                 <Field label="Webhook Secret" hint={config?.stripe?.hasWebhookSecret ? "已保存签名密钥，留空表示不修改" : "尚未保存签名密钥"}>
-                  <Input type="password" placeholder="whsec_..." value={form.stripe.webhookSecret} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, webhookSecret: e.target.value } }))} />
+                  <PasswordInput placeholder="whsec_..." value={form.stripe.webhookSecret} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, webhookSecret: e.target.value } }))} />
                 </Field>
                 <Field label="币种">
                   <Input value={form.stripe.currency} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, currency: e.target.value.toLowerCase() } }))} />
@@ -769,7 +784,7 @@ export default function Payments() {
                     <div className="font-medium">启用 USDT 支付</div>
                     <div className="text-sm text-muted-foreground">通过独立部署的 GM Pay 网关收款</div>
                   </div>
-                  <Switch checked={form.gmpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, enabled } }))} />
+                  <Checkbox aria-label="启用 USDT 支付" checked={form.gmpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, enabled } }))} />
                 </div>
                 <Field label="网关地址">
                   <Input placeholder="https://pay.example.com" value={form.gmpay.apiBase} onChange={(e) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, apiBase: e.target.value } }))} />
@@ -778,7 +793,7 @@ export default function Payments() {
                   <Input value={form.gmpay.pid} onChange={(e) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, pid: e.target.value } }))} />
                 </Field>
                 <Field label="商户密钥" hint={config?.gmpay?.hasSecretKey ? "已保存密钥，留空表示不修改" : "尚未保存密钥"}>
-                  <Input type="password" value={form.gmpay.secretKey} onChange={(e) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, secretKey: e.target.value } }))} />
+                  <PasswordInput value={form.gmpay.secretKey} onChange={(e) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, secretKey: e.target.value } }))} />
                 </Field>
                 <Field label="USDT 网络">
                   <Select value={form.gmpay.network} onValueChange={(network: PaymentConfigForm["gmpay"]["network"]) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, network } }))}>

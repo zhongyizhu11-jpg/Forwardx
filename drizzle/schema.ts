@@ -383,6 +383,18 @@ export const forwardRules = table("forward_rules", {
   failoverEnabled: boolean("failoverEnabled").notNull().default(false),
   failoverStrategy: varchar("failoverStrategy", { length: 32 }).notNull().default("fallback"),
   failoverTargets: text("failoverTargets"),
+  // 主出站的健康探测目标（`地址:端口`，留空就探出站地址本身）。备用出站的探测目标
+  // 存在 failoverTargets 的每一项里；主出站没地方放，所以单独一列。
+  failoverProbeTarget: text("failoverProbeTarget"),
+  // 时段表（JSON：{timezone, windows[]}）。某几个时段里优先走哪一条出站。
+  failoverSchedule: text("failoverSchedule"),
+  // 刚切过去之后至少待多久才允许按优先级切回；0 = 不限制。
+  failoverMinHoldSeconds: int("failoverMinHoldSeconds").notNull().default(0),
+  // 人工指定优先走第几条出站；null = 交回自动。到期时间 null = 一直钉着。
+  failoverPinnedIndex: int("failoverPinnedIndex"),
+  failoverPinnedUntil: epoch("failoverPinnedUntil"),
+  // 按实测延迟自动择优（只在主备模式下生效）。
+  failoverPreferFastest: boolean("failoverPreferFastest").notNull().default(false),
   failoverSeconds: int("failoverSeconds").notNull().default(60),
   recoverSeconds: int("recoverSeconds").notNull().default(120),
   autoFailback: boolean("autoFailback").notNull().default(true),

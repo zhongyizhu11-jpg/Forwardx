@@ -165,6 +165,22 @@ UI 重构阶段的**唯一依据**。
 | 全局提示 Toast | 60 | 永远在最上 |
 
 **用变量统一管理，禁止随手写大数字。**
+
+本项目的落法（2026-09）：六档写在 `shared/design-tokens.css` 里，
+`--fx-z-content / raised / popover / sticky / overlay / toast`。
+
+**浮层容器内部是另一套坐标系。** 对话框、下拉、菜单、气泡、日期面板、toast
+全都 portal 进 `#forwardx-overlay-root`，而那个容器是 `isolation: isolate` ——
+自成一个层叠上下文，里面的值只和彼此比较，跟页面上的 0~60 没有可比性：
+
+| 容器内 | 值 | 谁 |
+| --- | --- | --- |
+| `--fx-z-in-overlay-base` | 50 | 对话框、下拉、菜单、气泡：同一层，谁后挂上谁在上 |
+| `--fx-z-in-overlay-popover` | 70 | 日期面板：要盖住对话框，单独高一档 |
+| `--fx-z-in-overlay-toast` | 200 | 提示永远在最上 |
+
+`client/src/zIndexTiers.test.ts` 盯着字面量清单：写一个不在六档里、也没记在案的
+数字就会红。在案的例外（表格冻结列、页面基座、看板娘浮窗）都在那张表里写了理由。
 半透明遮罩出现时，比它层级低的内容都不应该可以点击。
 
 ---

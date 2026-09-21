@@ -1,3 +1,4 @@
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { FormField } from "@/components/ui/form-field";
 import EmptyState from "@/components/EmptyState";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
@@ -17,6 +18,7 @@ import { LatencyRating } from "@/components/LatencyRating";
 import { LinkTestProbeView, parseLinkTestMessage, type LinkTestPlannedSegment } from "@/components/LinkTestLatencySummary";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useOptimisticSortableOrder, useSortableReorder } from "@/components/SortableDragHandle";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -94,6 +96,44 @@ import {
 import { cn } from "@/lib/utils";
 import { autoForwardRuleName } from "@shared/forwardRuleName";
 import {
+  BILLING_TIME_ZONE,
+} from "@shared/billingTime";
+import {
+  MAX_FAILOVER_SCHEDULE_WINDOWS,
+  describeFailoverScheduleWindow,
+  failoverSchedulePayload,
+  parseFailoverSchedule,
+  type FailoverSchedule,
+  type FailoverScheduleWindow,
+} from "@shared/failoverSchedule";
+import {
+  describeFailoverLines,
+  failoverLineHintText,
+  type RelayCandidate,
+} from "@/lib/failoverRelayHints";
+import {
+  formatFailoverEndpoint,
+  formatFailoverTargetLine,
+  parseFailoverEndpoint,
+  parseFailoverTargetLine,
+  parseFailoverTargets,
+  type FailoverTarget,
+} from "@shared/failoverTargets";
+import {
+  forwardRuleFormBlocker,
+  isAdvancedSectionBlocker,
+  isForwardRuleSourcePortRequired,
+  isValidForwardPort,
+  type ForwardRuleFormContext,
+} from "@shared/forwardRuleForm";
+/*
+  端口策略以前在这个文件里另抄了一份，而且和服务端漂了：服务端的策略支持
+  多段 ranges（套餐发的端口段就是这么下来的），这边完全不认；「不限制」时
+  服务端说「不限制」，这边说「1-65535」—— 听着像有限制。合并那一步这边还是
+  逐个端口试 1..65535，实测 2.042ms，服务端的区间求交是 0.007ms。
+*/
+import { describePortPolicy, portPolicyFrom, type PortPolicy } from "@shared/portPolicy";
+import {
   Plus,
   Trash2,
   Pencil,
@@ -107,6 +147,7 @@ import {
   ArrowUpFromLine,
   Stethoscope,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   XCircle,
   Loader2,
@@ -187,84 +228,6 @@ function clearRuleTrafficStatCaches() {
   }
 }
 
-type PortPolicy = {
-  rangeStart: number | null;
-  rangeEnd: number | null;
-  allowlist: number[];
-  denyAll?: boolean;
-};
-
-function parsePortAllowlist(value: unknown) {
-  const text = String(value || "").trim();
-  if (!text) return [];
-  return Array.from(new Set(text
-    .split(",")
-    .map((item) => Number(String(item).trim()))
-    .filter((port) => Number.isInteger(port) && port >= 1 && port <= 65535)))
-    .sort((a, b) => a - b);
-}
-
-function portPolicyFrom(source: any): PortPolicy {
-  const start = source?.portRangeStart != null ? Number(source.portRangeStart) : null;
-  const end = source?.portRangeEnd != null ? Number(source.portRangeEnd) : null;
-  const hasRange = start != null && end != null && start >= 1 && end <= 65535 && start <= end;
-  return {
-    rangeStart: hasRange ? start : null,
-    rangeEnd: hasRange ? end : null,
-    allowlist: parsePortAllowlist(source?.portAllowlist),
-  };
-}
-
-function hasPortRestriction(policy: PortPolicy) {
-  return !!policy.denyAll || (policy.rangeStart !== null && policy.rangeEnd !== null) || policy.allowlist.length > 0;
-}
-
-function isPortAllowedByPolicy(port: number, policy: PortPolicy) {
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
-  if (policy.denyAll) return false;
-  if (!hasPortRestriction(policy)) return true;
-  const inRange = policy.rangeStart !== null && policy.rangeEnd !== null && port >= policy.rangeStart && port <= policy.rangeEnd;
-  return inRange || policy.allowlist.includes(port);
-}
-
-function describePortPolicy(policy: PortPolicy) {
-  if (policy.denyAll) return "无可用端口";
-  const parts: string[] = [];
-  if (policy.rangeStart !== null && policy.rangeEnd !== null) parts.push(`${policy.rangeStart}-${policy.rangeEnd}`);
-  if (policy.allowlist.length > 0) parts.push(policy.allowlist.join(","));
-  return parts.length > 0 ? parts.join(" + ") : "1-65535";
-}
-
-function combinePortPolicies(...policies: PortPolicy[]): PortPolicy {
-  const restricted = policies.filter(hasPortRestriction);
-  if (restricted.length === 0) return portPolicyFrom(null);
-  const allowed: number[] = [];
-  for (let port = 1; port <= 65535; port++) {
-    if (restricted.every((policy) => isPortAllowedByPolicy(port, policy))) allowed.push(port);
-  }
-  if (allowed.length === 0) return { rangeStart: null, rangeEnd: null, allowlist: [], denyAll: true };
-  const ranges: Array<{ start: number; end: number }> = [];
-  let start = allowed[0];
-  let previous = allowed[0];
-  for (let i = 1; i <= allowed.length; i++) {
-    const current = allowed[i];
-    if (current === previous + 1) {
-      previous = current;
-      continue;
-    }
-    ranges.push({ start, end: previous });
-    start = current;
-    previous = current;
-  }
-  const best = ranges.reduce((acc, range) => (range.end - range.start > acc.end - acc.start ? range : acc), ranges[0]);
-  const useRange = best.end > best.start;
-  return {
-    rangeStart: useRange ? best.start : null,
-    rangeEnd: useRange ? best.end : null,
-    allowlist: allowed.filter((port) => !useRange || port < best.start || port > best.end),
-  };
-}
-
 type RuleProtocol = "tcp" | "udp" | "both";
 type RuleRouteMode = "local" | "tunnel" | "chain" | "group";
 
@@ -279,30 +242,21 @@ type RuleFormData = {
   routeMode: RuleRouteMode;
   forwardType: ForwardType;
   protocol: "tcp" | "udp" | "both";
-  gostMode: "direct" | "reverse";
-  gostRelayHost: string;
-  gostRelayPort: number;
   tunnelId: number | null;
   forwardGroupId: number | null;
   sourcePort: number;
   targetIp: string;
   targetPort: number;
   telegramErrorNotifyEnabled: boolean;
-  blockHttp: boolean;
-  blockSocks: boolean;
-  blockTls: boolean;
-  proxyProtocolReceive: boolean;
-  proxyProtocolSend: boolean;
-  proxyProtocolExitReceive: boolean;
-  proxyProtocolExitSend: boolean;
-  proxyProtocolVersion: ProxyProtocolVersion;
-  tcpFastOpen: boolean;
-  zeroCopy: boolean;
-  udpOverTcp: boolean;
-  udpOverTcpPort: number;
   failoverEnabled: boolean;
   failoverStrategy: FailoverStrategy;
   failoverTargetsText: string;
+  failoverProbeTarget: string;
+  failoverSchedule: FailoverSchedule | null;
+  failoverMinHoldSeconds: number;
+  /** 人工钉住：走第几条出站、钉到什么时候（Unix 秒，null = 一直钉着）。 */
+  failoverPin: { index: number; until: number | null } | null;
+  failoverPreferFastest: boolean;
   failoverSeconds: number;
   recoverSeconds: number;
   autoFailback: boolean;
@@ -338,30 +292,20 @@ const defaultForm: RuleFormData = {
   routeMode: "local",
   forwardType: "iptables",
   protocol: "both",
-  gostMode: "direct",
-  gostRelayHost: "",
-  gostRelayPort: 0,
   tunnelId: null,
   forwardGroupId: null,
   sourcePort: 0,
   targetIp: "",
   targetPort: 0,
   telegramErrorNotifyEnabled: false,
-  blockHttp: false,
-  blockSocks: false,
-  blockTls: false,
-  proxyProtocolReceive: false,
-  proxyProtocolSend: false,
-  proxyProtocolExitReceive: false,
-  proxyProtocolExitSend: false,
-  proxyProtocolVersion: 1,
-  tcpFastOpen: false,
-  zeroCopy: false,
-  udpOverTcp: false,
-  udpOverTcpPort: 0,
   failoverEnabled: false,
   failoverStrategy: "fallback",
   failoverTargetsText: "",
+  failoverProbeTarget: "",
+  failoverSchedule: null,
+  failoverMinHoldSeconds: 0,
+  failoverPin: null,
+  failoverPreferFastest: false,
   failoverSeconds: 60,
   recoverSeconds: 120,
   autoFailback: true,
@@ -843,7 +787,7 @@ function buildRuleSearchText(rule: any, filters: RuleFilterState) {
   addRuleSearchForwardGroupParts(parts, group, filters, sourcePort);
   addRuleSearchUserParts(parts, filters.userById.get(Number(rule?.userId || 0)));
 
-  parseRuleFailoverTargets(rule?.failoverTargets).forEach((target) => {
+  parseFailoverTargets(rule?.failoverTargets).forEach((target) => {
     addRuleSearchPart(parts, target.targetIp);
     addRuleSearchPort(parts, target.targetPort, "备用端口");
     if (target.targetIp && target.targetPort > 0) addRuleSearchPart(parts, formatAddressWithPort(target.targetIp, target.targetPort));
@@ -1913,10 +1857,6 @@ function routeModeOptionClass(active: boolean, disabled = false) {
   return segmentedOptionClassName(active, disabled, "gap-1.5 px-3");
 }
 
-function isValidPort(port: number, allowZero = false) {
-  return Number.isInteger(port) && port >= (allowZero ? 0 : 1) && port <= 65535;
-}
-
 function isValidTargetHost(value: string) {
   return /^[a-zA-Z0-9]([a-zA-Z0-9\-_.]*[a-zA-Z0-9])?$|^[a-fA-F0-9:.]+$/.test(value.trim());
 }
@@ -1955,46 +1895,12 @@ function sanitizeRuleTransferFilePart(value: string) {
     .slice(0, 48) || "rules";
 }
 
-function splitFailoverTargetLine(line: string) {
-  const value = line.trim();
-  if (!value) return null;
-  if (value.startsWith("[")) {
-    const end = value.indexOf("]");
-    if (end > 1 && value[end + 1] === ":") {
-      return { targetIp: value.slice(1, end).trim(), targetPort: Number(value.slice(end + 2).trim()) };
-    }
-    return { error: "IPv6 地址请使用 [地址]:端口 格式" };
-  }
-  const index = value.lastIndexOf(":");
-  if (index <= 0 || index === value.length - 1) return { error: "请按 地址:端口 格式填写" };
-  return { targetIp: value.slice(0, index).trim(), targetPort: Number(value.slice(index + 1).trim()) };
-}
-
-function parseRuleFailoverTargets(raw: unknown) {
-  if (!raw) return [];
-  try {
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((target: any) => ({
-        targetIp: String(target?.targetIp || "").trim(),
-        targetPort: Number(target?.targetPort || 0),
-      }))
-      .filter((target) => target.targetIp && isValidPort(target.targetPort))
-      .slice(0, 10);
-  } catch {
-    return [];
-  }
-}
-
 function normalizeProxyProtocolVersion(value: unknown): ProxyProtocolVersion {
   return Number(value) === 2 ? 2 : 1;
 }
 
 function formatFailoverTargetsText(raw: unknown) {
-  return parseRuleFailoverTargets(raw)
-    .map((target) => `${target.targetIp.includes(":") ? `[${target.targetIp}]` : target.targetIp}:${target.targetPort}`)
-    .join("\n");
+  return parseFailoverTargets(raw).map(formatFailoverTargetLine).join("\n");
 }
 
 function exportRuleForTransfer(rule: any): RuleTransferFileRule {
@@ -2018,7 +1924,7 @@ function exportRuleForTransfer(rule: any): RuleTransferFileRule {
     udpOverTcpPort: Number(rule?.udpOverTcpPort || 0),
     failoverEnabled: Boolean(rule?.failoverEnabled),
     failoverStrategy: normalizeFailoverStrategy(rule?.failoverStrategy),
-    failoverTargets: parseRuleFailoverTargets(rule?.failoverTargets),
+    failoverTargets: parseFailoverTargets(rule?.failoverTargets),
     failoverSeconds: normalizeRuleTransferSeconds(rule?.failoverSeconds, 60),
     recoverSeconds: normalizeRuleTransferSeconds(rule?.recoverSeconds, 120),
     autoFailback: rule?.autoFailback !== false,
@@ -2054,22 +1960,23 @@ function downloadRuleTransferFiles(
 }
 
 function normalizeFailoverTargetsForSubmit(text: string) {
-  const targets: Array<{ targetIp: string; targetPort: number }> = [];
+  const targets: FailoverTarget[] = [];
   const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (lines.length > 10) return { error: "备用出站最多支持 10 个" };
   for (let index = 0; index < lines.length; index += 1) {
-    const parsed = splitFailoverTargetLine(lines[index]);
+    const parsed = parseFailoverTargetLine(lines[index]);
     if (!parsed) continue;
     if ("error" in parsed) return { error: `第 ${index + 1} 行：${parsed.error}` };
-    const targetIp = parsed.targetIp;
-    const targetPort = parsed.targetPort;
-    if (!isValidTargetHost(targetIp)) {
+    if (!isValidTargetHost(parsed.targetIp)) {
       return { error: `第 ${index + 1} 行：地址格式不正确` };
     }
-    if (!isValidPort(targetPort)) {
+    if (!isValidForwardPort(parsed.targetPort)) {
       return { error: `第 ${index + 1} 行：端口必须在 1-65535 之间` };
     }
-    targets.push({ targetIp, targetPort });
+    if (parsed.probeIp && (!isValidTargetHost(parsed.probeIp) || !isValidForwardPort(parsed.probePort))) {
+      return { error: `第 ${index + 1} 行：探测地址格式不正确` };
+    }
+    targets.push(parsed);
   }
   return { targets };
 }
@@ -2192,6 +2099,17 @@ function RulesContent() {
   const effectiveRulesQuery = selectedRulesQuery || undefined;
   const selectedScopeQueryEnabled = false as boolean;
   const [portStatus, setPortStatus] = useState<"idle" | "checking" | "available" | "used">("idle");
+  /*
+    「更多设置」默认收起。
+
+    这四项（规则名称、转发工具、异常提醒、出站策略）都有能用的默认值 —— 不管它们
+    也能把一条转发建出来。和真正要填的两项并排放着，等于让每个新手都当一次选择题：
+    「转发工具这三个我该选哪个？」而正确答案通常是「别动」。
+
+    收起不等于藏：折叠条上挂着当前值的摘要（见 advancedSummary），而且缺口指向
+    里面的控件时会自动展开 —— 读到一句自己看不见的提示，比什么都不说更糟。
+  */
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [portRangeError, setPortRangeError] = useState<string | null>(null);
   const latestPortCheckRef = useRef(0);
   const [copyRuleIds, setCopyRuleIds] = useState<number[]>([]);
@@ -2692,30 +2610,25 @@ function RulesContent() {
       routeMode: rule.forwardGroupId ? (forwardGroupModeOf(editForwardGroup) === "port" ? "local" : isForwardChainGroup(editForwardGroup) ? "chain" : "group") : rule.forwardType === "gost" && rule.tunnelId ? "tunnel" : "local",
       forwardType: rule.forwardType,
       protocol: rule.protocol,
-      gostMode: "direct" as const,
-      gostRelayHost: "",
-      gostRelayPort: 0,
       tunnelId: rule.tunnelId || null,
       forwardGroupId: rule.forwardGroupId || null,
       sourcePort: rule.sourcePort,
       targetIp: rule.targetIp,
       targetPort: rule.targetPort,
       telegramErrorNotifyEnabled: !!rule.telegramErrorNotifyEnabled,
-      blockHttp: false,
-      blockSocks: false,
-      blockTls: false,
-      proxyProtocolReceive: !!rule.proxyProtocolReceive,
-      proxyProtocolSend: !!rule.proxyProtocolSend,
-      proxyProtocolExitReceive: !!rule.proxyProtocolExitReceive,
-      proxyProtocolExitSend: !!rule.proxyProtocolExitSend,
-      proxyProtocolVersion: normalizeProxyProtocolVersion(rule.proxyProtocolVersion),
-      tcpFastOpen: !!rule.tcpFastOpen,
-      zeroCopy: !!rule.zeroCopy,
-      udpOverTcp: !!rule.udpOverTcp,
-      udpOverTcpPort: Number(rule.udpOverTcpPort || 0),
       failoverEnabled: !!rule.failoverEnabled,
       failoverStrategy: normalizeFailoverStrategy(rule.failoverStrategy),
       failoverTargetsText: formatFailoverTargetsText(rule.failoverTargets),
+      failoverProbeTarget: String(rule.failoverProbeTarget || ""),
+      failoverSchedule: parseFailoverSchedule(rule.failoverSchedule),
+      failoverMinHoldSeconds: Number(rule.failoverMinHoldSeconds || 0),
+      failoverPin: Number.isInteger(Number(rule.failoverPinnedIndex))
+        ? {
+          index: Number(rule.failoverPinnedIndex),
+          until: rule.failoverPinnedUntil ? Math.floor(new Date(rule.failoverPinnedUntil).getTime() / 1000) : null,
+        }
+        : null,
+      failoverPreferFastest: !!rule.failoverPreferFastest,
       failoverSeconds: Number(rule.failoverSeconds || 60),
       recoverSeconds: Number(rule.recoverSeconds || 120),
       autoFailback: rule.autoFailback !== false,
@@ -2724,6 +2637,7 @@ function RulesContent() {
     setEditingOriginalProtocol(normalizeRuleProtocol(rule.protocol));
     setLegacyLocalRuleEditId(isLegacyLocalRule ? Number(rule.id) : null);
     setPortStatus("idle");
+    setShowAdvanced(false);
     setShowDialog(true);
   };
 
@@ -2784,20 +2698,37 @@ function RulesContent() {
     if (!form.tunnelId || !tunnels) return null;
     return tunnels.find((t: any) => t.id === form.tunnelId) || null;
   }, [form.tunnelId, tunnels]);
-  const selectedEntryPortPolicy = useMemo(() => {
-    if (!selectedHost) return portPolicyFrom(null);
-    let policy = portPolicyFrom(selectedHost);
-    if (form.routeMode === "tunnel" && selectedTunnel) {
-      policy = combinePortPolicies(
-        policy,
-        portPolicyFrom({
-          portRangeStart: (selectedTunnel as any).portRangeStart,
-          portRangeEnd: (selectedTunnel as any).portRangeEnd,
-        }),
-      );
-    }
-    return policy;
-  }, [form.routeMode, selectedHost, selectedTunnel]);
+  // 允许哪些端口由服务端说了算，界面只负责显示。
+  //
+  // 这里原来自己照着算了一份：主机策略直接和隧道范围求交。服务端用的是
+  // combineHostPortPolicyWithRange —— 隧道范围恰好等于主机范围时，它会保留
+  // 主机的完整策略，而求交会把主机白名单里那些额外端口吃掉。实测：主机
+  // 22600-22600 + 白名单 23001、隧道 22600-22600，端口 23001 服务端放行、
+  // 界面拒绝，而且界面**拒绝时根本不会去问服务端**，用户就被硬拦在一个
+  // 自己有权用的端口上。界面这份还完全不知道套餐端口段的存在。
+  // isForwardGroupRouteMode 在下面才声明，这里照抄它的判定式（两个变量都已经
+  // 在上面了），避免为了一个查询把一大段 useMemo 往上搬。
+  const portPolicyForGroup = isForwardGroupBackedRouteModeValue(form.routeMode, form.forwardGroupId)
+    || (isLegacyLocalRuleEdit && form.routeMode === "local");
+  const entryPortPolicyQuery = trpc.rules.entryPortPolicy.useQuery(
+    portPolicyForGroup
+      ? { forwardGroupId: Number(form.forwardGroupId) }
+      : {
+        hostId: Number(form.hostId),
+        tunnelId: form.routeMode === "tunnel" ? form.tunnelId ?? null : null,
+      },
+    {
+      enabled: portPolicyForGroup
+        ? Number(form.forwardGroupId) > 0
+        : Number(form.hostId) > 0,
+      staleTime: 30_000,
+    },
+  );
+  const selectedEntryPortPolicy = useMemo(
+    // 还没拿到就先当作不限制：真正的把关在服务端，界面不该凭猜测拦人。
+    () => entryPortPolicyQuery.data?.policy ?? portPolicyFrom(null),
+    [entryPortPolicyQuery.data],
+  );
   const sourcePortRangeText = useMemo(() => describePortPolicy(selectedEntryPortPolicy), [selectedEntryPortPolicy]);
   const portStatusHint = useMemo(() => {
     if (portStatus === "used") {
@@ -3045,7 +2976,7 @@ function RulesContent() {
   const canCreateRule = canUseLocalForward || canUseGost || canUseForwardChain || canUseFailoverGroup;
 
   /*
-    创建按钮为什么点不了 —— 一处算，两处用。
+    创建按钮为什么点不了 —— 一处算，到处用（判断在 shared/forwardRuleForm）。
 
     原来这个判断只长在按钮的 disabled 上，于是按钮灰着但不说缺什么：用户盯着
     一张看起来填满了的表，无从下手。（曾经更糟：有一版把必填的「规则名称」
@@ -3057,28 +2988,54 @@ function RulesContent() {
     顺序按用户填表的顺序来（线路 → 源端口 → 目标 → 名称），只报第一个缺口：
     一次列三条缺失反而没人读。
   */
-  const submitBlocker = useMemo<string | null>(() => {
-    if (form.routeMode === "tunnel" && !form.tunnelId) return "还没选隧道";
-    if (isForwardGroupRouteMode && !form.forwardGroupId) {
-      return form.routeMode === "local" ? "还没选端口转发"
-        : form.routeMode === "chain" ? "还没选转发链"
-        : "还没选转发组";
-    }
-    if (form.routeMode === "local" && !canUseLocalForward) return "没有可用的端口转发资源";
-    if (form.routeMode === "chain" && !canUseForwardChain) return "没有可用的转发链";
-    if (form.routeMode === "group" && !canUseFailoverGroup) return "没有可用的转发组";
-    if (form.routeMode === "tunnel" && !canUseGost) return "当前账号没有隧道转发权限";
-    if (!isForwardGroupRouteMode && !form.hostId) return "还没选线路";
-    if (portStatus === "used") return "源端口已被占用";
-    if (!form.targetIp) return "还缺目标地址";
-    if (!form.targetPort) return "还缺目标端口";
-    if (form.failoverEnabled && form.protocol !== "tcp") return "出站策略只支持 TCP";
-    return null;
-  }, [
-    form.routeMode, form.tunnelId, form.forwardGroupId, form.hostId, form.targetIp,
-    form.targetPort, form.failoverEnabled, form.protocol,
-    isForwardGroupRouteMode, canUseLocalForward, canUseForwardChain, canUseFailoverGroup, canUseGost, portStatus,
+  const ruleFormContext = useMemo<ForwardRuleFormContext>(() => ({
+    editing: editingId !== null,
+    usesForwardGroup: isForwardGroupRouteMode,
+    canUseLocalForward,
+    canUseForwardChain,
+    canUseFailoverGroup,
+    canUseGost,
+    portStatus,
+  }), [
+    editingId, isForwardGroupRouteMode, canUseLocalForward,
+    canUseForwardChain, canUseFailoverGroup, canUseGost, portStatus,
   ]);
+  const submitBlocker = useMemo<string | null>(
+    () => forwardRuleFormBlocker(form, ruleFormContext),
+    [form, ruleFormContext],
+  );
+  const sourcePortRequired = isForwardRuleSourcePortRequired(ruleFormContext);
+  /*
+    折叠条上写清楚里面现在是什么样 —— 折起来就看不见的话，那叫藏，不叫收纳。
+    只列「有内容可说」的：转发工具总是有值，其余填了/开了才出现。
+  */
+  const advancedSummary = useMemo(() => {
+    const parts: string[] = [];
+    const toolLabel = FORWARD_TYPE_LABELS[effectiveRouteForwardType] || effectiveRouteForwardType;
+    if (toolLabel) parts.push(String(toolLabel));
+    const trimmedName = form.name.trim();
+    if (trimmedName) parts.push(trimmedName);
+    if (form.telegramErrorNotifyEnabled) parts.push("异常提醒");
+    if (form.failoverEnabled) parts.push(`出站${failoverStrategyLabels[form.failoverStrategy]}`);
+    return parts;
+  }, [effectiveRouteForwardType, form.name, form.telegramErrorNotifyEnabled, form.failoverEnabled, form.failoverStrategy]);
+  /*
+    备用出站的候选中转。只在出站策略真的开着时才拉 —— 绝大多数规则用不到主备，
+    没必要为它们多打一次库。
+  */
+  const relayCandidatesQuery = trpc.rules.relayCandidates.useQuery(
+    { excludeRuleId: editingId ?? undefined },
+    { enabled: showDialog && form.failoverEnabled, staleTime: 30_000 },
+  );
+  const failoverLineHints = useMemo(() => describeFailoverLines({
+    text: form.failoverTargetsText,
+    candidates: (relayCandidatesQuery.data || []) as RelayCandidate[],
+    mainAddress: formatFailoverEndpoint(form.targetIp, form.targetPort),
+    parseLine: parseFailoverTargetLine as any,
+    formatEndpoint: formatFailoverEndpoint,
+  }), [form.failoverTargetsText, form.targetIp, form.targetPort, relayCandidatesQuery.data]);
+  const advancedBlocked = isAdvancedSectionBlocker(submitBlocker);
+  const advancedOpen = showAdvanced || advancedBlocked;
   const routeModeTabItems: SlidingTabItem<RuleRouteMode>[] = [
     {
       value: "local",
@@ -3174,16 +3131,14 @@ function RulesContent() {
     const sourcePort = form.sourcePort;
     if (!sourcePort || sourcePort < 1) return;
     if (isForwardGroupRouteMode ? !forwardGroupId : !hostId) return;
-    if (!isValidPort(sourcePort)) {
+    if (!isValidForwardPort(sourcePort)) {
       setPortRangeError("端口必须在 1-65535 之间");
       setPortStatus("used");
       return;
     }
-    if (!isForwardGroupRouteMode && !isPortAllowedByPolicy(sourcePort, selectedEntryPortPolicy)) {
-      setPortRangeError(`端口必须在允许范围 ${describePortPolicy(selectedEntryPortPolicy)} 内`);
-      setPortStatus("used");
-      return;
-    }
+    // 超不超范围交给 checkPort 判 —— 它返回的 reason 就是服务端的原话。
+    // 以前这里会先用界面自己算的那份策略拦一道，拦下了就**直接返回**，
+    // 连请求都不发；而那份策略和服务端并不一致。
     setPortRangeError(null);
     setPortStatus("checking");
     try {
@@ -3372,7 +3327,7 @@ function RulesContent() {
       udpOverTcpPort: Number(rule.udpOverTcpPort || 0),
       failoverEnabled: keepFailover,
       failoverStrategy: normalizeFailoverStrategy(rule.failoverStrategy),
-      failoverTargets: keepFailover ? parseRuleFailoverTargets(rule.failoverTargets) : [],
+      failoverTargets: keepFailover ? parseFailoverTargets(rule.failoverTargets) : [],
       failoverSeconds: normalizePositiveRuleNumber(rule.failoverSeconds, 60),
       recoverSeconds: normalizePositiveRuleNumber(rule.recoverSeconds, 120),
       autoFailback: rule.autoFailback !== false,
@@ -3671,14 +3626,6 @@ function RulesContent() {
       toast.error(unsupportedProtocolTitle);
       return;
     }
-    if (!isValidPort(form.sourcePort, !editingId)) {
-      toast.error(editingId ? "源端口必须在 1-65535 之间" : "源端口必须为 0 或 1-65535，0 表示随机分配");
-      return;
-    }
-    if (!isValidPort(form.targetPort)) {
-      toast.error("目标端口必须在 1-65535 之间");
-      return;
-    }
     if (form.telegramErrorNotifyEnabled && !telegramBotReady) {
       toast.error("请先在系统设置中配置并启用 Telegram 机器人，再开启异常TG提醒");
       return;
@@ -3715,6 +3662,16 @@ function RulesContent() {
       failoverEnabled: canUseMainBackup ? form.failoverEnabled : false,
       failoverStrategy: form.failoverStrategy,
       failoverTargets: canUseMainBackup && form.failoverEnabled ? failoverTargets : [],
+      failoverProbeTarget: canUseMainBackup && form.failoverEnabled ? form.failoverProbeTarget.trim() || null : null,
+      failoverSchedule: canUseMainBackup && form.failoverEnabled
+        ? failoverSchedulePayload(form.failoverSchedule, form.failoverStrategy)
+        : null,
+      failoverMinHoldSeconds: canUseMainBackup && form.failoverEnabled ? form.failoverMinHoldSeconds : 0,
+      failoverPinnedIndex: canUseMainBackup && form.failoverEnabled ? (form.failoverPin?.index ?? null) : null,
+      failoverPinnedUntil: canUseMainBackup && form.failoverEnabled ? (form.failoverPin?.until ?? null) : null,
+      failoverPreferFastest: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback"
+        ? form.failoverPreferFastest
+        : false,
       failoverSeconds: form.failoverSeconds || 60,
       recoverSeconds: form.recoverSeconds || 120,
       autoFailback: form.autoFailback,
@@ -3894,7 +3851,7 @@ function RulesContent() {
       </div>
       <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)]">
         <Select value={copyRuleCategory} onValueChange={(value) => setCopyRuleCategory(value as RuleCategory)}>
-          <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label="规则类别" className="h-9 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">全部规则</SelectItem>
             <SelectItem value="local">端口转发</SelectItem>
@@ -4017,7 +3974,7 @@ function RulesContent() {
     ? !!selectedBatchEditTunnel
     : !!selectedBatchEditForwardGroup;
   const hasBatchEditTargetIpChange = batchEditTargetIp.length > 0;
-  const hasBatchEditTargetPortChange = isValidPort(batchEditTargetPort);
+  const hasBatchEditTargetPortChange = isValidForwardPort(batchEditTargetPort);
   const hasBatchEditChanges = hasBatchEditRouteSelection || hasBatchEditTargetIpChange || hasBatchEditTargetPortChange;
   const batchCopyDisabled = !canAdd || copyActionPending || selectedBatchRuleCount === 0 || selectedBatchTargetCount === 0;
   const batchEditDisabled = copyActionPending || selectedBatchRuleCount === 0 || !hasBatchEditChanges;
@@ -5244,17 +5201,19 @@ function RulesContent() {
     }
     const rules: RuleTransferFileRule[] = [];
     for (let index = 0; index < lines.length; index += 1) {
-      const parsed = splitFailoverTargetLine(lines[index]);
+      // 这里每行只有一个地址（批量导入），所以用纯地址解析，
+      // 不要用主备那条「出站 [探测目标]」的行语法 —— 一行两个地址在这儿是错的。
+      const parsed = parseFailoverEndpoint(lines[index]);
       if (!parsed) continue;
       if ("error" in parsed) {
         return { ok: false, message: `第 ${index + 1} 行：${parsed.error}`, rules: [] };
       }
-      const targetIp = String(parsed.targetIp || "").trim();
-      const targetPort = Number(parsed.targetPort || 0);
+      const targetIp = String(parsed.host || "").trim();
+      const targetPort = Number(parsed.port || 0);
       if (!isValidTargetHost(targetIp)) {
         return { ok: false, message: `第 ${index + 1} 行：地址格式不正确`, rules: [] };
       }
-      if (!isValidPort(targetPort)) {
+      if (!isValidForwardPort(targetPort)) {
         return { ok: false, message: `第 ${index + 1} 行：端口必须在 1-65535 之间`, rules: [] };
       }
       rules.push({
@@ -5690,12 +5649,8 @@ function RulesContent() {
           return;
         }
         const text = formatAddressWithPort(entry, rule.sourcePort);
-        try {
-          await navigator.clipboard.writeText(text);
-          toast.success(`已复制入口地址: ${text}`);
-        } catch {
-          toast.error("复制失败，请手动复制");
-        }
+        if (await copyTextToClipboard(text)) toast.success(`已复制入口地址: ${text}`);
+        else toast.error("复制失败，请手动复制");
         return;
       }
       const entry = String(entryValue || getForwardGroupEntryAddresses(group)[0]?.value || "").trim();
@@ -5704,12 +5659,8 @@ function RulesContent() {
         return;
       }
       const text = formatAddressWithPort(entry, rule.sourcePort);
-      try {
-        await navigator.clipboard.writeText(text);
-        toast.success(`已复制入口地址: ${text}`);
-      } catch {
-        toast.error("复制失败，请手动复制");
-      }
+      if (await copyTextToClipboard(text)) toast.success(`已复制入口地址: ${text}`);
+      else toast.error("复制失败，请手动复制");
       return;
     }
     const entry = String(entryValue || getRuleEntry(rule)).trim();
@@ -5718,24 +5669,12 @@ function RulesContent() {
       return;
     }
     const text = formatAddressWithPort(entry, rule.sourcePort);
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        // 回退方案：临时 textarea
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-      toast.success(`已复制入口地址: ${text}`);
-    } catch {
-      toast.error("复制失败，请手动复制");
-    }
+    /*
+      原来这里的回退路径**不看 execCommand 的返回值**，所以无论复制成没成，
+      都照样弹「已复制入口地址」—— 提示比没有提示更坏。共享实现会如实回 false。
+    */
+    if (await copyTextToClipboard(text)) toast.success(`已复制入口地址: ${text}`);
+    else toast.error("复制失败，请手动复制");
   };
 
   const renderResolvedStatusDot = (visual: ReturnType<typeof resolveForwardRuleVisualStatus>) => {
@@ -5784,7 +5723,7 @@ function RulesContent() {
     const entryTitle = rule.forwardGroupId
       ? `复制${groupRouteLabel}入口: ${entryAddress}`
       : `复制入口地址: ${entryAddress}`;
-    const failoverCount = parseRuleFailoverTargets(rule.failoverTargets).filter((target) => target.targetIp && target.targetPort > 0).length;
+    const failoverCount = parseFailoverTargets(rule.failoverTargets).filter((target) => target.targetIp && target.targetPort > 0).length;
     return {
       entryAddresses,
       entryAddress,
@@ -6226,7 +6165,7 @@ function RulesContent() {
         </Button>
         <Button
           variant="ghost"
-          size="icon"
+          size="icon" aria-label={`编辑 ${rule.name}`}
           className="h-8 w-8"
           onClick={() => openEdit(rule)}
         >
@@ -6234,7 +6173,7 @@ function RulesContent() {
         </Button>
         <Button
           variant="ghost"
-          size="icon"
+          size="icon" aria-label={`删除 ${rule.name}`}
           className="h-8 w-8 text-destructive hover:text-destructive"
           onClick={() => setDeleteRule(rule)}
         >
@@ -6733,7 +6672,7 @@ function RulesContent() {
           }>
             {user?.role === "admin" && (
               <Select value={filterUser} onValueChange={handleFilterUserChange}>
-                <SelectTrigger className="h-8 w-full text-xs sm:w-[160px]">
+                <SelectTrigger aria-label="按用户筛选规则" className="h-8 w-full text-xs sm:w-[160px]">
                   <SelectValue placeholder="我的规则" />
                 </SelectTrigger>
                 <SelectContent>
@@ -6829,7 +6768,7 @@ function RulesContent() {
               </DropdownMenuContent>
             </DropdownMenu>
             <Select value={String(rulePageSize)} onValueChange={handleRulePageSizeChange}>
-              <SelectTrigger className="h-8 w-full text-xs sm:w-[120px]">
+              <SelectTrigger aria-label="每页数量" className="h-8 w-full text-xs sm:w-[120px]">
                 <SelectValue placeholder="每页数量" />
               </SelectTrigger>
               <SelectContent>
@@ -7252,7 +7191,12 @@ function RulesContent() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-              <Label>源端口 <span className="text-destructive">*</span></Label>
+              <Label className="flex items-baseline gap-1.5">
+              源端口
+              {sourcePortRequired
+              ? <span className="text-destructive">*</span>
+              : <span className="text-xs font-normal text-muted-foreground">留空随机分配</span>}
+              </Label>
               <span className="truncate text-xs text-muted-foreground" title={`允许端口范围: ${sourcePortRangeText}`}>
               {sourcePortRangeText}
               </span>
@@ -7262,7 +7206,7 @@ function RulesContent() {
               <Input
               type="text"
               pattern="[0-9]*"
-              placeholder={isForwardGroupRouteMode ? "例如 8080" : "0=随机"}
+              placeholder={sourcePortRequired ? "例如 8080" : "留空随机分配"}
               value={form.sourcePort || ""}
               inputMode="numeric"
               onChange={(e) => {
@@ -7341,6 +7285,40 @@ function RulesContent() {
               </Select>
               </FormField>
             </div>
+            {/* 警告留在外面：折进「更多设置」就等于折没了，而它恰恰是要被看见的。 */}
+            {kernelForwardWarning && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                <div className="flex min-w-0 items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span className="min-w-0 leading-5">{kernelForwardWarning}</span>
+                </div>
+              </div>
+            )}
+            {/*
+              要填的和可以不管的，不该并排放在同一片方格里。
+
+              上面是「这条转发走哪儿、去哪儿」—— 真正要填的东西；这里面四项都有
+              能用的默认值，不动也能建出来。分开之后第一屏只剩该填的，而不是让人
+              每次都当一次选择题（「转发工具这三个我该选哪个」，而答案通常是别动）。
+            */}
+            <div className="rounded-md border border-border/60 bg-muted/15">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm"
+                onClick={() => setShowAdvanced(!advancedOpen)}
+                aria-expanded={advancedOpen}
+              >
+                <span className="shrink-0 font-medium">更多设置</span>
+                {/* 折起来也得看得见里面是什么 —— 收纳不是藏。 */}
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  {advancedSummary.join(" · ")}
+                </span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${advancedOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              {advancedOpen && (
+              <div className="space-y-3 border-t border-border/60 p-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <FormField className="space-y-2">
               <Label className="flex items-baseline gap-1.5">规则名称<span className="text-xs font-normal text-muted-foreground">留空自动生成</span></Label>
@@ -7351,7 +7329,7 @@ function RulesContent() {
               />
               </FormField>
               {!isForwardGroupRouteMode && form.routeMode === "local" && (
-              <div className="space-y-2">
+              <FormField className="space-y-2">
               <Label>转发工具</Label>
               {!routeModeLocked && form.routeMode === "local" ? (
               <Select
@@ -7359,9 +7337,6 @@ function RulesContent() {
               onValueChange={(v) => setForm({
               ...form,
               forwardType: v as any,
-              gostMode: "direct" as const,
-              gostRelayHost: "",
-              gostRelayPort: 0,
               tunnelId: null,
               })}
               >
@@ -7380,34 +7355,26 @@ function RulesContent() {
               </Badge>
               </div>
               )}
-              </div>
+              </FormField>
               )}
             </div>
             {/* 异常提醒是可选的通知设置，不该和必填字段并排同级。 */}
-            <div className={`flex min-h-10 flex-col gap-2 rounded-md bg-muted/35 px-3 py-2 sm:flex-row sm:items-center sm:justify-between${telegramBotReady ? "" : " opacity-60"}`}>
+            <FormField className={`flex min-h-10 flex-col gap-2 rounded-md bg-muted/35 px-3 py-2 sm:flex-row sm:items-center sm:justify-between${telegramBotReady ? "" : " opacity-60"}`}>
             <div className="min-w-0 space-y-0.5">
             <Label className="text-sm font-medium">异常TG提醒</Label>
             <p className="text-xs text-muted-foreground">
             {telegramBotReady ? "规则运行异常时提醒已绑定 Telegram 的管理员。" : "请先在系统设置中配置并启用 TG 机器人。"}
             </p>
             </div>
-            <Switch
+            <Checkbox
             checked={telegramBotReady && form.telegramErrorNotifyEnabled}
             disabled={!telegramBotReady}
             onCheckedChange={(checked) => setForm({ ...form, telegramErrorNotifyEnabled: checked })}
             />
-            </div>
-            {kernelForwardWarning && (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-                <div className="flex min-w-0 items-start gap-2">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span className="min-w-0 leading-5">{kernelForwardWarning}</span>
-                </div>
-              </div>
-            )}
+            </FormField>
             {showMainBackupConfig && (
             <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <FormField className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <Label className="text-sm">出站策略</Label>
                 </div>
@@ -7434,20 +7401,271 @@ function RulesContent() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
               {form.failoverEnabled && (
                 <div className="space-y-2">
                   <FormField className="space-y-2">
-                    <Label>备用出站（每行一个，最多 10 个）</Label>
-                    <Textarea
-                      value={form.failoverTargetsText}
-                      onChange={(event) => setForm({ ...form, failoverTargetsText: event.target.value })}
-                      placeholder={"10.0.0.1:80\nexample.com:443"}
-                      className="min-h-24 font-mono text-sm"
+                    <Label className="flex items-baseline gap-1.5">
+                    主出站探测目标
+                    <span className="text-xs font-normal text-muted-foreground">留空就探主出站地址本身</span>
+                    </Label>
+                    <Input
+                      value={form.failoverProbeTarget}
+                      onChange={(event) => setForm({ ...form, failoverProbeTarget: event.target.value })}
+                      placeholder="例如 10.0.0.1:9000"
+                      className="font-mono text-sm"
                       spellCheck={false}
                     />
                   </FormField>
-                  <div className="grid gap-2 sm:grid-cols-3">
+                  <FormField className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label>备用出站（每行一个，最多 10 个）</Label>
+                    {/*
+                      从面板认得的中转里选，而不是让人照着别处抄一个 地址:端口 过来。
+                      抄错了没有任何提示，要等真出事那天才发现备用线路根本连不上。
+                    */}
+                    {(relayCandidatesQuery.data || []).length > 0 && (
+                    <Select
+                      value=""
+                      onValueChange={(value) => {
+                      const existing = form.failoverTargetsText.replace(/\s*$/, "");
+                      setForm({ ...form, failoverTargetsText: existing ? `${existing}\n${value}` : value });
+                      }}
+                    >
+                      <SelectTrigger className="h-8 w-auto min-w-44 text-xs" aria-label="从中转里选一条加进备用出站">
+                      <SelectValue placeholder="从中转里选一条加进来" />
+                      </SelectTrigger>
+                      <SelectContent>
+                      {(relayCandidatesQuery.data || []).map((candidate: RelayCandidate) => (
+                      <SelectItem key={candidate.id} value={candidate.address}>
+                      {candidate.hostName} · {candidate.label}（{candidate.address}）
+                      </SelectItem>
+                      ))}
+                      </SelectContent>
+                    </Select>
+                    )}
+                    </div>
+                    <Textarea
+                      value={form.failoverTargetsText}
+                      onChange={(event) => setForm({ ...form, failoverTargetsText: event.target.value })}
+                      placeholder={"10.0.0.1:80\n10.0.0.2:80  10.0.0.2:9000"}
+                      className="min-h-24 font-mono text-sm"
+                      spellCheck={false}
+                    />
+                    {/*
+                      认出来的每一行在这儿说清楚：是哪台中转的哪条规则、探测有没有盲区、
+                      和主出站是不是同一个落地。这三件事手填时完全看不见，而任何一件出错
+                      都要等真出事那天才暴露。
+                    */}
+                    {failoverLineHints.map((hint) => {
+                    const text = failoverLineHintText(hint);
+                    if (!text) return null;
+                    return (
+                    <p
+                      key={hint.line}
+                      className={`text-xs leading-5 ${hint.probeBlindSpot || hint.sameDestination === false ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}
+                    >
+                      第 {hint.line} 行：{text}
+                    </p>
+                    );
+                    })}
+                  </FormField>
+                  {/*
+                    这段必须说，而且必须说得具体。
+
+                    健康检查就是对出站地址做一次 TCP 连接。出站是 iptables/DNAT 类中转时，
+                    握手实际是和最终落地完成的 —— 这一次连接就是端到端的。出站是 gost、
+                    realm 这类用户态转发时，中转在本地就把连接收下了：连得上只能证明中转
+                    活着，证明不了它到落地那一段还通。
+
+                    后一种情况下中转的上游断了，主备**不会切**，流量继续往死路里送，而
+                    面板上一切正常 —— 用户的体感是「备用线路配了，关键时刻没兜住」。
+                    不写清楚的话，他根本不会知道去填探测目标。
+                  */}
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    健康检查是对出站地址连一次 TCP。中转用 iptables/DNAT 时这一连就是端到端的；
+                    中转用 gost、realm 这类用户态转发时，连得上只说明中转活着，
+                    不代表它到落地那段还通 —— 这时填个探测目标（每行第二个地址，空格隔开），
+                    指向能反映整条路径的端口。
+                  </p>
+                  {/*
+                    时段表：晚高峰错峰。
+
+                    它只决定「首选是谁」，切不切得过去仍然由健康检查说了算 ——
+                    18 点到了而那条线正挂着，不该机械地切过去。这两件事是正交的，
+                    所以时段表放在这儿，和下面的切换/恢复时间并列，而不是替代它们。
+                  */}
+                  {/*
+                    人工钉住：应急时压过所有自动判断，走指定的那一条。
+
+                    两件事写死在这儿：
+                      · 钉住是「排到最前」，不是「只许走它」—— 钉住的那条挂了仍然
+                        会往下找。用一个应急开关制造一次故障，是最糟的那种设计。
+                      · **必须有期限**。应急处理完没人记得关，那条线就一直被钉着，
+                        后面所有自动切换（包括时段表）全部静默失效，而面板上看不出
+                        任何异常。所以「一直钉着」不是默认项，要主动选。
+                  */}
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/50 bg-background/40 p-2.5">
+                    <Label className="text-sm">强制走</Label>
+                    <Select
+                      value={form.failoverPin ? String(form.failoverPin.index) : "auto"}
+                      onValueChange={(value) => setForm({
+                      ...form,
+                      failoverPin: value === "auto"
+                        ? null
+                        : { index: Number(value), until: form.failoverPin?.until ?? Math.floor(Date.now() / 1000) + 2 * 3600 },
+                      })}
+                    >
+                      <SelectTrigger className="h-8 w-28 text-xs" aria-label="强制走哪条出站"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                      <SelectItem value="auto">自动</SelectItem>
+                      <SelectItem value="0">主出站</SelectItem>
+                      {failoverLineHints.map((hint) => (
+                      <SelectItem key={hint.line} value={String(hint.line)}>备用 {hint.line}</SelectItem>
+                      ))}
+                      </SelectContent>
+                    </Select>
+                    {form.failoverPin && (
+                    <>
+                    <Label className="text-sm">持续</Label>
+                    <Select
+                      value={form.failoverPin.until === null ? "forever" : String(form.failoverPin.until)}
+                      onValueChange={(value) => setForm({
+                      ...form,
+                      failoverPin: { index: form.failoverPin!.index, until: value === "forever" ? null : Number(value) },
+                      })}
+                    >
+                      <SelectTrigger className="h-8 w-32 text-xs" aria-label="强制走这条出站持续多久"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                      {[["30 分钟", 1800], ["2 小时", 7200], ["12 小时", 43200], ["24 小时", 86400]].map(([label, seconds]) => (
+                      <SelectItem key={String(label)} value={String(Math.floor(Date.now() / 1000) + Number(seconds))}>
+                      {label}
+                      </SelectItem>
+                      ))}
+                      <SelectItem value="forever">一直钉着</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="w-full text-xs leading-5 text-amber-600 dark:text-amber-400">
+                      {form.failoverPin.until === null
+                        ? "一直钉着：时段表和自动切换都不会再改变走向，直到你在这里改回「自动」。"
+                        : `到 ${new Date(form.failoverPin.until * 1000).toLocaleString("zh-CN")} 自动交回。钉住的这条要是挂了，仍然会往下切。`}
+                    </p>
+                    </>
+                    )}
+                  </div>
+                  {form.failoverStrategy !== "fallback" && (form.failoverSchedule?.windows.length || 0) > 0 && (
+                  /*
+                    配好时段表之后又把策略改成了轮询/随机/哈希。这几种策略本来就不存在
+                    「首选出站」，时段表不适用 —— 提交时会被归零。
+
+                    必须提前说：等用户保存完回来发现时段表空了，比现在多一行字糟得多。
+                    界面上那份还留着，改回主备就在，不用重配。
+                  */
+                  <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                    {failoverModeOptions.find((option) => option.value === form.failoverStrategy)?.label || "当前策略"}
+                    下没有「首选出站」，时段表不适用，保存后会清空。改回主备模式可以继续用。
+                  </p>
+                  )}
+                  {form.failoverStrategy === "fallback" && (
+                  <div className="space-y-2 rounded-md border border-border/50 bg-background/40 p-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label className="flex items-baseline gap-1.5">
+                    时段表
+                    <span className="text-xs font-normal text-muted-foreground">
+                    按 {BILLING_TIME_ZONE} 计时，没配就一直按优先级走
+                    </span>
+                    </Label>
+                    {(form.failoverSchedule?.windows.length || 0) < MAX_FAILOVER_SCHEDULE_WINDOWS && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => {
+                      const windows = [...(form.failoverSchedule?.windows || []), {
+                      days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1,
+                      } as FailoverScheduleWindow];
+                      setForm({ ...form, failoverSchedule: { timezone: BILLING_TIME_ZONE, windows } });
+                      }}
+                    >
+                      添加时段
+                    </Button>
+                    )}
+                    </div>
+                    {(form.failoverSchedule?.windows || []).map((window, index) => {
+                    const patch = (next: Partial<FailoverScheduleWindow>) => {
+                    const windows = (form.failoverSchedule?.windows || []).map((item, position) => (
+                    position === index ? { ...item, ...next } : item
+                    ));
+                    setForm({ ...form, failoverSchedule: { timezone: BILLING_TIME_ZONE, windows } });
+                    };
+                    return (
+                    <div key={index} className="flex flex-wrap items-center gap-1.5">
+                      <Select
+                      value={window.days.length === 0 ? "all" : window.days.length === 2 && window.days.includes(0) ? "weekend" : "weekday"}
+                      onValueChange={(value) => patch({
+                      days: value === "all" ? [] : value === "weekend" ? [0, 6] : [1, 2, 3, 4, 5],
+                      })}
+                      >
+                      <SelectTrigger className="h-8 w-24 text-xs" aria-label={`第 ${index + 1} 个时段：星期`}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                      <SelectItem value="all">每天</SelectItem>
+                      <SelectItem value="weekday">工作日</SelectItem>
+                      <SelectItem value="weekend">周末</SelectItem>
+                      </SelectContent>
+                      </Select>
+                      <Input
+                      type="time"
+                      value={window.from}
+                      onChange={(event) => patch({ from: event.target.value })}
+                      className="h-8 w-28 text-xs"
+                      aria-label={`第 ${index + 1} 个时段：开始时间`}
+                      />
+                      <span className="text-xs text-muted-foreground">至</span>
+                      <Input
+                      type="time"
+                      value={window.to}
+                      onChange={(event) => patch({ to: event.target.value })}
+                      className="h-8 w-28 text-xs"
+                      aria-label={`第 ${index + 1} 个时段：结束时间`}
+                      />
+                      <Select
+                      value={String(window.targetIndex)}
+                      onValueChange={(value) => patch({ targetIndex: Number(value) })}
+                      >
+                      <SelectTrigger className="h-8 w-28 text-xs" aria-label={`第 ${index + 1} 个时段：优先走哪条出站`}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                      <SelectItem value="0">主出站</SelectItem>
+                      {failoverLineHints.map((hint) => (
+                      <SelectItem key={hint.line} value={String(hint.line)}>备用 {hint.line}</SelectItem>
+                      ))}
+                      </SelectContent>
+                      </Select>
+                      <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      aria-label={`删除第 ${index + 1} 个时段`}
+                      onClick={() => {
+                      const windows = (form.failoverSchedule?.windows || []).filter((_, position) => position !== index);
+                      setForm({ ...form, failoverSchedule: windows.length > 0 ? { timezone: BILLING_TIME_ZONE, windows } : null });
+                      }}
+                      >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    );
+                    })}
+                    {/* 配好之后用一句话复述一遍：跨午夜那一段最容易理解反。 */}
+                    {(form.failoverSchedule?.windows || []).map((window, index) => (
+                    <p key={`hint-${index}`} className="text-xs leading-5 text-muted-foreground">
+                    {describeFailoverScheduleWindow(window)}
+                    </p>
+                    ))}
+                  </div>
+                  )}
+                  <div className="grid gap-2 sm:grid-cols-4">
                     <FormField className="space-y-2">
                       <Label>切换时间（秒）</Label>
                       <Input
@@ -7470,22 +7688,61 @@ function RulesContent() {
                         onChange={(event) => setForm({ ...form, recoverSeconds: parseInt(event.target.value) || 0 })}
                       />
                     </FormField>
+                    <FormField className="space-y-2">
+                      {/*
+                        最短驻留拦的是「好线路之间来回切」，不是「逃离一条死路」——
+                        当前这条挂了的时候它不生效，守着死路比抖动更糟。
+                      */}
+                      <Label className="flex items-baseline gap-1.5">
+                      最短驻留（秒）
+                      <span className="text-xs font-normal text-muted-foreground">0=不限</span>
+                      </Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={86400}
+                        step={1}
+                        value={form.failoverMinHoldSeconds || ""}
+                        onChange={(event) => setForm({ ...form, failoverMinHoldSeconds: parseInt(event.target.value) || 0 })}
+                      />
+                    </FormField>
                     {form.failoverStrategy === "fallback" && (
-                      <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
+                      <FormField className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
+                        <div className="min-w-0">
+                          {/*
+                            不是「谁快切谁」：那样线路会一直漂。候选必须同时快过绝对
+                            门槛和百分比门槛，而且连着三分钟都更快，才会被提到最前。
+                            三个数写死在 Agent 里 —— 多一个旋钮就多一次「填多少合适」
+                            的为难，而它们的合理范围很窄。
+                          */}
+                          <Label className="text-sm">自动择优</Label>
+                          <p className="text-xs text-muted-foreground">按实测延迟挑明显更快的那条</p>
+                        </div>
+                        <Checkbox
+                          checked={form.failoverPreferFastest}
+                          onCheckedChange={(checked) => setForm({ ...form, failoverPreferFastest: checked })}
+                        />
+                      </FormField>
+                    )}
+                    {form.failoverStrategy === "fallback" && (
+                      <FormField className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
                         <div>
                           <Label className="text-sm">恢复后切回</Label>
                         </div>
-                        <Switch
+                        <Checkbox
                           checked={form.autoFailback}
                           onCheckedChange={(checked) => setForm({ ...form, autoFailback: checked })}
                         />
-                      </div>
+                      </FormField>
                     )}
                   </div>
                 </div>
               )}
             </div>
             )}
+              </div>
+              )}
+            </div>
           </div>
           <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-background/95 pt-3 sm:items-center sm:justify-between">
             {/*
@@ -7752,7 +8009,8 @@ function RulesContent() {
                       </button>
                     </div>
                   </div>
-                  <div className="space-y-2">
+                  {/* 文件框和手填框只会出现一个，共用一个 FormField 的 id 不会撞。 */}
+                  <FormField className="space-y-2">
                     <Label>{importSourceMode === "file" ? "规则文件" : "目标地址列表"}</Label>
                     {importSourceMode === "file" ? (
                       <Input key={importFileInputKey} type="file" accept=".json,application/json" onChange={handleImportFileChange} />
@@ -7764,7 +8022,7 @@ function RulesContent() {
                         className="min-h-[7.5rem] resize-y"
                       />
                     )}
-                  </div>
+                  </FormField>
                   {(importSourceMode === "file" || importFileName || importFileError || importValidation.ok || String(importManualText || "").trim()) && (
                     <div
                       className={`rounded-md border px-3 py-2 text-sm ${
@@ -7828,7 +8086,7 @@ function RulesContent() {
                         resetImportDialog();
                       }}
                     >
-                      <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectTrigger aria-label="导入来源类型" className="h-9 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {importRuleTransferScopeOptions.map((option) => (
                           <SelectItem key={option.value} value={option.value}>
@@ -8136,7 +8394,7 @@ function RulesContent() {
                         setCopyTargetSearch("");
                       }}
                     >
-                      <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectTrigger aria-label="复制目标类型" className="h-9 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {ruleTransferScopeOptions.map((option) => (
                           <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>

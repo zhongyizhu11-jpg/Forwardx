@@ -3,11 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, LayoutGrid, List, Loader2, Pencil, RadioTower, Trash2 } from "lucide-react";
 import HostStatusLabel from "@/components/HostStatusLabel";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useOptimisticSortableOrder, useSortableReorder } from "@/components/SortableDragHandle";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -567,18 +569,18 @@ export default function HostProbeServiceManager({
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5"><Label>服务名</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如: 公网 API 延迟" /></div>
-              <div className="space-y-1.5"><Label>类型</Label><Select value={form.method} onValueChange={(value) => setForm({ ...form, method: value as ServiceForm["method"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="tcping">TCPing</SelectItem><SelectItem value="ping">Ping</SelectItem></SelectContent></Select></div>
+              <FormField className="space-y-1.5"><Label>类型</Label><Select value={form.method} onValueChange={(value) => setForm({ ...form, method: value as ServiceForm["method"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="tcping">TCPing</SelectItem><SelectItem value="ping">Ping</SelectItem></SelectContent></Select></FormField>
             </div>
             <div className={`grid gap-3 ${form.method === "tcping" ? "sm:grid-cols-[minmax(0,1fr)_150px]" : ""}`}>
               <div className="space-y-1.5"><Label>IP 地址 / 域名</Label><Input value={form.targetIp} onChange={(e) => setForm({ ...form, targetIp: e.target.value })} placeholder="1.1.1.1 或 example.com" /></div>
               {form.method === "tcping" && <div className="space-y-1.5"><Label>目标端口</Label><Input type="number" min={1} max={65535} value={form.targetPort} onChange={(e) => setForm({ ...form, targetPort: e.target.value })} placeholder="443" /></div>}
             </div>
             <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
-              <div className="space-y-1.5"><Label>选择主机</Label><Select value={form.hostScope} onValueChange={(value) => setForm({ ...form, hostScope: value as ServiceForm["hostScope"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">所有主机</SelectItem><SelectItem value="exclude">排除主机</SelectItem><SelectItem value="specific">特定主机</SelectItem></SelectContent></Select></div>
-              <div className="space-y-1.5"><Label>服务运行时间</Label><Input type="number" min={5} value={form.intervalSeconds} onChange={(e) => setForm({ ...form, intervalSeconds: Math.max(5, Number(e.target.value) || 5) })} /></div>
+              <FormField className="space-y-1.5"><Label>选择主机</Label><Select value={form.hostScope} onValueChange={(value) => setForm({ ...form, hostScope: value as ServiceForm["hostScope"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">所有主机</SelectItem><SelectItem value="exclude">排除主机</SelectItem><SelectItem value="specific">特定主机</SelectItem></SelectContent></Select></FormField>
+              <FormField className="space-y-1.5"><Label>服务运行时间</Label><Input type="number" min={5} value={form.intervalSeconds} onChange={(e) => setForm({ ...form, intervalSeconds: Math.max(5, Number(e.target.value) || 5) })} /></FormField>
             </div>
             {form.hostScope !== "all" && (
-              <div className="space-y-3 rounded-md border border-border/50 p-3">
+              <FormField className="space-y-3 rounded-md border border-border/50 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <Label className="text-sm">{form.hostScope === "exclude" ? "添加需要排除在外的主机" : "选择需要运行服务的主机"}</Label>
                   {selectedScopeHostIds.length > 0 && (
@@ -611,18 +613,18 @@ export default function HostProbeServiceManager({
                           {index + 1}
                         </span>
                         <HostStatusLabel host={item.host} label={item.name} className="min-w-0 text-sm font-medium" labelClassName="truncate" />
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => removeScopeHost(item.id)}>
+                        <Button variant="ghost" size="icon" aria-label="移除主机" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => removeScopeHost(item.id)}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     ))}
                   </div>
                 )}
-              </div>
+              </FormField>
             )}
             <label className="flex items-center justify-between gap-3 rounded-md border border-border/50 px-3 py-2.5">
               <span className="text-sm font-medium">启用服务</span>
-              <Switch checked={form.isEnabled} onCheckedChange={(checked) => setForm({ ...form, isEnabled: checked })} />
+              <Checkbox aria-label="启用服务" checked={form.isEnabled} onCheckedChange={(checked) => setForm({ ...form, isEnabled: checked })} />
             </label>
           </div>
           <DialogFooter>

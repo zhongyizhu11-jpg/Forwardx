@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -206,11 +208,26 @@ func TestRunEntryClosesTCPListenerWhenUDPBindFails(t *testing.T) {
 }
 
 func TestRunEntryGroupListensOnManyEntriesInOneRuntime(t *testing.T) {
-	ports := uniqueFreeTCPPorts(t, 128)
-	exitPort := freeTCPPort(t)
-	for containsInt(ports, exitPort) {
-		exitPort = freeTCPPort(t)
+	// 端口这件事没法做到万无一失：占住再放开，到真正绑上之间总有个窗口，
+	// 同机上任何一个进程都可能在这一瞬间把它拿走。所以允许重来几次 ——
+	// 只对「端口被占」重来，别的错照样直接红。
+	for attempt := 1; ; attempt++ {
+		err := runManyEntryGroupAttempt(t)
+		if err == nil {
+			return
+		}
+		if attempt >= 3 || !strings.Contains(err.Error(), "address already in use") {
+			t.Fatal(err)
+		}
+		t.Logf("第 %d 次撞上端口被占，换一批重来：%v", attempt, err)
 	}
+}
+
+func runManyEntryGroupAttempt(t *testing.T) error {
+	t.Helper()
+	reserved, release := reserveFreeTCPPorts(t, 129)
+	ports := reserved[:128]
+	exitPort := reserved[128]
 	entries := make([]config, 0, len(ports))
 	for i, port := range ports {
 		entries = append(entries, normalizeConfig(config{
@@ -232,21 +249,28 @@ func TestRunEntryGroupListensOnManyEntriesInOneRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// 占到这一刻才放开，把「别人抢走」的窗口压到最短。
+	release()
+
 	done := make(chan struct{})
 	result := make(chan error, 1)
 	go func() { result <- runEntryGroup(done, cfg) }()
 	for _, port := range ports {
-		waitForTCP(t, port)
+		if err := waitForEntryGroupPort(port, result); err != nil {
+			close(done)
+			return err
+		}
 	}
 	close(done)
 	select {
 	case err := <-result:
 		if err != nil {
-			t.Fatalf("entry group shutdown failed: %v", err)
+			return fmt.Errorf("entry group shutdown failed: %w", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("entry group did not stop all entries")
+		return errors.New("entry group did not stop all entries")
 	}
+	return nil
 }
 
 func TestRunEntryGroupStopsOtherEntriesOnRuntimeError(t *testing.T) {
@@ -288,25 +312,57 @@ func TestRunEntryGroupStopsOtherEntriesOnRuntimeError(t *testing.T) {
 	_ = ln.Close()
 }
 
-func uniqueFreeTCPPorts(t *testing.T, count int) []int {
-	t.Helper()
-	ports := make([]int, 0, count)
-	seen := make(map[int]bool, count)
-	for len(ports) < count {
-		port := freeTCPPort(t)
-		if !seen[port] {
-			seen[port] = true
-			ports = append(ports, port)
+// waitForEntryGroupPort waits for one entry's listener, but gives up the moment
+// the group itself reports a failure.
+//
+// 入口组只要有一个入口绑不上，整组就会带着原因退出、把所有监听都关掉。这时候
+// 光等端口，等到的只会是一句「端口 N 没开」—— 真正的原因（比如端口被别人占了）
+// 被丢在 result 里没人看。把它捞出来，红的时候才知道是怎么红的。
+func waitForEntryGroupPort(port int, result <-chan error) error {
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		select {
+		case err := <-result:
+			return fmt.Errorf("入口组在端口 %d 开起来之前就退出了：%w", port, err)
+		default:
 		}
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("port %d did not open", port)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	return ports
 }
 
-func containsInt(values []int, target int) bool {
-	for _, value := range values {
-		if value == target {
-			return true
+// reserveFreeTCPPorts holds count ports at once and hands back the release.
+//
+// 一个一个地「绑了就放」不行：放掉的那些在轮到它们之前，同机上任何一个进程
+// 都可能拿走 —— 并行跑测试的时候这事儿经常发生，实测就是这么红的。同时占住
+// 才能保证这一批互不重复、也不会被别人拿走；放开到真正绑上之间那个窗口
+// 关不掉，由调用方重试兜底。
+func reserveFreeTCPPorts(t *testing.T, count int) ([]int, func()) {
+	t.Helper()
+	listeners := make([]net.Listener, 0, count)
+	ports := make([]int, 0, count)
+	release := func() {
+		for _, ln := range listeners {
+			_ = ln.Close()
 		}
+		listeners = nil
 	}
-	return false
+	for len(ports) < count {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			release()
+			t.Fatalf("reserve port %d/%d: %v", len(ports)+1, count, err)
+		}
+		listeners = append(listeners, ln)
+		ports = append(ports, ln.Addr().(*net.TCPAddr).Port)
+	}
+	t.Cleanup(release)
+	return ports, release
 }

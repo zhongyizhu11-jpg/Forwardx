@@ -28,6 +28,7 @@ import {
 import type { LinkCreateType } from "@/components/LinkCreateTypeSelector";
 import { getLinkTestDetailEndpointIds, LinkTestProbeView, getLinkTestTotalLatency, hasPendingLinkTestDetails, parseLinkTestMessage, type LinkTestPlannedSegment } from "@/components/LinkTestLatencySummary";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -3260,7 +3261,7 @@ function TunnelsContent() {
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2" title={!proxySupported ? "仅 GOST 和 Realm 支持" : undefined}>
                   <span className="min-w-0 truncate text-sm">接收 PROXY</span>
-                  <Switch
+                  <Checkbox
                     checked={proxySupported && chainCreateForm.proxyProtocolReceive}
                     disabled={!proxySupported}
                     onCheckedChange={(proxyProtocolReceive) => setChainCreateForm((prev) => ({ ...prev, proxyProtocolReceive }))}
@@ -3268,7 +3269,7 @@ function TunnelsContent() {
                 </label>
                 <label className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2" title={!proxySupported ? "仅 GOST 和 Realm 支持" : undefined}>
                   <span className="min-w-0 truncate text-sm">发送 PROXY</span>
-                  <Switch
+                  <Checkbox
                     checked={proxySupported && chainCreateForm.proxyProtocolSend}
                     disabled={!proxySupported}
                     onCheckedChange={(proxyProtocolSend) => setChainCreateForm((prev) => ({ ...prev, proxyProtocolSend }))}
@@ -3363,7 +3364,7 @@ function TunnelsContent() {
     const renderProxySwitch = (label: string, field: "proxyProtocolReceive" | "proxyProtocolSend" | "proxyProtocolExitReceive" | "proxyProtocolExitSend") => (
       <label className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2">
         <span className="min-w-0 truncate text-sm">{label}</span>
-        <Switch
+        <Checkbox
           checked={form[field]}
           onCheckedChange={(checked) => setForm((prev) => ({ ...prev, [field]: checked }))}
         />
@@ -3371,14 +3372,14 @@ function TunnelsContent() {
     );
     const proxyOptions = proxySupported ? (
       <div className="space-y-2">
-        <div className="flex min-w-0 items-center justify-between gap-3">
+        <FormField className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             <Label className="text-sm">PROXY Protocol</Label>
             <span className={`rounded-full border px-2 py-0.5 text-[11px] leading-none ${proxyAnyEnabled ? "border-primary/25 bg-primary/10 text-primary" : "border-border/50 bg-background/60 text-muted-foreground"}`}>
               {proxyAnyEnabled ? `已配置 V${form.proxyProtocolVersion}` : tunnelProxyPanelOpen ? "待配置" : "关闭"}
             </span>
           </div>
-          <Switch
+          <Checkbox
             checked={tunnelProxyPanelOpen}
             onCheckedChange={(checked) => {
               setTunnelProxyPanelOpen(checked);
@@ -3394,7 +3395,7 @@ function TunnelsContent() {
               }
             }}
           />
-        </div>
+        </FormField>
         {tunnelProxyPanelOpen && (
           <div className="space-y-2 border-t border-border/45 pt-2">
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -3434,7 +3435,7 @@ function TunnelsContent() {
       tooltip?: string,
     ) => {
       const control = (
-        <Switch
+        <Checkbox aria-label={title}
           checked={checked}
           onCheckedChange={onCheckedChange}
         />
@@ -3879,7 +3880,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch aria-label="当前协议不支持" checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </div>
                     </div>
@@ -3977,7 +3978,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch aria-label="当前协议不支持" checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </div>
                     </div>
@@ -4103,7 +4104,7 @@ function TunnelsContent() {
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch checked={false} disabled className="switch-compact" /></span>)
+                          renderUnsupportedHint(<span className="inline-flex"><Switch aria-label="当前协议不支持" checked={false} disabled className="switch-compact" /></span>)
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -4580,7 +4581,7 @@ function TunnelsContent() {
                       <div className="flex items-end">
                         <label className="flex h-10 w-full items-center justify-between rounded-md border border-border/60 px-3">
                           <span className="text-sm">启用</span>
-                          <Switch
+                          <Checkbox
                             checked={chainCreateForm.isEnabled}
                             onCheckedChange={(isEnabled) => setChainCreateForm({ ...chainCreateForm, isEnabled })}
                           />

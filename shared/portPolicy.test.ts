@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -157,4 +159,38 @@ test("interval intersection matches direct policy evaluation", () => {
       `intersection differs at port ${port}`,
     );
   }
+});
+
+test("端口策略只有一处实现", () => {
+  /*
+    这套逻辑原来在 client/src/pages/Rules.tsx 里另抄了一份，并且漂了：
+
+      - 服务端的策略支持多段 `ranges`（套餐发的端口段就是这么下来的），
+        界面那份完全不认 —— 多段策略在界面眼里等于「没有限制」
+      - 「不限制」时服务端说「不限制」，界面说「1-65535」，听着像有限制
+      - 合并两条策略，界面那份逐个端口试 1..65535（实测 2.042ms），
+        服务端是区间求交（0.007ms）
+
+    5 个真实场景跑下来 7 处判定不一致，其中一处是界面把服务端会放行的端口判成
+    不可用 —— 那是功能少了一块，不只是提示不准。
+  */
+  const root = path.resolve(import.meta.dirname, "..");
+  const 自己 = path.join("shared", "portPolicy.ts");
+  const hits: string[] = [];
+  const walk = (dir: string) => {
+    for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (["node_modules", ".git", "dist", ".dev"].includes(item.name)) continue;
+      const full = path.join(dir, item.name);
+      if (item.isDirectory()) { walk(full); continue; }
+      if (!/\.tsx?$/.test(item.name) || /\.test\.tsx?$/.test(item.name)) continue;
+      const relative = path.relative(root, full);
+      if (relative === 自己) continue;
+      const source = fs.readFileSync(full, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      if (/function\s+(isPortAllowedByPolicy|describePortPolicy|combinePortPolicies|portPolicyFrom|parsePortAllowlist)\s*[(<]/.test(source)) {
+        hits.push(relative);
+      }
+    }
+  };
+  for (const dir of ["server", "shared", "client/src"]) walk(path.join(root, dir));
+  assert.deepEqual(hits, [], `这些文件又自己写了一份端口策略，请改用 shared/portPolicy.ts：\n  ${hits.join("\n  ")}`);
 });

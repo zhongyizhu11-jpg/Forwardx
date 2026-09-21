@@ -7,6 +7,8 @@ import { selfTestRulesRouter } from "./rules.selfTest";
 import { trafficRulesRouter } from "./rules.traffic";
 import { canUseForwardRuleResource, getLinkAccessScope } from "../linkAccessView";
 import { isManagedForwardGroupChildRule } from "../forwardRuleVisibility";
+import { formatHostAddressWithPort, getHostEntryAddress } from "@shared/hostEntryAddress";
+import { isForwardRuleProtocolTcpEnabled, isUserspaceForwardType } from "@shared/forwardTypes";
 
 async function withRuleResourceAccess<T extends any>(value: T, user: { id: number; role: string }): Promise<T> {
   if (user.role === "admin") return value;
@@ -168,6 +170,75 @@ export const rulesRouter = router({
       if (ctx.user.role !== "admin" && rule.userId !== ctx.user.id) return null;
       if (ctx.user.role !== "admin" && isManagedForwardGroupChildRule(rule)) return null;
       return withRuleResourceAccess(rule, ctx.user);
+    }),
+  /**
+   * 能当「备用出站」用的中转。
+   *
+   * 主备的备用出站原来是个多行文本框，得自己手填 `地址:端口` —— 而面板里明明就有
+   * 这些中转：它们是一条条指向落地的转发规则。手填的代价不只是麻烦：
+   *
+   *   · 填错了不会有任何提示，要等真出事那天才发现备用线路根本连不上；
+   *   · 面板知道那台中转用的是哪种转发方式，而**这直接决定了健康检查有没有盲区**
+   *     （用户态转发时，连得上只证明中转活着，它到落地那段断了照样探不出来）——
+   *     手填的地址让面板没法把这件事告诉用户。
+   *
+   * 所以这里把候选列出来，连带每条的转发方式、它自己指向哪个落地一起给界面。
+   * 界面据此可以当场说清楚：这条出站通到哪儿、和主出站是不是同一个落地、
+   * 要不要另配探测目标。
+   */
+  relayCandidates: protectedProcedure
+    .input(z.object({ excludeRuleId: z.number().int().positive().optional() }).optional())
+    .query(async ({ input, ctx }) => {
+      const isAdmin = ctx.user.role === "admin";
+      const rules = await db.getForwardRules(isAdmin ? undefined : ctx.user.id);
+      /*
+        主机按**规则引用到的 id** 取，不按归属取。
+
+        租户的规则可以跑在管理员的按量计费主机上 —— 按归属取的话这些中转会整批消失，
+        而用户在自己的规则行上明明看得见它们。只查规则引用到的那些，也不会多暴露
+        任何东西：规则本来就是他自己的。
+      */
+      const hostIds = Array.from(new Set((rules as any[])
+        .map((rule: any) => Number(rule?.hostId || 0))
+        .filter((hostId: number) => hostId > 0)));
+      const hosts = hostIds.length > 0 ? await db.getHostsByIds(hostIds) : [];
+      const hostById = new Map((hosts as any[]).map((host: any) => [Number(host.id), host]));
+      const excluded = Number(input?.excludeRuleId || 0);
+      const candidates: Array<{
+        id: number;
+        label: string;
+        hostName: string;
+        address: string;
+        forwardType: string;
+        userspaceRelay: boolean;
+        targetIp: string;
+        targetPort: number;
+      }> = [];
+      for (const rule of rules as any[]) {
+        const id = Number(rule?.id || 0);
+        if (!id || id === excluded) continue;
+        // 备用出站是 TCP 的（主备本身只支持 TCP），关掉的规则不该出现在候选里 ——
+        // 选了等于配了一条一定连不上的备用线路。
+        if (!isForwardRuleProtocolTcpEnabled(rule?.protocol)) continue;
+        if (rule?.isEnabled === false) continue;
+        const sourcePort = Number(rule?.sourcePort || 0);
+        if (!(sourcePort >= 1 && sourcePort <= 65535)) continue;
+        const host = hostById.get(Number(rule?.hostId || 0));
+        if (!host) continue;
+        const entryAddress = getHostEntryAddress(host);
+        if (!entryAddress) continue;
+        candidates.push({
+          id,
+          label: String(rule?.name || `规则 #${id}`),
+          hostName: String(host?.name || `主机 ${host?.id}`),
+          address: formatHostAddressWithPort(entryAddress, sourcePort),
+          forwardType: String(rule?.forwardType || ""),
+          userspaceRelay: isUserspaceForwardType(rule?.forwardType),
+          targetIp: String(rule?.targetIp || ""),
+          targetPort: Number(rule?.targetPort || 0),
+        });
+      }
+      return candidates;
     }),
   reorder: protectedProcedure
     .input(z.object({

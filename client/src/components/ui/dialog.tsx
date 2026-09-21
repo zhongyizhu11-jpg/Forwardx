@@ -103,14 +103,14 @@ DialogPortal.displayName = DialogPrimitive.Portal.displayName
 const DialogClose = DialogPrimitive.Close
 
 const DialogOverlay = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Overlay>, React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>>(({ className, ...props }, ref) => (
-  <DialogPrimitive.Overlay ref={ref} className={cn("dialog-overlay fixed inset-0 z-50 overflow-hidden", className)} {...props} />
+  <DialogPrimitive.Overlay ref={ref} className={cn("dialog-overlay fixed inset-0 z-[var(--fx-z-in-overlay-base)] overflow-hidden", className)} {...props} />
 ))
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
 const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Content>, React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>>(({ className, children, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
-    <div className="dialog-positioner fixed inset-0 z-50 grid place-items-center p-3 pointer-events-none sm:p-6">
+    <div className="dialog-positioner fixed inset-0 z-[var(--fx-z-in-overlay-base)] grid place-items-center p-3 pointer-events-none sm:p-6">
       {/*
         默认可滚，不是默认裁掉。
 

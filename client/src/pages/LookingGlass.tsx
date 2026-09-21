@@ -3,6 +3,7 @@ import { FormField } from "@/components/ui/form-field";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { BorderBeam } from "@/components/ui/border-beam";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -143,7 +144,9 @@ function ResultOutput({
   const statusLabel = isRunning ? "执行中" : result ? (ok ? "完成" : result.timedOut ? "超时" : "异常") : "等待";
 
   return (
-    <Card className="flex h-[480px] min-w-0 flex-col overflow-hidden border-border bg-card sm:h-[520px] xl:h-[560px]">
+    <Card className="relative flex h-[480px] min-w-0 flex-col overflow-hidden border-border bg-card sm:h-[520px] xl:h-[560px]">
+      {/* 手册：光束用来强调「正在进行」，跑完就撤。ping/mtr 动辄十几秒，正是这个场景。 */}
+      {isRunning && <BorderBeam />}
       <CardHeader className="shrink-0 border-b border-border/40 bg-muted/20 px-4 py-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex min-w-0 items-center gap-2 text-sm">
@@ -215,7 +218,9 @@ function Iperf3Output({
   const commands = status?.commands;
 
   return (
-    <Card className="flex h-[560px] min-w-0 flex-col overflow-hidden border-border bg-card sm:h-[600px] xl:h-[640px]">
+    <Card className="relative flex h-[560px] min-w-0 flex-col overflow-hidden border-border bg-card sm:h-[600px] xl:h-[640px]">
+      {/* 只在排队/启动/停止这些过渡态亮；running 是稳定态，常驻光束等于没有光束。 */}
+      {isBusy && <BorderBeam />}
       <CardHeader className="shrink-0 border-b border-border/40 bg-muted/20 px-4 py-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex min-w-0 items-center gap-2 text-sm">

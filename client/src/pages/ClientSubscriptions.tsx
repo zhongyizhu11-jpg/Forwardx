@@ -9,6 +9,7 @@ import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import DataSectionError from "@/components/DataSectionError";
 import StatCard from "@/components/StatCard";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -703,7 +704,7 @@ export default function ClientSubscriptionsPage() {
         />
       ),
       toggle: node.sharedFrom ? null : (
-        <Switch
+        <Switch aria-label={`${node.name} 启用`}
           className="shrink-0 scale-90"
           checked={!!node.isEnabled}
           onCheckedChange={(checked) => updateNode.mutate({ id: node.id, isEnabled: checked })}
@@ -1103,7 +1104,7 @@ export default function ClientSubscriptionsPage() {
                         {renderTokenFailure(token)}
                       </div>
                       <div className="flex items-center gap-2">
-                        <Switch
+                        <Switch aria-label={`${token.name} 启用`}
                           checked={!!token.isEnabled}
                           onCheckedChange={(checked) => updateToken.mutate({ id: token.id, isEnabled: checked })}
                         />
@@ -1193,7 +1194,7 @@ export default function ClientSubscriptionsPage() {
                                 rulePreset: value as ProxyRulePreset,
                               })}
                             >
-                              <SelectTrigger className="h-7 w-24 text-xs">
+                              <SelectTrigger aria-label="分流规则" className="h-7 w-24 text-xs">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -1373,7 +1374,7 @@ export default function ClientSubscriptionsPage() {
                                 defaultFormat: value as ProxySubscriptionFormat,
                               })}
                             >
-                              <SelectTrigger className="h-7 w-auto gap-1 text-xs">
+                              <SelectTrigger aria-label="认不出客户端时用的订阅格式" className="h-7 w-auto gap-1 text-xs">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -1626,7 +1627,7 @@ export default function ClientSubscriptionsPage() {
                       >
                         <EyeOff className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{item.ruleName}</span>
-                        <Switch
+                        <Switch aria-label={`${item.ruleName} 放回订阅`}
                           className="shrink-0 scale-90"
                           checked={false}
                           onCheckedChange={() => setRuleVisible.mutate({ ruleId: item.ruleId, visible: true })}
@@ -1692,7 +1693,7 @@ export default function ClientSubscriptionsPage() {
                             proxyNodeId: Number(value),
                           })}
                         >
-                          <SelectTrigger className="h-8 w-36 shrink-0 text-xs">
+                          <SelectTrigger aria-label={`${item.ruleName} 选择落地节点`} className="h-8 w-36 shrink-0 text-xs">
                             <SelectValue placeholder="选择落地节点" />
                           </SelectTrigger>
                           <SelectContent>
@@ -1806,7 +1807,7 @@ export default function ClientSubscriptionsPage() {
                 会顶掉「订阅内容」里那个「直连」标签，分享出去的人也看得到。不进订阅。
               </p>
             </div>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>加进订阅</Label>
               <div className="flex items-start justify-between gap-3 rounded-lg border p-3">
                 <p className="min-w-0 text-xs text-muted-foreground">
@@ -1817,13 +1818,13 @@ export default function ClientSubscriptionsPage() {
                     </span>
                   ) : null}
                 </p>
-                <Switch
+                <Checkbox
                   checked={nodeIncludeDirect}
                   onCheckedChange={setNodeIncludeDirect}
                   className="mt-0.5 shrink-0"
                 />
               </div>
-            </div>
+            </FormField>
             <div className="space-y-2 rounded-lg border p-3">
               <Label>这台落地机的套餐</Label>
               <div className="grid grid-cols-2 gap-2">
@@ -1883,7 +1884,7 @@ export default function ClientSubscriptionsPage() {
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {nodeTrafficAutoReset ? (
-                    <Input
+                    <Input aria-label="每月自动清零日期"
                       type="number"
                       inputMode="numeric"
                       className="h-8 w-16"
@@ -1891,7 +1892,7 @@ export default function ClientSubscriptionsPage() {
                       onChange={(event) => setNodeTrafficResetDay(event.target.value)}
                     />
                   ) : null}
-                  <Switch checked={nodeTrafficAutoReset} onCheckedChange={setNodeTrafficAutoReset} />
+                  <Checkbox aria-label="每月自动清零" checked={nodeTrafficAutoReset} onCheckedChange={setNodeTrafficAutoReset} />
                 </div>
               </div>
             </div>

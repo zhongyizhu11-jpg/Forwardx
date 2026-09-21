@@ -1,0 +1,116 @@
+{
+  "note": "主备时段表的判定用例，面板（TS）和 Agent（Go）共用同一份。两边各有一套实现是没办法的事——Agent 必须能在面板挂掉时照常按表走——但实现漂移的后果是「面板上显示走备线、机器上还在走主线」，所以判定本身由这张表钉住：谁改出了偏差，谁那边的测试红。at 是 RFC3339 的瞬间，expected 是该时刻首选第几条出站，null 表示没有时段命中（按原来的优先级走）。",
+  "cases": [
+    {
+      "name": "晚高峰窗口内走备线",
+      "timezone": "Asia/Shanghai",
+      "windows": [{ "days": [], "from": "18:00", "to": "23:00", "targetIndex": 1 }],
+      "at": "2026-09-21T11:00:00Z",
+      "expected": 1
+    },
+    {
+      "name": "晚高峰之前还在主线",
+      "timezone": "Asia/Shanghai",
+      "windows": [{ "days": [], "from": "18:00", "to": "23:00", "targetIndex": 1 }],
+      "at": "2026-09-21T09:59:00Z",
+      "expected": null
+    },
+    {
+      "name": "结束时刻不含在窗口里",
+      "timezone": "Asia/Shanghai",
+      "windows": [{ "days": [], "from": "18:00", "to": "23:00", "targetIndex": 1 }],
+      "at": "2026-09-21T15:00:00Z",
+      "expected": null
+    },
+    {
+      "name": "起始时刻含在窗口里",
+      "timezone": "Asia/Shanghai",
+      "windows": [{ "days": [], "from": "18:00", "to": "23:00", "targetIndex": 1 }],
+      "at": "2026-09-21T10:00:00Z",
+      "expected": 1
+    },
+    {
+      "name": "跨午夜：当天傍晚在窗口内",
+      "timezone": "Asia/Shanghai",
+      "windows": [{ "days": [1], "from": "18:00", "to": "01:00", "targetIndex": 2 }],
+      "at": "2026-09-21T12:00:00Z",
+      "expected": 2
+    },
+    {
+      "name": "跨午夜：次日凌晨仍属于前一天那条窗口",
+      "timezone": "Asia/Shanghai",
+      "windows": [{ "days": [1], "from": "18:00", "to": "01:00", "targetIndex": 2 }],
+      "at": "2026-09-21T16:30:00Z",
+      "expected": 2
+    },
+    {
+      "name": "跨午夜：窗口当天的凌晨不算（那是前一天的尾巴，而前一天没开窗口）",
+      "timezone": "Asia/Shanghai",
+      "windows": [{ "days": [1], "from": "18:00", "to": "01:00", "targetIndex": 2 }],
+      "at": "2026-09-20T16:30:00Z",
+      "expected": null
+    },
+    {
+      "name": "工作日窗口在周六不生效",
+      "timezone": "Asia/Shanghai",
+      "windows": [{ "days": [1, 2, 3, 4, 5], "from": "18:00", "to": "23:00", "targetIndex": 1 }],
+      "at": "2026-09-26T11:00:00Z",
+      "expected": null
+    },
+    {
+      "name": "工作日窗口在周五生效",
+      "timezone": "Asia/Shanghai",
+      "windows": [{ "days": [1, 2, 3, 4, 5], "from": "18:00", "to": "23:00", "targetIndex": 1 }],
+      "at": "2026-09-25T11:00:00Z",
+      "expected": 1
+    },
+    {
+      "name": "从上往下第一条命中的说了算",
+      "timezone": "Asia/Shanghai",
+      "windows": [
+        { "days": [5], "from": "18:00", "to": "23:00", "targetIndex": 3 },
+        { "days": [1, 2, 3, 4, 5], "from": "18:00", "to": "23:00", "targetIndex": 1 }
+      ],
+      "at": "2026-09-25T11:00:00Z",
+      "expected": 3
+    },
+    {
+      "name": "同样两条窗口，周四落到第二条",
+      "timezone": "Asia/Shanghai",
+      "windows": [
+        { "days": [5], "from": "18:00", "to": "23:00", "targetIndex": 3 },
+        { "days": [1, 2, 3, 4, 5], "from": "18:00", "to": "23:00", "targetIndex": 1 }
+      ],
+      "at": "2026-09-24T11:00:00Z",
+      "expected": 1
+    },
+    {
+      "name": "时区真的按时区算：同一瞬间在洛杉矶不在晚高峰",
+      "timezone": "America/Los_Angeles",
+      "windows": [{ "days": [], "from": "18:00", "to": "23:00", "targetIndex": 1 }],
+      "at": "2026-09-21T11:00:00Z",
+      "expected": null
+    },
+    {
+      "name": "时区真的按时区算：洛杉矶的晚高峰在另一个瞬间",
+      "timezone": "America/Los_Angeles",
+      "windows": [{ "days": [], "from": "18:00", "to": "23:00", "targetIndex": 1 }],
+      "at": "2026-09-22T02:00:00Z",
+      "expected": 1
+    },
+    {
+      "name": "认不出的时区一律当作没有时段表",
+      "timezone": "Mars/Olympus",
+      "windows": [{ "days": [], "from": "00:00", "to": "23:59", "targetIndex": 1 }],
+      "at": "2026-09-21T11:00:00Z",
+      "expected": null
+    },
+    {
+      "name": "没有窗口就没有首选",
+      "timezone": "Asia/Shanghai",
+      "windows": [],
+      "at": "2026-09-21T11:00:00Z",
+      "expected": null
+    }
+  ]
+}

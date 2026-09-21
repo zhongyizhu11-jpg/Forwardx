@@ -1,3 +1,4 @@
+import { avatarQuotaState } from "@/lib/avatarQuota";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -70,6 +71,7 @@ import { useLocation } from "wouter";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "./ui/dialog";
+import { PasswordInput } from "./ui/password-input";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { useQueryFailureSignal } from "@/hooks/useQueryFailureSignal";
@@ -78,9 +80,10 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { renderMixedHtml } from "@/lib/htmlContent";
 import { mobileAuth } from "@/lib/mobileAuth";
-import { checkMobileAppUpdate, openMobileReleasePage, type MobileAppUpdateResult } from "@/lib/mobileNotifications";
+import { openMobileReleasePage } from "@/lib/mobileNotifications";
+import { useMobileAppUpdateCheck } from "@/lib/mobileAppUpdateCheck";
 import { cn } from "@/lib/utils";
-import { getPanelChangelogUrl, PANEL_UPGRADE_REFRESH_DELAY_MS, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
+import { getPanelChangelogUrl, getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_MS, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -125,7 +128,6 @@ const PANEL_UPGRADE_SESSION_KEY = "forwardx.panel.upgrade";
 const PANEL_UPGRADE_NOTICE_DISMISSED_KEY = "forwardx.panel.upgrade.dismissedVersion";
 const PANEL_UPGRADE_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const UPDATE_AUTO_CHECK_REFETCH_MS = 6 * 60 * 60 * 1000;
-const MOBILE_APP_UPDATE_SESSION_KEY = "forwardx.mobile.updateNotice";
 const POPUP_ANNOUNCEMENT_SESSION_KEY = "forwardx.popupAnnouncement.seen";
 const UPGRADE_ANNOUNCEMENT_VERSION_KEY = "forwardx.upgradeAnnouncement.lastSeenVersion";
 const UPGRADE_ANNOUNCEMENT_DISPLAY_SESSION_KEY = "forwardx.upgradeAnnouncement.displayed";
@@ -297,63 +299,6 @@ function readPanelUpgradeSession(): PanelUpgradeSession | null {
   }
 }
 
-function getLayoutUpgradeProgress(job: any) {
-  const status = job?.status || "idle";
-  const isRollback = job?.mode === "rollback";
-  const actionLabel = isRollback ? "回退" : "升级";
-  const logs = Array.isArray(job?.logs) ? job.logs.join("\n") : "";
-  const matched = (patterns: RegExp[]) => patterns.some((pattern) => pattern.test(logs));
-  const steps = [
-    { label: `准备${actionLabel}`, done: status !== "idle" && matched([/开始升级/i, /开始回退/i, /Starting panel/i, /start/i]) },
-    {
-      label: "检查发布资产",
-      done: matched([
-        /Release assets/i,
-        /not available yet/i,
-        /still building/i,
-        /发布资产/i,
-        /构建完成/i,
-        /Docker image/i,
-        /panel bundle/i,
-      ]),
-    },
-    {
-      label: "下载或拉取资产",
-      done: matched([
-        /Downloading panel bundle/i,
-        /Pulling image/i,
-        /Downloaded newer image/i,
-        /Image is up to date/i,
-        /load metadata/i,
-        /load build context/i,
-        /pnpm install/i,
-        /npm install/i,
-        /downloaded/i,
-        /Lockfile is up to date/i,
-      ]),
-    },
-    { label: "安装并重启", done: matched([/Container .* (Creating|Created|Starting|Started)/i, /docker compose up/i, /systemctl restart/i, /已启动/i, /recreate/i]) },
-  ];
-
-  if (status === "success") {
-    return { percent: 100, label: `${actionLabel}完成，正在等待面板恢复`, steps: steps.map((step) => ({ ...step, done: true, active: false })) };
-  }
-  if (status === "waiting_assets") {
-    return { percent: 34, label: "等待 GitHub Actions 构建发布资产", steps: steps.map((step, index) => ({ ...step, done: index === 0, active: index === 1 })) };
-  }
-  if (status === "error") {
-    const doneCount = steps.filter((step) => step.done).length;
-    const activeIndex = Math.min(doneCount, steps.length - 1);
-    return { percent: Math.max(10, doneCount * 22), label: `${actionLabel}异常`, steps: steps.map((step, index) => ({ ...step, active: index === activeIndex && !step.done })) };
-  }
-  if (status === "running") {
-    const doneCount = steps.filter((step) => step.done).length;
-    const activeIndex = Math.min(doneCount, steps.length - 1);
-    return { percent: Math.min(92, Math.max(12, doneCount * 22 + 8)), label: steps[activeIndex]?.label || `正在${actionLabel}`, steps: steps.map((step, index) => ({ ...step, active: index === activeIndex && !step.done })) };
-  }
-  return { percent: 0, label: `等待确认${actionLabel}`, steps: steps.map((step) => ({ ...step, active: false })) };
-}
-
 export default function DashboardLayout({
   children,
 }: {
@@ -502,8 +447,11 @@ function DashboardLayoutContent({
   const [upgradeAnnouncementCountdown, setUpgradeAnnouncementCountdown] = useState(UPGRADE_ANNOUNCEMENT_COUNTDOWN_SECONDS);
   const [showTelegramDialog, setShowTelegramDialog] = useState(false);
   const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
-  const [checkingMobileUpdate, setCheckingMobileUpdate] = useState(false);
-  const [mobileUpdateInfo, setMobileUpdateInfo] = useState<MobileAppUpdateResult | null>(null);
+  const {
+    checking: checkingMobileUpdate,
+    updateInfo: mobileUpdateInfo,
+    check: handleMobileUpdateCheck,
+  } = useMobileAppUpdateCheck(() => setShowMobileUpdateDialog(true));
   const [showMobileUpdateDialog, setShowMobileUpdateDialog] = useState(false);
   const upgradeRefreshTimerRef = useRef<number | null>(null);
   const upgradeRefreshIntervalRef = useRef<number | null>(null);
@@ -797,9 +745,17 @@ function DashboardLayoutContent({
     },
   });
 
+  const { data: avatarQuota } = trpc.users.avatarQuota.useQuery(undefined, {
+    enabled: !!user,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const { exhausted: avatarQuotaExhausted } = avatarQuotaState(avatarQuota, (user as any)?.role === "admin");
+
   const updateAvatarMutation = trpc.users.updateAvatar.useMutation({
     onSuccess: () => {
       utils.auth.me.invalidate();
+      utils.users.avatarQuota.invalidate();
       toast.success("头像已更新");
       setShowAvatarDialog(false);
     },
@@ -815,6 +771,14 @@ function DashboardLayoutContent({
   const handleSaveAvatar = () => {
     if (!avatarDraft) {
       toast.error("请选择头像");
+      return;
+    }
+    /*
+      这一条原来只有个人资料页有。侧边栏这条路让用户挑完裁完点了保存，才被
+      服务端顶回来 —— 同一个功能，两个入口，一个提前说一个事后说。
+    */
+    if (avatarQuotaExhausted) {
+      toast.error("今日头像修改次数已用完");
       return;
     }
     updateAvatarMutation.mutate({ avatar: avatarDraft });
@@ -1016,29 +980,6 @@ function DashboardLayoutContent({
     });
   };
 
-  const handleMobileUpdateCheck = async () => {
-    if (!mobileAuth.isNative || checkingMobileUpdate) return;
-    try {
-      setCheckingMobileUpdate(true);
-      const result = await checkMobileAppUpdate({ silent: false });
-      setMobileUpdateInfo(result);
-      if (result?.hasUpdate) {
-        try {
-          window.sessionStorage.setItem(MOBILE_APP_UPDATE_SESSION_KEY, result.latestVersion);
-        } catch {
-          // Ignore storage failures.
-        }
-        setShowMobileUpdateDialog(true);
-      } else if (result) {
-        toast.success(result.hasPackage ? "当前 APP 已是最新版本" : `当前版本暂无 ${result.packageLabel} 更新`);
-      }
-    } catch (error: any) {
-      toast.error(error?.message || "APP 更新检查失败");
-    } finally {
-      setCheckingMobileUpdate(false);
-    }
-  };
-
   const openDetectedMobileRelease = () => {
     void openMobileReleasePage(mobileUpdateInfo?.releaseUrl);
     setShowMobileUpdateDialog(false);
@@ -1168,7 +1109,7 @@ function DashboardLayoutContent({
       mode: backgroundUpgrade.mode || "upgrade",
     };
   }, [backgroundUpgrade, upgradeJob, upgradeRefreshScheduled, upgradeStatus?.currentVersion]);
-  const upgradeProgress = getLayoutUpgradeProgress(displayUpgradeJob);
+  const upgradeProgress = getPanelUpgradeProgress(displayUpgradeJob);
   const isPanelVersionTaskVisible = !!displayUpgradeJob?.status && displayUpgradeJob.status !== "idle";
   const isPanelRollbackTask = displayUpgradeJob?.mode === "rollback";
   const panelVersionActionLabel = isPanelRollbackTask ? "回退" : "升级";
@@ -1974,9 +1915,8 @@ function DashboardLayoutContent({
           <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label htmlFor="old-password">当前密码</Label>
-              <Input
+              <PasswordInput
                 id="old-password"
-                type="password"
                 value={oldPassword}
                 onChange={(e) => setOldPassword(e.target.value)}
                 placeholder="请输入当前密码"
@@ -1984,9 +1924,8 @@ function DashboardLayoutContent({
             </div>
             <div className="space-y-2">
               <Label htmlFor="new-password">新密码</Label>
-              <Input
+              <PasswordInput
                 id="new-password"
-                type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="请输入新密码（至少6个字符）"
@@ -1994,9 +1933,8 @@ function DashboardLayoutContent({
             </div>
             <div className="space-y-2">
               <Label htmlFor="confirm-password">确认新密码</Label>
-              <Input
+              <PasswordInput
                 id="confirm-password"
-                type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="请再次输入新密码"
@@ -2058,9 +1996,8 @@ function DashboardLayoutContent({
               </div>
               <div className="space-y-2">
                 <Label htmlFor="two-factor-disable-password">当前密码</Label>
-                <Input
+                <PasswordInput
                   id="two-factor-disable-password"
-                  type="password"
                   value={twoFactorPassword}
                   onChange={(e) => setTwoFactorPassword(e.target.value)}
                   placeholder="请输入当前密码"
@@ -2128,9 +2065,8 @@ function DashboardLayoutContent({
               </div>
               <div className="space-y-2">
                 <Label htmlFor="two-factor-enable-password">当前密码</Label>
-                <Input
+                <PasswordInput
                   id="two-factor-enable-password"
-                  type="password"
                   value={twoFactorPassword}
                   onChange={(e) => setTwoFactorPassword(e.target.value)}
                   placeholder="请输入当前密码"
@@ -2232,7 +2168,7 @@ function DashboardLayoutContent({
                         {telegramBindExpired ? "绑定码已过期，请重新生成。" : "5 分钟内有效，可复制备用，也可以直接打开 Telegram 完成绑定。"}
                       </p>
                     </div>
-                    <Button variant="outline" size="icon" onClick={() => copyText(telegramBind.code)} disabled={telegramBindExpired}>
+                    <Button variant="outline" size="icon" aria-label="复制绑定码" onClick={() => copyText(telegramBind.code)} disabled={telegramBindExpired}>
                       <Copy className="h-4 w-4" />
                     </Button>
                   </div>

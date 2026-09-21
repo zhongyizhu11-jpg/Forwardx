@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -69,4 +71,29 @@ test("「够门槛」和「落后」是互补的，不能同时成立", () => {
       `${a} vs ${b}：同一对版本号在两个问法下要给出相反的答案`,
     );
   }
+});
+
+test("版本比较只有一处实现", () => {
+  /*
+    这个文件头上写着「全站唯一一份」，但 client/src/lib/mobileNotifications.ts 里
+    一直另有一份漏网的 —— 它按 "." 切而不是 `[.-]`，带后缀的版本号会被当成 x.y.0。
+    11 对样本里 4 对结论不同。这条盯着别再长出第五份。
+  */
+  const root = path.resolve(import.meta.dirname, "..");
+  const 自己 = path.join("shared", "version.ts");
+  const hits: string[] = [];
+  const walk = (dir: string) => {
+    for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (["node_modules", ".git", "dist", ".dev"].includes(item.name)) continue;
+      const full = path.join(dir, item.name);
+      if (item.isDirectory()) { walk(full); continue; }
+      if (!/\.tsx?$/.test(item.name) || /\.test\.tsx?$/.test(item.name)) continue;
+      const relative = path.relative(root, full);
+      if (relative === 自己) continue;
+      const source = fs.readFileSync(full, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      if (/function\s+(compareVersions|normalizeVersion)\s*[(<]/.test(source)) hits.push(relative);
+    }
+  };
+  for (const dir of ["server", "shared", "client/src"]) walk(path.join(root, dir));
+  assert.deepEqual(hits, [], `这些文件又自己写了一份版本比较，请改用 shared/version.ts：\n  ${hits.join("\n  ")}`);
 });

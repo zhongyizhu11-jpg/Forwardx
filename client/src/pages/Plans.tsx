@@ -11,6 +11,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -284,7 +285,7 @@ function PlanCard({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Button variant="ghost" size="sm" className="h-8 px-2" onClick={onEdit}>编辑</Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={onDelete}>
+          <Button variant="ghost" size="icon" aria-label="删除套餐" className="h-8 w-8 text-destructive" onClick={onDelete}>
             <Trash2 className="h-4 w-4" />
           </Button>
         </div>
@@ -457,7 +458,7 @@ function PlanResourcePicker({
   renderSelected: (item: any) => ReactNode;
 }) {
   return (
-    <div className="space-y-2">
+    <FormField className="space-y-2">
       <div className="flex items-center justify-between gap-3">
         <Label className="text-sm font-medium">{title}</Label>
         <Badge variant="outline" className="h-6 shrink-0 rounded-full px-2 text-xs">{countText}</Badge>
@@ -505,7 +506,7 @@ function PlanResourcePicker({
           </Select>
         </>
       )}
-    </div>
+    </FormField>
   );
 }
 
@@ -1117,7 +1118,7 @@ export default function Plans() {
               <CardDescription>商店状态</CardDescription>
               <CardTitle className="flex items-center justify-between">
                 <span>{storeEnabled ? "已开启" : "已关闭"}</span>
-                <OptimisticSwitch
+                <OptimisticSwitch aria-label="商店状态"
                   checked={storeEnabled}
                   disabled={storeStatusLoading}
                   onCheckedChangeAsync={(enabled) => setStoreEnabled.mutateAsync({ enabled })}
@@ -1293,7 +1294,7 @@ export default function Plans() {
                                 </TableCell>
                                 <TableCell className="text-right">
                                   <Button variant="ghost" size="sm" onClick={() => openPlanEdit(plan)}>编辑</Button>
-                                  <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deletePlan.mutate({ id: plan.id })}>
+                                  <Button variant="ghost" size="sm" aria-label={`删除 ${plan.name}`} className="text-destructive" onClick={() => deletePlan.mutate({ id: plan.id })}>
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
                                 </TableCell>
@@ -1448,7 +1449,7 @@ export default function Plans() {
                           <span className="w-16 shrink-0 text-sm font-medium">{planDurationLabel(days)}</span>
                         ) : (
                           <div className="flex w-24 shrink-0 items-center gap-1">
-                            <Input
+                            <Input aria-label="自定义时长天数"
                               type="number"
                               min={1}
                               max={3650}
@@ -1487,7 +1488,7 @@ export default function Plans() {
                         </span>
                         <Button
                           type="button"
-                          size="icon"
+                          size="icon" aria-label="删除价格档位"
                           variant="ghost"
                           className="h-8 w-8 shrink-0"
                           onClick={() => setForm({ ...form, priceTiers: form.priceTiers.filter((_, i) => i !== index) })}
@@ -1536,19 +1537,19 @@ export default function Plans() {
               <Input type="number" min={0} value={form.maxIPs} onChange={(e) => setForm({ ...form, maxIPs: e.target.value })} />
             </FormField>
             <div className="space-y-2 sm:col-span-2">
-              <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+              <FormField className="flex items-start justify-between gap-3 rounded-md border p-3">
                 <div className="min-w-0">
                   <Label>附带客户端订阅权限</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
                     开启后，购买该套餐的用户即可使用客户端订阅。与转发权限不同，这项不会因为有订阅就自动开启。
                   </p>
                 </div>
-                <Switch
+                <Checkbox
                   checked={form.allowProxySubscription}
                   onCheckedChange={(checked) => setForm({ ...form, allowProxySubscription: checked })}
                   className="mt-1 shrink-0"
                 />
-              </div>
+              </FormField>
               <p className="text-xs text-muted-foreground">同组规则共享限制。</p>
             </div>
             <FormField className="space-y-2">
@@ -1563,7 +1564,7 @@ export default function Plans() {
                       <p className="text-sm font-medium">套餐状态</p>
                       <p className="text-xs text-muted-foreground">关闭后该套餐不可购买或分配。</p>
                     </div>
-                    <Switch
+                    <Checkbox aria-label="套餐状态"
                       className="shrink-0"
                       checked={form.isActive}
                       onCheckedChange={(isActive) => setForm((current) => ({
@@ -1582,7 +1583,7 @@ export default function Plans() {
                           : "商店总开关是关的，这里开了用户也看不到，得先去上面的「商店状态」打开。"}
                       </p>
                     </div>
-                    <Switch
+                    <Checkbox aria-label="购买入口"
                       className="shrink-0"
                       checked={form.isActive && form.isStoreVisible}
                       disabled={!form.isActive}
@@ -1595,7 +1596,7 @@ export default function Plans() {
                         <p className="text-sm font-medium">同步已购买用户</p>
                         <p className="text-xs text-muted-foreground">开启后保存套餐会同步已购买用户的生效权益；关闭后仅影响后续新购或新分配。</p>
                       </div>
-                      <Switch
+                      <Checkbox
                         className="shrink-0"
                         checked={form.syncExistingSubscribers}
                         onCheckedChange={(syncExistingSubscribers) => setForm({ ...form, syncExistingSubscribers })}
@@ -1839,7 +1840,7 @@ export default function Plans() {
                           关：大家共用原端口、各发一份凭据，省端口，但流量按端口统计、分不开。
                         </p>
                       </div>
-                      <Switch
+                      <Checkbox aria-label="给每人单开一个端口"
                         className="shrink-0"
                         checked={form.dedicatedProxyPort}
                         onCheckedChange={(dedicatedProxyPort) => setForm({ ...form, dedicatedProxyPort })}
@@ -1877,9 +1878,9 @@ export default function Plans() {
                   </FormField>
                   <label className="flex h-10 items-center justify-between gap-2 rounded-md border px-3 text-sm">
                     启用
-                    <Switch checked={addon.isActive} onCheckedChange={(isActive) => updateTrafficAddon(index, { isActive })} />
+                    <Checkbox aria-label="启用" checked={addon.isActive} onCheckedChange={(isActive) => updateTrafficAddon(index, { isActive })} />
                   </label>
-                  <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => removeTrafficAddon(index)}>
+                  <Button type="button" variant="ghost" size="icon" aria-label="删除流量加购" className="text-destructive" onClick={() => removeTrafficAddon(index)}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>

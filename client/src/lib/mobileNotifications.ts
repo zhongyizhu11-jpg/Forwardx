@@ -1,3 +1,11 @@
+/*
+  版本比较走 shared/version.ts 那一份。这里原来自己写了一份，差别在后缀：
+  它按 "." 切，`2.3.364-beta.1` 的第三段成了 `"364-beta"`，`Number()` 得 NaN 归 0，
+  于是这个版本被当成 `2.3.0` —— 比 `2.3.100` 还旧。共用那份按 `[.-]` 切，得 364。
+  今天 ANDROID_APP_VERSION 一直是干净的 x.y.z，所以这是个潜伏问题；
+  哪天发一个 rc 版就会发作。
+*/
+import { compareVersions } from "@shared/version";
 import { App } from "@capacitor/app";
 import { Browser } from "@capacitor/browser";
 import { LocalNotifications } from "@capacitor/local-notifications";
@@ -145,16 +153,6 @@ export async function scheduleMobileReminders(settings: MobileNotificationSettin
   }
 
   if (notifications.length) await LocalNotifications.schedule({ notifications });
-}
-
-function compareVersions(a: string, b: string) {
-  const pa = a.replace(/^v/i, "").split(".").map((n) => Number(n) || 0);
-  const pb = b.replace(/^v/i, "").split(".").map((n) => Number(n) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
 }
 
 function extractMobilePackageVersion(assetName: string) {

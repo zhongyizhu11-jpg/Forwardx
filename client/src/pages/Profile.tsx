@@ -1,3 +1,4 @@
+import { avatarQuotaState } from "@/lib/avatarQuota";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { AvatarPicker } from "@/components/AvatarPicker";
@@ -6,13 +7,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { OptimisticSwitch, Switch } from "@/components/ui/switch";
 import { migrateLegacyAvatarValue } from "@/lib/avatar";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { mobileAuth } from "@/lib/mobileAuth";
-import { checkMobileAppUpdate, openMobileReleasePage, type MobileAppUpdateResult } from "@/lib/mobileNotifications";
+import { openMobileReleasePage } from "@/lib/mobileNotifications";
+import { useMobileAppUpdateCheck } from "@/lib/mobileAppUpdateCheck";
 import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
@@ -57,8 +60,15 @@ function ProfileContent() {
   const [twoFactorSetupTick, setTwoFactorSetupTick] = useState(Date.now());
   const [twoFactorPassword, setTwoFactorPassword] = useState("");
   const [twoFactorCode, setTwoFactorCode] = useState("");
-  const [checkingMobileUpdate, setCheckingMobileUpdate] = useState(false);
-  const [mobileUpdateInfo, setMobileUpdateInfo] = useState<MobileAppUpdateResult | null>(null);
+  // 发现新版本时不弹对话框：这一页有地方常驻显示版本对比和「前往下载」，
+  // 见下面的卡片。toast 只是个「查完了」的确认。
+  const {
+    checking: checkingMobileUpdate,
+    updateInfo: mobileUpdateInfo,
+    check: handleMobileUpdateCheck,
+  } = useMobileAppUpdateCheck((result) => {
+    toast.success(`发现 APP 新版本 v${result.latestVersion.replace(/^v/i, "")}`);
+  });
 
   const isAdmin = user?.role === "admin";
 
@@ -230,9 +240,7 @@ function ProfileContent() {
     return () => window.clearInterval(timer);
   }, [telegramBind?.expiresAt]);
 
-  const avatarQuotaRemaining = avatarQuota?.remaining ?? 3;
-  const avatarQuotaUnlimited = !!avatarQuota?.unlimited || user?.role === "admin";
-  const avatarQuotaExhausted = !avatarQuotaUnlimited && avatarQuotaRemaining <= 0;
+  const { remaining: avatarQuotaRemaining, unlimited: avatarQuotaUnlimited, exhausted: avatarQuotaExhausted } = avatarQuotaState(avatarQuota, user?.role === "admin");
   const avatarBusy = updateAvatarMutation.isPending || randomAvatarMutation.isPending;
   const twoFactorSetupExpiresAt = twoFactorSetup?.expiresAt ? new Date(twoFactorSetup.expiresAt).getTime() : 0;
   const twoFactorSetupRemaining = twoFactorSetupExpiresAt ? Math.max(0, Math.ceil((twoFactorSetupExpiresAt - twoFactorSetupTick) / 1000)) : 0;
@@ -353,21 +361,6 @@ function ProfileContent() {
     updateTelegramAnnouncementSubscriptionMutation.mutateAsync({ telegramAnnouncementSubscribed: enabled })
   );
 
-  const handleMobileUpdateCheck = async () => {
-    if (!mobileAuth.isNative || checkingMobileUpdate) return;
-    try {
-      setCheckingMobileUpdate(true);
-      const result = await checkMobileAppUpdate({ silent: false });
-      setMobileUpdateInfo(result);
-      if (result?.hasUpdate) toast.success(`发现 APP 新版本 v${result.latestVersion.replace(/^v/i, "")}`);
-      else if (result) toast.success(result.hasPackage ? "当前 APP 已是最新版本" : `当前版本暂无 ${result.packageLabel} 更新`);
-    } catch (error: any) {
-      toast.error(error?.message || "APP 更新检查失败");
-    } finally {
-      setCheckingMobileUpdate(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -468,15 +461,15 @@ function ProfileContent() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="profile-old-password">当前密码</Label>
-              <Input id="profile-old-password" type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} placeholder="请输入当前密码" />
+              <PasswordInput id="profile-old-password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} placeholder="请输入当前密码" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="profile-new-password">新密码</Label>
-              <Input id="profile-new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 个字符" />
+              <PasswordInput id="profile-new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 个字符" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="profile-confirm-password">确认新密码</Label>
-              <Input id="profile-confirm-password" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="再次输入新密码" />
+              <PasswordInput id="profile-confirm-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="再次输入新密码" />
             </div>
             <Button className="w-full" onClick={handleChangePassword} disabled={changePasswordMutation.isPending}>
               {changePasswordMutation.isPending ? "修改中..." : "修改密码"}
@@ -507,7 +500,7 @@ function ProfileContent() {
                   默认关闭。开启后，新公告仅在管理员选择 TG 推送时发送到已绑定的 Telegram。
                 </p>
               </div>
-              <OptimisticSwitch
+              <OptimisticSwitch aria-label="公告 Telegram 推送"
                 checked={!!telegramStatus?.announcementSubscribed}
                 disabled={!telegramStatus?.bound}
                 onCheckedChangeAsync={handleTelegramAnnouncementSubscribedChange}
@@ -622,7 +615,7 @@ function ProfileContent() {
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="profile-2fa-disable-password">当前密码</Label>
-                      <Input id="profile-2fa-disable-password" type="password" value={twoFactorPassword} onChange={(e) => setTwoFactorPassword(e.target.value)} placeholder="请输入当前密码" />
+                      <PasswordInput id="profile-2fa-disable-password" value={twoFactorPassword} onChange={(e) => setTwoFactorPassword(e.target.value)} placeholder="请输入当前密码" />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="profile-2fa-disable-code">动态验证码</Label>
@@ -677,7 +670,7 @@ function ProfileContent() {
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="profile-2fa-enable-password">当前密码</Label>
-                      <Input id="profile-2fa-enable-password" type="password" value={twoFactorPassword} onChange={(e) => setTwoFactorPassword(e.target.value)} placeholder="请输入当前密码" />
+                      <PasswordInput id="profile-2fa-enable-password" value={twoFactorPassword} onChange={(e) => setTwoFactorPassword(e.target.value)} placeholder="请输入当前密码" />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="profile-2fa-enable-code">动态验证码</Label>

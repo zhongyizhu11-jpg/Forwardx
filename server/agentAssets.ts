@@ -1,3 +1,4 @@
+import { normalizeVersion } from "@shared/version";
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
@@ -61,10 +62,6 @@ async function isCachedElfAsset(filePath: string) {
   } finally {
     await file?.close().catch(() => undefined);
   }
-}
-
-function normalizeVersion(version: string | null | undefined) {
-  return String(version || "").trim().replace(/^v/i, "");
 }
 
 function isSemver(version: string) {

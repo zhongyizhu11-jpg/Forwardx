@@ -15,6 +15,41 @@
   --fx-radius: 12px;
   --fx-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --fx-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  /*
+    层级只有这几档。手册的原话是「用变量统一管理，禁止随手写大数字」——
+    以前 toast 是内联的 `zIndex: 200`、日期面板是 `z-[70]`，都是当场拍的数字，
+    下一个人再加浮层只能接着猜。
+
+    前六档是**页面层**的（手册那张表）：
+
+      内容 0 · 悬浮卡片 10 · 下拉气泡 20 · 吸顶导航 40 · 遮罩弹窗 50 · Toast 60
+
+    后三档是**浮层容器内部**的次序，和上面那六档不是一回事：所有浮层
+    （对话框、下拉、气泡、日期面板、toast）都 portal 进 #forwardx-overlay-root，
+    而那个容器是 `isolation: isolate`，自成一个层叠上下文 —— 里面的值只和
+    彼此比较，跟页面上的 0~60 没有可比性。所以单独一组，名字也写明是容器内。
+  */
+  --fx-z-content: 0;
+  --fx-z-raised: 10;
+  --fx-z-popover: 20;
+  --fx-z-sticky: 40;
+  --fx-z-overlay: 50;
+  --fx-z-toast: 60;
+
+  --fx-z-in-overlay-base: 50;     /* 对话框、下拉、菜单、气泡：同一层，谁后挂上谁在上 */
+  --fx-z-in-overlay-popover: 70;  /* 日期面板：要盖住对话框，所以单独高一档 */
+  --fx-z-in-overlay-toast: 200;   /* 提示永远在最上 */
+
+  /*
+    手册点名的两个效果用的颜色。放在令牌里是因为文档站也共用这个文件，
+    而且浅深色两套值必须成对出现 —— 写死在组件里改一个忘一个是迟早的事。
+  */
+  --fx-beam: #20242b;                  /* 边框光束那颗点：浅色下是墨色 */
+  --fx-beam-glow: rgb(32 36 43 / 55%);
+  --fx-mesh-1: rgb(203 208 214 / 78%); /* 流动渐变的三团：手册要求浅色用低透明度灰 */
+  --fx-mesh-2: rgb(186 193 201 / 62%);
+  --fx-mesh-3: rgb(216 220 225 / 70%);
 }
 .dark {
   --fx-canvas: #101315;
@@ -29,4 +64,10 @@
   --fx-brand-soft: #213c35;
   --fx-shadow: 0 1px 2px rgb(0 0 0 / 12%), inset 0 1px 0 rgb(255 255 255 / 3%);
   --fx-shadow-raised: 0 12px 32px rgb(0 0 0 / 24%), inset 0 1px 0 rgb(255 255 255 / 5%);
+
+  --fx-beam: #edf0f3;                  /* 深色下反过来，点是亮的 */
+  --fx-beam-glow: rgb(237 240 243 / 70%);
+  --fx-mesh-1: rgb(66 76 88 / 62%);
+  --fx-mesh-2: rgb(52 61 72 / 58%);
+  --fx-mesh-3: rgb(78 89 102 / 46%);
 }

@@ -1,3 +1,4 @@
+import { isPrivateOrReservedAddress } from "../shared/ipAddress";
 import dns from "node:dns/promises";
 import net from "node:net";
 import * as db from "./db";
@@ -124,64 +125,14 @@ function normalizeLookupAddress(value: string) {
   return trimmed;
 }
 
-function isPrivateIpv4(address: string) {
-  const parts = address.split(".").map((part) => Number(part));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-  const [a, b] = parts;
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 192 && b === 0) ||
-    (a === 192 && b === 2) ||
-    (a === 198 && (b === 18 || b === 19 || b === 51)) ||
-    (a === 203 && b === 0) ||
-    a >= 224
-  );
-}
-
-function expandIpv6(address: string) {
-  const normalized = address.toLowerCase().split("%")[0];
-  const ipv4Match = normalized.match(/(.+):(\d{1,3}(?:\.\d{1,3}){3})$/);
-  const value = ipv4Match ? `${ipv4Match[1]}:0:0` : normalized;
-  const halves = value.split("::");
-  if (halves.length > 2) return null;
-  const left = halves[0] ? halves[0].split(":").filter(Boolean) : [];
-  const right = halves[1] ? halves[1].split(":").filter(Boolean) : [];
-  const fill = Array(Math.max(0, 8 - left.length - right.length)).fill("0");
-  const groups = halves.length === 1 ? left : [...left, ...fill, ...right];
-  if (groups.length !== 8) return null;
-  const parsed = groups.map((group) => Number.parseInt(group || "0", 16));
-  if (parsed.some((group) => !Number.isInteger(group) || group < 0 || group > 0xffff)) return null;
-  return parsed;
-}
-
-function isPrivateIpv6(address: string) {
-  const groups = expandIpv6(address);
-  if (!groups) return true;
-  const first = groups[0];
-  const second = groups[1];
-  const isLoopback = groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1;
-  const isUnspecified = groups.every((group) => group === 0);
-  return (
-    isUnspecified ||
-    isLoopback ||
-    (first & 0xfe00) === 0xfc00 ||
-    (first & 0xffc0) === 0xfe80 ||
-    (first === 0x2001 && second === 0x0db8)
-  );
-}
-
 function isPrivateAddress(address: string) {
   const normalized = normalizeLookupAddress(address);
-  const family = net.isIP(normalized);
-  if (family === 4) return isPrivateIpv4(normalized);
-  if (family === 6) return isPrivateIpv6(normalized);
-  return false;
+  /*
+    不是 IP 就不拦。这里两个调用方传进来的都已经是解析后的地址；万一不是，
+    交给后面的解析流程去处理，而不是在这里当成内网 —— 这是原来的行为，保留。
+  */
+  if (!net.isIP(normalized)) return false;
+  return isPrivateOrReservedAddress(normalized);
 }
 
 async function resolveLookupAddress(address: string) {

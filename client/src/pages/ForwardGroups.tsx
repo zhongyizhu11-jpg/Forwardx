@@ -21,6 +21,7 @@ import {
 } from "@/components/LatencyTimeRangeSelect";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import { applyLatencyPeakCut, clipLatencyForChart, getLatencyStabilityStats, getLatencyYAxisMax, getLatencyYAxisTicks, isLatencySeriesCacheFresh, normalizeLatencyProbeCounts } from "@/lib/latencyChart";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -2311,13 +2312,13 @@ export function ForwardGroupsContent({
               {isCollectionMode(form.groupMode) && (
                 <label className="flex h-10 items-center justify-between rounded-md border border-border/60 px-3 sm:self-end">
                   <span className="text-sm">启用</span>
-                  <Switch checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
+                  <Checkbox aria-label="启用" checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
                 </label>
               )}
             </div>
 
             {form.groupMode === "exit" && (
-              <div className="grid gap-2 rounded-md border border-border/60 bg-muted/15 p-3 sm:grid-cols-[120px_minmax(0,1fr)] sm:items-center">
+              <FormField className="grid gap-2 rounded-md border border-border/60 bg-muted/15 p-3 sm:grid-cols-[120px_minmax(0,1fr)] sm:items-center">
                 <Label>出口策略</Label>
                 <div className="space-y-1.5">
                   <Select
@@ -2339,7 +2340,7 @@ export function ForwardGroupsContent({
                         : "按当前策略为新连接选择已启用的出口主机。"}
                   </p>
                 </div>
-              </div>
+              </FormField>
             )}
 
             {(form.groupMode === "failover" || form.groupMode === "entry") && (
@@ -2363,7 +2364,7 @@ export function ForwardGroupsContent({
                   {form.groupMode === "entry" && (
                     <label className="flex h-10 items-center justify-between rounded-md border border-border/60 px-3 sm:self-end">
                       <span className="text-sm">自动解析</span>
-                      <Switch checked={form.ddnsAutoResolveEnabled} onCheckedChange={(ddnsAutoResolveEnabled) => setForm({ ...form, ddnsAutoResolveEnabled })} />
+                      <Checkbox aria-label="自动解析" checked={form.ddnsAutoResolveEnabled} onCheckedChange={(ddnsAutoResolveEnabled) => setForm({ ...form, ddnsAutoResolveEnabled })} />
                     </label>
                   )}
                 </div>
@@ -2378,7 +2379,7 @@ export function ForwardGroupsContent({
                           单条连接仍然只走一台入口；要把一条连接拆开并行传输，请用隧道的「中转带宽叠加」。
                         </span>
                       </span>
-                      <Switch
+                      <Checkbox
                         checked={form.bandwidthAggregationEnabled}
                         onCheckedChange={(bandwidthAggregationEnabled) => setForm({ ...form, bandwidthAggregationEnabled })}
                       />
@@ -2453,11 +2454,11 @@ export function ForwardGroupsContent({
                       <div className="flex items-end gap-2">
                         <label className="flex h-10 min-w-[128px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
                           <span className="whitespace-nowrap text-sm">恢复后切回</span>
-                          <Switch checked={form.autoFailback} onCheckedChange={(autoFailback) => setForm({ ...form, autoFailback })} />
+                          <Checkbox aria-label="恢复后切回" checked={form.autoFailback} onCheckedChange={(autoFailback) => setForm({ ...form, autoFailback })} />
                         </label>
                         <label className="flex h-10 min-w-[92px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
                           <span className="whitespace-nowrap text-sm">启用</span>
-                          <Switch checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
+                          <Checkbox aria-label="启用" checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
                         </label>
                       </div>
                     </div>
@@ -2496,7 +2497,7 @@ export function ForwardGroupsContent({
                   <div className="space-y-2">
                     <label className="flex h-10 items-center justify-between rounded-md border border-border/60 px-3">
                       <span className="text-sm">入口健康度检测</span>
-                      <Switch checked={form.chinaHealthCheckEnabled} onCheckedChange={(chinaHealthCheckEnabled) => setForm({ ...form, chinaHealthCheckEnabled })} />
+                      <Checkbox aria-label="入口健康度检测" checked={form.chinaHealthCheckEnabled} onCheckedChange={(chinaHealthCheckEnabled) => setForm({ ...form, chinaHealthCheckEnabled })} />
                     </label>
                     <label
                       className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2"
@@ -2508,7 +2509,7 @@ export function ForwardGroupsContent({
                           {telegramReady ? "仅自动切换提醒" : telegramSettingsLoaded ? "需先配置 Telegram" : "正在确认配置"}
                         </span>
                       </span>
-                      <Switch
+                      <Checkbox
                         checked={form.telegramSwitchNotifyEnabled}
                         disabled={telegramSettingsLoaded && !telegramReady && !form.telegramSwitchNotifyEnabled}
                         onCheckedChange={(telegramSwitchNotifyEnabled) => {
@@ -2662,11 +2663,11 @@ export function ForwardGroupsContent({
                       <div className="grid gap-2 sm:grid-cols-2">
                         <label className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
                           <span className="text-sm">接收 PROXY</span>
-                          <Switch checked={runtimeProxyProtocolSupported && form.proxyProtocolReceive} disabled={!runtimeProxyProtocolSupported} onCheckedChange={(checked) => setForm({ ...form, proxyProtocolReceive: checked })} />
+                          <Checkbox aria-label="接收 PROXY" checked={runtimeProxyProtocolSupported && form.proxyProtocolReceive} disabled={!runtimeProxyProtocolSupported} onCheckedChange={(checked) => setForm({ ...form, proxyProtocolReceive: checked })} />
                         </label>
                         <label className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
                           <span className="text-sm">发送 PROXY</span>
-                          <Switch checked={runtimeProxyProtocolSupported && form.proxyProtocolSend} disabled={!runtimeProxyProtocolSupported} onCheckedChange={(checked) => setForm({ ...form, proxyProtocolSend: checked })} />
+                          <Checkbox aria-label="发送 PROXY" checked={runtimeProxyProtocolSupported && form.proxyProtocolSend} disabled={!runtimeProxyProtocolSupported} onCheckedChange={(checked) => setForm({ ...form, proxyProtocolSend: checked })} />
                         </label>
                       </div>
                       {!runtimeProxyProtocolSupported && <p className="text-xs text-muted-foreground">PROXY Protocol 仅支持 TCP 且转发工具为 GOST 或 Realm。</p>}
@@ -2695,7 +2696,7 @@ export function ForwardGroupsContent({
                   <>
                     <div className="flex justify-end">
                       <Select onValueChange={(v) => addMember(Number(v))}>
-                        <SelectTrigger className="w-full sm:w-64">
+                        <SelectTrigger aria-label="添加成员" className="w-full sm:w-64">
                           <SelectValue placeholder={effectiveGroupType === "host" ? "添加主机成员" : "添加隧道成员"} />
                         </SelectTrigger>
                         <SelectContent>
@@ -2783,7 +2784,7 @@ export function ForwardGroupsContent({
                           {form.groupMode === "exit" && member.memberType === "host" && (
                             <>
                               <div className="flex h-7 w-[56px] items-center justify-center">
-                                <Switch
+                                <Checkbox
                                   checked={!!hostPrivateAddress(hostById.get(Number(member.hostId || 0))) && sameAddress(member.connectHost, hostPrivateAddress(hostById.get(Number(member.hostId || 0))))}
                                   disabled={!hostPrivateAddress(hostById.get(Number(member.hostId || 0)))}
                                   onCheckedChange={(checked) => updateExitMemberUsePrivate(member.key, checked)}
@@ -2791,7 +2792,7 @@ export function ForwardGroupsContent({
                                 />
                               </div>
                               <div className="flex h-7 w-[56px] items-center justify-center">
-                                <Switch
+                                <Checkbox
                                   checked={!!hostIpv6Address(hostById.get(Number(member.hostId || 0))) && sameAddress(member.connectHost, hostIpv6Address(hostById.get(Number(member.hostId || 0))))}
                                   disabled={!hostIpv6Address(hostById.get(Number(member.hostId || 0)))}
                                   onCheckedChange={(checked) => updateExitMemberUseIpv6(member.key, checked)}
@@ -2825,7 +2826,7 @@ export function ForwardGroupsContent({
                             </>
                           )}
                           <div className="flex h-7 w-[52px] items-center justify-center">
-                            <Switch checked={member.isEnabled} onCheckedChange={(checked) => {
+                            <Checkbox aria-label={`启用 ${memberLabel(member)}`} checked={member.isEnabled} onCheckedChange={(checked) => {
                               setForm({ ...form, members: form.members.map((m) => m.key === member.key ? { ...m, isEnabled: checked } : m) });
                             }} title={member.isEnabled ? "关闭后该成员不参与转发组切换" : "开启后该成员可参与转发组切换"} />
                           </div>
@@ -2861,11 +2862,11 @@ export function ForwardGroupsContent({
                     <div className="flex items-end gap-2">
                       <label className="flex h-10 min-w-[128px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
                         <span className="whitespace-nowrap text-sm">恢复后切回</span>
-                        <Switch checked={form.autoFailback} onCheckedChange={(autoFailback) => setForm({ ...form, autoFailback })} />
+                        <Checkbox aria-label="恢复后切回" checked={form.autoFailback} onCheckedChange={(autoFailback) => setForm({ ...form, autoFailback })} />
                       </label>
                       <label className="flex h-10 min-w-[92px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
                         <span className="whitespace-nowrap text-sm">启用</span>
-                        <Switch checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
+                        <Checkbox aria-label="启用" checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
                       </label>
                     </div>
                   </div>
@@ -2902,7 +2903,7 @@ export function ForwardGroupsContent({
                   <div className="space-y-2">
                     <label className="flex h-10 items-center justify-between rounded-md border border-border/60 px-3">
                       <span className="text-sm">入口健康度检测</span>
-                      <Switch checked={form.chinaHealthCheckEnabled} onCheckedChange={(chinaHealthCheckEnabled) => setForm({ ...form, chinaHealthCheckEnabled })} />
+                      <Checkbox aria-label="入口健康度检测" checked={form.chinaHealthCheckEnabled} onCheckedChange={(chinaHealthCheckEnabled) => setForm({ ...form, chinaHealthCheckEnabled })} />
                     </label>
                     <label
                       className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2"
@@ -2914,7 +2915,7 @@ export function ForwardGroupsContent({
                           {telegramReady ? "仅自动切换提醒" : telegramSettingsLoaded ? "需先配置 Telegram" : "正在确认配置"}
                         </span>
                       </span>
-                      <Switch
+                      <Checkbox
                         checked={form.telegramSwitchNotifyEnabled}
                         disabled={telegramSettingsLoaded && !telegramReady && !form.telegramSwitchNotifyEnabled}
                         onCheckedChange={(telegramSwitchNotifyEnabled) => {

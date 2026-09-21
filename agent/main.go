@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.195"
+var Version = "2.2.196"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -244,6 +244,68 @@ func fxpEndpointEventsSnapshot() []fxpEndpointEvent {
 		result = append(result, event)
 	}
 	return result
+}
+
+/*
+主备切换的事件队列。
+
+setActiveLocked 早就把切换写进 Agent 自己的日志了，但那份日志留在机器上 —— 面板
+不知道这条规则什么时候切过、为什么切。而主备恰恰是「平时看不出来、出事才知道有没有
+用」的东西：切了没人知道，没切更没人知道。
+
+所以把切换和健康翻转攒起来，随心跳带回面板。攒的是**发生过的事**，不是当前状态，
+所以用追加队列而不是按键覆盖的映射 —— 一小时里切了三次和切了一次，是完全不同的
+两件事。
+
+心跳发失败的话这一批会丢（取快照即出队，和 fxpEndpointEvents 一样）。机器本地的
+日志仍然有，所以丢的是「面板上少一条记录」，不是「查不出来」。
+*/
+const failoverEventQueueMax = 128
+
+var failoverEventMu sync.Mutex
+var failoverEventQueue []failoverProxyEvent
+
+type failoverProxyEvent struct {
+	RuleID     int    `json:"ruleId"`
+	SourcePort int    `json:"sourcePort"`
+	// switch / unhealthy / recovered
+	Kind       string `json:"kind"`
+	FromTarget string `json:"fromTarget,omitempty"`
+	ToTarget   string `json:"toTarget"`
+	Reason     string `json:"reason,omitempty"`
+	// 这条出站最近一次探测的往返耗时（毫秒）；探不通是 0。
+	LatencyMs  int   `json:"latencyMs,omitempty"`
+	OccurredAt int64 `json:"occurredAt"`
+}
+
+func recordFailoverProxyEvent(event failoverProxyEvent) {
+	event.OccurredAt = time.Now().UnixMilli()
+	failoverEventMu.Lock()
+	defer failoverEventMu.Unlock()
+	// 队列满了丢最老的：面板更关心刚刚发生了什么，而不是一小时前的第一条。
+	if len(failoverEventQueue) >= failoverEventQueueMax {
+		failoverEventQueue = failoverEventQueue[len(failoverEventQueue)-failoverEventQueueMax+1:]
+	}
+	failoverEventQueue = append(failoverEventQueue, event)
+}
+
+func failoverProxyEventsSnapshot() []failoverProxyEvent {
+	failoverEventMu.Lock()
+	defer failoverEventMu.Unlock()
+	if len(failoverEventQueue) == 0 {
+		return []failoverProxyEvent{}
+	}
+	drained := failoverEventQueue
+	failoverEventQueue = nil
+	return drained
+}
+
+func failoverTargetLabel(target failoverTarget) string {
+	host := target.TargetIP
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+	return host + ":" + strconv.Itoa(target.TargetPort)
 }
 
 var protocolGuardMu sync.Mutex
@@ -2392,6 +2454,23 @@ type forwardGroupHealthSpec struct {
 type failoverTarget struct {
 	TargetIP   string `json:"targetIp"`
 	TargetPort int    `json:"targetPort"`
+	// 这条出站的健康探测目标；留空就探出站地址本身。
+	//
+	// 出站是 iptables/DNAT 类中转时，握手实际是和最终落地完成的，探出站地址就是
+	// 端到端的。出站是 gost、realm 这类用户态转发时，中转在本地就把连接收下了 ——
+	// 连得上只能证明中转活着，证明不了它到落地那一段还通。后一种情况下中转的上游
+	// 断了主备不会切，流量继续往死路里送，而面板上一切正常。
+	ProbeIP   string `json:"probeIp,omitempty"`
+	ProbePort int    `json:"probePort,omitempty"`
+}
+
+// 这条出站实际该探哪儿。和面板的 failoverProbeEndpoint 是同一条规则。
+func (t failoverTarget) probeEndpoint() (string, int) {
+	host := strings.TrimSpace(t.ProbeIP)
+	if host != "" && t.ProbePort >= 1 && t.ProbePort <= 65535 {
+		return host, t.ProbePort
+	}
+	return t.TargetIP, t.TargetPort
 }
 
 type failoverSpec struct {
@@ -2404,6 +2483,32 @@ type failoverSpec struct {
 	FailoverSeconds int              `json:"failoverSeconds"`
 	RecoverSeconds  int              `json:"recoverSeconds"`
 	AutoFailback    bool             `json:"autoFailback"`
+	// 时段表：某几个时段里优先走哪一条出站（晚高峰错峰）。只对 fallback 生效。
+	Schedule *failoverSchedule `json:"schedule,omitempty"`
+	// 刚切过去之后至少待多久才允许再按优先级切回，防止线路来回抖。
+	// 当前这条**挂了**的时候不受它限制 —— 守着一条死路比抖动更糟。
+	MinHoldSeconds int `json:"minHoldSeconds,omitempty"`
+	// 人工指定优先走第几条出站；nil 或负数表示交回自动。
+	//
+	// 语义是「把它排到最前」，**不是「只许走它」**：钉住的那条要是挂了，仍然按
+	// 优先级往下找。运维想要的是「现在走 B」，不是「B 死了也守着 B」—— 后者等于
+	// 用一个应急开关制造一次故障。
+	//
+	// **为什么是指针**：Go 的 int 零值是 0，而 0 是一个合法的出站序号（主出站）。
+	// 用 int 的话，任何没带这个字段的规格 —— 老 Agent 落在盘上的快照、面板漏传的
+	// 那一次 —— 都会被解成「钉死在主出站」，于是时段表和自动择优全部静默失效，
+	// 而面板上看不出任何异常。用例 TestPinnedIndexZeroValueIsNotAPin 钉住这件事。
+	PinnedIndex *int `json:"pinnedIndex,omitempty"`
+	// 钉到什么时候（Unix 毫秒）；0 表示一直钉着。
+	//
+	// 有期限这件事很要紧：应急处理完没人记得去关，那条线就一直被钉着，后面所有
+	// 自动切换（包括时段表）全部静默失效，而面板上看不出任何异常。
+	PinnedUntil int64 `json:"pinnedUntil,omitempty"`
+	// 按实测延迟自动择优。
+	//
+	// 不是「谁快切谁」：那样线路会一直漂。候选必须**明显**更快（同时满足绝对值和
+	// 百分比两个门槛），而且要连着好一阵子都更快，才会被提到最前。
+	PreferFastest bool `json:"preferFastest,omitempty"`
 }
 
 type tunnelProbe struct {
@@ -3761,6 +3866,7 @@ func heartbeat(cfg Config, forceReconcile ...bool) (heartbeatResult, error) {
 	payload["agentLastReceivedHash"] = receivedHash
 	payload["agentLastAppliedHash"] = appliedHash
 	payload["fxpEndpointEvents"] = fxpEndpointEventsSnapshot()
+	payload["failoverEvents"] = failoverProxyEventsSnapshot()
 	if compactEnabled {
 		payload["m"] = []any{
 			cpuUsageValue,
@@ -3981,6 +4087,7 @@ func heartbeatKeepalive(cfg Config) (heartbeatResult, error) {
 		"agentLastReceivedHash":     receivedHash,
 		"agentLastAppliedHash":      appliedHash,
 		"fxpEndpointEvents":         fxpEndpointEventsSnapshot(),
+		"failoverEvents":            failoverProxyEventsSnapshot(),
 	}
 	payload["mimicEnvironment"] = mimicEnvironment(false)
 	if compactAgentReports.Load() {
@@ -11666,8 +11773,16 @@ type failoverProxy struct {
 	targetHealth   []bool
 	failureSince   []time.Time
 	recoveredSince []time.Time
+	// 每条出站最近一次探测的往返耗时（毫秒）。原来 tcpLatency 的返回值是直接
+	// 丢掉的 —— 数据一直在采，白扔了，而它正是「哪条线路更快」唯一的现成原料。
+	lastLatencyMs []int
 	rng            *mathrand.Rand
-	ln             net.Listener
+	// 上一次切换的时刻，最短驻留时间从这儿算。
+	lastSwitchAt time.Time
+	// 自动择优的候选，以及它从什么时候开始一直是候选。
+	fastestCandidate int
+	fastestSince     time.Time
+	ln           net.Listener
 	done           chan struct{}
 	mu             sync.RWMutex
 }
@@ -11685,9 +11800,19 @@ func failoverSignature(spec failoverSpec) string {
 		strconv.Itoa(spec.FailoverSeconds),
 		strconv.Itoa(spec.RecoverSeconds),
 		strconv.FormatBool(spec.AutoFailback),
+		strconv.Itoa(spec.MinHoldSeconds),
+		func() string {
+			if spec.PinnedIndex == nil {
+				return "-"
+			}
+			return strconv.Itoa(*spec.PinnedIndex)
+		}(),
+		strconv.FormatInt(spec.PinnedUntil, 10),
+		strconv.FormatBool(spec.PreferFastest),
+		failoverScheduleSignature(spec.Schedule),
 	}
 	for _, target := range spec.Targets {
-		parts = append(parts, target.TargetIP, strconv.Itoa(target.TargetPort))
+		parts = append(parts, target.TargetIP, strconv.Itoa(target.TargetPort), target.ProbeIP, strconv.Itoa(target.ProbePort))
 	}
 	return strings.Join(parts, "|")
 }
@@ -11708,11 +11833,29 @@ func normalizeFailoverSpec(spec failoverSpec) failoverSpec {
 	if spec.RecoverSeconds <= 0 {
 		spec.RecoverSeconds = 120
 	}
+	if spec.MinHoldSeconds < 0 {
+		spec.MinHoldSeconds = 0
+	}
+	if spec.PinnedIndex != nil && (*spec.PinnedIndex < 0 || *spec.PinnedIndex >= len(spec.Targets)) {
+		spec.PinnedIndex = nil
+		spec.PinnedUntil = 0
+	}
+	if spec.PinnedIndex == nil {
+		spec.PinnedUntil = 0
+	}
+	spec.Schedule = normalizeFailoverSchedule(spec.Schedule)
 	cleaned := make([]failoverTarget, 0, len(spec.Targets))
 	for _, target := range spec.Targets {
 		target.TargetIP = strings.TrimSpace(target.TargetIP)
 		if target.TargetIP == "" || target.TargetPort <= 0 || target.TargetPort > 65535 {
 			continue
+		}
+		// 探测目标填得不合法时退回「探出站地址本身」，也就是老行为 —— 不能因为
+		// 一个填错的探测地址就让这条出站永远探不通、被当成挂了。
+		target.ProbeIP = strings.TrimSpace(target.ProbeIP)
+		if target.ProbeIP == "" || target.ProbePort <= 0 || target.ProbePort > 65535 {
+			target.ProbeIP = ""
+			target.ProbePort = 0
 		}
 		cleaned = append(cleaned, target)
 		if len(cleaned) >= 11 {
@@ -11854,6 +11997,9 @@ func stopFailoverProxyRuntime(ruleID int, sourcePort int) {
 
 func (p *failoverProxy) ensureHealthStateLocked() {
 	n := len(p.spec.Targets)
+	if len(p.lastLatencyMs) != n {
+		p.lastLatencyMs = make([]int, n)
+	}
 	if len(p.targetHealth) != n {
 		p.targetHealth = make([]bool, n)
 		for i := range p.targetHealth {
@@ -11951,30 +12097,209 @@ func (p *failoverProxy) setActiveLocked(index int, reason string) {
 	}
 	old := p.activeIndex
 	p.activeIndex = index
+	p.lastSwitchAt = time.Now()
 	next := p.spec.Targets[index]
 	logf("failover switch rule=%d source=%d %d->%d target=%s:%d reason=%s", p.ruleID, p.sourcePort, old, index, next.TargetIP, next.TargetPort, reason)
+	from := ""
+	if old >= 0 && old < len(p.spec.Targets) {
+		from = failoverTargetLabel(p.spec.Targets[old])
+	}
+	recordFailoverProxyEvent(failoverProxyEvent{
+		RuleID: p.ruleID, SourcePort: p.sourcePort, Kind: "switch",
+		FromTarget: from, ToTarget: failoverTargetLabel(next),
+		Reason: reason, LatencyMs: p.latencyMsLocked(index),
+	})
+}
+
+// 调用方必须已经持有 p.mu。
+func (p *failoverProxy) recordTargetEventLocked(index int, kind string, reason string) {
+	if index < 0 || index >= len(p.spec.Targets) {
+		return
+	}
+	recordFailoverProxyEvent(failoverProxyEvent{
+		RuleID: p.ruleID, SourcePort: p.sourcePort, Kind: kind,
+		ToTarget: failoverTargetLabel(p.spec.Targets[index]),
+		Reason:   reason, LatencyMs: p.latencyMsLocked(index),
+	})
+}
+
+func (p *failoverProxy) latencyMsLocked(index int) int {
+	if index < 0 || index >= len(p.lastLatencyMs) || p.lastLatencyMs[index] <= 0 {
+		return 0
+	}
+	return p.lastLatencyMs[index]
+}
+
+/*
+出站的优先次序。
+
+没有时段表时就是数组顺序（也就是这个功能加进来之前的行为）。时段表命中时，把它
+指定的那一条提到最前，其余保持原来的相对次序 —— 时段表只改「谁是首选」，不重排
+剩下的兜底顺序。
+*/
+// 人工钉住的那条还算不算数。
+func (p *failoverProxy) pinnedIndexAt(now time.Time) int {
+	if p.spec.PinnedIndex == nil {
+		return -1
+	}
+	index := *p.spec.PinnedIndex
+	if index < 0 || index >= len(p.spec.Targets) {
+		return -1
+	}
+	if p.spec.PinnedUntil > 0 && now.UnixMilli() >= p.spec.PinnedUntil {
+		return -1
+	}
+	return index
+}
+
+func (p *failoverProxy) priorityOrderLocked(now time.Time) []int {
+	count := len(p.spec.Targets)
+	order := make([]int, 0, count)
+	// 人工 > 时段表 > 自动择优 > 数组顺序。
+	//
+	// 人工钉住是运维拿来压过自动判断的，压不过就没有意义；时段表是人**事先**排好
+	// 的意图，也该压过机器自己算出来的择优。
+	preferred := p.pinnedIndexAt(now)
+	if preferred < 0 {
+		preferred = failoverScheduleTargetIndexAt(p.spec.Schedule, now)
+	}
+	if preferred < 0 {
+		preferred = p.fastestIndexLocked(now)
+	}
+	if preferred >= 0 && preferred < count {
+		order = append(order, preferred)
+	}
+	for index := 0; index < count; index++ {
+		if len(order) > 0 && order[0] == index {
+			continue
+		}
+		order = append(order, index)
+	}
+	return order
+}
+
+/*
+自动择优：按实测延迟挑一条明显更快的。
+
+**不是「谁快切谁」** —— 那样线路会一直漂：两条线延迟在几毫秒之间来回，每次探测
+都能得出不同的结论，而每次切换都会让新连接换一条路。所以设了三道门槛：
+
+  · 绝对值：至少快 failoverFastestMarginMs 毫秒（小于它的差距在公网上就是噪声）
+  · 百分比：至少快 failoverFastestMarginRatio（同样是 200ms 的链路，快 20ms 不算
+    什么；同样是 30ms 的链路，快 20ms 是另一回事）
+  · 持续时间：连着 failoverFastestHoldSeconds 都是它，才算数
+
+三道门槛都是写死的常数，没有做成设置项：多一个旋钮就多一次「这个填多少合适」的
+为难，而这三个数的合理范围很窄。哪天真有人需要调，再暴露不迟。
+*/
+const failoverFastestMarginMs = 20
+const failoverFastestMarginRatio = 0.2
+const failoverFastestHoldSeconds = 180
+
+func (p *failoverProxy) fastestIndexLocked(now time.Time) int {
+	if !p.spec.PreferFastest || len(p.spec.Targets) < 2 {
+		return -1
+	}
+	p.ensureHealthStateLocked()
+	activeLatency := p.latencyMsLocked(p.activeIndex)
+	best := -1
+	bestLatency := 0
+	for index := range p.spec.Targets {
+		if !p.targetHealth[index] {
+			continue
+		}
+		latency := p.latencyMsLocked(index)
+		// 0 表示这一轮没探出耗时（探不通，或者还没探过），不能当成「快得不得了」。
+		if latency <= 0 {
+			continue
+		}
+		if best < 0 || latency < bestLatency {
+			best, bestLatency = index, latency
+		}
+	}
+	if best < 0 || best == p.activeIndex || activeLatency <= 0 {
+		p.fastestCandidate = -1
+		p.fastestSince = time.Time{}
+		return -1
+	}
+	margin := activeLatency - bestLatency
+	if margin < failoverFastestMarginMs || float64(margin) < float64(activeLatency)*failoverFastestMarginRatio {
+		p.fastestCandidate = -1
+		p.fastestSince = time.Time{}
+		return -1
+	}
+	// fastestSince 是零值时必须当成「还没开始计时」。
+	//
+	// fastestCandidate 的 Go 零值是 0，所以第一次评估如果恰好选中第 0 条，
+	// `p.fastestCandidate != best` 会是 false，而 now.Sub(零时刻) 是个巨大的数 ——
+	// 持续时间那道门槛会被整个跳过，第一次探测就切。这三道门槛里最重要的一道
+	// 就这么没了，而且只在「最快的恰好是第 0 条」时发生，最难查。
+	if p.fastestCandidate != best || p.fastestSince.IsZero() {
+		p.fastestCandidate = best
+		p.fastestSince = now
+		return -1
+	}
+	if now.Sub(p.fastestSince) < failoverFastestHoldSeconds*time.Second {
+		return -1
+	}
+	return best
+}
+
+// 刚切过去，还在最短驻留时间里。
+func (p *failoverProxy) holdingLocked(now time.Time) bool {
+	if p.spec.MinHoldSeconds <= 0 || p.lastSwitchAt.IsZero() {
+		return false
+	}
+	return now.Sub(p.lastSwitchAt) < time.Duration(p.spec.MinHoldSeconds)*time.Second
 }
 
 func (p *failoverProxy) updateFallbackActiveLocked(reason string) {
+	p.updateFallbackActiveAtLocked(time.Now(), reason)
+}
+
+/*
+把「现在几点」作为参数传进来，而不是在里面读 time.Now()。
+
+时段表的行为只有按指定时刻才测得准：读真实时钟的话，「18 点到了而那条线正挂着，
+不该切过去」这条用例只在真实时间落在 18-23 点时才真的走到判断，其余时候压根没有
+窗口命中 —— 测试照常绿，但什么都没验证。这种测试比没有更糟，因为它看起来在保护。
+*/
+func (p *failoverProxy) updateFallbackActiveAtLocked(now time.Time, reason string) {
 	if len(p.spec.Targets) == 0 || p.spec.Strategy != "fallback" {
 		return
 	}
 	p.ensureHealthStateLocked()
+	order := p.priorityOrderLocked(now)
+
 	if p.targetHealth[p.activeIndex] {
 		if !p.spec.AutoFailback {
 			return
 		}
-		for i := 0; i < p.activeIndex; i++ {
-			if p.targetHealth[i] {
-				p.setActiveLocked(i, reason)
+		for _, index := range order {
+			// 走到当前这条了，说明前面没有更优且健康的，保持不动。
+			if index == p.activeIndex {
+				return
+			}
+			if p.targetHealth[index] {
+				// 按优先级往回切是可以等的：刚切过来就被拽回去，线路会来回抖。
+				if p.holdingLocked(now) {
+					return
+				}
+				p.setActiveLocked(index, reason)
 				return
 			}
 		}
 		return
 	}
-	for i := range p.spec.Targets {
-		if p.targetHealth[i] {
-			p.setActiveLocked(i, reason)
+	/*
+		当前这条挂了：按优先级找第一条健康的，**不受最短驻留限制**。
+
+		守着一条死路比抖动更糟 —— 最短驻留是拿来防「好线路之间来回切」的，
+		不是拿来拖着不逃生的。
+	*/
+	for _, index := range order {
+		if p.targetHealth[index] {
+			p.setActiveLocked(index, reason)
 			return
 		}
 	}
@@ -12022,8 +12347,10 @@ func (p *failoverProxy) checkHealth() {
 		return
 	}
 	results := make([]bool, len(targets))
+	latencies := make([]int, len(targets))
 	for i, target := range targets {
-		_, results[i] = tcpLatency(target.TargetIP, target.TargetPort, 2*time.Second)
+		probeHost, probePort := target.probeEndpoint()
+		latencies[i], results[i] = tcpLatency(probeHost, probePort, 2*time.Second)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -12031,6 +12358,11 @@ func (p *failoverProxy) checkHealth() {
 		return
 	}
 	p.ensureHealthStateLocked()
+	for i := range results {
+		if i < len(p.lastLatencyMs) {
+			p.lastLatencyMs[i] = latencies[i]
+		}
+	}
 	for i, ok := range results {
 		if i >= len(p.spec.Targets) {
 			break
@@ -12045,6 +12377,7 @@ func (p *failoverProxy) checkHealth() {
 					p.targetHealth[i] = true
 					p.recoveredSince[i] = time.Time{}
 					logf("failover target recovered rule=%d source=%d index=%d target=%s:%d", p.ruleID, p.sourcePort, i, target.TargetIP, target.TargetPort)
+					p.recordTargetEventLocked(i, "recovered", "health check")
 				}
 			} else {
 				p.recoveredSince[i] = time.Time{}
@@ -12059,6 +12392,7 @@ func (p *failoverProxy) checkHealth() {
 				p.targetHealth[i] = false
 				p.failureSince[i] = time.Time{}
 				logf("failover target unhealthy rule=%d source=%d index=%d target=%s:%d reason=health check", p.ruleID, p.sourcePort, i, target.TargetIP, target.TargetPort)
+				p.recordTargetEventLocked(i, "unhealthy", "health check")
 			}
 		}
 	}

@@ -3,7 +3,7 @@ import { forwardGroupMembers, forwardGroups, forwardRuleTunnelExits, forwardRule
 import { executeRaw, getDb, insertAndGetId, nowDate } from "../dbRuntime";
 import { queryRaw } from "../dbRuntime";
 import { boolLiteral, boolValue, inList, quoteIdentifier } from "../dbCompat";
-import { describePortPolicy, isPortAllowedByPolicy, portPolicyFrom, portPolicyHasRestriction, type PortPolicySource } from "../portPolicy";
+import { describePortPolicy, isPortAllowedByPolicy, portPolicyFrom, portPolicyHasRestriction, type PortPolicySource } from "@shared/portPolicy";
 import { sqlBool } from "./repositoryUtils";
 import { pageResult, pageWindowForTotal, type PageRequest } from "../../shared/pagination";
 import { recordConfigAuditEvent, shouldAuditConfigPatch } from "../configAudit";

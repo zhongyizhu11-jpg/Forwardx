@@ -6,6 +6,7 @@ import { Label } from "./label";
 import { Input } from "./input";
 import { Textarea } from "./textarea";
 import { Select, SelectTrigger, SelectValue } from "./select";
+import { Switch } from "./switch";
 
 test("repeated fields each connect their label to their own control", () => {
   const html = renderToStaticMarkup(<>
@@ -31,4 +32,23 @@ test("standalone controls do not inherit an unrelated field id", () => {
   const html = renderToStaticMarkup(<><FormField><Label>地址</Label><Input /></FormField><Input aria-label="搜索" /></>);
   assert.equal([...html.matchAll(/<input[^>]* id="/g)].length, 1);
   assert.match(html, /aria-label="搜索"/);
+});
+
+/*
+  开关也要接进来。Radix 渲染出来是 <button role="switch">，而 <label for> 对 button
+  同样有效 —— 实测 Chrome 给出的名称来源就是 labelfor。接上之后就不用把界面上那句话
+  在 aria-label 里再抄一遍。
+*/
+test("switches in a field connect to their label", () => {
+  const html = renderToStaticMarkup(<FormField><Label>转发总开关</Label><Switch checked={false} /></FormField>);
+  const [, labelFor] = html.match(/<label[^>]* for="([^"]+)"/) ?? [];
+  const [, buttonId] = html.match(/<button[^>]* id="([^"]+)"/) ?? [];
+  assert.ok(labelFor, "label 没有 for");
+  assert.equal(buttonId, labelFor);
+});
+
+test("a switch outside a field keeps its own name", () => {
+  const html = renderToStaticMarkup(<Switch aria-label="站点维护模式" checked={false} />);
+  assert.equal([...html.matchAll(/<button[^>]* id="/g)].length, 0);
+  assert.match(html, /aria-label="站点维护模式"/);
 });

@@ -1,3 +1,4 @@
+import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { FormField } from "@/components/ui/form-field";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -5,6 +6,7 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 import { formatBytes } from "@shared/formatBytes";
 import DashboardLayout from "@/components/DashboardLayout";
 import { EmailSettingsContent } from "./EmailSettings";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,7 +31,7 @@ import { SlidingTabsList } from "@/components/ui/sliding-tabs";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
-import { getPanelChangelogUrl, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
+import { getPanelChangelogUrl, getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
 import { compressImageFile, imageDataUrlSize } from "@/lib/imageUpload";
 import { downloadTextFile, type TextDownloadFile } from "@/lib/fileDownload";
 import { applyPersonalizationTheme } from "@/lib/personalizationTheme";
@@ -118,73 +121,6 @@ import {
   type PersonalizationBackgroundImage,
   type PersonalizationBackgroundUrlType,
 } from "@shared/personalization";
-
-function getUpgradeProgress(job: any) {
-  const status = job?.status || "idle";
-  const isRollback = job?.mode === "rollback";
-  const actionLabel = isRollback ? "回退" : "升级";
-  const logs = Array.isArray(job?.logs) ? job.logs.join("\n") : "";
-  const matched = (patterns: RegExp[]) => patterns.some((pattern) => pattern.test(logs));
-  const steps = [
-    {
-      label: `准备${actionLabel}`,
-      done: status !== "idle" && matched([/开始升级/i, /开始回退/i, /Starting panel/i, /start/i]),
-    },
-    {
-      label: "检查发布资产",
-      done: matched([
-        /Release assets/i,
-        /not available yet/i,
-        /still building/i,
-        /发布资产/i,
-        /构建完成/i,
-        /Docker image/i,
-        /panel bundle/i,
-      ]),
-    },
-    {
-      label: "下载或拉取资产",
-      done: matched([
-        /Downloading panel bundle/i,
-        /Pulling image/i,
-        /Downloaded newer image/i,
-        /Image is up to date/i,
-        /load metadata/i,
-        /load build context/i,
-        /transferring context/i,
-        /pnpm install/i,
-        /npm install/i,
-        /Packages:/i,
-        /node_modules/i,
-        /downloaded/i,
-        /Lockfile is up to date/i,
-      ]),
-    },
-    {
-      label: "安装并重启",
-      done: matched([/Container .* (Creating|Created|Starting|Started)/i, /docker compose up/i, /systemctl restart/i, /已启动/i, /recreate/i]),
-    },
-  ];
-
-  if (status === "success") {
-    return { percent: 100, label: `${actionLabel}完成`, steps: steps.map((step) => ({ ...step, done: true, active: false })) };
-  }
-  if (status === "waiting_assets") {
-    return { percent: 34, label: "等待 GitHub Actions 构建发布资产", steps: steps.map((step, index) => ({ ...step, done: index === 0, active: index === 1 })) };
-  }
-  if (status === "error") {
-    const doneCount = steps.filter((step) => step.done).length;
-    const activeIndex = Math.min(doneCount, steps.length - 1);
-    return { percent: Math.max(10, doneCount * 22), label: `${actionLabel}异常`, steps: steps.map((step, index) => ({ ...step, active: index === activeIndex && !step.done })) };
-  }
-  if (status === "running") {
-    const doneCount = steps.filter((step) => step.done).length;
-    const activeIndex = Math.min(doneCount, steps.length - 1);
-    const activeStep = steps[activeIndex]?.label || "等待服务重启";
-    return { percent: Math.min(92, Math.max(12, doneCount * 22 + 8)), label: activeStep, steps: steps.map((step, index) => ({ ...step, active: index === activeIndex && !step.done })) };
-  }
-  return { percent: 0, label: `等待${actionLabel}`, steps: steps.map((step) => ({ ...step, active: false })) };
-}
 
 function formatDatabaseSwitchDuration(milliseconds: number) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -697,61 +633,21 @@ function SettingsContent() {
     || (typeof window !== "undefined" ? window.location.origin : "");
 
   const copyToClipboard = async (text: string) => {
-    // 优先使用 Clipboard API（仅在 https 或 localhost 下可用）
-    if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
-      try {
-        await navigator.clipboard.writeText(text);
-        toast.success("已复制到剪贴板");
-        return;
-      } catch (err) {
-        console.warn("[Clipboard] navigator.clipboard 失败，回退 execCommand:", err);
-      }
-    }
+    /*
+      走共享实现，不再在这里自己拼一遍 textarea。
 
-    // Fallback：HTTP / 非安全上下文 / 不支持 Clipboard API
-    // 关键修复：Radix Dialog 会抢焦点，必须将 textarea 挂到当前活跃 dialog 内部才能 select 成功。
-    let success = false;
-    const host =
-      (document.querySelector('[role="dialog"][data-state="open"]') as HTMLElement | null) ||
-      document.body;
-    const textarea = document.createElement("textarea");
-    try {
-      textarea.value = text;
-      textarea.setAttribute("readonly", "");
-      // 不能 display:none / left:-9999px，iOS 与部分浏览器会跳过选中
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      textarea.style.pointerEvents = "none";
-      textarea.style.left = "0";
-      textarea.style.top = "0";
-      textarea.style.width = "1px";
-      textarea.style.height = "1px";
-      host.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      textarea.setSelectionRange(0, text.length);
-      success = document.execCommand("copy");
-    } catch (err) {
-      console.error("[Clipboard] execCommand fallback 异常:", err);
-      success = false;
-    } finally {
-      if (textarea.parentNode) {
-        textarea.parentNode.removeChild(textarea);
-      }
-    }
-
-    if (success) {
+      共享那份的注释写明了为什么：textarea 那条路 Chromium 会返回 true 其实复制了个空，
+      iOS 直接不认 —— 它改用了 contenteditable + Range。这里原来抄的正是被换掉的旧写法。
+    */
+    if (await copyTextToClipboard(text)) {
       toast.success("已复制到剪贴板");
       return;
     }
-
-    // 最后兑底：弹 prompt 让用户手动 Ctrl+C，避免静默失败
-    try {
-      window.prompt("复制失败，请手动选中并复制 (Ctrl+C / Cmd+C)：", text);
-      toast.warning("未能自动写入剪贴板，已弹出手动复制窗口");
-    } catch {
-      toast.error("复制失败，请手动复制");
-    }
+    toast.error(
+      clipboardNeedsManualCopy()
+        ? "当前是 http 访问，浏览器限制了剪贴板，请长按选中内容复制"
+        : "复制失败，请手动复制",
+    );
   };
 
   if (user?.role !== "admin") return null;
@@ -906,7 +802,7 @@ function PanelLogsSection() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="flex items-center gap-2">
                 <Select value={exportLevel} onValueChange={(value) => setExportLevel(value as typeof exportLevel)}>
-                  <SelectTrigger className="h-9 w-28">
+                  <SelectTrigger aria-label="导出日志级别" className="h-9 w-28">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1424,24 +1320,13 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
   });
 
   const copyMigrationCode = async (code: string) => {
-    let copied = false;
-    try {
-      await navigator.clipboard.writeText(code);
-      copied = true;
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = code;
-      textarea.setAttribute("readonly", "true");
-      textarea.style.position = "fixed";
-      textarea.style.left = "-9999px";
-      document.body.appendChild(textarea);
-      textarea.select();
-      copied = document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }
-
-    if (copied) toast.success("迁移码已复制");
-    else toast.error("复制失败，请手动选中迁移码复制");
+    /*
+      走共享实现。原来这里自己拼 textarea 挂到 document.body 上 ——
+      而这个复制按钮在弹窗里，弹窗有焦点陷阱，会把焦点抢回去。
+      共享那份专门把临时元素挂在打开着的弹窗内，就是为了这个。
+    */
+    if (await copyTextToClipboard(code)) toast.success("迁移码已复制");
+    else toast.error(clipboardNeedsManualCopy() ? "当前是 http 访问，浏览器限制了剪贴板，请手动选中复制" : "复制失败，请手动选中迁移码复制");
   };
 
   const migrationCountdown = getMigrationCodeCountdown(migrationCode, migrationCodeTick);
@@ -1932,8 +1817,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                 </div>
                 <FormField className="space-y-2">
                   <Label>密码</Label>
-                  <Input
-                    type="password"
+                  <PasswordInput
                     value={databaseSwitchExternal.password}
                     onChange={(e) => {
                       setDatabaseSwitchExternal({ ...databaseSwitchExternal, password: e.target.value });
@@ -1946,7 +1830,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                     <p className="text-sm font-medium">启用 SSL</p>
                     <p className="text-xs text-muted-foreground">远程数据库或云数据库可按需开启。</p>
                   </div>
-                  <Switch
+                  <Checkbox aria-label="启用 SSL"
                     checked={databaseSwitchExternal.ssl}
                     onCheckedChange={(ssl) => {
                       setDatabaseSwitchExternal({ ...databaseSwitchExternal, ssl });
@@ -2095,11 +1979,11 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
             <div className="grid gap-3 sm:grid-cols-2">
               <FormField className="space-y-2">
                 <Label>备份密码</Label>
-                <Input type="password" value={backupPassword} onChange={(e) => setBackupPassword(e.target.value)} placeholder="至少 8 位" />
+                <PasswordInput value={backupPassword} onChange={(e) => setBackupPassword(e.target.value)} placeholder="至少 8 位" />
               </FormField>
               <FormField className="space-y-2">
                 <Label>确认备份密码</Label>
-                <Input type="password" value={backupPasswordConfirm} onChange={(e) => setBackupPasswordConfirm(e.target.value)} />
+                <PasswordInput value={backupPasswordConfirm} onChange={(e) => setBackupPasswordConfirm(e.target.value)} />
               </FormField>
             </div>
             <Alert>
@@ -2146,7 +2030,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
             </FormField>
             <FormField className="space-y-2">
               <Label>备份密码</Label>
-              <Input type="password" value={importPassword} onChange={(e) => setImportPassword(e.target.value)} />
+              <PasswordInput value={importPassword} onChange={(e) => setImportPassword(e.target.value)} />
             </FormField>
             <BackupTaskProgressView progress={importProgress} />
             <Button className="gap-2" onClick={openImportConfirm} disabled={importBackupMutation.isPending}>
@@ -2436,7 +2320,7 @@ function TelegramBotSettingsCard() {
                       {settings?.telegram?.botUsername ? `@${settings.telegram.botUsername}` : "保存 Token 后自动识别机器人"}
                     </p>
                   </div>
-                  <Switch
+                  <Checkbox aria-label="启用机器人"
                     checked={telegramEnabled}
                     onCheckedChange={(checked) => {
                       if (checked && !hasTelegramTokenForEnable) {
@@ -2463,7 +2347,7 @@ function TelegramBotSettingsCard() {
                     <p className="text-sm font-medium">到期提醒</p>
                     <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || `到期前第 ${expiryReminderDays} 天各提醒一次。`}</p>
                   </div>
-                  <Switch
+                  <Checkbox aria-label="到期提醒"
                     checked={telegramRemindersReady && telegramExpiryReminder}
                     disabled={!telegramRemindersReady}
                     onCheckedChange={setTelegramExpiryReminder}
@@ -2491,7 +2375,7 @@ function TelegramBotSettingsCard() {
                     <p className="text-sm font-medium">主机上线/离线通知</p>
                     <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || "仅发送给已绑定 Telegram 的管理员。"}</p>
                   </div>
-                  <Switch
+                  <Checkbox aria-label="主机上线/离线通知"
                     checked={telegramRemindersReady && telegramHostStatusNotify}
                     disabled={!telegramRemindersReady}
                     onCheckedChange={setTelegramHostStatusNotify}
@@ -2504,7 +2388,7 @@ function TelegramBotSettingsCard() {
                     <p className="text-sm font-medium">流量提醒</p>
                     <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || "低于阈值时提醒。"}</p>
                   </div>
-                  <Switch
+                  <Checkbox aria-label="流量提醒"
                     checked={telegramRemindersReady && telegramTrafficReminder}
                     disabled={!telegramRemindersReady}
                     onCheckedChange={setTelegramTrafficReminder}
@@ -2818,7 +2702,7 @@ function DeepSeekSettingsCard() {
                         ? `${providerLabel} · ${deepseekModel}${selectedModelMeta?.isFree === true ? " · Free" : (selectedModelMeta?.isFree === false ? " · Paid" : "")}`
                         : "保存 API Key 后启用"}
                     </p>
-                    <Switch
+                    <Checkbox aria-label="启用 AI 助手"
                       checked={deepseekEnabled}
                       onCheckedChange={(checked) => {
                         if (checked && !hasDeepSeekKeyForEnable) {
@@ -2897,7 +2781,7 @@ function DeepSeekSettingsCard() {
                     value={models.some((item: any) => String(item?.id || "") === deepseekModel) ? deepseekModel : undefined}
                     onValueChange={(value) => updateActiveProviderConfig({ model: value })}
                   >
-                    <SelectTrigger className="h-9">
+                    <SelectTrigger aria-label="从列表选择模型" className="h-9">
                       <SelectValue placeholder="从列表选择模型" />
                     </SelectTrigger>
                     <SelectContent className="max-h-72">
@@ -2956,7 +2840,7 @@ function DeepSeekSettingsCard() {
                         关闭后普通用户不能使用 AI 对话执行管理操作。
                       </p>
                     </div>
-                    <Switch
+                    <Checkbox aria-label="普通用户可用 AI 管理"
                       checked={deepseekTelegramUserManageEnabled}
                       onCheckedChange={setDeepseekTelegramUserManageEnabled}
                     />
@@ -2970,7 +2854,7 @@ function DeepSeekSettingsCard() {
                         仅对 AI 相关聊天内容生效，默认关闭。
                       </p>
                     </div>
-                    <Switch
+                    <Checkbox aria-label="机器人信息自动撤回"
                       checked={deepseekTelegramAutoRecallEnabled}
                       onCheckedChange={setDeepseekTelegramAutoRecallEnabled}
                     />
@@ -3816,7 +3700,7 @@ function PersonalizationSettingsSection() {
               {backgroundEnabled && (
                 <div className="space-y-3">
                   <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-                    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
+                    <FormField className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
                       <div className="space-y-2">
                         <Label>背景不透明度</Label>
                         <input
@@ -3838,8 +3722,8 @@ function PersonalizationSettingsSection() {
                         inputMode="numeric"
                         className="sm:mt-6"
                       />
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
+                    </FormField>
+                    <FormField className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
                       <div className="space-y-2">
                         <Label>背景虚化程度</Label>
                         <input
@@ -3861,7 +3745,7 @@ function PersonalizationSettingsSection() {
                         inputMode="numeric"
                         className="sm:mt-6"
                       />
-                    </div>
+                    </FormField>
                   </div>
                   <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
                     {mobileBackgroundHint}
@@ -3998,7 +3882,7 @@ function PersonalizationSettingsSection() {
                   </div>
                   <div className="grid gap-2 lg:grid-cols-[9rem_minmax(0,1fr)_auto]">
                     <Select value={backgroundUrlType} onValueChange={(value) => setBackgroundUrlType(value as PersonalizationBackgroundUrlType)}>
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="背景链接类型">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -4048,14 +3932,14 @@ function PersonalizationSettingsSection() {
                 <p className="text-sm font-medium">启用公开首页</p>
                 <p className="text-xs text-muted-foreground">关闭后直接进入登录页。</p>
               </div>
-              <Switch checked={homepageEnabled} onCheckedChange={setHomepageEnabled} />
+              <Checkbox aria-label="启用公开首页" checked={homepageEnabled} onCheckedChange={setHomepageEnabled} />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
               <div>
                 <p className="text-sm font-medium">使用自定义 H5</p>
                 <p className="text-xs text-muted-foreground">优先展示自定义页面。</p>
               </div>
-              <Switch checked={homepageCustomEnabled} onCheckedChange={setHomepageCustomEnabled} />
+              <Checkbox aria-label="使用自定义 H5" checked={homepageCustomEnabled} onCheckedChange={setHomepageCustomEnabled} />
             </div>
           </div>
           {homepageCustomEnabled && (
@@ -4765,24 +4649,14 @@ function SystemInfoSection() {
     setSidebarMenu((prev) => ({ ...prev, [key]: enabled }));
   };
 
-  const copyTextToClipboard = async (text: string) => {
-    let copied = false;
-    try {
-      await navigator.clipboard.writeText(text);
-      copied = true;
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.setAttribute("readonly", "true");
-      textarea.style.position = "fixed";
-      textarea.style.left = "-9999px";
-      document.body.appendChild(textarea);
-      textarea.select();
-      copied = document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }
-    if (copied) toast.success("已复制到剪贴板");
-    else toast.error("复制失败，请手动复制");
+  const copyTextWithToast = async (text: string) => {
+    /*
+      走共享实现。原来这里自己拼 textarea 挂到 document.body 上 ——
+      而这个复制按钮在弹窗里，弹窗有焦点陷阱，会把焦点抢回去。
+      共享那份专门把临时元素挂在打开着的弹窗内，就是为了这个。
+    */
+    if (await copyTextToClipboard(text)) toast.success("已复制到剪贴板");
+    else toast.error(clipboardNeedsManualCopy() ? "当前是 http 访问，浏览器限制了剪贴板，请手动选中复制" : "复制失败，请手动复制");
   };
 
   const startUpgradeMutation = trpc.system.startUpgrade.useMutation({
@@ -4920,7 +4794,7 @@ function SystemInfoSection() {
     }] : []),
   ];
   const isUpgradeRunning = upgradeStatus?.job.status === "running";
-  const upgradeProgress = getUpgradeProgress(upgradeStatus?.job);
+  const upgradeProgress = getPanelUpgradeProgress(upgradeStatus?.job);
   const upgradeErrorLogs = (upgradeStatus?.job?.logs || []).slice(-80).join("\n");
   const directProtocolEnabledCount = directForwardProtocolKeys.filter((key) => forwardProtocols[key]).length;
   const tunnelProtocolEnabledCount = tunnelForwardProtocolKeys.filter((key) => forwardProtocols[key]).length;
@@ -4967,7 +4841,7 @@ function SystemInfoSection() {
                   关闭后侧边栏入口和接口都会对普通用户禁用。
                 </p>
               </div>
-              <Switch className="shrink-0" checked={lookingGlassUserEnabled} onCheckedChange={setLookingGlassUserEnabled} />
+              <Checkbox aria-label="普通用户可见网络测试" className="shrink-0" checked={lookingGlassUserEnabled} onCheckedChange={setLookingGlassUserEnabled} />
             </div>
             <Button onClick={handleSaveLookingGlass} disabled={isSavingSetting("networkTest")}>
               保存
@@ -5056,7 +4930,7 @@ function SystemInfoSection() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
+              <Input aria-label="Web 服务监听端口"
                 type="number"
                 inputMode="numeric"
                 min={1}
@@ -5111,7 +4985,7 @@ function SystemInfoSection() {
                   当前协议：{settings?.panelSsl?.activeProtocol === "https" ? "HTTPS" : "HTTP"}，端口：{webPortDisplay}
                 </p>
               </div>
-              <Switch className="shrink-0" checked={panelSslEnabled} onCheckedChange={setPanelSslEnabled} />
+              <Checkbox aria-label="启用 HTTPS" className="shrink-0" checked={panelSslEnabled} onCheckedChange={setPanelSslEnabled} />
             </div>
             <div className="flex flex-col gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-start gap-2">
@@ -5320,7 +5194,7 @@ function SystemInfoSection() {
                   关闭后仅管理员可添加用户。
                 </p>
               </div>
-              <Switch checked={registrationEnabled} onCheckedChange={setRegistrationEnabled} />
+              <Checkbox aria-label="开放注册" checked={registrationEnabled} onCheckedChange={setRegistrationEnabled} />
             </div>
             <div className="flex justify-end">
               <Button onClick={handleSaveRegistration} disabled={isSavingSetting("registration")}>
@@ -5348,7 +5222,7 @@ function SystemInfoSection() {
                   关闭后隐藏绑定入口。
                 </p>
               </div>
-              <Switch checked={twoFactorEnabled} onCheckedChange={setTwoFactorEnabled} />
+              <Checkbox aria-label="启用 2FA 软件支持" checked={twoFactorEnabled} onCheckedChange={setTwoFactorEnabled} />
             </div>
             <div className="flex justify-end">
               <Button onClick={handleSaveTwoFactor} disabled={isSavingSetting("twoFactor")}>
@@ -5376,7 +5250,7 @@ function SystemInfoSection() {
                 <p className="text-sm font-medium">启用 DDNS</p>
                 <p className="text-xs text-muted-foreground">关闭后不更新域名。</p>
               </div>
-              <Switch className="shrink-0" checked={ddnsEnabled} onCheckedChange={setDdnsEnabled} />
+              <Checkbox aria-label="启用 DDNS" className="shrink-0" checked={ddnsEnabled} onCheckedChange={setDdnsEnabled} />
             </div>
             <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
@@ -5385,7 +5259,7 @@ function SystemInfoSection() {
               </div>
               <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-56">
                 <Select value={ddnsProvider} onValueChange={(v) => setDdnsProvider(v as any)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label="DDNS 服务商"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="disabled">不使用</SelectItem>
                     <SelectItem value="cloudflare">Cloudflare</SelectItem>
@@ -5420,11 +5294,10 @@ function SystemInfoSection() {
             <div className="space-y-2">
               <FormField className="space-y-2">
                 <Label>API Token</Label>
-                <Input
+                <PasswordInput
                   value={ddnsCloudflareApiToken}
                   onChange={(e) => setDdnsCloudflareApiToken(e.target.value)}
                   placeholder={settings?.ddns?.cloudflareTokenMasked || "需要 Zone:Read + DNS:Edit 权限"}
-                  type="password"
                 />
                 <p className="text-xs text-muted-foreground">自动识别 Zone；Token 留空时保留原值。</p>
               </FormField>
@@ -5440,11 +5313,10 @@ function SystemInfoSection() {
                 </FormField>
                 <FormField className="space-y-2">
                   <Label>Secret Access Key</Label>
-                  <Input
+                  <PasswordInput
                     value={ddnsHuaweiCloudSecretKey}
                     onChange={(e) => setDdnsHuaweiCloudSecretKey(e.target.value)}
                     placeholder={settings?.ddns?.huaweicloudSecretKeyMasked || "留空保留已保存密钥"}
-                    type="password"
                   />
                 </FormField>
               </div>
@@ -5480,11 +5352,10 @@ function SystemInfoSection() {
                 </FormField>
                 <FormField className="space-y-2">
                   <Label>AccessKey Secret</Label>
-                  <Input
+                  <PasswordInput
                     value={ddnsAliyunAccessKeySecret}
                     onChange={(e) => setDdnsAliyunAccessKeySecret(e.target.value)}
                     placeholder={settings?.ddns?.aliyunAccessKeySecretMasked || "留空保留已保存密钥"}
-                    type="password"
                   />
                 </FormField>
               </div>
@@ -5516,11 +5387,10 @@ function SystemInfoSection() {
                 </FormField>
                 <FormField className="space-y-2">
                   <Label>SecretKey</Label>
-                  <Input
+                  <PasswordInput
                     value={ddnsTencentCloudSecretKey}
                     onChange={(e) => setDdnsTencentCloudSecretKey(e.target.value)}
                     placeholder={settings?.ddns?.tencentcloudSecretKeyMasked || "留空保留已保存密钥"}
-                    type="password"
                   />
                 </FormField>
               </div>
@@ -5600,7 +5470,7 @@ function SystemInfoSection() {
             <div className="min-w-0">
               <p className="text-sm font-medium">允许免登录查看主机监控</p>
             </div>
-            <Switch className="shrink-0" checked={publicHostMonitorEnabled} onCheckedChange={setPublicHostMonitorEnabled} />
+            <Checkbox aria-label="允许免登录查看主机监控" className="shrink-0" checked={publicHostMonitorEnabled} onCheckedChange={setPublicHostMonitorEnabled} />
           </div>
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
@@ -5624,7 +5494,7 @@ function SystemInfoSection() {
                 支持字母、数字、短横线和下划线。
               </p>
             </FormField>
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label>访问地址</Label>
               <div className="flex min-w-0 gap-2">
                 <Input value={publicHostMonitorUrl} readOnly className="font-mono text-xs" />
@@ -5634,7 +5504,7 @@ function SystemInfoSection() {
                   </a>
                 </Button>
               </div>
-            </div>
+            </FormField>
           </div>
 
           <div className="flex justify-end">
@@ -5665,7 +5535,7 @@ function SystemInfoSection() {
                   关闭时后登录的设备会立即接管，正在使用的旧会话将退出；仅保留 Cookie 但未在使用的设备不会阻止新登录。
                 </p>
               </div>
-              <Switch className="shrink-0" checked={allowMultiDeviceLogin} onCheckedChange={setAllowMultiDeviceLogin} />
+              <Checkbox aria-label="允许多设备在线" className="shrink-0" checked={allowMultiDeviceLogin} onCheckedChange={setAllowMultiDeviceLogin} />
             </div>
             <div className="flex justify-end">
               <Button onClick={handleSaveSessionPolicy} disabled={isSavingSetting("sessionPolicy")}>
@@ -5736,7 +5606,7 @@ function SystemInfoSection() {
                       className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/40 bg-background/60 px-3 py-2"
                     >
                       <span className="min-w-0 truncate text-sm">{FORWARD_PROTOCOL_LABELS[key]}</span>
-                      <Switch className="shrink-0" checked={forwardProtocols[key]} onCheckedChange={(checked) => setForwardProtocolEnabled(key, checked)} />
+                      <Checkbox aria-label="端口转发" className="shrink-0" checked={forwardProtocols[key]} onCheckedChange={(checked) => setForwardProtocolEnabled(key, checked)} />
                     </div>
                   ))}
                 </div>
@@ -5753,7 +5623,7 @@ function SystemInfoSection() {
                       className="flex min-h-10 items-center justify-between gap-2 rounded-md border border-border/40 bg-background/60 px-3 py-2"
                     >
                       <span className="min-w-0 truncate text-sm">{FORWARD_PROTOCOL_LABELS[key]}</span>
-                      <Switch className="shrink-0" checked={forwardProtocols[key]} onCheckedChange={(checked) => setForwardProtocolEnabled(key, checked)} />
+                      <Checkbox aria-label="隧道协议" className="shrink-0" checked={forwardProtocols[key]} onCheckedChange={(checked) => setForwardProtocolEnabled(key, checked)} />
                     </div>
                   ))}
                 </div>
@@ -5798,7 +5668,7 @@ function SystemInfoSection() {
                 className="flex items-center justify-between gap-3 rounded-md border border-border/40 bg-background/60 px-3 py-2"
               >
                 <span className="text-sm">{SIDEBAR_MENU_LABELS[key]}</span>
-                <Switch checked={sidebarMenu[key]} onCheckedChange={(checked) => setSidebarMenuEnabled(key, checked)} />
+                <Checkbox aria-label={SIDEBAR_MENU_LABELS[key]} checked={sidebarMenu[key]} onCheckedChange={(checked) => setSidebarMenuEnabled(key, checked)} />
               </div>
             ))}
           </div>
@@ -5843,7 +5713,7 @@ function SystemInfoSection() {
                   <p className="text-sm font-medium">自动检查更新</p>
                   <p className="text-xs text-muted-foreground">开启后定期检查面板和 Agent 更新。</p>
                 </div>
-                <OptimisticSwitch
+                <OptimisticSwitch aria-label="自动检查更新"
                   className="shrink-0"
                   checked={updateAutoCheckEnabled}
                   onCheckedChangeAsync={(checked) => updateAutoCheckMutation.mutateAsync({ updateAutoCheckEnabled: checked })}
@@ -6096,7 +5966,7 @@ function SystemInfoSection() {
                   开启并填写地址后，GitHub 真实地址会拼接在加速地址后面。
                 </p>
               </div>
-              <Switch className="shrink-0" checked={githubAcceleratorEnabled} onCheckedChange={setGithubAcceleratorEnabled} />
+              <Checkbox aria-label="启用 GitHub 加速地址" className="shrink-0" checked={githubAcceleratorEnabled} onCheckedChange={setGithubAcceleratorEnabled} />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
               <div className="min-w-0">
@@ -6105,7 +5975,7 @@ function SystemInfoSection() {
                   开启后先从面板拉取安装脚本和 Agent 程序，失败后回退 GitHub。
                 </p>
               </div>
-              <Switch className="shrink-0" checked={agentPreferPanelInstall} onCheckedChange={setAgentPreferPanelInstall} />
+              <Checkbox aria-label="优先连接面板安装 Agent" className="shrink-0" checked={agentPreferPanelInstall} onCheckedChange={setAgentPreferPanelInstall} />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 lg:col-span-2">
               <div className="min-w-0">
@@ -6114,7 +5984,7 @@ function SystemInfoSection() {
                   版本检查、Release 安装包、版本回退和升级脚本优先使用加速地址，失败时自动回退直连。
                 </p>
               </div>
-              <Switch
+              <Checkbox aria-label="面板更新使用加速站"
                 className="shrink-0"
                 checked={githubAcceleratorPanelUpdateEnabled}
                 onCheckedChange={setGithubAcceleratorPanelUpdateEnabled}
@@ -6344,7 +6214,7 @@ function SystemInfoSection() {
               onClick={() => {
                 if (!selectedRollbackVersion) return;
                 if (rollbackType === "panel" && !canRunPanelRollback) {
-                  copyTextToClipboard(selectedRollbackPanelCommand);
+                  copyTextWithToast(selectedRollbackPanelCommand);
                   return;
                 }
                 startRollbackMutation.mutate({ type: rollbackType, targetVersion: selectedRollbackVersion });
@@ -6389,7 +6259,7 @@ function SystemInfoSection() {
             <Button variant="outline" onClick={() => setShowDockerUpgradeScript(false)}>
               关闭
             </Button>
-            <Button className="gap-2" onClick={() => copyTextToClipboard(dockerPanelUpgradeCommand)}>
+            <Button className="gap-2" onClick={() => copyTextWithToast(dockerPanelUpgradeCommand)}>
               <Copy className="h-4 w-4" />
               复制脚本
             </Button>

@@ -1,3 +1,4 @@
+import { sameNetworkAddress } from "@shared/ipAddress";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { dbBool } from "../repositories/repositoryUtils";
 import { z } from "zod";
@@ -11,7 +12,7 @@ import * as hopRepo from "../repositories/tunnelRepository";
 import { createTunnelHopBatch, registerTunnelHopTest } from "../tunnelHopTestState";
 import { clearTunnelRuntimeStatus } from "../tunnelRuntimeStatus";
 import { createQueryCache } from "../queryCache";
-import { isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "../portPolicy";
+import { isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "@shared/portPolicy";
 import { structuredLinkTestMessage } from "../linkTestMessages";
 import { isValidHostOrIp } from "../networkAddress";
 import { normalizeTrafficMultiplier } from "../../shared/trafficMultiplier";
@@ -327,9 +328,9 @@ function normalizeHopConnectForHost(rawConnectHost: string | null | undefined, h
   const privateAddr = getHostPrivateAddress(host);
   const ipv6Addr = getHostIpv6Address(host);
   const normalized = normalizeTunnelConnect(raw);
-  if (privateAddr && normalized === privateAddr) return privateAddr;
-  if (ipv6Addr && normalized === ipv6Addr) return ipv6Addr;
-  if (publicAddr && normalized === publicAddr) return null;
+  if (privateAddr && sameNetworkAddress(normalized, privateAddr)) return privateAddr;
+  if (ipv6Addr && sameNetworkAddress(normalized, ipv6Addr)) return ipv6Addr;
+  if (publicAddr && sameNetworkAddress(normalized, publicAddr)) return null;
   if (!privateAddr && !ipv6Addr) return null;
   throw new Error(`主机 ${host?.name || host?.id || ""} 的连接地址只能使用入口地址、已配置的内网IP或IPv6地址`);
 }
@@ -341,15 +342,15 @@ function normalizeOptionalConnectForHost(rawConnectHost: string | null | undefin
   const privateAddr = getHostPrivateAddress(host);
   const ipv6Addr = getHostIpv6Address(host);
   const normalized = normalizeTunnelConnect(raw);
-  if (privateAddr && normalized === privateAddr) return privateAddr;
-  if (ipv6Addr && normalized === ipv6Addr) return ipv6Addr;
-  if (publicAddr && normalized === publicAddr) return null;
+  if (privateAddr && sameNetworkAddress(normalized, privateAddr)) return privateAddr;
+  if (ipv6Addr && sameNetworkAddress(normalized, ipv6Addr)) return ipv6Addr;
+  if (publicAddr && sameNetworkAddress(normalized, publicAddr)) return null;
   throw new Error(`主机 ${host?.name || host?.id || ""} 的连接地址只能使用入口地址、已配置的内网IP或IPv6地址`);
 }
 
 function isHostPrivateConnectHost(connectHost: string | null | undefined, host: any) {
   const privateAddr = getHostPrivateAddress(host);
-  return !!privateAddr && String(connectHost || "").trim() === privateAddr;
+  return !!privateAddr && sameNetworkAddress(connectHost, privateAddr);
 }
 
 async function normalizeHopConnectHostsForHosts(hopHostIds: number[], hopConnectHosts: Array<string | null>) {

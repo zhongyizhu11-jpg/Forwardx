@@ -1,3 +1,4 @@
+import { useFormFieldId } from "@/components/ui/form-field";
 import * as React from "react"
 import * as SwitchPrimitives from "@radix-ui/react-switch"
 import { cn } from "@/lib/utils"
@@ -7,11 +8,22 @@ type SwitchProps = React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root> 
   instant?: boolean;
 };
 
-const Switch = React.forwardRef<React.ComponentRef<typeof SwitchPrimitives.Root>, SwitchProps>(({ className, instant = false, ...props }, ref) => (
-  <SwitchPrimitives.Root data-slot="switch" className={cn("peer relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-border/70 bg-muted/80 shadow-inner focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 data-[state=checked]:border-primary/70 data-[state=checked]:bg-primary data-[state=unchecked]:border-border/70 data-[state=unchecked]:bg-muted/80 dark:data-[state=unchecked]:border-slate-500 dark:data-[state=unchecked]:bg-slate-700/90", instant ? "" : "transition-colors", className)} {...props} ref={ref}>
+/*
+  开关也接进 FormField —— 和 Input/Textarea/SelectTrigger 一样从 context 拿 id。
+
+  Radix 的开关渲染出来是一个 <button role="switch">，而 <label for> 对 button
+  一样有效（Chrome 里这条名称来源叫 labelwrapped / labelfor，实测过）。
+  接上之后 `<FormField><Label>转发总开关</Label><Switch /></FormField>` 就有名字了，
+  不用再把同一句话在 aria-label 里抄第二遍 —— 抄第二遍早晚会和界面对不上。
+*/
+const Switch = React.forwardRef<React.ComponentRef<typeof SwitchPrimitives.Root>, SwitchProps>(({ className, instant = false, ...props }, ref) => {
+  const fieldId = useFormFieldId();
+  return (
+  <SwitchPrimitives.Root data-slot="switch" id={fieldId} className={cn("peer relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-border/70 bg-muted/80 shadow-inner focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 data-[state=checked]:border-primary/70 data-[state=checked]:bg-primary data-[state=unchecked]:border-border/70 data-[state=unchecked]:bg-muted/80 dark:data-[state=unchecked]:border-slate-500 dark:data-[state=unchecked]:bg-slate-700/90", instant ? "" : "transition-colors", className)} {...props} ref={ref}>
     <SwitchPrimitives.Thumb className={cn("pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 data-[state=checked]:translate-x-5 data-[state=checked]:bg-primary-foreground data-[state=unchecked]:translate-x-0 data-[state=unchecked]:bg-background dark:data-[state=unchecked]:bg-slate-100", instant ? "" : "transition-transform")} />
   </SwitchPrimitives.Root>
-))
+  );
+})
 Switch.displayName = SwitchPrimitives.Root.displayName
 
 type OptimisticSwitchProps = Omit<SwitchProps, "checked" | "defaultChecked" | "onCheckedChange"> & {

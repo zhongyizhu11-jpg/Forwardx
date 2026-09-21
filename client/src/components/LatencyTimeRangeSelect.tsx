@@ -50,7 +50,7 @@ export function LatencyTimeRangeSelect({
         if (option) onChange(option.hours);
       }}
     >
-      <SelectTrigger className={cn("h-8 w-24 shrink-0 text-xs", className)}>
+      <SelectTrigger aria-label="延迟时间范围" className={cn("h-8 w-24 shrink-0 text-xs", className)}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent align="end">

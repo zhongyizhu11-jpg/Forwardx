@@ -162,7 +162,7 @@ export default function DatePickerInput({
       ref={panelRef}
       aria-hidden={!open}
       style={panelStyle}
-      className={`fixed z-[70] overflow-hidden rounded-lg border border-border/80 bg-background shadow-[0_20px_60px_rgba(15,23,42,0.22)] ring-1 ring-black/5 transition-all duration-200 ease-out ${panelOrigin} ${open ? "pointer-events-auto translate-y-0 scale-100 opacity-100" : `pointer-events-none ${panelClosedTranslate} scale-[0.98] opacity-0`}`}
+      className={`fixed z-[var(--fx-z-in-overlay-popover)] overflow-hidden rounded-lg border border-border/80 bg-background shadow-[0_20px_60px_rgba(15,23,42,0.22)] ring-1 ring-black/5 transition-all duration-200 ease-out ${panelOrigin} ${open ? "pointer-events-auto translate-y-0 scale-100 opacity-100" : `pointer-events-none ${panelClosedTranslate} scale-[0.98] opacity-0`}`}
     >
       <div className="p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
