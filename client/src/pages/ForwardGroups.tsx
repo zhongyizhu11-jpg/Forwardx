@@ -1,4 +1,6 @@
 import WorkspaceHeader from "@/components/WorkspaceHeader";
+import { NetworkPath } from "@/components/network/NetworkPath";
+import { buildChainPath } from "@/features/links/chainPath";
 import { FormField } from "@/components/ui/form-field";
 import DataSectionError from "@/components/DataSectionError";
 import { sameNullableStringArray } from "@/lib/multiHopAddress";
@@ -1726,6 +1728,157 @@ export function ForwardGroupsContent({
     return `${index + 1}. ${prefix}${memberLabel(member)}${suffix}`;
   };
 
+  /**
+   * 一张转发组卡片。
+   *
+   * 原来这 95 行在文件里**一字不差地写了两遍** —— 一处给卡片视图，一处给表格
+   * 视图在窄屏下的降级。任何改动都得改两处，而历史上总有一处会被忘掉。
+   * 合成一个渲染函数，两处调用。
+   */
+  /**
+   * 成员区。转发链走 Path，其余模式走胶囊。
+   *
+   * 分开是因为它们本来就不是一回事：**链是有顺序的，组是没有顺序的**。
+   * 入口组、出口组、端口组里的成员谁先谁后无所谓，胶囊换行没有损失；
+   * 而一条转发链的全部意义就在顺序上，胶囊一换行顺序就读断了。
+   */
+  const renderGroupMembers = (group: any) => {
+    const members = Array.isArray(group.members) ? group.members : [];
+    if (members.length === 0) {
+      return <span className="text-meta text-muted-foreground">暂无成员</span>;
+    }
+
+    if (normalizeGroupMode(group.groupMode) === "chain") {
+      const path = buildChainPath(
+        members.map((member: any) => ({
+          id: member.id,
+          label: memberLabel(member),
+          sublabel: memberConnectLabel(member) || undefined,
+          active: isGroupMemberActive(group, member),
+          enabled: member.isEnabled !== false,
+        })),
+        {
+          externalEntryLabel: entryGroupDisplayText(group, groupsByMode),
+          latencyMs: typeof group.latestLatencyMs === "number" ? group.latestLatencyMs : null,
+          isTimeout: !!group.latestLatencyIsTimeout,
+        },
+      );
+      return (
+        <div title={path.title}>
+          <NetworkPath nodes={path.nodes} edges={path.edges} orientation="vertical" />
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        {members.map((member: any, index: number) => {
+          const active = isGroupMemberActive(group, member);
+          return (
+            <span
+              key={member.id}
+              className="inline-flex max-w-full items-center gap-1 rounded-[var(--fx-radius-control)] border px-1.5 py-0.5 text-meta"
+              /*
+                语义色而不是 emerald-500：组里「在生效」的绿必须和主机页、
+                链路页的绿是同一个绿，否则同一套系统里「正常」有三种颜色。
+              */
+              style={
+                active
+                  ? {
+                      color: "var(--fx-healthy-text)",
+                      backgroundColor: "var(--fx-healthy-soft)",
+                      borderColor: "var(--fx-healthy-soft)",
+                    }
+                  : {
+                      color: "var(--fx-text-secondary)",
+                      backgroundColor: "var(--fx-l2-group)",
+                      borderColor: "var(--fx-stroke-weak)",
+                    }
+              }
+              title={memberHealthTitle(group, member)}
+            >
+              {renderMemberConfigIcon(group, member)}
+              <span className="truncate">{memberDecoratedLabel(group, member, index)}</span>
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderForwardGroupCard = (group: any) => (
+    <SortableItem key={group.id} id={Number(group.id)} disabled={groupSortable.disabled}>
+      {({ itemProps, handleProps, isDragging, isDropTarget }) => (
+                <Card
+                  {...itemProps}
+                  className={cn(
+                    "group/sortable relative action-card border-border/40 bg-card/60 transition-[box-shadow,opacity]",
+                    isDragging && "opacity-55 ring-1 ring-primary/35",
+                    isDropTarget && "ring-1 ring-primary/45",
+                  )}
+                >
+                  <CardContent className="action-card-content space-y-3 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <p className="min-w-0 truncate font-medium">{group.name}</p>
+                        {groupKindBadge(group)}
+                        {groupStatusBadge(group)}
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{groupStatusMessage(group)}</p>
+                      {groupRuntimeBadges(group)}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <SortableDragHandle
+                        dragHandleProps={handleProps}
+                        visible={isDragging}
+                        busy={groupReorderPending}
+                        className="bg-card/70"
+                      />
+                      {renderGroupEnabledSwitch(group)}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] p-2.5">
+                    <div className="text-meta text-muted-foreground">{groupMemberTitle(group)}</div>
+                    {renderGroupMembers(group)}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="min-w-0 rounded-md border border-border/40 bg-background/35 p-2">
+                      <p className="text-muted-foreground">{normalizeGroupMode(group.groupMode) === "port" ? "所属主机" : normalizeGroupMode(group.groupMode) === "chain" ? "入口" : normalizeGroupMode(group.groupMode) === "exit" ? "出口" : "DDNS"}</p>
+                      <p className="mt-1 truncate">{normalizeGroupMode(group.groupMode) === "port" ? ((group.members || []).length ? memberLabel((group.members || [])[0]) : "未选择") : normalizeGroupMode(group.groupMode) === "chain" ? chainEntryText(group) : normalizeGroupMode(group.groupMode) === "exit" ? `${(group.members || []).length} 台主机` : groupDdnsText(group)}</p>
+                    </div>
+                    <div className="min-w-0 rounded-md border border-border/40 bg-background/35 p-2">
+                      <p className="text-muted-foreground">{normalizeGroupMode(group.groupMode) === "chain" ? "链路延迟" : isCollectionMode(normalizeGroupMode(group.groupMode)) ? "用途" : "引用规则"}</p>
+                      <div className="mt-1">{normalizeGroupMode(group.groupMode) === "chain" ? renderChainLatencySummary(group) : isCollectionMode(normalizeGroupMode(group.groupMode)) ? (normalizeGroupMode(group.groupMode) === "entry" ? "固定入口" : "固定出口") : Number(group.templateRuleCount || 0)}</div>
+                    </div>
+                  </div>
+
+                  <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
+                    {chainLatencyActions(group)}
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive hover:text-destructive"
+                      aria-label={`删除链路 ${group.name}`}
+                      onClick={() => setDeleteGroup(group)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  </CardContent>
+                </Card>
+      )}
+    </SortableItem>
+  );
+
   const renderTableMembersSummary = (group: any) => {
     const members = Array.isArray(group.members) ? group.members : [];
     if (members.length === 0) return <span className="text-xs text-muted-foreground">暂无成员</span>;
@@ -1923,198 +2076,14 @@ export function ForwardGroupsContent({
         {viewMode === "card" ? (
           <SortableReorderContext sortable={groupSortable} ids={pagedGroups.map((group: any) => Number(group.id))} strategy="rect">
           <div className="standard-card-grid gap-4">
-            {pagedGroups.map((group: any) => {
-              return (
-              <SortableItem key={group.id} id={Number(group.id)} disabled={groupSortable.disabled}>
-              {({ itemProps, handleProps, isDragging, isDropTarget }) => (
-                <Card
-                  {...itemProps}
-                  className={cn(
-                    "group/sortable relative action-card border-border/40 bg-card/60 transition-[box-shadow,opacity]",
-                    isDragging && "opacity-55 ring-1 ring-primary/35",
-                    isDropTarget && "ring-1 ring-primary/45",
-                  )}
-                >
-                  <CardContent className="action-card-content space-y-3 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <p className="min-w-0 truncate font-medium">{group.name}</p>
-                        {groupKindBadge(group)}
-                        {groupStatusBadge(group)}
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{groupStatusMessage(group)}</p>
-                      {groupRuntimeBadges(group)}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <SortableDragHandle
-                        dragHandleProps={handleProps}
-                        visible={isDragging}
-                        busy={groupReorderPending}
-                        className="bg-card/70"
-                      />
-                      {renderGroupEnabledSwitch(group)}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 rounded-md bg-muted/25 p-2.5">
-                    <div className="text-xs text-muted-foreground">{groupMemberTitle(group)}</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {(group.members || []).length > 0 ? (group.members || []).map((member: any, index: number) => (
-                        <span
-                          key={member.id}
-                          className={`inline-flex max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] ${
-                            isGroupMemberActive(group, member)
-                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600"
-                              : "border-border bg-muted/20 text-muted-foreground"
-                          }`}
-                          title={memberHealthTitle(group, member)}
-                        >
-                          {renderMemberConfigIcon(group, member)}
-                          <span className="truncate">
-                            {memberDecoratedLabel(group, member, index)}
-                          </span>
-                        </span>
-                      )) : (
-                        <span className="text-xs text-muted-foreground">暂无成员</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="min-w-0 rounded-md border border-border/40 bg-background/35 p-2">
-                      <p className="text-muted-foreground">{normalizeGroupMode(group.groupMode) === "port" ? "所属主机" : normalizeGroupMode(group.groupMode) === "chain" ? "入口" : normalizeGroupMode(group.groupMode) === "exit" ? "出口" : "DDNS"}</p>
-                      <p className="mt-1 truncate">{normalizeGroupMode(group.groupMode) === "port" ? ((group.members || []).length ? memberLabel((group.members || [])[0]) : "未选择") : normalizeGroupMode(group.groupMode) === "chain" ? chainEntryText(group) : normalizeGroupMode(group.groupMode) === "exit" ? `${(group.members || []).length} 台主机` : groupDdnsText(group)}</p>
-                    </div>
-                    <div className="min-w-0 rounded-md border border-border/40 bg-background/35 p-2">
-                      <p className="text-muted-foreground">{normalizeGroupMode(group.groupMode) === "chain" ? "链路延迟" : isCollectionMode(normalizeGroupMode(group.groupMode)) ? "用途" : "引用规则"}</p>
-                      <div className="mt-1">{normalizeGroupMode(group.groupMode) === "chain" ? renderChainLatencySummary(group) : isCollectionMode(normalizeGroupMode(group.groupMode)) ? (normalizeGroupMode(group.groupMode) === "entry" ? "固定入口" : "固定出口") : Number(group.templateRuleCount || 0)}</div>
-                    </div>
-                  </div>
-
-                  <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
-                    {chainLatencyActions(group)}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      aria-label={`删除链路 ${group.name}`}
-                      onClick={() => setDeleteGroup(group)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                  </CardContent>
-                </Card>
-              )}
-              </SortableItem>
-              );
-            })}
+            {pagedGroups.map((group: any) => renderForwardGroupCard(group))}
           </div>
           </SortableReorderContext>
         ) : (
           <>
           <SortableReorderContext sortable={groupSortable} ids={pagedGroups.map((group: any) => Number(group.id))} strategy="vertical" restrictToList>
           <div className="grid gap-3 sm:hidden">
-            {pagedGroups.map((group: any) => {
-              return (
-              <SortableItem key={group.id} id={Number(group.id)} disabled={groupSortable.disabled}>
-              {({ itemProps, handleProps, isDragging, isDropTarget }) => (
-                <Card
-                  {...itemProps}
-                  className={cn(
-                    "group/sortable relative action-card border-border/40 bg-card/60 transition-[box-shadow,opacity]",
-                    isDragging && "opacity-55 ring-1 ring-primary/35",
-                    isDropTarget && "ring-1 ring-primary/45",
-                  )}
-                >
-                  <CardContent className="action-card-content space-y-3 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <p className="min-w-0 truncate font-medium">{group.name}</p>
-                        {groupKindBadge(group)}
-                        {groupStatusBadge(group)}
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{groupStatusMessage(group)}</p>
-                      {groupRuntimeBadges(group)}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <SortableDragHandle
-                        dragHandleProps={handleProps}
-                        visible={isDragging}
-                        busy={groupReorderPending}
-                        className="bg-card/70"
-                      />
-                      {renderGroupEnabledSwitch(group)}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 rounded-md bg-muted/25 p-2.5">
-                    <div className="text-xs text-muted-foreground">{groupMemberTitle(group)}</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {(group.members || []).length > 0 ? (group.members || []).map((member: any, index: number) => (
-                        <span
-                          key={member.id}
-                          className={`inline-flex max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] ${
-                            isGroupMemberActive(group, member)
-                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600"
-                              : "border-border bg-muted/20 text-muted-foreground"
-                          }`}
-                          title={memberHealthTitle(group, member)}
-                        >
-                          {renderMemberConfigIcon(group, member)}
-                          <span className="truncate">
-                            {memberDecoratedLabel(group, member, index)}
-                          </span>
-                        </span>
-                      )) : (
-                        <span className="text-xs text-muted-foreground">暂无成员</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="min-w-0 rounded-md border border-border/40 bg-background/35 p-2">
-                      <p className="text-muted-foreground">{normalizeGroupMode(group.groupMode) === "port" ? "所属主机" : normalizeGroupMode(group.groupMode) === "chain" ? "入口" : normalizeGroupMode(group.groupMode) === "exit" ? "出口" : "DDNS"}</p>
-                      <p className="mt-1 truncate">{normalizeGroupMode(group.groupMode) === "port" ? ((group.members || []).length ? memberLabel((group.members || [])[0]) : "未选择") : normalizeGroupMode(group.groupMode) === "chain" ? chainEntryText(group) : normalizeGroupMode(group.groupMode) === "exit" ? `${(group.members || []).length} 台主机` : groupDdnsText(group)}</p>
-                    </div>
-                    <div className="min-w-0 rounded-md border border-border/40 bg-background/35 p-2">
-                      <p className="text-muted-foreground">{normalizeGroupMode(group.groupMode) === "chain" ? "链路延迟" : isCollectionMode(normalizeGroupMode(group.groupMode)) ? "用途" : "引用规则"}</p>
-                      <div className="mt-1">{normalizeGroupMode(group.groupMode) === "chain" ? renderChainLatencySummary(group) : isCollectionMode(normalizeGroupMode(group.groupMode)) ? (normalizeGroupMode(group.groupMode) === "entry" ? "固定入口" : "固定出口") : Number(group.templateRuleCount || 0)}</div>
-                    </div>
-                  </div>
-
-                  <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
-                    {chainLatencyActions(group)}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      aria-label={`删除链路 ${group.name}`}
-                      onClick={() => setDeleteGroup(group)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                  </CardContent>
-                </Card>
-              )}
-              </SortableItem>
-              );
-            })}
+            {pagedGroups.map((group: any) => renderForwardGroupCard(group))}
           </div>
           </SortableReorderContext>
           <Card className="hidden border-border/40 bg-card/60 sm:block">
