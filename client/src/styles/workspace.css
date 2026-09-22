@@ -157,18 +157,22 @@
   .workspace-main [data-slot="table-head"] { font-weight: 600; background: var(--fx-subtle); }
 
   /*
-    卡片回来。
+    卡片：纯白、大圆角、**不描边**、不投影。
 
-    上一轮我把卡片拆成「文档章节」（只留一条顶线），结果是一列规则读起来
-    分不出哪几行是一条 —— 有质感但看不清。清晰优先于克制：一条规则就该是
-    一张看得见边界的卡片。
+    这里前后反过三次，把结论记下来免得再反：
 
-    但不走另一个极端：白底 + 一条细边框 + 6px 圆角（--fx-radius，手册主力值），
-    不要投影、不要填充色差。边界感来自边框，不是来自一层灰底或一圈阴影。
+      一版  灰底卡片 + 边框            —— 两种灰堆着，发闷
+      二版  白底卡片 + 边框（白页面）  —— 卡片浮不起来，全靠框撑着，像线框图
+      三版  白底卡片 + 无边框（灰页面）—— 现在这版
+
+    关键在**页面底色和卡片的那一点差**。有了它，白块自己就是一张卡片；
+    再加一圈边框是把同一件事说两遍，而重复的那一遍读起来就是「重」。
+
+    圆角走 surface 档（16px）：没有边框之后，圆角是唯一还在勾勒轮廓的东西。
   */
   .workspace-main [data-slot="card"] {
-    border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius-card);
-    background: var(--fx-surface); box-shadow: none;
+    border: 0; border-radius: var(--fx-radius-surface);
+    background: var(--fx-l1-surface); box-shadow: none;
     padding: 0; margin-top: 0;
   }
   .workspace-main [data-slot="card-header"] { padding: 12px 12px 0; }
@@ -516,7 +520,7 @@
     这比灰底白块更明确 —— 一屏扫过去，黑的那一块就是「你在这里」，
     不需要靠投影去暗示层次。
   */
-  .workspace-tabs { padding: 2px; border-radius: 8px; border: 1px solid var(--fx-stroke-base); background: transparent; }
+  .workspace-tabs { padding: 3px; border-radius: var(--fx-radius-control); border: 0; background: var(--fx-l1-surface); }
   .workspace-tabs .workspace-tab { border: 0; border-radius: var(--fx-radius); font-size: 13px; font-weight: 500; min-height: 30px; padding: 5px 10px; }
   .workspace-tabs .workspace-tab[data-state="active"] {
     background: var(--fx-text); color: var(--fx-text-inverse); font-weight: 600;
@@ -795,4 +799,31 @@
   font-weight: 500;
   letter-spacing: .02em;
   color: var(--fx-text-muted);
+}
+
+/*
+  ═══════════════════════════════════════════════════════════
+  直接坐在页面上的控件：白底、不描边
+
+  搜索框、筛选按钮、分段控件这些贴着页面底的控件，和卡片是同一个道理 ——
+  页面是浅灰，它们是白的，这一点差已经说清楚「这是一个控件」。再加一圈
+  边框是把同一件事说两遍。
+
+  参考图里那排筛选胶囊（UDP / HTTP/S / Reject）就是这样：白色胶囊浮在灰底
+  上，一条边都没有。
+
+  **对话框里的输入框不在此列**：那里的底是白的，白输入框不描边就会整个消失。
+  所以这条规则只限定在 .workspace-filter 这一层，不往下渗。
+  ═══════════════════════════════════════════════════════════
+*/
+@media (max-width: 767px) {
+  .workspace-filter > [data-slot="button"],
+  .workspace-filter-action [data-slot="button"][data-variant="outline"],
+  .workspace-filter-search [data-slot="input"][class] {
+    border-color: transparent;
+    background: var(--fx-l1-surface);
+  }
+  .workspace-filter-search [data-slot="input"][class]:focus-visible {
+    border-color: var(--fx-text);
+  }
 }

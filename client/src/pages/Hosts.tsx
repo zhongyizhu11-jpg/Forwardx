@@ -2478,7 +2478,7 @@ function HostsContent() {
 
           这是 Surface A（页面级模块）：一个面，内部靠竖线分栏，不各画各的框。
         */}
-        <div className="stat-strip grid grid-cols-3 divide-x divide-[var(--fx-stroke-weak)] rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-base)] bg-[var(--fx-l1-surface)]">
+        <div className="stat-strip grid grid-cols-3 divide-x divide-[var(--fx-stroke-weak)] rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)]">
           <div className="min-w-0 px-3 py-2.5">
             <Metric
               label="在线"

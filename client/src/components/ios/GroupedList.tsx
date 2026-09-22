@@ -16,12 +16,12 @@ import { cn } from "@/lib/utils";
  * 就没人找得到第十个。分组列表没有这个上限：加一项就是多一行，而且**它天然
  * 说得清层级**：哪几项是一类，一眼看出来。
  *
- * ── 和黑白的关系 ──
+ * ── 它凭什么成形 ──
  *
- * iOS 原版的分层来自「浅灰页面底 + 白色圆角块」。这套面板刚刚把灰去干净了，
- * 所以这里换个办法做同一件事：**块用 1px 描边成形，行与行之间用内缩的分隔线**。
+ * 和 iOS 原版一样：**浅灰页面底 + 纯白圆角块，块本身不描边**。
+ * 面板的 L0/L1 就是按这个定的，所以这里直接用令牌，不需要为列表开特例。
  *
- * 结构是 iOS 的，颜色是这套面板的。要换回灰底只是改一个令牌。
+ * 行与行之间的分隔线内缩到文字起点，这是块内部唯一的线。
  *
  * ── 分隔线为什么要内缩 ──
  *
@@ -56,7 +56,11 @@ export function ListSection({
         */
         <h2 className="fx-list-section-header">{header}</h2>
       ) : null}
-      <div className="overflow-hidden rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-base)]">
+      {/*
+        不描边、纯白、大圆角 —— 分组块靠和页面浅灰底的差浮起来，这是 iOS
+        分组列表全部质感的来源。加一圈边框会让它退回「网页表格」。
+      */}
+      <div className="overflow-hidden rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)]">
         {children}
       </div>
       {footer ? (
@@ -138,7 +142,7 @@ export function ListRow({
     配合行内 border-top 的负边距，读起来更直接。
   */
   const shared = cn(
-    "fx-list-row flex w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left",
+    "fx-list-row flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left",
     icon ? "fx-list-row-inset" : null,
     disabled && "opacity-50",
     className,

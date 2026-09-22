@@ -58,15 +58,21 @@ test("分组的小标题和脚注都渲染出来", () => {
   assert.match(html, /绕过 TUN/);
 });
 
-test("分组只画一层框，行自己不画框", () => {
-  // 「不是所有信息都需要一个圆角矩形」—— 组是那个框，行不是。
+test("分组只有一块白面，行自己不是面，而且这块面不描边", () => {
+  /*
+    「不是所有信息都需要一个圆角矩形」—— 组是那块面，行不是。
+    面也不描边：iOS 分组列表的质感全部来自「白块 + 页面浅灰底」的底色差，
+    补一圈边框只会把它拉回网页表格。
+  */
   const html = renderToStaticMarkup(
     <ListSection>
       <ListRow label="A" onSelect={noop} />
       <ListRow label="B" onSelect={noop} />
     </ListSection>,
   );
-  assert.equal(html.match(/rounded-\[var\(--fx-radius-card\)\]/g)?.length, 1);
+  assert.equal(html.match(/rounded-\[var\(--fx-radius-surface\)\]/g)?.length, 1);
+  const classLists = [...html.matchAll(/class="([^"]*)"/g)].map((m) => m[1].split(/\s+/));
+  assert.ok(!classLists.some((list) => list.includes("border")));
 });
 
 test("选中的行靠字重标出来，不靠底色", () => {
