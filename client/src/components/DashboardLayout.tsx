@@ -18,7 +18,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarTrigger,
   useSidebar,
   SidebarGroup,
   SidebarGroupLabel,
@@ -26,6 +25,7 @@ import {
 import { useTheme } from "@/contexts/ThemeContext";
 import {
   LayoutDashboard,
+  Ellipsis,
   LogOut,
   PanelLeft,
   Server,
@@ -66,6 +66,9 @@ import {
 } from "lucide-react";
 import { App as CapacitorApp } from "@capacitor/app";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { IosTabBar } from "@/components/ios/TabBar";
+import { MobileNavContext, type MobileNavEntry } from "@/components/ios/navigationContext";
+import { MORE_TAB_PATH, pickTabBarItems } from "@/components/ios/tabBar";
 import QRCode from "qrcode";
 import { useLocation } from "wouter";
 import { Button } from "./ui/button";
@@ -1162,6 +1165,34 @@ function DashboardLayoutContent({
     ...managementMenuItems.map(item => ({ ...item, group: isAdmin ? "管理与账户" : "工具与账户" })),
     ...otherMenuItems.map(item => ({ ...item, group: "扩展" })),
   ];
+  /*
+    ── 手机端底部标签栏 ──────────────────────────────────────────
+
+    上一版手机端是「汉堡 → 抽屉」，而抽屉的问题不是不好看，是**它把常用的和
+    罕用的放在同一个深度**：去「转发规则」和去「支付对接」都是点汉堡、找一行、
+    点一下。实际使用里前者一天几十次，后者一个月一次。
+
+    标签栏摊开最常去的四格，剩下的收进「更多」。优先级表写在这里而不是写死在
+    组件里，因为它要和权限过滤后的结果求交集 —— 一个只有转发权限的租户不该
+    拿到一个点进去 403 的「主机」格。
+  */
+  const tabBarPlan = pickTabBarItems({
+    destinations: commandItems,
+    preferred: ["/", "/rules", "/hosts", "/tunnels", "/client-subscriptions"],
+    /*
+      标签栏一格 78px、字号 10px，「转发规则」四个汉字挤进去要么截断要么
+      糊成一团。侧边栏保持全名（那里有横向空间，也要和别的「…管理」区分），
+      标签栏用短名 —— iOS 自己的标签也全是两个词以内。
+    */
+    shortLabels: {
+      "/rules": "转发",
+      "/hosts": "主机",
+      "/tunnels": "链路",
+      "/client-subscriptions": "订阅",
+    },
+    more: { path: MORE_TAB_PATH, label: "更多", icon: Ellipsis },
+  });
+
   const closeMobileNavigation = () => {
     if (isMobile) {
       setAccountMenuOpen(false);
@@ -1179,6 +1210,21 @@ function DashboardLayoutContent({
       window.open(item.externalUrl, "_blank", "noopener,noreferrer");
     } else navigateFromSidebar(item.path);
   };
+
+  const mobileNavValue = {
+    overflow: tabBarPlan.overflow as MobileNavEntry[],
+    currentPath,
+    navigate: navigateToDestination,
+    account: {
+      name: accountDisplayName,
+      detail: `${isAdmin ? "管理员" : "普通用户"} · ${accountUsername}`,
+      avatar: <UserAvatar user={user as any} className="h-7 w-7 shrink-0" />,
+    },
+    theme: { isDark: resolvedTheme === "dark", toggle: toggleTheme },
+    onLogout: handleLogout,
+    onOpenSearch: () => setCommandOpen(true),
+  };
+
   const navigateFromAccountMenu = (path: string) => {
     setAccountMenuOpen(false);
     window.requestAnimationFrame(() => navigateFromSidebar(path));
@@ -1614,13 +1660,16 @@ function DashboardLayoutContent({
         <a className="workspace-skip-link" href="#workspace-content">跳到主要内容</a>
         {isMobile && (
           <div ref={mobileHeaderRef} data-mobile-header="true" className="glass-surface fixed inset-x-0 top-0 z-40 flex min-h-12 items-center gap-1 border-b px-1.5 md:sticky">
-            <SidebarTrigger className="h-8 w-8 shrink-0 rounded-md bg-background" />
+            {/*
+              手机上没有汉堡了：抽屉里的东西全部搬进了标签栏第五格「更多」。
+              两套导航并存的结果是两边都不完整 —— 用户不知道该点哪个。
+            */}
             {/*
               这一行就是页面标题本身，所以页面里的 H1 在手机上只留给读屏（见
               WorkspaceHeader）。同一个词在顶栏和正文各写一遍，白占 150px。
             */}
             <span className="min-w-0 flex-1 truncate font-medium tracking-tight text-foreground">
-              {activeMenuItem?.label ?? siteTitle}
+              {activeMenuItem?.label ?? (currentPath === MORE_TAB_PATH ? "更多" : siteTitle)}
             </span>
             {/* 页面的主操作挂到这里，不再单独占一行。 */}
             <div id="workspace-topbar-actions" className="flex min-w-0 shrink items-center gap-1" />
@@ -1640,7 +1689,7 @@ function DashboardLayoutContent({
             </div>
           </div>
         )}
-        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className="workspace-main flex-1 px-3 pb-4 pt-3 sm:p-6 lg:p-8">
+        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className={cn("workspace-main flex-1 px-3 pb-4 pt-3 sm:p-6 lg:p-8", isMobile && tabBarPlan.tabs.length ? "workspace-has-tabbar" : null)}>
           {/*
             兜底的「没读到」提示。
             各个列表自己会画失败态，但一页上挂着十几个查询，不可能每个都单独接一遍；
@@ -1673,7 +1722,14 @@ function DashboardLayoutContent({
             </div>
           ) : null}
           <div key={location} className="route-content-enter">
-            {children}
+            {/*
+              「更多」页要的东西全部由这里算好递下去：它已经按权限过滤过一次，
+              页面不该再算第二遍。算两遍的下场是两边不一致 —— 侧边栏里没有的
+              入口在「更多」里还点得到。
+            */}
+            <MobileNavContext.Provider value={mobileNavValue}>
+              {children}
+            </MobileNavContext.Provider>
           </div>
         </main>
         <footer className="hidden pb-4 text-center text-xs text-muted-foreground md:block">
@@ -1710,6 +1766,9 @@ function DashboardLayoutContent({
             ) : null}
           </div>
         </footer>
+        {isMobile ? (
+          <IosTabBar plan={tabBarPlan} currentPath={currentPath} onNavigate={(path) => navigateFromSidebar(path)} />
+        ) : null}
       </SidebarInset>
 
       <WorkspaceCommand open={commandOpen} onOpenChange={setCommandOpen} items={commandItems} currentPath={currentPath} onNavigate={navigateToDestination} />

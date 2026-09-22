@@ -469,7 +469,17 @@
   @media (max-width: 767px) {
     [data-mobile-main="true"] {
       padding-top: calc(var(--forwardx-mobile-header-offset, calc(3.5rem + var(--forwardx-safe-area-top))) + 0.875rem) !important;
-      padding-bottom: calc(0.75rem + var(--forwardx-safe-area-bottom)) !important;
+      /*
+        底部留白走变量，不写死。
+
+        这条规则带 !important（它要压过 Tailwind 的 pb-*），所以后来想加一个
+        「有标签栏时多让 49px」的类是压不过它的 —— 实测加了类之后还是 12px，
+        最后一张卡有一半在标签栏底下。再叠一个 !important 只会把问题推给下一个人。
+
+        改成读自定义属性：自定义属性按正常层叠走，标签栏那个类改一下变量就行，
+        不用和 !important 打架。
+      */
+      padding-bottom: calc(var(--forwardx-mobile-bottom-inset, 0.75rem) + var(--forwardx-safe-area-bottom)) !important;
     }
   }
 

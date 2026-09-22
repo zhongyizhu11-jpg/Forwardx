@@ -35,6 +35,7 @@ const ForwardGroupsPage = lazy(() => import("@/pages/ForwardGroupsRoute"));
 const HomepagePreviewPage = lazy(() => import("@/pages/HomepagePreview"));
 const HostMonitorPage = lazy(() => import("@/pages/HostMonitor"));
 const HostsPage = lazy(() => import("@/pages/Hosts"));
+const MorePage = lazy(() => import("@/pages/More"));
 const LookingGlassPage = lazy(() => import("@/pages/LookingGlass"));
 const PaymentsPage = lazy(() => import("@/pages/Payments"));
 const PlansPage = lazy(() => import("@/pages/Plans"));
@@ -132,6 +133,8 @@ function Router() {
         重置流量这些管理员专属的入口都不渲染。
       */}
       <Route path="/hosts">{routeComponent(HostsPage)}</Route>
+      {/* 手机端标签栏第五格。桌面端左侧边栏已经列全了，这一页会说明这一点 */}
+      <Route path="/more">{routeComponent(MorePage)}</Route>
       <Route path="/rules">{routeComponent(RulesPage)}</Route>
       <Route path="/looking-glass" component={LookingGlassRoute} />
       <Route path="/forward-groups">{() => <AdminRoute component={ForwardGroupsPage} />}</Route>

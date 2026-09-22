@@ -827,3 +827,199 @@
     border-color: var(--fx-text);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   iOS 导航外壳：底部标签栏 + 大标题导航栏
+   ═══════════════════════════════════════════════════════════════════════
+
+   这一层只在手机上生效。桌面端有横向空间，侧边栏比标签栏合适 ——
+   把 iPhone 的形态照搬到 1920px 宽的屏幕上，只会得到一条横跨全屏的
+   五个图标和一片空白。
+*/
+@media (max-width: 767px) {
+  /* ── 底部标签栏 ─────────────────────────────────────── */
+  .fx-tabbar {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: var(--fx-z-sticky); /* 和顶栏同一层：都是常驻外壳，都该被对话框盖住 */
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    /*
+      49px 是 iOS 标签栏的标准高度，下面再补一个 home indicator 的安全区。
+      写成 padding 而不是加高：内容要贴着 49px 那条线排，安全区是留白不是控件。
+    */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    border-top: 1px solid var(--fx-stroke-weak);
+    /*
+      标签栏是少数应该半透明的东西：内容从它底下滑过去时透出来的那点颜色
+      就是「下面还有，能继续滚」。这是信息，不是装饰。
+    */
+    background: color-mix(in srgb, var(--fx-l1-surface) 82%, transparent);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+  }
+
+  .fx-tabbar-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    height: 49px;
+    min-width: 0;
+    padding: 0 2px;
+    color: var(--fx-text-muted);
+    transition: color 120ms ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* 选中态走黑白，不引入第三种颜色去和状态语义色抢注意力 */
+  .fx-tabbar-item-active { color: var(--fx-text); }
+  .fx-tabbar-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    line-height: 12px;
+    letter-spacing: 0.01em;
+  }
+  .fx-tabbar-item-active .fx-tabbar-label { font-weight: 600; }
+
+  /*
+    有标签栏时，内容底部要让出 49px，否则最后一张卡有一半压在栏底下。
+
+    改的是变量不是 padding：index.css 里那条 [data-mobile-main] 带 !important，
+    直接写 padding-bottom 压不过它（实测还是 12px）。自定义属性按正常层叠走，
+    所以这里设一下变量就够了，安全区那一份由那条规则自己加。
+  */
+  .workspace-has-tabbar { --forwardx-mobile-bottom-inset: calc(0.75rem + 49px); }
+
+  /* ── 大标题导航栏 ───────────────────────────────────── */
+  .fx-navbar {
+    position: sticky;
+    top: 0;
+    z-index: var(--fx-z-sticky);
+    margin: 0 calc(var(--fx-page-gutter, 12px) * -1);
+    padding: env(safe-area-inset-top, 0px) var(--fx-page-gutter, 12px) 0;
+    background: color-mix(in srgb, var(--fx-l0-page) 86%, transparent);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    /*
+      分隔线只在折叠后出现 —— 停在顶部时导航栏和页面是同一块底色，
+      画一条线等于凭空切一刀。滚起来之后内容从下面穿过去，那条线才有意义。
+    */
+    border-bottom: 1px solid transparent;
+    transition: border-color 160ms ease;
+  }
+  .fx-navbar-collapsed { border-bottom-color: var(--fx-stroke-weak); }
+
+  .fx-navbar-compact {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px; /* iOS 导航栏标准高度，也正好是触摸命中区的下限 */
+  }
+  .fx-navbar-leading-spacer { width: 0; }
+
+  .fx-navbar-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    min-width: 0;
+    max-width: 45%;
+    margin-inline-start: -6px;
+    padding: 4px 4px 4px 0;
+    color: var(--fx-text);
+    font-size: 17px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /*
+    小标题只在折叠后出现，而且是从下往上「顶」进来的 —— 让它看起来是大标题
+    移上来的，而不是另一个标题凭空出现。
+  */
+  .fx-navbar-inline-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--fx-text);
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 160ms ease, transform 160ms ease;
+  }
+  .fx-navbar-collapsed .fx-navbar-inline-title { opacity: 1; transform: none; }
+
+  .fx-navbar-trailing { display: flex; flex-shrink: 0; align-items: center; gap: 2px; }
+
+  .fx-navbar-large {
+    overflow: hidden;
+    padding-bottom: 6px;
+    /*
+      折叠是高度归零 + 淡出，不是 display:none —— 后者没有过渡，标题会瞬间
+      消失，读起来像页面跳了一下。
+    */
+    max-height: 96px;
+    opacity: 1;
+    transition: max-height 200ms ease, opacity 140ms ease, padding-bottom 200ms ease;
+  }
+  .fx-navbar-collapsed .fx-navbar-large { max-height: 0; opacity: 0; padding-bottom: 0; }
+
+  .fx-navbar-large-title {
+    margin: 0;
+    font-size: 30px;
+    line-height: 36px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--fx-text);
+  }
+  .fx-navbar-subtitle {
+    margin: 2px 0 0;
+    font-size: var(--fx-size-meta);
+    line-height: 1.4;
+    color: var(--fx-text-muted);
+  }
+  .fx-navbar-below { padding-bottom: 8px; }
+}
+
+/* 桌面端这三个组件不出现；万一被渲染出来也别变成一条横跨全屏的怪东西 */
+@media (min-width: 768px) {
+  .fx-tabbar { display: none; }
+  .fx-navbar-large-title { font-size: var(--fx-size-section); }
+}
+
+/*
+  iOS 开关。
+  51×31 是 iOS 的标准尺寸 —— 比网页常见的 36×20 大一圈，因为它是要用拇指
+  按的，不是用鼠标点的。开的时候整条轨道变色，这是「开」唯一的信号，所以
+  轨道用正文黑而不是浅灰：浅灰的「开」和浅灰的「关」在阳光下分不出来。
+*/
+.fx-ios-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 51px;
+  height: 31px;
+  border-radius: 999px;
+  background: var(--fx-stroke-base);
+  transition: background-color 180ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.fx-ios-switch[aria-checked="true"] { background: var(--fx-text); }
+.fx-ios-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 2px 4px rgb(0 0 0 / 0.18);
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.fx-ios-switch[aria-checked="true"] .fx-ios-switch-knob { transform: translateX(20px); }
