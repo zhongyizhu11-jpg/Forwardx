@@ -98,6 +98,48 @@
   --fx-delivery: #6b4bb8;
   --fx-delivery-soft: rgb(107 75 184 / 12%);
 
+  /*
+    ── 网络语义别名 ──
+
+    上面那组是「颜色叫什么」，这一组是「网络里的什么东西用它」。两套名字指向
+    同一批值，因为它们回答的是不同的问题：写连线时想的是 network-standby，
+    写徽标时想的是 healthy，强行统一成一个名字只会让其中一半用起来别扭。
+
+    组件里只许用这两组名字。**不许再出现 emerald-500 / #10b981 这种**：
+    调色板颜色说的是「好看」，语义名说的才是「这是什么」。
+  */
+  --fx-network-active: var(--fx-healthy);
+  --fx-network-standby: var(--fx-standby);
+  --fx-network-degraded: var(--fx-warn);
+  --fx-network-down: var(--fx-down);
+  --fx-network-path: var(--fx-path);
+  --fx-network-path-muted: var(--fx-path-line);
+
+  --fx-health-good: var(--fx-healthy);
+  --fx-health-warning: var(--fx-warn);
+  --fx-health-critical: var(--fx-down);
+
+  /*
+    ── 图表色板 ──
+
+    Home.tsx 里原来是一串写死的十六进制（#2563eb / #10b981 / #f59e0b / ...），
+    分散在饼图、环形进度、面积图三处，换主题或做深色时一处处找。
+
+    前四位刻意和状态色一致：图表里的绿和列表里的绿必须是同一个绿，否则同一份
+    数据在两个地方是两种颜色。后面几位是纯粹的分类色，只在「第 5 个以后的
+    分片」这种没有语义的场合用。
+  */
+  --fx-chart-1: var(--fx-path);
+  --fx-chart-2: var(--fx-healthy);
+  --fx-chart-3: var(--fx-warn);
+  --fx-chart-4: var(--fx-down);
+  --fx-chart-5: var(--fx-delivery);
+  --fx-chart-6: #3f7fb8;
+  --fx-chart-7: #a8632f;
+  --fx-chart-8: #4d7a3a;
+  --fx-chart-9: #7a6a8f;
+  --fx-chart-10: var(--fx-standby);
+
   /* ═══════════════════════════════════════════════════════
      四、字号 —— 严格 6 档
 
@@ -282,6 +324,12 @@
 
   --fx-delivery: #a68ae8;
   --fx-delivery-soft: rgb(166 138 232 / 16%);
+
+  /* 纯分类色在暗底上要提亮；带语义的那几位跟着状态色走，不用在这里重写 */
+  --fx-chart-6: #6ba6dc;
+  --fx-chart-7: #d9905c;
+  --fx-chart-8: #85b86e;
+  --fx-chart-9: #ab9bc4;
 
   /* 暗色下投影几乎看不见，靠加深来做高度 */
   --fx-elevation-card: 0 1px 2px rgb(0 0 0 / 30%);

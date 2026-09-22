@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CHART_SEMANTIC_COLORS, chartSeriesColor } from "@/lib/chartPalette";
 import { mobileAuth } from "@/lib/mobileAuth";
 import { pollingInterval } from "@/lib/polling";
 import { trafficQuotaBreakdown, type TrafficQuotaSourceKind } from "@/lib/trafficQuota";
@@ -41,8 +42,11 @@ const TrafficPieChart = lazy(() => import("@/components/charts/DashboardTrafficC
 const TrafficAreaChart = lazy(() => import("@/components/charts/DashboardTrafficCharts").then((m) => ({ default: m.TrafficAreaChart })));
 
 const LOGIN_WELCOME_TOAST_KEY = "forwardx.loginWelcome";
-const TRAFFIC_PIE_COLORS = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#14b8a6", "#ec4899", "#f97316", "#84cc16", "#64748b", "#a3a3a3"];
-const DASHBOARD_RULE_ACTIVE_COLOR = "#2563eb";
+/*
+  图表色全部收口到 lib/chartPalette。写死十六进制的问题不只是换主题麻烦 ——
+  列表里「在线」是语义绿，饼图里的「在线」是另一个绿，同一份数据两种颜色。
+*/
+const DASHBOARD_RULE_ACTIVE_COLOR = CHART_SEMANTIC_COLORS.path;
 const TRAFFIC_PIE_MAX_SEGMENTS = 5;
 
 type TrafficPieDatum = {
@@ -181,7 +185,7 @@ function TrafficPieCard({
       id: item.id,
       name: item.name,
       value: item.value,
-      color: TRAFFIC_PIE_COLORS[index % TRAFFIC_PIE_COLORS.length],
+      color: chartSeriesColor(index),
       percent: sum > 0 ? Number(((item.value / sum) * 100).toFixed(1)) : 0,
     }));
   }, [data]);
@@ -716,7 +720,7 @@ function DashboardContent() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-6">
-                {isLoading ? <Skeleton className="h-20 w-20 rounded-full" /> : <CircularProgress value={onlineRate} color="#10b981" />}
+                {isLoading ? <Skeleton className="h-20 w-20 rounded-full" /> : <CircularProgress value={onlineRate} color={CHART_SEMANTIC_COLORS.healthy} />}
                 <div className="space-y-1 text-sm">
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-emerald-500" />

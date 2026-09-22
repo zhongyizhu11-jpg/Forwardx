@@ -214,7 +214,11 @@ export function NetworkPath({
               <NetworkEdge
                 edge={edge}
                 orientation={direction}
-                className={direction === "horizontal" ? "mt-1.5" : "ml-1"}
+                /*
+                  横排时把线抬到和状态点的圆心齐平：点高 8px，圆心在 4px 处，
+                  所以是 mt-1 而不是 mt-1.5。差 2px 看着就是「线没接上点」。
+                */
+                className={direction === "horizontal" ? "mt-1" : "ml-1"}
               />
             ) : null}
           </div>
