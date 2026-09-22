@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildRuleFlow, decideRuleFlowLayout, ruleVisualStateToHealth } from "./ruleFlow";
+import {
+  buildRuleFlow,
+  buildRuleFormPreview,
+  decideRuleFlowLayout,
+  ruleVisualStateToHealth,
+} from "./ruleFlow";
 
 test("直连走一行，隧道/链/组走竖排 Flow", () => {
   /*
@@ -119,4 +124,52 @@ test("认不出来的状态回 unknown，不回 healthy", () => {
   assert.equal(ruleVisualStateToHealth(""), "unknown");
   assert.equal(ruleVisualStateToHealth(null), "unknown");
   assert.equal(ruleVisualStateToHealth("nonsense"), "unknown");
+});
+
+test("预览把没填的那一节画成待填写，不替用户补上", () => {
+  /*
+    预览最容易做坏的地方是替用户把没填的补上：目标还没填就先画一个「目标」，
+    看起来这条转发已经成立了 —— 然后他点创建，被告诉缺目标地址。
+
+    预览的职责是「你现在配出来的是这个」，不是「你大概想配这个」。
+  */
+  const preview = buildRuleFormPreview({ category: "local", entry: "1.2.3.4:80" });
+  assert.deepEqual(preview.nodes.map((n) => n.name), ["1.2.3.4:80", "待填写"]);
+  assert.equal(preview.nodes[1].health, "unknown");
+  assert.equal(preview.nodes[0].health, "healthy");
+});
+
+test("选了走隧道但还没选哪条时，中间那一节是「待选择线路」", () => {
+  // 这一节确实存在，只是还不知道是谁 —— 不画的话预览会看起来像直连。
+  const preview = buildRuleFormPreview({ category: "tunnel", entry: "a:1", target: "b:2" });
+  assert.deepEqual(preview.nodes.map((n) => n.name), ["a:1", "待选择线路", "b:2"]);
+  assert.equal(preview.nodes[1].health, "unknown");
+});
+
+test("直连的预览没有中间节点", () => {
+  const preview = buildRuleFormPreview({ category: "local", entry: "a:1", target: "b:2" });
+  assert.equal(preview.nodes.length, 2);
+});
+
+test("填全之后整条预览都是 healthy", () => {
+  const preview = buildRuleFormPreview({
+    category: "tunnel",
+    entry: "a:1",
+    target: "b:2",
+    hops: ["Po0", "Jinx"],
+  });
+  assert.ok(preview.nodes.every((n) => n.health === "healthy"));
+  assert.ok(preview.edges.every((e) => e.health === "healthy"));
+});
+
+test("没填完时，相邻的线跟着变灰 —— 不能是绿线连着灰点", () => {
+  const preview = buildRuleFormPreview({ category: "local", entry: "a:1" });
+  assert.equal(preview.edges[0].health, "unknown");
+});
+
+test("预览的 title 是一条可读的路径", () => {
+  const preview = buildRuleFormPreview({
+    category: "tunnel", entry: "a:1", target: "b:2", hops: ["Po0"],
+  });
+  assert.equal(preview.title, "a:1 → Po0 → b:2");
 });

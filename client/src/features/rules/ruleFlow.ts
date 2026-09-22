@@ -143,3 +143,72 @@ export function ruleVisualStateToHealth(state: string | null | undefined): Netwo
       return "unknown";
   }
 }
+
+/**
+ * 创建 / 编辑转发时那一块实时预览。
+ *
+ * 你在方案里写的是「Review 可以在提交按钮上方即时显示」而不是做成 wizard 的
+ * 最后一步 —— 这是对的：管理员经常要快速建一条，强制分步会把三秒的事拉成
+ * 四屏。放在按钮上方则是白给的：填到哪儿就看到哪儿，不用多点一次。
+ *
+ * ── 没填完的地方要诚实 ──
+ *
+ * 预览最容易做坏的地方是**替用户把没填的补上**。比如目标还没填就先画一个
+ * 「目标」占位，看起来这条转发已经成立了 —— 然后他点创建，被告诉缺目标地址。
+ *
+ * 所以没填的那一节画成 unknown（灰点 + 虚线）并写明「待填写」：预览的职责是
+ * 「你现在配出来的是这个」，不是「你大概想配这个」。整套状态词汇表里
+ * unknown 单列一档，正是为这种场合。
+ */
+export type RuleFormPreviewInput = {
+  category: RuleCategory | string | null | undefined;
+  /** 入口地址。还没定下来时传空 */
+  entry?: string | null;
+  /** 目标地址。还没填时传空 */
+  target?: string | null;
+  /** 中间节点名。选了隧道/链/组才有 */
+  hops?: readonly string[];
+  via?: string | null;
+};
+
+export function buildRuleFormPreview(input: RuleFormPreviewInput): RuleFlow {
+  const entry = String(input.entry || "").trim();
+  const target = String(input.target || "").trim();
+  const hops = (input.hops || []).map((hop) => String(hop || "").trim()).filter(Boolean);
+  const needsHops = decideRuleFlowLayout(input.category) === "flow";
+
+  const nodes: NetworkNodeSpec[] = [
+    entry
+      ? { id: "preview-entry", name: entry, sublabel: "入口", health: "healthy" as NetworkHealth }
+      : { id: "preview-entry", name: "待填写", sublabel: "入口", health: "unknown" as NetworkHealth },
+  ];
+
+  if (needsHops) {
+    if (hops.length > 0) {
+      hops.forEach((hop, index) =>
+        nodes.push({ id: `preview-hop-${index}`, name: hop, health: "healthy" as NetworkHealth }),
+      );
+    } else {
+      // 选了「走隧道」但还没选哪条 —— 这一节确实存在，只是还不知道是谁
+      nodes.push({ id: "preview-hop-pending", name: "待选择线路", health: "unknown" as NetworkHealth });
+    }
+  }
+
+  nodes.push(
+    target
+      ? { id: "preview-target", name: target, sublabel: "目标", health: "healthy" as NetworkHealth }
+      : { id: "preview-target", name: "待填写", sublabel: "目标", health: "unknown" as NetworkHealth },
+  );
+
+  const middle = Math.max(0, Math.floor((nodes.length - 1) / 2));
+  const edges: NetworkEdgeSpec[] = nodes.slice(1).map((_, index) => {
+    const health = rollUpNetworkHealth([nodes[index].health, nodes[index + 1].health]);
+    return index === middle ? { health, via: input.via || undefined } : { health };
+  });
+
+  return {
+    nodes,
+    edges,
+    title: nodes.map((node) => node.name).join(" → "),
+  };
+}

@@ -211,7 +211,12 @@ import {
 } from "@/lib/linkTestNodeMeta";
 import { getTunnelExitNames, getTunnelHopIds, getTunnelRouteText, tunnelHopHostName } from "@/lib/tunnelDisplay";
 import { NetworkPath } from "@/components/network/NetworkPath";
-import { buildRuleFlow, decideRuleFlowLayout, ruleVisualStateToHealth } from "@/features/rules/ruleFlow";
+import {
+  buildRuleFlow,
+  buildRuleFormPreview,
+  decideRuleFlowLayout,
+  ruleVisualStateToHealth,
+} from "@/features/rules/ruleFlow";
 import {
   preferLastKnownForwardRuleVisualStatus,
   resolveForwardRuleVisualStatus,
@@ -5746,6 +5751,39 @@ function RulesContent() {
     };
   };
 
+  /**
+   * 创建 / 编辑对话框里那条实时预览。
+   *
+   * 数据全部取自**表单当前的值**而不是已保存的规则：它要回答的是
+   * 「我现在填的这些会建出什么」。
+   */
+  const createPreview = useMemo(() => {
+    const category = form.routeMode === "tunnel"
+      ? "tunnel"
+      : isForwardGroupBackedRouteModeValue(form.routeMode, form.forwardGroupId)
+        ? (getRuleForwardGroupKind({ forwardGroupId: form.forwardGroupId }, forwardGroupById) || "group")
+        : "local";
+    const hops = form.routeMode === "tunnel"
+      ? (selectedTunnel
+        ? getTunnelHopIds(selectedTunnel)
+          .map((hostId: number) => String(tunnelHopHostName(selectedTunnel, hostId, hosts) || "").trim())
+          .filter(Boolean)
+        : [])
+      : (selectedForwardGroup ? [String(selectedForwardGroup.name || "").trim()].filter(Boolean) : []);
+    const targetIp = String(form.targetIp || "").trim();
+    const targetPort = Number(form.targetPort || 0);
+    return buildRuleFormPreview({
+      category,
+      entry: Number(form.sourcePort || 0) > 0 ? `:${form.sourcePort}` : "",
+      target: targetIp && targetPort > 0 ? `${targetIp}:${targetPort}` : "",
+      hops,
+      via: FORWARD_TYPE_LABELS[form.forwardType as ForwardType] || undefined,
+    });
+  }, [
+    form.routeMode, form.forwardGroupId, form.sourcePort, form.targetIp, form.targetPort,
+    form.forwardType, selectedTunnel, selectedForwardGroup, forwardGroupById, hosts,
+  ]);
+
   /** 这条规则的紧凑卡是否已经画了 Flow —— 画了的话线路徽标就不要再写一遍路径。 */
   const ruleDrawsFlow = (rule: any) =>
     decideRuleFlowLayout(getRuleCategory(rule, forwardGroupById)) === "flow";
@@ -7911,6 +7949,23 @@ function RulesContent() {
               </div>
               )}
             </div>
+          </div>
+          {/*
+            提交前的实时预览 —— 放在按钮上方而不是做成 wizard 的最后一步。
+
+            管理员经常要快速建一条，强制分步会把三秒的事拉成四屏；放在按钮上方
+            则是白给的：填到哪儿就看到哪儿，不用多点一次。
+
+            没填的那一节画成灰点虚线并写「待填写」，不替用户补上 —— 预览的职责
+            是「你现在配出来的是这个」，不是「你大概想配这个」。
+          */}
+          <div className="shrink-0 rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l2-group)] px-3 py-2">
+            <p className="mb-1.5 text-meta text-muted-foreground">流量将经过</p>
+            <NetworkPath
+              nodes={createPreview.nodes}
+              edges={createPreview.edges}
+              orientation="vertical"
+            />
           </div>
           <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-background/95 pt-3 sm:items-center sm:justify-between">
             {/*
