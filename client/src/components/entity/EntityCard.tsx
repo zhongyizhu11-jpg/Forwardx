@@ -74,7 +74,12 @@ export function EntityHeader({
   className?: string;
 }) {
   return (
-    <div className={cn("flex min-w-0 items-start gap-2 px-4 pt-4", className)}>
+    <div
+      className={cn(
+        "flex min-w-0 items-start gap-2 px-[var(--fx-card-padding)] pt-[var(--fx-space-3)]",
+        className,
+      )}
+    >
       {health ? <StatusDot health={health} size="large" className="mt-1.5" /> : null}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-w-0 items-center gap-2">
@@ -98,17 +103,26 @@ export function EntityHeader({
  */
 export function EntityBody({
   band = false,
+  tight = false,
   className,
   children,
 }: {
   band?: boolean;
+  /**
+   * 一组彼此紧挨的同类项（三条占用条、两个速率）用 tight。
+   *
+   * 默认的 12px 是给「两块不同的内容」之间用的；三条 16px 高的占用条之间也留
+   * 12px，那一组就散成了三件事。组内紧、组间松。
+   */
+  tight?: boolean;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <div
       className={cn(
-        "flex min-w-0 flex-col gap-3 px-4 py-3",
+        "flex min-w-0 flex-col px-[var(--fx-card-padding)] py-[var(--fx-space-2)]",
+        tight ? "gap-[var(--fx-space-1)]" : "gap-[var(--fx-space-2)]",
         band && "bg-[var(--fx-l2-group)]",
         className,
       )}
@@ -125,7 +139,11 @@ export function EntityBody({
  * 像装饰，拉满的线才像「这里分成了两段」。
  */
 export function EntityDivider({ className }: { className?: string }) {
-  return <div className={cn("mx-4 h-px shrink-0 bg-[var(--fx-stroke-weak)]", className)} />;
+  return (
+    <div
+      className={cn("mx-[var(--fx-card-padding)] h-px shrink-0 bg-[var(--fx-stroke-weak)]", className)}
+    />
+  );
 }
 
 /**
@@ -136,16 +154,18 @@ export function EntityDivider({ className }: { className?: string }) {
 export function EntityFooter({
   className,
   children,
+  ...rest
 }: {
   className?: string;
   children: ReactNode;
-}) {
+} & Omit<React.HTMLAttributes<HTMLDivElement>, "children">) {
   return (
     <div
       className={cn(
-        "mt-auto flex min-w-0 items-center justify-end gap-2 border-t border-[var(--fx-stroke-weak)] px-4 py-2",
+        "fx-entity-footer mt-auto flex min-w-0 items-center justify-end gap-2 border-t border-[var(--fx-stroke-weak)] px-[var(--fx-space-2)] py-[var(--fx-space-1)]",
         className,
       )}
+      {...rest}
     >
       {children}
     </div>

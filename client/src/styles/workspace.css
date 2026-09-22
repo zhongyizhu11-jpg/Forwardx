@@ -286,8 +286,17 @@
     只收内边距和圆角，不动边框和背景：那两样是「这是一组」的信号，去掉会让
     密集的列表糊成一片。
   */
-  .workspace-main [class*="rounded-"][class*="border"]:not([data-slot]):not(button):not(input):not(textarea):not([role="button"]),
-  [role="dialog"] [class*="rounded-"][class*="border"]:not([data-slot]):not(button):not(input):not(textarea):not([role="button"]) {
+  /*
+    ⚠ 这条是「猜 DOM」而不是设计系统 API：任何带圆角和边框的元素都被它改掉，
+    包括以后新加的业务组件。它已经误伤过一次 —— Entity 卡片自己声明了
+    12px（卡片档），被这条按 9px 盖掉，而 V2 的圆角分级正是靠这个差别建立
+    层级的。
+
+    所以排除 [data-fx-entity]：凡是走设计系统的组件，自己的令牌说了算。
+    这条规则本身要在 CSS 减法那一轮整个删掉，换成明确的 fx-* 类名。
+  */
+  .workspace-main [class*="rounded-"][class*="border"]:not([data-slot]):not([data-fx-entity]):not(button):not(input):not(textarea):not([role="button"]),
+  [role="dialog"] [class*="rounded-"][class*="border"]:not([data-slot]):not([data-fx-entity]):not(button):not(input):not(textarea):not([role="button"]) {
     border-radius: 9px;
   }
 
@@ -702,4 +711,28 @@
 
 @media (pointer: coarse) {
   [data-slot="switch"]:not(.switch-compact)::before { content: ""; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%); }
+}
+
+/*
+  ═══════════════════════════════════════════════════════════
+  Entity 卡片的触摸命中区
+
+  全局 `@media (pointer: coarse) { button { min-height: 44px } }` 会把 Entity
+  卡底部那排操作顶到 44px 视觉高度 —— 一张只有五行内容的卡，光底栏就占 53px。
+
+  和列表卡那排图标同一个办法：视觉高度收到 30px，命中区用 ::after 只往纵向
+  撑回 44px。横向不撑，免得盖住旁边那一项。
+  ═══════════════════════════════════════════════════════════
+*/
+@media (pointer: coarse) {
+  .fx-entity-footer [data-slot="button"] {
+    position: relative;
+    min-height: 30px;
+    height: 30px;
+  }
+  .fx-entity-footer [data-slot="button"]::after {
+    content: "";
+    position: absolute;
+    inset: -7px 0;
+  }
 }
