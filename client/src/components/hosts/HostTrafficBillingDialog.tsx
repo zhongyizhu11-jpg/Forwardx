@@ -133,7 +133,7 @@ export default function HostTrafficBillingDialog({
         </DialogHeader>
 
         {!featureEnabled ? (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+          <div className="flex items-start gap-2 rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-xs text-[var(--fx-warn-text)]">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
               流量计费<strong>总开关是关着的</strong>，这里配了也一分钱都不会扣。要去「套餐管理 → 流量计费」先打开。

@@ -1,6 +1,6 @@
-export const APP_VERSION = "2.3.368";
+export const APP_VERSION = "2.3.369";
 export const ANDROID_APP_VERSION = "2.3.99";
-export const ANDROID_APK_RELEASE_VERSION = "2.3.368";
+export const ANDROID_APK_RELEASE_VERSION = "2.3.369";
 export const AGENT_VERSION = "2.2.196";
 
 export const PANEL_AGENT_COMPATIBILITY_LIMIT = 5;

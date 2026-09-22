@@ -100,7 +100,7 @@ function StorePlanCard({
 
   return (
     <div className="flex min-h-[29rem] flex-col overflow-hidden rounded-lg border border-border/40 bg-card/60 shadow-sm backdrop-blur-md transition-colors hover:border-primary/35">
-      <div className="h-1.5 bg-gradient-to-r from-primary/45 via-primary/20 to-emerald-500/25" />
+      <div className="h-1.5 bg-gradient-to-r from-primary/45 via-primary/20 to-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)]" />
 
       <div className="flex flex-1 flex-col gap-4 p-5">
         <div className="flex items-start justify-between gap-3">
@@ -139,7 +139,7 @@ function StorePlanCard({
                 >
                   {durationLabel(option.durationDays)}
                   {option.discountPercent > 0 ? (
-                    <span className="ml-1 rounded-sm bg-emerald-500/15 px-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                    <span className="ml-1 rounded-sm bg-[var(--fx-healthy-soft)] px-1 text-[10px] font-medium text-[var(--fx-healthy-text)]">
                       省 {option.discountPercent}%
                     </span>
                   ) : null}
@@ -564,7 +564,7 @@ export default function Store() {
                   <span>{selectedPlan ? money(listPriceCents, selectedPlan.currency) : "-"}</span>
                 </div>
                 {discountPreview && (
-                  <div className="mt-1 flex items-center justify-between text-emerald-600">
+                  <div className="mt-1 flex items-center justify-between text-[var(--fx-healthy-text)]">
                     <span>优惠</span>
                     <span>-{money(discountPreview.discountAmountCents, selectedPlan?.currency)}</span>
                   </div>

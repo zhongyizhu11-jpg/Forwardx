@@ -5,11 +5,11 @@ export function getLatencyRating(latencyMs: number | null | undefined) {
   if (typeof latencyMs !== "number" || !Number.isFinite(latencyMs)) {
     return { label: "", className: "text-muted-foreground" };
   }
-  if (latencyMs < 60) return { label: "优秀", className: "text-emerald-600 dark:text-emerald-400" };
-  if (latencyMs < 150) return { label: "良好", className: "text-yellow-600 dark:text-yellow-400" };
-  if (latencyMs < 220) return { label: "一般", className: "text-rose-500 dark:text-rose-400" };
-  if (latencyMs < 300) return { label: "较差", className: "text-red-700 dark:text-red-500" };
-  return { label: "较差", className: "text-red-700 dark:text-red-500" };
+  if (latencyMs < 60) return { label: "优秀", className: "text-[var(--fx-healthy-text)]" };
+  if (latencyMs < 150) return { label: "良好", className: "text-[var(--fx-warn-text)]" };
+  if (latencyMs < 220) return { label: "一般", className: "text-[var(--fx-down-text)]" };
+  if (latencyMs < 300) return { label: "较差", className: "text-[var(--fx-down-text)]" };
+  return { label: "较差", className: "text-[var(--fx-down-text)]" };
 }
 
 export function LatencyRating({

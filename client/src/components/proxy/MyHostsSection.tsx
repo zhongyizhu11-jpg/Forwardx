@@ -191,7 +191,7 @@ export default function MyHostsSection() {
                     一键复制不成时，长按上面这段选中即可。
                   </p>
                 ) : null}
-                <p className="pt-2 text-xs text-amber-600 dark:text-amber-500">
+                <p className="pt-2 text-xs text-[var(--fx-warn-text)]">
                   命令里带着这台机器的 Agent 令牌，谁拿到谁就能把机器接进面板，别转发给别人。
                 </p>
               </>
@@ -235,7 +235,7 @@ export default function MyHostsSection() {
               key={host.id}
               leading={
                 <span
-                  className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${host.isOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+                  className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${host.isOnline ? "bg-[var(--fx-healthy)]" : "bg-muted-foreground/40"}`}
                   title={host.isOnline ? "Agent 已连上面板" : "Agent 还没连上面板"}
                   aria-label={host.isOnline ? "在线" : "离线"}
                 />

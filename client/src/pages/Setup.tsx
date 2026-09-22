@@ -338,10 +338,10 @@ export default function Setup() {
                   key={item.id}
                   aria-current={active ? "step" : undefined}
                   className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-all duration-300 ${
-                    active ? "border-primary/40 bg-primary/10 text-primary" : done ? "border-emerald-500/25 bg-emerald-500/100/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-muted text-muted-foreground"
+                    active ? "border-primary/40 bg-primary/10 text-primary" : done ? "border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[color-mix(in_srgb,var(--fx-healthy)_100%,transparent)]/10 text-[var(--fx-healthy-text)]" : "border-border bg-muted text-muted-foreground"
                   }`}
                 >
-                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${done ? "bg-emerald-600 text-white" : active ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${done ? "bg-[var(--fx-healthy)] text-white" : active ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
                     {done ? <Check className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
                   </div>
                   <div className="min-w-0">
@@ -413,8 +413,8 @@ export default function Setup() {
                   </Alert>
 
                   {dbReady && data?.databaseConfigured && (
-                    <Alert className="border-emerald-500/25 bg-emerald-500/10/80 text-emerald-950">
-                      <Database className="h-4 w-4 text-emerald-700" />
+                    <Alert className="border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)]/80 text-emerald-950">
+                      <Database className="h-4 w-4 text-[var(--fx-healthy-text)]" />
                       <AlertTitle>当前已连接 {configuredDatabaseLabel} 数据库</AlertTitle>
                       <AlertDescription>
                         {configuredDatabaseText || "数据库连接正常。"} 如需修改数据库配置，请选择新的数据库类型并重新保存。
@@ -485,14 +485,14 @@ export default function Setup() {
                 </CardHeader>
                 <CardContent className="grid gap-5">
                   {dbReady && data?.databaseConfigured && (
-                    <div className="flex flex-col gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10/80 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-col gap-3 rounded-lg border border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)]/80 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2 font-medium text-emerald-800">
+                        <div className="flex items-center gap-2 font-medium text-[var(--fx-healthy-text)]">
                           <CheckCircle2 className="h-4 w-4 shrink-0" />
                           已连接 {configuredDatabaseLabel} 数据库
                         </div>
                         {configuredDatabaseText && (
-                          <p className="mt-1 truncate text-xs text-emerald-700/80" title={configuredDatabaseText}>
+                          <p className="mt-1 truncate text-xs text-[color-mix(in_srgb,var(--fx-healthy)_80%,transparent)]" title={configuredDatabaseText}>
                             {configuredDatabaseText}
                           </p>
                         )}
@@ -504,8 +504,8 @@ export default function Setup() {
                   )}
 
                   {hasExistingData && hasAdmin && data?.setupDataChoice !== "new-panel" && (
-                    <div className="grid gap-4 rounded-lg border border-amber-500/30 bg-amber-50/80 p-4">
-                      <Alert className="border-amber-500/30 bg-card">
+                    <div className="grid gap-4 rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[color-mix(in_srgb,var(--fx-warn)_80%,transparent)] p-4">
+                      <Alert className="border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-card">
                         <ShieldCheck className="h-4 w-4" />
                         <AlertTitle>检测到当前数据库已有面板业务数据</AlertTitle>
                         <AlertDescription>
@@ -567,7 +567,7 @@ export default function Setup() {
                       type="button"
                       disabled={hasExistingData && hasAdmin && data?.setupDataChoice !== "new-panel"}
                       onClick={() => setMode("new")}
-                      className={`rounded-lg border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${mode === "new" ? "border-emerald-500/50 bg-emerald-500/10" : "border-border bg-card hover:border-emerald-400/40"}`}
+                      className={`rounded-lg border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${mode === "new" ? "border-[color-mix(in_srgb,var(--fx-healthy)_50%,transparent)] bg-[var(--fx-healthy-soft)]" : "border-border bg-card hover:border-[color-mix(in_srgb,var(--fx-healthy)_40%,transparent)]"}`}
                     >
                       <div className="font-semibold">作为新面板使用</div>
                       <p className="mt-2 text-sm text-muted-foreground">不导入旧数据。</p>
@@ -632,7 +632,7 @@ export default function Setup() {
                           <Progress value={migrationStatus.data.progress} className="mt-3" />
                           <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                             {migrationStatus.data.status === "running" && <RotateCcw className="h-3.5 w-3.5 animate-spin" />}
-                            {migrationStatus.data.status === "success" && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}
+                            {migrationStatus.data.status === "success" && <CheckCircle2 className="h-3.5 w-3.5 text-[var(--fx-healthy-text)]" />}
                             {migrationStatus.data.error || "正在验证新面板和转发状态，请保持新旧面板可访问。"}
                           </div>
                         </div>

@@ -6,7 +6,7 @@
  */
 export function ledgerTone(item: any) {
   if (item.kind === "balance" && Number(item.amountCents) < 0) return "text-destructive";
-  if (item.kind === "balance" && Number(item.amountCents) > 0) return "text-emerald-600";
-  if (item.kind === "payment" && (item.status === "paid" || item.status === "completed")) return "text-emerald-600";
+  if (item.kind === "balance" && Number(item.amountCents) > 0) return "text-[var(--fx-healthy-text)]";
+  if (item.kind === "payment" && (item.status === "paid" || item.status === "completed")) return "text-[var(--fx-healthy-text)]";
   return "";
 }

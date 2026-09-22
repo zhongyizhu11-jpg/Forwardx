@@ -58,12 +58,12 @@ function TrafficTooltipContent({ active, payload, label }: any) {
       <p className="mb-1.5 text-xs text-muted-foreground">{data.fullLabel || label}</p>
       <div className="space-y-1">
         <p className="flex items-center gap-1.5 text-xs tabular-nums">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          <span className="h-2 w-2 rounded-full bg-[var(--fx-healthy)]" />
           <span className="text-muted-foreground">入站</span>
           <span className="ml-auto font-semibold">{formatBytes(data.bytesIn)}</span>
         </p>
         <p className="flex items-center gap-1.5 text-xs tabular-nums">
-          <span className="h-2 w-2 rounded-full bg-amber-500" />
+          <span className="h-2 w-2 rounded-full bg-[var(--fx-warn)]" />
           <span className="text-muted-foreground">出站</span>
           <span className="ml-auto font-semibold">{formatBytes(data.bytesOut)}</span>
         </p>

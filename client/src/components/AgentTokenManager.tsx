@@ -652,7 +652,7 @@ export default function AgentTokenManager({
         </div>
       </div>
 
-      <Alert className="border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+      <Alert className="border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]">
         <ShieldCheck className="h-4 w-4" />
         <AlertTitle>通讯已加密</AlertTitle>
       </Alert>
@@ -856,7 +856,7 @@ export default function AgentTokenManager({
               onChange={setInstallAddressMode}
             />
             {panelUrlUsesLoopback && (
-              <Alert className="border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+              <Alert className="border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>当前安装地址是本机回环地址</AlertTitle>
                 <AlertDescription>
@@ -983,7 +983,7 @@ export default function AgentTokenManager({
               onChange={setInstallAddressMode}
             />
             {panelUrlUsesLoopback && (
-              <Alert className="border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+              <Alert className="border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>当前安装地址是本机回环地址</AlertTitle>
                 <AlertDescription>

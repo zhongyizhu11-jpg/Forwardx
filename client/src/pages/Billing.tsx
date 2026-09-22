@@ -498,7 +498,6 @@ export default function Billing() {
             value={money(totalBalance)}
             subtitle={`${Number(billingSummary?.userCount || 0)} 个用户`}
             icon={WalletCards}
-            tone="bg-gradient-to-br from-teal-500 to-teal-600"
             loading={billingSummaryLoading}
             cacheKey="billing.totalBalance"
             fallbackValue={money(0)}
@@ -508,7 +507,6 @@ export default function Billing() {
             value={activeRedemptionCodes}
             subtitle="未使用且已启用"
             icon={Gift}
-            tone="bg-gradient-to-br from-emerald-500 to-emerald-600"
             loading={billingSummaryLoading}
             cacheKey="billing.activeRedemptionCodes"
             fallbackValue={0}
@@ -518,7 +516,6 @@ export default function Billing() {
             value={activeDiscountCodes}
             subtitle="当前可抵扣"
             icon={TicketPercent}
-            tone="bg-gradient-to-br from-orange-500 to-orange-600"
             loading={billingSummaryLoading}
             cacheKey="billing.activeDiscountCodes"
             fallbackValue={0}
@@ -795,7 +792,7 @@ export default function Billing() {
                           <p className="break-words text-sm font-medium">{tx.name || tx.username || `#${tx.userId}`}</p>
                           <p className="mt-1 text-xs text-muted-foreground">{dateText(tx.createdAt)}</p>
                         </div>
-                        <div className={`shrink-0 text-right text-sm font-medium ${Number(tx.amountCents) >= 0 ? "text-emerald-600" : "text-destructive"}`}>{money(tx.amountCents)}</div>
+                        <div className={`shrink-0 text-right text-sm font-medium ${Number(tx.amountCents) >= 0 ? "text-[var(--fx-healthy-text)]" : "text-destructive"}`}>{money(tx.amountCents)}</div>
                       </div>
                       <div className="mt-3 space-y-2 border-t border-border/40 pt-3">
                         <MobileInfoRow label="类型"><Badge variant="outline">{tx.typeLabel || balanceTypeLabel(tx.type)}</Badge></MobileInfoRow>
@@ -818,7 +815,7 @@ export default function Billing() {
                       <TableRow key={tx.id}>
                         <TableCell>{tx.name || tx.username || `#${tx.userId}`}</TableCell>
                         <TableCell><Badge variant="outline">{tx.typeLabel || balanceTypeLabel(tx.type)}</Badge></TableCell>
-                        <TableCell className={Number(tx.amountCents) >= 0 ? "text-emerald-600" : "text-destructive"}>{money(tx.amountCents)}</TableCell>
+                        <TableCell className={Number(tx.amountCents) >= 0 ? "text-[var(--fx-healthy-text)]" : "text-destructive"}>{money(tx.amountCents)}</TableCell>
                         <TableCell>{money(tx.balanceAfterCents)}</TableCell>
                         <TableCell>{tx.description || "-"}</TableCell>
                         <TableCell>{dateText(tx.createdAt)}</TableCell>

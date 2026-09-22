@@ -215,9 +215,9 @@ function statusBadge(status: string) {
     failed: "失败",
   };
   const tone = status === "paid" || status === "processing" || status === "completed"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    ? "border-[var(--fx-healthy-soft)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
     : status === "pending"
-      ? "border-amber-200 bg-amber-50 text-amber-700"
+      ? "border-[var(--fx-warn-soft)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]"
       : "border-slate-200 bg-slate-50 text-slate-600";
   return <Badge variant="outline" className={tone}>{text[status] || status}</Badge>;
 }
@@ -490,7 +490,7 @@ export default function Payments() {
             label="支付状态"
             value={form.enabled ? "已启用" : "未启用"}
             icon={ShieldCheck}
-            tone={form.enabled ? "text-emerald-600" : "text-muted-foreground"}
+            tone={form.enabled ? "text-[var(--fx-healthy-text)]" : "text-muted-foreground"}
             loading={isLoading}
             cacheKey="payments.enabled"
             fallbackValue="未启用"
@@ -508,7 +508,7 @@ export default function Payments() {
             label="已支付订单"
             value={stats?.paidOrders || 0}
             icon={CheckCircle2}
-            tone="text-emerald-600"
+            tone="text-[var(--fx-healthy-text)]"
             loading={statsLoading}
             cacheKey="payments.paidOrders"
             fallbackValue={0}
@@ -517,7 +517,7 @@ export default function Payments() {
             label="待支付订单"
             value={stats?.pendingOrders || 0}
             icon={RefreshCw}
-            tone="text-amber-600"
+            tone="text-[var(--fx-warn-text)]"
             loading={statsLoading}
             cacheKey="payments.pendingOrders"
             fallbackValue={0}
@@ -813,7 +813,7 @@ export default function Payments() {
                   <div className="flex min-w-0 items-center gap-2 text-sm">
                     {testGmPayGateway.data ? (
                       <>
-                        <Badge variant="outline" className={testGmPayGateway.data.supportsUsdt ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-destructive/30 bg-destructive/5 text-destructive"}>
+                        <Badge variant="outline" className={testGmPayGateway.data.supportsUsdt ? "border-[var(--fx-healthy-soft)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]" : "border-destructive/30 bg-destructive/5 text-destructive"}>
                           {testGmPayGateway.data.supportsUsdt ? "USDT 可用" : "USDT 不可用"}
                         </Badge>
                         <span className="truncate text-muted-foreground">

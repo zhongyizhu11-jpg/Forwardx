@@ -283,7 +283,7 @@ export default function Wallet() {
                     <TableCell>
                       <Badge variant="outline">{tx.typeLabel || balanceTypeLabel(tx.type)}</Badge>
                     </TableCell>
-                    <TableCell className={Number(tx.amountCents) >= 0 ? "text-emerald-600" : "text-destructive"}>
+                    <TableCell className={Number(tx.amountCents) >= 0 ? "text-[var(--fx-healthy-text)]" : "text-destructive"}>
                       {money(tx.amountCents)}
                     </TableCell>
                     <TableCell>{money(tx.balanceAfterCents)}</TableCell>

@@ -790,14 +790,14 @@ export function LinkTestProbeView({
       idle,
       ok,
       label,
-      lineClass: testing ? "bg-primary/70" : idle ? "bg-border" : ok ? "bg-emerald-500/70" : "bg-destructive/70",
-      textClass: testing ? "text-primary" : idle ? "text-muted-foreground" : ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive",
+      lineClass: testing ? "bg-primary/70" : idle ? "bg-border" : ok ? "bg-[color-mix(in_srgb,var(--fx-healthy)_70%,transparent)]" : "bg-destructive/70",
+      textClass: testing ? "text-primary" : idle ? "text-muted-foreground" : ok ? "text-[var(--fx-healthy-text)]" : "text-destructive",
       badgeClass: testing
         ? "border-primary/20 text-primary"
         : idle
           ? "border-border/70 text-muted-foreground"
           : ok
-            ? "border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+            ? "border-[color-mix(in_srgb,var(--fx-healthy)_20%,transparent)] text-[var(--fx-healthy-text)]"
             : "border-destructive/20 text-destructive",
     };
   };
@@ -1239,7 +1239,7 @@ export function LinkTestProbeView({
         <span className="text-muted-foreground">{isBranchView ? "最大延迟" : "合计"}</span>
         <span className={cn(
           "font-semibold tabular-nums",
-          totalLatency !== null ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+          totalLatency !== null ? "text-[var(--fx-healthy-text)]" : "text-muted-foreground",
         )}>
           {effectiveTesting
             ? "探测中"

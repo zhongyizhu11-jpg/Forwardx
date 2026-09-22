@@ -18,7 +18,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarTrigger,
   useSidebar,
   SidebarGroup,
   SidebarGroupLabel,
@@ -26,6 +25,7 @@ import {
 import { useTheme } from "@/contexts/ThemeContext";
 import {
   LayoutDashboard,
+  Ellipsis,
   LogOut,
   PanelLeft,
   Server,
@@ -66,6 +66,9 @@ import {
 } from "lucide-react";
 import { App as CapacitorApp } from "@capacitor/app";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { IosTabBar } from "@/components/ios/TabBar";
+import { MobileNavContext, type MobileNavEntry } from "@/components/ios/navigationContext";
+import { MORE_TAB_PATH, pickTabBarItems } from "@/components/ios/tabBar";
 import QRCode from "qrcode";
 import { useLocation } from "wouter";
 import { Button } from "./ui/button";
@@ -333,7 +336,6 @@ function DashboardLayoutContent({
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar, isMobile, openMobile, setOpenMobile } = useSidebar();
   const openMobileRef = useRef(openMobile);
-  const mobileHeaderRef = useRef<HTMLDivElement | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const commandOpenRef = useRef(commandOpen);
@@ -1162,6 +1164,34 @@ function DashboardLayoutContent({
     ...managementMenuItems.map(item => ({ ...item, group: isAdmin ? "管理与账户" : "工具与账户" })),
     ...otherMenuItems.map(item => ({ ...item, group: "扩展" })),
   ];
+  /*
+    ── 手机端底部标签栏 ──────────────────────────────────────────
+
+    上一版手机端是「汉堡 → 抽屉」，而抽屉的问题不是不好看，是**它把常用的和
+    罕用的放在同一个深度**：去「转发规则」和去「支付对接」都是点汉堡、找一行、
+    点一下。实际使用里前者一天几十次，后者一个月一次。
+
+    标签栏摊开最常去的四格，剩下的收进「更多」。优先级表写在这里而不是写死在
+    组件里，因为它要和权限过滤后的结果求交集 —— 一个只有转发权限的租户不该
+    拿到一个点进去 403 的「主机」格。
+  */
+  const tabBarPlan = pickTabBarItems({
+    destinations: commandItems,
+    preferred: ["/", "/rules", "/hosts", "/tunnels", "/client-subscriptions"],
+    /*
+      标签栏一格 78px、字号 10px，「转发规则」四个汉字挤进去要么截断要么
+      糊成一团。侧边栏保持全名（那里有横向空间，也要和别的「…管理」区分），
+      标签栏用短名 —— iOS 自己的标签也全是两个词以内。
+    */
+    shortLabels: {
+      "/rules": "转发",
+      "/hosts": "主机",
+      "/tunnels": "链路",
+      "/client-subscriptions": "订阅",
+    },
+    more: { path: MORE_TAB_PATH, label: "更多", icon: Ellipsis },
+  });
+
   const closeMobileNavigation = () => {
     if (isMobile) {
       setAccountMenuOpen(false);
@@ -1179,6 +1209,21 @@ function DashboardLayoutContent({
       window.open(item.externalUrl, "_blank", "noopener,noreferrer");
     } else navigateFromSidebar(item.path);
   };
+
+  const mobileNavValue = {
+    overflow: tabBarPlan.overflow as MobileNavEntry[],
+    currentPath,
+    navigate: navigateToDestination,
+    account: {
+      name: accountDisplayName,
+      detail: `${isAdmin ? "管理员" : "普通用户"} · ${accountUsername}`,
+      avatar: <UserAvatar user={user as any} className="h-7 w-7 shrink-0" />,
+    },
+    theme: { isDark: resolvedTheme === "dark", toggle: toggleTheme },
+    onLogout: handleLogout,
+    onOpenSearch: () => setCommandOpen(true),
+  };
+
   const navigateFromAccountMenu = (path: string) => {
     setAccountMenuOpen(false);
     window.requestAnimationFrame(() => navigateFromSidebar(path));
@@ -1267,47 +1312,6 @@ function DashboardLayoutContent({
   useEffect(() => {
     if (isMobile && !openMobile) setAccountMenuOpen(false);
   }, [isMobile, openMobile]);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (!isMobile) {
-      root.style.removeProperty("--forwardx-mobile-header-offset");
-      return;
-    }
-    const header = mobileHeaderRef.current;
-    if (!header) return;
-
-    let frame = 0;
-    const syncHeaderOffset = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        const height = Math.ceil(header.getBoundingClientRect().height || 0);
-        const fallbackHeight = 56;
-        const safeAreaTop = Number.parseFloat(getComputedStyle(root).getPropertyValue("--forwardx-safe-area-top")) || 0;
-        const nextHeight = Math.max(height, fallbackHeight + safeAreaTop);
-        root.style.setProperty("--forwardx-mobile-header-offset", `${nextHeight}px`);
-      });
-    };
-
-    syncHeaderOffset();
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(syncHeaderOffset) : null;
-    observer?.observe(header);
-    const visualViewport = window.visualViewport;
-    window.addEventListener("resize", syncHeaderOffset);
-    window.addEventListener("orientationchange", syncHeaderOffset);
-    visualViewport?.addEventListener("resize", syncHeaderOffset);
-    visualViewport?.addEventListener("scroll", syncHeaderOffset);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer?.disconnect();
-      window.removeEventListener("resize", syncHeaderOffset);
-      window.removeEventListener("orientationchange", syncHeaderOffset);
-      visualViewport?.removeEventListener("resize", syncHeaderOffset);
-      visualViewport?.removeEventListener("scroll", syncHeaderOffset);
-      root.style.removeProperty("--forwardx-mobile-header-offset");
-    };
-  }, [isMobile]);
 
   useEffect(() => {
     if (!mobileAuth.isNative || !isMobile) return;
@@ -1478,9 +1482,9 @@ function DashboardLayoutContent({
                 {displayUpgradeJob?.status === "running" ? (
                   <Loader2 className="forwardx-icon-spin h-4 w-4 shrink-0" />
                 ) : displayUpgradeJob?.status === "success" ? (
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--fx-healthy-text)]" />
                 ) : displayUpgradeJob?.status === "waiting_assets" ? (
-                  <RefreshCw className="h-4 w-4 shrink-0 text-amber-500" />
+                  <RefreshCw className="h-4 w-4 shrink-0 text-[var(--fx-warn-text)]" />
                 ) : displayUpgradeJob?.status === "error" ? (
                   <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
                 ) : (
@@ -1516,7 +1520,7 @@ function DashboardLayoutContent({
                         {upgradeProgress.steps.map((step) => (
                           <div key={step.label} className="flex min-w-0 items-center gap-1.5 text-[10px] leading-4 text-primary/75">
                             {step.done ? (
-                              <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" />
+                              <CheckCircle2 className="h-3 w-3 shrink-0 text-[var(--fx-healthy-text)]" />
                             ) : step.active ? (
                               <Loader2 className="forwardx-icon-spin h-3 w-3 shrink-0" />
                             ) : (
@@ -1612,35 +1616,17 @@ function DashboardLayoutContent({
 
       <SidebarInset className="workspace-with-mobile-nav">
         <a className="workspace-skip-link" href="#workspace-content">跳到主要内容</a>
-        {isMobile && (
-          <div ref={mobileHeaderRef} data-mobile-header="true" className="glass-surface fixed inset-x-0 top-0 z-40 flex min-h-12 items-center gap-1 border-b px-1.5 md:sticky">
-            <SidebarTrigger className="h-8 w-8 shrink-0 rounded-md bg-background" />
-            {/*
-              这一行就是页面标题本身，所以页面里的 H1 在手机上只留给读屏（见
-              WorkspaceHeader）。同一个词在顶栏和正文各写一遍，白占 150px。
-            */}
-            <span className="min-w-0 flex-1 truncate font-medium tracking-tight text-foreground">
-              {activeMenuItem?.label ?? siteTitle}
-            </span>
-            {/* 页面的主操作挂到这里，不再单独占一行。 */}
-            <div id="workspace-topbar-actions" className="flex min-w-0 shrink items-center gap-1" />
-            <div className="flex shrink-0 items-center">
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCommandOpen(true)} aria-label="查找功能"><Search className="h-4 w-4" /></Button>
-              <button
-                onClick={toggleTheme}
-                className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded-lg transition-colors"
-                aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"}
-              >
-                {resolvedTheme === "dark" ? (
-                  <Sun className="h-4 w-4" />
-                ) : (
-                  <Moon className="h-4 w-4" />
-                )}
-              </button>
-            </div>
-          </div>
-        )}
-        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className="workspace-main flex-1 px-3 pb-4 pt-3 sm:p-6 lg:p-8">
+        {/*
+          手机端不再有这条常驻顶栏。
+
+          它同时干四件事：写页面名、挂主操作、放搜索、放主题开关 —— 而这四件事
+          在 iOS 上分属三个地方：页面名是页面自己的大标题（滚动时才收进顶栏），
+          主操作跟着大标题走，搜索和主题在「更多」里。常驻一条 56px 的栏去放
+          这些，等于每一页都先扣掉一条规则的高度。
+
+          页面名由各页的 WorkspaceHeader 用 IosNavigationBar 画，见那个组件。
+        */}
+        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className={cn("workspace-main flex-1 px-3 pb-4 pt-3 sm:p-6 lg:p-8", isMobile && tabBarPlan.tabs.length ? "workspace-has-tabbar" : null, isMobile ? "workspace-has-iosnav" : null)}>
           {/*
             兜底的「没读到」提示。
             各个列表自己会画失败态，但一页上挂着十几个查询，不可能每个都单独接一遍；
@@ -1661,7 +1647,7 @@ function DashboardLayoutContent({
             </div>
           ) : null}
           {expiryNoticeVisible ? (
-            <div className="mb-4 flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-4 flex flex-col gap-2 rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
               <p className="min-w-0">
                 {expiryDaysLeft === 0
                   ? `「${expiryNotice?.planName || "你的套餐"}」今天到期，到期后订阅和转发都会停。`
@@ -1673,7 +1659,14 @@ function DashboardLayoutContent({
             </div>
           ) : null}
           <div key={location} className="route-content-enter">
-            {children}
+            {/*
+              「更多」页要的东西全部由这里算好递下去：它已经按权限过滤过一次，
+              页面不该再算第二遍。算两遍的下场是两边不一致 —— 侧边栏里没有的
+              入口在「更多」里还点得到。
+            */}
+            <MobileNavContext.Provider value={mobileNavValue}>
+              {children}
+            </MobileNavContext.Provider>
           </div>
         </main>
         <footer className="hidden pb-4 text-center text-xs text-muted-foreground md:block">
@@ -1710,6 +1703,9 @@ function DashboardLayoutContent({
             ) : null}
           </div>
         </footer>
+        {isMobile ? (
+          <IosTabBar plan={tabBarPlan} currentPath={currentPath} onNavigate={(path) => navigateFromSidebar(path)} />
+        ) : null}
       </SidebarInset>
 
       <WorkspaceCommand open={commandOpen} onOpenChange={setCommandOpen} items={commandItems} currentPath={currentPath} onNavigate={navigateToDestination} />
@@ -1748,7 +1744,7 @@ function DashboardLayoutContent({
                 </div>
 
                 {upgradeStatus?.upgradeEnabled === false && (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                  <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-sm text-[var(--fx-warn-text)]">
                     {isDockerDeployment ? `Docker 部署请复制下方一键脚本到服务器执行${panelVersionActionLabel}。` : `当前环境未配置自动${panelVersionActionLabel}命令，无法在面板内一键${panelVersionActionLabel}。`}
                   </div>
                 )}
@@ -1756,7 +1752,7 @@ function DashboardLayoutContent({
                 {isDockerDeployment && (
                   <div className="space-y-3 rounded-lg border border-border/40 bg-background/60 p-3">
                     {updateInfo?.pendingReason && !updateInfo.error && (
-                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                      <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-xs leading-5 text-[var(--fx-warn-text)]">
                         {updateInfo.pendingReason}
                       </div>
                     )}
@@ -1777,7 +1773,7 @@ function DashboardLayoutContent({
                       {progress.steps.map((step) => (
                         <div key={step.label} className="flex min-w-0 items-center gap-2 text-xs">
                           {step.done ? (
-                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[var(--fx-healthy-text)]" />
                           ) : step.active ? (
                             <Loader2 className="forwardx-icon-spin h-3.5 w-3.5 shrink-0 text-primary" />
                           ) : (
@@ -1791,7 +1787,7 @@ function DashboardLayoutContent({
                 )}
 
                 {isWaitingAssets && (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                  <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-sm text-[var(--fx-warn-text)]">
                     <div className="flex items-center gap-2 font-medium">
                       <RefreshCw className="h-4 w-4" />
                       发布资产构建中
@@ -1813,7 +1809,7 @@ function DashboardLayoutContent({
                 )}
 
                 {isSuccess && (
-                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                  <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] bg-[var(--fx-healthy-soft)] p-3 text-sm text-[var(--fx-healthy-text)]">
                     {panelVersionActionLabel}任务已完成，面板正在重启。{upgradeRefreshText}。
                   </div>
                 )}
@@ -1988,7 +1984,7 @@ function DashboardLayoutContent({
             </div>
           ) : twoFactorStatus?.enabled ? (
             <div className="space-y-4 py-2">
-              <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+              <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] p-3 text-sm text-[var(--fx-healthy-text)]">
                 当前账户已启用双重验证。
               </div>
               <div className="space-y-2">

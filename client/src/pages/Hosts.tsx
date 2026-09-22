@@ -763,9 +763,9 @@ function formatHostExpiryTitle(stoppedAt: unknown, remainingDays: string) {
 
 function hostRemainingClass(value: string) {
   if (value === "已到期") return "text-destructive";
-  if (value === "不足1天") return "text-amber-500";
+  if (value === "不足1天") return "text-[var(--fx-warn-text)]";
   if (value === "--") return "text-muted-foreground";
-  return "text-emerald-500";
+  return "text-[var(--fx-healthy-text)]";
 }
 
 function compactHostOsInfo(value: unknown) {
@@ -880,8 +880,8 @@ function HostListFlowPair({
       className="mx-auto grid w-[96px] max-w-full grid-cols-[12px_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1 text-xs tabular-nums"
       title={`${inTitle || inValue}\n${outTitle || outValue}`}
     >
-      <ArrowDown className="h-3 w-3 text-emerald-500" />
-      <span className="min-w-0 truncate text-right font-medium text-emerald-500">{inValue}</span>
+      <ArrowDown className="h-3 w-3 text-[var(--fx-healthy-text)]" />
+      <span className="min-w-0 truncate text-right font-medium text-[var(--fx-healthy-text)]">{inValue}</span>
       <ArrowUp className="h-3 w-3 text-muted-foreground" />
       <span className="min-w-0 truncate text-right font-medium text-foreground">{outValue}</span>
     </div>
@@ -895,8 +895,8 @@ function HostListStatusBadge({ host }: { host: any }) {
       className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] font-medium leading-none"
       title={online ? "Agent 在线" : "Agent 离线"}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${online ? "bg-emerald-500" : "bg-destructive"}`} />
-      <span className={online ? "text-emerald-500" : "text-destructive"}>{online ? "在线" : "离线"}</span>
+      <span className={`h-1.5 w-1.5 rounded-full ${online ? "bg-[var(--fx-healthy)]" : "bg-destructive"}`} />
+      <span className={online ? "text-[var(--fx-healthy-text)]" : "text-destructive"}>{online ? "在线" : "离线"}</span>
     </span>
   );
 }
@@ -907,7 +907,7 @@ function HostSummaryCard({
   subtitle,
   icon: Icon,
   leadingIcon: LeadingIcon,
-  leadingTone = "bg-emerald-500",
+  leadingTone = "bg-[var(--fx-healthy)]",
   iconTone = "bg-chart-2/10 text-chart-2",
   tone,
   loading,
@@ -1055,7 +1055,7 @@ function HostTrafficSummaryCard({
             cacheKey={`${cacheKey}.in`}
             animated={animated}
             icon={ArrowDownToLine}
-            tone="bg-emerald-500"
+            tone="bg-[var(--fx-healthy)]"
           />
           <HostTrafficDirectionStat
             label="出向"
@@ -1064,7 +1064,7 @@ function HostTrafficSummaryCard({
             cacheKey={`${cacheKey}.out`}
             animated={animated}
             icon={ArrowUpFromLine}
-            tone="bg-amber-500"
+            tone="bg-[var(--fx-warn)]"
           />
         </div>
       </CardContent>
@@ -1226,11 +1226,18 @@ function HostGroupFilterBar({
     [groups],
   );
   if (enabledGroups.length === 0) return null;
+  /*
+    选中态是整块反白（黑底白字），不是染一层绿。
+
+    chart-1 在令牌里绑的是「正常」那个状态色 —— 拿它做「我选中了这一组」，
+    等于在同一屏里让「这台机器正常」和「我点了这一格」共用一个颜色。
+    分组是选择，不是状态，所以走黑白，和分段控件的选中项同一套。
+  */
   const chipClass = (active: boolean) => [
-    "inline-flex h-9 shrink-0 items-center gap-2 rounded-md border px-3 text-sm transition-colors",
+    "inline-flex h-9 shrink-0 items-center gap-2 rounded-[var(--fx-radius-control)] px-3 text-sm transition-colors",
     active
-      ? "border-chart-1/35 bg-chart-1/10 text-chart-1 shadow-sm"
-      : "border-border/45 bg-card/60 text-muted-foreground hover:bg-muted/45 hover:text-foreground",
+      ? "bg-[var(--fx-text)] font-semibold text-[var(--fx-text-inverse)]"
+      : "border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] text-muted-foreground hover:text-foreground",
   ].join(" ");
   const countForGroup = (group: HostGroupView) => Number(groupCounts[Number(group.id)] || 0);
 
@@ -1239,7 +1246,7 @@ function HostGroupFilterBar({
       <button type="button" className={chipClass(selectedGroupId === "all")} onClick={() => onSelectGroup("all")}>
         <Server className="h-3.5 w-3.5" />
         <span>全部</span>
-        <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === "all" ? "bg-chart-1/15 text-chart-1" : "bg-background/70 text-muted-foreground")}>{totalHosts}</span>
+        <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === "all" ? "bg-white/20 text-[var(--fx-text-inverse)]" : "text-muted-foreground")}>{totalHosts}</span>
       </button>
       {enabledGroups.map((group) => (
         <button
@@ -1251,7 +1258,7 @@ function HostGroupFilterBar({
         >
           <FolderKanban className="h-3.5 w-3.5" />
           <span className="max-w-[160px] truncate">{group.name}</span>
-          <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === Number(group.id) ? "bg-chart-1/15 text-chart-1" : "bg-background/70 text-muted-foreground")}>{countForGroup(group)}</span>
+          <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === Number(group.id) ? "bg-white/20 text-[var(--fx-text-inverse)]" : "text-muted-foreground")}>{countForGroup(group)}</span>
         </button>
       ))}
     </div>
@@ -2248,7 +2255,7 @@ function HostsContent() {
             「0 / 4 在线」待在同一行。
           */}
           {updateCount > 0 && user?.role === "admin" && (
-            <Badge variant="outline" className="justify-center gap-1.5 border-amber-500/30 px-2.5 py-1 text-xs text-amber-500">
+            <Badge variant="outline" className="justify-center gap-1.5 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-2.5 py-1 text-xs text-[var(--fx-warn-text)]">
               <AlertTriangle className="h-3 w-3" />
               {updateCount} 台发现新版本
             </Badge>
@@ -2732,7 +2739,7 @@ function HostsContent() {
                                   </span>
                                 )}
                                 {agentNeedsUpdate && (
-                                  <Badge variant="outline" className="h-4 shrink-0 border-amber-500/30 px-1 py-0 text-[9px] leading-none text-amber-500">
+                                  <Badge variant="outline" className="h-4 shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1 py-0 text-[9px] leading-none text-[var(--fx-warn-text)]">
                                     新版本
                                   </Badge>
                                 )}

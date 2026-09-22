@@ -127,7 +127,7 @@ function TrafficPieLoadingState() {
       <div className="flex h-44 min-w-0 items-center justify-center">
         <div className="relative flex h-32 w-32 items-center justify-center">
           <div className="absolute inset-0 rounded-full border-[18px] border-muted/70" />
-          <div className="absolute inset-0 animate-spin rounded-full border-[18px] border-transparent border-r-blue-600/30 border-t-blue-600/80" />
+          <div className="absolute inset-0 animate-spin rounded-full border-[18px] border-transparent border-r-[color-mix(in_srgb,var(--fx-path)_30%,transparent)] border-t-[color-mix(in_srgb,var(--fx-path)_80%,transparent)]" />
           <div className="absolute inset-7 rounded-full bg-card/90 shadow-inner" />
           <div className="relative space-y-2 text-center">
             <Skeleton className="mx-auto h-4 w-16" />
@@ -215,7 +215,7 @@ function TrafficPieCard({
           <div className="grid gap-3 sm:grid-cols-[170px_minmax(0,1fr)] lg:grid-cols-1 2xl:grid-cols-[170px_minmax(0,1fr)]">
             <div className="h-44 min-w-0">
               {/* 图表库还在路上时沿用同一个转圈，换过来看不出接缝。 */}
-              <Suspense fallback={<div className="flex h-full items-center justify-center"><div className="h-24 w-24 animate-spin rounded-full border-[14px] border-muted/70 border-r-blue-600/30 border-t-blue-600/80" /></div>}>
+              <Suspense fallback={<div className="flex h-full items-center justify-center"><div className="h-24 w-24 animate-spin rounded-full border-[14px] border-muted/70 border-r-[color-mix(in_srgb,var(--fx-path)_30%,transparent)] border-t-[color-mix(in_srgb,var(--fx-path)_80%,transparent)]" /></div>}>
                 <TrafficPieChart
                   chartData={chartData}
                   total={total}
@@ -429,7 +429,7 @@ function DashboardContent() {
                 <Shield className="h-4 w-4" />
                 我的消耗
               </CardTitle>
-              <Badge variant="outline" className="border-emerald-500/30 text-emerald-600">
+              <Badge variant="outline" className="border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]">
                 <AnimatedStatValue
                   value="管理员权限"
                   loading={accountStatusLoading}
@@ -521,7 +521,7 @@ function DashboardContent() {
                 我的账户状态
               </CardTitle>
               <div className="flex flex-wrap gap-2">
-                <Badge variant={canForward ? "outline" : "destructive"} className={canForward ? "border-emerald-500/30 text-emerald-600" : ""}>
+                <Badge variant={canForward ? "outline" : "destructive"} className={canForward ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]" : ""}>
                   <AnimatedStatValue
                     value={canForwardText}
                     loading={accountStatusLoading}
@@ -529,7 +529,7 @@ function DashboardContent() {
                     fallbackValue="转发已停用"
                   />
                 </Badge>
-                <Badge variant={expiry.tone === "danger" ? "destructive" : "outline"} className={expiry.tone === "warning" ? "border-amber-500/40 text-amber-600" : ""}>
+                <Badge variant={expiry.tone === "danger" ? "destructive" : "outline"} className={expiry.tone === "warning" ? "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] text-[var(--fx-warn-text)]" : ""}>
                   <AnimatedStatValue
                     value={expiry.label}
                     loading={accountStatusLoading}
@@ -674,11 +674,11 @@ function DashboardContent() {
             </CardTitle>
             <div className="flex items-center gap-3 text-[10px]">
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="h-2 w-2 rounded-full bg-[var(--fx-healthy)]" />
                 入站
               </span>
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-full bg-amber-500" />
+                <span className="h-2 w-2 rounded-full bg-[var(--fx-warn)]" />
                 出站
               </span>
             </div>
@@ -723,7 +723,7 @@ function DashboardContent() {
                 {isLoading ? <Skeleton className="h-20 w-20 rounded-full" /> : <CircularProgress value={onlineRate} color={CHART_SEMANTIC_COLORS.healthy} />}
                 <div className="space-y-1 text-sm">
                   <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    <span className="h-2 w-2 rounded-full bg-[var(--fx-healthy)]" />
                     在线 {stats?.onlineHosts ?? 0}
                   </div>
                   <div className="flex items-center gap-2 text-muted-foreground">

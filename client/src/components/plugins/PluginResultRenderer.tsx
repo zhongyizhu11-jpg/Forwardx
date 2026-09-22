@@ -30,7 +30,7 @@ function displayValue(value: unknown, field: PluginResultFieldDefinition) {
 function statusTone(value: unknown) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (["true", "ok", "online", "active", "running", "success", "applied", "effective", "enabled"].includes(normalized)) {
-    return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    return "border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]";
   }
   if (["false", "error", "offline", "inactive", "failed", "timeout", "disabled"].includes(normalized)) {
     return "border-destructive/25 bg-destructive/10 text-destructive";

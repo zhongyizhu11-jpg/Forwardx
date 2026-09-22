@@ -42,9 +42,9 @@ function SetupStep({
   action?: ReactNode;
 }) {
   const badge = tone === "ok"
-    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+    ? "border-[color-mix(in_srgb,var(--fx-healthy)_40%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
     : tone === "warn"
-    ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+    ? "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]"
     : "border-border/60 bg-muted/40 text-muted-foreground";
   const Icon = tone === "ok" ? Check : tone === "warn" ? AlertTriangle : X;
   return (
@@ -135,7 +135,7 @@ export default function TrafficBillingSection() {
         这个开关原来在界面上根本点不到，人配完了价等账单，等到的是 0。
       */}
       {!isLoading && !enabled ? (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+        <div className="flex items-start gap-2 rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-sm text-[var(--fx-warn-text)]">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             <strong>总开关关着</strong>，下面配的价一分钱都不会扣，转发的流量仍然记进各自的套餐额度。

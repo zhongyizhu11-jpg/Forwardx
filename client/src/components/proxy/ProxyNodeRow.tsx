@@ -65,11 +65,11 @@ export type ProxyNodeRowAccent = "own" | "pasted" | "shared";
 const ACCENT_BORDERS: Record<ProxyNodeRowAccent, string> = {
   // 青：和「我的节点」那段的色章、「落地节点」那张概览卡同色 —— 自建的才是真正属于
   // 这个面板的那一类。
-  own: "border-l-[3px] border-l-teal-500/50",
+  own: "border-l-[3px] border-l-[color-mix(in_srgb,var(--fx-healthy)_50%,transparent)]",
   // 天蓝：从别处粘来的，凭据不是面板生成的。
-  pasted: "border-l-[3px] border-l-sky-500/50",
+  pasted: "border-l-[3px] border-l-[color-mix(in_srgb,var(--fx-path)_50%,transparent)]",
   // 紫：别人给的，只能用不能改。
-  shared: "border-l-[3px] border-l-violet-500/50",
+  shared: "border-l-[3px] border-l-[color-mix(in_srgb,var(--fx-delivery)_50%,transparent)]",
 };
 
 /**

@@ -67,9 +67,9 @@ interface MultiHopEditorProps {
 const missingTunnelEntryIpTip = "请先配置内网IP";
 const missingIpv6Tip = "该主机暂无IPv6";
 const ROLE_COLORS: Record<HopRole, string> = {
-  entry: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600",
-  mid: "border-amber-500/40 bg-amber-500/10 text-amber-600",
-  exit: "border-teal-500/35 bg-teal-500/10 text-teal-700",
+  entry: "border-[color-mix(in_srgb,var(--fx-healthy)_40%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]",
+  mid: "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]",
+  exit: "border-[color-mix(in_srgb,var(--fx-healthy)_35%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]",
 };
 
 const ROLE_LABELS: Record<HopRole, string> = {

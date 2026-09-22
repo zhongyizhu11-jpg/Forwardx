@@ -117,18 +117,18 @@ import { toast } from "sonner";
  */
 const CLIENT_ICONS: Record<string, { icon: LucideIcon; className: string }> = {
   // mihomo 的吉祥物就是只猫。
-  clash: { icon: Cat, className: "bg-sky-500/10 text-sky-600 dark:text-sky-400" },
-  stash: { icon: Layers, className: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
-  singbox: { icon: Package, className: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
-  loon: { icon: Waves, className: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
-  surge: { icon: AudioLines, className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-  quantumultx: { icon: Atom, className: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
-  hiddify: { icon: Shield, className: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
-  shadowrocket: { icon: Rocket, className: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
-  v2rayng: { icon: Binary, className: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
-  surfboard: { icon: Ship, className: "bg-lime-500/10 text-lime-600 dark:text-lime-400" },
-  nekobox: { icon: Boxes, className: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-  nekoray: { icon: Blocks, className: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400" },
+  clash: { icon: Cat, className: "bg-[var(--fx-path-soft)] text-[var(--fx-path)]" },
+  stash: { icon: Layers, className: "bg-[var(--fx-delivery-soft)] text-[var(--fx-delivery)]" },
+  singbox: { icon: Package, className: "bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]" },
+  loon: { icon: Waves, className: "bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]" },
+  surge: { icon: AudioLines, className: "bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]" },
+  quantumultx: { icon: Atom, className: "bg-[var(--fx-delivery-soft)] text-[var(--fx-delivery)]" },
+  hiddify: { icon: Shield, className: "bg-[var(--fx-path-soft)] text-[var(--fx-path)]" },
+  shadowrocket: { icon: Rocket, className: "bg-[var(--fx-down-soft)] text-[var(--fx-down-text)]" },
+  v2rayng: { icon: Binary, className: "bg-[var(--fx-path-soft)] text-[var(--fx-path)]" },
+  surfboard: { icon: Ship, className: "bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]" },
+  nekobox: { icon: Boxes, className: "bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]" },
+  nekoray: { icon: Blocks, className: "bg-[var(--fx-delivery-soft)] text-[var(--fx-delivery)]" },
   v2rayn: { icon: Binary, className: "bg-slate-500/10 text-slate-600 dark:text-slate-400" },
 };
 
@@ -218,8 +218,8 @@ function writeStored(key: string, value: string) {
 }
 
 const NODE_HEALTH_STYLES: Record<ProxyNodeHealth["state"], string> = {
-  online: "bg-emerald-500",
-  offline: "bg-red-500",
+  online: "bg-[var(--fx-healthy)]",
+  offline: "bg-[var(--fx-down)]",
   // 灰色而不是红色：没人在探它不等于它挂了，标红会把好节点冤枉成故障。
   unknown: "bg-muted-foreground/40",
 };
@@ -284,7 +284,7 @@ function renderTokenFailure(token: any) {
   if (status.kind !== "failed") return null;
   return (
     <span
-      className="inline-flex min-w-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400"
+      className="inline-flex min-w-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-[var(--fx-warn-text)]"
       title={`客户端来拉过，被挡下了：${PROXY_SUB_TOKEN_FAILURE_LABELS[status.reason]}`}
     >
       <AlertTriangle className="h-3 w-3 shrink-0" />
@@ -947,11 +947,11 @@ export default function ClientSubscriptionsPage() {
               variant="outline"
               className={`shrink-0 gap-1.5 px-3 py-1.5 ${
                 healthSummary.badge.tone === "warn"
-                  ? "border-amber-500/30 text-amber-600"
-                  : "border-emerald-500/30 text-emerald-600"
+                  ? "border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] text-[var(--fx-warn-text)]"
+                  : "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]"
               }`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${healthSummary.badge.tone === "warn" ? "bg-amber-500" : "bg-emerald-500"}`} />
+              <span className={`h-1.5 w-1.5 rounded-full ${healthSummary.badge.tone === "warn" ? "bg-[var(--fx-warn)]" : "bg-[var(--fx-healthy)]"}`} />
               {healthSummary.badge.text}
             </Badge>
           ) : null}
@@ -968,7 +968,6 @@ export default function ClientSubscriptionsPage() {
             value={preview?.nodes.length ?? 0}
             subtitle={`中转 ${relayPreviewNodes.length} · 直连 ${directPreviewNodes.length}`}
             icon={Zap}
-            tone="bg-gradient-to-br from-sky-500 to-sky-600"
             loading={previewQuery.isLoading}
             cacheKey="subscriptions.stats.nodes"
             fallbackValue={0}
@@ -984,7 +983,6 @@ export default function ClientSubscriptionsPage() {
             value={nodeCount}
             subtitle={healthSummary.subtitle}
             icon={Server}
-            tone="bg-gradient-to-br from-teal-500 to-teal-600"
             loading={nodesQuery.isLoading}
             cacheKey="subscriptions.stats.landing"
             fallbackValue={0}
@@ -995,7 +993,6 @@ export default function ClientSubscriptionsPage() {
             value={tokens.length}
             subtitle={tokens.length > 0 ? "导入客户端用的地址" : "还没建"}
             icon={Link2}
-            tone="bg-gradient-to-br from-violet-500 to-violet-600"
             loading={tokensQuery.isLoading}
             cacheKey="subscriptions.stats.tokens"
             fallbackValue={0}
@@ -1006,9 +1003,6 @@ export default function ClientSubscriptionsPage() {
             value={pendingCount}
             subtitle={pendingSubtitle}
             icon={pendingCount > 0 ? AlertTriangle : CheckCircle2}
-            tone={pendingCount > 0
-              ? "bg-gradient-to-br from-amber-500 to-amber-600"
-              : "bg-gradient-to-br from-emerald-500 to-emerald-600"}
             loading={previewQuery.isLoading}
             cacheKey="subscriptions.stats.pending"
             fallbackValue={0}
@@ -1040,7 +1034,7 @@ export default function ClientSubscriptionsPage() {
               不用再读一遍标题。图标散着放也能认，但认的是图标；带上颜色认的是「这一块」。
             */}
             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400">
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--fx-delivery-soft)] text-[var(--fx-delivery)]">
                 <Link2 className="h-3.5 w-3.5" />
               </span>
               订阅链接
@@ -1559,10 +1553,10 @@ export default function ClientSubscriptionsPage() {
                     {hostOfflineNodes.map((item: any) => (
                       <div
                         key={`host-offline-${item.nodeId}`}
-                        className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-2"
+                        className="space-y-1 rounded-md border border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn)]/[0.06] px-2.5 py-2"
                       >
                         <div className="flex items-center gap-2">
-                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[var(--fx-warn-text)]" />
                           <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.nodeName}</span>
                         </div>
                         <p className="break-all text-xs text-muted-foreground">
@@ -1603,10 +1597,10 @@ export default function ClientSubscriptionsPage() {
                     {driftedRules.map((item) => (
                       <div
                         key={`drift-${item.ruleId}`}
-                        className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-2"
+                        className="space-y-1 rounded-md border border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn)]/[0.06] px-2.5 py-2"
                       >
                         <div className="flex items-center gap-2">
-                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[var(--fx-warn-text)]" />
                           <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.ruleName}</span>
                         </div>
                         <p className="break-all text-xs text-muted-foreground">
@@ -1813,7 +1807,7 @@ export default function ClientSubscriptionsPage() {
                 <p className="min-w-0 text-xs text-muted-foreground">
                   订阅里额外给出这个节点自己的地址。
                   {nodeIncludeDirect ? (
-                    <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                    <span className="mt-1 block text-[var(--fx-warn-text)]">
                       该节点 IP 会出现在每条订阅地址里。
                     </span>
                   ) : null}
@@ -1871,7 +1865,7 @@ export default function ClientSubscriptionsPage() {
                   </div>
                   <p className="text-xs text-muted-foreground">
                     面板自己会累加，这里只是用来跟机房的账单对齐。
-                    <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                    <span className="mt-1 block text-[var(--fx-warn-text)]">
                       面板只数得到经转发规则走过的流量 —— 订阅里的「直连」条目和这台机器上跑的别的服务都不计入，
                       所以这个数只会比机房账单小，不会大。
                     </span>
@@ -1964,7 +1958,7 @@ export default function ClientSubscriptionsPage() {
                     <p className="text-xs text-muted-foreground">
                       连接先经由它建立。
                       {nodeFrontProxyId > 0 ? (
-                        <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                        <span className="mt-1 block text-[var(--fx-warn-text)]">
                           Loon 与 QX 需在客户端里手连一次。
                         </span>
                       ) : null}

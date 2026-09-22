@@ -285,7 +285,7 @@ export default function Subscriptions() {
               </Button>
             )}
             <Badge variant="outline" className="w-fit gap-1.5 px-3 py-1.5">
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+              <CheckCircle2 className="h-3.5 w-3.5 text-[var(--fx-healthy-text)]" />
               {activeCount} 个生效套餐
             </Badge>
           </>} />
@@ -314,11 +314,11 @@ export default function Subscriptions() {
           「余额」只会以为自己还得再掏一笔。
         */}
         {meteredRules > 0 && (
-          <Card className="border-amber-500/30 bg-amber-500/[0.04]">
+          <Card className="border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn)]/[0.04]">
             <CardHeader className="gap-2 pb-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <Coins className="h-4 w-4 text-amber-600 dark:text-amber-400" /> 按量计费
+                  <Coins className="h-4 w-4 text-[var(--fx-warn-text)]" /> 按量计费
                 </CardTitle>
                 <CardDescription>
                   你有 {meteredRules} 条转发按 GB 扣余额{meteredPriceText ? `，${meteredPriceText}` : ""}。这部分不占套餐流量额度。
@@ -581,7 +581,7 @@ export default function Subscriptions() {
                   <span>{money(renewingPrice, renewingSub?.currency || "CNY")}</span>
                 </div>
                 {discountPreview && (
-                  <div className="mt-1 flex items-center justify-between text-emerald-600">
+                  <div className="mt-1 flex items-center justify-between text-[var(--fx-healthy-text)]">
                     <span>优惠</span>
                     <span>-{money(discountPreview.discountAmountCents, renewingSub?.currency || "CNY")}</span>
                   </div>

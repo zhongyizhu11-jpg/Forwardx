@@ -18,8 +18,8 @@ type Props = {
 
 function utilizationTone(utilization: number) {
   if (utilization >= 0.9) return "text-destructive";
-  if (utilization >= 0.7) return "text-amber-600 dark:text-amber-400";
-  return "text-emerald-600 dark:text-emerald-400";
+  if (utilization >= 0.7) return "text-[var(--fx-warn-text)]";
+  return "text-[var(--fx-healthy-text)]";
 }
 
 /**
@@ -79,7 +79,7 @@ export function BandwidthAggregationSummary({ groupId, open }: Props) {
       <Progress value={Math.min(100, Math.round(utilization * 100))} className="h-1.5" />
 
       {data.reason ? (
-        <p className="text-xs text-amber-600 dark:text-amber-400">{data.reason}</p>
+        <p className="text-xs text-[var(--fx-warn-text)]">{data.reason}</p>
       ) : null}
 
       <div className="space-y-1.5">

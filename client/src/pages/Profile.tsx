@@ -608,7 +608,7 @@ function ProfileContent() {
             ) : twoFactorStatus?.enabled ? (
               <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_220px]">
                 <div className="space-y-3">
-                  <div className="flex items-start gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                  <div className="flex items-start gap-2 rounded-lg border border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] p-3 text-sm text-[var(--fx-healthy-text)]">
                     <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>当前账号已启用双因素认证。</span>
                   </div>
