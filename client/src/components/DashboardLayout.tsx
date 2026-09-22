@@ -336,7 +336,6 @@ function DashboardLayoutContent({
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar, isMobile, openMobile, setOpenMobile } = useSidebar();
   const openMobileRef = useRef(openMobile);
-  const mobileHeaderRef = useRef<HTMLDivElement | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const commandOpenRef = useRef(commandOpen);
@@ -1315,47 +1314,6 @@ function DashboardLayoutContent({
   }, [isMobile, openMobile]);
 
   useEffect(() => {
-    const root = document.documentElement;
-    if (!isMobile) {
-      root.style.removeProperty("--forwardx-mobile-header-offset");
-      return;
-    }
-    const header = mobileHeaderRef.current;
-    if (!header) return;
-
-    let frame = 0;
-    const syncHeaderOffset = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        const height = Math.ceil(header.getBoundingClientRect().height || 0);
-        const fallbackHeight = 56;
-        const safeAreaTop = Number.parseFloat(getComputedStyle(root).getPropertyValue("--forwardx-safe-area-top")) || 0;
-        const nextHeight = Math.max(height, fallbackHeight + safeAreaTop);
-        root.style.setProperty("--forwardx-mobile-header-offset", `${nextHeight}px`);
-      });
-    };
-
-    syncHeaderOffset();
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(syncHeaderOffset) : null;
-    observer?.observe(header);
-    const visualViewport = window.visualViewport;
-    window.addEventListener("resize", syncHeaderOffset);
-    window.addEventListener("orientationchange", syncHeaderOffset);
-    visualViewport?.addEventListener("resize", syncHeaderOffset);
-    visualViewport?.addEventListener("scroll", syncHeaderOffset);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer?.disconnect();
-      window.removeEventListener("resize", syncHeaderOffset);
-      window.removeEventListener("orientationchange", syncHeaderOffset);
-      visualViewport?.removeEventListener("resize", syncHeaderOffset);
-      visualViewport?.removeEventListener("scroll", syncHeaderOffset);
-      root.style.removeProperty("--forwardx-mobile-header-offset");
-    };
-  }, [isMobile]);
-
-  useEffect(() => {
     if (!mobileAuth.isNative || !isMobile) return;
     let disposed = false;
     let removeListener: (() => void) | undefined;
@@ -1658,38 +1616,17 @@ function DashboardLayoutContent({
 
       <SidebarInset className="workspace-with-mobile-nav">
         <a className="workspace-skip-link" href="#workspace-content">跳到主要内容</a>
-        {isMobile && (
-          <div ref={mobileHeaderRef} data-mobile-header="true" className="glass-surface fixed inset-x-0 top-0 z-40 flex min-h-12 items-center gap-1 border-b px-1.5 md:sticky">
-            {/*
-              手机上没有汉堡了：抽屉里的东西全部搬进了标签栏第五格「更多」。
-              两套导航并存的结果是两边都不完整 —— 用户不知道该点哪个。
-            */}
-            {/*
-              这一行就是页面标题本身，所以页面里的 H1 在手机上只留给读屏（见
-              WorkspaceHeader）。同一个词在顶栏和正文各写一遍，白占 150px。
-            */}
-            <span className="min-w-0 flex-1 truncate font-medium tracking-tight text-foreground">
-              {activeMenuItem?.label ?? (currentPath === MORE_TAB_PATH ? "更多" : siteTitle)}
-            </span>
-            {/* 页面的主操作挂到这里，不再单独占一行。 */}
-            <div id="workspace-topbar-actions" className="flex min-w-0 shrink items-center gap-1" />
-            <div className="flex shrink-0 items-center">
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCommandOpen(true)} aria-label="查找功能"><Search className="h-4 w-4" /></Button>
-              <button
-                onClick={toggleTheme}
-                className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded-lg transition-colors"
-                aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"}
-              >
-                {resolvedTheme === "dark" ? (
-                  <Sun className="h-4 w-4" />
-                ) : (
-                  <Moon className="h-4 w-4" />
-                )}
-              </button>
-            </div>
-          </div>
-        )}
-        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className={cn("workspace-main flex-1 px-3 pb-4 pt-3 sm:p-6 lg:p-8", isMobile && tabBarPlan.tabs.length ? "workspace-has-tabbar" : null)}>
+        {/*
+          手机端不再有这条常驻顶栏。
+
+          它同时干四件事：写页面名、挂主操作、放搜索、放主题开关 —— 而这四件事
+          在 iOS 上分属三个地方：页面名是页面自己的大标题（滚动时才收进顶栏），
+          主操作跟着大标题走，搜索和主题在「更多」里。常驻一条 56px 的栏去放
+          这些，等于每一页都先扣掉一条规则的高度。
+
+          页面名由各页的 WorkspaceHeader 用 IosNavigationBar 画，见那个组件。
+        */}
+        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className={cn("workspace-main flex-1 px-3 pb-4 pt-3 sm:p-6 lg:p-8", isMobile && tabBarPlan.tabs.length ? "workspace-has-tabbar" : null, isMobile ? "workspace-has-iosnav" : null)}>
           {/*
             兜底的「没读到」提示。
             各个列表自己会画失败态，但一页上挂着十几个查询，不可能每个都单独接一遍；

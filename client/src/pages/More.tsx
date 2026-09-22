@@ -1,6 +1,7 @@
 import { ChevronRight, LogOut, Moon, Search, Sun } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
+import WorkspaceHeader from "@/components/WorkspaceHeader";
 import {
   GroupedList,
   ListRow,
@@ -28,6 +29,7 @@ export default function MorePage() {
   */
   return (
     <DashboardLayout>
+      <WorkspaceHeader title="更多" />
       <MoreContent />
     </DashboardLayout>
   );

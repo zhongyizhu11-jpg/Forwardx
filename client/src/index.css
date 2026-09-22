@@ -211,10 +211,6 @@
       opacity: 0;
       transform: translateY(8px);
     }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
   }
 
   @keyframes forwardx-card-enter {
@@ -263,12 +259,24 @@
     opacity: 0;
   }
 
+  /*
+    填充模式是 backwards，不是 both。
+
+    both 会在动画结束后一直保留 100% 那一帧的值 —— 哪怕那个值是
+    `transform: translateY(0)`，它也是一个「确实存在的」transform，会**永久**
+    给这个包裹层建一个 containing block。于是里面任何 position: sticky / fixed
+    的东西都改成相对这个包裹层定位而不是视口：实测页面的大标题导航栏滚到
+    504px 时 top 变成 -504，也就是根本没粘住，跟着内容一起走掉了。
+
+    backwards 只在动画开始前应用 from（防止首帧闪一下），结束之后不留值，
+    元素回到自己的 transform: none。顺带也不再为每个页面永久占一个合成层。
+  */
   .route-content-enter {
-    animation: forwardx-page-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: forwardx-page-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
   }
 
   .tab-content-enter[data-state="active"] {
-    animation: forwardx-page-enter 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: forwardx-page-enter 200ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
   }
 
   .stagger-card {
@@ -468,7 +476,12 @@
 
   @media (max-width: 767px) {
     [data-mobile-main="true"] {
-      padding-top: calc(var(--forwardx-mobile-header-offset, calc(3.5rem + var(--forwardx-safe-area-top))) + 0.875rem) !important;
+      /*
+        顶部留白也走变量。手机端已经没有常驻顶栏了 —— 页面自己的大标题
+        导航栏是 sticky 的，安全区那一份由它自己带。这里再留 56px 出来，
+        导航栏会先被推到屏幕中间、滚动时再跳回顶部，看着像页面抖了一下。
+      */
+      padding-top: var(--forwardx-mobile-top-inset, calc(var(--forwardx-mobile-header-offset, calc(3.5rem + var(--forwardx-safe-area-top))) + 0.875rem)) !important;
       /*
         底部留白走变量，不写死。
 

@@ -1226,11 +1226,18 @@ function HostGroupFilterBar({
     [groups],
   );
   if (enabledGroups.length === 0) return null;
+  /*
+    选中态是整块反白（黑底白字），不是染一层绿。
+
+    chart-1 在令牌里绑的是「正常」那个状态色 —— 拿它做「我选中了这一组」，
+    等于在同一屏里让「这台机器正常」和「我点了这一格」共用一个颜色。
+    分组是选择，不是状态，所以走黑白，和分段控件的选中项同一套。
+  */
   const chipClass = (active: boolean) => [
-    "inline-flex h-9 shrink-0 items-center gap-2 rounded-md border px-3 text-sm transition-colors",
+    "inline-flex h-9 shrink-0 items-center gap-2 rounded-[var(--fx-radius-control)] px-3 text-sm transition-colors",
     active
-      ? "border-chart-1/35 bg-chart-1/10 text-chart-1 shadow-sm"
-      : "border-border/45 bg-card/60 text-muted-foreground hover:bg-muted/45 hover:text-foreground",
+      ? "bg-[var(--fx-text)] font-semibold text-[var(--fx-text-inverse)]"
+      : "border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] text-muted-foreground hover:text-foreground",
   ].join(" ");
   const countForGroup = (group: HostGroupView) => Number(groupCounts[Number(group.id)] || 0);
 
@@ -1239,7 +1246,7 @@ function HostGroupFilterBar({
       <button type="button" className={chipClass(selectedGroupId === "all")} onClick={() => onSelectGroup("all")}>
         <Server className="h-3.5 w-3.5" />
         <span>全部</span>
-        <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === "all" ? "bg-chart-1/15 text-chart-1" : "bg-background/70 text-muted-foreground")}>{totalHosts}</span>
+        <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === "all" ? "bg-white/20 text-[var(--fx-text-inverse)]" : "text-muted-foreground")}>{totalHosts}</span>
       </button>
       {enabledGroups.map((group) => (
         <button
@@ -1251,7 +1258,7 @@ function HostGroupFilterBar({
         >
           <FolderKanban className="h-3.5 w-3.5" />
           <span className="max-w-[160px] truncate">{group.name}</span>
-          <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === Number(group.id) ? "bg-chart-1/15 text-chart-1" : "bg-background/70 text-muted-foreground")}>{countForGroup(group)}</span>
+          <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === Number(group.id) ? "bg-white/20 text-[var(--fx-text-inverse)]" : "text-muted-foreground")}>{countForGroup(group)}</span>
         </button>
       ))}
     </div>

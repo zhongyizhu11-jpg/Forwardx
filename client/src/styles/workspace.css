@@ -896,6 +896,9 @@
   */
   .workspace-has-tabbar { --forwardx-mobile-bottom-inset: calc(0.75rem + 49px); }
 
+  /* 有页面自己的导航栏时，顶部不再预留常驻顶栏的高度 */
+  .workspace-has-iosnav { --forwardx-mobile-top-inset: 0px; }
+
   /* ── 大标题导航栏 ───────────────────────────────────── */
   .fx-navbar {
     position: sticky;
@@ -957,6 +960,28 @@
   .fx-navbar-collapsed .fx-navbar-inline-title { opacity: 1; transform: none; }
 
   .fx-navbar-trailing { display: flex; flex-shrink: 0; align-items: center; gap: 2px; }
+
+  /*
+    导航栏里的按钮不画面。
+
+    iOS 导航栏的按钮一律是「光秃秃一个字或一个图标」 —— 它已经站在导航栏里，
+    位置本身就说明了它是操作，再套一个描边圆角盒子是多说一遍。实测页面传过来
+    的 `···` 带边框和投影，在大标题旁边像一块贴上去的补丁。
+
+    [class] 提特指度是因为这些按钮带着 Tailwind 的 bg-/border- 工具类。
+  */
+  .fx-navbar-trailing button[class],
+  .fx-navbar-trailing [data-slot="button"][class] {
+    height: 36px;
+    min-width: 36px;
+    padding-inline: 6px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--fx-text);
+  }
+  /* 桌面端那几个「显示模式」切换在手机上本来就是 hidden，别让上面这条把它放出来 */
+  .fx-navbar-trailing .hidden { display: none; }
 
   .fx-navbar-large {
     overflow: hidden;
