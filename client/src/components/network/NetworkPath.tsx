@@ -215,10 +215,18 @@ export function NetworkPath({
                 edge={edge}
                 orientation={direction}
                 /*
-                  横排时把线抬到和状态点的圆心齐平：点高 8px，圆心在 4px 处，
-                  所以是 mt-1 而不是 mt-1.5。差 2px 看着就是「线没接上点」。
+                  线要落在状态点的圆心上，横竖两个方向都是。
+
+                  横排：点高 8px，圆心在 4px 处，所以 mt-1（4px），不是 mt-1.5。
+                  竖排：点宽 8px 从 x=0 起，圆心在 x=4；边自己的 w-2 容器已经把
+                  线居中到 4px 了，所以**不能再加左边距** —— 之前那个 ml-1 把线
+                  推到 x=8，比圆心右了 4px，一条三跳的路径看上去就是线和点各走
+                  各的，根本没连起来。
+
+                  差几个像素在这里不是审美问题：Path 的全部意义就是「这两个点
+                  是连着的」，线没接上点，这句话就没说出来。
                 */
-                className={direction === "horizontal" ? "mt-1" : "ml-1"}
+                className={direction === "horizontal" ? "mt-1" : undefined}
               />
             ) : null}
           </div>

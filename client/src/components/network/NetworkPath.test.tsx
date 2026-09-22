@@ -66,6 +66,17 @@ test("edges 比 nodes 少一段时，剩下的按默认实线补，不报错", (
   assert.match(html, /Jinx/);
 });
 
+test("竖排时连线不带左边距 —— 它要落在状态点的圆心上", () => {
+  /*
+    边自己的 w-2 容器已经把线居中到 x=4，和 8px 状态点的圆心重合。再加 ml-1
+    会把线推到 x=8，实机上看就是线和点各走各的，根本没连起来。
+  */
+  const html = renderToStaticMarkup(
+    <NetworkPath nodes={[po0, relay, jinx]} orientation="vertical" />,
+  );
+  assert.doesNotMatch(html, /class="[^"]*\bml-1\b/);
+});
+
 test("空节点列表渲染成空，不抛错", () => {
   assert.equal(renderToStaticMarkup(<NetworkPath nodes={[]} />), "");
 });
