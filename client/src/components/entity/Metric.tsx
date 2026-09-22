@@ -113,7 +113,11 @@ export function ResourceMeter({
   return (
     <div className={cn("flex min-w-0 items-center gap-2", className)}>
       <span className="w-10 shrink-0 text-meta text-muted-foreground">{label}</span>
-      <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-[var(--fx-radius-pill)] bg-[var(--fx-l2-group)]">
+      {/*
+        轨道用线色而不是填充色。面全白之后，浅灰填充在白底上就是看不见 ——
+        而一条 1px 的轨道本来就更像「一条线」，不是「一块底」。
+      */}
+      <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-[var(--fx-radius-pill)] bg-[var(--fx-stroke-weak)]">
         <span
           className="block h-full rounded-[var(--fx-radius-pill)]"
           style={{ width: `${value}%`, backgroundColor: color }}

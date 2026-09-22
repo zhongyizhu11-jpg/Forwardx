@@ -123,7 +123,11 @@ export function EntityBody({
       className={cn(
         "flex min-w-0 flex-col px-[var(--fx-card-padding)] py-[var(--fx-space-2)]",
         tight ? "gap-[var(--fx-space-1)]" : "gap-[var(--fx-space-2)]",
-        band && "bg-[var(--fx-l2-group)]",
+        /*
+          band 原来是一块浅灰底。面全白之后改成上下各一条细线 —— 要表达的本来
+          就是「这一段和上下文不是一回事」，一条线说得清楚，一块灰只是在涂色。
+        */
+        band && "border-y border-[var(--fx-stroke-weak)]",
         className,
       )}
     >
@@ -192,13 +196,25 @@ export function EntityTag({
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center gap-1 rounded-[var(--fx-radius-control)] px-1.5 py-0.5 text-meta",
+        "inline-flex shrink-0 items-center gap-1 rounded-[var(--fx-radius-control)] border px-1.5 py-0.5 text-meta",
         className,
       )}
+      /*
+        中性档靠边框成形，不靠底色。面全白之后灰底标记就是一片看不见的白，
+        而一个标记的形状本来也可以由一条线给出。
+      */
       style={
         tone
-          ? { color: `var(--fx-${tone})`, backgroundColor: `var(--fx-${tone}-soft)` }
-          : { color: "var(--fx-text-secondary)", backgroundColor: "var(--fx-l2-group)" }
+          ? {
+              color: `var(--fx-${tone})`,
+              backgroundColor: `var(--fx-${tone}-soft)`,
+              borderColor: "transparent",
+            }
+          : {
+              color: "var(--fx-text-secondary)",
+              backgroundColor: "transparent",
+              borderColor: "var(--fx-stroke-base)",
+            }
       }
     >
       {children}

@@ -7959,7 +7959,7 @@ function RulesContent() {
             没填的那一节画成灰点虚线并写「待填写」，不替用户补上 —— 预览的职责
             是「你现在配出来的是这个」，不是「你大概想配这个」。
           */}
-          <div className="shrink-0 rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l2-group)] px-3 py-2">
+          <div className="shrink-0 rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-base)] px-3 py-2">
             <p className="mb-1.5 text-meta text-muted-foreground">流量将经过</p>
             <NetworkPath
               nodes={createPreview.nodes}

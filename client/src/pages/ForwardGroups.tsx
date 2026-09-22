@@ -1791,8 +1791,8 @@ export function ForwardGroupsContent({
                     }
                   : {
                       color: "var(--fx-text-secondary)",
-                      backgroundColor: "var(--fx-l2-group)",
-                      borderColor: "var(--fx-stroke-weak)",
+                      backgroundColor: "transparent",
+                      borderColor: "var(--fx-stroke-base)",
                     }
               }
               title={memberHealthTitle(group, member)}
@@ -1839,7 +1839,7 @@ export function ForwardGroupsContent({
                     </div>
                   </div>
 
-                  <div className="space-y-2 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] p-2.5">
+                  <div className="space-y-2 rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-weak)] p-2.5">
                     <div className="text-meta text-muted-foreground">{groupMemberTitle(group)}</div>
                     {renderGroupMembers(group)}
                   </div>

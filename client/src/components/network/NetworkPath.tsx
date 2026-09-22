@@ -263,7 +263,7 @@ export function PathPreview({
   return (
     <div
       className={cn(
-        "rounded-[var(--fx-radius-card)] border border-border bg-[var(--fx-l2-group)] p-4",
+        "rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-base)] p-4",
         className,
       )}
     >
