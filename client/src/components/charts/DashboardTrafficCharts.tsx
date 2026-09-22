@@ -49,6 +49,21 @@ function TrafficTooltipContent({ active, payload, label }: any) {
 
 const AXIS_TICK = { fontSize: 10, fill: "var(--fx-text-muted)" };
 
+/**
+ * Y 轴刻度：一个 <text>，不折行。
+ *
+ * 默认刻度会按轴宽自动折词，「12.66 GB」被拆成数字一行、单位一行 —— 一根轴上
+ * 五个刻度就是十行字。加宽轴只能把折行推迟到更大的数，还白占手机上的横向空间；
+ * 刻度本来就一行放得下，问题只是它会折。
+ */
+function ByteAxisTick({ x, y, payload }: { x?: number; y?: number; payload?: { value?: number } }) {
+  return (
+    <text x={x} y={y} dy={3} textAnchor="end" fontSize={AXIS_TICK.fontSize} fill={AXIS_TICK.fill}>
+      {formatBytes(payload?.value ?? 0)}
+    </text>
+  );
+}
+
 export function TrafficAreaChart({ chartData }: { chartData: any[] }) {
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -73,15 +88,10 @@ export function TrafficAreaChart({ chartData }: { chartData: any[] }) {
           interval="preserveStartEnd"
         />
         <YAxis
-          tick={AXIS_TICK}
+          tick={<ByteAxisTick />}
           tickLine={false}
           axisLine={false}
-          tickFormatter={(value) => formatBytes(value)}
-          /*
-            原来是 56，「8.46 GB」塞不下，被折成两行（数字一行、单位一行）——
-            一根轴上五个刻度就是十行字。
-          */
-          width={64}
+          width={60}
           domain={[0, (dataMax: number) => Math.max(1024, Math.ceil((dataMax || 0) * 1.2))]}
           allowDecimals={false}
         />

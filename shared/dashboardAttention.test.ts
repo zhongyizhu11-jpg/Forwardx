@@ -114,7 +114,11 @@ test("每一行说出了什么事，再给一条下一步最有用的线索", ()
 test("暂停那一行：标题就是出了什么事，下面说原因也说出路", () => {
   const described = describeAttentionRow(row("forward-paused", 1, { name: "", count: 3, pauseReason: "expired" }));
   assert.equal(described.title, "转发已暂停");
-  assert.equal(described.detail, "3 条转发停着 · 账户已到期，续期后自动恢复");
+  assert.equal(
+    described.detail,
+    "账户到期了，续期后自动恢复 · 3 条转发停着",
+    "原因和出路在前：窄屏上截断时先丢的应该是条数，不是出路",
+  );
   assert.match(
     describeAttentionRow(row("forward-paused", 1, { name: "", count: 1, pauseReason: "traffic_billing_balance" })).detail,
     /充值/,

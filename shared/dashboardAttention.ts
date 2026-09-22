@@ -155,11 +155,11 @@ export function formatAgo(elapsedMs: number): string {
 export function tenantPauseReasonText(reason: string | null | undefined): string {
   switch (reason) {
     case "expired":
-      return "账户已到期，续期后自动恢复";
+      return "账户到期了，续期后自动恢复";
     case "traffic_limit":
-      return "流量额度用完了，加购流量或等下个周期";
+      return "流量额度用完了，加购或等下个周期";
     case "traffic_billing_balance":
-      return "按量计费余额不足，充值后自动恢复";
+      return "余额不足，充值后自动恢复";
     case "manual":
       return "管理员暂停了你的转发";
     default:
@@ -208,9 +208,10 @@ export function describeAttentionRow(row: DashboardAttentionRow, now = Date.now(
       return {
         // 这一行是合出来的，没有「一个东西」可以当标题 —— 标题就说出了什么事。
         title: label,
+        // 原因和出路在前、条数在后：窄屏上截断时，先丢的应该是不那么要紧的那半句。
         detail: joinParts([
-          Number(row.count) > 0 ? `${row.count} 条转发停着` : null,
           tenantPauseReasonText(row.pauseReason),
+          Number(row.count) > 0 ? `${row.count} 条转发停着` : null,
         ]),
       };
     default:

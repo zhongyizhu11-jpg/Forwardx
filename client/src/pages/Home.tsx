@@ -3,26 +3,16 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { quotaSourceLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import { formatBytes } from "@shared/formatBytes";
-import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DashboardLayout from "@/components/DashboardLayout";
 import MobileAppSettings from "@/components/MobileAppSettings";
 import SystemStatusHeader, { type SystemHealth } from "@/components/SystemStatusHeader";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { mobileAuth } from "@/lib/mobileAuth";
 import { pollingInterval } from "@/lib/polling";
 import { trafficQuotaBreakdown } from "@/lib/trafficQuota";
 import { trpc } from "@/lib/trpc";
+import { AccountSection } from "@/features/dashboard/AccountSection";
 import { AttentionSection } from "@/features/dashboard/AttentionSection";
 import { TrafficSurface, type TrafficChartPoint } from "@/features/dashboard/TrafficSurface";
-import {
-  Activity,
-  Coins,
-  Package,
-  Shield,
-  WalletCards,
-} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -148,18 +138,9 @@ function DashboardContent() {
   const accountExpiresAt = currentUserTraffic ? currentUserTraffic.expiresAt ?? null : activeSubscription?.expiresAt ?? null;
   const expiry = quota.hasQuota ? getExpiryStatus(accountExpiresAt) : { label: "---", tone: "normal" as const };
   const canForward = isAdmin || !!currentUserTraffic?.canAddRules;
-  const canForwardText = canForward ? "转发已启用" : "转发已停用";
   const quotaExpiryText = quota.hasQuota ? formatDate(accountExpiresAt) : "---";
-  const quotaProgressText = quota.hasQuota
-    ? trafficLimit > 0
-      ? `${formatBytes(trafficUsed)} / ${formatBytes(trafficLimit)} (${trafficPercent}%)`
-      : `${formatBytes(trafficUsed)} / 不限`
-    : "---";
-  const quotaProgressValue = quota.hasQuota && trafficLimit > 0 ? trafficPercent : 0;
   const trafficBillingBytesText = trafficBillingEnabled ? formatBytes(trafficBillingBytes) : "未开启";
   const trafficBillingAmountText = trafficBillingEnabled ? money(trafficBillingAmount) : "-";
-  const trafficBillingAdminSubtitle = trafficBillingEnabled ? `已计费 ${trafficBillingBilledGb}GB` : "流量计费功能未开启";
-  const trafficBillingUserSubtitle = trafficBillingEnabled ? `已计费 ${trafficBillingBilledGb}GB` : "管理员未开启";
 
   const mobileReminderSnapshot = useMemo(
     () => ({
@@ -171,251 +152,37 @@ function DashboardContent() {
   );
 
   const accountSection = (
-    <>
-      {isAdmin ? (
-        <Card className="relative overflow-hidden border-border bg-card">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
-          <CardHeader className="pb-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <Shield className="h-4 w-4" />
-                我的消耗
-              </CardTitle>
-              <Badge variant="outline" className="border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]">
-                <AnimatedStatValue
-                  value="管理员权限"
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.adminBadge`}
-                  fallbackValue="管理员权限"
-                />
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-lg border border-border/50 bg-background/35 p-3">
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Activity className="h-3 w-3" />
-                  我的已用流量
-                </p>
-                <AnimatedStatValue
-                  as="p"
-                  value={formatBytes(trafficUsed)}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.trafficUsed`}
-                  fallbackValue="0 B"
-                  className="mt-1 text-xl font-semibold tabular-nums"
-                />
-                <p className="mt-1 text-[11px] text-muted-foreground">按当前登录账号统计</p>
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/35 p-3">
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Coins className="h-3 w-3" />
-                  计费流量
-                </p>
-                <AnimatedStatValue
-                  as="p"
-                  value={trafficBillingBytesText}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.billingTraffic`}
-                  fallbackValue="未开启"
-                  className="mt-1 text-xl font-semibold tabular-nums"
-                />
-                <AnimatedStatValue
-                  as="p"
-                  value={trafficBillingAdminSubtitle}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.billingTrafficSubtitle`}
-                  fallbackValue="流量计费功能未开启"
-                  className="mt-1 text-[11px] text-muted-foreground"
-                />
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/35 p-3">
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <WalletCards className="h-3 w-3" />
-                  计费消费
-                </p>
-                <AnimatedStatValue
-                  as="p"
-                  value={trafficBillingAmountText}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.billingAmount`}
-                  fallbackValue="-"
-                  className="mt-1 text-xl font-semibold tabular-nums"
-                />
-                <p className="mt-1 text-[11px] text-muted-foreground">仅统计当前账号</p>
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/35 p-3">
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Shield className="h-3 w-3" />
-                  权限状态
-                </p>
-                <AnimatedStatValue
-                  as="p"
-                  value="管理员"
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.permission`}
-                  fallbackValue="管理员"
-                  className="mt-1 text-xl font-semibold"
-                />
-                <p className="mt-1 text-[11px] text-muted-foreground">不受套餐订阅限制</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card className="relative overflow-hidden border-border bg-card">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
-          <CardHeader className="pb-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <Shield className="h-4 w-4" />
-                我的账户状态
-              </CardTitle>
-              <div className="flex flex-wrap gap-2">
-                <Badge variant={canForward ? "outline" : "destructive"} className={canForward ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]" : ""}>
-                  <AnimatedStatValue
-                    value={canForwardText}
-                    loading={accountStatusLoading}
-                    cacheKey={`home.account.${accountCacheScope}.canForward`}
-                    fallbackValue="转发已停用"
-                  />
-                </Badge>
-                <Badge variant={expiry.tone === "danger" ? "destructive" : "outline"} className={expiry.tone === "warning" ? "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] text-[var(--fx-warn-text)]" : ""}>
-                  <AnimatedStatValue
-                    value={expiry.label}
-                    loading={accountStatusLoading}
-                    cacheKey={`home.account.${accountCacheScope}.expiry`}
-                    fallbackValue="---"
-                  />
-                </Badge>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
-              <div className="rounded-lg border border-border/50 bg-background/35 p-3 xl:col-span-2">
-                <p className="text-xs text-muted-foreground">流量额度</p>
-                <AnimatedStatValue
-                  as="p"
-                  value={quotaProgressText}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.planProgress`}
-                  fallbackValue="---"
-                  className="mt-1 text-xl font-semibold tabular-nums"
-                />
-                {!accountStatusLoading && quota.sources.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                    {quota.sources.map((source) => (
-                      <span key={source.kind} className="whitespace-nowrap">
-                        {quotaSourceLabel(source.kind)} {source.unlimited ? "不限" : formatBytes(source.bytes)}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/35 p-3">
-                <p className="text-xs text-muted-foreground">到期时间</p>
-                <AnimatedStatValue
-                  as="p"
-                  value={quotaExpiryText}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.planExpiry`}
-                  fallbackValue="---"
-                  className="mt-1 text-xl font-semibold tabular-nums"
-                />
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/35 p-3">
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <WalletCards className="h-3 w-3" />
-                  账户余额
-                </p>
-                <AnimatedStatValue
-                  as="p"
-                  value={money(wallet?.balanceCents)}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.wallet`}
-                  fallbackValue={money(0)}
-                  className="mt-1 text-xl font-semibold tabular-nums"
-                />
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/35 p-3">
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <WalletCards className="h-3 w-3" />
-                  计费流量
-                </p>
-                <AnimatedStatValue
-                  as="p"
-                  value={trafficBillingBytesText}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.userBillingTraffic`}
-                  fallbackValue="未开启"
-                  className="mt-1 text-xl font-semibold tabular-nums"
-                />
-                <AnimatedStatValue
-                  as="p"
-                  value={trafficBillingUserSubtitle}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.userBillingTrafficSubtitle`}
-                  fallbackValue="管理员未开启"
-                  className="mt-1 text-[11px] text-muted-foreground"
-                />
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/35 p-3">
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <WalletCards className="h-3 w-3" />
-                  计费消费
-                </p>
-                <AnimatedStatValue
-                  as="p"
-                  value={trafficBillingAmountText}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.userBillingAmount`}
-                  fallbackValue="-"
-                  className="mt-1 text-xl font-semibold tabular-nums"
-                />
-                <p className="mt-1 text-[11px] text-muted-foreground">仅统计流量计费资源</p>
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/35 p-3">
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Package className="h-3 w-3" />
-                  当前套餐
-                </p>
-                <AnimatedStatValue
-                  as="p"
-                  value={activeSubscriptions.length > 1
-                    ? `${activeSubscription?.planName || "---"} 等 ${activeSubscriptions.length} 个套餐`
-                    : activeSubscription?.planName || "---"}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.planName`}
-                  fallbackValue="---"
-                  className="mt-1 truncate text-xl font-semibold"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                <span>流量额度使用进度</span>
-                <AnimatedStatValue
-                  value={quotaProgressText}
-                  loading={accountStatusLoading}
-                  cacheKey={`home.account.${accountCacheScope}.planProgress.inline`}
-                  fallbackValue="---"
-                  className="tabular-nums"
-                />
-              </div>
-              <Progress value={quotaProgressValue} className="h-2" />
-              <p className="text-[11px] text-muted-foreground">
-                {quota.sources.length > 0
-                  ? `额度来源：${quota.sources.map((source) => quotaSourceLabel(source.kind)).join("、")}。`
-                  : "暂无生效流量额度。"}
-                {quota.hasQuota && currentUserTraffic?.trafficAutoReset ? ` 每月 ${currentUserTraffic.trafficResetDay || 1} 日自动重置。` : ""}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </>
+    <AccountSection
+      isAdmin={isAdmin}
+      loading={accountStatusLoading}
+      cacheScope={accountCacheScope}
+      onOpen={setLocation}
+      trafficUsed={trafficUsed}
+      billing={{
+        enabled: trafficBillingEnabled,
+        bytesText: trafficBillingBytesText,
+        amountText: trafficBillingAmountText,
+        billedText: `已计费 ${trafficBillingBilledGb}GB`,
+      }}
+      quota={{
+        hasQuota: quota.hasQuota,
+        unlimited: quota.unlimited,
+        used: trafficUsed,
+        limit: trafficLimit,
+        percent: trafficPercent,
+        sourcesText: quota.sources.length > 0
+          ? `额度来源：${quota.sources.map((source) => `${quotaSourceLabel(source.kind)} ${source.unlimited ? "不限" : formatBytes(source.bytes)}`).join("、")}。`
+          : null,
+        autoResetDay: currentUserTraffic?.trafficAutoReset ? Number(currentUserTraffic.trafficResetDay || 1) : null,
+      }}
+      expiry={{ dateText: quotaExpiryText, label: expiry.label, tone: expiry.tone }}
+      planText={activeSubscriptions.length > 1
+        ? `${activeSubscription?.planName || "---"} 等 ${activeSubscriptions.length} 个`
+        : activeSubscription?.planName || "---"}
+      balanceText={money(wallet?.balanceCents)}
+      canForward={canForward}
+      forwardPaused={((health as SystemHealth | undefined)?.attention?.totals["forward-paused"] ?? 0) > 0}
+    />
   );
 
   const trafficSection = (
