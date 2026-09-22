@@ -133,7 +133,7 @@ export function NetworkEdge({
       aria-hidden="true"
       className={cn(
         "block shrink-0",
-        orientation === "horizontal" ? "w-full border-t" : "h-full min-h-4 border-l",
+        orientation === "horizontal" ? "w-full border-t" : "h-full min-h-2 border-l",
         style === "dashed" && "border-dashed",
         style === "pulse" && "fx-edge-pulse",
       )}
@@ -149,8 +149,16 @@ export function NetworkEdge({
       </span>
     );
   }
+  /*
+    竖排那一段的高度：有标注时留 24px（放得下「GOST TLS / 46ms」两行），
+    没标注时只留 12px。
+
+    两个值分开是因为它们的职责不同：有标注的那一段要装下文字，没标注的那一段
+    只是在说「这两个点是连着的」，一条 12px 的线足够说清楚。上一版统一 24px，
+    一条四跳的路径光在三段空线上就花掉 72px —— 而列表卡总共才 350px。
+  */
   return (
-    <span className={cn("flex min-h-6 items-stretch gap-2", className)}>
+    <span className={cn("flex items-stretch gap-2", hasLabel ? "min-h-6" : "min-h-3", className)}>
       <span className="flex w-2 shrink-0 justify-center">{line}</span>
       {label}
     </span>

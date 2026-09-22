@@ -77,6 +77,23 @@ test("竖排时连线不带左边距 —— 它要落在状态点的圆心上", 
   assert.doesNotMatch(html, /class="[^"]*\bml-1\b/);
 });
 
+test("没有标注的那一段只留 12px，有标注的才留 24px", () => {
+  /*
+    没标注的段只是在说「这两个点是连着的」，一条短线足够。统一用 24px 的话，
+    一条四跳路径光在三段空线上就花掉 72px —— 而列表卡总共才 350px。
+  */
+  const bare = renderToStaticMarkup(
+    <NetworkPath nodes={[po0, relay, jinx]} orientation="vertical" />,
+  );
+  assert.match(bare, /min-h-3/);
+  assert.doesNotMatch(bare, /min-h-6/);
+
+  const labelled = renderToStaticMarkup(
+    <NetworkPath nodes={[po0, jinx]} edges={[{ via: "GOST", latencyMs: 46 }]} orientation="vertical" />,
+  );
+  assert.match(labelled, /min-h-6/);
+});
+
 test("空节点列表渲染成空，不抛错", () => {
   assert.equal(renderToStaticMarkup(<NetworkPath nodes={[]} />), "");
 });
