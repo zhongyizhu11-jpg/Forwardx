@@ -89,7 +89,13 @@ export function IosNavigationBar({
       </div>
       <div className="fx-navbar-large">
         <h1 className="fx-navbar-large-title">{title}</h1>
-        {subtitle ? <p className="fx-navbar-subtitle">{subtitle}</p> : null}
+        {/*
+          这里必须是 div 不能是 p：页面传进来的 status 常常是一个 Badge，
+          而 Badge 渲染出来是 div —— <p> 里放 <div> 是非法嵌套，浏览器会
+          就地把 <p> 闭掉，实际渲染结构和写的不是一回事（控制台也会报
+          「cannot be a descendant of <p>」）。
+        */}
+        {subtitle ? <div className="fx-navbar-subtitle">{subtitle}</div> : null}
       </div>
       {belowTitle ? <div className="fx-navbar-below">{belowTitle}</div> : null}
     </header>

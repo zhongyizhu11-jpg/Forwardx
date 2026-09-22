@@ -2,6 +2,8 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { FormField } from "@/components/ui/form-field";
 import EmptyState from "@/components/EmptyState";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
+import { InlineLinkCreator } from "@/features/links/InlineLinkCreator";
+import { describeLinkKind, linkKindForRouteMode, linkKindRequiresAdmin } from "@/features/links/inlineLinkDraft";
 import FilterToolbar from "@/components/FilterToolbar";
 import ConnectionPath from "@/components/ConnectionPath";
 import TrafficOverview from "@/components/TrafficOverview";
@@ -2045,6 +2047,64 @@ function RulesContent() {
   });
 
   const [showDialog, setShowDialog] = useState(false);
+  /*
+    「＋ 新建线路」展开的那个迷你表单开着没有。
+
+    建任何一条规则都要先有线路，而线路一直只能在别的页面建 —— 对话框里那句
+    「暂无可用隧道，请先在链路管理中创建隧道」就是这条断路的原样记录：它告诉你
+    走不通，但不给出路。跳出去再回来，填了一半的端口和目标地址也没了。
+  */
+  const [inlineLinkOpen, setInlineLinkOpen] = useState(false);
+
+  /**
+   * 选择器底下那一格：要么是「＋ 新建…」按钮，要么是展开的迷你表单。
+   *
+   * 四种走法共用这一个，不按 routeMode 各写一遍 —— 「哪种转发要哪种线路」
+   * 已经在 inlineLinkDraft 里写成了一张表。
+   */
+  const renderInlineLinkSlot = (routeMode: string) => {
+    const kind = linkKindForRouteMode(routeMode);
+    if (!kind) return null;
+
+    if (linkKindRequiresAdmin(kind) && user?.role !== "admin") {
+      /*
+        租户建不了转发组（服务端是 adminProcedure）。给他一个点下去必然 403 的
+        按钮比不给更糟 —— 所以只在真的没线路可选时说一句该找谁。
+      */
+      const emptyForTenant = routeMode === "local"
+        ? availablePortForwardGroups.length === 0
+        : routeMode === "chain"
+          ? availableForwardChainGroups.length === 0
+          : availableFailoverForwardGroups.length === 0;
+      if (!emptyForTenant) return null;
+      return <p className="text-meta text-muted-foreground">还没有可用线路，需要管理员先分配。</p>;
+    }
+
+    if (inlineLinkOpen) {
+      return (
+        <InlineLinkCreator
+          kind={kind}
+          hosts={(hosts || []) as any}
+          onCancel={() => setInlineLinkOpen(false)}
+          onCreated={({ id, entryHostId }) => {
+            setInlineLinkOpen(false);
+            if (kind === "tunnel") {
+              setForm((previous: any) => ({ ...previous, tunnelId: id, hostId: entryHostId ?? previous.hostId }));
+            } else {
+              setForm((previous: any) => ({ ...previous, forwardGroupId: id, hostId: null, tunnelId: null }));
+            }
+          }}
+        />
+      );
+    }
+
+    return (
+      <Button type="button" variant="outline" size="sm" className="gap-1" onClick={() => setInlineLinkOpen(true)}>
+        <Plus className="h-3.5 w-3.5" />
+        {describeLinkKind(kind).label}
+      </Button>
+    );
+  };
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingOriginalProtocol, setEditingOriginalProtocol] = useState<RuleProtocol | null>(null);
   const [legacyLocalRuleEditId, setLegacyLocalRuleEditId] = useState<number | null>(null);
@@ -2379,6 +2439,11 @@ function RulesContent() {
 
   const setRouteMode = (mode: RuleRouteMode) => {
     if (mode === form.routeMode) return;
+    /*
+      换了走法，展开着的建线路表单就不再对应了（隧道的表单在「转发链」下
+      毫无意义）。直接收起来，而不是让它留在那儿显示上一种线路的字段。
+    */
+    setInlineLinkOpen(false);
     if (mode === "local" && !canUseLocalForward) return;
     if (mode === "tunnel" && !canUseGost) return;
     const localUsesSavedForward = mode === "local" && canUseSavedLocalForward;
@@ -2501,6 +2566,7 @@ function RulesContent() {
     setEditingOriginalProtocol(null);
     setLegacyLocalRuleEditId(null);
     setPortStatus("idle");
+    setInlineLinkOpen(false);
   };
 
   const openCreate = (preferredRouteMode?: RuleRouteMode) => {
@@ -7194,6 +7260,18 @@ function RulesContent() {
         />
       )}
 
+      {/*
+        ── 线路就地新建 ────────────────────────────────────────────
+
+        以前这里写的是「暂无可用隧道，请先在链路管理中创建隧道」——
+        它告诉你走不通，但不给出路。第一次用面板的人在这一步必然卡住：
+        他想做的是「把这个端口转出去」，而面板要求他先理解「隧道」是一个
+        需要去另一页单独创建的对象。这是实现结构泄漏到了操作流程里。
+
+        现在不管有没有可用线路，选择器下面都有一个「＋ 新建…」，点开就地填，
+        建完自动选中，接着填端口。不跳页 —— 跳出去再回来，填了一半的端口和
+        目标地址就没了。
+      */}
       <Dialog
         open={showDialog}
         onOpenChange={(open) => {
@@ -7256,9 +7334,7 @@ function RulesContent() {
                       {selectedTunnelDisplay.shortLabel}
                     </Badge>
                   </div>
-                  {availableTunnels.length === 0 && (
-                    <p className="text-xs text-amber-600">暂无可用隧道，请先在链路管理中创建隧道。</p>
-                  )}
+                  {renderInlineLinkSlot("tunnel")}
                   {selectedTunnel && (
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       {renderTunnelRoute(selectedTunnel, true)}
@@ -7309,9 +7385,7 @@ function RulesContent() {
                       旧版端口转发规则需要选择新版端口转发，保存后会保留当前目标地址和端口配置。
                     </p>
                   )}
-                  {form.routeMode === "local" && availablePortForwardGroups.length === 0 && (
-                    <p className="text-xs text-amber-600">暂无可用端口转发，请先在链路管理中创建并启用。</p>
-                  )}
+                  {renderInlineLinkSlot(form.routeMode)}
                   {selectedForwardGroup && (
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       {(selectedForwardGroup.members || []).slice(0, 4).map((member: any, index: number) => (
