@@ -48,6 +48,30 @@ function walk(dir: string, out: string[] = []) {
   return out;
 }
 
+/*
+ * 图表不许写死十六进制颜色。
+ *
+ * 上面那条只认调色板**类名**，挡不住 SVG 属性里的色值：首页流量图的
+ * stroke="#10b981" / "#f59e0b" 就是从这个缝里漏过去的 —— 类名清干净了，
+ * 图还是 emerald 和 amber，深色模式下也不跟着变。
+ */
+const HEX_COLOR = /#[0-9a-f]{3}(?:[0-9a-f]{3})?(?:[0-9a-f]{2})?\b/i;
+
+test("图表里不写死十六进制颜色", () => {
+  const root = path.resolve(import.meta.dirname);
+  const offenders: string[] = [];
+  for (const dir of ["components/charts", "features/dashboard"]) {
+    for (const file of walk(path.join(root, dir))) {
+      const lines = stripComments(fs.readFileSync(file, "utf8")).split("\n");
+      lines.forEach((line, index) => {
+        // url(#gradientId) 是引用，不是颜色。
+        if (HEX_COLOR.test(line.replace(/url\(#[^)]*\)/g, ""))) offenders.push(`${path.relative(root, file)}:${index + 1}`);
+      });
+    }
+  }
+  assert.deepEqual(offenders, [], `图表颜色走 lib/chartPalette（var(--fx-*)）：\n  ${offenders.join("\n  ")}`);
+});
+
 test("界面里不出现调色板名字，颜色一律走语义令牌", () => {
   const root = path.resolve(import.meta.dirname);
   const offenders: string[] = [];

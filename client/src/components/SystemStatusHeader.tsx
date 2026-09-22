@@ -2,7 +2,6 @@ import { AlertTriangle, CheckCircle2, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 import { countAttentionDegraded, type DashboardAttention } from "@shared/dashboardAttention";
-import { formatBytes } from "@shared/formatBytes";
 import { cn } from "@/lib/utils";
 
 /** Health reflects current API data; status colors are reserved for actual conditions. */
@@ -18,14 +17,6 @@ export type SystemHealth = {
 
 type Props = {
   health?: SystemHealth;
-  /**
-   * 近 24 小时流量（字节）。没有数据时传 undefined，不要传 0 —— 那是两回事。
-   *
-   * 叫「近 24H」而不是「今日」：数据是最近 24 小时的滚动窗口，不是从零点算起。
-   * 两者在下午三点能差出大半天的量，而页面下方那张图本来就叫「近 24H」，
-   * 顶上写「今日」会让同一份数据在同一屏里有两个名字。
-   */
-  recentBytes?: number;
   loading?: boolean;
   isAdmin: boolean;
   onRetry?: () => void;
@@ -70,7 +61,7 @@ function headline(health: SystemHealth) {
   return { text: "运行正常", tone: "healthy" as const };
 }
 
-export default function SystemStatusHeader({ health, recentBytes, loading, isAdmin, onRetry }: Props) {
+export default function SystemStatusHeader({ health, loading, isAdmin, onRetry }: Props) {
   const empty = !!health && health.hosts.total === 0 && health.links.total === 0 && health.forwards.total === 0;
   const verdict = health && !empty ? headline(health) : null;
   const linkDegraded = Math.max(0, Number(health?.links.degraded) || 0);
@@ -106,9 +97,13 @@ export default function SystemStatusHeader({ health, recentBytes, loading, isAdm
         </div>
       </div>
 
+      {/*
+        这里只放「现在跑得怎么样」的三个数。「近 24H 流量」原来也挤在这一行，
+        而下面「流量」那一块又拿它当大标题 —— 同一个数一屏写两遍。它回到流量那一块。
+      */}
       <div className={cn(
         "mt-4 grid gap-4 border-t pt-4",
-        isAdmin ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2 sm:grid-cols-3",
+        isAdmin ? "grid-cols-3" : "grid-cols-2",
       )}>
         {isAdmin ? (
           <Metric
@@ -141,10 +136,6 @@ export default function SystemStatusHeader({ health, recentBytes, loading, isAdm
                 : `${health.forwards.running} 运行中`
             : null}
           tone={health && (health.forwards.stalled > 0 || (forwardPaused > 0 && !isAdmin)) ? "warn" : "normal"}
-        />
-        <Metric
-          label="近 24H 流量"
-          value={recentBytes === undefined ? "—" : formatBytes(recentBytes)}
         />
       </div>
     </section>
