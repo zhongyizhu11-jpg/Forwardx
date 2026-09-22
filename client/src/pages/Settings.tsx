@@ -854,7 +854,7 @@ function PanelLogsSection() {
   }, [supportBundleQuery.data, supportTaskId]);
   const logLevelClass = (level: string) => {
     if (level === "error") return "text-destructive";
-    if (level === "warn") return "text-amber-600 dark:text-amber-400";
+    if (level === "warn") return "text-[var(--fx-warn-text)]";
     if (level === "info") return "text-primary";
     return "text-muted-foreground";
   };
@@ -1646,8 +1646,8 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                   </Badge>
                 </div>
                 {migrationRequest?.status === "pending" && (
-                  <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                    <p className="text-sm font-medium text-amber-700 dark:text-amber-300">收到新面板迁移请求</p>
+                  <div className="mt-3 rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] p-3">
+                    <p className="text-sm font-medium text-[var(--fx-warn-text)]">收到新面板迁移请求</p>
                     <p className="mt-1 break-all text-xs text-muted-foreground">
                       目标面板：{migrationRequest.targetPanelUrl}
                     </p>
@@ -1675,7 +1675,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                   </div>
                 )}
                 {migrationRequest?.status === "approved" && (
-                  <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                  <div className="mt-3 rounded-lg border border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] bg-[var(--fx-healthy-soft)] p-3 text-sm text-[var(--fx-healthy-text)]">
                     已同意迁移请求，正在等待新面板拉取数据。
                   </div>
                 )}
@@ -1956,7 +1956,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                 databaseSwitchFailed
                   ? "border-destructive/35 bg-destructive/5"
                   : databaseSwitchSucceeded
-                    ? "border-emerald-500/30 bg-emerald-500/5"
+                    ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] bg-[color-mix(in_srgb,var(--fx-healthy)_5%,transparent)]"
                     : "border-primary/15 bg-primary/5",
               )}>
                 <div className="flex items-start justify-between gap-4">
@@ -1964,7 +1964,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                     {databaseSwitchFailed ? (
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                     ) : databaseSwitchSucceeded ? (
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[var(--fx-healthy-text)]" />
                     ) : databaseSwitchRunning ? (
                       <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />
                     ) : (
@@ -1994,7 +1994,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                   className={cn(
                     "mt-3 h-2",
                     databaseSwitchFailed && "[&>div]:bg-destructive",
-                    databaseSwitchSucceeded && "[&>div]:bg-emerald-500",
+                    databaseSwitchSucceeded && "[&>div]:bg-[var(--fx-healthy)]",
                   )}
                 />
                 <div className="mt-2 space-y-1.5 text-xs text-muted-foreground">
@@ -2028,7 +2028,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                       </p>
                     )}
                   {databaseSwitchJob.suggestion && (
-                    <div className="border-l-2 border-amber-500/60 pl-3 text-amber-700 dark:text-amber-300">
+                    <div className="border-l-2 border-[color-mix(in_srgb,var(--fx-warn)_60%,transparent)] pl-3 text-[var(--fx-warn-text)]">
                       <p>{databaseSwitchJob.suggestion}</p>
                       {databaseSwitchJob.suggestionCommand && (
                         <code className="mt-1 block select-all break-all font-mono text-[11px] text-foreground">
@@ -2143,7 +2143,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <AlertTriangle className="h-5 w-5 text-[var(--fx-warn-text)]" />
               确认导入备份
             </DialogTitle>
             <DialogDescription>
@@ -2177,7 +2177,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <AlertTriangle className="h-5 w-5 text-[var(--fx-warn-text)]" />
               确认在线迁移
             </DialogTitle>
             <DialogDescription>
@@ -2216,7 +2216,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <AlertTriangle className="h-5 w-5 text-[var(--fx-warn-text)]" />
               确认切换数据库
             </DialogTitle>
             <DialogDescription>
@@ -2756,12 +2756,12 @@ function DeepSeekSettingsCard() {
 
   return (
     <>
-      <Card className="border-emerald-500/25 bg-emerald-500/5 backdrop-blur-md">
+      <Card className="border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[color-mix(in_srgb,var(--fx-healthy)_5%,transparent)] backdrop-blur-md">
         <CardHeader>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle className="flex items-center gap-2 text-base">
-                <Key className="h-4 w-4 text-emerald-500" />
+                <Key className="h-4 w-4 text-[var(--fx-healthy-text)]" />
                 AI 助手模型
               </CardTitle>
               <CardDescription className="mt-1">
@@ -3845,7 +3845,7 @@ function PersonalizationSettingsSection() {
                       />
                     </FormField>
                   </div>
-                  <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                  <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_25%,transparent)] bg-[var(--fx-warn-soft)] px-3 py-2 text-xs leading-5 text-[var(--fx-warn-text)]">
                     {mobileBackgroundHint}
                   </div>
                 </div>
@@ -4888,7 +4888,7 @@ function SystemInfoSection() {
       label: "Android APK 下载",
       url: androidApkDownloadUrl,
       icon: Download,
-      iconClassName: "text-emerald-600",
+      iconClassName: "text-[var(--fx-healthy-text)]",
     }] : []),
   ];
   const isUpgradeRunning = upgradeStatus?.job.status === "running";
@@ -5010,7 +5010,7 @@ function SystemInfoSection() {
             <p className="text-xs text-muted-foreground">
               留空使用当前访问地址。需以 http:// 或 https:// 开头。
             </p>
-            <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-300">
+            <p className="text-xs leading-relaxed text-[var(--fx-warn-text)]">
               反向代理或 Docker 部署请填写外部可访问的面板地址，否则 Agent 可能无法回连。
             </p>
           </CardContent>
@@ -5219,7 +5219,7 @@ function SystemInfoSection() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <AlertTriangle className="h-5 w-5 text-[var(--fx-warn-text)]" />
               确认修改 Web 端口
             </DialogTitle>
             <DialogDescription>
@@ -5248,7 +5248,7 @@ function SystemInfoSection() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <AlertTriangle className="h-5 w-5 text-[var(--fx-warn-text)]" />
               确认修改面板 SSL
             </DialogTitle>
             <DialogDescription>
@@ -5938,9 +5938,9 @@ function SystemInfoSection() {
                     upgradeStatus.job.status === "error"
                       ? "bg-destructive/10 text-destructive"
                       : upgradeStatus.job.status === "waiting_assets"
-                        ? "bg-amber-500/10 text-amber-500"
+                        ? "bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]"
                       : upgradeStatus.job.status === "success"
-                        ? "bg-emerald-500/10 text-emerald-500"
+                        ? "bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
                         : "bg-primary/10 text-primary"
                   }`}>
                     {upgradeStatus.job.status === "error" ? (
@@ -5974,7 +5974,7 @@ function SystemInfoSection() {
                     </p>
                   </div>
                 </div>
-                <Badge variant={upgradeStatus.job.status === "error" ? "destructive" : "outline"} className={`w-fit ${upgradeStatus.job.status === "waiting_assets" ? "border-amber-500/30 text-amber-500" : ""}`}>
+                <Badge variant={upgradeStatus.job.status === "error" ? "destructive" : "outline"} className={`w-fit ${upgradeStatus.job.status === "waiting_assets" ? "border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] text-[var(--fx-warn-text)]" : ""}`}>
                   {upgradeStatus.job.targetVersion}
                 </Badge>
               </div>
@@ -5991,7 +5991,7 @@ function SystemInfoSection() {
                       key={step.label}
                       className={`rounded-lg border px-3 py-2 text-xs ${
                         step.done
-                          ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-500"
+                          ? "border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
                           : step.active
                             ? "border-primary/30 bg-primary/10 text-primary"
                           : "border-border/40 bg-background/40 text-muted-foreground"
@@ -6012,7 +6012,7 @@ function SystemInfoSection() {
                       <AlertDescription>{upgradeStatus.job.error}</AlertDescription>
                     </Alert>
                   )}
-                  <pre className="max-h-52 overflow-auto rounded-lg border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-relaxed text-muted-foreground">
+                  <pre className="max-h-52 overflow-auto rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_25%,transparent)] bg-[color-mix(in_srgb,var(--fx-warn)_5%,transparent)] p-3 text-xs leading-relaxed text-muted-foreground">
                     {upgradeErrorLogs || "正在等待 GitHub Actions 构建发布资产"}
                   </pre>
                 </div>

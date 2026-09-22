@@ -160,7 +160,6 @@ function UserStatCard({
   value,
   subtitle,
   icon: Icon,
-  tone,
   loading,
   cacheKey,
   fallbackValue,
@@ -170,7 +169,6 @@ function UserStatCard({
   value: string | number;
   subtitle?: string;
   icon: ElementType;
-  tone: string;
   loading?: boolean;
   cacheKey: string;
   fallbackValue?: string | number;
@@ -178,7 +176,6 @@ function UserStatCard({
 }) {
   return (
     <Card className={`group relative overflow-hidden border-border bg-card transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5 ${className || ""}`}>
-      <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
       <CardContent className="relative p-3 sm:p-4">
         <div className="flex items-start justify-between gap-2 sm:gap-3">
           <div className="min-w-0 flex-1 space-y-1">
@@ -202,8 +199,12 @@ function UserStatCard({
               />
             )}
           </div>
-          <div className={`hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone} shadow-sm sm:flex`}>
-            <Icon className="h-5 w-5 text-white" />
+          {/*
+            图标方块以前按卡片刷不同的渐变色（余额绿、折扣码琥珀…）—— 那不是状态，
+            只是四张卡各挑了一个颜色。颜色在这套面板里只说状态，所以改中性。
+          */}
+          <div className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--fx-l3-control-fill)] sm:flex">
+            <Icon className="h-5 w-5 text-[var(--fx-text-secondary)]" />
           </div>
         </div>
       </CardContent>
@@ -1397,7 +1398,7 @@ function UsersContent() {
             管理系统用户、权限和流量配额
           </>} actions={<>
           <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
-            <ShieldCheck className="h-3 w-3 text-amber-400" />
+            <ShieldCheck className="h-3 w-3 text-[var(--fx-warn-text)]" />
             <AnimatedStatValue
               value={`${adminCount} 管理员`}
               loading={isLoading || !users}
@@ -1426,7 +1427,6 @@ function UsersContent() {
           value={userSummary?.totalUsers ?? userPageQuery.data?.totalItems ?? 0}
           subtitle={`${adminCount} 个管理员`}
           icon={UsersIcon}
-          tone="bg-gradient-to-br from-teal-500 to-teal-600"
           loading={summaryLoading || isLoading}
           cacheKey="users.summary.totalUsers"
           fallbackValue={0}
@@ -1436,7 +1436,6 @@ function UsersContent() {
           value={userSummary?.totalRules ?? 0}
           subtitle={`${userSummary?.activeRules ?? 0} 条已启用`}
           icon={ArrowRightLeft}
-          tone="bg-gradient-to-br from-emerald-500 to-emerald-600"
           loading={summaryLoading}
           cacheKey="users.summary.totalRules"
           fallbackValue={0}
@@ -1446,7 +1445,6 @@ function UsersContent() {
           value={formatBytes(userSummary?.totalTrafficIn ?? 0)}
           subtitle="所有用户累计入站"
           icon={ArrowDownToLine}
-          tone="bg-gradient-to-br from-rose-500 to-rose-600"
           loading={summaryLoading}
           cacheKey="users.summary.totalTrafficIn"
           fallbackValue="0 B"
@@ -1457,7 +1455,6 @@ function UsersContent() {
           value={formatBytes(userSummary?.totalTrafficOut ?? 0)}
           subtitle="所有用户累计出站"
           icon={ArrowUpFromLine}
-          tone="bg-gradient-to-br from-amber-500 to-amber-600"
           loading={summaryLoading}
           cacheKey="users.summary.totalTrafficOut"
           fallbackValue="0 B"

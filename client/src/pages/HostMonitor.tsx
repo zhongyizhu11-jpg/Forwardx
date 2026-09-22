@@ -178,7 +178,7 @@ function HostMonitorStatCard({
   subtitle,
   icon: Icon,
   leadingIcon: LeadingIcon,
-  leadingTone = "bg-emerald-500",
+  leadingTone = "bg-[var(--fx-healthy)]",
   tone = "bg-gradient-to-br from-chart-2/10 to-transparent",
   iconTone = "bg-chart-2/10 text-chart-2",
 }: {
@@ -267,13 +267,13 @@ function HostMonitorTrafficStatCard({
             label="入向"
             value={inValue}
             icon={ArrowDownToLine}
-            tone="bg-emerald-500"
+            tone="bg-[var(--fx-healthy)]"
           />
           <HostMonitorTrafficDirectionStat
             label="出向"
             value={outValue}
             icon={ArrowUpFromLine}
-            tone="bg-amber-500"
+            tone="bg-[var(--fx-warn)]"
           />
         </div>
       </CardContent>
@@ -340,7 +340,7 @@ function PublicHostCard({
             <span className="shrink-0 rounded border border-border/50 bg-background/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">
               {host.agentVersion ? `v${host.agentVersion}` : "未上报"}
             </span>
-            <Badge variant="outline" className={`ml-auto shrink-0 text-[10px] ${isOnline ? "border-emerald-500/30 text-emerald-600" : "border-destructive/30 text-destructive"}`}>
+            <Badge variant="outline" className={`ml-auto shrink-0 text-[10px] ${isOnline ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]" : "border-destructive/30 text-destructive"}`}>
               {isOnline ? "在线" : "离线"}
             </Badge>
           </div>
@@ -460,7 +460,7 @@ function PublicHostListFlowPair({
 }) {
   return (
     <div className="min-w-0 space-y-1 text-xs tabular-nums">
-      <div className="flex items-center gap-1.5 text-emerald-500" title={inTitle || inValue}>
+      <div className="flex items-center gap-1.5 text-[var(--fx-healthy-text)]" title={inTitle || inValue}>
         <ArrowDownToLine className="h-3.5 w-3.5 shrink-0" />
         <span className="min-w-0 truncate font-medium">{inValue}</span>
       </div>
@@ -513,8 +513,8 @@ function PublicHostTable({
                   onClick={() => onSelectHost?.(host)}
                 >
                   <TableCell className="w-[76px] whitespace-nowrap px-3 py-3">
-                    <Badge variant="outline" className={`gap-1.5 text-xs ${isOnline ? "border-emerald-500/30 text-emerald-600" : "border-destructive/30 text-destructive"}`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-destructive"}`} />
+                    <Badge variant="outline" className={`gap-1.5 text-xs ${isOnline ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]" : "border-destructive/30 text-destructive"}`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${isOnline ? "bg-[var(--fx-healthy)]" : "bg-destructive"}`} />
                       {isOnline ? "在线" : "离线"}
                     </Badge>
                   </TableCell>
@@ -743,14 +743,14 @@ function HostMonitorDetail({
           <ArrowLeftCircle className="h-5 w-5" />
         </Button>
         <h2 className="min-w-0 truncate text-lg font-bold tracking-tight sm:text-xl">{detailHost?.name || "主机详情"}</h2>
-        <Badge variant="outline" className={`ml-auto shrink-0 gap-1.5 sm:ml-2 ${isOnline ? "border-emerald-500/30 text-emerald-600" : "border-destructive/30 text-destructive"}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-destructive"}`} />
+        <Badge variant="outline" className={`ml-auto shrink-0 gap-1.5 sm:ml-2 ${isOnline ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]" : "border-destructive/30 text-destructive"}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${isOnline ? "bg-[var(--fx-healthy)]" : "bg-destructive"}`} />
           {isOnline ? "在线" : "离线"}
         </Badge>
       </div>
 
       <div className="grid max-w-6xl grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-x-8 sm:gap-y-4 lg:grid-cols-6">
-        <DetailInfoItem label="状态" value={isOnline ? "在线" : "离线"} className={isOnline ? "text-emerald-600" : "text-destructive"} />
+        <DetailInfoItem label="状态" value={isOnline ? "在线" : "离线"} className={isOnline ? "text-[var(--fx-healthy-text)]" : "text-destructive"} />
         <DetailInfoItem label="运行时间" value={metric?.uptime == null ? "-" : formatUptime(metric.uptime)} />
         <DetailInfoItem label="内存" value={formatMetricSizeDetail(metric?.memoryUsed, detailHost?.memoryTotal) || formatUsagePercent(metric?.memoryUsage)} />
         <DetailInfoItem label="磁盘" value={formatMetricSizeDetail(metric?.diskUsed, metric?.diskTotal) || formatUsagePercent(metric?.diskUsage)} />
@@ -1012,7 +1012,6 @@ export default function HostMonitor() {
                 inValue={formatBytes(summary?.totalTrafficIn || 0)}
                 outValue={formatBytes(summary?.totalTrafficOut || 0)}
                 icon={ArrowRightLeft}
-                tone="bg-gradient-to-br from-chart-4/10 to-transparent"
                 iconTone="bg-chart-4/10 text-chart-4"
               />
             </div>

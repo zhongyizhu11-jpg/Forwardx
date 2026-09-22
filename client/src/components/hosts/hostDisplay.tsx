@@ -38,9 +38,9 @@ export function writeCachedHostMetrics(hostId: number | string, metrics: any[]) 
 export function metricUsageProgressClass(value: unknown, isOnline: boolean) {
   if (!isOnline) return "h-1.5 bg-muted [&>div]:bg-muted-foreground/40";
   const usage = Number(value || 0);
-  if (usage >= 80) return "h-1.5 bg-muted [&>div]:bg-red-500";
-  if (usage >= 50) return "h-1.5 bg-muted [&>div]:bg-amber-500";
-  return "h-1.5 bg-muted [&>div]:bg-emerald-500";
+  if (usage >= 80) return "h-1.5 bg-muted [&>div]:bg-[var(--fx-down)]";
+  if (usage >= 50) return "h-1.5 bg-muted [&>div]:bg-[var(--fx-warn)]";
+  return "h-1.5 bg-muted [&>div]:bg-[var(--fx-healthy)]";
 }
 
 export function formatUptime(seconds: number | null | undefined): string {

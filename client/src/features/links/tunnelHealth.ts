@@ -6,7 +6,7 @@ import type { NetworkHealth } from "@shared/networkHealth";
  * 链路页原来自己画状态点，颜色写死在一个四分支的 if 里：
  *
  *   available   → bg-chart-2 + animate-pulse
- *   degraded    → bg-amber-400
+ *   degraded    → bg-[var(--fx-warn)]
  *   unavailable → bg-destructive/70
  *   其余         → bg-muted-foreground/30
  *

@@ -249,8 +249,8 @@ function PlanStatusQuickToggle({
         className={cn(
           "h-7 rounded-full border px-3 text-xs font-medium transition-colors disabled:pointer-events-none disabled:opacity-60",
           plan.isActive && plan.isStoreVisible
-            ? "border-emerald-500/50 bg-emerald-500/12 text-emerald-600 dark:text-emerald-300"
-            : "border-border/60 bg-background/70 text-muted-foreground hover:border-emerald-500/35 hover:text-foreground",
+            ? "border-[color-mix(in_srgb,var(--fx-healthy)_50%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
+            : "border-border/60 bg-background/70 text-muted-foreground hover:border-[color-mix(in_srgb,var(--fx-healthy)_35%,transparent)] hover:text-foreground",
         )}
       >
         {plan.isActive && plan.isStoreVisible ? "商店展示" : "后台分配"}
@@ -415,7 +415,7 @@ function PlanResourceOption({
           <span className="truncate text-sm font-medium">{title}</span>
           <span className="shrink-0 rounded border border-border/60 bg-background/70 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">{kind}</span>
           {multiplier ? (
-            <span className="shrink-0 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium leading-none text-emerald-700 dark:text-emerald-300">
+            <span className="shrink-0 rounded border border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] bg-[var(--fx-healthy-soft)] px-1.5 py-0.5 text-[11px] font-medium leading-none text-[var(--fx-healthy-text)]">
               {multiplier}
             </span>
           ) : null}
@@ -1170,7 +1170,7 @@ export default function Plans() {
           </div>
 
         {storeGateBlocking && (
-          <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2 rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
             <p className="min-w-0">
               商店总开关是关的：{storeVisiblePlans} 个套餐开了「购买入口」，但用户面板里没有商店，只能管理员后台分配。
             </p>

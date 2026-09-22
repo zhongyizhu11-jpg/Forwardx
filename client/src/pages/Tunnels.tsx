@@ -1117,7 +1117,7 @@ function TunnelWorldGlobe({
               隧道 {tunnels.length} 条 · 转发链 {chainGroups.length} 条 · 已定位 {globeData.links.length} 条
             </div>
             {globeData.skipped > 0 && (
-              <div className="mt-1 text-amber-200/85">待定位 {globeData.skipped} 条</div>
+              <div className="mt-1 text-[color-mix(in_srgb,var(--fx-warn)_85%,transparent)]">待定位 {globeData.skipped} 条</div>
             )}
           </div>
           <div className="pointer-events-none absolute right-4 top-4 flex flex-col gap-2 text-xs text-white">
@@ -1704,7 +1704,7 @@ function TunnelSelfTestDialog({
                 <div key={`${row.role}-${row.hostId}`} className="rounded border border-border/60 bg-background/70 px-2 py-1.5">
                   <div className="flex min-w-0 items-center justify-between gap-3">
                     <span className="min-w-0 truncate font-medium">{row.label}</span>
-                    <span className={success ? "shrink-0 text-emerald-600 dark:text-emerald-400" : "shrink-0 text-destructive"}>{latency}</span>
+                    <span className={success ? "shrink-0 text-[var(--fx-healthy-text)]" : "shrink-0 text-destructive"}>{latency}</span>
                   </div>
                   <div className="mt-1 flex min-w-0 items-center justify-between gap-3 text-[11px] text-muted-foreground">
                     <span>{row.role}</span>
@@ -2512,7 +2512,7 @@ function TunnelsContent() {
   /**
    * 链路状态点。
    *
-   * 原来是四个分支各写死一个调色板颜色（bg-chart-2 / bg-amber-400 /
+   * 原来是四个分支各写死一个调色板颜色（bg-chart-2 / bg-[var(--fx-warn)] /
    * bg-destructive），并且给 available 加了 animate-pulse。三处都改了：
    *
    * 一、颜色走语义令牌 —— 链路页的绿必须和主机页的绿是同一个绿，否则同一套
@@ -3604,7 +3604,7 @@ function TunnelsContent() {
       : activeSection === "groups"
         ? { value: `${Number(forwardGroupSummaryQuery.data?.enabledItems || 0)} / ${Number(forwardGroupSummaryQuery.data?.totalItems || 0)} 已启用`, loading: forwardGroupsLoading, cacheKey: "tunnels.header.forwardGroupsActive", fallback: "0 / 0 已启用", iconClass: "text-primary" }
         : activeSection === "entries"
-          ? { value: `${Number(forwardGroupSummaryQuery.data?.enabledItems || 0)} / ${Number(forwardGroupSummaryQuery.data?.totalItems || 0)} 已启用`, loading: forwardGroupsLoading, cacheKey: "tunnels.header.entryGroupsActive", fallback: "0 / 0 已启用", iconClass: "text-emerald-500" }
+          ? { value: `${Number(forwardGroupSummaryQuery.data?.enabledItems || 0)} / ${Number(forwardGroupSummaryQuery.data?.totalItems || 0)} 已启用`, loading: forwardGroupsLoading, cacheKey: "tunnels.header.entryGroupsActive", fallback: "0 / 0 已启用", iconClass: "text-[var(--fx-healthy-text)]" }
           : activeSection === "exits"
             ? { value: `${Number(forwardGroupSummaryQuery.data?.enabledItems || 0)} / ${Number(forwardGroupSummaryQuery.data?.totalItems || 0)} 已启用`, loading: forwardGroupsLoading, cacheKey: "tunnels.header.exitGroupsActive", fallback: "0 / 0 已启用", iconClass: "text-primary" }
             : {
@@ -4538,7 +4538,7 @@ function TunnelsContent() {
                       </div>
                     </div>
                     {gostTunnelModes.includes(form.mode) && enabledGostTunnelModes.length === 0 && (
-                      <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600">
+                      <p className="rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-xs text-[var(--fx-warn-text)]">
                         {unsupportedProtocolTitle}
                       </p>
                     )}
@@ -4847,7 +4847,7 @@ function TunnelsContent() {
               </div>
             </div>
             {gostTunnelModes.includes(form.mode) && enabledGostTunnelModes.length === 0 && (
-              <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600">
+              <p className="rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-xs text-[var(--fx-warn-text)]">
                 {unsupportedProtocolTitle}
               </p>
             )}

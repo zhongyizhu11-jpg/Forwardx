@@ -41,7 +41,7 @@ function Metric({ label, value, note, tone }: {
       <div className="mt-1 flex items-baseline gap-1.5">
         <span className="truncate text-2xl font-semibold tabular-nums tracking-tight">{value}</span>
         {note ? (
-          <span className={cn("truncate text-xs", tone === "warn" ? "text-amber-600 dark:text-amber-500" : "text-muted-foreground")}>
+          <span className={cn("truncate text-xs", tone === "warn" ? "text-[var(--fx-warn-text)]" : "text-muted-foreground")}>
             {note}
           </span>
         ) : null}
@@ -74,9 +74,9 @@ export default function SystemStatusHeader({ health, recentBytes, loading, isAdm
         ) : empty ? (
           <Layers className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
         ) : healthy ? (
-          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden="true" />
+          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fx-healthy-text)]" aria-hidden="true" />
         ) : (
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden="true" />
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fx-warn-text)]" aria-hidden="true" />
         )}
         <div className="min-w-0">
           <h2 className="text-lg font-semibold tracking-tight sm:text-xl">

@@ -32,8 +32,8 @@ import {
 export const QUOTA_STATE_STYLES = {
   none: "text-muted-foreground",
   normal: "text-muted-foreground",
-  warn: "text-amber-600 dark:text-amber-500",
-  exceeded: "text-red-600 dark:text-red-500",
+  warn: "text-[var(--fx-warn-text)]",
+  exceeded: "text-[var(--fx-down-text)]",
 } as const;
 
 /** 端口 / 节点自己那一份额度。两张表用的是同一组列名。 */

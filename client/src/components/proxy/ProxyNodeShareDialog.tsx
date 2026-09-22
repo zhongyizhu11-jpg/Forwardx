@@ -175,7 +175,7 @@ export function ProxyNodeShareDialog({
                       </div>
                       {/* 没有订阅权限的人，分享给他也拿不到 —— 事先标出来，别让人以为分完就完了。 */}
                       {!user.allowProxySubscription ? (
-                        <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal text-amber-600 dark:text-amber-500">
+                        <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] font-normal text-[var(--fx-warn-text)]">
                           无订阅权限
                         </Badge>
                       ) : null}

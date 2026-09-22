@@ -160,10 +160,10 @@ function taskStatusLabel(status?: string) {
 }
 
 function taskStatusClass(status?: string) {
-  if (status === "success" || status === "effective") return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  if (status === "success" || status === "effective") return "border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]";
   if (status === "error" || status === "timeout" || status === "offline") return "border-destructive/25 bg-destructive/10 text-destructive";
-  if (status === "running") return "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300";
-  if (status === "queued" || status === "syncing") return "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  if (status === "running") return "border-[color-mix(in_srgb,var(--fx-path)_25%,transparent)] bg-[var(--fx-path-soft)] text-[var(--fx-path)]";
+  if (status === "queued" || status === "syncing") return "border-[color-mix(in_srgb,var(--fx-warn)_25%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]";
   return "border-border/60 bg-muted/30 text-muted-foreground";
 }
 
@@ -903,7 +903,7 @@ export function AgentResourceManager({
                 >
                   <span className={cn(
                     "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-                    status === "success" || status === "effective" ? "bg-emerald-500" : status === "running" || status === "queued" || status === "syncing" ? "bg-amber-400" : status === "error" || status === "timeout" || status === "offline" ? "bg-destructive/75" : "bg-muted-foreground/35",
+                    status === "success" || status === "effective" ? "bg-[var(--fx-healthy)]" : status === "running" || status === "queued" || status === "syncing" ? "bg-[var(--fx-warn)]" : status === "error" || status === "timeout" || status === "offline" ? "bg-destructive/75" : "bg-muted-foreground/35",
                   )} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{host.name || `主机 ${host.id}`}</span>
@@ -984,14 +984,14 @@ export function AgentResourceManager({
           </div>
 
           {blockedReason && (
-            <div className="m-3 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-300">
+            <div className="m-3 flex items-start gap-2 rounded-md border border-[color-mix(in_srgb,var(--fx-warn)_25%,transparent)] bg-[var(--fx-warn-soft)] px-3 py-2.5 text-sm text-[var(--fx-warn-text)]">
               <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{blockedReason}</span>
             </div>
           )}
 
           {sourceWarnings.length > 0 && (
-            <div className="m-3 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-300">
+            <div className="m-3 flex items-start gap-2 rounded-md border border-[color-mix(in_srgb,var(--fx-warn)_25%,transparent)] bg-[var(--fx-warn-soft)] px-3 py-2.5 text-sm text-[var(--fx-warn-text)]">
               <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <span className="min-w-0 flex-1 break-words">
                 {listHasData ? "刷新失败，当前保留上次成功数据：" : "读取 Agent 数据失败："}

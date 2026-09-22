@@ -341,11 +341,11 @@ export function getLatencyStabilityStats(samples: LatencyStabilitySample[]): Lat
 
 export function getLatencyStabilityRating(score: number | null): LatencyStabilityRating {
   if (score === null) return { label: "暂无", className: "text-muted-foreground" };
-  if (score >= 90) return { label: "优秀", className: "text-emerald-600 dark:text-emerald-400" };
-  if (score >= 80) return { label: "良好", className: "text-lime-600 dark:text-lime-400" };
-  if (score >= 65) return { label: "一般", className: "text-yellow-600 dark:text-yellow-400" };
-  if (score >= 45) return { label: "较差", className: "text-orange-600 dark:text-orange-400" };
-  if (score >= 25) return { label: "不稳定", className: "text-rose-600 dark:text-rose-400" };
+  if (score >= 90) return { label: "优秀", className: "text-[var(--fx-healthy-text)]" };
+  if (score >= 80) return { label: "良好", className: "text-[var(--fx-healthy-text)]" };
+  if (score >= 65) return { label: "一般", className: "text-[var(--fx-warn-text)]" };
+  if (score >= 45) return { label: "较差", className: "text-[var(--fx-warn-text)]" };
+  if (score >= 25) return { label: "不稳定", className: "text-[var(--fx-down-text)]" };
   return { label: "严重不可用", className: "text-destructive" };
 }
 

@@ -1482,9 +1482,9 @@ function DashboardLayoutContent({
                 {displayUpgradeJob?.status === "running" ? (
                   <Loader2 className="forwardx-icon-spin h-4 w-4 shrink-0" />
                 ) : displayUpgradeJob?.status === "success" ? (
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--fx-healthy-text)]" />
                 ) : displayUpgradeJob?.status === "waiting_assets" ? (
-                  <RefreshCw className="h-4 w-4 shrink-0 text-amber-500" />
+                  <RefreshCw className="h-4 w-4 shrink-0 text-[var(--fx-warn-text)]" />
                 ) : displayUpgradeJob?.status === "error" ? (
                   <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
                 ) : (
@@ -1520,7 +1520,7 @@ function DashboardLayoutContent({
                         {upgradeProgress.steps.map((step) => (
                           <div key={step.label} className="flex min-w-0 items-center gap-1.5 text-[10px] leading-4 text-primary/75">
                             {step.done ? (
-                              <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" />
+                              <CheckCircle2 className="h-3 w-3 shrink-0 text-[var(--fx-healthy-text)]" />
                             ) : step.active ? (
                               <Loader2 className="forwardx-icon-spin h-3 w-3 shrink-0" />
                             ) : (
@@ -1647,7 +1647,7 @@ function DashboardLayoutContent({
             </div>
           ) : null}
           {expiryNoticeVisible ? (
-            <div className="mb-4 flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-4 flex flex-col gap-2 rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
               <p className="min-w-0">
                 {expiryDaysLeft === 0
                   ? `「${expiryNotice?.planName || "你的套餐"}」今天到期，到期后订阅和转发都会停。`
@@ -1744,7 +1744,7 @@ function DashboardLayoutContent({
                 </div>
 
                 {upgradeStatus?.upgradeEnabled === false && (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                  <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-sm text-[var(--fx-warn-text)]">
                     {isDockerDeployment ? `Docker 部署请复制下方一键脚本到服务器执行${panelVersionActionLabel}。` : `当前环境未配置自动${panelVersionActionLabel}命令，无法在面板内一键${panelVersionActionLabel}。`}
                   </div>
                 )}
@@ -1752,7 +1752,7 @@ function DashboardLayoutContent({
                 {isDockerDeployment && (
                   <div className="space-y-3 rounded-lg border border-border/40 bg-background/60 p-3">
                     {updateInfo?.pendingReason && !updateInfo.error && (
-                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                      <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-xs leading-5 text-[var(--fx-warn-text)]">
                         {updateInfo.pendingReason}
                       </div>
                     )}
@@ -1773,7 +1773,7 @@ function DashboardLayoutContent({
                       {progress.steps.map((step) => (
                         <div key={step.label} className="flex min-w-0 items-center gap-2 text-xs">
                           {step.done ? (
-                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[var(--fx-healthy-text)]" />
                           ) : step.active ? (
                             <Loader2 className="forwardx-icon-spin h-3.5 w-3.5 shrink-0 text-primary" />
                           ) : (
@@ -1787,7 +1787,7 @@ function DashboardLayoutContent({
                 )}
 
                 {isWaitingAssets && (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                  <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-sm text-[var(--fx-warn-text)]">
                     <div className="flex items-center gap-2 font-medium">
                       <RefreshCw className="h-4 w-4" />
                       发布资产构建中
@@ -1809,7 +1809,7 @@ function DashboardLayoutContent({
                 )}
 
                 {isSuccess && (
-                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                  <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] bg-[var(--fx-healthy-soft)] p-3 text-sm text-[var(--fx-healthy-text)]">
                     {panelVersionActionLabel}任务已完成，面板正在重启。{upgradeRefreshText}。
                   </div>
                 )}
@@ -1984,7 +1984,7 @@ function DashboardLayoutContent({
             </div>
           ) : twoFactorStatus?.enabled ? (
             <div className="space-y-4 py-2">
-              <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+              <div className="rounded-lg border border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] p-3 text-sm text-[var(--fx-healthy-text)]">
                 当前账户已启用双重验证。
               </div>
               <div className="space-y-2">

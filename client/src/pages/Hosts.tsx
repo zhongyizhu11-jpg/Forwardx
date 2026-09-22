@@ -763,9 +763,9 @@ function formatHostExpiryTitle(stoppedAt: unknown, remainingDays: string) {
 
 function hostRemainingClass(value: string) {
   if (value === "已到期") return "text-destructive";
-  if (value === "不足1天") return "text-amber-500";
+  if (value === "不足1天") return "text-[var(--fx-warn-text)]";
   if (value === "--") return "text-muted-foreground";
-  return "text-emerald-500";
+  return "text-[var(--fx-healthy-text)]";
 }
 
 function compactHostOsInfo(value: unknown) {
@@ -880,8 +880,8 @@ function HostListFlowPair({
       className="mx-auto grid w-[96px] max-w-full grid-cols-[12px_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1 text-xs tabular-nums"
       title={`${inTitle || inValue}\n${outTitle || outValue}`}
     >
-      <ArrowDown className="h-3 w-3 text-emerald-500" />
-      <span className="min-w-0 truncate text-right font-medium text-emerald-500">{inValue}</span>
+      <ArrowDown className="h-3 w-3 text-[var(--fx-healthy-text)]" />
+      <span className="min-w-0 truncate text-right font-medium text-[var(--fx-healthy-text)]">{inValue}</span>
       <ArrowUp className="h-3 w-3 text-muted-foreground" />
       <span className="min-w-0 truncate text-right font-medium text-foreground">{outValue}</span>
     </div>
@@ -895,8 +895,8 @@ function HostListStatusBadge({ host }: { host: any }) {
       className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] font-medium leading-none"
       title={online ? "Agent 在线" : "Agent 离线"}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${online ? "bg-emerald-500" : "bg-destructive"}`} />
-      <span className={online ? "text-emerald-500" : "text-destructive"}>{online ? "在线" : "离线"}</span>
+      <span className={`h-1.5 w-1.5 rounded-full ${online ? "bg-[var(--fx-healthy)]" : "bg-destructive"}`} />
+      <span className={online ? "text-[var(--fx-healthy-text)]" : "text-destructive"}>{online ? "在线" : "离线"}</span>
     </span>
   );
 }
@@ -907,7 +907,7 @@ function HostSummaryCard({
   subtitle,
   icon: Icon,
   leadingIcon: LeadingIcon,
-  leadingTone = "bg-emerald-500",
+  leadingTone = "bg-[var(--fx-healthy)]",
   iconTone = "bg-chart-2/10 text-chart-2",
   tone,
   loading,
@@ -1055,7 +1055,7 @@ function HostTrafficSummaryCard({
             cacheKey={`${cacheKey}.in`}
             animated={animated}
             icon={ArrowDownToLine}
-            tone="bg-emerald-500"
+            tone="bg-[var(--fx-healthy)]"
           />
           <HostTrafficDirectionStat
             label="出向"
@@ -1064,7 +1064,7 @@ function HostTrafficSummaryCard({
             cacheKey={`${cacheKey}.out`}
             animated={animated}
             icon={ArrowUpFromLine}
-            tone="bg-amber-500"
+            tone="bg-[var(--fx-warn)]"
           />
         </div>
       </CardContent>
@@ -2255,7 +2255,7 @@ function HostsContent() {
             「0 / 4 在线」待在同一行。
           */}
           {updateCount > 0 && user?.role === "admin" && (
-            <Badge variant="outline" className="justify-center gap-1.5 border-amber-500/30 px-2.5 py-1 text-xs text-amber-500">
+            <Badge variant="outline" className="justify-center gap-1.5 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-2.5 py-1 text-xs text-[var(--fx-warn-text)]">
               <AlertTriangle className="h-3 w-3" />
               {updateCount} 台发现新版本
             </Badge>
@@ -2739,7 +2739,7 @@ function HostsContent() {
                                   </span>
                                 )}
                                 {agentNeedsUpdate && (
-                                  <Badge variant="outline" className="h-4 shrink-0 border-amber-500/30 px-1 py-0 text-[9px] leading-none text-amber-500">
+                                  <Badge variant="outline" className="h-4 shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1 py-0 text-[9px] leading-none text-[var(--fx-warn-text)]">
                                     新版本
                                   </Badge>
                                 )}

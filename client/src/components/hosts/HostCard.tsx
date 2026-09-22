@@ -435,8 +435,8 @@ export default function HostCard({
   const remainingTimeClass = remainingTimeLabel === "已到期"
     ? "border-destructive/30 bg-destructive/10 text-destructive"
     : remainingTimeLabel === "不足1天"
-      ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-      : "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+      ? "border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]"
+      : "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]";
   const agentNeedsUpdate = isAgentVersionBehind(host.agentVersion, latestAgentVersion);
   const agentUpgradeTimedOut = isAgentUpgradeTimedOut(host);
   const trafficUsageProgressClass = trafficLimit > 0
@@ -534,7 +534,7 @@ export default function HostCard({
         <span className="shrink-0 text-muted-foreground">计费：</span>
         {billingBadge.metered ? (
           <span
-            className="min-w-0 truncate rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
+            className="min-w-0 truncate rounded bg-[var(--fx-warn-soft)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--fx-warn-text)]"
             title={billingBadge.title}
           >
             {billingBadge.label}
@@ -618,7 +618,7 @@ export default function HostCard({
                   {host.agentVersion ? `v${host.agentVersion}` : "未上报"}
                 </span>
                 {agentNeedsUpdate && (
-                  <Badge variant="outline" className="shrink-0 border-amber-500/30 px-1.5 py-0 text-[10px] text-amber-500">
+                  <Badge variant="outline" className="shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1.5 py-0 text-[10px] text-[var(--fx-warn-text)]">
                     新版
                   </Badge>
                 )}
@@ -650,7 +650,7 @@ export default function HostCard({
                   {host.agentVersion ? `v${host.agentVersion}` : "未上报"}
                 </span>
                 {agentNeedsUpdate && (
-                  <Badge variant="outline" className="shrink-0 border-amber-500/30 px-1.5 py-0 text-[10px] text-amber-500">
+                  <Badge variant="outline" className="shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1.5 py-0 text-[10px] text-[var(--fx-warn-text)]">
                     新版
                   </Badge>
                 )}

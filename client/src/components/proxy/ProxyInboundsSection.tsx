@@ -680,7 +680,7 @@ export default function ProxyInboundsSection({
             >
               <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
               {/* 和「落地节点」那张概览卡同一个青色，上下两处对得上。 */}
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-teal-500/10 text-teal-600 dark:text-teal-400">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]">
                 <Server className="h-3.5 w-3.5" />
               </span>
               <CardTitle className="text-sm font-medium text-muted-foreground">我的节点</CardTitle>
@@ -732,7 +732,7 @@ export default function ProxyInboundsSection({
                   <Eye className="mr-1 h-4 w-4" />
                   预览订阅
                   {previewAlertCount > 0 ? (
-                    <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-medium tabular-nums text-amber-600 dark:text-amber-400">
+                    <span className="ml-1 rounded-full bg-[var(--fx-warn-soft)] px-1.5 text-[11px] font-medium tabular-nums text-[var(--fx-warn-text)]">
                       {previewAlertCount}
                     </span>
                   ) : null}
@@ -821,7 +821,7 @@ export default function ProxyInboundsSection({
               </div>
             )}
             {hosts.length === 0 ? (
-              <p className="mt-3 text-xs text-amber-600 dark:text-amber-500">
+              <p className="mt-3 text-xs text-[var(--fx-warn-text)]">
                 {/*
                   「主机管理」对普通用户是关着的（侧边栏藏了，路由也是 AdminRoute），
                   所以不能对所有人都说「先去主机管理装一台」—— 那是一句他做不到的指示。
@@ -969,7 +969,7 @@ export default function ProxyInboundsSection({
                     </SelectContent>
                   </Select>
                   {isLegacyShadowsocksMethod(form.method) ? (
-                    <p className="text-xs text-amber-600 dark:text-amber-500">
+                    <p className="text-xs text-[var(--fx-warn-text)]">
                       老式 AEAD 有已知的主动探测手段，中间设备能把这类流量识别出来。
                       只在对端客户端太旧、不支持 SS2022 时才用它。
                     </p>
@@ -1071,7 +1071,7 @@ export default function ProxyInboundsSection({
                     注册 Let's Encrypt 账户用，证书快到期时会发提醒到这里。
                   </p>
                 </div>
-                <p className="text-xs text-amber-600 dark:text-amber-500">
+                <p className="text-xs text-[var(--fx-warn-text)]">
                   签证书需要落地机的 80 或 443 端口能从公网访问到。证书由落地机自己申请和续期，私钥不经过面板。
                 </p>
               </div>
@@ -1259,7 +1259,7 @@ export default function ProxyInboundsSection({
                   </div>
                   <p className="text-xs text-muted-foreground">
                     面板自己会累加，这里只是用来手工校准。
-                    <span className="mt-1 block text-amber-600 dark:text-amber-500">
+                    <span className="mt-1 block text-[var(--fx-warn-text)]">
                       这是<strong>这个端口</strong>跑掉的量，不是这台机器的总量 —— 机房按整台机器的网卡算，
                       那个数在「主机管理」里，通常比这里大。
                     </span>
@@ -1297,7 +1297,7 @@ export default function ProxyInboundsSection({
             </div>
 
             {form.id > 0 ? (
-              <p className="text-xs text-amber-600 dark:text-amber-500">
+              <p className="text-xs text-[var(--fx-warn-text)]">
                 <RefreshCw className="mr-1 inline h-3 w-3" />
                 改协议、安全层或加密方式会重新生成凭据，客户端要重新拉一次订阅。
                 {isAdmin ? "换归属用户会把节点从原主人的订阅里移走，他已导入的客户端会少掉这个节点。" : ""}
@@ -1359,7 +1359,7 @@ export default function ProxyInboundsSection({
                 一键复制不成时，长按上面的链接选中即可。
               </p>
             ) : null}
-            <p className="pt-1 text-xs text-amber-600 dark:text-amber-500">
+            <p className="pt-1 text-xs text-[var(--fx-warn-text)]">
               链接里带着这一份完整凭据，发给谁，谁就能用这个节点。
             </p>
           </div>

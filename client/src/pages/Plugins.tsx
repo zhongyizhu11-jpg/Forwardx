@@ -105,7 +105,7 @@ function pluginStatusLabel(status?: string) {
 
 function pluginStatusClass(status?: string) {
   const base = "shrink-0 whitespace-nowrap px-2 text-[11px] leading-none";
-  if (status === "enabled") return `${base} border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300`;
+  if (status === "enabled") return `${base} border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]`;
   if (status === "error") return `${base} border-destructive/25 bg-destructive/10 text-destructive`;
   return `${base} border-border/60 bg-muted/30 text-muted-foreground`;
 }
@@ -226,10 +226,10 @@ function agentTaskStatusLabel(status?: string) {
 }
 
 function agentTaskStatusClass(status?: string) {
-  if (status === "success") return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-  if (status === "partial") return "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  if (status === "success") return "border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]";
+  if (status === "partial") return "border-[color-mix(in_srgb,var(--fx-warn)_25%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]";
   if (status === "error" || status === "timeout") return "border-destructive/25 bg-destructive/10 text-destructive";
-  if (status === "running") return "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300";
+  if (status === "running") return "border-[color-mix(in_srgb,var(--fx-path)_25%,transparent)] bg-[var(--fx-path-soft)] text-[var(--fx-path)]";
   return "border-border/60 bg-muted/30 text-muted-foreground";
 }
 
@@ -267,7 +267,7 @@ function AgentActionResultPanel({
               <div className="flex min-w-0 items-center gap-2">
                 <span className={cn(
                   "h-2.5 w-2.5 shrink-0 rounded-full",
-                  row.status === "success" ? "bg-emerald-500" : row.status === "error" || row.status === "timeout" ? "bg-destructive" : row.status === "running" ? "bg-sky-500" : "bg-muted-foreground/40",
+                  row.status === "success" ? "bg-[var(--fx-healthy)]" : row.status === "error" || row.status === "timeout" ? "bg-destructive" : row.status === "running" ? "bg-[var(--fx-path)]" : "bg-muted-foreground/40",
                 )} />
                 <p className="truncate text-sm font-medium">{row.hostName || `主机 ${row.hostId}`}</p>
               </div>
@@ -715,7 +715,7 @@ function ChinaWhitelistHostStatusSummary({
     <div className="border-b border-border/40 pb-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+          <ShieldCheck className="h-4 w-4 text-[var(--fx-healthy-text)]" />
           <p className="text-sm font-medium">Agent 规则状态</p>
         </div>
         <p className="text-xs text-muted-foreground">已读取 {statusByHostId.size}/{selectedHosts.length} 台</p>
@@ -740,14 +740,14 @@ function ChinaWhitelistHostStatusSummary({
             <div key={host.id} className="min-w-0 rounded-md border border-border/40 bg-background/60 px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className={cn("h-2 w-2 shrink-0 rounded-full", host.isOnline ? "bg-emerald-500" : "bg-muted-foreground/40")} />
+                  <span className={cn("h-2 w-2 shrink-0 rounded-full", host.isOnline ? "bg-[var(--fx-healthy)]" : "bg-muted-foreground/40")} />
                   <p className="truncate text-sm font-medium">{host.name || `主机 ${host.id}`}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   {failed && <ShieldAlert className="h-3.5 w-3.5 text-destructive" />}
                   <Badge variant="outline" className={cn(
                     "text-[10px]",
-                    data?.applied ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : failed ? "border-destructive/25 bg-destructive/10 text-destructive" : "border-border/50 text-muted-foreground",
+                    data?.applied ? "border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]" : failed ? "border-destructive/25 bg-destructive/10 text-destructive" : "border-border/50 text-muted-foreground",
                   )}>
                     {stateLabel}
                   </Badge>
@@ -1527,7 +1527,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
         <div className="space-y-4">
           <div className="flex flex-col gap-3 border-b border-border/40 pb-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-start gap-3">
-              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-300">
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]">
                 <ShieldCheck className="h-4 w-4" />
               </div>
               <div className="min-w-0">
@@ -1551,7 +1551,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
           </div>
 
           {selectedPlugin.status !== "enabled" && (
-            <Alert className="border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+            <Alert className="border-[color-mix(in_srgb,var(--fx-warn)_25%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]">
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>{hostAssetSyncUsageView?.disabledTitle || "插件未启用"}</AlertTitle>
               <AlertDescription>{hostAssetSyncUsageView?.disabledDescription || "启用插件后才能同步到 Agent。"}</AlertDescription>
@@ -1604,7 +1604,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
             />
           </div>
           {selectedPlugin.status !== "enabled" && (
-            <Alert className="mt-4 border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+            <Alert className="mt-4 border-[color-mix(in_srgb,var(--fx-warn)_25%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]">
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>{hostAssetSyncUsageView?.disabledTitle || "插件未启用"}</AlertTitle>
               <AlertDescription>{hostAssetSyncUsageView?.disabledDescription || "配置可先保存，启用插件后再同步到 Agent。"}</AlertDescription>
@@ -1731,7 +1731,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                     )}
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", host.isOnline ? "bg-emerald-500" : "bg-muted-foreground/40")} />
+                      <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", host.isOnline ? "bg-[var(--fx-healthy)]" : "bg-muted-foreground/40")} />
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{host.name || `主机 ${host.id}`}</p>
                         <p className="truncate text-xs text-muted-foreground">{host.ip || "-"}</p>
@@ -2025,7 +2025,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                             <Badge variant="outline" className={pluginStatusClass(plugin.status)}>
                               {pluginStatusLabel(plugin.status)}
                             </Badge>
-                            {plugin.trustRequired && plugin.trusted && <Badge className="bg-amber-500 text-white">已信任</Badge>}
+                            {plugin.trustRequired && plugin.trusted && <Badge className="bg-[var(--fx-warn)] text-white">已信任</Badge>}
                           </div>
                           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{plugin.description || plugin.pluginId}</p>
                         </div>
@@ -2108,7 +2108,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                           <div className="flex flex-wrap justify-end gap-1.5">
                             {item.official && <Badge className="bg-primary text-primary-foreground">官方</Badge>}
                             {!item.official && item.storeSourceName && <Badge variant="outline" className="max-w-40 truncate" title={item.storeSourceName}>{item.storeSourceName}</Badge>}
-                            {installed && <Badge className="bg-emerald-500 text-white">已安装</Badge>}
+                            {installed && <Badge className="bg-[var(--fx-healthy)] text-white">已安装</Badge>}
                           </div>
                         </div>
                         <div className="mt-4 min-w-0 flex-1">
@@ -2292,7 +2292,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                         {storeDetailItem.name}
                         {storeDetailItem.official && <Badge className="bg-primary text-primary-foreground">官方</Badge>}
                         {!storeDetailItem.official && storeDetailItem.storeSourceName && <Badge variant="outline">{storeDetailItem.storeSourceName}</Badge>}
-                        {installedIds.has(storeDetailItem.id) && <Badge className="bg-emerald-500 text-white">已安装</Badge>}
+                        {installedIds.has(storeDetailItem.id) && <Badge className="bg-[var(--fx-healthy)] text-white">已安装</Badge>}
                       </DialogTitle>
                       <DialogDescription className="mt-1">
                         开发者：{storeDetailItem.author || "ForwardX"} · v{storeDetailItem.version || "0.0.0"} · 更新：{formatDateText(storeDetailItem.updatedAt)}
@@ -2404,7 +2404,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                             <Badge variant="outline" className={pluginStatusClass(plugin.status)}>
                               {pluginStatusLabel(plugin.status)}
                             </Badge>
-                            {plugin.trustRequired && plugin.trusted && <Badge className="bg-amber-500 text-white">已信任</Badge>}
+                            {plugin.trustRequired && plugin.trusted && <Badge className="bg-[var(--fx-warn)] text-white">已信任</Badge>}
                             {updating ? (
                               <Badge className="gap-1.5 bg-primary text-primary-foreground">
                                 <Loader2 className="h-3 w-3 animate-spin" />更新中
@@ -2450,7 +2450,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                         <Badge variant="outline" className={pluginStatusClass(selectedPlugin.status)}>
                           {pluginStatusLabel(selectedPlugin.status)}
                         </Badge>
-                        {selectedPluginRequiresTrust && selectedPlugin.trusted && <Badge className="bg-amber-500 text-white">已信任</Badge>}
+                        {selectedPluginRequiresTrust && selectedPlugin.trusted && <Badge className="bg-[var(--fx-warn)] text-white">已信任</Badge>}
                         {selectedPluginUpdating ? (
                           <Badge className="gap-1.5 bg-primary text-primary-foreground">
                             <Loader2 className="h-3 w-3 animate-spin" />更新中
@@ -2487,10 +2487,10 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                     {selectedPluginRequiresTrust && (
                       <div className={cn(
                         "flex h-9 items-center gap-2 rounded-md border px-2.5",
-                        selectedPlugin.trusted ? "border-amber-500/40 bg-amber-500/10" : "border-border/50 bg-muted/20",
+                        selectedPlugin.trusted ? "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)]" : "border-border/50 bg-muted/20",
                       )}>
                         {selectedPlugin.trusted
-                          ? <ShieldCheck className="h-4 w-4 text-amber-600 dark:text-amber-300" />
+                          ? <ShieldCheck className="h-4 w-4 text-[var(--fx-warn-text)]" />
                           : <ShieldAlert className="h-4 w-4 text-muted-foreground" />}
                         <Label htmlFor="plugin-trusted" className="cursor-pointer text-xs">插件信任</Label>
                         <OptimisticSwitch
@@ -2503,9 +2503,9 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                     )}
                     <div className={cn(
                       "flex h-9 items-center gap-2 rounded-md border px-2.5",
-                      selectedPlugin.status === "enabled" ? "border-emerald-500/35 bg-emerald-500/10" : "border-border/50 bg-muted/20",
+                      selectedPlugin.status === "enabled" ? "border-[color-mix(in_srgb,var(--fx-healthy)_35%,transparent)] bg-[var(--fx-healthy-soft)]" : "border-border/50 bg-muted/20",
                     )}>
-                      <Power className={cn("h-4 w-4", selectedPlugin.status === "enabled" ? "text-emerald-600 dark:text-emerald-300" : "text-muted-foreground")} />
+                      <Power className={cn("h-4 w-4", selectedPlugin.status === "enabled" ? "text-[var(--fx-healthy-text)]" : "text-muted-foreground")} />
                       <Label htmlFor="plugin-enabled" className="cursor-pointer text-xs">启用</Label>
                       <OptimisticSwitch
                         id="plugin-enabled"
@@ -2573,8 +2573,8 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
 
                     <TabsContent value="overview" className="space-y-4">
                       {selectedPluginRequiresTrust && (
-                        <Alert className={selectedPlugin.trusted ? "border-amber-500/30 bg-amber-500/10" : "border-border/50 bg-muted/20"}>
-                          {selectedPlugin.trusted ? <ShieldCheck className="h-4 w-4 text-amber-600" /> : <ShieldAlert className="h-4 w-4" />}
+                        <Alert className={selectedPlugin.trusted ? "border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)]" : "border-border/50 bg-muted/20"}>
+                          {selectedPlugin.trusted ? <ShieldCheck className="h-4 w-4 text-[var(--fx-warn-text)]" /> : <ShieldAlert className="h-4 w-4" />}
                           <AlertTitle>{selectedPlugin.trusted ? "高权限 API 已授权" : "高权限 API 待授权"}</AlertTitle>
                           <AlertDescription>
                             {selectedPlugin.trusted
@@ -2822,7 +2822,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                             </Button>
                           </div>
                           {actionResult?.result?.parseError && (
-                            <p className="mb-2 text-xs text-amber-600 dark:text-amber-300">JSON 解析失败：{actionResult.result.parseError}</p>
+                            <p className="mb-2 text-xs text-[var(--fx-warn-text)]">JSON 解析失败：{actionResult.result.parseError}</p>
                           )}
                           {actionResultDisplayBody(actionResult) ? (
                             <pre className="max-h-80 overflow-auto rounded-md bg-muted/40 p-3 text-xs leading-5">
@@ -2834,7 +2834,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                         </div>
                       )}
                       {selectedPlugin.status !== "enabled" && managementPluginActions.length > 0 && (
-                        <Alert className="border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                        <Alert className="border-[color-mix(in_srgb,var(--fx-warn)_25%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]">
                           <AlertTriangle className="h-4 w-4" />
                           <AlertTitle>插件未启用</AlertTitle>
                           <AlertDescription>启用插件后可执行动作。</AlertDescription>

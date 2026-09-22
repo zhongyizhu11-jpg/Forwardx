@@ -12,8 +12,8 @@ export function HostStatusDot({ host, className }: { host?: HostLike | null; cla
       className={cn(
         "h-2.5 w-2.5 shrink-0 rounded-full",
         online
-          ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.16)]"
-          : "bg-rose-500 shadow-[0_0_0_3px_rgba(244,63,94,0.14)]",
+          ? "bg-[var(--fx-healthy)] shadow-[0_0_0_3px_var(--fx-healthy-soft)]"
+          : "bg-[var(--fx-down)] shadow-[0_0_0_3px_var(--fx-down-soft)]",
         className,
       )}
       aria-hidden="true"

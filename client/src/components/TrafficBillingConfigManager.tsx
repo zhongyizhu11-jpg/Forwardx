@@ -182,7 +182,7 @@ function BillingResourceOption({
           <span className="truncate text-sm font-medium">{name}</span>
           <span className="shrink-0 rounded border border-border/60 bg-background/70 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">{kind}</span>
           {multiplier ? (
-            <span className="shrink-0 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium leading-none text-emerald-700 dark:text-emerald-300">
+            <span className="shrink-0 rounded border border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] bg-[var(--fx-healthy-soft)] px-1.5 py-0.5 text-[11px] font-medium leading-none text-[var(--fx-healthy-text)]">
               {multiplier}
             </span>
           ) : null}
@@ -407,7 +407,6 @@ export default function TrafficBillingConfigManager({
             value={money(totalCharged)}
             subtitle="历史扣费合计"
             icon={Coins}
-            tone="bg-gradient-to-br from-teal-500 to-teal-600"
             loading={summaryLoading}
             cacheKey="trafficBilling.totalCharged"
             fallbackValue={money(0)}
@@ -417,7 +416,6 @@ export default function TrafficBillingConfigManager({
             value={`${totalGb} GB`}
             subtitle="扣费记录累计"
             icon={Gauge}
-            tone="bg-gradient-to-br from-emerald-500 to-emerald-600"
             loading={summaryLoading}
             cacheKey="trafficBilling.totalGb"
             fallbackValue="0 GB"
@@ -427,7 +425,6 @@ export default function TrafficBillingConfigManager({
             value={data?.configs?.length || 0}
             subtitle="已配置资源"
             icon={ReceiptText}
-            tone="bg-gradient-to-br from-orange-500 to-orange-600"
             loading={configsLoading}
             cacheKey="trafficBilling.configsCount"
             fallbackValue={0}

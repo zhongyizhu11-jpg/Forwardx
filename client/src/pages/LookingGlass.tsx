@@ -153,14 +153,14 @@ function ResultOutput({
             {isRunning ? (
               <Loader2 className="forwardx-icon-spin h-4 w-4 text-primary" />
             ) : result ? (
-              ok ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <AlertTriangle className="h-4 w-4 text-amber-500" />
+              ok ? <CheckCircle2 className="h-4 w-4 text-[var(--fx-healthy-text)]" /> : <AlertTriangle className="h-4 w-4 text-[var(--fx-warn-text)]" />
             ) : (
               <Terminal className="h-4 w-4 text-primary" />
             )}
             <span className="truncate">{title}</span>
             <Badge
               variant={ok && !isRunning ? "secondary" : "outline"}
-              className={cn(ok && !isRunning && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300")}
+              className={cn(ok && !isRunning && "bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]")}
             >
               {statusLabel}
             </Badge>
@@ -227,16 +227,16 @@ function Iperf3Output({
             {loading || isBusy ? (
               <Loader2 className="forwardx-icon-spin h-4 w-4 text-primary" />
             ) : isRunning ? (
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-[var(--fx-healthy-text)]" />
             ) : state === "error" ? (
-              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              <AlertTriangle className="h-4 w-4 text-[var(--fx-warn-text)]" />
             ) : (
               <Gauge className="h-4 w-4 text-primary" />
             )}
             <span className="truncate">iperf3 服务端</span>
             <Badge
               variant={isRunning ? "secondary" : "outline"}
-              className={cn(isRunning && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300")}
+              className={cn(isRunning && "bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]")}
             >
               {iperf3StateLabel(state)}
             </Badge>
@@ -695,7 +695,7 @@ export default function LookingGlass() {
               </Button>
 
               {!isIperf3Method && iperf3Running && (
-                <p className="text-xs text-amber-600 dark:text-amber-300">当前 iperf3 服务端正在运行，请先切换到 iperf3 服务端并停止后再执行其他测试。</p>
+                <p className="text-xs text-[var(--fx-warn-text)]">当前 iperf3 服务端正在运行，请先切换到 iperf3 服务端并停止后再执行其他测试。</p>
               )}
 
               <div className="rounded-lg border border-border/40 bg-muted/20 p-3">

@@ -1629,8 +1629,8 @@ export function ForwardGroupsContent({
   const groupStatusBadge = (group: any) => {
     const configState = getGroupConfigState(group);
     if (configState.status === "disabled") return <Badge variant="outline">停用</Badge>;
-    if (configState.status === "available") return <Badge className="border-emerald-500/20 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 hover:text-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-500/20 dark:hover:text-emerald-100">可用</Badge>;
-    if (configState.status === "degraded") return <Badge className="border-amber-500/25 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300">部分可用</Badge>;
+    if (configState.status === "available") return <Badge className="border-[color-mix(in_srgb,var(--fx-healthy)_20%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)] hover:bg-[color-mix(in_srgb,var(--fx-healthy)_20%,transparent)] hover:text-[var(--fx-healthy-text)] dark:hover:bg-[color-mix(in_srgb,var(--fx-healthy)_20%,transparent)] dark:hover:text-[var(--fx-healthy-text)]">可用</Badge>;
+    if (configState.status === "degraded") return <Badge className="border-[color-mix(in_srgb,var(--fx-warn)_25%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)] hover:bg-[var(--fx-warn-soft)]">部分可用</Badge>;
     if (configState.status === "pending") return <Badge variant="secondary">等待检测</Badge>;
     return <Badge variant="destructive">不可用</Badge>;
   };
@@ -1891,7 +1891,7 @@ export function ForwardGroupsContent({
             key={member.id}
             className={`inline-flex max-w-[14rem] items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] ${
               isGroupMemberActive(group, member)
-                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600"
+                ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
                 : "border-border bg-muted/20 text-muted-foreground"
             }`}
             title={memberHealthTitle(group, member)}

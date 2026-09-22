@@ -120,7 +120,7 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
             <div className={`flex h-10 w-10 items-center justify-center rounded-md ${
               pending?.tone === "destructive"
                 ? "bg-destructive/10 text-destructive"
-                : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                : "bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]"
             }`}>
               <AlertTriangle className="h-5 w-5" />
             </div>

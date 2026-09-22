@@ -1814,7 +1814,7 @@ function RuleTrafficGlobe({
               规则 {rules.length} 条 · 已定位 {globeData.summaries.length} 条
             </div>
             {globeData.skipped > 0 && (
-              <div className="mt-1 text-amber-200/85">待定位 {globeData.skipped} 条</div>
+              <div className="mt-1 text-[color-mix(in_srgb,var(--fx-warn)_85%,transparent)]">待定位 {globeData.skipped} 条</div>
             )}
           </div>
 
@@ -4463,7 +4463,7 @@ function RulesContent() {
   };
   const getHostOptionName = (host: any) => host?.name || `主机 #${host?.id || "-"}`;
   const renderTrafficBillingResourceBadge = (enabled = true) => enabled ? (
-    <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-700 dark:text-amber-300">
+    <span className="shrink-0 rounded border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] px-1.5 py-0.5 text-[10px] font-medium leading-none text-[var(--fx-warn-text)]">
       按量计费资源
     </span>
   ) : null;
@@ -4475,8 +4475,8 @@ function RulesContent() {
         <span
           className={`h-2.5 w-2.5 shrink-0 rounded-full ${
             online
-              ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.16)]"
-              : "bg-rose-500 shadow-[0_0_0_3px_rgba(244,63,94,0.14)]"
+              ? "bg-[var(--fx-healthy)] shadow-[0_0_0_3px_var(--fx-healthy-soft)]"
+              : "bg-[var(--fx-down)] shadow-[0_0_0_3px_var(--fx-down-soft)]"
           }`}
           aria-hidden="true"
         />
@@ -4535,7 +4535,7 @@ function RulesContent() {
   const renderTunnelSelectStatusDot = (tunnel: any) => {
     const state = tunnelAvailabilityById.get(Number(tunnel?.id || 0));
     if (state?.status === "available") return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" aria-hidden="true" />;
-    if (state?.status === "degraded" || state?.status === "pending") return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50" aria-hidden="true" />;
+    if (state?.status === "degraded" || state?.status === "pending") return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--fx-warn)] shadow-sm" aria-hidden="true" />;
     if (state?.status === "unavailable") return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-destructive/70 shadow-sm shadow-destructive/40" aria-hidden="true" />;
     return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-muted-foreground/30" aria-hidden="true" />;
   };
@@ -4675,8 +4675,8 @@ function RulesContent() {
     if (status === "unavailable") {
       return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-destructive/70 shadow-sm shadow-destructive/40" aria-hidden="true" />;
     }
-    if (status === "degraded") return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50" aria-hidden="true" />;
-    return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50" aria-hidden="true" />;
+    if (status === "degraded") return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--fx-warn)] shadow-sm" aria-hidden="true" />;
+    return <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--fx-warn)] shadow-sm" aria-hidden="true" />;
   };
   const renderForwardGroupSelectLabel = (group: any) => {
     const mode = forwardGroupModeOf(group);
@@ -5070,14 +5070,14 @@ function RulesContent() {
       if (state?.status === "available") {
         return {
           label: "可用",
-          dotClassName: "bg-emerald-500",
+          dotClassName: "bg-[var(--fx-healthy)]",
           textClassName: "text-muted-foreground",
         };
       }
       if (state?.status === "degraded" || state?.status === "pending") {
         return {
           label: state.status === "degraded" ? "部分可用" : "检测中",
-          dotClassName: "bg-amber-500",
+          dotClassName: "bg-[var(--fx-warn)]",
           textClassName: "text-muted-foreground",
         };
       }
@@ -5092,14 +5092,14 @@ function RulesContent() {
     if (status === "available") {
       return {
         label: "可用",
-        dotClassName: "bg-emerald-500",
+        dotClassName: "bg-[var(--fx-healthy)]",
         textClassName: "text-muted-foreground",
       };
     }
     if (status === "pending" || status === "degraded") {
       return {
         label: status === "degraded" ? "部分可用" : "检测中",
-        dotClassName: "bg-amber-500",
+        dotClassName: "bg-[var(--fx-warn)]",
         textClassName: "text-muted-foreground",
       };
     }
@@ -5780,7 +5780,7 @@ function RulesContent() {
       return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-destructive/70 shadow-sm shadow-destructive/40" />;
     }
     if (visual.state === "pending") {
-      return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50" />;
+      return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-[var(--fx-warn)] shadow-sm" />;
     }
     return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30" />;
   };
@@ -5902,7 +5902,7 @@ function RulesContent() {
       failoverStrategy,
     } = getRuleTransferDisplay(rule);
     const failoverBadge = failoverEnabled ? (
-      <Badge variant="outline" className="h-5 shrink-0 border-amber-500/30 px-1.5 text-[10px] text-amber-600">
+      <Badge variant="outline" className="h-5 shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1.5 text-[10px] text-[var(--fx-warn-text)]">
         {failoverStrategyLabels[failoverStrategy]} {failoverCount}
       </Badge>
     ) : null;
@@ -6002,7 +6002,7 @@ function RulesContent() {
           {targetAddress}
         </code>
         {failoverEnabled && (
-          <Badge variant="outline" className="h-5 shrink-0 border-amber-500/30 px-1.5 text-[10px] text-amber-600">
+          <Badge variant="outline" className="h-5 shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1.5 text-[10px] text-[var(--fx-warn-text)]">
             {failoverStrategyLabels[failoverStrategy]} {failoverCount}
           </Badge>
         )}
@@ -6057,7 +6057,7 @@ function RulesContent() {
     return (
       <Badge
         variant="outline"
-        className="h-5 w-fit border-amber-500/35 bg-amber-500/10 px-1.5 text-[10px] text-amber-700 dark:text-amber-300"
+        className="h-5 w-fit border-[color-mix(in_srgb,var(--fx-warn)_35%,transparent)] bg-[var(--fx-warn-soft)] px-1.5 text-[10px] text-[var(--fx-warn-text)]"
         title={warning}
       >
         <AlertCircle className="mr-1 h-3 w-3" />
@@ -6083,7 +6083,7 @@ function RulesContent() {
       return (
         <Badge
           variant="outline"
-          className="w-fit whitespace-nowrap border-amber-500/40 text-[10px] text-amber-600 dark:text-amber-400"
+          className="w-fit whitespace-nowrap border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] text-[10px] text-[var(--fx-warn-text)]"
           title={`这条转发的目标已经不是它绑的「${nodeName}」了。订阅里那条线路还在，但客户端连过去是拿着「${nodeName}」的凭据去连新目标 —— 把目标改回去，或者在这里重新选节点。`}
         >
           <AlertTriangle className="mr-1 h-3 w-3" />
@@ -6095,7 +6095,7 @@ function RulesContent() {
       <Badge
         variant="outline"
         className={`w-fit whitespace-nowrap text-[10px] ${
-          visible ? "border-sky-500/30 text-sky-600 dark:text-sky-400" : "border-muted-foreground/30 text-muted-foreground"
+          visible ? "border-[color-mix(in_srgb,var(--fx-path)_30%,transparent)] text-[var(--fx-path)]" : "border-muted-foreground/30 text-muted-foreground"
         }`}
         title={visible
           ? `这条转发以「${nodeName}」的身份出现在你的订阅里。改目标、停用或删掉它，客户端里那条线路会跟着变。`
@@ -6114,8 +6114,8 @@ function RulesContent() {
     看不见了，这正是「主备到底在哪儿用」说不清楚的地方。
   */
   const failoverToneClass: Record<FailoverLineTone, string> = {
-    idle: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
-    backup: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    idle: "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]",
+    backup: "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]",
     warn: "border-destructive/40 text-destructive",
     unreported: "border-border text-muted-foreground",
   };
@@ -6158,7 +6158,7 @@ function RulesContent() {
         variant="outline"
         className={`w-fit whitespace-nowrap text-[10px] ${
           rule.forwardGroupId
-            ? "border-emerald-500/30 text-emerald-600"
+            ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]"
             : rule.forwardType === "iptables" || rule.forwardType === "nftables"
             ? "border-primary/30 text-primary"
             : rule.forwardType === "socat"
@@ -6540,11 +6540,21 @@ function RulesContent() {
   const ruleContentModeKey = effectiveViewMode === "card" ? "card" : displayMode;
   const ruleContentTransitionKey = `${ruleCategory}-${ruleContentModeKey}-${isLoading ? "loading" : filteredRules.length > 0 ? "list" : "empty"}`;
 
+  /*
+    分组图标一律中性。
+
+    以前四类各刷一个颜色：转发链琥珀、转发组绿、隧道红、端口转发品牌色 ——
+    而这四个颜色在面板里分别是「降级」「正常」「故障」和「主操作」。于是一个
+    转发链分组的标题看着像在报警，一个转发组的标题看着像在说「一切正常」。
+
+    类型该由图标形状和旁边的文字说，颜色只留给状态。
+  */
   function renderRuleGroupIcon(type: RuleGroupType, className = "h-4 w-4") {
-    if (type === "chain") return <GitBranch className={`${className} text-amber-600`} />;
-    if (type === "group") return <Layers3 className={`${className} text-emerald-600`} />;
-    if (type === "tunnel") return <Network className={`${className} text-chart-4`} />;
-    return <ArrowRightLeft className={`${className} text-primary`} />;
+    const tone = `${className} text-muted-foreground`;
+    if (type === "chain") return <GitBranch className={tone} />;
+    if (type === "group") return <Layers3 className={tone} />;
+    if (type === "tunnel") return <Network className={tone} />;
+    return <ArrowRightLeft className={tone} />;
   }
 
   const renderRuleGroupHeader = (group: { type: RuleGroupType; label: string; rules: any[] }, compact = false) => {
@@ -6884,7 +6894,7 @@ function RulesContent() {
         scope={trafficTotalsCacheScope} lastScope={trafficTotalsLastCacheScope} />
 
       {!canAdd && !rulePermissionLoading && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm text-amber-700 dark:text-amber-400">
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--fx-warn-soft)] border border-[color-mix(in_srgb,var(--fx-warn)_20%,transparent)] text-sm text-[var(--fx-warn-text)]">
           <AlertCircle className="h-4 w-4 flex-shrink-0" />
           <span>当前账号没有添加转发规则的权限</span>
         </div>
@@ -7394,7 +7404,7 @@ function RulesContent() {
                     </Badge>
                   </div>
                   {isLegacyLocalRuleEdit && form.routeMode === "local" && (
-                    <p className="text-xs text-amber-600">
+                    <p className="text-xs text-[var(--fx-warn-text)]">
                       旧版端口转发规则需要选择新版端口转发，保存后会保留当前目标地址和端口配置。
                     </p>
                   )}
@@ -7449,7 +7459,7 @@ function RulesContent() {
                     </Badge>
                   </div>
                   {availableTrafficBillingHosts.length === 0 && (
-                    <p className="text-xs text-amber-600">暂无可用按量计费资源，请确认资源授权和余额。</p>
+                    <p className="text-xs text-[var(--fx-warn-text)]">暂无可用按量计费资源，请确认资源授权和余额。</p>
                   )}
                   {selectedHost && (
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -7496,7 +7506,7 @@ function RulesContent() {
               }}
               className={`pr-24 ${
               portStatus === "used" ? "border-destructive" :
-              portStatus === "available" ? "border-emerald-500" : ""
+              portStatus === "available" ? "border-[var(--fx-healthy)]" : ""
               }`}
               />
               {portStatus === "used" && (
@@ -7506,7 +7516,7 @@ function RulesContent() {
               </div>
               )}
               {portStatus === "available" && (
-              <div className="absolute right-2.5 top-1/2 inline-flex max-w-[5.5rem] -translate-y-1/2 items-center gap-1 text-[11px] font-medium text-emerald-600" title={portStatusHint?.title}>
+              <div className="absolute right-2.5 top-1/2 inline-flex max-w-[5.5rem] -translate-y-1/2 items-center gap-1 text-[11px] font-medium text-[var(--fx-healthy-text)]" title={portStatusHint?.title}>
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate">{portStatusHint?.text || "可用"}</span>
               </div>
@@ -7566,7 +7576,7 @@ function RulesContent() {
             </div>
             {/* 警告留在外面：折进「更多设置」就等于折没了，而它恰恰是要被看见的。 */}
             {kernelForwardWarning && (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+              <div className="rounded-md border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] px-3 py-2 text-sm text-[var(--fx-warn-text)]">
                 <div className="flex min-w-0 items-start gap-2">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span className="min-w-0 leading-5">{kernelForwardWarning}</span>
@@ -7691,7 +7701,7 @@ function RulesContent() {
                 而这一块以前干脆整个不渲染，等于让人对着一个不存在的功能找原因。
               */}
               {!canUseMainBackup && mainBackupDisabledText && (
-                <p className="text-[11px] leading-4 text-amber-600 dark:text-amber-400">
+                <p className="text-[11px] leading-4 text-[var(--fx-warn-text)]">
                   {mainBackupDisabledText}
                 </p>
               )}
@@ -7756,7 +7766,7 @@ function RulesContent() {
                     return (
                     <p
                       key={hint.line}
-                      className={`text-xs leading-5 ${hint.probeBlindSpot || hint.sameDestination === false ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}
+                      className={`text-xs leading-5 ${hint.probeBlindSpot || hint.sameDestination === false ? "text-[var(--fx-warn-text)]" : "text-muted-foreground"}`}
                     >
                       第 {hint.line} 行：{text}
                     </p>
@@ -7838,7 +7848,7 @@ function RulesContent() {
                       <SelectItem value="forever">一直钉着</SelectItem>
                       </SelectContent>
                     </Select>
-                    <p className="w-full text-xs leading-5 text-amber-600 dark:text-amber-400">
+                    <p className="w-full text-xs leading-5 text-[var(--fx-warn-text)]">
                       {form.failoverPin.until === null
                         ? "一直钉着：时段表和自动切换都不会再改变走向，直到你在这里改回「自动」。"
                         : `到 ${new Date(form.failoverPin.until * 1000).toLocaleString("zh-CN")} 自动交回。钉住的这条要是挂了，仍然会往下切。`}
@@ -7854,7 +7864,7 @@ function RulesContent() {
                     必须提前说：等用户保存完回来发现时段表空了，比现在多一行字糟得多。
                     界面上那份还留着，改回主备就在，不用重配。
                   */
-                  <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                  <p className="rounded-md bg-[var(--fx-warn-soft)] px-3 py-2 text-xs leading-5 text-[var(--fx-warn-text)]">
                     {failoverModeOptions.find((option) => option.value === form.failoverStrategy)?.label || "当前策略"}
                     下没有「首选出站」，时段表不适用，保存后会清空。改回主备模式可以继续用。
                   </p>
@@ -8197,7 +8207,7 @@ function RulesContent() {
             <div
               className={`rounded-md border px-3 py-2 text-sm ${
                 importValidation.ok
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
                   : importFileName || importFileError
                     ? "border-destructive/30 bg-destructive/10 text-destructive"
                     : "border-border/60 bg-muted/30 text-muted-foreground"
@@ -8337,7 +8347,7 @@ function RulesContent() {
                     <div
                       className={`rounded-md border px-3 py-2 text-sm ${
                         importValidation.ok
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                          ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
                           : importFileName || importFileError || String(importManualText || "").trim()
                             ? "border-destructive/30 bg-destructive/10 text-destructive"
                             : "border-border/60 bg-muted/30 text-muted-foreground"
@@ -8381,7 +8391,7 @@ function RulesContent() {
                       <Label>导入目标</Label>
                       <div className="text-xs text-muted-foreground">选择要导入到哪个端口转发、隧道、转发链或转发组。</div>
                     </div>
-                    <div className="inline-flex shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                    <div className="inline-flex shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-full bg-[var(--fx-healthy-soft)] px-3 py-1 text-xs font-medium text-[var(--fx-healthy-text)]">
                       <span>已选择</span>
                       <span className="rounded-full bg-background/90 px-2 py-0.5 tabular-nums">{selectedImportResource ? 1 : 0}</span>
                     </div>
@@ -8442,7 +8452,7 @@ function RulesContent() {
                           onClick={() => setImportResourceId(String(resource.id))}
                           className={`flex w-full min-w-0 items-start gap-3 rounded-md border p-2 text-left transition-colors hover:bg-muted/40 ${
                             selected
-                              ? "border-emerald-500/50 bg-emerald-500/5 shadow-sm"
+                              ? "border-[color-mix(in_srgb,var(--fx-healthy)_50%,transparent)] bg-[color-mix(in_srgb,var(--fx-healthy)_5%,transparent)] shadow-sm"
                               : "border-border/40 bg-background/70"
                           }`}
                         >
@@ -8495,7 +8505,7 @@ function RulesContent() {
                       <Label>导出内容</Label>
                       <div className="text-xs text-muted-foreground">将左侧选中的规则导出为 JSON 文件，便于备份或迁移。</div>
                     </div>
-                    <div className="inline-flex shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-full bg-sky-500/10 px-3 py-1 text-xs font-medium text-sky-700 dark:text-sky-300">
+                    <div className="inline-flex shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-full bg-[var(--fx-path-soft)] px-3 py-1 text-xs font-medium text-[var(--fx-path)]">
                       <span>待导出</span>
                       <span className="rounded-full bg-background/90 px-2 py-0.5 tabular-nums">{selectedBatchRuleCount}</span>
                     </div>
@@ -8532,7 +8542,7 @@ function RulesContent() {
                         入口资源和目标地址可独立替换；未填写的项会保留每条规则原来的值。
                       </div>
                     </div>
-                    <div className="inline-flex shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                    <div className="inline-flex shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-full bg-[var(--fx-warn-soft)] px-3 py-1 text-xs font-medium text-[var(--fx-warn-text)]">
                       {hasBatchEditChanges ? "按填写项替换" : "未设置替换项"}
                     </div>
                   </div>
@@ -8690,7 +8700,7 @@ function RulesContent() {
                       <Label>复制目标</Label>
                       <div className="text-xs text-muted-foreground">可同时选择多个{copyTargetScopeLabel}；搜索仅筛选显示，不会取消已选目标。</div>
                     </div>
-                    <div className="inline-flex items-center gap-2 self-start rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                    <div className="inline-flex items-center gap-2 self-start rounded-full bg-[var(--fx-healthy-soft)] px-3 py-1 text-xs font-medium text-[var(--fx-healthy-text)]">
                       <span>已选目标</span>
                       <span className="rounded-full bg-background/90 px-2 py-0.5 tabular-nums">{selectedBatchTargetCount}</span>
                     </div>
@@ -8787,7 +8797,7 @@ function RulesContent() {
                         key={`${copyTargetScopeType}:${resource.id}`}
                         className={`flex cursor-pointer items-start gap-3 rounded-md border p-2 transition-colors hover:bg-muted/40 ${
                           copyTargetResourceIds.includes(Number(resource.id))
-                            ? "border-emerald-500/50 bg-emerald-500/5 shadow-sm"
+                            ? "border-[color-mix(in_srgb,var(--fx-healthy)_50%,transparent)] bg-[color-mix(in_srgb,var(--fx-healthy)_5%,transparent)] shadow-sm"
                             : "border-border/40 bg-background/70"
                         }`}
                       >
@@ -8804,7 +8814,7 @@ function RulesContent() {
                       <div className="py-10 text-center text-sm text-muted-foreground">没有可选择的{copyTargetScopeLabel}</div>
                     )}
                   </div>
-                  <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs leading-5 text-emerald-800 dark:text-emerald-200">
+                  <div className="rounded-md border border-[color-mix(in_srgb,var(--fx-healthy)_20%,transparent)] bg-[color-mix(in_srgb,var(--fx-healthy)_5%,transparent)] px-3 py-2 text-xs leading-5 text-[var(--fx-healthy-text)]">
                     {selectedCopyTargetResources.length > 0 ? (
                       <>
                         <span className="font-medium">本次复制目标：</span>
@@ -8894,7 +8904,7 @@ function RulesContent() {
                 : `确认重置规则 "${resetTrafficTarget?.rule?.name || ""}" 的所有统计数据？`}
             </DialogDescription>
           </DialogHeader>
-          <div className="rounded-md border border-amber-500/20 bg-amber-500/10 p-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
+          <div className="rounded-md border border-[color-mix(in_srgb,var(--fx-warn)_20%,transparent)] bg-[var(--fx-warn-soft)] p-3 text-xs leading-5 text-[var(--fx-warn-text)]">
             这里只清除规则页面展示的统计数据，不会清除用户套餐已用流量、余额或流量按量计费记录。
           </div>
           <DialogFooter>

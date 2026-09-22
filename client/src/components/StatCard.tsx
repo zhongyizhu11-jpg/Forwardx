@@ -18,8 +18,6 @@ export type StatCardProps = {
   value: string | number;
   subtitle?: string;
   icon: ElementType;
-  /** Legacy color hint, retained for callers. The common surface owns icon colors. */
-  tone: string;
   loading?: boolean;
   /** 缓存键：刷新时先显示上次的值，避免整排数字闪一下 0。 */
   cacheKey: string;

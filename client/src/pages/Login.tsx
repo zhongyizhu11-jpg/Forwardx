@@ -851,7 +851,7 @@ export default function Login() {
             aria-label="设置面板地址"
             title="设置面板地址"
           >
-            <SettingsIcon className={mobileAuth.hasPanelUrl() ? "h-5 w-5 text-muted-foreground" : "h-5 w-5 text-amber-500"} />
+            <SettingsIcon className={mobileAuth.hasPanelUrl() ? "h-5 w-5 text-muted-foreground" : "h-5 w-5 text-[var(--fx-warn-text)]"} />
           </button>
         )}
         <button
@@ -943,7 +943,7 @@ export default function Login() {
                 <button
                   type="button"
                   onClick={() => setShowPanelSettings(true)}
-                  className="w-full rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-left text-sm text-amber-700 transition-colors hover:bg-amber-500/15 dark:text-amber-300"
+                  className="w-full rounded-md border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] px-3 py-2 text-left text-sm text-[var(--fx-warn-text)] transition-colors hover:bg-[var(--fx-warn-soft)]"
                 >
                   未添加服务器地址，请点击右上角设置按钮添加
                 </button>
@@ -1088,7 +1088,7 @@ export default function Login() {
                 <button
                   type="button"
                   onClick={() => setShowPanelSettings(true)}
-                  className="w-full rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-left text-sm text-amber-700 transition-colors hover:bg-amber-500/15 dark:text-amber-300"
+                  className="w-full rounded-md border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] px-3 py-2 text-left text-sm text-[var(--fx-warn-text)] transition-colors hover:bg-[var(--fx-warn-soft)]"
                 >
                   未添加服务器地址，请点击右上角设置按钮添加
                 </button>
