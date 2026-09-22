@@ -426,15 +426,21 @@ V1 首页告诉用户**我有什么**（一堆数字卡片）。V2 首页要告�
   延迟 82ms · 较平均值 +41%        >
 ```
 
-没有问题时：
-
-```
-✓ 一切正常
-当前没有需要处理的问题
-```
+没有问题时，「需要关注」**整块不出现** —— 顶上那一行已经写了「✓ 运行正常」，
+再来一块「一切正常」是同一句话说两遍。（这一节最初画的是一块写着「一切正常」的
+区域，落地时改掉了。）
 
 筛选依据是 `describeNetworkHealth(...).needsAttention` —— 注意 `unknown` 也算
-需要关注，它是一个待查的问题，不是一切正常。
+需要关注，它是一个待查的问题，不是一切正常。落地后的几条约定：
+
+- 顶上的数和列表出自同一次调用（`dashboard.health`），逐类对应：列表里有几处红的，
+  顶上就写几处异常。
+- 顶上按「最该先看到哪个」退档：有异常说「N 处异常」；没有异常但有降级说「N 处
+  降级」—— 不能在列表里挂着琥珀色的同时写「运行正常」。
+- 「还没接入」的主机（unknown）进列表但不计入异常：一步没做完，不是出了事。
+- 按设计停着的不算异常：转发组的模板规则看子规则；主人被计费暂停的规则在管理员
+  那边不算，在租户自己那边合成一行「转发已暂停」。
+- 同一档状态里按「从根上往下」排：主机 → 隧道 → 转发组 → 转发。
 
 ### 列表和详情各管各的
 
@@ -462,7 +468,9 @@ EmptyState · LoadingState · ErrorState · OfflineState
 ```
 
 已落地：`StatusDot`、`HealthBadge`、`NetworkNode`、`NetworkEdge`、`NetworkPath`、
-`PathPreview`。其余按 Phase 推进。
+`PathPreview`；iOS 那一套 `GroupedList`（`ListSection` / `ListRow`）、导航栏、
+标签栏；首页的 `AttentionSection` / `TrafficSurface` / `AccountSection`
+（`client/src/features/dashboard/`）。其余按 Phase 推进。
 
 ---
 
@@ -495,11 +503,14 @@ Tailwind 工具类是 `(0,1,0)`；一条 `[data-slot="x"]` 也是 `(0,1,0)`，�
 |---|---|---|
 | 1 | Foundations：令牌、字体、间距、圆角、颜色、表面、状态体系 | ✅ |
 | 2 | Visual Language：Node / Path / Edge / Flow / Health | ✅ |
-| 3 | 核心三页：总览 → 主机 → 链路 | |
-| 4 | 操作系统：Drawer、Bottom Sheet、ActionMenu、创建流程、诊断流程 | |
-| 5 | 转发系统：规则、链、组，以及 Route Policy 抽象 | |
-| 6 | Subscription + Settings 迁移 | |
+| 3 | 核心三页：总览 → 主机 → 链路 | ✅ |
+| 4 | 操作系统：Drawer、Bottom Sheet、ActionMenu、创建流程、诊断流程 | 部分：Sheet / 操作表 / 创建流程；诊断流程未动 |
+| 5 | 转发系统：规则、链、组，以及 Route Policy 抽象 | 部分：规则 / 链 / 组；Route Policy 未动 |
+| 6 | Subscription + Settings 迁移 | 部分：设置页手机端 |
 | 7 | Polish：Skeleton / Loading / Empty / Error / 转场 / 深色 / 响应式 | |
+
+按 PR 拆的推进表（和这张表是同一件事的另一种切法）在
+`FORWARDX_PRODUCT_UI_CN.md` 第八节。
 
 最后再做一次全站视觉审计。
 

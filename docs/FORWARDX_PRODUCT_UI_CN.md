@@ -166,16 +166,34 @@ lib/chartPalette                 图表色板
 | PR | 内容 | 状态 |
 |---|---|---|
 | 1 | **UI Architecture**：Entity 系列、Path 系列、Health、Metric、色板、本文档。**不大改视觉** | ✅ |
-| 2 | **Hosts 2.0**：列表压缩、Summary/Detail 分离、离线态改善、统一 ActionMenu | |
-| 3 | **Links 2.0**：TunnelCard / ChainCard / GroupCard / Topology，Tunnels.tsx 拆分到 `features/links/` | |
-| 4 | **Rules 2.0**：Rule 从配置卡变成 Flow 卡，创建流程改渐进式披露 | |
-| 5 | **Dashboard 2.0**：Health / Traffic / Attention 三段，减少饼图和孤立统计卡 | |
+| 2 | **Hosts 2.0**：列表压缩、Summary/Detail 分离、离线态改善、统一 ActionMenu | ✅ |
+| 3 | **Links 2.0**：TunnelCard / ChainCard / GroupCard / Topology，Tunnels.tsx 拆分到 `features/links/` | ✅ 拆分只迈了第一步 |
+| 4 | **Rules 2.0**：Rule 从配置卡变成 Flow 卡，创建流程改渐进式披露 | ✅ |
+| 5 | **Dashboard 2.0**：Health / Traffic / Attention 三段，减少饼图和孤立统计卡 | ✅ |
 | 6 | **Route Policy**：主备、多线路、定时、自动故障切换、手动、恢复，统一进策略 UI | |
-| 7 | Subscription / Settings 迁移 | |
+| 7 | Subscription / Settings 迁移 | 设置页手机端已换分组列表 |
 | 8 | **CSS 债清理**：删 legacy override、宽泛选择器、重复样式 | |
+
+PR 3 的拆分只迈了第一步：`features/links/` 里目前是路径和状态的几个纯函数
+（`tunnelPath` / `chainPath` / `tunnelHealth`）和创建转发时就地建线路的表单，
+`Tunnels.tsx` 本身还有 4900 行（`Rules.tsx` 9100 行）—— 别以为已经拆完了。
 
 **CSS 清理放最后**，不是因为不重要，而是一开始大删很容易引入全站回归 ——
 等页面都迁到明确的 class 之后再删，删的是确定没人用的东西。
+
+### PR 5 落地时定下的几条
+
+- **首页的数和列表出自同一次调用**（`dashboard.health` 同时返回计数和「需要关注」
+  的行）。拆成两个接口各自缓存，总有一瞬间顶上写 2 处、列表画 3 行。
+- **「需要关注」按「从根上往下」排**：同一档状态里主机 → 隧道 → 转发组 → 转发。
+  一台机器掉了，挂在它上面的会一起报，根因要排在症状前面。
+- **按设计停着的不是异常**：转发组的模板规则（自己从不运行，看子规则）、主人被
+  计费暂停的规则（管理员那边不算，租户自己那边合成一行「转发已暂停」）。
+- **没有要处理的事时「需要关注」整块不出现** —— 顶上已经写了「运行正常」。
+- 组件在 `client/src/features/dashboard/`：`AttentionSection`、`TrafficSurface`、
+  `AccountSection`，纯函数在 `shared/dashboardAttention.ts` 和
+  `features/dashboard/trafficRanking.ts`。三块都是 iOS 分组列表那一套（组名在块外、
+  块纯白不描边），和设置页同一个组件。
 
 ---
 
@@ -189,13 +207,13 @@ lib/chartPalette                 图表色板
   目标是把 CSS 从「猜 DOM」变成「设计系统 API」：`fx-page` / `fx-section` /
   `fx-entity-card` / `fx-entity-body` / `fx-entity-footer` / `fx-path` 这类明确
   的类名。PR 8 做。
-- **`Home.tsx` 里还有 `bg-emerald-500` 的小圆点和徽标**。图表色已经收口，这些
-  装饰性的点要等 Dashboard 2.0 换成 `StatusDot`。
+- ~~`Home.tsx` 里还有 `bg-emerald-500` 的小圆点和徽标~~ —— 2.3.369 的色板清理换成
+  了令牌，Dashboard 2.0 把这些点所在的卡片整张删掉了；首页的状态点现在全是 `StatusDot`。
 - **`Tunnels.tsx` / `Rules.tsx` 是巨型文件**，几乎承载了各自全部业务 UI。
   拆分到 `features/` 在 PR 3 / PR 4。
-- **移动端顶栏承担了身份 + 主操作 + 全局操作三件事**，因为正文 H1 在手机上被
-  隐藏了。目标形态是 `☰  链路管理  ＋`：右上角只放当前页的主操作，搜索回到
-  内容区，主题进账户菜单。
+- ~~移动端顶栏承担了身份 + 主操作 + 全局操作三件事~~ —— 2.3.369 换成了 iOS 大标题
+  导航栏 + 底部标签栏，常驻顶栏删掉了。形态和原来设想的略有不同：搜索留在导航栏
+  右侧（它是全局功能），主题进「更多」。
 - **桌面端仍是响应式缩放，不是 Master–Detail**。Hosts / Links / Rules 都应该是
   左列表右详情，这比把每张卡做得越来越复杂效果好得多。
 - **Globe 是 wow factor，不该承担运维主操作**。链路页最终应有「列表 / 拓扑 /
