@@ -58,19 +58,31 @@ export function describeNetworkHealth(health: NetworkHealth | null | undefined):
 }
 
 /**
- * 一组状态汇总成一个。
+ * 「最该先看到哪一个」的顺序。
  *
- * 顺序是按「最该先看到哪一个」排的，不是按严重程度排的：
- * 切换中排在故障前面，因为切换是正在发生的事，看到它的人还来得及决定要不要插手；
- * 故障已经发生了，晚看一眼不会更糟。
+ * 不是按严重程度排的：切换中排在故障前面，因为切换是正在发生的事，看到它的人
+ * 还来得及决定要不要插手；故障已经发生了，晚看一眼不会更糟。
+ *
+ * 汇总（rollUpNetworkHealth）和首页「需要关注」的排序都用这一份 —— 两处各写
+ * 一遍的话，迟早一处改了另一处没改，列表第一行和汇总出来的颜色就对不上了。
+ */
+const ATTENTION_ORDER: readonly NetworkHealth[] = ["switching", "down", "degraded", "unknown", "standby", "healthy"];
+
+/** 越小越该先看到。认不出来的按 unknown 排 —— 不能因为认不出来就沉到最底下。 */
+export function networkHealthPriority(health: NetworkHealth | null | undefined): number {
+  const index = ATTENTION_ORDER.indexOf((health || "unknown") as NetworkHealth);
+  return index >= 0 ? index : ATTENTION_ORDER.indexOf("unknown");
+}
+
+/**
+ * 一组状态汇总成一个：取最该先看到的那一个。
  *
  * 全空回 unknown —— 不是 healthy。零个成员不代表一切正常，代表什么都不知道。
  */
 export function rollUpNetworkHealth(items: readonly (NetworkHealth | null | undefined)[]): NetworkHealth {
   const present = items.filter((item): item is NetworkHealth => !!item && item in DESCRIPTORS);
   if (present.length === 0) return "unknown";
-  const order: NetworkHealth[] = ["switching", "down", "degraded", "unknown", "standby", "healthy"];
-  for (const candidate of order) {
+  for (const candidate of ATTENTION_ORDER) {
     if (present.includes(candidate)) return candidate;
   }
   return "unknown";

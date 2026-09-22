@@ -1394,6 +1394,20 @@ async function seedRules(hostIds: number[], resources: DevResources, usersSeed: 
   for (const groupId of [resources.groups.chainGroupId, resources.groups.apiChainGroupId, resources.groups.longChainGroupId]) {
     await syncForwardGroupRules(groupId, { preserveRuntime: true, validatePorts: false });
   }
+  /*
+    转发组的子规则按所在机器定运行状态：在线机器上的在跑，掉线那台上的没在跑。
+
+    不补这一步，本地每个转发组都是「一条子规则都没在跑」—— 和组自己报的 healthy
+    自相矛盾，首页也会把每个转发组记成一条没在跑的转发。真实面板上子规则的运行
+    状态由 Agent 上报，这里只是替它报一次。
+  */
+  const q = quoteDbIdentifier;
+  await executeRaw(
+    `UPDATE ${q("forward_rules")} SET ${q("isRunning")} = ?`
+      + ` WHERE ${q("forwardGroupRuleId")} IS NOT NULL AND ${q("isEnabled")} = ?`
+      + ` AND ${q("hostId")} IN (SELECT ${q("id")} FROM ${q("hosts")} WHERE ${q("isOnline")} = ?)`,
+    [true, true, true],
+  );
 
   for (const [index, ruleId] of allRuleIds.entries()) {
     const rule = rules[index];
@@ -1425,6 +1439,18 @@ async function seedRules(hostIds: number[], resources: DevResources, usersSeed: 
       updatedAt: nowDate(),
     });
   }
+
+  /*
+    管理员账户的累计流量（首页「累计」那一格读的就是它）。真实面板上由流量上报
+    一路累加；这里按他名下规则的累计量合一份，否则本地首页永远写着「累计 0 B」，
+    而同一屏上近 24H 有几十 GB。三个租户的那一份在 seedUserState 里单独给。
+  */
+  await executeRaw(
+    `INSERT INTO ${q("user_traffic_counters")} (${q("userId")}, ${q("bytesIn")}, ${q("bytesOut")}, ${q("connections")})`
+      + ` SELECT ${q("userId")}, SUM(${q("bytesIn")}), SUM(${q("bytesOut")}), SUM(${q("connections")})`
+      + ` FROM ${q("forward_rule_traffic_counters")} WHERE ${q("userId")} = ? GROUP BY ${q("userId")}`,
+    [usersSeed.adminId],
+  );
 
   return {
     allRuleIds,

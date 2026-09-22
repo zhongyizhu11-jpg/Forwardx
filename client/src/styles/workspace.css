@@ -698,7 +698,8 @@
 .auth-mode-panel { min-height: 0; }
 .setup-shell { min-height: 100svh; background: var(--fx-canvas); }
 .setup-progress { border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); padding: 16px; box-shadow: var(--fx-shadow); }
-.system-health { border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); box-shadow: var(--fx-shadow); }
+/* 首页状态区：和全站卡片同一套 —— 纯白、不描边、不投影，靠页面的浅灰底浮起来。 */
+.system-health { border: 0; border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface); box-shadow: none; }
 @media (min-width: 1024px) { .public-home-hero { grid-template-columns: 1.1fr 1fr; padding-block: 96px 88px; } }
 @media (min-width: 640px) { .public-nav-link.hidden { display: inline-flex; } }
 @media (max-width: 639px) {

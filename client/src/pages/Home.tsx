@@ -30,6 +30,9 @@ import {
 import { motion } from "motion/react";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
+import { AttentionSection } from "@/features/dashboard/AttentionSection";
+import type { SystemHealth } from "@/components/SystemStatusHeader";
 import PublicHome, { CustomPublicHome } from "./PublicHome";
 /*
   两张图按需加载 —— recharts 不再进首屏包。
@@ -262,6 +265,7 @@ function TrafficPieCard({
 function DashboardContent() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const [, setLocation] = useLocation();
   const { data: stats, isLoading } = trpc.dashboard.stats.useQuery(undefined, { refetchInterval: pollingInterval("normal"), placeholderData: (previousData) => previousData });
   const { data: trafficTotals, isLoading: trafficTotalsLoading } = trpc.dashboard.trafficTotals.useQuery(undefined, {
     refetchInterval: pollingInterval("normal"),
@@ -392,11 +396,16 @@ function DashboardContent() {
     <div className="space-y-6">
       <WorkspaceHeader title="总览" description="查看运行状态、资源使用和流量趋势。" />
       <SystemStatusHeader
-        health={health as any}
+        health={health as SystemHealth | undefined}
         recentBytes={recentBytes}
         loading={healthLoading}
         isAdmin={isAdmin}
         onRetry={() => { void refetchHealth(); }}
+      />
+      <AttentionSection
+        attention={(health as SystemHealth | undefined)?.attention}
+        isAdmin={isAdmin}
+        onOpen={setLocation}
       />
 
       {/*
