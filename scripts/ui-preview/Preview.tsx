@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Activity, ArrowRightLeft, BookOpen, Copy, Gift, LayoutDashboard, Link2, Moon, Network, Plus, Search, Server, Settings, ShieldCheck, Sun, Wallet, X } from "lucide-react";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import ConnectionPath from "@/components/ConnectionPath";
+import EntityGallery from "./EntityGallery";
 import FilterToolbar from "@/components/FilterToolbar";
 import TrafficOverview from "@/components/TrafficOverview";
 import SystemStatusHeader from "@/components/SystemStatusHeader";
@@ -28,7 +29,7 @@ import "@/index.css";
 import "./preview.css";
 
 const sections = [
-  {name:"总览", icon:LayoutDashboard}, {name:"转发规则",icon:ArrowRightLeft},
+  {name:"总览", icon:LayoutDashboard}, {name:"网络语言",icon:Network}, {name:"转发规则",icon:ArrowRightLeft},
   {name:"链路管理",icon:Network}, {name:"账单与兑换",icon:Wallet},
   {name:"表单与状态",icon:Settings}, {name:"公开首页",icon:BookOpen},
 ];
@@ -91,7 +92,10 @@ function Demo() {
     <div className="workspace-with-mobile-nav min-w-0 flex-1">
       <header className="preview-topbar"><Button variant="ghost" size="icon" className="md:hidden" onClick={()=>setNav(!nav)} aria-label="打开导航"><LayoutDashboard className="h-5 w-5"/></Button><span className="min-w-0 truncate text-sm text-muted-foreground"><span className="hidden sm:inline">工作空间 <span className="mx-2 text-border">/</span></span><span className="text-foreground">{page}</span></span><Button variant="ghost" size="icon" onClick={()=>setCommand(true)} aria-label="查找功能" className="ml-auto"><Search size={16}/></Button><Button variant="ghost" size="icon" onClick={toggleTheme} aria-label={dark?"切换浅色模式":"切换深色模式"}>{dark?<Sun className="h-4 w-4"/>:<Moon className="h-4 w-4"/>}</Button></header>
       <main id="workspace-content" tabIndex={-1} className="workspace-main space-y-6 p-4 sm:p-6 lg:p-8">
-        {page==="总览"?<>
+        {page==="网络语言"?<>
+          <WorkspaceHeader title="网络语言" description="业务实体在各种状态下的样子。这一页是视觉回归的基准 —— 真实面板里难得把离线主机、降级链路、正在切换的线路凑齐。"/>
+          <EntityGallery/>
+        </>:page==="总览"?<>
           <WorkspaceHeader title="总览" description="查看运行状态、资源使用和流量趋势。" />
           <SystemStatusHeader isAdmin health={{hosts:{total:4,online:4,offline:0,neverConnected:0},links:{total:2,healthy:2,unhealthy:0},forwards:{total:3,running:3,stalled:0,disabled:0},issues:0}} recentBytes={1717986918}/>
           <TrafficOverview total={{bytesIn:1148900000,bytesOut:11124000000,connections:61794}} daily={{bytesIn:111620000,bytesOut:1664300000,connections:7248}} totalLoading={false} dailyLoading={false} scope="preview" lastScope="preview"/>

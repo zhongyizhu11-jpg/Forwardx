@@ -20,6 +20,10 @@ import DateTimePickerInput, {
 import AddSelfServiceHostDialog from "@/components/hosts/AddSelfServiceHostDialog";
 import HostTrafficBillingDialog from "@/components/hosts/HostTrafficBillingDialog";
 import HostCard, { HostActionButtons } from "@/components/hosts/HostCard";
+// 本页 902 行已有一个同名的统计小卡，这里取别名区分：这个是主机列表里的实体卡
+import HostEntitySummaryCard from "@/components/hosts/HostSummaryCard";
+import HostDetailDialog from "@/components/hosts/HostDetailDialog";
+import { Metric } from "@/components/entity/Metric";
 import HostGroupManager, { compareHostGroupDisplayOrder, type HostGroupView, type HostGroupViewMode } from "@/components/hosts/HostGroupManager";
 import HostProbeServiceManager, { type HostProbeServiceViewMode } from "@/components/hosts/HostProbeServiceManager";
 import HostProbeServiceLatencyDialog from "@/components/hosts/HostProbeServiceLatencyDialog";
@@ -1412,6 +1416,11 @@ function HostsContent() {
   const [hostDialogTab, setHostDialogTab] = useState<HostDialogTab>("basic");
   const [upgradeHost, setUpgradeHost] = useState<any>(null);
   const [probeLatencyHost, setProbeLatencyHost] = useState<any>(null);
+  /*
+    点开的那台机器。列表只负责「要不要点进去」，其余全部在这里展开 ——
+    上一版没有这一层，所有字段都挤在列表里，于是列表既看不清也翻不完。
+  */
+  const [detailHost, setDetailHost] = useState<any>(null);
   const [resetTrafficHost, setResetTrafficHost] = useState<any>(null);
   const [resetTrafficHostId, setResetTrafficHostId] = useState<number | null>(null);
   const [trafficCorrectionHost, setTrafficCorrectionHost] = useState<any>(null);
@@ -2062,7 +2071,36 @@ function HostsContent() {
     for (const row of hostLatestMetricRows as any[]) map.set(Number(row.hostId), [row]);
     return map;
   }, [hostLatestMetricRows]);
-  const renderHostCard = (host: any, options: { dragHandle?: any; sortableClassName?: string; compact?: boolean } = {}) => (
+  const renderHostCard = (host: any, options: { dragHandle?: any; sortableClassName?: string; compact?: boolean } = {}) => {
+    const compact = options.compact ?? viewMode === "compact-card";
+    /*
+      紧凑模式换成 Summary 卡：列表只看状态，点进去才看数据。
+
+      详情卡（viewMode === "card"）暂时还走旧的 HostCard —— 它承载了排序拖拽、
+      服务列表、到期提醒等一批还没迁移的东西，一次全换会丢功能。等 PR 3 之后
+      那些各自有了去处再收掉。
+    */
+    if (compact) {
+      return (
+        <HostEntitySummaryCard
+          key={host.id}
+          host={host}
+          metrics={hostLatestMetricSeriesById.get(host.id) ?? null}
+          traffic={hostTrafficById.get(host.id)}
+          canUpgrade={user?.role === "admin"}
+          resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
+          onOpenDetail={setDetailHost}
+          onEdit={openEdit}
+          onDelete={(id: number) => deleteMutation.mutate({ id })}
+          onUpgrade={requestAgentUpgrade}
+          onResetTraffic={user?.role === "admin" ? requestResetHostTraffic : undefined}
+          onCorrectTraffic={user?.role === "admin" ? requestCorrectHostTraffic : undefined}
+          onEditBilling={user?.role === "admin" ? setBillingHost : undefined}
+          onViewProbeLatency={setProbeLatencyHost}
+        />
+      );
+    }
+    return (
     <HostCard
       key={host.id}
       host={host}
@@ -2079,11 +2117,12 @@ function HostsContent() {
       metrics={hostLatestMetricSeriesById.get(host.id) ?? null}
       latestAgentVersion={latestAgentVersion}
       refreshInterval={hostLiveRefreshInterval}
-      compact={options.compact ?? viewMode === "compact-card"}
+      compact={compact}
       dragHandle={options.dragHandle}
       sortableClassName={options.sortableClassName}
     />
-  );
+    );
+  };
   const requestResetHostTraffic = (host: any) => {
     const hostId = Number(host?.id);
     if (!Number.isInteger(hostId) || hostId <= 0) return;
@@ -2430,45 +2469,46 @@ function HostsContent() {
       </div>
 
         <TabsContent value="hosts" className="space-y-4">
-        <div className="stat-strip grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          <HostSummaryCard
-            title="在线状态"
-            value={`${effectiveHostSummary?.onlineHosts ?? onlineCount} / ${effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length}`}
-            subtitle={effectiveHostSummary
-              ? (() => {
+        {/*
+          三个数一条带，不是三张卡。
+
+          原来是三张各 112px 高的卡片竖排，在 393px 的屏幕上要 360px ——
+          还没看到第一台机器，一屏已经过半。而它们回答的是同一个问题的三个
+          侧面（几台在线、现在跑多快、一共跑了多少），本来就该在一起。
+
+          这是 Surface A（页面级模块）：一个面，内部靠竖线分栏，不各画各的框。
+        */}
+        <div className="stat-strip grid grid-cols-3 divide-x divide-[var(--fx-stroke-weak)] rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)]">
+          <div className="min-w-0 px-3 py-2.5">
+            <Metric
+              label="在线"
+              value={`${effectiveHostSummary?.onlineHosts ?? onlineCount} / ${effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length}`}
+              size="inline"
+              hint={(() => {
+                if (!effectiveHostSummary) return "暂无统计";
                 const total = effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length;
                 const online = effectiveHostSummary?.onlineHosts ?? onlineCount;
-                const offlineCount = Math.max(0, total - online);
-                return offlineCount > 0 ? `离线 ${offlineCount} 台` : "全部在线";
-              })()
-              : "暂无统计"}
-            icon={Server}
-            leadingIcon={CircleCheck}
-            tone="bg-gradient-to-br from-emerald-500 to-emerald-600"
-            loading={isEffectiveHostSummaryLoading && !effectiveHostSummary}
-            cacheKey="hosts.summary.online"
-          />
-          <HostTrafficSummaryCard
-            title="当前瞬时流量"
-            inValue={formatBytesPerSecond(effectiveHostSummary?.currentTrafficIn)}
-            outValue={formatBytesPerSecond(effectiveHostSummary?.currentTrafficOut)}
-            icon={ActivitySquare}
-            tone="bg-gradient-to-br from-chart-1/10 to-transparent"
-            iconTone="bg-chart-1/10 text-chart-1"
-            loading={isEffectiveHostSummaryLoading && !effectiveHostSummary}
-            cacheKey="hosts.summary.currentTraffic"
-            animated={false}
-          />
-          <HostTrafficSummaryCard
-            title="累计流量"
-            inValue={formatBytes(effectiveHostSummary?.totalTrafficIn)}
-            outValue={formatBytes(effectiveHostSummary?.totalTrafficOut)}
-            icon={ArrowRightLeft}
-            tone="bg-gradient-to-br from-chart-4/10 to-transparent"
-            iconTone="bg-chart-4/10 text-chart-4"
-            loading={isEffectiveHostSummaryLoading && !effectiveHostSummary}
-            cacheKey="hosts.summary.totalTraffic"
-          />
+                const offline = Math.max(0, total - online);
+                return offline > 0 ? `离线 ${offline} 台` : "全部在线";
+              })()}
+            />
+          </div>
+          <div className="min-w-0 px-3 py-2.5">
+            <Metric
+              label="瞬时"
+              value={`↓ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficIn)}`}
+              size="inline"
+              hint={`↑ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficOut)}`}
+            />
+          </div>
+          <div className="min-w-0 px-3 py-2.5">
+            <Metric
+              label="累计"
+              value={`↓ ${formatBytes(effectiveHostSummary?.totalTrafficIn)}`}
+              size="inline"
+              hint={`↑ ${formatBytes(effectiveHostSummary?.totalTrafficOut)}`}
+            />
+          </div>
         </div>
         {user?.role === "admin" && (
           <HostGroupFilterBar
@@ -2863,6 +2903,24 @@ function HostsContent() {
           onCreateSignalHandled={() => setTokenCreateSignal(0)}
         />
       )}
+
+      <HostDetailDialog
+        open={!!detailHost}
+        onOpenChange={(open) => !open && setDetailHost(null)}
+        host={detailHost}
+        metrics={detailHost ? (hostLatestMetricSeriesById.get(detailHost.id) ?? null) : null}
+        traffic={detailHost ? hostTrafficById.get(detailHost.id) : null}
+        canUpgrade={user?.role === "admin"}
+        resetTrafficPending={!!detailHost && resetTrafficHostId === detailHost.id && resetHostTrafficMutation.isPending}
+        onEdit={openEdit}
+        onDelete={(id) => deleteMutation.mutate({ id })}
+        onUpgrade={requestAgentUpgrade}
+        onResetTraffic={user?.role === "admin" ? requestResetHostTraffic : undefined}
+        onCorrectTraffic={user?.role === "admin" ? requestCorrectHostTraffic : undefined}
+        onEditBilling={user?.role === "admin" ? setBillingHost : undefined}
+        onViewProbeLatency={setProbeLatencyHost}
+        refreshInterval={hostLiveRefreshInterval}
+      />
 
       <HostProbeServiceLatencyDialog
         open={!!probeLatencyHost}

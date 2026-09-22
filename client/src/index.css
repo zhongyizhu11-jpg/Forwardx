@@ -43,17 +43,79 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --font-sans: var(--fx-font);
+  --font-mono: var(--fx-font-mono);
+
+  /*
+    V2 语义色接进 Tailwind：写 text-healthy / bg-down-soft / border-path，
+    而不是每处自己挑一个 emerald-600 或 amber-500。
+
+    颜色必须有语义 —— 类名里出现 healthy / warn / down / standby / path /
+    delivery 才是在说事，出现 green-500 只是在说好看。
+  */
+  --color-healthy: var(--fx-healthy);
+  --color-healthy-soft: var(--fx-healthy-soft);
+  --color-healthy-text: var(--fx-healthy-text);
+  --color-warn: var(--fx-warn);
+  --color-warn-soft: var(--fx-warn-soft);
+  --color-warn-text: var(--fx-warn-text);
+  --color-down: var(--fx-down);
+  --color-down-soft: var(--fx-down-soft);
+  --color-down-text: var(--fx-down-text);
+  --color-standby: var(--fx-standby);
+  --color-standby-soft: var(--fx-standby-soft);
+  --color-path: var(--fx-path);
+  --color-path-soft: var(--fx-path-soft);
+  --color-path-line: var(--fx-path-line);
+  --color-delivery: var(--fx-delivery);
+  --color-delivery-soft: var(--fx-delivery-soft);
+
+  /*
+    六档字号接进 Tailwind：text-display / text-metric / text-section /
+    text-primary-type / text-secondary-type / text-meta，每一档带着自己的行高。
+
+    带 -type 后缀的两个是为了避开 Tailwind 已有的 text-primary（前景色）和
+    text-secondary（前景色）—— 同名会覆盖掉颜色工具类。
+
+    移动端的值在 design-tokens.css 的媒体查询里改令牌，这里不用改。
+  */
+  --text-display: var(--fx-size-display);
+  --text-display--line-height: var(--fx-line-display);
+  --text-metric: var(--fx-size-metric);
+  --text-metric--line-height: var(--fx-line-metric);
+  --text-section: var(--fx-size-section);
+  --text-section--line-height: var(--fx-line-section);
+  --text-primary-type: var(--fx-size-primary);
+  --text-primary-type--line-height: var(--fx-line-primary);
+  --text-secondary-type: var(--fx-size-secondary);
+  --text-secondary-type--line-height: var(--fx-line-secondary);
+  --text-meta: var(--fx-size-meta);
+  --text-meta--line-height: var(--fx-line-meta);
+
+  /* 4px 栅格接进 Tailwind 的 spacing，p-4 / gap-3 这些照常用 */
+  --spacing: 4px;
+
+  /* 高度四级：shadow-card / shadow-popover / shadow-modal */
+  --shadow-card: var(--fx-elevation-card);
+  --shadow-popover: var(--fx-elevation-popover);
+  --shadow-modal: var(--fx-elevation-modal);
 }
 
 /* ===== Light theme (default) ===== */
 :root {
   /*
-    圆角基准跟 UI Handbook 对齐：手册上 6px 出现 459 次（控件的主力），
-    12px 235 次（大容器）。这里把基准压到 8px，Tailwind 的四档就正好落在
-    sm 4 / md 6 / lg 8 / xl 12 —— rounded-md 直接等于手册的按钮圆角。
-    之前是 0.75rem，md 解析出来是 10px，和手册差一档。
+    圆角基准 12px，Tailwind 的四档正好落在 V2 的刻度上：
+
+      rounded-sm  8px   极小控件
+      rounded-md  10px  按钮、输入框、Chip   = --fx-radius-control
+      rounded-lg  12px  列表卡、小面板       = --fx-radius-card
+      rounded-xl  16px  主 Surface、大容器   = --fx-radius-surface
+
+    对话框的 20px 不在这四档里，用 --fx-radius-modal 显式写。
+
+    上一版把基准压到 0.5rem，让四档变成 4/6/8/12 —— 那是「所有控件一个 6px」，
+    结果是没有层级。V2 的判断是：半径要跟着尺寸走，小控件小圆角，大面板大圆角。
   */
-  --radius: 0.5rem;
+  --radius: 0.75rem;
   --background: var(--fx-canvas);
   --foreground: var(--fx-text);
   --card: var(--fx-surface);
@@ -62,11 +124,11 @@
   --popover-foreground: var(--fx-text);
   --primary: oklch(0.18 0.012 260);
   --primary-foreground: oklch(0.98 0 0);
-  --secondary: var(--fx-subtle);
+  --secondary: var(--fx-hover);
   --secondary-foreground: var(--fx-text);
-  --muted: var(--fx-subtle);
+  --muted: var(--fx-hover);
   --muted-foreground: var(--fx-muted);
-  --accent: var(--fx-subtle);
+  --accent: var(--fx-hover);
   --accent-foreground: var(--fx-text);
   --destructive: oklch(0.55 0.22 25);
   --destructive-foreground: oklch(0.98 0 0);
@@ -101,11 +163,11 @@
   --popover-foreground: var(--fx-text);
   --primary: oklch(0.92 0.004 260);
   --primary-foreground: oklch(0.14 0.01 260);
-  --secondary: var(--fx-subtle);
+  --secondary: var(--fx-hover);
   --secondary-foreground: var(--fx-text);
-  --muted: var(--fx-subtle);
+  --muted: var(--fx-hover);
   --muted-foreground: var(--fx-muted);
-  --accent: var(--fx-subtle);
+  --accent: var(--fx-hover);
   --accent-foreground: var(--fx-text);
   --destructive: oklch(0.65 0.2 25);
   --destructive-foreground: oklch(0.98 0 0);
@@ -1650,5 +1712,36 @@ html[data-personalization-background="video"] .fx-mesh {
     content: "";
     position: absolute;
     inset: -12px;
+  }
+}
+
+/*
+  ═══════════════════════════════════════════════════════════
+  ForwardX 网络语言：切换中的脉冲
+
+  「正在切换」是六个状态里唯一一个**瞬时态** —— 其余五个都是静态结论，
+  只有它表示「此刻正在发生一件事」。静态的颜色说不了这个，所以给它动。
+
+  动效必须克制：1.6s 一个来回、只动透明度、幅度 0.45→1。它的作用是让眼睛
+  在一列静止的点里注意到这一个，不是表演。
+
+  prefers-reduced-motion 下退回静态 —— 状态信息不能只靠动效传达，脉冲停下来
+  之后颜色（路径青）本身仍然和其它五个状态区分得开。
+  ═══════════════════════════════════════════════════════════
+*/
+@keyframes fx-network-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.fx-dot-pulse,
+.fx-edge-pulse {
+  animation: fx-network-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-dot-pulse,
+  .fx-edge-pulse {
+    animation: none;
   }
 }

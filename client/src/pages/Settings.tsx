@@ -28,6 +28,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { OptimisticSwitch, Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SlidingTabsList } from "@/components/ui/sliding-tabs";
+import { GroupedList, ListRow, ListSection } from "@/components/ios/GroupedList";
+import { useIsMobile } from "@/hooks/useMobile";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
@@ -74,6 +76,7 @@ import {
   Key,
   Copy,
   CheckCircle2,
+  ChevronLeft,
   Settings2,
   Download,
   Github,
@@ -453,6 +456,44 @@ function getMigrationCodeCountdown(code: { expiresAt: number } | null, now: numb
 
 const settingsTabs = ["system", "telegram", "email", "personalization", "backup", "logs"] as const;
 type SettingsTab = typeof settingsTabs[number];
+/**
+ * 设置的分组。
+ *
+ * 六个 tab 原来并排在一条横向标签条上 —— 标签条的容量是固定的，加到第七项
+ * 就开始滚动，加到第十项就没人找得到第十项。而设置是**只会越来越多**的那种
+ * 页面。
+ *
+ * 分组列表没有这个上限：加一项就是多一行。而且它天然说得清层级 ——
+ * 「Telegram 和邮箱都是通知」这件事，横向标签条表达不了，分组一眼看得出来。
+ */
+const settingsGroups = [
+  {
+    key: "general",
+    header: "通用",
+    items: ["system", "personalization"],
+  },
+  {
+    key: "notify",
+    header: "通知",
+    footer: "Telegram 和邮箱都用来发告警、到期提醒和流量提醒。",
+    items: ["telegram", "email"],
+  },
+  {
+    key: "maintenance",
+    header: "维护",
+    items: ["backup", "logs"],
+  },
+] as const;
+
+const settingsTabDetail: Record<string, string> = {
+  system: "面板地址、数据库、注册与登录",
+  personalization: "站点名称、Logo、主题与首页",
+  telegram: "机器人推送与 AI 助手",
+  email: "SMTP 发信与邮件模板",
+  backup: "导出、导入与迁移",
+  logs: "运行日志与导出",
+};
+
 const settingsTabItems = [
   { value: "system", label: "系统配置", icon: Settings2 },
   { value: "telegram", label: "Telegram", icon: Send },
@@ -610,6 +651,13 @@ function SettingsContent() {
     对方点开看到的是另一屏。别的七个带 tab 的页上一版已经统一到 useUrlTab 了，
     这一页漏了，现在补上。
   */
+  const isMobile = useIsMobile();
+  /*
+    手机上是否已经进到某个分区里。默认在索引，点一项才进去。
+
+    桌面上这个状态不参与渲染 —— 那边永远是标签条，一次点到位。
+  */
+  const [mobileSectionOpen, setMobileSectionOpen] = useState(false);
   const [activeTab, setActiveTab] = useUrlTab<SettingsTab>({
     values: settingsTabs,
     defaultValue: "system",
@@ -656,8 +704,57 @@ function SettingsContent() {
     <div className="space-y-6">
       <WorkspaceHeader title="系统设置" description="配置面板、通知、外观与数据维护。" />
 
+      {/*
+        手机上用分组列表当导航，不用横向标签条。
+
+        标签条在这一页已经到极限了：六项挤满一行，第七项就得滚动 —— 而设置
+        是只会越来越多的那种页面。分组列表没有这个上限，而且能说清「Telegram
+        和邮箱都是通知」这种横向标签条表达不了的层级。
+
+        桌面上保留标签条：那儿横向空间够，一次点到位比先进列表再选更快。
+      */}
+      {isMobile && !mobileSectionOpen ? (
+        <GroupedList>
+          {settingsGroups.map((group) => (
+            <ListSection key={group.key} header={group.header} footer={(group as any).footer}>
+              {group.items.map((value) => {
+                const item = settingsTabItems.find((tab) => tab.value === value);
+                if (!item) return null;
+                const Icon = item.icon;
+                return (
+                  <ListRow
+                    key={value}
+                    icon={<Icon className="h-4 w-4" />}
+                    label={item.label}
+                    detail={settingsTabDetail[value]}
+                    onSelect={() => {
+                      handleTabChange(value);
+                      setMobileSectionOpen(true);
+                    }}
+                  />
+                );
+              })}
+            </ListSection>
+          ))}
+        </GroupedList>
+      ) : (
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-        <SlidingTabsList items={settingsTabItems} activeValue={activeTab} ariaLabel="系统设置" minItemWidthRem={7.5} />
+        {isMobile ? (
+          /*
+            进到某一分区之后给一条返回 —— 列表导航必须能回去，
+            否则用户只能按浏览器后退，而那会连带退出整个设置页。
+          */
+          <button
+            type="button"
+            onClick={() => setMobileSectionOpen(false)}
+            className="flex items-center gap-1 text-secondary-type text-[var(--fx-text-secondary)]"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            全部设置
+          </button>
+        ) : (
+          <SlidingTabsList items={settingsTabItems} activeValue={activeTab} ariaLabel="系统设置" minItemWidthRem={7.5} />
+        )}
 
         {/* System Info Tab */}
         <TabsContent value="system" className="space-y-4">
@@ -690,6 +787,7 @@ function SettingsContent() {
           <PanelLogsSection />
         </TabsContent>
       </Tabs>
+      )}
 
     </div>
   );

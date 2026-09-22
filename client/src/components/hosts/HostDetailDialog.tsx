@@ -1,0 +1,162 @@
+import type { ReactNode } from "react";
+
+import { formatBytes } from "@shared/formatBytes";
+import { HOST_TRAFFIC_MEASURE_MODE_LABELS, normalizeHostTrafficMeasureMode } from "@shared/hostTrafficQuota";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { Metric, MetricGroup, ResourceMeter } from "@/components/entity/Metric";
+import { HealthBadge, StatusDot } from "@/components/network/StatusDot";
+import { useConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { hostAddressText, hostRegionText } from "./hostDisplay";
+import { buildHostActions, type HostSummaryCardProps } from "./HostSummaryCard";
+import { useHostVitals } from "./useHostVitals";
+
+/**
+ * 主机详情 —— Detail 态。
+ *
+ * 列表那张卡只回答「要不要点进去」，这里回答「它到底怎么样」。上一版没有这一
+ * 层，所有字段都挤在列表里，于是列表既看不清也翻不完。
+ *
+ * 分段按「问的是什么」来，不是按数据来源：
+ *
+ *   概览    它是谁、在哪、什么版本、跑了多久
+ *   资源    CPU / 内存 / 磁盘，带绝对值不只是百分比
+ *   流量    瞬时速率、系统累计、计费口径的用量与配额
+ *
+ * 每一段之间只有一条细线和一个小标题，**不套卡片** —— 详情页里再画三个圆角
+ * 矩形，就又回到「Card 里面又 Card」了。
+ *
+ * 移动端用的还是现有的 Dialog（它已经做过窄屏适配）。真正的 Bottom Sheet 归
+ * PR 4「操作系统」那一轮 —— 在这里临时造一个，就等于多了一套浮层。
+ */
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex min-w-0 flex-col gap-2 border-t border-[var(--fx-stroke-weak)] pt-3 first:border-t-0 first:pt-0">
+      <h3 className="text-meta font-medium uppercase tracking-wide text-muted-foreground">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+/** 一行「标签 …… 值」。详情里大量这种键值对，值靠右并且等宽，一列能扫下来。 */
+function Row({ label, value }: { label: ReactNode; value: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-baseline justify-between gap-3">
+      <span className="shrink-0 text-meta text-muted-foreground">{label}</span>
+      <span className="min-w-0 truncate text-right text-secondary-type tabular-nums text-foreground">{value}</span>
+    </div>
+  );
+}
+
+export type HostDetailDialogProps = Omit<HostSummaryCardProps, "onOpenDetail"> & {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  refreshInterval?: number | false;
+};
+
+export default function HostDetailDialog(props: HostDetailDialogProps) {
+  const { host, open, onOpenChange } = props;
+  const confirmDialog = useConfirmDialog();
+  const vitals = useHostVitals(host, {
+    metrics: props.metrics,
+    traffic: props.traffic,
+    refreshInterval: open ? props.refreshInterval : false,
+  });
+
+  if (!host) return null;
+
+  const name = String(host.name || "-").trim() || "-";
+  const measureMode = normalizeHostTrafficMeasureMode(host.trafficMeasureMode);
+
+  const confirmDelete = async () => {
+    if (
+      await confirmDialog({
+        title: "删除主机",
+        description: "确定要删除此主机吗？删除后相关状态和配置会同步移除。",
+        confirmText: "删除",
+        tone: "destructive",
+      })
+    ) {
+      onOpenChange(false);
+      props.onDelete(host.id);
+    }
+  };
+
+  const { primary, menu } = buildHostActions({ ...props, onConfirmDelete: () => void confirmDelete() });
+
+  const orDash = (value: number | null) => (value === null ? "—" : formatBytes(value));
+  const sizePair = (used: number | null, total: number | null) =>
+    used === null && total === null ? "—" : `${orDash(used)} / ${orDash(total)}`;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex min-w-0 items-center gap-2">
+            <StatusDot health={vitals.health} size="large" />
+            <span className="min-w-0 truncate">{name}</span>
+          </DialogTitle>
+          <DialogDescription className="flex flex-wrap items-center gap-2">
+            <HealthBadge health={vitals.health} />
+            {/*
+              上报时间只在离线时给。在线时它每隔几秒变一次，是噪音；
+              离线时它才是那个关键问题的答案 —— 「它是什么时候没的」。
+            */}
+            {!vitals.isOnline && vitals.lastReportedText ? (
+              <span className="text-meta text-muted-foreground">最后上报 {vitals.lastReportedText}</span>
+            ) : null}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex min-w-0 flex-col gap-4">
+          <Section title="概览">
+            <Row label="地址" value={hostAddressText(host) || "—"} />
+            <Row label="地区" value={hostRegionText(host) || "—"} />
+            <Row label="Agent" value={host.agentVersion ? `v${host.agentVersion}` : "—"} />
+            <Row label={vitals.uptimeLabel} value={vitals.uptimeText} />
+          </Section>
+
+          <Section title="资源">
+            {/*
+              百分比配绝对值。只给 25% 说不清是 2GB 里的 25% 还是 128GB 里的
+              25%，而这两件事该做的处理完全不同。
+            */}
+            <ResourceMeter label="CPU" percent={vitals.cpuPercent} />
+            <ResourceMeter label="内存" percent={vitals.memoryPercent} />
+            <Row label="" value={sizePair(vitals.memoryUsed, vitals.memoryTotal)} />
+            <ResourceMeter label="磁盘" percent={vitals.diskPercent} />
+            <Row label="" value={sizePair(vitals.diskUsed, vitals.diskTotal)} />
+          </Section>
+
+          <Section title="流量">
+            <MetricGroup columns={2}>
+              <Metric
+                label={`↓ ${vitals.speedLabel}`}
+                value={orDash(vitals.speedIn)}
+                unit={vitals.speedIn === null ? undefined : "/s"}
+                size="inline"
+              />
+              <Metric
+                label={`↑ ${vitals.speedLabel}`}
+                value={orDash(vitals.speedOut)}
+                unit={vitals.speedOut === null ? undefined : "/s"}
+                size="inline"
+              />
+            </MetricGroup>
+            <Row label="系统累计 ↓" value={orDash(vitals.systemIn)} />
+            <Row label="系统累计 ↑" value={orDash(vitals.systemOut)} />
+            <Row
+              label={`计费用量（${HOST_TRAFFIC_MEASURE_MODE_LABELS[measureMode]}）`}
+              value={vitals.trafficUsageLabel}
+            />
+          </Section>
+        </div>
+
+        <div className="flex items-center justify-end border-t border-[var(--fx-stroke-weak)] pt-3">
+          <EntityActions primary={primary} menu={menu} />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

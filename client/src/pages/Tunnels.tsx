@@ -2,6 +2,10 @@ import { FormField } from "@/components/ui/form-field";
 import EmptyState from "@/components/EmptyState";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import ConnectionPath from "@/components/ConnectionPath";
+import { NetworkPath } from "@/components/network/NetworkPath";
+import { StatusDot } from "@/components/network/StatusDot";
+import { buildTunnelPath } from "@/features/links/tunnelPath";
+import { tunnelHealthFromAvailability } from "@/features/links/tunnelHealth";
 import DataSectionError from "@/components/DataSectionError";
 import { sameNullableStringArray } from "@/lib/multiHopAddress";
 import { normalizeLatencySeriesKey } from "@shared/latencyProbe";
@@ -2505,38 +2509,59 @@ function TunnelsContent() {
     () => editingId ? (tunnels || []).find((tunnel: any) => Number(tunnel.id) === Number(editingId)) || null : null,
     [editingId, tunnels]
   );
-  const renderTunnelStatusDot = (tunnel: any, supported = true) => {
-    if (!supported) return <span title="当前转发协议未启用" className="h-2.5 w-2.5 rounded-full bg-destructive/60" />;
+  /**
+   * 链路状态点。
+   *
+   * 原来是四个分支各写死一个调色板颜色（bg-chart-2 / bg-amber-400 /
+   * bg-destructive），并且给 available 加了 animate-pulse。三处都改了：
+   *
+   * 一、颜色走语义令牌 —— 链路页的绿必须和主机页的绿是同一个绿，否则同一套
+   *     系统里「正常」有两种颜色，用户会以为它们不是一回事。
+   * 二、脉冲留给「切换中」这个瞬时态。给「一切正常」加脉冲，等于一屏上所有
+   *     正常的链路都在闪，真正需要被注意的那条反而淹没了。
+   * 三、pending 不再和 degraded 并成同一个黄：前者是「还没测出来」，后者是
+   *     「测出来了不太好」。
+   */
+  const tunnelHealthOf = (tunnel: any, supported = true) => {
     const state = tunnelAvailabilityById.get(Number(tunnel?.id || 0));
-    if (state?.status === "available") return <span title={state.message} className="h-2.5 w-2.5 rounded-full bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" />;
-    if (state?.status === "degraded" || state?.status === "pending") return <span title={state.message} className="h-2.5 w-2.5 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50" />;
-    if (state?.status === "unavailable") return <span title={state.message} className="h-2.5 w-2.5 rounded-full bg-destructive/70 shadow-sm shadow-destructive/40" />;
-    return <span title={state?.message || "隧道已停用"} className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30" />;
+    return {
+      health: tunnelHealthFromAvailability(state?.status, {
+        supported,
+        enabled: tunnel?.isEnabled !== false,
+      }),
+      message: !supported ? "当前转发协议未启用" : state?.message || "隧道已停用",
+    };
+  };
+  const renderTunnelStatusDot = (tunnel: any, supported = true) => {
+    const { health, message } = tunnelHealthOf(tunnel, supported);
+    return <StatusDot health={health} size="large" label={message} />;
   };
   const renderTunnelRoute = (tunnel: any, compact = false) => {
-    const hopIds = getTunnelHopIds(tunnel);
     const entryGroup = Number(tunnel?.entryGroupId || 0) > 0 ? entryGroupById.get(Number(tunnel.entryGroupId)) : null;
-    const entryGroupLabel = entryGroup
-      ? `${String(entryGroup.name || "入口组").trim()}${String(entryGroup.domain || "").trim() ? ` (${String(entryGroup.domain).trim()})` : ""}`
-      : "";
-    const visibleHopIds = entryGroup
-      ? hopIds.filter((hostId: number) => !entryMembersForGroup(Number(entryGroup.id)).some((member: any) => Number(member.hostId || 0) === Number(hostId)))
-      : hopIds;
-    const extraExitNames = getTunnelLoadBalanceExitNames(tunnel, hosts);
-    const exitNames = extraExitNames.length > 0 ? getTunnelExitNames(tunnel, hosts) : [];
-    const routeTitle = [
-      entryGroupLabel ? `入口组：${entryGroupLabel}` : "",
-      getTunnelRouteText(tunnel, hosts),
-    ].filter(Boolean).join("；");
-    const steps = [
-      ...(entryGroupLabel ? [{ label: "入口组", content: entryGroupLabel, key: "entry-group" }] : []),
-      ...visibleHopIds.map((hostId: number, index: number) => ({
-        label: !entryGroupLabel && index === 0 ? "入口主机" : index === visibleHopIds.length - 1 ? "出口主机" : `中继 ${index + (entryGroupLabel ? 1 : 0)}`,
-        content: tunnelHopHostName(tunnel, hostId, hosts), key: `${hostId}-${index}`,
-      })),
-      ...(exitNames.length ? [{ label: "负载均衡出口", content: exitNames.join(" / "), key: "extra-exits" }] : []),
-    ];
-    return <div title={routeTitle}><ConnectionPath steps={steps} /></div>;
+    /*
+      换成 Path 语言：位置本身说明谁是入口谁是出口，不再给每个节点贴
+      「入口主机 / 出口主机 / 中继 N」的标签。
+
+      那些标签既没增加信息 —— 第一个当然是入口 —— 又占掉半行宽度，还让三个
+      节点读起来像三条并列的属性，而不是一条有方向的链。腾出来的注脚位置给
+      真正有信息量的东西：地区、经过谁、多少 ms。
+    */
+    const { health } = tunnelHealthOf(tunnel);
+    const path = buildTunnelPath(tunnel, {
+      hosts,
+      entryGroup: entryGroup ? { id: Number(entryGroup.id), name: entryGroup.name, domain: entryGroup.domain } : null,
+      entryGroupMemberHostIds: entryGroup
+        ? entryMembersForGroup(Number(entryGroup.id)).map((member: any) => Number(member.hostId || 0))
+        : [],
+      health,
+      latencyMs: typeof tunnel?.lastLatencyMs === "number" ? tunnel.lastLatencyMs : null,
+      via: getTunnelModeDisplay(tunnel?.mode, true, tunnel?.forwardxVersion),
+    });
+    return (
+      <div title={path.title}>
+        <NetworkPath nodes={path.nodes} edges={path.edges} orientation={compact ? "auto" : "vertical"} />
+      </div>
+    );
   };
 
   const resetForm = () => {

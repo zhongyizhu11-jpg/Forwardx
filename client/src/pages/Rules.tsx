@@ -210,6 +210,13 @@ import {
   targetGeoNodeMeta,
 } from "@/lib/linkTestNodeMeta";
 import { getTunnelExitNames, getTunnelHopIds, getTunnelRouteText, tunnelHopHostName } from "@/lib/tunnelDisplay";
+import { NetworkPath } from "@/components/network/NetworkPath";
+import {
+  buildRuleFlow,
+  buildRuleFormPreview,
+  decideRuleFlowLayout,
+  ruleVisualStateToHealth,
+} from "@/features/rules/ruleFlow";
 import {
   preferLastKnownForwardRuleVisualStatus,
   resolveForwardRuleVisualStatus,
@@ -5744,6 +5751,68 @@ function RulesContent() {
     };
   };
 
+  /**
+   * 创建 / 编辑对话框里那条实时预览。
+   *
+   * 数据全部取自**表单当前的值**而不是已保存的规则：它要回答的是
+   * 「我现在填的这些会建出什么」。
+   */
+  const createPreview = useMemo(() => {
+    const category = form.routeMode === "tunnel"
+      ? "tunnel"
+      : isForwardGroupBackedRouteModeValue(form.routeMode, form.forwardGroupId)
+        ? (getRuleForwardGroupKind({ forwardGroupId: form.forwardGroupId }, forwardGroupById) || "group")
+        : "local";
+    const hops = form.routeMode === "tunnel"
+      ? (selectedTunnel
+        ? getTunnelHopIds(selectedTunnel)
+          .map((hostId: number) => String(tunnelHopHostName(selectedTunnel, hostId, hosts) || "").trim())
+          .filter(Boolean)
+        : [])
+      : (selectedForwardGroup ? [String(selectedForwardGroup.name || "").trim()].filter(Boolean) : []);
+    const targetIp = String(form.targetIp || "").trim();
+    const targetPort = Number(form.targetPort || 0);
+    return buildRuleFormPreview({
+      category,
+      entry: Number(form.sourcePort || 0) > 0 ? `:${form.sourcePort}` : "",
+      target: targetIp && targetPort > 0 ? `${targetIp}:${targetPort}` : "",
+      hops,
+      via: FORWARD_TYPE_LABELS[form.forwardType as ForwardType] || undefined,
+    });
+  }, [
+    form.routeMode, form.forwardGroupId, form.sourcePort, form.targetIp, form.targetPort,
+    form.forwardType, selectedTunnel, selectedForwardGroup, forwardGroupById, hosts,
+  ]);
+
+  /** 这条规则的紧凑卡是否已经画了 Flow —— 画了的话线路徽标就不要再写一遍路径。 */
+  const ruleDrawsFlow = (rule: any) =>
+    decideRuleFlowLayout(getRuleCategory(rule, forwardGroupById)) === "flow";
+
+  /**
+   * 这条规则中间经过哪些节点。直连返回空数组。
+   *
+   * 隧道取它的跳点名，转发链取链上的主机名，转发组取组名 —— 组内部谁在跑是
+   * 组自己的事，规则这一层只需要说明「走的是这个组」。
+   */
+  const getRuleHopNames = (rule: any): string[] => {
+    const category = getRuleCategory(rule, forwardGroupById);
+    if (category === "tunnel") {
+      const tunnel = tunnelById.get(Number(rule?.tunnelId || 0));
+      if (!tunnel) return [];
+      return getTunnelHopIds(tunnel)
+        .map((hostId: number) => String(tunnelHopHostName(tunnel, hostId, hosts) || "").trim())
+        .filter(Boolean);
+    }
+    const group = forwardGroupById.get(Number(rule?.forwardGroupId || 0));
+    if (!group) return [];
+    if (category === "chain") {
+      return (Array.isArray(group.members) ? group.members : [])
+        .map((member: any) => String(hostById.get(Number(member?.hostId || 0))?.name || "").trim())
+        .filter(Boolean);
+    }
+    return [String(group.name || "").trim()].filter(Boolean);
+  };
+
   const renderTransfer = (rule: any, compact = false) => {
     const {
       entryAddresses,
@@ -5766,13 +5835,33 @@ function RulesContent() {
     */
     if (compact) {
       /*
-        一行：`入口 ⧉ → 目标`。中间那一轮我把它拆成两行、各自加「入口」「目标」
-        前缀，理由是窄屏截断之后分不清谁是谁；但那是我自己在 393px 下推演的，
-        实机上一行放得下，而且两行会让每张卡多出一行的高度。
+        版式跟着数据走。
 
-        分不清的问题不靠加前缀解决，靠样式分主次：入口是正文色 + 可点复制，
-        目标退到 muted，一个箭头说明方向。两个 title 兜住截断的情况。
+        直连规则的入口和目标之间什么都没有，一行 `入口 ⧉ → 目标` 已经说完了；
+        画成竖排 Flow 只是用五行重复一个箭头。
+
+        隧道 / 转发链 / 转发组不一样：中间经过哪儿正是它和直连的唯一区别，
+        也是这条规则最要紧的信息，而一行的写法根本放不下。
+
+        两种版式不是折中，是同一条原则的两个结果 —— 让最重要的那件事最显眼。
       */
+      if (decideRuleFlowLayout(getRuleCategory(rule, forwardGroupById)) === "flow") {
+        const flow = buildRuleFlow({
+          entry: entryAddresses[0]?.text || "",
+          target: targetAddress,
+          hops: getRuleHopNames(rule),
+          via: FORWARD_TYPE_LABELS[rule?.forwardType as ForwardType] || undefined,
+          latencyMs: typeof rule?.latestLatencyMs === "number" ? rule.latestLatencyMs : null,
+          health: ruleVisualStateToHealth(
+            (ruleVisualStatuses.get(Number(rule.id))?.display || resolveRuleVisualStatus(rule))?.state,
+          ),
+        });
+        return (
+          <div title={flow.title}>
+            <NetworkPath nodes={flow.nodes} edges={flow.edges} orientation="vertical" />
+          </div>
+        );
+      }
       return (
         <div className="flex min-w-0 items-center gap-1.5 font-mono text-[13px] leading-5">
           {entryAddresses.map((entry) => (
@@ -5967,7 +6056,17 @@ function RulesContent() {
     );
   };
 
-  const renderRouteBadge = (rule: any, compactRow = false) => {
+  /**
+   * 线路徽标。
+   *
+   * `hideRoute` 给那些**卡上已经画了 Flow** 的地方用：Flow 里已经有
+   * `入口 → HK entry 01 → JP exit 02 → 目标` 这条完整路径，这里再写一遍
+   * 「HK entry 01 → / Multi-exit group；出口：…」就是同一件事说两遍 ——
+   * 实测一张隧道规则卡因此从 264px 涨到 435px，多出来的全是重复。
+   *
+   * 徽标本身要留：它说的是「用什么转发」，不是「经过哪儿」，Flow 回答不了。
+   */
+  const renderRouteBadge = (rule: any, compactRow = false, hideRoute = false) => {
     const tunnel = rule.forwardType === "gost" && rule.tunnelId ? tunnelById.get(Number(rule.tunnelId)) : null;
     const group = rule.forwardGroupId ? forwardGroupById.get(Number(rule.forwardGroupId)) : null;
     const groupMode = forwardGroupModeOf(group);
@@ -6021,6 +6120,15 @@ function RulesContent() {
       );
     }
     if (!tunnel) {
+      return warningBadge || subscriptionBadge ? (
+        <div className={`flex min-w-0 items-center gap-1 ${compactRow ? "overflow-hidden" : "flex-wrap"}`}>
+          {badge}
+          {warningBadge}
+          {subscriptionBadge}
+        </div>
+      ) : badge;
+    }
+    if (hideRoute) {
       return warningBadge || subscriptionBadge ? (
         <div className={`flex min-w-0 items-center gap-1 ${compactRow ? "overflow-hidden" : "flex-wrap"}`}>
           {badge}
@@ -6500,7 +6608,7 @@ function RulesContent() {
 
             <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
               {renderFailoverLineBadge(rule)}
-              {renderRouteBadge(rule)}
+              {renderRouteBadge(rule, false, ruleDrawsFlow(rule))}
               <Badge variant="secondary" className="h-5 whitespace-nowrap px-1.5 text-[10px]">
                 {formatForwardRuleProtocol(rule.protocol)}
               </Badge>
@@ -6593,7 +6701,7 @@ function RulesContent() {
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div className="min-w-0">
               <div className="mb-1 text-muted-foreground">链路</div>
-              {renderRouteBadge(rule)}
+              {renderRouteBadge(rule, false, ruleDrawsFlow(rule))}
             </div>
             <div className="min-w-0">
               <div className="mb-1 text-muted-foreground">协议</div>
@@ -7841,6 +7949,23 @@ function RulesContent() {
               </div>
               )}
             </div>
+          </div>
+          {/*
+            提交前的实时预览 —— 放在按钮上方而不是做成 wizard 的最后一步。
+
+            管理员经常要快速建一条，强制分步会把三秒的事拉成四屏；放在按钮上方
+            则是白给的：填到哪儿就看到哪儿，不用多点一次。
+
+            没填的那一节画成灰点虚线并写「待填写」，不替用户补上 —— 预览的职责
+            是「你现在配出来的是这个」，不是「你大概想配这个」。
+          */}
+          <div className="shrink-0 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] px-3 py-2">
+            <p className="mb-1.5 text-meta text-muted-foreground">流量将经过</p>
+            <NetworkPath
+              nodes={createPreview.nodes}
+              edges={createPreview.edges}
+              orientation="vertical"
+            />
           </div>
           <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-background/95 pt-3 sm:items-center sm:justify-between">
             {/*

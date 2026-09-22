@@ -11,7 +11,7 @@
 .workspace-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
 .workspace-header-actions > button { box-shadow: var(--fx-shadow); }
 .workspace-header-actions [data-icon-button] { box-shadow: none; }
-.workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-subtle); color: var(--fx-text); font-weight: 600; box-shadow: none; }
+.workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-hover); color: var(--fx-text); font-weight: 600; box-shadow: none; }
 .workspace-layout [data-sidebar="group-label"] { opacity: 1; color: var(--fx-muted); letter-spacing: .06em; }
 .workspace-layout [data-mobile-header] { background: var(--fx-surface); border-color: var(--fx-stroke); box-shadow: 0 1px 4px rgb(24 37 54 / 4%); }
 .workspace-tabs { isolation: isolate; border-radius: 12px; background: var(--fx-subtle); border: 1px solid var(--fx-stroke); padding: 4px; }
@@ -35,12 +35,12 @@
 .connection-rail { position: relative; width: 12px; flex: 0 0 12px; display: flex; justify-content: center; }
 .connection-step:not(:last-child) .connection-rail::after { position: absolute; content: ""; width: 1px; top: 16px; bottom: -12px; background: var(--fx-stroke); }
 .connection-node { position: relative; z-index: 1; margin-top: 5px; width: 8px; height: 8px; border: 2px solid var(--fx-brand); border-radius: 50%; background: var(--fx-surface); }
-.connection-arrow { position: absolute; bottom: -8px; z-index: 1; color: var(--fx-muted); background: var(--fx-subtle); }
+.connection-arrow { position: absolute; bottom: -8px; z-index: 1; color: var(--fx-muted); background: var(--fx-l1-surface); }
 .connection-label { display: block; font-size: 11px; line-height: 16px; color: var(--fx-muted); }
 .connection-value { margin-top: 4px; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; color: var(--fx-text); }
 .workspace-main .action-card { border-color: var(--fx-stroke); background: var(--fx-surface); backdrop-filter: none; }
 .workspace-main .action-card-content { padding: 16px; }
-.workspace-main .action-card-footer { background: var(--fx-subtle); margin: 4px -16px -16px; padding: 8px 12px; border-top: 1px solid var(--fx-stroke); border-radius: 0 0 var(--fx-radius) var(--fx-radius); }
+.workspace-main .action-card-footer { background: var(--fx-subtle); margin: 4px -16px -16px; padding: 8px 12px; border-top: 1px solid var(--fx-stroke); border-radius: 0 0 var(--fx-radius-card) var(--fx-radius-card); }
 .workspace-main .action-card [class*="animate-pulse"] { animation: none; }
 .workspace-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); box-shadow: var(--fx-shadow); overflow: hidden; }
 .workspace-metrics > div { min-width: 0; padding: 16px; }
@@ -78,7 +78,7 @@
 .workspace-command-results:empty { flex: 0; padding: 0; }
 .workspace-command-results > button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 10px 12px; border-radius: var(--fx-radius); text-align: left; font-size: 14px; }
 .workspace-command-results > button > svg { flex-shrink: 0; color: var(--fx-muted); }
-.workspace-command-results > button[aria-selected="true"] { background: var(--fx-subtle); }
+.workspace-command-results > button[aria-selected="true"] { background: var(--fx-hover); }
 .workspace-command-results small { display: block; font-size: 11px; color: var(--fx-muted); }
 .workspace-command-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--fx-stroke); color: var(--fx-muted); font-size: 11px; }
 .workspace-command-empty { flex: 1; display: grid; place-content: center; padding: 32px 20px; text-align: center; color: var(--fx-muted); font-size: 13px; }
@@ -157,18 +157,22 @@
   .workspace-main [data-slot="table-head"] { font-weight: 600; background: var(--fx-subtle); }
 
   /*
-    卡片回来。
+    卡片：纯白、大圆角、**不描边**、不投影。
 
-    上一轮我把卡片拆成「文档章节」（只留一条顶线），结果是一列规则读起来
-    分不出哪几行是一条 —— 有质感但看不清。清晰优先于克制：一条规则就该是
-    一张看得见边界的卡片。
+    这里前后反过三次，把结论记下来免得再反：
 
-    但不走另一个极端：白底 + 一条细边框 + 6px 圆角（--fx-radius，手册主力值），
-    不要投影、不要填充色差。边界感来自边框，不是来自一层灰底或一圈阴影。
+      一版  灰底卡片 + 边框            —— 两种灰堆着，发闷
+      二版  白底卡片 + 边框（白页面）  —— 卡片浮不起来，全靠框撑着，像线框图
+      三版  白底卡片 + 无边框（灰页面）—— 现在这版
+
+    关键在**页面底色和卡片的那一点差**。有了它，白块自己就是一张卡片；
+    再加一圈边框是把同一件事说两遍，而重复的那一遍读起来就是「重」。
+
+    圆角走 surface 档（16px）：没有边框之后，圆角是唯一还在勾勒轮廓的东西。
   */
   .workspace-main [data-slot="card"] {
-    border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius);
-    background: var(--fx-surface); box-shadow: none;
+    border: 0; border-radius: var(--fx-radius-surface);
+    background: var(--fx-l1-surface); box-shadow: none;
     padding: 0; margin-top: 0;
   }
   .workspace-main [data-slot="card-header"] { padding: 12px 12px 0; }
@@ -286,8 +290,17 @@
     只收内边距和圆角，不动边框和背景：那两样是「这是一组」的信号，去掉会让
     密集的列表糊成一片。
   */
-  .workspace-main [class*="rounded-"][class*="border"]:not([data-slot]):not(button):not(input):not(textarea):not([role="button"]),
-  [role="dialog"] [class*="rounded-"][class*="border"]:not([data-slot]):not(button):not(input):not(textarea):not([role="button"]) {
+  /*
+    ⚠ 这条是「猜 DOM」而不是设计系统 API：任何带圆角和边框的元素都被它改掉，
+    包括以后新加的业务组件。它已经误伤过一次 —— Entity 卡片自己声明了
+    12px（卡片档），被这条按 9px 盖掉，而 V2 的圆角分级正是靠这个差别建立
+    层级的。
+
+    所以排除 [data-fx-entity]：凡是走设计系统的组件，自己的令牌说了算。
+    这条规则本身要在 CSS 减法那一轮整个删掉，换成明确的 fx-* 类名。
+  */
+  .workspace-main [class*="rounded-"][class*="border"]:not([data-slot]):not([data-fx-entity]):not(button):not(input):not(textarea):not([role="button"]),
+  [role="dialog"] [class*="rounded-"][class*="border"]:not([data-slot]):not([data-fx-entity]):not(button):not(input):not(textarea):not([role="button"]) {
     border-radius: 9px;
   }
 
@@ -450,7 +463,7 @@
   .dialog-panel {
     width: calc(100vw - 20px); max-width: calc(100vw - 20px);
     max-height: 84svh;
-    border-radius: 12px;
+    border-radius: var(--fx-radius-modal);
     padding: 14px 16px 16px;
     gap: 10px;
   }
@@ -498,17 +511,27 @@
   }
 
   /*
-    分类条 → iOS 分段控件（UISegmentedControl）。
-    底槽是一块浅灰圆角，选中项是一块白色滑块浮在上面，分隔靠的是滑块本身不是
-    边框。iOS 的槽是 9px 圆角、滑块 7px。
+    分类条：黑白分段控件。
+
+    上一版是 iOS 的做法 —— 浅灰底槽 + 白色滑块 + 投影。那一套的全部分层信息
+    都在「灰和白的差」上，面全白之后它就没了：白滑块浮在白槽上，等于没有选中态。
+
+    黑白的做法反过来：槽靠一条边框成形，**选中项整块反白**（黑底白字）。
+    这比灰底白块更明确 —— 一屏扫过去，黑的那一块就是「你在这里」，
+    不需要靠投影去暗示层次。
   */
-  .workspace-tabs { padding: 2px; border-radius: 8px; border: 0; background: var(--fx-subtle); }
+  .workspace-tabs { padding: 3px; border-radius: var(--fx-radius-control); border: 0; background: var(--fx-l1-surface); }
   .workspace-tabs .workspace-tab { border: 0; border-radius: var(--fx-radius); font-size: 13px; font-weight: 500; min-height: 30px; padding: 5px 10px; }
   .workspace-tabs .workspace-tab[data-state="active"] {
-    background: var(--fx-surface); font-weight: 600;
-    box-shadow: 0 3px 8px rgb(0 0 0 / 12%), 0 3px 1px rgb(0 0 0 / 4%);
+    background: var(--fx-text); color: var(--fx-text-inverse); font-weight: 600;
+    box-shadow: none;
   }
-  .workspace-tab-count { background: var(--fx-stroke); color: var(--fx-text); border-radius: 9px; }
+  /* 反白之后计数徽标也得跟着反过来，否则黑底上一块深色看不见 */
+  .workspace-tabs .workspace-tab[data-state="active"] .workspace-tab-count {
+    background: color-mix(in srgb, var(--fx-text-inverse) 26%, transparent);
+    color: var(--fx-text-inverse);
+  }
+  .workspace-tab-count { background: var(--fx-stroke-weak); color: var(--fx-text); border-radius: 9px; }
 
   /*
     列表 → iOS 分组内嵌表格（inset grouped）。
@@ -517,21 +540,26 @@
   */
   /* 卡片的样式归下面「文档式排版」那一节管。 */
 
-  /* 输入框在 iOS 上是填充块不是描边框。 */
   /*
-    提权到两个选择器：Tailwind 的 bg-background 是单个类，同权重时写在后面的赢，
-    而 Tailwind 的工具类排在这个文件后面。加一层 [class] 把权重抬到 (0,2,0)，
-    第一版只写 [data-slot="input"] 所以输入框一直是白底描边。
+    输入框回到「白底 + 描边」。
+
+    上一版照 iOS 做成了填充块（灰底、无边框）—— 那个做法认得出「这里能填」
+    靠的就是那块灰。面全白之后填充块和背景一样白，输入框会整个消失。
+
+    描边的另一个好处：聚焦时只需要加重边框，不用同时换底色，状态变化更干净。
+
+    提权到 [class] 是因为 Tailwind 的 bg-background 是单类，同权重时后写的赢，
+    而工具类排在这个文件后面 —— 第一版只写 [data-slot="input"] 所以一直没生效。
   */
   [data-slot="input"][class], [data-slot="select-trigger"][class], [data-slot="textarea"][class] {
-    border-color: transparent;
-    background: var(--fx-subtle);
+    border-color: var(--fx-stroke-base);
+    background: var(--fx-l1-surface);
   }
   [data-slot="input"][class]:focus-visible,
   [data-slot="select-trigger"][class]:focus,
   [data-slot="textarea"][class]:focus-visible {
-    background: var(--fx-surface);
-    border-color: var(--fx-brand);
+    background: var(--fx-l1-surface);
+    border-color: var(--fx-text);
   }
 }
 @media (pointer: coarse) { .workspace-nav-search, .public-journey-switch button { min-height: 44px; } }
@@ -588,7 +616,7 @@
 .workspace-layout [data-slot="card"], .public-home-shell [data-slot="card"] { background: var(--fx-surface); border-color: var(--fx-stroke); box-shadow: var(--fx-shadow); backdrop-filter: none; }
 .workspace-layout [data-sidebar="sidebar"] { background: var(--fx-surface); }
 [data-sidebar="menu-button"] { min-height: 38px; }
-[data-sidebar="menu-button"][data-active="true"] { background: var(--fx-subtle); color: var(--fx-text); font-weight: 600; }
+[data-sidebar="menu-button"][data-active="true"] { background: var(--fx-hover); color: var(--fx-text); font-weight: 600; }
 /* 复选框也走控件描边：一个 20px 的空方框全靠边框才看得见，用 --fx-stroke 太淡。
    选中时边框由 checked:border-primary 接管，所以这里只管没选中的状态。 */
 [data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"], [data-slot="checkbox"]:not(:checked) { background-color: var(--fx-surface); border-color: var(--fx-control-stroke); }
@@ -702,4 +730,100 @@
 
 @media (pointer: coarse) {
   [data-slot="switch"]:not(.switch-compact)::before { content: ""; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%); }
+}
+
+/*
+  ═══════════════════════════════════════════════════════════
+  Entity 卡片的触摸命中区
+
+  全局 `@media (pointer: coarse) { button { min-height: 44px } }` 会把 Entity
+  卡底部那排操作顶到 44px 视觉高度 —— 一张只有五行内容的卡，光底栏就占 53px。
+
+  和列表卡那排图标同一个办法：视觉高度收到 30px，命中区用 ::after 只往纵向
+  撑回 44px。横向不撑，免得盖住旁边那一项。
+  ═══════════════════════════════════════════════════════════
+*/
+@media (pointer: coarse) {
+  .fx-entity-footer [data-slot="button"] {
+    position: relative;
+    min-height: 30px;
+    height: 30px;
+  }
+  .fx-entity-footer [data-slot="button"]::after {
+    content: "";
+    position: absolute;
+    inset: -7px 0;
+  }
+}
+
+/*
+  ═══════════════════════════════════════════════════════════
+  iOS 分组列表的分隔线
+
+  行与行之间的线画在行上而不是容器上，并且**从文字开始画，不从行的最左边**。
+
+  这个内缩不是装饰：图标那一列因此是连续的，眼睛顺着图标往下扫不会被一堆
+  横线切断。不做这个细节，列表立刻就「像网页表格」而不像 iOS 列表。
+
+  首行不画线 —— 容器自己的边框已经在那儿了，再画一条就是两条。
+  ═══════════════════════════════════════════════════════════
+*/
+.fx-list-row + .fx-list-row {
+  border-top: 1px solid var(--fx-stroke-weak);
+}
+
+/* 有图标的行：线从文字起点开始（图标 28px + 间距 12px = 40px） */
+.fx-list-row-inset + .fx-list-row-inset {
+  border-top-color: transparent;
+  background-image: linear-gradient(var(--fx-stroke-weak), var(--fx-stroke-weak));
+  background-repeat: no-repeat;
+  background-size: calc(100% - 40px) 1px;
+  background-position: 40px 0;
+}
+
+/*
+  分组小标题。
+
+  用专门的类而不是工具类：这个元素必须是 h2（文档大纲和读屏跳转都靠它），
+  而 .workspace-main h2 的特指度 (0,1,1) 压过任何单个工具类 —— 写 text-meta
+  实测渲染出来是 20px 的黑标题。
+
+  选择器同样带 .workspace-main 打平特指度，再靠后写赢。
+*/
+.fx-list-section-header,
+.workspace-main .fx-list-section-header {
+  padding-inline: 4px;
+  padding-bottom: 6px;
+  font-size: var(--fx-size-meta);
+  line-height: var(--fx-line-meta);
+  font-weight: 500;
+  letter-spacing: .02em;
+  color: var(--fx-text-muted);
+}
+
+/*
+  ═══════════════════════════════════════════════════════════
+  直接坐在页面上的控件：白底、不描边
+
+  搜索框、筛选按钮、分段控件这些贴着页面底的控件，和卡片是同一个道理 ——
+  页面是浅灰，它们是白的，这一点差已经说清楚「这是一个控件」。再加一圈
+  边框是把同一件事说两遍。
+
+  参考图里那排筛选胶囊（UDP / HTTP/S / Reject）就是这样：白色胶囊浮在灰底
+  上，一条边都没有。
+
+  **对话框里的输入框不在此列**：那里的底是白的，白输入框不描边就会整个消失。
+  所以这条规则只限定在 .workspace-filter 这一层，不往下渗。
+  ═══════════════════════════════════════════════════════════
+*/
+@media (max-width: 767px) {
+  .workspace-filter > [data-slot="button"],
+  .workspace-filter-action [data-slot="button"][data-variant="outline"],
+  .workspace-filter-search [data-slot="input"][class] {
+    border-color: transparent;
+    background: var(--fx-l1-surface);
+  }
+  .workspace-filter-search [data-slot="input"][class]:focus-visible {
+    border-color: var(--fx-text);
+  }
 }

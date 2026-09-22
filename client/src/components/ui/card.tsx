@@ -36,7 +36,7 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(({ className, style, en
       ref={ref}
       data-slot="card"
       className={cn(
-        "glass-panel rounded-md transition-[border-color,box-shadow,transform] duration-300",
+        "glass-panel rounded-lg transition-[border-color,box-shadow,transform] duration-300",
         animateEnter && "stagger-card",
         className,
       )}

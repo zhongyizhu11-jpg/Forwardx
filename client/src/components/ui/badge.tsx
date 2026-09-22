@@ -6,7 +6,16 @@ const badgeVariants = cva("inline-flex items-center rounded-full border px-2.5 p
   variants: {
     variant: {
       default: "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
-      secondary: "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+      /*
+        secondary 是**静态**徽标（TCP / UDP / 计数），不是悬停态。
+
+        它原来用 bg-secondary 那块浅灰成形，而 bg-secondary 现在指向悬停色 ——
+        静态元素挂悬停色，等于全站散着十几块「假的悬停」。而且面全白之后，
+        那块浅灰正是「一屏都是灰」的主要来源。
+
+        改成描边成形：形状由一条线给出，底色留白。
+      */
+      secondary: "border-[var(--fx-stroke-base)] bg-transparent text-[var(--fx-text-secondary)]",
       destructive: "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
       outline: "text-foreground",
     },
