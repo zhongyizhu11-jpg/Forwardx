@@ -751,3 +751,48 @@
     inset: -7px 0;
   }
 }
+
+/*
+  ═══════════════════════════════════════════════════════════
+  iOS 分组列表的分隔线
+
+  行与行之间的线画在行上而不是容器上，并且**从文字开始画，不从行的最左边**。
+
+  这个内缩不是装饰：图标那一列因此是连续的，眼睛顺着图标往下扫不会被一堆
+  横线切断。不做这个细节，列表立刻就「像网页表格」而不像 iOS 列表。
+
+  首行不画线 —— 容器自己的边框已经在那儿了，再画一条就是两条。
+  ═══════════════════════════════════════════════════════════
+*/
+.fx-list-row + .fx-list-row {
+  border-top: 1px solid var(--fx-stroke-weak);
+}
+
+/* 有图标的行：线从文字起点开始（图标 28px + 间距 12px = 40px） */
+.fx-list-row-inset + .fx-list-row-inset {
+  border-top-color: transparent;
+  background-image: linear-gradient(var(--fx-stroke-weak), var(--fx-stroke-weak));
+  background-repeat: no-repeat;
+  background-size: calc(100% - 40px) 1px;
+  background-position: 40px 0;
+}
+
+/*
+  分组小标题。
+
+  用专门的类而不是工具类：这个元素必须是 h2（文档大纲和读屏跳转都靠它），
+  而 .workspace-main h2 的特指度 (0,1,1) 压过任何单个工具类 —— 写 text-meta
+  实测渲染出来是 20px 的黑标题。
+
+  选择器同样带 .workspace-main 打平特指度，再靠后写赢。
+*/
+.fx-list-section-header,
+.workspace-main .fx-list-section-header {
+  padding-inline: 4px;
+  padding-bottom: 6px;
+  font-size: var(--fx-size-meta);
+  line-height: var(--fx-line-meta);
+  font-weight: 500;
+  letter-spacing: .02em;
+  color: var(--fx-text-muted);
+}
