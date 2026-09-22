@@ -185,7 +185,7 @@ import {
   type ForwardProtocolKey,
 } from "@shared/forwardTypes";
 import { ruleLatencyProbeMethodForRule } from "@shared/latencyProbe";
-import { formatTrafficMultiplier } from "@shared/trafficMultiplier";
+import { formatTrafficMultiplier, normalizeTrafficMultiplier, TRAFFIC_MULTIPLIER_DEFAULT } from "@shared/trafficMultiplier";
 import {
   formatHostAddressWithPort,
   getHostEntryAddress,
@@ -4491,7 +4491,20 @@ function RulesContent() {
     const end = Number(item?.portRangeEnd || 0);
     return start > 0 && end > 0 ? `${start}-${end}` : "";
   };
-  const trafficMultiplierBadgeClass = (_value: unknown) => "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  /*
+    计费倍率徽标。
+
+    以前不管倍率是多少都刷一层绿 —— 参数名都写成了 `_value`，说明它压根没看过
+    这个值。而绿在这套面板里是「正常」的语义色，于是一条 5 倍计费的线路和一条
+    1 倍的线路长得一模一样，还都透着「没问题」。
+
+    倍率的意义是**这条线路的流量按几倍扣**，所以只有一种情况需要颜色：超过 1 倍，
+    那是花钱的警告。等于 1 倍是默认，低于 1 倍是优惠 —— 两者都不必抢注意力。
+  */
+  const trafficMultiplierBadgeClass = (value: unknown) =>
+    normalizeTrafficMultiplier(value) > TRAFFIC_MULTIPLIER_DEFAULT
+      ? "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] text-[var(--fx-warn)]"
+      : "border-[var(--fx-stroke-base)] text-muted-foreground";
   const renderTrafficMultiplierBadge = (value: unknown) => (
     <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] font-medium leading-none ${trafficMultiplierBadgeClass(value)}`}>
       {formatTrafficMultiplier(value)}

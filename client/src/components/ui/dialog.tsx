@@ -134,7 +134,7 @@ const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive
           gap。为钉一个按钮把所有弹窗的间距改一遍不划算。
           滚上去之后还有 ESC、点遮罩、底部的取消三条路可以关。
         */}
-        <DialogPrimitive.Close className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-70 ring-offset-background transition-colors hover:bg-destructive/10 hover:text-destructive hover:opacity-100 focus:bg-destructive/10 focus:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive/40 focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
+        <DialogPrimitive.Close data-fx-dialog-close="" className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-70 ring-offset-background transition-colors hover:bg-destructive/10 hover:text-destructive hover:opacity-100 focus:bg-destructive/10 focus:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive/40 focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
           <X className="h-4 w-4" />
           <span className="sr-only">关闭</span>
         </DialogPrimitive.Close>
