@@ -39,7 +39,7 @@ DDNS Failover · Latency Probe · Topology · Traffic · Client Subscription
 | **Path** | 两个节点之间的关系 | 连线 | `PathEdge` / `NetworkPath` |
 | **Flow** | 流量的方向 | 箭头、从上到下 / 从左到右的顺序 | `NetworkPath` |
 | **Group** | 一组节点或一组线路 | 容器（缩进、分支符、浅色带） | `PathBranch` |
-| **Policy** | 决定走哪条的条件 | 条件行 + 当前生效项高亮 | Phase 5 |
+| **Policy** | 决定走哪条的条件 | 条件行 + 当前生效项高亮 | `RoutePolicyPanel` / `FailoverPolicyFields` |
 | **Health** | 现在好不好 | **颜色 + 线型**，不是文字 | `StatusDot` / `HealthBadge` |
 | **Metric** | 数值反馈 | 数字大、标签和单位小 | `Metric` / `PathMetric` |
 
@@ -154,8 +154,17 @@ components/entity/EntityActions  EntityActions · partitionEntityActions
 lib/chartPalette                 图表色板
 ```
 
+已落地（PR 6）：
+
+```
+shared/routePolicy.ts            主备策略模型：首选 / 实际 / 哪一层在决定，全站唯一一份
+shared/failoverPin.ts            人工钉住怎么读（null 不是 0）
+features/rules/RoutePolicySheet  RoutePolicyPanel · RoutePolicySheet（规则卡上点开）
+features/rules/FailoverPolicyFields  编辑框里的主备那一块
+```
+
 待建：`AppShell`、`PageHeader`、`SectionHeader`、`Sparkline`、`SegmentControl`、
-`BottomSheet`、`Drawer`、`OfflineState`、Route Policy 一族。
+`BottomSheet`、`Drawer`、`OfflineState`。
 
 ---
 
@@ -170,7 +179,7 @@ lib/chartPalette                 图表色板
 | 3 | **Links 2.0**：TunnelCard / ChainCard / GroupCard / Topology，Tunnels.tsx 拆分到 `features/links/` | ✅ 拆分只迈了第一步 |
 | 4 | **Rules 2.0**：Rule 从配置卡变成 Flow 卡，创建流程改渐进式披露 | ✅ |
 | 5 | **Dashboard 2.0**：Health / Traffic / Attention 三段，减少饼图和孤立统计卡 | ✅ |
-| 6 | **Route Policy**：主备、多线路、定时、自动故障切换、手动、恢复，统一进策略 UI | |
+| 6 | **Route Policy**：主备、多线路、定时、自动故障切换、手动、恢复，统一进策略 UI | ✅ 规则级主备；转发组的故障转移还没接进来 |
 | 7 | Subscription / Settings 迁移 | 设置页手机端已换分组列表 |
 | 8 | **CSS 债清理**：删 legacy override、宽泛选择器、重复样式 | |
 
@@ -194,6 +203,32 @@ PR 3 的拆分只迈了第一步：`features/links/` 里目前是路径和状态
   `AccountSection`，纯函数在 `shared/dashboardAttention.ts` 和
   `features/dashboard/trafficRanking.ts`。三块都是 iOS 分组列表那一套（组名在块外、
   块纯白不描边），和设置页同一个组件。
+
+### PR 6 落地时定下的几条
+
+- **先看数据是不是真的，再画高亮。** 做策略界面之前把每一层到底生效没有过了一遍，
+  结果人工钉住那一层把「没钉」读成了「钉在主出站」（时段表和自动择优从上线起就没
+  生效过），「现在走哪条」的切换事件大多在心跳早退时被丢掉、时间单位还存错了。
+  在错的数据上画一个高亮，只会让错的答案更显眼。修法和一次性修正见 CHANGELOG。
+- **选路的规矩只有一份，写在 Agent 里**（`priorityOrderLocked`：人工指定 > 时段表 >
+  自动择优 > 出站顺序）。面板用 `shared/routePolicy` 把同一套规矩再算一遍，只为
+  说清楚「为什么走这条」，不替 Agent 做决定。择优门槛这类照抄 Agent 常数的文案，
+  测试直接读 `agent/main.go` 核对。
+- **「首选」和「实际」分开说。** 首选是面板按规矩算的（自动择优在决定时是 null ——
+  谁更快是 Agent 实测的，不猜）；实际是 Agent 报的，报告能信到什么程度看那台
+  Agent 的版本和在不在线：`2.2.197` 起每次心跳确认，叫「现在走」；`2.2.196` 只报
+  切换事件，叫「最近一次切到」；离线就不说；没有记录时不替它说「走主出站」。
+- **条件行的三种状态**：`deciding`（此刻在决定，一根路径色竖条 + 「此刻」）、
+  `overridden`（此刻本该轮到它、被上面那层压着 —— 钉子一到期它就接手，这是最该被
+  看见的）、`idle`。高亮不整行染色：白块里再染一块面就是又一层。
+- **颜色看「走的是不是首选」，不看「是不是在备用上」**：按时段表晚上走备用 1 是排好的。
+- **策略面板和编辑框说同一种话**：线路 → 按什么选 → 什么时候切，「按什么选」按优先级
+  从上往下。编辑框里的「此刻」拿还没保存的表单当场算。
+- **对话框里放分组列表时，对话框自己当 L0**（`bg-[var(--fx-l0-page)]`）：白块放在白底
+  上看不出分组。仍然是「底灰、面白」那一次底色差。
+- 还没做的：**转发组的故障转移**仍是自己那套画法（成员按优先级排、可用的打勾）。它只有
+  「出站顺序」一层和切换 / 恢复时间，接进同一份模型需要一个转发组的适配和链路页上的
+  入口，是下一步。
 
 ---
 

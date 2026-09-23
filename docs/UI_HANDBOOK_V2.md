@@ -470,7 +470,14 @@ EmptyState · LoadingState · ErrorState · OfflineState
 已落地：`StatusDot`、`HealthBadge`、`NetworkNode`、`NetworkEdge`、`NetworkPath`、
 `PathPreview`；iOS 那一套 `GroupedList`（`ListSection` / `ListRow`）、导航栏、
 标签栏；首页的 `AttentionSection` / `TrafficSurface` / `AccountSection`
-（`client/src/features/dashboard/`）。其余按 Phase 推进。
+（`client/src/features/dashboard/`）；主备策略的 `RoutePolicyPanel` /
+`RoutePolicySheet` / `FailoverPolicyFields`（`client/src/features/rules/`，判断在
+`shared/routePolicy.ts`）。其余按 Phase 推进。
+
+**条件行**（Policy 的画法）：一层一行，从上往下就是优先级。此刻起作用的那一行左边
+一根 3px 的 `--fx-path` 竖条、字重加粗、右侧一个 `EntityTag tone="path"` 写「此刻」；
+「本该轮到它、被上面那层压着」的那一行不高亮，但用 `--fx-warn-text` 写一句被谁压着；
+其余的照常画。**不整行染色** —— 白块里再染一块面，就是又多了一层。
 
 ---
 
