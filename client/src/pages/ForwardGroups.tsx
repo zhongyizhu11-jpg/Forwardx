@@ -1,6 +1,8 @@
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { NetworkPath } from "@/components/network/NetworkPath";
 import { buildChainPath } from "@/features/links/chainPath";
+import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
+import { FAILOVER_TONE_CLASS, describeGroupPolicyDisplay } from "@/lib/failoverLineDisplay";
 import { FormField } from "@/components/ui/form-field";
 import DataSectionError from "@/components/DataSectionError";
 import { sameNullableStringArray } from "@/lib/multiHopAddress";
@@ -69,6 +71,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronRight,
+  Globe,
   GripVertical,
   Layers3,
   LayoutGrid,
@@ -95,6 +98,7 @@ import {
   YAxis,
 } from "recharts";
 import { MAX_FORWARD_GROUP_MEMBERS } from "@shared/forwardGroup";
+import { describeGroupRoutePolicy, type GroupRoutePolicyOptions } from "@shared/routePolicy";
 import { LinkTestProbeView, parseLinkTestMessage, type LinkTestPlannedSegment } from "@/components/LinkTestLatencySummary";
 import { BandwidthAggregationSummary } from "@/components/BandwidthAggregationSummary";
 import { addHostNodeMeta, addNodeMetaAliases, hostDisplayName } from "@/lib/linkTestNodeMeta";
@@ -886,6 +890,8 @@ export function ForwardGroupsContent({
   const [latencyGroup, setLatencyGroup] = useState<{ id: number; name: string } | null>(null);
   const [testGroup, setTestGroup] = useState<{ id: number; name: string } | null>(null);
   const [deleteGroup, setDeleteGroup] = useState<any | null>(null);
+  // 点开故障转移策略面板的那个组。只存 id：面板跟着列表轮询刷新，不拿一份旧快照。
+  const [policyGroupId, setPolicyGroupId] = useState<number | null>(null);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
   const lastCreateRequestKeyRef = useRef(createRequestKey ?? 0);
   const lastEditRequestKeyRef = useRef(0);
@@ -1270,6 +1276,29 @@ export function ForwardGroupsContent({
     onError: (e) => toast.error(e.message || "执行失败"),
   });
 
+  /*
+    故障转移策略面板上的两个手动操作，用的是现成的两个接口：
+      换一个首选 = reorder（改成员顺序，一直有效），服务端改完立刻按新顺序重选一次；
+      现在重新选 = sync（卡片上「同步」那个按钮做的事），不等观察时间直接挑最前面的健康成员。
+    各自一份 mutation：共用 syncMutation 的话，成功提示会是「已同步链路成员规则」，答非所问。
+  */
+  const preferMemberMutation = trpc.forwardGroups.reorder.useMutation({
+    onSuccess: () => {
+      utils.forwardGroups.options.invalidate();
+      utils.forwardGroups.listPage.invalidate();
+      toast.success("成员顺序已改，已按新顺序重新选了一次");
+    },
+    onError: (e) => toast.error(e.message || "调整成员顺序失败"),
+  });
+  const reselectMutation = trpc.forwardGroups.sync.useMutation({
+    onSuccess: () => {
+      utils.forwardGroups.options.invalidate();
+      utils.forwardGroups.listPage.invalidate();
+      toast.success("已按成员顺序重新选了一次");
+    },
+    onError: (e) => toast.error(e.message || "重新选失败"),
+  });
+
   const reorderGroupsMutation = trpc.forwardGroups.reorderGroups.useMutation({
     onError: (e) => toast.error(e.message || "排序保存失败"),
   });
@@ -1641,6 +1670,39 @@ export function ForwardGroupsContent({
     return tunnel ? `${tunnel.name} / ${getTunnelRouteText(tunnel, hosts)}` : `隧道 #${member.tunnelId}`;
   };
 
+  /*
+    系统 DDNS 没开时，面板照样按顺序挑成员，但只记成「建议入口」，解析不改 —— 策略面板要照实
+    说「建议」而不是「解析到」。设置还没加载出来时是 undefined，按开着说。
+  */
+  const groupPolicyOptions: GroupRoutePolicyOptions = {
+    ddnsSwitching: settings?.ddns ? !!settings.ddns.enabled && settings.ddns.provider !== "disabled" : undefined,
+    memberLabel: (member) => memberLabel(member),
+  };
+
+  /** 故障转移组的「解析 · HK entry 01」：点开是策略面板，和规则卡上的「主备 · 备用 1」同一个东西。 */
+  const renderGroupPolicyBadge = (group: any) => {
+    if (normalizeGroupMode(group.groupMode) !== "failover") return null;
+    const display = describeGroupPolicyDisplay(group, groupPolicyOptions);
+    if (!display) return null;
+    return (
+      <button
+        type="button"
+        className="inline-flex min-w-0 max-w-full shrink items-center rounded-[var(--fx-radius-control)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setPolicyGroupId(Number(group.id))}
+        title={display.title}
+        aria-label={`故障转移策略：${display.title}`}
+      >
+        <Badge
+          variant="outline"
+          className={cn("h-5 max-w-full cursor-pointer gap-1 px-1.5 text-[10px] font-medium", FAILOVER_TONE_CLASS[display.tone])}
+        >
+          <Globe className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">{display.text}</span>
+        </Badge>
+      </button>
+    );
+  };
+
   const memberHealthTitle = (group: any, member: any) => {
     const active = isGroupMemberActive(group, member);
     const parts = [active ? "当前成员可用" : "当前成员不可用"];
@@ -1840,7 +1902,15 @@ export function ForwardGroupsContent({
                   </div>
 
                   <div className="space-y-2 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] p-2.5">
-                    <div className="text-meta text-muted-foreground">{groupMemberTitle(group)}</div>
+                    {/*
+                      「解析 · HK entry 01」放在成员这一块的标题行上：它回答的就是「解析在哪个成员上」。
+                      放在卡片标题行时，手机上名字 + 状态已经占满一行，它折到第二行，还被触屏
+                      44px 的按钮高度撑出一大块空白。
+                    */}
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <div className="shrink-0 text-meta text-muted-foreground">{groupMemberTitle(group)}</div>
+                      {renderGroupPolicyBadge(group)}
+                    </div>
                     {renderGroupMembers(group)}
                   </div>
 
@@ -2123,10 +2193,11 @@ export function ForwardGroupsContent({
                           className="mx-auto"
                         />
                       </TableCell>
-                      <TableCell className="py-3">
-                        <div className="flex items-center gap-1.5">
+                      <TableCell className="max-w-[13rem] py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           {renderGroupEnabledSwitch(group)}
                           {groupStatusBadge(group)}
+                          {renderGroupPolicyBadge(group)}
                         </div>
                       </TableCell>
                       <TableCell className="max-w-[13rem] py-3">
@@ -2926,6 +2997,34 @@ export function ForwardGroupsContent({
           onOpenChange={(open) => !open && setTestGroup(null)}
         />
       )}
+      {(() => {
+        const policyGroup = policyGroupId === null ? null : (groups || []).find((group: any) => Number(group.id) === policyGroupId) || null;
+        const policy = policyGroup ? describeGroupRoutePolicy(policyGroup, groupPolicyOptions) : null;
+        const groupId = Number(policyGroup?.id || 0);
+        return (
+          <RoutePolicySheet
+            open={policyGroupId !== null}
+            onOpenChange={(open) => !open && setPolicyGroupId(null)}
+            subjectName={String(policyGroup?.name || "")}
+            policy={policy}
+            canEdit
+            pending={preferMemberMutation.isPending || reselectMutation.isPending}
+            onPrefer={(index) => {
+              if (!policy || !groupId) return;
+              // reorder 按给的次序把 priority 写成 0..n-1，所以要把全部成员都带上（停用的也算），只把选中的挪到最前。
+              const memberIds = policy.lines.map((line) => line.memberId).filter((id): id is number => !!id);
+              const chosen = policy.lines[index]?.memberId;
+              if (!chosen) return;
+              preferMemberMutation.mutate({ groupId, memberIds: [chosen, ...memberIds.filter((id) => id !== chosen)] });
+            }}
+            onReselect={() => groupId && reselectMutation.mutate({ id: groupId })}
+            onEdit={() => {
+              setPolicyGroupId(null);
+              if (policyGroup) openEdit(policyGroup);
+            }}
+          />
+        );
+      })()}
       <Dialog open={!!deleteGroup} onOpenChange={(open) => !open && setDeleteGroup(null)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>

@@ -1209,24 +1209,28 @@ async function seedTunnelsAndGroups(adminId: number, hostIds: number[]): Promise
     protocol: "tcp",
     targetIp: "10.70.0.44",
     targetPort: 443,
+    // 配了域名、首选成员不健康、解析在第二个成员上：故障转移策略面板「没走首选」那一句靠它看得见。
+    domain: "api.dev.forwardx.local",
+    recordType: "A",
     chinaHealthCheckEnabled: true,
     chinaHealthCheckTarget: "www.qq.com:80",
     lastStatus: "healthy",
-    lastMessage: "JP node currently active",
+    lastMessage: "SG node currently active",
+    lastDdnsValue: "198.51.100.16",
     isEnabled: true,
     sortOrder: 1,
     createdAt: nowDate(),
     updatedAt: nowDate(),
   });
   const apiFailoverMembers = await addForwardGroupMembers(apiFailoverGroupId, [
-    { hostId: hostIds[1], connectHost: "fd00:10:10::20", latency: 39, priority: 1 },
+    { hostId: hostIds[1], connectHost: "fd00:10:10::20", latency: null, status: "unhealthy", chinaStatus: "unhealthy", priority: 1 },
     { hostId: hostIds[2], connectHost: "10.10.3.10", latency: 47, priority: 2 },
   ]);
   await executeRaw(
     `UPDATE ${quoteDbIdentifier("forward_groups")}
         SET ${quoteDbIdentifier("activeMemberId")} = ?
       WHERE ${quoteDbIdentifier("id")} = ?`,
-    [apiFailoverMembers[0], apiFailoverGroupId],
+    [apiFailoverMembers[1], apiFailoverGroupId],
   );
   await addGroupLatency(apiFailoverGroupId, 47);
 

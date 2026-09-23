@@ -120,7 +120,7 @@ import {
   parseFailoverTargets,
   type FailoverTarget,
 } from "@shared/failoverTargets";
-import { describeFailoverLineDisplay, type FailoverLineTone } from "@/lib/failoverLineDisplay";
+import { FAILOVER_TONE_CLASS, describeFailoverLineDisplay } from "@/lib/failoverLineDisplay";
 import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
 import { FailoverPolicyFields } from "@/features/rules/FailoverPolicyFields";
 import { describeRoutePolicy, pinUntilSeconds } from "@shared/routePolicy";
@@ -6166,13 +6166,6 @@ function RulesContent() {
     知道的是「现在走的哪条」。配了主备和没配在列表上几乎长一样，功能配完就
     看不见了，这正是「主备到底在哪儿用」说不清楚的地方。
   */
-  const failoverToneClass: Record<FailoverLineTone, string> = {
-    normal: "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]",
-    deviated: "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]",
-    warn: "border-destructive/40 text-destructive",
-    muted: "border-border text-muted-foreground",
-  };
-
   const renderFailoverLineBadge = (rule: any) => {
     const display = describeFailoverLineDisplay(rule, hostById.get(Number(rule.hostId)));
     if (!display) return null;
@@ -6187,7 +6180,7 @@ function RulesContent() {
       >
         <Badge
           variant="outline"
-          className={cn("h-5 cursor-pointer gap-1 px-1.5 text-[10px] font-medium", failoverToneClass[display.tone])}
+          className={cn("h-5 cursor-pointer gap-1 px-1.5 text-[10px] font-medium", FAILOVER_TONE_CLASS[display.tone])}
         >
           <GitBranch className="h-3 w-3" aria-hidden="true" />
           {display.text}
@@ -8685,7 +8678,7 @@ function RulesContent() {
           <RoutePolicySheet
             open={policyRuleId !== null}
             onOpenChange={(open) => !open && setPolicyRuleId(null)}
-            ruleName={String(policyRule?.name || "")}
+            subjectName={String(policyRule?.name || "")}
             policy={policy}
             canEdit
             pending={pinMutation.isPending}
