@@ -103,17 +103,13 @@ import {
   BILLING_TIME_ZONE,
 } from "@shared/billingTime";
 import {
-  MAX_FAILOVER_SCHEDULE_WINDOWS,
-  describeFailoverScheduleWindow,
   failoverSchedulePayload,
   parseFailoverSchedule,
   type FailoverSchedule,
-  type FailoverScheduleWindow,
 } from "@shared/failoverSchedule";
 import { readFailoverPin } from "@shared/failoverPin";
 import {
   describeFailoverLines,
-  failoverLineHintText,
   type RelayCandidate,
 } from "@/lib/failoverRelayHints";
 import {
@@ -126,6 +122,7 @@ import {
 } from "@shared/failoverTargets";
 import { describeFailoverLineDisplay, type FailoverLineTone } from "@/lib/failoverLineDisplay";
 import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
+import { FailoverPolicyFields } from "@/features/rules/FailoverPolicyFields";
 import { describeRoutePolicy, pinUntilSeconds } from "@shared/routePolicy";
 import { failoverLineLabel } from "@shared/failoverActiveLine";
 import {
@@ -3136,6 +3133,32 @@ function RulesContent() {
     parseLine: parseFailoverTargetLine as any,
     formatEndpoint: formatFailoverEndpoint,
   }), [form.failoverTargetsText, form.targetIp, form.targetPort, relayCandidatesQuery.data]);
+  /*
+    编辑框里的「此刻」：拿还没保存的表单走和策略面板同一份模型算一遍。转发方式和协议
+    不传 —— 那两样用不了主备时，这一块上面已经有一句专门的说明，不重复。
+  */
+  const formRoutePolicy = useMemo(() => {
+    if (!form.failoverEnabled) return null;
+    return describeRoutePolicy({
+      failoverEnabled: true,
+      failoverStrategy: form.failoverStrategy,
+      targetIp: form.targetIp,
+      targetPort: form.targetPort,
+      failoverTargets: JSON.stringify(normalizeFailoverTargetsForSubmit(form.failoverTargetsText).targets || []),
+      failoverSchedule: form.failoverSchedule,
+      failoverPinnedIndex: form.failoverPin?.index ?? null,
+      failoverPinnedUntil: form.failoverPin?.until ?? null,
+      failoverPreferFastest: form.failoverPreferFastest,
+      failoverMinHoldSeconds: form.failoverMinHoldSeconds,
+      failoverSeconds: form.failoverSeconds,
+      recoverSeconds: form.recoverSeconds,
+      autoFailback: form.autoFailback,
+    }, { host: form.hostId ? hostById.get(Number(form.hostId)) : undefined });
+  }, [
+    form.failoverEnabled, form.failoverStrategy, form.targetIp, form.targetPort, form.failoverTargetsText,
+    form.failoverSchedule, form.failoverPin, form.failoverPreferFastest, form.failoverMinHoldSeconds,
+    form.failoverSeconds, form.recoverSeconds, form.autoFailback, form.hostId, hostById,
+  ]);
   const advancedBlocked = isAdvancedSectionBlocker(submitBlocker);
   const advancedOpen = showAdvanced || advancedBlocked;
   const routeModeTabItems: SlidingTabItem<RuleRouteMode>[] = [
@@ -3778,8 +3801,9 @@ function RulesContent() {
         ? failoverSchedulePayload(form.failoverSchedule, form.failoverStrategy)
         : null,
       failoverMinHoldSeconds: canUseMainBackup && form.failoverEnabled ? form.failoverMinHoldSeconds : 0,
-      failoverPinnedIndex: canUseMainBackup && form.failoverEnabled ? (form.failoverPin?.index ?? null) : null,
-      failoverPinnedUntil: canUseMainBackup && form.failoverEnabled ? (form.failoverPin?.until ?? null) : null,
+      // 钉子和自动择优一样只对主备有意义：轮询这类没有「首选」，Agent 也不看。
+      failoverPinnedIndex: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback" ? (form.failoverPin?.index ?? null) : null,
+      failoverPinnedUntil: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback" ? (form.failoverPin?.until ?? null) : null,
       failoverPreferFastest: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback"
         ? form.failoverPreferFastest
         : false,
@@ -7712,7 +7736,8 @@ function RulesContent() {
             />
             </FormField>
             {showMainBackupConfig && (
-            <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+            /* L2 分组：灰底、不描边。原来是一个描边的框，里面又套两层描边的框。 */
+            <div className="space-y-3 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] p-3">
               <FormField className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   {/* 面板以前叫它「出站策略」，而这件事本身叫主备线路 —— 两个名字指一件事，
@@ -7756,340 +7781,15 @@ function RulesContent() {
                 </p>
               )}
               {form.failoverEnabled && (
-                <div className="space-y-2">
-                  <FormField className="space-y-2">
-                    <Label className="flex items-baseline gap-1.5">
-                    主出站探测目标
-                    <span className="text-xs font-normal text-muted-foreground">留空就探主出站地址本身</span>
-                    </Label>
-                    <Input
-                      value={form.failoverProbeTarget}
-                      onChange={(event) => setForm({ ...form, failoverProbeTarget: event.target.value })}
-                      placeholder="例如 10.0.0.1:9000"
-                      className="font-mono text-sm"
-                      spellCheck={false}
-                    />
-                  </FormField>
-                  <FormField className="space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Label>备用出站（每行一个，最多 10 个）</Label>
-                    {/*
-                      从面板认得的中转里选，而不是让人照着别处抄一个 地址:端口 过来。
-                      抄错了没有任何提示，要等真出事那天才发现备用线路根本连不上。
-                    */}
-                    {(relayCandidatesQuery.data || []).length > 0 && (
-                    <Select
-                      value=""
-                      onValueChange={(value) => {
-                      const existing = form.failoverTargetsText.replace(/\s*$/, "");
-                      setForm({ ...form, failoverTargetsText: existing ? `${existing}\n${value}` : value });
-                      }}
-                    >
-                      <SelectTrigger className="h-8 w-auto min-w-44 text-xs" aria-label="从中转里选一条加进备用出站">
-                      <SelectValue placeholder="从中转里选一条加进来" />
-                      </SelectTrigger>
-                      <SelectContent>
-                      {(relayCandidatesQuery.data || []).map((candidate: RelayCandidate) => (
-                      <SelectItem key={candidate.id} value={candidate.address}>
-                      {candidate.hostName} · {candidate.label}（{candidate.address}）
-                      </SelectItem>
-                      ))}
-                      </SelectContent>
-                    </Select>
-                    )}
-                    </div>
-                    <Textarea
-                      value={form.failoverTargetsText}
-                      onChange={(event) => setForm({ ...form, failoverTargetsText: event.target.value })}
-                      placeholder={"10.0.0.1:80\n10.0.0.2:80  10.0.0.2:9000"}
-                      className="min-h-24 font-mono text-sm"
-                      spellCheck={false}
-                    />
-                    {/*
-                      认出来的每一行在这儿说清楚：是哪台中转的哪条规则、探测有没有盲区、
-                      和主出站是不是同一个落地。这三件事手填时完全看不见，而任何一件出错
-                      都要等真出事那天才暴露。
-                    */}
-                    {failoverLineHints.map((hint) => {
-                    const text = failoverLineHintText(hint);
-                    if (!text) return null;
-                    return (
-                    <p
-                      key={hint.line}
-                      className={`text-xs leading-5 ${hint.probeBlindSpot || hint.sameDestination === false ? "text-[var(--fx-warn-text)]" : "text-muted-foreground"}`}
-                    >
-                      第 {hint.line} 行：{text}
-                    </p>
-                    );
-                    })}
-                  </FormField>
-                  {/*
-                    这段必须说，而且必须说得具体。
-
-                    健康检查就是对出站地址做一次 TCP 连接。出站是 iptables/DNAT 类中转时，
-                    握手实际是和最终落地完成的 —— 这一次连接就是端到端的。出站是 gost、
-                    realm 这类用户态转发时，中转在本地就把连接收下了：连得上只能证明中转
-                    活着，证明不了它到落地那一段还通。
-
-                    后一种情况下中转的上游断了，主备**不会切**，流量继续往死路里送，而
-                    面板上一切正常 —— 用户的体感是「备用线路配了，关键时刻没兜住」。
-                    不写清楚的话，他根本不会知道去填探测目标。
-                  */}
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    健康检查是对出站地址连一次 TCP。中转用 iptables/DNAT 时这一连就是端到端的；
-                    中转用 gost、realm 这类用户态转发时，连得上只说明中转活着，
-                    不代表它到落地那段还通 —— 这时填个探测目标（每行第二个地址，空格隔开），
-                    指向能反映整条路径的端口。
-                  </p>
-                  {/*
-                    时段表：晚高峰错峰。
-
-                    它只决定「首选是谁」，切不切得过去仍然由健康检查说了算 ——
-                    18 点到了而那条线正挂着，不该机械地切过去。这两件事是正交的，
-                    所以时段表放在这儿，和下面的切换/恢复时间并列，而不是替代它们。
-                  */}
-                  {/*
-                    人工钉住：应急时压过所有自动判断，走指定的那一条。
-
-                    两件事写死在这儿：
-                      · 钉住是「排到最前」，不是「只许走它」—— 钉住的那条挂了仍然
-                        会往下找。用一个应急开关制造一次故障，是最糟的那种设计。
-                      · **必须有期限**。应急处理完没人记得关，那条线就一直被钉着，
-                        后面所有自动切换（包括时段表）全部静默失效，而面板上看不出
-                        任何异常。所以「一直钉着」不是默认项，要主动选。
-                  */}
-                  <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/50 bg-background/40 p-2.5">
-                    <Label className="text-sm">强制走</Label>
-                    <Select
-                      value={form.failoverPin ? String(form.failoverPin.index) : "auto"}
-                      onValueChange={(value) => setForm({
-                      ...form,
-                      failoverPin: value === "auto"
-                        ? null
-                        : { index: Number(value), until: form.failoverPin?.until ?? Math.floor(Date.now() / 1000) + 2 * 3600 },
-                      })}
-                    >
-                      <SelectTrigger className="h-8 w-28 text-xs" aria-label="强制走哪条出站"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                      <SelectItem value="auto">自动</SelectItem>
-                      <SelectItem value="0">主出站</SelectItem>
-                      {failoverLineHints.map((hint) => (
-                      <SelectItem key={hint.line} value={String(hint.line)}>备用 {hint.line}</SelectItem>
-                      ))}
-                      </SelectContent>
-                    </Select>
-                    {form.failoverPin && (
-                    <>
-                    <Label className="text-sm">持续</Label>
-                    <Select
-                      value={form.failoverPin.until === null ? "forever" : String(form.failoverPin.until)}
-                      onValueChange={(value) => setForm({
-                      ...form,
-                      failoverPin: { index: form.failoverPin!.index, until: value === "forever" ? null : Number(value) },
-                      })}
-                    >
-                      <SelectTrigger className="h-8 w-32 text-xs" aria-label="强制走这条出站持续多久"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                      {[["30 分钟", 1800], ["2 小时", 7200], ["12 小时", 43200], ["24 小时", 86400]].map(([label, seconds]) => (
-                      <SelectItem key={String(label)} value={String(Math.floor(Date.now() / 1000) + Number(seconds))}>
-                      {label}
-                      </SelectItem>
-                      ))}
-                      <SelectItem value="forever">一直钉着</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="w-full text-xs leading-5 text-[var(--fx-warn-text)]">
-                      {form.failoverPin.until === null
-                        ? "一直钉着：时段表和自动切换都不会再改变走向，直到你在这里改回「自动」。"
-                        : `到 ${new Date(form.failoverPin.until * 1000).toLocaleString("zh-CN")} 自动交回。钉住的这条要是挂了，仍然会往下切。`}
-                    </p>
-                    </>
-                    )}
-                  </div>
-                  {form.failoverStrategy !== "fallback" && (form.failoverSchedule?.windows.length || 0) > 0 && (
-                  /*
-                    配好时段表之后又把策略改成了轮询/随机/哈希。这几种策略本来就不存在
-                    「首选出站」，时段表不适用 —— 提交时会被归零。
-
-                    必须提前说：等用户保存完回来发现时段表空了，比现在多一行字糟得多。
-                    界面上那份还留着，改回主备就在，不用重配。
-                  */
-                  <p className="rounded-md bg-[var(--fx-warn-soft)] px-3 py-2 text-xs leading-5 text-[var(--fx-warn-text)]">
-                    {failoverModeOptions.find((option) => option.value === form.failoverStrategy)?.label || "当前策略"}
-                    下没有「首选出站」，时段表不适用，保存后会清空。改回主备模式可以继续用。
-                  </p>
-                  )}
-                  {form.failoverStrategy === "fallback" && (
-                  <div className="space-y-2 rounded-md border border-border/50 bg-background/40 p-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Label className="flex items-baseline gap-1.5">
-                    时段表
-                    <span className="text-xs font-normal text-muted-foreground">
-                    按 {BILLING_TIME_ZONE} 计时，没配就一直按优先级走
-                    </span>
-                    </Label>
-                    {(form.failoverSchedule?.windows.length || 0) < MAX_FAILOVER_SCHEDULE_WINDOWS && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => {
-                      const windows = [...(form.failoverSchedule?.windows || []), {
-                      days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1,
-                      } as FailoverScheduleWindow];
-                      setForm({ ...form, failoverSchedule: { timezone: BILLING_TIME_ZONE, windows } });
-                      }}
-                    >
-                      添加时段
-                    </Button>
-                    )}
-                    </div>
-                    {(form.failoverSchedule?.windows || []).map((window, index) => {
-                    const patch = (next: Partial<FailoverScheduleWindow>) => {
-                    const windows = (form.failoverSchedule?.windows || []).map((item, position) => (
-                    position === index ? { ...item, ...next } : item
-                    ));
-                    setForm({ ...form, failoverSchedule: { timezone: BILLING_TIME_ZONE, windows } });
-                    };
-                    return (
-                    <div key={index} className="flex flex-wrap items-center gap-1.5">
-                      <Select
-                      value={window.days.length === 0 ? "all" : window.days.length === 2 && window.days.includes(0) ? "weekend" : "weekday"}
-                      onValueChange={(value) => patch({
-                      days: value === "all" ? [] : value === "weekend" ? [0, 6] : [1, 2, 3, 4, 5],
-                      })}
-                      >
-                      <SelectTrigger className="h-8 w-24 text-xs" aria-label={`第 ${index + 1} 个时段：星期`}><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                      <SelectItem value="all">每天</SelectItem>
-                      <SelectItem value="weekday">工作日</SelectItem>
-                      <SelectItem value="weekend">周末</SelectItem>
-                      </SelectContent>
-                      </Select>
-                      <Input
-                      type="time"
-                      value={window.from}
-                      onChange={(event) => patch({ from: event.target.value })}
-                      className="h-8 w-28 text-xs"
-                      aria-label={`第 ${index + 1} 个时段：开始时间`}
-                      />
-                      <span className="text-xs text-muted-foreground">至</span>
-                      <Input
-                      type="time"
-                      value={window.to}
-                      onChange={(event) => patch({ to: event.target.value })}
-                      className="h-8 w-28 text-xs"
-                      aria-label={`第 ${index + 1} 个时段：结束时间`}
-                      />
-                      <Select
-                      value={String(window.targetIndex)}
-                      onValueChange={(value) => patch({ targetIndex: Number(value) })}
-                      >
-                      <SelectTrigger className="h-8 w-28 text-xs" aria-label={`第 ${index + 1} 个时段：优先走哪条出站`}><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                      <SelectItem value="0">主出站</SelectItem>
-                      {failoverLineHints.map((hint) => (
-                      <SelectItem key={hint.line} value={String(hint.line)}>备用 {hint.line}</SelectItem>
-                      ))}
-                      </SelectContent>
-                      </Select>
-                      <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      aria-label={`删除第 ${index + 1} 个时段`}
-                      onClick={() => {
-                      const windows = (form.failoverSchedule?.windows || []).filter((_, position) => position !== index);
-                      setForm({ ...form, failoverSchedule: windows.length > 0 ? { timezone: BILLING_TIME_ZONE, windows } : null });
-                      }}
-                      >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                    );
-                    })}
-                    {/* 配好之后用一句话复述一遍：跨午夜那一段最容易理解反。 */}
-                    {(form.failoverSchedule?.windows || []).map((window, index) => (
-                    <p key={`hint-${index}`} className="text-xs leading-5 text-muted-foreground">
-                    {describeFailoverScheduleWindow(window)}
-                    </p>
-                    ))}
-                  </div>
-                  )}
-                  <div className="grid gap-2 sm:grid-cols-4">
-                    <FormField className="space-y-2">
-                      <Label>切换时间（秒）</Label>
-                      <Input
-                        type="number"
-                        min={10}
-                        max={3600}
-                        step={1}
-                        value={form.failoverSeconds || ""}
-                        onChange={(event) => setForm({ ...form, failoverSeconds: parseInt(event.target.value) || 0 })}
-                      />
-                    </FormField>
-                    <FormField className="space-y-2">
-                      <Label>恢复观察（秒）</Label>
-                      <Input
-                        type="number"
-                        min={10}
-                        max={3600}
-                        step={1}
-                        value={form.recoverSeconds || ""}
-                        onChange={(event) => setForm({ ...form, recoverSeconds: parseInt(event.target.value) || 0 })}
-                      />
-                    </FormField>
-                    <FormField className="space-y-2">
-                      {/*
-                        最短驻留拦的是「好线路之间来回切」，不是「逃离一条死路」——
-                        当前这条挂了的时候它不生效，守着死路比抖动更糟。
-                      */}
-                      <Label className="flex items-baseline gap-1.5">
-                      最短驻留（秒）
-                      <span className="text-xs font-normal text-muted-foreground">0=不限</span>
-                      </Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={86400}
-                        step={1}
-                        value={form.failoverMinHoldSeconds || ""}
-                        onChange={(event) => setForm({ ...form, failoverMinHoldSeconds: parseInt(event.target.value) || 0 })}
-                      />
-                    </FormField>
-                    {form.failoverStrategy === "fallback" && (
-                      <FormField className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
-                        <div className="min-w-0">
-                          {/*
-                            不是「谁快切谁」：那样线路会一直漂。候选必须同时快过绝对
-                            门槛和百分比门槛，而且连着三分钟都更快，才会被提到最前。
-                            三个数写死在 Agent 里 —— 多一个旋钮就多一次「填多少合适」
-                            的为难，而它们的合理范围很窄。
-                          */}
-                          <Label className="text-sm">自动择优</Label>
-                          <p className="text-xs text-muted-foreground">按实测延迟挑明显更快的那条</p>
-                        </div>
-                        <Checkbox
-                          checked={form.failoverPreferFastest}
-                          onCheckedChange={(checked) => setForm({ ...form, failoverPreferFastest: checked })}
-                        />
-                      </FormField>
-                    )}
-                    {form.failoverStrategy === "fallback" && (
-                      <FormField className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
-                        <div>
-                          <Label className="text-sm">恢复后切回</Label>
-                        </div>
-                        <Checkbox
-                          checked={form.autoFailback}
-                          onCheckedChange={(checked) => setForm({ ...form, autoFailback: checked })}
-                        />
-                      </FormField>
-                    )}
-                  </div>
-                </div>
+                <FailoverPolicyFields
+                  value={form}
+                  onChange={(patch) => setForm({ ...form, ...patch })}
+                  policy={formRoutePolicy}
+                  lineHints={failoverLineHints}
+                  relayCandidates={(relayCandidatesQuery.data || []) as RelayCandidate[]}
+                  strategyLabel={failoverModeOptions.find((option) => option.value === form.failoverStrategy)?.label || "当前策略"}
+                  scheduleTimeZone={BILLING_TIME_ZONE}
+                />
               )}
             </div>
             )}

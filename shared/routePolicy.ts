@@ -60,6 +60,8 @@ export type RoutePolicyCondition = {
   then: string;
   /** 指向哪条出站；「按顺序」「择优」「分摊」这种不指向单独一条的是 null。 */
   targetIndex: number | null;
+  /** 时段表那几行：它是配置里的第几个时段（编辑框要把「此刻」标在对应的那一行上）。 */
+  windowIndex?: number;
   /**
    * - deciding：此刻就是它在决定首选
    * - overridden：此刻本该轮到它，但被更靠前的一层压着（钉着的时候时段表命中了）
@@ -230,8 +232,11 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
     const supported = report.kind !== "unsupported";
     pin = readFailoverPin(rule, { nowMs, lineCount });
     const schedule = parseFailoverSchedule(rule.failoverSchedule);
-    const windows = (schedule?.windows || []).filter((window) => window.targetIndex < lineCount);
-    const matchedWindow = schedule ? failoverScheduleWindowIndexAt({ ...schedule, windows }, new Date(nowMs)) : null;
+    const allWindows = schedule?.windows || [];
+    // 指向不存在的出站的时段不算（服务端也存不进去），但序号按配置里的原样给，编辑框才对得上行。
+    const validWindows = allWindows.map((window, index) => ({ window, index })).filter(({ window }) => window.targetIndex < lineCount);
+    const matchedValid = schedule ? failoverScheduleWindowIndexAt({ ...schedule, windows: validWindows.map(({ window }) => window) }, new Date(nowMs)) : null;
+    const matchedWindow = matchedValid === null ? null : validWindows[matchedValid].index;
     const preferFastest = truthy(rule.failoverPreferFastest, false);
 
     // 按 Agent 的次序一层层往下找第一个给出答案的。Agent 太旧时这三层它都不认，只剩出站顺序。
@@ -240,7 +245,7 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
       preferredIndex = pin.index;
     } else if (supported && matchedWindow !== null) {
       deciding = "schedule";
-      preferredIndex = windows[matchedWindow].targetIndex;
+      preferredIndex = allWindows[matchedWindow].targetIndex;
     } else if (supported && preferFastest) {
       deciding = "fastest";
       preferredIndex = null;
@@ -259,7 +264,7 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
         state: deciding === "pin" ? "deciding" : "idle",
       });
     }
-    windows.forEach((window, index) => {
+    validWindows.forEach(({ window, index }) => {
       const crossesMidnight = (parseScheduleMinutes(window.to) ?? 0) <= (parseScheduleMinutes(window.from) ?? 0);
       const matched = index === matchedWindow;
       conditions.push({
@@ -268,6 +273,7 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
         when: `${describeFailoverScheduleDays(window.days)} ${window.from}–${window.to}${crossesMidnight ? "（次日）" : ""}`,
         then: `首选 ${label(window.targetIndex)}`,
         targetIndex: window.targetIndex,
+        windowIndex: index,
         state: matched && deciding === "schedule" ? "deciding" : matched && supported ? "overridden" : "idle",
       });
     });
@@ -290,7 +296,7 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
       targetIndex: null,
       state: deciding === "order" ? "deciding" : "idle",
     });
-    if (!supported && (pin || windows.length > 0 || preferFastest)) {
+    if (!supported && (pin || validWindows.length > 0 || preferFastest)) {
       warnings.push(`这台机器的 Agent 早于 ${ROUTE_POLICY_AGENT_VERSION}：人工指定、时段表、自动择优它都不认，只按出站顺序走。`);
     }
   }

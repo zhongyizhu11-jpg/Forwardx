@@ -208,3 +208,15 @@ test("转发方式或协议不支持主备时照实说：配着，但机器上�
   assert.match(policyAt(IN_WINDOW, { protocol: "both" }).warnings.join(""), /不会走主备/);
   assert.match(policyAt(IN_WINDOW, { forwardType: "realm", protocol: "tcp" }).warnings.join(""), /不会走主备/);
 });
+
+test("时段表那几行带着配置里的序号：前面有一条失效的，此刻也标在对的那一行上", () => {
+  // 第 0 个时段指向不存在的备用 5（比如刚删了那条备用），不算；命中的是第 1 个。
+  const policy = policyAt(IN_WINDOW, { failoverSchedule: JSON.stringify({ timezone: TZ, windows: [
+    { days: [], from: "00:00", to: "23:59", targetIndex: 5 },
+    { days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 2 },
+  ] }) });
+  const deciding = policy.conditions.find((condition) => condition.state === "deciding");
+  assert.equal(deciding?.windowIndex, 1);
+  assert.equal(deciding?.key, "schedule-1");
+  assert.equal(policy.preferredIndex, 2);
+});
