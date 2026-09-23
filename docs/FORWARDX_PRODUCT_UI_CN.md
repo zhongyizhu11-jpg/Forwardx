@@ -39,7 +39,7 @@ DDNS Failover · Latency Probe · Topology · Traffic · Client Subscription
 | **Path** | 两个节点之间的关系 | 连线 | `PathEdge` / `NetworkPath` |
 | **Flow** | 流量的方向 | 箭头、从上到下 / 从左到右的顺序 | `NetworkPath` |
 | **Group** | 一组节点或一组线路 | 容器（缩进、分支符、浅色带） | `PathBranch` |
-| **Policy** | 决定走哪条的条件 | 条件行 + 当前生效项高亮 | `RoutePolicyPanel` / `FailoverPolicyFields` |
+| **Policy** | 决定走哪条的条件 | 条件行 + 当前生效项高亮 | `RoutePolicyPanel` / `FailoverPolicyFields` / `GroupFailoverPolicyFields` |
 | **Health** | 现在好不好 | **颜色 + 线型**，不是文字 | `StatusDot` / `HealthBadge` |
 | **Metric** | 数值反馈 | 数字大、标签和单位小 | `Metric` / `PathMetric` |
 
@@ -157,10 +157,12 @@ lib/chartPalette                 图表色板
 已落地（PR 6）：
 
 ```
-shared/routePolicy.ts            主备策略模型：首选 / 实际 / 哪一层在决定，全站唯一一份
+shared/routePolicy.ts            策略模型：首选 / 实际 / 哪一层在决定，全站唯一一份（规则的主备 + 转发组的故障转移）
 shared/failoverPin.ts            人工钉住怎么读（null 不是 0）
-features/rules/RoutePolicySheet  RoutePolicyPanel · RoutePolicySheet（规则卡上点开）
-features/rules/FailoverPolicyFields  编辑框里的主备那一块
+features/rules/RoutePolicySheet  RoutePolicyPanel · RoutePolicySheet（规则卡、转发组卡片上点开）
+features/rules/PolicyBlocks      PolicyGroup · ConditionBlock（编辑框里「按什么选 / 什么时候切」的画法）
+features/rules/FailoverPolicyFields      规则编辑框里的主备那一块
+features/links/GroupFailoverPolicyFields 转发组编辑框里的故障转移那一块
 ```
 
 待建：`AppShell`、`PageHeader`、`SectionHeader`、`Sparkline`、`SegmentControl`、
@@ -179,7 +181,7 @@ features/rules/FailoverPolicyFields  编辑框里的主备那一块
 | 3 | **Links 2.0**：TunnelCard / ChainCard / GroupCard / Topology，Tunnels.tsx 拆分到 `features/links/` | ✅ 拆分只迈了第一步 |
 | 4 | **Rules 2.0**：Rule 从配置卡变成 Flow 卡，创建流程改渐进式披露 | ✅ |
 | 5 | **Dashboard 2.0**：Health / Traffic / Attention 三段，减少饼图和孤立统计卡 | ✅ |
-| 6 | **Route Policy**：主备、多线路、定时、自动故障切换、手动、恢复，统一进策略 UI | ✅ 规则级主备；转发组的故障转移还没接进来 |
+| 6 | **Route Policy**：主备、多线路、定时、自动故障切换、手动、恢复，统一进策略 UI | ✅ 规则级主备 + 转发组的故障转移 |
 | 7 | Subscription / Settings 迁移 | 设置页手机端已换分组列表 |
 | 8 | **CSS 债清理**：删 legacy override、宽泛选择器、重复样式 | |
 
@@ -226,9 +228,19 @@ PR 3 的拆分只迈了第一步：`features/links/` 里目前是路径和状态
   从上往下。编辑框里的「此刻」拿还没保存的表单当场算。
 - **对话框里放分组列表时，对话框自己当 L0**（`bg-[var(--fx-l0-page)]`）：白块放在白底
   上看不出分组。仍然是「底灰、面白」那一次底色差。
-- 还没做的：**转发组的故障转移**仍是自己那套画法（成员按优先级排、可用的打勾）。它只有
-  「出站顺序」一层和切换 / 恢复时间，接进同一份模型需要一个转发组的适配和链路页上的
-  入口，是下一步。
+- **转发组的故障转移用同一份模型、同一块面板**（`describeGroupRoutePolicy`，`subject: "group"`）。
+  两套机器：规则级是 Agent 在本地切出站，转发组是面板每轮检查成员健康、切 DDNS 解析；
+  回答的是同一个问题 —— 现在用的是哪个、为什么是它、什么时候会换。照着
+  `runForwardGroupFailoverForGroups` 的实际行为写，不照设置项的字面意思写：Agent 已经
+  给出结论的不等观察时间；系统 DDNS 没开时只是「建议入口」；没配域名就不切换；没有规则
+  在用时不探转发、库里的健康是旧的。
+- **没有的层不硬凑。** 转发组没有人工钉住、时段表、自动择优，面板上只有「按成员顺序」一行；
+  手动能做的是「换一个首选」（改成员顺序，一直有效）和「现在按顺序重新选」（不等观察时间）。
+  硬凑成同样的几行，只会让人以为能配。
+- **写下来的时刻只说它能说明的事。** 转发组的 `lastDdnsAt` 是「最近一次写解析」，手动同步、
+  面板重启后都会原样重写，所以不说「21:30 起」。
+- **入口放在它回答的问题旁边。** 「解析 · JP exit 02」放在卡片「成员优先级」那一行，不放标题行：
+  手机上名字 + 状态已经占满一行，它会折下去，还被触屏 44px 的按钮高度撑出一块空白。
 
 ---
 

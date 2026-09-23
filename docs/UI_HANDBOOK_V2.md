@@ -471,13 +471,18 @@ EmptyState · LoadingState · ErrorState · OfflineState
 `PathPreview`；iOS 那一套 `GroupedList`（`ListSection` / `ListRow`）、导航栏、
 标签栏；首页的 `AttentionSection` / `TrafficSurface` / `AccountSection`
 （`client/src/features/dashboard/`）；主备策略的 `RoutePolicyPanel` /
-`RoutePolicySheet` / `FailoverPolicyFields`（`client/src/features/rules/`，判断在
-`shared/routePolicy.ts`）。其余按 Phase 推进。
+`RoutePolicySheet` / `FailoverPolicyFields` / `PolicyBlocks`（`client/src/features/rules/`，
+判断在 `shared/routePolicy.ts`），转发组的 `GroupFailoverPolicyFields`
+（`client/src/features/links/`，同一份模型、同一块面板）。其余按 Phase 推进。
 
 **条件行**（Policy 的画法）：一层一行，从上往下就是优先级。此刻起作用的那一行左边
 一根 3px 的 `--fx-path` 竖条、字重加粗、右侧一个 `EntityTag tone="path"` 写「此刻」；
 「本该轮到它、被上面那层压着」的那一行不高亮，但用 `--fx-warn-text` 写一句被谁压着；
 其余的照常画。**不整行染色** —— 白块里再染一块面，就是又多了一层。
+
+**规矩写在后半句的说明要能折行。** `ListRow` 的说明只给一行、放不下就截成「…」：
+「在用的成员不健康满 60 秒就换下一个健康的；Agent 已判定失败的不等」在手机上被截掉的
+恰好是规矩那半句。这种整句话用策略面板里 `SentenceRow` 那种写法（标题一行、说明照常折行）。
 
 ---
 
