@@ -86,9 +86,7 @@ import { cn } from "@/lib/utils";
 import {
   Activity,
   ArrowDown,
-  ArrowDownToLine,
   ArrowUp,
-  ArrowUpFromLine,
   ArrowRightLeft,
   CalendarDays,
   CircleCheck,
@@ -956,116 +954,6 @@ function HostSummaryCard({
               </p>
             )}
           </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function HostTrafficDirectionStat({
-  label,
-  value,
-  icon: Icon,
-  tone,
-  loading,
-  cacheKey,
-  animated = true,
-  className,
-}: {
-  label: string;
-  value: string;
-  icon: typeof ActivitySquare;
-  tone: string;
-  loading?: boolean;
-  cacheKey: string;
-  animated?: boolean;
-  className?: string;
-}) {
-  return (
-    <div className={`min-w-0 ${className || ""}`.trim()}>
-      <div className="flex items-center gap-2.5">
-        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg shadow-sm ${tone}`}>
-          <Icon className="h-4 w-4 text-white" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {animated ? (
-            <AnimatedStatValue
-              as="p"
-              value={value}
-              loading={loading}
-              cacheKey={cacheKey}
-              fallbackValue="0 B/s"
-              className="mt-0.5 whitespace-nowrap text-base font-semibold leading-tight tabular-nums sm:text-lg"
-              title={value}
-            />
-          ) : (
-            <p
-              className="mt-0.5 whitespace-nowrap text-base font-semibold leading-tight tabular-nums sm:text-lg"
-              title={value}
-            >
-              {value}
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function HostTrafficSummaryCard({
-  title,
-  inValue,
-  outValue,
-  icon: Icon,
-  tone = "bg-gradient-to-br from-chart-1/10 to-transparent",
-  iconTone = "bg-chart-1/10 text-chart-1",
-  loading,
-  cacheKey,
-  animated = true,
-  className,
-}: {
-  title: string;
-  inValue: string;
-  outValue: string;
-  icon: typeof ActivitySquare;
-  tone?: string;
-  iconTone?: string;
-  loading?: boolean;
-  cacheKey: string;
-  animated?: boolean;
-  className?: string;
-}) {
-  return (
-    <Card className={`group relative h-full overflow-hidden border-border bg-card ${className || ""}`.trim()}>
-      <CardContent className="relative flex h-full flex-col justify-start p-3.5 sm:p-4">
-        <div className="flex min-h-0 items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1 pr-12">
-            <p className="text-xs font-medium text-muted-foreground">{title}</p>
-          </div>
-          <div className={`pointer-events-none absolute right-4 top-3.5 hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${iconTone}`}>
-            <Icon className="h-5 w-5" />
-          </div>
-        </div>
-        <div className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(145px,1fr))] gap-2.5">
-          <HostTrafficDirectionStat
-            label="入向"
-            value={inValue}
-            loading={loading}
-            cacheKey={`${cacheKey}.in`}
-            animated={animated}
-            icon={ArrowDownToLine}
-            tone="bg-[var(--fx-healthy)]"
-          />
-          <HostTrafficDirectionStat
-            label="出向"
-            value={outValue}
-            loading={loading}
-            cacheKey={`${cacheKey}.out`}
-            animated={animated}
-            icon={ArrowUpFromLine}
-            tone="bg-[var(--fx-warn)]"
-          />
         </div>
       </CardContent>
     </Card>

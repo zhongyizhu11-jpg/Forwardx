@@ -1643,6 +1643,24 @@ async function seedCatalog(adminId: number, resources: DevResources, hostIds: nu
     updatedAt: nowDate(),
   });
 
+  /*
+    公开的按量计费资源：下面 seedUserState 里那两个都要单独授权，商店「按量计费」那一页在
+    开发面板里于是永远是空的，卡片长什么样只能靠猜。这里补两个公开的：一个隧道带说明、按倍率，
+    一个转发组不带说明、走默认明细 —— 两种卡片各一张。资源不能和那两个重复（唯一键）。
+  */
+  for (const config of [
+    { resourceType: "tunnel", resourceId: resources.tunnels.sgUsWssTunnelId, requiresPermission: false, pricePerGbMilliCents: 50000, multiplier: 150, description: "SG → US 专线，晚高峰也稳。\n按实际计费流量扣余额，不用买套餐。" },
+    { resourceType: "forward_group", resourceId: resources.groups.entryGroupId, requiresPermission: false, pricePerGbMilliCents: 20000, multiplier: 100, description: null },
+  ]) {
+    await insertAndGetId("traffic_billing_configs", {
+      ...config,
+      enabled: true,
+      pricePerGbCents: Math.round(config.pricePerGbMilliCents / 1000),
+      createdAt: nowDate(),
+      updatedAt: nowDate(),
+    });
+  }
+
   return {
     starterPlanId,
     proPlanId,

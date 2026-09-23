@@ -11,6 +11,10 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import { ListRow, ListSection } from "@/components/ios/GroupedList";
+import { CardActions, EntityCard } from "@/components/entity/EntityCard";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { SettingList, SettingRow } from "@/components/SettingRow";
+import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -41,7 +45,7 @@ import {
   PLAN_PRICE_TIER_LIMIT,
   planMonthlyEquivalentCents,
 } from "@shared/planPricing";
-import { Check, CheckCircle2, Coins, LayoutGrid, List, Package, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
+import { Check, CheckCircle2, Coins, LayoutGrid, List, Package, Pencil, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -214,48 +218,53 @@ function unpricedTierLabels(form: PlanForm): string[] {
     .map((tier) => planDurationLabel(Number(tier.durationDays || 0)));
 }
 
-function PlanStatusQuickToggle({
+/*
+  套餐的两个状态：启用、在商店展示。
+
+  原来是两个胶囊按钮，写着「启用」「商店展示」—— 同一个东西既像状态标签又像按钮：黑底的
+  「启用」是说它现在启用着，还是点它来启用？点一下就变成「停用」，要看过一次才知道。
+  这两样点了立刻生效，按手册就是开关。
+*/
+function PlanStatusSwitches({
   plan,
   disabled,
   onToggleActive,
   onToggleStoreVisible,
-  align = "left",
+  layout = "rows",
 }: {
   plan: any;
   disabled?: boolean;
   onToggleActive: () => void;
   onToggleStoreVisible: () => void;
-  align?: "left" | "right";
+  /** rows：卡片里两行设置；inline：表格那一格里上下两个小开关。 */
+  layout?: "rows" | "inline";
 }) {
+  const active = !!plan.isActive;
+  const storeVisible = active && !!plan.isStoreVisible;
+  const activeSwitch = (
+    <Switch aria-label={`启用 ${plan.name}`} checked={active} disabled={disabled} onCheckedChange={() => onToggleActive()} />
+  );
+  const storeSwitch = (
+    <Switch aria-label={`在商店展示 ${plan.name}`} checked={storeVisible} disabled={disabled || !active} onCheckedChange={() => onToggleStoreVisible()} />
+  );
+  if (layout === "inline") {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <label className="flex items-center gap-2 text-meta text-muted-foreground">{activeSwitch}启用</label>
+        <label className="flex items-center gap-2 text-meta text-muted-foreground">{storeSwitch}商店展示</label>
+      </div>
+    );
+  }
   return (
-    <div className={`flex flex-wrap gap-1.5 ${align === "right" ? "justify-end" : ""}`}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onToggleActive}
-        className={cn(
-          "h-7 rounded-full border px-3 text-xs font-medium transition-colors disabled:pointer-events-none disabled:opacity-60",
-          plan.isActive
-            ? "border-primary bg-primary text-primary-foreground shadow-sm"
-            : "border-border/60 bg-background/70 text-muted-foreground hover:border-primary/45 hover:text-foreground",
-        )}
-      >
-        {plan.isActive ? "启用" : "停用"}
-      </button>
-      <button
-        type="button"
-        disabled={disabled || !plan.isActive}
-        onClick={onToggleStoreVisible}
-        className={cn(
-          "h-7 rounded-full border px-3 text-xs font-medium transition-colors disabled:pointer-events-none disabled:opacity-60",
-          plan.isActive && plan.isStoreVisible
-            ? "border-[color-mix(in_srgb,var(--fx-healthy)_50%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
-            : "border-border/60 bg-background/70 text-muted-foreground hover:border-[color-mix(in_srgb,var(--fx-healthy)_35%,transparent)] hover:text-foreground",
-        )}
-      >
-        {plan.isActive && plan.isStoreVisible ? "商店展示" : "后台分配"}
-      </button>
-    </div>
+    <SettingList>
+      <SettingRow asLabel label="启用" description={active ? "可以分配、购买和续费。" : "不能再分配、购买和续费；已有订阅照常用到到期。"} control={activeSwitch} />
+      <SettingRow
+        asLabel
+        label="在商店展示"
+        description={active ? (storeVisible ? "用户可以在商店自助购买。" : "只能由管理员在后台分配。") : "套餐启用后才能开启。"}
+        control={storeSwitch}
+      />
+    </SettingList>
   );
 }
 
@@ -276,45 +285,53 @@ function PlanCard({
   onToggleActive: () => void;
   onToggleStoreVisible: () => void;
 }) {
+  /*
+    原来这张卡是一个描边小框，套在「套餐列表」那张大卡里（卡里套卡），右上角一个「编辑」
+    一个红色垃圾桶 —— 垃圾桶点一下就删，没有确认。现在和别的实体卡一样：一块白，名字和价格
+    在上，明细是一张两列的表，状态是两个开关，底部「编辑」+「···」，删除收进菜单最后、先确认。
+  */
   return (
-    <div className="rounded-lg border border-border/50 bg-background/40 p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="break-words text-sm font-medium">{plan.name}</p>
-          <p className="mt-1 break-words text-xs text-muted-foreground">{plan.description || "无描述"}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button variant="ghost" size="sm" className="h-8 px-2" onClick={onEdit}>编辑</Button>
-          <Button variant="ghost" size="icon" aria-label="删除套餐" className="h-8 w-8 text-destructive" onClick={onDelete}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
+    <EntityCard className="h-full">
+      <div className="px-[var(--fx-card-padding)] pt-[var(--fx-space-3)]">
+        <h3 className="break-words text-primary-type font-semibold text-foreground">{plan.name}</h3>
+        <div className="mt-0.5 break-words text-meta text-muted-foreground">{plan.description || "无描述"}</div>
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-1.5">
+          <span className="text-metric font-semibold tabular-nums text-foreground">{money(plan.priceCents, plan.currency)}</span>
+          <span className="text-meta text-muted-foreground">/ {durationLabel(plan.durationDays)}</span>
         </div>
       </div>
-      <div className="mt-3 space-y-2 border-t border-border/40 pt-3">
-        <MobileInfoRow label="价格">{money(plan.priceCents, plan.currency)} / {durationLabel(plan.durationDays)}</MobileInfoRow>
-        <MobileInfoRow label="资源">
-          <div className="flex flex-wrap justify-end gap-1">
-            {resourceParts.map((item) => (
-              <Badge key={item.label} variant="outline">{item.label} {item.count}</Badge>
-            ))}
-          </div>
-        </MobileInfoRow>
-        <MobileInfoRow label="端口">{plan.portCount} 个端口</MobileInfoRow>
-        <MobileInfoRow label="规则/流量">规则 {plan.maxRules || "不限"} · 流量 {formatQuotaBytes(plan.trafficLimit)}</MobileInfoRow>
-        <MobileInfoRow label="连接/IP">连接 {plan.maxConnections || "不限"} · 单 IP {plan.maxIPs || "不限"}</MobileInfoRow>
-        <MobileInfoRow label="限速">{speed(plan.rateLimitMbps)}</MobileInfoRow>
-        <MobileInfoRow label="附加流量">{plan.trafficAddons?.length || 0} 档</MobileInfoRow>
-        <MobileInfoRow label="状态">
-          <PlanStatusQuickToggle
-            plan={plan}
-            disabled={toggling}
-            align="right"
-            onToggleActive={onToggleActive}
-            onToggleStoreVisible={onToggleStoreVisible}
-          />
-        </MobileInfoRow>
+      <dl className="mx-[var(--fx-card-padding)] mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 border-t border-[var(--fx-stroke-weak)] pt-3 text-secondary-type">
+        <dt className="text-muted-foreground">资源</dt>
+        <dd className="min-w-0 break-words text-right text-foreground">
+          {resourceParts.length > 0 ? resourceParts.map((item) => `${item.label} ${item.count}`).join(" · ") : "无"}
+        </dd>
+        <dt className="text-muted-foreground">端口</dt>
+        <dd className="text-right tabular-nums text-foreground">{plan.portCount} 个</dd>
+        <dt className="text-muted-foreground">规则 / 流量</dt>
+        <dd className="text-right tabular-nums text-foreground">{plan.maxRules || "不限"} · {formatQuotaBytes(plan.trafficLimit)}</dd>
+        <dt className="text-muted-foreground">连接 / 单 IP</dt>
+        <dd className="text-right tabular-nums text-foreground">{plan.maxConnections || "不限"} · {plan.maxIPs || "不限"}</dd>
+        <dt className="text-muted-foreground">限速</dt>
+        <dd className="text-right tabular-nums text-foreground">{speed(plan.rateLimitMbps)}</dd>
+        <dt className="text-muted-foreground">附加流量</dt>
+        <dd className="text-right tabular-nums text-foreground">{plan.trafficAddons?.length || 0} 档</dd>
+      </dl>
+      <div className="mx-[var(--fx-card-padding)] mt-3 border-t border-[var(--fx-stroke-weak)] py-3">
+        <PlanStatusSwitches
+          plan={plan}
+          disabled={toggling}
+          onToggleActive={onToggleActive}
+          onToggleStoreVisible={onToggleStoreVisible}
+        />
       </div>
-    </div>
+      <CardActions className="px-[var(--fx-space-2)] pb-1">
+        <EntityActions
+          primary={[{ key: "edit", label: "编辑", ariaLabel: `编辑套餐 ${plan.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: onEdit }]}
+          menu={[{ key: "delete", label: "删除", ariaLabel: `删除套餐 ${plan.name}`, destructive: true, onSelect: onDelete }]}
+          menuLabel={`${plan.name} 的更多操作`}
+        />
+      </CardActions>
+    </EntityCard>
   );
 }
 
@@ -781,6 +798,23 @@ export default function Plans() {
     },
   });
 
+  const confirmDialog = useConfirmDialog();
+  /*
+    原来点垃圾桶就删，没有确认 —— 而删套餐的后果比看上去大：订阅的主机、隧道、转发组
+    默认跟着套餐当前绑的走（只有改套餐时选了「不同步已有订阅者」的才冻进订阅），删掉套餐
+    连绑定一起删，这些用户手里的资源跟着就没了。停用才是「不再卖」：只挡分配、购买和
+    自动续费，已有订阅照常用到到期（billingRepository 里那几处 isActive 判断）。
+  */
+  const confirmDeletePlan = (plan: any) => {
+    void confirmDialog({
+      title: `删除套餐「${plan.name}」`,
+      description: "已经买了它的用户，订阅里跟着这个套餐走的主机、隧道、转发组会一起没有（改套餐时冻结过内容的订阅除外）。只是不想再卖的话，关掉「启用」就行：已有订阅照常用到到期。有待支付或待发放的订单时删不掉。",
+      confirmText: "删除",
+      tone: "destructive",
+    }).then((confirmed) => {
+      if (confirmed) deletePlan.mutate({ id: plan.id });
+    });
+  };
   const deletePlan = trpc.plans.delete.useMutation({
     onSuccess: () => {
       toast.success("套餐已删除");
@@ -1165,14 +1199,15 @@ export default function Plans() {
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as PlanManageTab)} className="space-y-4">
           <SlidingTabsList items={PLAN_MANAGE_TAB_ITEMS} activeValue={activeTab} ariaLabel="套餐管理" minItemWidthRem={9.5} />
 
-          <TabsContent value="plans" className="mt-0 space-y-6">
-            <Card>
-              <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2"><Package className="h-5 w-5" /> 套餐列表</CardTitle>
-                  <CardDescription>订阅后分配连续端口段。</CardDescription>
-                </div>
-                <div className="flex items-center overflow-hidden rounded-md border border-border/40">
+          <TabsContent value="plans" className="mt-0 space-y-3">
+            {/*
+              原来这里是一张「套餐列表」大卡，套餐卡一张张嵌在里面（卡里套卡）。标题和上面
+              选中的「套餐计费」是同一句话；留下说明和视图切换，卡片直接坐在页面上，和主机、
+              规则的卡片一样。表格视图才需要一块白底托住。
+            */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 text-meta text-muted-foreground">订阅后分配连续端口段。</div>
+                <div className="flex shrink-0 items-center overflow-hidden rounded-md border border-border/40">
                   <Button
                     variant={planViewMode === "card" ? "secondary" : "ghost"}
                     size="icon"
@@ -1192,8 +1227,8 @@ export default function Plans() {
                     <List className="h-4 w-4" />
                   </Button>
                 </div>
-              </CardHeader>
-              <CardContent>
+            </div>
+            <div>
                 {isLoading ? (
                   <DataSectionLoading label="正在加载套餐数据" />
                 ) : (
@@ -1207,7 +1242,7 @@ export default function Plans() {
                             resourceParts={planResourcePartsForDisplay(plan, forwardGroupMap)}
                             toggling={statusUpdatingPlanId === Number(plan.id)}
                             onEdit={() => openPlanEdit(plan)}
-                            onDelete={() => deletePlan.mutate({ id: plan.id })}
+                            onDelete={() => confirmDeletePlan(plan)}
                             onToggleActive={() => togglePlanActive(plan)}
                             onToggleStoreVisible={() => togglePlanStoreVisible(plan)}
                           />
@@ -1223,11 +1258,11 @@ export default function Plans() {
                             minHeight="min-h-[120px]"
                           />
                         ) : (
-                          <div className="col-span-full rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">还没有套餐</div>
+                          <div className="col-span-full rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)] p-6 text-center text-secondary-type text-muted-foreground">还没有套餐</div>
                         ))}
                       </AutoAnimateContainer>
                     ) : (
-                      <div key="plan-table-view" className="overflow-x-auto">
+                      <div key="plan-table-view" className="overflow-x-auto rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)]">
                         <Table>
                           <TableHeader>
                             <TableRow>
@@ -1261,18 +1296,21 @@ export default function Plans() {
                                   <div>连接 {plan.maxConnections || "不限"} · 单 IP {plan.maxIPs || "不限"} · 限速 {speed(plan.rateLimitMbps)}</div>
                                 </TableCell>
                                 <TableCell>
-                                  <PlanStatusQuickToggle
+                                  <PlanStatusSwitches
                                     plan={plan}
+                                    layout="inline"
                                     disabled={statusUpdatingPlanId === Number(plan.id)}
                                     onToggleActive={() => togglePlanActive(plan)}
                                     onToggleStoreVisible={() => togglePlanStoreVisible(plan)}
                                   />
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  <Button variant="ghost" size="sm" onClick={() => openPlanEdit(plan)}>编辑</Button>
-                                  <Button variant="ghost" size="sm" aria-label={`删除 ${plan.name}`} className="text-destructive" onClick={() => deletePlan.mutate({ id: plan.id })}>
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
+                                  <EntityActions
+                                    className="justify-end"
+                                    primary={[{ key: "edit", label: "编辑", ariaLabel: `编辑套餐 ${plan.name}`, onSelect: () => openPlanEdit(plan) }]}
+                                    menu={[{ key: "delete", label: "删除", ariaLabel: `删除套餐 ${plan.name}`, destructive: true, onSelect: () => confirmDeletePlan(plan) }]}
+                                    menuLabel={`${plan.name} 的更多操作`}
+                                  />
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -1293,8 +1331,7 @@ export default function Plans() {
                     )}
                   </AutoAnimateContainer>
                 )}
-              </CardContent>
-            </Card>
+            </div>
             <PersistentPagination pagination={planPagination} itemName="个套餐" />
           </TabsContent>
 

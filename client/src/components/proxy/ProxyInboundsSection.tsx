@@ -667,9 +667,8 @@ export default function ProxyInboundsSection({
   return (
     <>
       <div className="space-y-4">
-        {/* 和订阅链接那张卡、以及仪表盘上那几张，用同一种玻璃卡 + 顶部高光。 */}
+        {/* 和订阅链接那张卡同一种卡片（顶部那道主色渐变高光两处一起去掉了：它不说任何事）。 */}
         <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
           {/* 手机上收窄卡片自己的内边距，别让三层 padding 叠着把内容挤成一条。 */}
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 px-3 pb-3 pt-4 sm:px-6 sm:pt-6">
             <button

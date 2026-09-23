@@ -5,6 +5,8 @@ import { AvatarPicker } from "@/components/AvatarPicker";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { SettingList, SettingRow } from "@/components/SettingRow";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -383,16 +385,17 @@ function ProfileContent() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className={`grid gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 text-sm ${avatarQuotaUnlimited ? "lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]" : "lg:grid-cols-[minmax(0,0.75fr)_minmax(0,1.15fr)_minmax(112px,0.45fr)]"}`}>
-              <div className="flex min-w-0 flex-col justify-center">
-                <p className="text-xs text-muted-foreground">账号</p>
-                <p className="mt-2 truncate text-base font-medium">{user?.username || "-"}</p>
-              </div>
-              <div className="min-w-0 space-y-2">
-                <Label htmlFor="profile-display-name" className="text-xs text-muted-foreground">显示名称</Label>
+            {/*
+              账号、显示名称、今日还能改几次头像，原来挤在一个灰框里排成三列，下面头像选择又是
+              一个框。账号和名字写成设置行；「今日剩余」说的是头像，挪到头像那一块下面。
+            */}
+            <SettingList>
+              <SettingRow label="账号" description={<span className="break-all">{user?.username || "-"}</span>} />
+              <SettingRow label="显示名称">
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     id="profile-display-name"
+                    aria-label="显示名称"
                     value={displayNameDraft}
                     onChange={(e) => setDisplayNameDraft(e.target.value)}
                     maxLength={DISPLAY_NAME_MAX_LENGTH}
@@ -408,15 +411,9 @@ function ProfileContent() {
                     {updateProfileMutation.isPending ? "保存中..." : "保存"}
                   </Button>
                 </div>
-              </div>
-              {!avatarQuotaUnlimited && (
-                <div className="flex min-w-0 flex-col justify-center">
-                  <p className="text-xs text-muted-foreground">今日剩余</p>
-                  <p className="mt-2 truncate font-medium">{avatarQuotaRemaining} / {avatarQuota?.limit ?? 3} 次</p>
-                </div>
-              )}
-            </div>
-            <div className="rounded-lg border border-border/40 bg-muted/10 p-3">
+              </SettingRow>
+            </SettingList>
+            <div className="border-t border-[var(--fx-stroke-weak)] pt-4">
               <AvatarPicker
                 value={avatarDraft}
                 onChange={setAvatarDraft}
@@ -442,11 +439,13 @@ function ProfileContent() {
                 )}
               />
             </div>
-            {avatarQuotaExhausted && (
-              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-primary">
-                今日头像修改次数已用完，明天可继续修改。
+            {!avatarQuotaUnlimited ? (
+              <div className={cn("text-meta", avatarQuotaExhausted ? "text-[var(--fx-warn-text)]" : "text-muted-foreground")}>
+                {avatarQuotaExhausted
+                  ? "今日头像修改次数已用完，明天可继续修改。"
+                  : `今天还能改 ${avatarQuotaRemaining} / ${avatarQuota?.limit ?? 3} 次头像。`}
               </div>
-            )}
+            ) : null}
           </CardContent>
         </Card>
 
@@ -493,43 +492,44 @@ function ProfileContent() {
             </Badge>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-muted/15 p-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">公告 Telegram 推送</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  默认关闭。开启后，新公告仅在管理员选择 TG 推送时发送到已绑定的 Telegram。
-                </p>
-              </div>
-              <OptimisticSwitch aria-label="公告 Telegram 推送"
-                checked={!!telegramStatus?.announcementSubscribed}
-                disabled={!telegramStatus?.bound}
-                onCheckedChangeAsync={handleTelegramAnnouncementSubscribedChange}
+            <SettingList>
+              <SettingRow
+                label="公告 Telegram 推送"
+                description={telegramStatus?.bound
+                  ? "默认关闭。开启后，新公告仅在管理员选择 TG 推送时发送到已绑定的 Telegram。"
+                  : "绑定 Telegram 后才能开启。开启后，新公告仅在管理员选择 TG 推送时发送过来。"}
+                control={(
+                  <OptimisticSwitch aria-label="公告 Telegram 推送"
+                    checked={!!telegramStatus?.announcementSubscribed}
+                    disabled={!telegramStatus?.bound}
+                    onCheckedChangeAsync={handleTelegramAnnouncementSubscribedChange}
+                  />
+                )}
               />
-            </div>
-            {!telegramStatus?.bound && telegramStatus?.configured !== false && (
-              <p className="text-xs text-muted-foreground">绑定 Telegram 后可开启公告推送订阅。</p>
-            )}
+            </SettingList>
             {telegramStatus?.bound ? (
-              <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 text-sm sm:flex-row sm:items-center">
-                <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
-                  <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">Telegram</p>
-                    <p className="mt-1 truncate font-medium">
+              <SettingList>
+                <SettingRow
+                  label="Telegram"
+                  description={telegramStatus.account?.linkedAt ? `${new Date(telegramStatus.account.linkedAt).toLocaleString()} 绑定` : undefined}
+                  control={(
+                    <span className="truncate text-secondary-type font-medium">
                       {telegramStatus.account?.username ? `@${telegramStatus.account.username}` : telegramStatus.account?.id || "-"}
-                    </p>
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">绑定时间</p>
-                    <p className="mt-1 truncate font-medium">
-                      {telegramStatus.account?.linkedAt ? new Date(telegramStatus.account.linkedAt).toLocaleString() : "-"}
-                    </p>
-                  </div>
-                </div>
-                <Button variant="destructive" size="sm" className="w-full gap-2 sm:w-auto sm:shrink-0" onClick={() => setShowTelegramUnbindConfirm(true)} disabled={unbindTelegramMutation.isPending}>
-                  <Link2Off className="h-4 w-4" />
-                  {unbindTelegramMutation.isPending ? "解绑中..." : "解绑 Telegram"}
-                </Button>
-              </div>
+                    </span>
+                  )}
+                />
+                {/* 解绑是破坏性的，但它就是这一块唯一的操作：放在这一行右边，描边红字，不用实心红块。 */}
+                <SettingRow
+                  label="解绑"
+                  description="解绑后收不到提醒，也不能用 Telegram 登录。"
+                  control={(
+                    <Button variant="outline" size="sm" className="gap-2 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setShowTelegramUnbindConfirm(true)} disabled={unbindTelegramMutation.isPending}>
+                      <Link2Off className="h-4 w-4" />
+                      {unbindTelegramMutation.isPending ? "解绑中..." : "解绑 Telegram"}
+                    </Button>
+                  )}
+                />
+              </SettingList>
             ) : telegramStatus?.configured === false ? (
               <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-primary">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -705,16 +705,10 @@ function ProfileContent() {
           </CardHeader>
           <CardContent className="space-y-4">
             {mobileUpdateInfo && (
-              <div className="grid gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 text-sm sm:grid-cols-2">
-                <div>
-                  <p className="text-xs text-muted-foreground">当前版本</p>
-                  <p className="mt-1 font-mono">{mobileUpdateInfo.currentVersion ? `v${mobileUpdateInfo.currentVersion.replace(/^v/i, "")}` : "-"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">最新版本</p>
-                  <p className="mt-1 font-mono text-primary">{mobileUpdateInfo.latestVersion ? `v${mobileUpdateInfo.latestVersion.replace(/^v/i, "")}` : "-"}</p>
-                </div>
-              </div>
+              <SettingList>
+                <SettingRow label="当前版本" control={<span className="font-mono text-secondary-type">{mobileUpdateInfo.currentVersion ? `v${mobileUpdateInfo.currentVersion.replace(/^v/i, "")}` : "-"}</span>} />
+                <SettingRow label="最新版本" control={<span className="font-mono text-secondary-type">{mobileUpdateInfo.latestVersion ? `v${mobileUpdateInfo.latestVersion.replace(/^v/i, "")}` : "-"}</span>} />
+              </SettingList>
             )}
             <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
               {mobileUpdateInfo?.hasUpdate && (

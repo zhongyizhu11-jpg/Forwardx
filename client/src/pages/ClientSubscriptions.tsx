@@ -914,7 +914,6 @@ export default function ClientSubscriptionsPage() {
         <div className="space-y-6">
           <WorkspaceHeader title={<>订阅管理</>} description={<>你有哪些线路，以及怎么把它们带进客户端。</>} />
           <Card className="relative overflow-hidden border-border bg-card">
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
             <CardContent className="py-10 text-center">
               {/*
                 原来只说「没有权限，联系管理员」—— 那等于把人挡在门外还不说门后是什么。
@@ -1002,9 +1001,11 @@ export default function ClientSubscriptionsPage() {
           压在五张卡片的最后，每次都要滚到底。第一次来的人也不吃亏：这时它是空的，
           空状态里就写着「先在下面加节点，再回来建链接」，等于把顺序讲了一遍。
         */}
-        {/* 玻璃卡 + 顶部一道高光，和仪表盘那几张同一种做法。 */}
+        {/*
+          原来顶上还有一道渐变高光，写着「和仪表盘那几张同一种做法」—— 仪表盘在 Dashboard 2.0
+          已经把它去掉了（手册：颜色只说状态，装饰性的主色渐变不说任何事）。
+        */}
         <Card className="relative overflow-hidden border-border bg-card">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
           {/*
             手机上原来三层内边距叠着吃宽度：外层 main 12px + 卡片 24px + 每行自己的
             12px，414 的屏幕先去掉 72。内容被挤成一条，看着就不饱满。卡片这一层在手机上
