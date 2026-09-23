@@ -365,6 +365,24 @@ export async function clearFailoverPinZeroArtifactsOnce() {
   return cleared;
 }
 
+// 2.3.366–2.3.369 stored the Agent's millisecond switch time as seconds. MySQL
+// and PostgreSQL rejected those writes (the epoch column is a 32-bit integer),
+// so only SQLite holds such rows — dated tens of thousands of years ahead.
+// Anything past year ~5000 can only be that bug; divide it back once.
+export async function repairFailoverActiveTimeUnitOnce() {
+  const marker = "failover-active-at-unit-v1";
+  if (await getSetting(marker)) return 0;
+  const q = quoteIdentifier;
+  const result = await executeRaw(
+    `UPDATE ${q("forward_rules")}
+        SET ${q("failoverActiveAt")} = ${q("failoverActiveAt")} / 1000
+      WHERE ${q("failoverActiveAt")} > 100000000000`,
+  );
+  const repaired = rawAffectedRows(result);
+  await setSetting(marker, String(Math.floor(Date.now() / 1000)));
+  return repaired;
+}
+
 export async function initDatabase() {
   const initializationStartedAt = Date.now();
   const runInitializationStep = async <T>(name: string, work: () => Promise<T> | T) => {
@@ -406,6 +424,11 @@ export async function initDatabase() {
       if (count > 0) console.log(`[Database] Returned failover rules pinned to the main outbound by the empty-pin bug to automatic count=${count}`);
     }).catch((error) => {
       console.warn("[Database] Failover pin artifact cleanup skipped:", error instanceof Error ? error.message : String(error));
+    }));
+    await runInitializationStep("repair-failover-active-time", () => repairFailoverActiveTimeUnitOnce().then((count) => {
+      if (count > 0) console.log(`[Database] Repaired failover active-line times stored in milliseconds count=${count}`);
+    }).catch((error) => {
+      console.warn("[Database] Failover active-line time repair skipped:", error instanceof Error ? error.message : String(error));
     }));
     await runInitializationStep("repair-rule-hosts", () => repairPortForwardRuleHostReferencesOnce().then((repairs) => {
       if (repairs.length > 0) console.log(`[Database] Repaired stale port-forward rule hosts count=${repairs.length}`);

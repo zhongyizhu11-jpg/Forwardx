@@ -881,9 +881,8 @@ export async function getForwardRulesForUserSync(userId: number) {
   )).orderBy(sql`${forwardRules.sortOrder} ASC`, desc(forwardRules.createdAt), desc(forwardRules.id));
 }
 
-export async function getForwardRulesForAgent(hostId?: number) {
-  const db = await getDb();
-  if (!db) return [];
+/** 一台机器的 Agent 管得着哪些规则。下发和收它报上来的东西都按这一份算。 */
+function forwardRulesForAgentConditions(hostId?: number) {
   const conds: any[] = [
     sql`COALESCE(${forwardRules.isForwardGroupTemplate}, ${sqlBool(false)}) = ${sqlBool(false)}`,
     sql`(COALESCE(${forwardRules.pendingDelete}, ${sqlBool(false)}) = ${sqlBool(false)} OR ${forwardRules.isRunning} = ${sqlBool(true)})`,
@@ -906,9 +905,30 @@ export async function getForwardRulesForAgent(hostId?: number) {
         )
       )
     )`);
-    return db.select().from(forwardRules).where(and(...conds)).orderBy(desc(forwardRules.createdAt));
   }
-  return db.select().from(forwardRules).where(and(...conds)).orderBy(desc(forwardRules.createdAt));
+  return conds;
+}
+
+export async function getForwardRulesForAgent(hostId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(forwardRules).where(and(...forwardRulesForAgentConditions(hostId))).orderBy(desc(forwardRules.createdAt));
+}
+
+/**
+ * 收主备线路上报时用：只要归属和库里现在记的那条。
+ *
+ * 这一步在心跳的所有早退之前跑（见 failoverLineReports），所以只取三列 —— 整行取出来
+ * 是给下发拼命令用的，这里用不着。
+ */
+export async function getForwardRuleFailoverLinesForAgent(hostId: number) {
+  const db = await getDb();
+  if (!db || !hostId) return [];
+  return db.select({
+    id: forwardRules.id,
+    failoverActiveTarget: forwardRules.failoverActiveTarget,
+    failoverActiveAt: forwardRules.failoverActiveAt,
+  }).from(forwardRules).where(and(...forwardRulesForAgentConditions(hostId)));
 }
 
 export async function getForwardRulesForAgentScope(hostId: number, tunnelIds: number[]) {
