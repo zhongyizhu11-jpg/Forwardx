@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Trash2 } from "lucide-react";
 
 import { EntityTag } from "@/components/entity/EntityCard";
@@ -19,6 +19,7 @@ import {
   type FailoverScheduleWindow,
 } from "@shared/failoverSchedule";
 import { PIN_DURATION_OPTIONS, formatPolicyClock, pinUntilSeconds, type RoutePolicy } from "@shared/routePolicy";
+import { ConditionBlock, PolicyGroup } from "./PolicyBlocks";
 
 /*
   编辑框里「主备线路」开着之后的那一块。
@@ -63,55 +64,6 @@ export type FailoverPolicyFieldsProps = {
   timeZone?: string;
 };
 
-function Group({ title, note, children }: { title: string; note?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="flex min-w-0 flex-col gap-2">
-      <h3 className="text-meta font-medium text-muted-foreground">{title}</h3>
-      {children}
-      {note ? <p className="text-meta leading-relaxed text-muted-foreground">{note}</p> : null}
-    </section>
-  );
-}
-
-/** 「按什么选」里的一层。此刻在起作用的那一层左边一根路径色竖条，和策略面板同一个画法。 */
-function ConditionBlock({
-  title,
-  detail,
-  deciding,
-  overridden,
-  showTag = true,
-  children,
-  testId,
-}: {
-  title: string;
-  detail?: ReactNode;
-  deciding: boolean;
-  overridden?: boolean;
-  /** 时段表那一层把「此刻」标在命中的那个时段上，不标在层标题上。 */
-  showTag?: boolean;
-  children?: ReactNode;
-  testId?: string;
-}) {
-  return (
-    <div
-      className="relative flex min-w-0 flex-col gap-2 border-t border-[var(--fx-stroke-weak)] py-2.5 pl-3 first:border-t-0 first:pt-0"
-      data-state={deciding ? "deciding" : overridden ? "overridden" : "idle"}
-      data-testid={testId}
-    >
-      {deciding ? <span aria-hidden="true" className="absolute bottom-2.5 left-0 top-2.5 w-[3px] rounded-r bg-[var(--fx-path)]" /> : null}
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-col">
-          <span className={cn("text-secondary-type", deciding ? "font-semibold text-foreground" : "text-foreground")}>{title}</span>
-          {detail ? <span className="text-meta text-muted-foreground">{detail}</span> : null}
-          {overridden ? <span className="text-meta text-[var(--fx-warn-text)]">此刻本该轮到它，被上面那层压着</span> : null}
-        </div>
-        {deciding && showTag ? <EntityTag tone="path">此刻</EntityTag> : null}
-      </div>
-      {children}
-    </div>
-  );
-}
-
 /** 选择用的小块：选中是整块反白，和策略面板、主机分组同一套。 */
 function choiceClass(active: boolean) {
   return cn(
@@ -151,7 +103,7 @@ export function FailoverPolicyFields({
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <Group
+      <PolicyGroup
         title="线路"
         note={
           /*
@@ -227,9 +179,9 @@ export function FailoverPolicyFields({
             );
           })}
         </FormField>
-      </Group>
+      </PolicyGroup>
 
-      <Group
+      <PolicyGroup
         title="按什么选"
         note={fallback ? "从上往下，先对上的那一层说了算。它指的那条挂了，照样往下找 —— 选路和健康检查是两件事。" : undefined}
       >
@@ -437,12 +389,15 @@ export function FailoverPolicyFields({
             />
           </div>
         )}
-      </Group>
+      </PolicyGroup>
 
-      <Group title="什么时候切">
+      <PolicyGroup title="什么时候切">
         <div className={cn("grid gap-2", fallback ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
           <FormField className="space-y-2">
-            <Label>切换时间（秒）</Label>
+            <Label className="flex items-baseline gap-1.5">
+              切换时间（秒）
+              <span className="text-xs font-normal text-muted-foreground">10–3600</span>
+            </Label>
             <Input
               type="number"
               min={10}
@@ -453,7 +408,10 @@ export function FailoverPolicyFields({
             />
           </FormField>
           <FormField className="space-y-2">
-            <Label>恢复观察（秒）</Label>
+            <Label className="flex items-baseline gap-1.5">
+              恢复观察（秒）
+              <span className="text-xs font-normal text-muted-foreground">10–3600</span>
+            </Label>
             <Input
               type="number"
               min={10}
@@ -498,7 +456,7 @@ export function FailoverPolicyFields({
             </span>
           </label>
         ) : null}
-      </Group>
+      </PolicyGroup>
     </div>
   );
 }

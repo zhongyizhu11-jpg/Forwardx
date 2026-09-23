@@ -3784,11 +3784,11 @@ function RulesContent() {
         return;
       }
       if (!Number.isInteger(form.failoverSeconds) || form.failoverSeconds < 10 || form.failoverSeconds > 3600) {
-        toast.error("健康检查切换时间必须在 10-3600 秒之间");
+        toast.error("切换时间必须在 10-3600 秒之间");
         return;
       }
       if (!Number.isInteger(form.recoverSeconds) || form.recoverSeconds < 10 || form.recoverSeconds > 3600) {
-        toast.error("恢复观察时间必须在 10-3600 秒之间");
+        toast.error("恢复观察必须在 10-3600 秒之间");
         return;
       }
     }

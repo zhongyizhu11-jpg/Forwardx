@@ -1,6 +1,7 @@
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { NetworkPath } from "@/components/network/NetworkPath";
 import { buildChainPath } from "@/features/links/chainPath";
+import { GroupFailoverPolicyFields } from "@/features/links/GroupFailoverPolicyFields";
 import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
 import { FAILOVER_TONE_CLASS, describeGroupPolicyDisplay } from "@/lib/failoverLineDisplay";
 import { FormField } from "@/components/ui/form-field";
@@ -1562,10 +1563,10 @@ export function ForwardGroupsContent({
     const failoverSeconds = Number(form.failoverSeconds);
     const recoverSeconds = Number(form.recoverSeconds);
     if (!Number.isInteger(failoverSeconds) || failoverSeconds < 10 || failoverSeconds > 3600) {
-      return toast.error("故障转移时间需为 10-3600 秒的整数");
+      return toast.error("切换时间需为 10-3600 秒的整数");
     }
     if (!Number.isInteger(recoverSeconds) || recoverSeconds < 10 || recoverSeconds > 3600) {
-      return toast.error("恢复观察时间需为 10-3600 秒的整数");
+      return toast.error("恢复观察需为 10-3600 秒的整数");
     }
     const trafficMultiplierValue = Number(form.trafficMultiplier);
     if ((isPortMode || isChainGroup || isFailoverMode) && (!Number.isFinite(trafficMultiplierValue) || trafficMultiplierValue < 0.01 || trafficMultiplierValue > 50)) {
@@ -1678,6 +1679,34 @@ export function ForwardGroupsContent({
     ddnsSwitching: settings?.ddns ? !!settings.ddns.enabled && settings.ddns.provider !== "disabled" : undefined,
     memberLabel: (member) => memberLabel(member),
   };
+
+  /*
+    编辑框里「故障转移」那一块下面那几句话：拿还没保存的表单走同一份模型算。按「有规则在用」
+    来算 —— 编辑框要说的是「这样配会怎么做」；新建的组还没有规则，照实算的话「恢复后切回」那
+    一句会变成「一直挑最前面在线的」，跟着勾选框一动不动。
+  */
+  const formGroupPolicy = showDialog && form.groupMode === "failover"
+    ? describeGroupRoutePolicy({
+      groupMode: "failover",
+      isEnabled: form.isEnabled,
+      domain: form.domain,
+      recordType: form.recordType,
+      failoverSeconds: form.failoverSeconds,
+      recoverSeconds: form.recoverSeconds,
+      autoFailback: form.autoFailback,
+      chinaHealthCheckEnabled: form.chinaHealthCheckEnabled,
+      chinaHealthCheckTarget: form.chinaHealthCheckTarget,
+      chinaHealthCheckMethod: form.chinaHealthCheckMethod,
+      templateRuleCount: 1,
+      members: form.members.map((member, index) => ({
+        memberType: member.memberType,
+        hostId: member.hostId,
+        tunnelId: member.tunnelId,
+        priority: index,
+        isEnabled: member.isEnabled,
+      })),
+    }, groupPolicyOptions)
+    : null;
 
   /** 故障转移组的「解析 · HK entry 01」：点开是策略面板，和规则卡上的「主备 · 备用 1」同一个东西。 */
   const renderGroupPolicyBadge = (group: any) => {
@@ -2479,32 +2508,6 @@ export function ForwardGroupsContent({
                   </div>
                 )}
 
-                {false && form.groupMode === "failover" && (
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">单位：秒，范围 10-3600。</p>
-                    <div className="grid gap-3 sm:grid-cols-[minmax(0,130px)_minmax(0,130px)_minmax(0,1fr)]">
-                      <FormField className="space-y-2">
-                        <Label>故障转移时间</Label>
-                        <Input type="number" min={10} max={3600} value={form.failoverSeconds} onChange={(e) => setForm({ ...form, failoverSeconds: e.target.value })} placeholder="60" />
-                      </FormField>
-                      <FormField className="space-y-2">
-                        <Label>恢复观察时间</Label>
-                        <Input type="number" min={10} max={3600} value={form.recoverSeconds} onChange={(e) => setForm({ ...form, recoverSeconds: e.target.value })} placeholder="120" />
-                      </FormField>
-                      <div className="flex items-end gap-2">
-                        <label className="flex h-10 min-w-[128px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
-                          <span className="whitespace-nowrap text-sm">恢复后切回</span>
-                          <Checkbox aria-label="恢复后切回" checked={form.autoFailback} onCheckedChange={(autoFailback) => setForm({ ...form, autoFailback })} />
-                        </label>
-                        <label className="flex h-10 min-w-[92px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
-                          <span className="whitespace-nowrap text-sm">启用</span>
-                          <Checkbox aria-label="启用" checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 {form.groupMode === "entry" && (
                 <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,200px)]">
                   <div className="space-y-1.5">
@@ -2887,87 +2890,40 @@ export function ForwardGroupsContent({
             )}
 
             {form.groupMode === "failover" && (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">单位：秒，范围 10-3600。</p>
-                  <div className="grid gap-3 sm:grid-cols-[minmax(0,130px)_minmax(0,130px)_minmax(0,1fr)]">
-                    <FormField className="space-y-2">
-                      <Label>故障转移时间</Label>
-                      <Input type="number" min={10} max={3600} value={form.failoverSeconds} onChange={(e) => setForm({ ...form, failoverSeconds: e.target.value })} placeholder="60" />
-                    </FormField>
-                    <FormField className="space-y-2">
-                      <Label>恢复观察时间</Label>
-                      <Input type="number" min={10} max={3600} value={form.recoverSeconds} onChange={(e) => setForm({ ...form, recoverSeconds: e.target.value })} placeholder="120" />
-                    </FormField>
-                    <div className="flex items-end gap-2">
-                      <label className="flex h-10 min-w-[128px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
-                        <span className="whitespace-nowrap text-sm">恢复后切回</span>
-                        <Checkbox aria-label="恢复后切回" checked={form.autoFailback} onCheckedChange={(autoFailback) => setForm({ ...form, autoFailback })} />
-                      </label>
-                      <label className="flex h-10 min-w-[92px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
-                        <span className="whitespace-nowrap text-sm">启用</span>
-                        <Checkbox aria-label="启用" checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,200px)]">
-                  <div className="space-y-1.5">
-                    <Input
-                      aria-label="入口健康度检测目标"
-                      disabled={!form.chinaHealthCheckEnabled}
-                      value={form.chinaHealthCheckTarget}
-                      onChange={(e) => setForm({ ...form, chinaHealthCheckTarget: e.target.value })}
-                      placeholder={healthCheckTargetPlaceholder(form.chinaHealthCheckMethod)}
-                    />
-                    <Select
-                      value={form.chinaHealthCheckMethod}
-                      onValueChange={(value) => setForm({ ...form, chinaHealthCheckMethod: normalizeForwardGroupHealthCheckMethod(value) })}
-                      disabled={!form.chinaHealthCheckEnabled}
-                    >
-                      <SelectTrigger aria-label="健康度检测方式"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {FORWARD_GROUP_HEALTH_CHECK_METHODS.map((method) => (
-                          <SelectItem key={method} value={method}>
-                            {FORWARD_GROUP_HEALTH_CHECK_METHOD_LABELS[method]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {FORWARD_GROUP_HEALTH_CHECK_METHOD_HINTS[form.chinaHealthCheckMethod]}
-                      {healthCheckTargetNeedsPort(form.chinaHealthCheckMethod) ? " IPv6 格式：[地址]:端口。" : " IPv6 直接填地址。"}
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="flex h-10 items-center justify-between rounded-md border border-border/60 px-3">
-                      <span className="text-sm">入口健康度检测</span>
-                      <Checkbox aria-label="入口健康度检测" checked={form.chinaHealthCheckEnabled} onCheckedChange={(chinaHealthCheckEnabled) => setForm({ ...form, chinaHealthCheckEnabled })} />
-                    </label>
-                    <label
-                      className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2"
-                      title={telegramReady ? "仅在自动切换时发送 Telegram 告警。" : telegramSettingsLoaded ? "请先在系统设置中配置并启用 Telegram 机器人。" : "正在确认 Telegram 配置。"}
-                    >
-                      <span className="min-w-0">
-                        <span className="block text-sm">切换告警</span>
-                        <span className="block truncate text-[11px] text-muted-foreground">
-                          {telegramReady ? "仅自动切换提醒" : telegramSettingsLoaded ? "需先配置 Telegram" : "正在确认配置"}
-                        </span>
+              <div className="space-y-4">
+                <GroupFailoverPolicyFields
+                  value={form}
+                  onChange={(patch) => setForm({ ...form, ...patch })}
+                  policy={formGroupPolicy}
+                  ddnsSwitching={groupPolicyOptions.ddnsSwitching}
+                />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label
+                    className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2"
+                    title={telegramReady ? "仅在自动切换时发送 Telegram 告警。" : telegramSettingsLoaded ? "请先在系统设置中配置并启用 Telegram 机器人。" : "正在确认 Telegram 配置。"}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm">切换告警</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {telegramReady ? "仅自动切换提醒" : telegramSettingsLoaded ? "需先配置 Telegram" : "正在确认配置"}
                       </span>
-                      <Checkbox
-                        checked={form.telegramSwitchNotifyEnabled}
-                        disabled={telegramSettingsLoaded && !telegramReady && !form.telegramSwitchNotifyEnabled}
-                        onCheckedChange={(telegramSwitchNotifyEnabled) => {
-                          if (telegramSwitchNotifyEnabled && telegramSettingsLoaded && !telegramReady) {
-                            toast.error("请先在系统设置中配置并启用 Telegram 机器人");
-                            return;
-                          }
-                          setForm({ ...form, telegramSwitchNotifyEnabled });
-                        }}
-                      />
-                    </label>
-                  </div>
+                    </span>
+                    <Checkbox
+                      checked={form.telegramSwitchNotifyEnabled}
+                      disabled={telegramSettingsLoaded && !telegramReady && !form.telegramSwitchNotifyEnabled}
+                      onCheckedChange={(telegramSwitchNotifyEnabled) => {
+                        if (telegramSwitchNotifyEnabled && telegramSettingsLoaded && !telegramReady) {
+                          toast.error("请先在系统设置中配置并启用 Telegram 机器人");
+                          return;
+                        }
+                        setForm({ ...form, telegramSwitchNotifyEnabled });
+                      }}
+                    />
+                  </label>
+                  <label className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
+                    <span className="text-sm">启用</span>
+                    <Checkbox aria-label="启用" checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
+                  </label>
                 </div>
               </div>
             )}
