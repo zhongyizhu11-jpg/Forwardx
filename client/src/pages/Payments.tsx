@@ -219,7 +219,7 @@ function statusBadge(status: string) {
     ? "border-[var(--fx-healthy-soft)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
     : status === "pending"
       ? "border-[var(--fx-warn-soft)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]"
-      : "border-slate-200 bg-slate-50 text-slate-600";
+      : "border-border bg-muted text-muted-foreground";
   return <Badge variant="outline" className={tone}>{text[status] || status}</Badge>;
 }
 

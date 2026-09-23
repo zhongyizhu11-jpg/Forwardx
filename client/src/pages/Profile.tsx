@@ -640,7 +640,7 @@ function ProfileContent() {
                     {twoFactorQrCode ? (
                       <img src={twoFactorQrCode} alt="2FA 绑定二维码" className="h-full w-full" />
                     ) : (
-                      <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                     )}
                   </div>
                   <div className={`text-xs ${twoFactorSetupExpired ? "text-destructive" : "text-muted-foreground"}`}>

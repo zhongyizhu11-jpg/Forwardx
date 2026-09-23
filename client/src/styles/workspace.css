@@ -38,10 +38,7 @@
 .connection-arrow { position: absolute; bottom: -8px; z-index: 1; color: var(--fx-muted); background: var(--fx-l1-surface); }
 .connection-label { display: block; font-size: 11px; line-height: 16px; color: var(--fx-muted); }
 .connection-value { margin-top: 4px; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; color: var(--fx-text); }
-.workspace-main .action-card { border-color: var(--fx-stroke); background: var(--fx-surface); backdrop-filter: none; }
 .workspace-main .action-card-content { padding: 16px; }
-.workspace-main .action-card [class*="animate-pulse"] { animation: none; }
-.stat-card-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--fx-radius); background: var(--fx-subtle); color: var(--fx-muted); }
 [data-slot="card-title"] { line-height: 1.4; }
 [data-slot="table-header"] { background: var(--fx-subtle); }
 [data-slot="table"] { font-variant-numeric: tabular-nums; }
@@ -112,7 +109,13 @@
     列表，不是一篇文章：1.75 等于每一行凭空多 4px，十二条规则就是 48px。
   */
   .workspace-main { font-size: 16px; line-height: 1.5; }
-  .workspace-main p { margin-block: 12px; }
+  /*
+    这里原来还有一条 `.workspace-main p { margin-block: 12px; }`：照文档站的正文排版抄来的，
+    给手机上**每一个** <p> 加上下各 12px。面板里的 <p> 大多不是段落，是「标签 / 数值」这种
+    两行一组的小字 —— 桌面上外边距是 0，组件照 0 设计；到了手机上一组被撑开 24px，
+    「我的套餐」里余额那一格「当前余额」和「¥1,000.00」之间隔出一大块。删掉之前量过：
+    手机上带这 12px 的 <p>，账单中心 16 个、钱包 30 个、转发组 16 个。
+  */
 
   /*
     手册的字号分布是 12px 1377 次、14px 815 次 —— 两档，没有中间值。
@@ -140,11 +143,8 @@
 
     圆角走 surface 档（16px）：没有边框之后，圆角是唯一还在勾勒轮廓的东西。
   */
-  .workspace-main [data-slot="card"] {
-    border: 0; border-radius: var(--fx-radius-surface);
-    background: var(--fx-l1-surface); box-shadow: none;
-    padding: 0; margin-top: 0;
-  }
+  /* 底色、圆角、不描边、不投影已经挪到下面「工作区里的卡片」，四种宽度共用；手机上只多这两项。 */
+  .workspace-main [data-slot="card"] { padding: 0; margin-top: 0; }
   .workspace-main [data-slot="card-header"] { padding: 12px 12px 0; }
   .workspace-main [data-slot="card-content"] { padding: 12px; }
   .workspace-main [data-slot="card-footer"] { padding: 0 12px 12px; }
@@ -237,28 +237,11 @@
   /* 竖线和箭头都归 rail 管，rail 收起来之后一并消失。 */
 
   /*
-    ── 全站盒子密度 ──
-    卡片的默认内边距已经在 ui/card.tsx 里从 24px 改到 12px（手机）/16px（≥sm），
-    所以这里不再重复。剩下的是**调用方自己写死的**那些盒子 —— 全站有几十处
-    `rounded-md border bg-muted/30 p-2.5`、`rounded-lg border p-4` 这样的子盒子，
-    它们不走 Card，所以默认值改小碰不到它们。
-
-    只收内边距和圆角，不动边框和背景：那两样是「这是一组」的信号，去掉会让
-    密集的列表糊成一片。
+    这里原来有一条「全站盒子密度」：`[class*="rounded-"][class*="border"]` —— 类名里同时有
+    rounded- 和 border 的元素，手机上圆角一律改成 9px。它按类名片段猜 DOM，已经误伤过
+    Entity 卡片的圆角；而它要收的那些「开关小框、数字小框」，这一轮已经换成了设置行和摘要条。
+    剩下带框的是提示框、分段控件、日志窗这类本来就该自成一块的东西，圆角照它们自己的类名走。
   */
-  /*
-    ⚠ 这条是「猜 DOM」而不是设计系统 API：任何带圆角和边框的元素都被它改掉，
-    包括以后新加的业务组件。它已经误伤过一次 —— Entity 卡片自己声明了
-    12px（卡片档），被这条按 9px 盖掉，而 V2 的圆角分级正是靠这个差别建立
-    层级的。
-
-    所以排除 [data-fx-entity]：凡是走设计系统的组件，自己的令牌说了算。
-    这条规则本身要在 CSS 减法那一轮整个删掉，换成明确的 fx-* 类名。
-  */
-  .workspace-main [class*="rounded-"][class*="border"]:not([data-slot]):not([data-fx-entity]):not(button):not(input):not(textarea):not([role="button"]),
-  [role="dialog"] [class*="rounded-"][class*="border"]:not([data-slot]):not([data-fx-entity]):not(button):not(input):not(textarea):not([role="button"]) {
-    border-radius: 9px;
-  }
 
   /*
     页面竖向节奏。各页外层普遍是 space-y-6（24px），在 393px 宽的屏幕上，
@@ -503,7 +486,6 @@
 @media (pointer: coarse) { .workspace-nav-search, .public-journey-switch button { min-height: 44px; } }
 @media (hover: hover) {
   .workspace-tab:hover:not([data-state="active"]) { color: var(--fx-text); background: var(--fx-stroke); }
-  .workspace-main .action-card:hover { border-color: color-mix(in srgb, var(--fx-muted) 50%, var(--fx-stroke)); box-shadow: var(--fx-shadow-raised); }
 }
 @media (max-width: 639px) {
   .workspace-header { gap: 12px; }
@@ -548,6 +530,23 @@
 .workspace-header-actions > [data-slot="button"] { width: auto; }
 .workspace-header-actions > [data-slot="badge"] { align-self: center; }
 .workspace-layout [data-slot="card"], .public-home-shell [data-slot="card"] { background: var(--fx-surface); border-color: var(--fx-stroke); box-shadow: var(--fx-shadow); backdrop-filter: none; }
+/*
+  工作区里的卡片：任何宽度都是纯白、大圆角、不描边、不投影 —— 和 EntityCard 一个样子。
+
+  原来这几样只写在手机那一段里；桌面上的 Card 还带着 1px 边框和一层投影，而 EntityCard
+  （主机、规则、套餐）没有 —— 同一页上两种卡并排，一种有框一种没有。手册定的是「底灰、
+  面白」这一次底色差成形，卡片不描边。放在上面那条后面，同样的特指度靠后写赢。
+
+  卡片整张不可点，所以也不要悬停抬起（原来 .action-card:hover 会加边框色和投影，看上去
+  像能点进去）。backdrop-filter 一并关掉：不透明的白底上做模糊，只是白白占 GPU。
+*/
+.workspace-main [data-slot="card"] {
+  border: 0;
+  border-radius: var(--fx-radius-surface);
+  background: var(--fx-l1-surface);
+  box-shadow: none;
+  backdrop-filter: none;
+}
 .workspace-layout [data-sidebar="sidebar"] { background: var(--fx-surface); }
 [data-sidebar="menu-button"] { min-height: 38px; }
 [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-hover); color: var(--fx-text); font-weight: 600; }

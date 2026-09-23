@@ -127,7 +127,7 @@ const CLIENT_ICONS: Record<string, { icon: LucideIcon; className: string }> = {
   surfboard: { icon: Ship, className: "bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]" },
   nekobox: { icon: Boxes, className: "bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]" },
   nekoray: { icon: Blocks, className: "bg-[var(--fx-delivery-soft)] text-[var(--fx-delivery)]" },
-  v2rayn: { icon: Binary, className: "bg-slate-500/10 text-slate-600 dark:text-slate-400" },
+  v2rayn: { icon: Binary, className: "bg-[var(--fx-l3-control-fill)] text-muted-foreground" },
 };
 
 function clientIcon(target: ProxyClientTarget) {

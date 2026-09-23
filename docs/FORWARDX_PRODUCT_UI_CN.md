@@ -182,8 +182,8 @@ features/links/GroupFailoverPolicyFields 转发组编辑框里的故障转移那
 | 4 | **Rules 2.0**：Rule 从配置卡变成 Flow 卡，创建流程改渐进式披露 | ✅ |
 | 5 | **Dashboard 2.0**：Health / Traffic / Attention 三段，减少饼图和孤立统计卡 | ✅ |
 | 6 | **Route Policy**：主备、多线路、定时、自动故障切换、手动、恢复，统一进策略 UI | ✅ 规则级主备 + 转发组的故障转移 |
-| 7 | Subscription / Settings 迁移 | 设置页手机端已换分组列表 |
-| 8 | **CSS 债清理**：删 legacy override、宽泛选择器、重复样式 | |
+| 7 | Subscription / Settings 迁移 | ✅ 设置页宽屏两栏 + 设置行；商店、套餐、个人资料、订阅 |
+| 8 | **CSS 债清理**：删 legacy override、宽泛选择器、重复样式 | 第一步：猜 DOM 的选择器清零、卡片四种宽度统一；手机密度那一段还在 |
 
 PR 3 的拆分只迈了第一步：`features/links/` 里目前是路径和状态的几个纯函数
 （`tunnelPath` / `chainPath` / `tunnelHealth`）和创建转发时就地建线路的表单，
@@ -248,12 +248,14 @@ PR 3 的拆分只迈了第一步：`features/links/` 里目前是路径和状态
 
 这些是明确看到但本轮没动的，记下来免得以为已经处理了：
 
-- **`workspace.css` 里的宽泛选择器**。`[class*="rounded-"][class*="border"]` 和
-  `.workspace-main > .route-content-enter > div > .space-y-6 > * + *` 这类规则
-  今天解决了密度问题，但以后加一个业务组件可能莫名其妙被全局 CSS 改掉。
-  目标是把 CSS 从「猜 DOM」变成「设计系统 API」：`fx-page` / `fx-section` /
-  `fx-entity-card` / `fx-entity-body` / `fx-entity-footer` / `fx-path` 这类明确
-  的类名。PR 8 做。
+- **`workspace.css` 里的宽泛选择器** —— PR 8 做了第一步：按类名片段猜 DOM 的
+  （`[class*="rounded-"][class*="border"]`、`[class*="animate-pulse"]`）清零，
+  `.workspace-main p { margin-block: 12px }` 删掉，工作区卡片「不描边、不投影」从手机段
+  挪到最外层（桌面上原来有框）；`workspaceCss.test.ts` 守着这三条。**还没动的**是手机段里
+  按 Tailwind 类名改密度的那一批：`.space-y-4 > * + *`、`.space-y-3 > * + *`、页面级
+  `.space-y-6`、卡片内容子元素一律 6px、卡片里 `.text-sm.font-medium` 改 16px。它们是
+  有意的手机密度，删掉会整站变松；要换成 `fx-page` / `fx-section` / `fx-entity-body`
+  这类明确的类名，得一页一页迁，下一轮做。
 - ~~`Home.tsx` 里还有 `bg-emerald-500` 的小圆点和徽标~~ —— 2.3.369 的色板清理换成
   了令牌，Dashboard 2.0 把这些点所在的卡片整张删掉了；首页的状态点现在全是 `StatusDot`。
 - **`Tunnels.tsx` / `Rules.tsx` 是巨型文件**，几乎承载了各自全部业务 UI。

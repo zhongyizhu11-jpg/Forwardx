@@ -2016,11 +2016,11 @@ function DashboardLayoutContent({
               <div className="flex flex-col items-center gap-3">
                 <div className={`flex h-48 w-48 items-center justify-center rounded-lg border bg-white p-3 ${twoFactorSetupExpired ? "opacity-45" : ""}`}>
                   {beginTwoFactorSetupMutation.isPending ? (
-                    <Loader2 className="forwardx-icon-spin h-6 w-6 text-slate-500" />
+                    <Loader2 className="forwardx-icon-spin h-6 w-6 text-muted-foreground" />
                   ) : twoFactorQrCode ? (
                     <img src={twoFactorQrCode} alt="2FA 绑定二维码" className="h-full w-full" />
                   ) : (
-                    <span className="text-xs text-slate-500">二维码生成中</span>
+                    <span className="text-xs text-muted-foreground">二维码生成中</span>
                   )}
                 </div>
                 <div className={`text-xs ${twoFactorSetupExpired ? "text-destructive" : "text-muted-foreground"}`}>

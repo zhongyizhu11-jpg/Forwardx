@@ -387,7 +387,6 @@
     html[data-personalization-background="image"] .backdrop-blur-lg,
     html[data-personalization-background="image"] .backdrop-blur-xl,
     html[data-personalization-background="image"] .backdrop-blur-2xl,
-    html[data-personalization-background="image"] .glass-surface,
     html[data-personalization-background="image"] .auth-card-surface,
     html[data-personalization-background="video"] .backdrop-blur,
     html[data-personalization-background="video"] .backdrop-blur-sm,
@@ -395,7 +394,6 @@
     html[data-personalization-background="video"] .backdrop-blur-lg,
     html[data-personalization-background="video"] .backdrop-blur-xl,
     html[data-personalization-background="video"] .backdrop-blur-2xl,
-    html[data-personalization-background="video"] .glass-surface,
     html[data-personalization-background="video"] .auth-card-surface {
       backdrop-filter: none !important;
       -webkit-backdrop-filter: none !important;
@@ -756,18 +754,6 @@
   .rule-card-grid-static-compact > * {
     animation-name: rule-card-item-compact-enter;
   }
-  .host-management-tabs {
-    contain: layout paint;
-  }
-
-  .host-management-tabs [role="tab"] {
-    font-weight: 500;
-  }
-
-  .host-management-tabs [role="tab"][data-state="active"] {
-    font-weight: 500;
-  }
-
   .host-card-grid-static {
     animation: host-card-grid-soft-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
     backface-visibility: hidden;
@@ -1030,12 +1016,6 @@
       animation-delay: 0ms;
     }
   }
-  .glass-surface {
-    background: var(--fx-surface);
-    border-color: var(--fx-stroke);
-    box-shadow: 0 1px 3px rgb(24 37 54 / 4%);
-  }
-
   .auth-shell,
   .public-home-shell {
     background: var(--fx-canvas);

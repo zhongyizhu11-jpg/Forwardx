@@ -473,7 +473,21 @@ EmptyState · LoadingState · ErrorState · OfflineState
 （`client/src/features/dashboard/`）；主备策略的 `RoutePolicyPanel` /
 `RoutePolicySheet` / `FailoverPolicyFields` / `PolicyBlocks`（`client/src/features/rules/`，
 判断在 `shared/routePolicy.ts`），转发组的 `GroupFailoverPolicyFields`
-（`client/src/features/links/`，同一份模型、同一块面板）。其余按 Phase 推进。
+（`client/src/features/links/`，同一份模型、同一块面板）；页头的 `SummaryStrip`、
+手机上的流水行 `LedgerRow`、卡片底部的 `CardActions`（`EntityActions` 两个带字 + ···）、
+设置页的 `SettingList` / `SettingRow`。其余按 Phase 推进。
+
+**设置行**（`SettingRow`）：名字 + 说明在左，控件在右，行间一根细线（和分组列表同一条
+`.fx-list-row`），不画框。控件是**一个**开关或复选框时 `asLabel`，整行都能点；这一项
+自己的参数（阈值、天数）作为 children 跟在同一格里、在 label 外面。二选一、三选一用分段
+控件，下面只摆选中那一种的字段 —— 不要把几种都画成并排的大卡片再标「当前使用」。
+
+**卡片里的数**：一两个值写成设置行的行尾（「已开启 5 / 6」）；几个数并排才用摘要条。
+不要一个数一个小框。
+
+**宽屏两栏看容器，不看窗口。** 设置页宽屏是左边分区、右边内容；右栏里的分栏一律按
+右栏自己的宽度切（`@container` + `@[42rem]:` / `@[58rem]:`），不写 `lg:` / `xl:` ——
+侧栏收起、展开时同一个窗口宽度下右栏能差出 200px。
 
 **条件行**（Policy 的画法）：一层一行，从上往下就是优先级。此刻起作用的那一行左边
 一根 3px 的 `--fx-path` 竖条、字重加粗、右侧一个 `EntityTag tone="path"` 写「此刻」；
@@ -517,8 +531,8 @@ Tailwind 工具类是 `(0,1,0)`；一条 `[data-slot="x"]` 也是 `(0,1,0)`，�
 | 2 | Visual Language：Node / Path / Edge / Flow / Health | ✅ |
 | 3 | 核心三页：总览 → 主机 → 链路 | ✅ |
 | 4 | 操作系统：Drawer、Bottom Sheet、ActionMenu、创建流程、诊断流程 | 部分：Sheet / 操作表 / 创建流程；诊断流程未动 |
-| 5 | 转发系统：规则、链、组，以及 Route Policy 抽象 | 部分：规则 / 链 / 组；Route Policy 未动 |
-| 6 | Subscription + Settings 迁移 | 部分：设置页手机端 |
+| 5 | 转发系统：规则、链、组，以及 Route Policy 抽象 | ✅ |
+| 6 | Subscription + Settings 迁移 | ✅ 设置页宽屏两栏 + 设置行；商店、套餐、个人资料、订阅 |
 | 7 | Polish：Skeleton / Loading / Empty / Error / 转场 / 深色 / 响应式 | |
 
 按 PR 拆的推进表（和这张表是同一件事的另一种切法）在

@@ -413,7 +413,7 @@ export default function Setup() {
                   </Alert>
 
                   {dbReady && data?.databaseConfigured && (
-                    <Alert className="border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)]/80 text-emerald-950">
+                    <Alert className="border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)]/80 text-[var(--fx-healthy-text)]">
                       <Database className="h-4 w-4 text-[var(--fx-healthy-text)]" />
                       <AlertTitle>当前已连接 {configuredDatabaseLabel} 数据库</AlertTitle>
                       <AlertDescription>

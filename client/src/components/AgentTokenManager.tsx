@@ -128,14 +128,19 @@ function TokenStatusBadge({ tokenItem }: { tokenItem: any }) {
   }
 
   const isOnline = isTokenHostOnline(host);
+  /*
+    原来「在线」用的是图表色 chart-2，圆点还带 animate-pulse —— 而 workspace.css 里有一条
+    `.action-card [class*="animate-pulse"] { animation: none }` 专门把它按住：一边加动画、一边
+    用猜类名的规则关掉。状态色走令牌，不闪（手册：闪动只留给「正在发生」的事）。
+  */
   return isOnline ? (
-    <Badge className="shrink-0 gap-1.5 border-chart-2/25 bg-chart-2/10 text-chart-2 text-[10px]">
-      <span className="h-2 w-2 rounded-full bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" />
+    <Badge className="shrink-0 gap-1.5 border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)] text-[10px]">
+      <span className="h-2 w-2 rounded-full bg-[var(--fx-healthy)]" aria-hidden="true" />
       在线
     </Badge>
   ) : (
-    <Badge className="shrink-0 gap-1.5 border-destructive/25 bg-destructive/10 text-destructive text-[10px]">
-      <span className="h-2 w-2 rounded-full bg-destructive shadow-sm shadow-destructive/50" />
+    <Badge className="shrink-0 gap-1.5 border-[color-mix(in_srgb,var(--fx-down)_25%,transparent)] bg-[var(--fx-down-soft)] text-[var(--fx-down-text)] text-[10px]">
+      <span className="h-2 w-2 rounded-full bg-[var(--fx-down)]" aria-hidden="true" />
       离线
     </Badge>
   );
