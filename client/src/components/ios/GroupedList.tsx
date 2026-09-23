@@ -84,6 +84,8 @@ export type ListRowProps = {
   onSelect?: () => void;
   /** 当前选中（用在索引列表里标出正在看的那一项） */
   selected?: boolean;
+  /** 可点时画不画右侧箭头。当侧栏导航用时不画 —— 选中那一行已经说明「内容在右边」。 */
+  chevron?: boolean;
   disabled?: boolean;
   className?: string;
 };
@@ -96,6 +98,7 @@ export function ListRow({
   trailing,
   onSelect,
   selected = false,
+  chevron = true,
   disabled = false,
   className,
 }: ListRowProps) {
@@ -104,7 +107,7 @@ export function ListRow({
     一行里不能既是入口又是开关：有 trailing（开关）就不画箭头。
     两个都画的话用户不知道点哪儿 —— 点开关还是进下一层？
   */
-  const showChevron = interactive && !trailing;
+  const showChevron = interactive && !trailing && chevron;
 
   const content = (
     <>
@@ -152,7 +155,18 @@ export function ListRow({
     return <div className={shared}>{content}</div>;
   }
   return (
-    <button type="button" onClick={onSelect} disabled={disabled} className={cn(shared, "transition-colors hover:bg-[var(--fx-hover)]")}>
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      aria-current={selected ? "true" : undefined}
+      /*
+        选中是「正在看哪一项」，不是状态 —— 不染状态色。底色和应用左边那条侧栏的选中项
+        同一个灰（--fx-hover）：设置页宽屏时两栏导航并排，同一件事得说成同一个样子。
+        用控件底那个灰（#f1f1f4）试过，白块上几乎看不出来，和页面底一个色，像块上缺了一格。
+      */
+      className={cn(shared, "transition-colors hover:bg-[var(--fx-hover)]", selected && "bg-[var(--fx-hover)]")}
+    >
       {content}
     </button>
   );

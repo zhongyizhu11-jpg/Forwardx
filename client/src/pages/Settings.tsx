@@ -29,6 +29,9 @@ import { OptimisticSwitch, Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SlidingTabsList } from "@/components/ui/sliding-tabs";
 import { GroupedList, ListRow, ListSection } from "@/components/ios/GroupedList";
+import { SettingList, SettingRow } from "@/components/SettingRow";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { segmentedControlClassName, segmentedOptionClassName } from "@/components/ui/segmented";
 import { useIsMobile } from "@/hooks/useMobile";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { pollingInterval } from "@/lib/polling";
@@ -485,12 +488,16 @@ const settingsGroups = [
   },
 ] as const;
 
+/*
+  每一项管什么。现在宽屏右栏顶上也显示这一句，所以照实际内容写：原来「系统配置」写着
+  「数据库」（数据库切换在备份恢复里）、「邮箱设置」写着「邮件模板」（没有模板这回事）。
+*/
 const settingsTabDetail: Record<string, string> = {
-  system: "面板地址、数据库、注册与登录",
-  personalization: "站点名称、Logo、主题与首页",
+  system: "面板地址、HTTPS、注册登录、DDNS 与版本升级",
+  personalization: "站点名称、Logo、配色、背景与首页",
   telegram: "机器人推送与 AI 助手",
-  email: "SMTP 发信与邮件模板",
-  backup: "导出、导入与迁移",
+  email: "SMTP 发信、注册验证与提醒邮件",
+  backup: "迁移、数据库切换、导出与导入",
   logs: "运行日志与导出",
 };
 
@@ -633,6 +640,15 @@ function encodeSvgDataUrl(svg: string) {
   return `data:image/svg+xml;base64,${globalThis.btoa(binary)}`;
 }
 
+/** 「已开启 5 / 6」：设置行右边那个数。开了几个是重点，所以只有前一个数加粗。 */
+function EnabledCount({ enabled, total }: { enabled: number; total: number }) {
+  return (
+    <span className="text-secondary-type tabular-nums text-muted-foreground">
+      已开启 <span className="font-semibold text-foreground">{enabled}</span> / {total}
+    </span>
+  );
+}
+
 const SETTINGS_TAB_STORAGE_KEY = "forwardx.settings.tab";
 
 function isSettingsTab(tab: string | null): tab is SettingsTab {
@@ -700,92 +716,137 @@ function SettingsContent() {
 
   if (user?.role !== "admin") return null;
 
+  const activeItem = settingsTabItems.find((tab) => tab.value === activeTab);
+  /*
+    同一份分组画两个地方：手机上的索引页、宽屏左边的分区栏。两处的区别只在
+    「选中的那一行要不要标出来、要不要箭头」—— 索引页点进去是下一层（画箭头），
+    分区栏点了内容就在右边（不画箭头，标出正在看的那一项）。
+  */
+  const renderSectionNav = (mode: "index" | "rail") => (
+    <GroupedList className={mode === "rail" ? "gap-[var(--fx-space-4)]" : undefined}>
+      {settingsGroups.map((group) => (
+        <ListSection key={group.key} header={group.header} footer={mode === "index" ? (group as { footer?: string }).footer : undefined}>
+          {group.items.map((value) => {
+            const item = settingsTabItems.find((tab) => tab.value === value);
+            if (!item) return null;
+            const Icon = item.icon;
+            return (
+              <ListRow
+                key={value}
+                icon={<Icon className="h-4 w-4" />}
+                label={item.label}
+                detail={mode === "index" ? settingsTabDetail[value] : undefined}
+                selected={mode === "rail" && activeTab === value}
+                chevron={mode === "index"}
+                onSelect={() => {
+                  handleTabChange(value);
+                  if (mode === "index") setMobileSectionOpen(true);
+                }}
+              />
+            );
+          })}
+        </ListSection>
+      ))}
+    </GroupedList>
+  );
+
   return (
     <div className="space-y-6">
       <WorkspaceHeader title="系统设置" description="配置面板、通知、外观与数据维护。" />
 
       {/*
-        手机上用分组列表当导航，不用横向标签条。
+        三种宽度，三种导航：
 
-        标签条在这一页已经到极限了：六项挤满一行，第七项就得滚动 —— 而设置
-        是只会越来越多的那种页面。分组列表没有这个上限，而且能说清「Telegram
-        和邮箱都是通知」这种横向标签条表达不了的层级。
+        - 手机：分组列表当索引，点一项进去，顶上一条「全部设置」回来。标签条在这一页
+          已经到极限了（六项挤满一行，第七项就得滚动），而设置是只会越来越多的那种页面。
+        - 中等宽度：顶部标签条，一次点到位。
+        - 宽屏：左边一栏分区、右边内容（Master–Detail）。原来 1280 上标签条横跨整页，
+          下面的卡片也横跨整页，一张「网络测试」卡片宽 470px 里只有一个复选框；而分组
+          （「Telegram 和邮箱都是通知」）只有手机上看得见。左边这一栏把分组也带到桌面，
+          右边的内容区收窄到一个表单该有的宽度。
 
-        桌面上保留标签条：那儿横向空间够，一次点到位比先进列表再选更快。
+        宽屏与否看的是**这一页自己有多宽**（容器查询），不是窗口多宽：侧栏收起来时，
+        1024 的窗口里这一页也有 900 多像素，够放两栏；侧栏展开时 1152 的窗口里只剩 830，
+        放两栏右边就窄了。按窗口宽度判断，这两种情况会各错一次。
       */}
       {isMobile && !mobileSectionOpen ? (
-        <GroupedList>
-          {settingsGroups.map((group) => (
-            <ListSection key={group.key} header={group.header} footer={(group as any).footer}>
-              {group.items.map((value) => {
-                const item = settingsTabItems.find((tab) => tab.value === value);
-                if (!item) return null;
-                const Icon = item.icon;
-                return (
-                  <ListRow
-                    key={value}
-                    icon={<Icon className="h-4 w-4" />}
-                    label={item.label}
-                    detail={settingsTabDetail[value]}
-                    onSelect={() => {
-                      handleTabChange(value);
-                      setMobileSectionOpen(true);
-                    }}
-                  />
-                );
-              })}
-            </ListSection>
-          ))}
-        </GroupedList>
+        renderSectionNav("index")
       ) : (
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-        {isMobile ? (
-          /*
-            进到某一分区之后给一条返回 —— 列表导航必须能回去，
-            否则用户只能按浏览器后退，而那会连带退出整个设置页。
-          */
-          <button
-            type="button"
-            onClick={() => setMobileSectionOpen(false)}
-            className="flex items-center gap-1 text-secondary-type text-[var(--fx-text-secondary)]"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            全部设置
-          </button>
-        ) : (
-          <SlidingTabsList items={settingsTabItems} activeValue={activeTab} ariaLabel="系统设置" minItemWidthRem={7.5} />
-        )}
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="@container/settings">
+        <div className="@min-[56rem]/settings:grid @min-[56rem]/settings:grid-cols-[14rem_minmax(0,1fr)] @min-[56rem]/settings:items-start @min-[56rem]/settings:gap-6">
+          <nav aria-label="设置分区" className="hidden @min-[56rem]/settings:sticky @min-[56rem]/settings:top-8 @min-[56rem]/settings:block">
+            {renderSectionNav("rail")}
+          </nav>
 
-        {/* System Info Tab */}
-        <TabsContent value="system" className="space-y-4">
-          <SystemInfoSection />
-        </TabsContent>
+          {/*
+            右边这一栏自己也是一个容器：里面各分区原来按窗口宽度切的两列（lg:/xl:），
+            都改成按这一栏的宽度切 —— 左边多了一栏之后，窗口 1280 时右边只有 700 多像素，
+            还按窗口算的话，两张表单卡会被并排挤成两条 340px 的窄条。
 
-        {/* Telegram Bot Tab */}
-        <TabsContent value="telegram" className="space-y-4">
-          <TelegramBotSettingsCard />
-          <DeepSeekSettingsCard />
-        </TabsContent>
+            换算按「原来那个断点下，内容区实际有多宽」：侧栏展开时窗口 1024（lg）的内容区
+            704px，有滚动条时实测 694 → @[42rem]（672）；窗口 1280（xl）约 960，有滚动条时
+            945 左右 → @[58rem]（928）。门槛各往下留了一点，给滚动条：第一版按 704 整数卡，
+            1024 上差 10px 没切成两列，排法和原来不一样了。所以没有左栏的那几种宽度下，
+            各分区的排法和原来一样；有左栏时，右边 700 像素上表单字段仍然两列，整张卡片
+            不再并排。
+          */}
+          <div className="@container min-w-0 space-y-4">
+            {isMobile ? (
+              /*
+                进到某一分区之后给一条返回 —— 列表导航必须能回去，
+                否则用户只能按浏览器后退，而那会连带退出整个设置页。
+              */
+              <button
+                type="button"
+                onClick={() => setMobileSectionOpen(false)}
+                className="flex items-center gap-1 text-secondary-type text-[var(--fx-text-secondary)]"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                全部设置
+              </button>
+            ) : (
+              <div className="@min-[56rem]/settings:hidden">
+                <SlidingTabsList items={settingsTabItems} activeValue={activeTab} ariaLabel="系统设置" minItemWidthRem={7.5} />
+              </div>
+            )}
 
-        {/* Email Settings Tab */}
-        <TabsContent value="email" className="space-y-4">
-          <EmailSettingsContent />
-        </TabsContent>
+            {/*
+              分区标题：手机上进到分区之后、宽屏右边那一栏的顶上。标签条那种宽度不画 ——
+              选中的那一格已经写着是哪一项了。
+            */}
+            {activeItem ? (
+              <div className={cn("min-w-0", isMobile ? "block" : "hidden @min-[56rem]/settings:block")}>
+                <h2 className="fx-pane-title">{activeItem.label}</h2>
+                <div className="mt-0.5 text-meta text-muted-foreground">{settingsTabDetail[activeTab]}</div>
+              </div>
+            ) : null}
 
-        {/* Personalization Tab */}
-        <TabsContent value="personalization" className="space-y-4">
-          <PersonalizationSettingsSection />
-        </TabsContent>
+            <TabsContent value="system" className="space-y-4">
+              <SystemInfoSection />
+            </TabsContent>
 
-        {/* Backup and Restore Tab */}
-        <TabsContent value="backup" className="space-y-4">
-          <BackupRestoreSection panelUrl={panelUrl} />
-        </TabsContent>
+            <TabsContent value="telegram" className="space-y-4">
+              <TelegramBotSettingsCard />
+              <DeepSeekSettingsCard />
+            </TabsContent>
 
-        {/* Panel Logs Tab */}
-        <TabsContent value="logs" className="space-y-4">
-          <PanelLogsSection />
-        </TabsContent>
+            <TabsContent value="email" className="space-y-4">
+              <EmailSettingsContent />
+            </TabsContent>
+
+            <TabsContent value="personalization" className="space-y-4">
+              <PersonalizationSettingsSection />
+            </TabsContent>
+
+            <TabsContent value="backup" className="space-y-4">
+              <BackupRestoreSection panelUrl={panelUrl} />
+            </TabsContent>
+
+            <TabsContent value="logs" className="space-y-4">
+              <PanelLogsSection />
+            </TabsContent>
+          </div>
+        </div>
       </Tabs>
       )}
 
@@ -793,9 +854,17 @@ function SettingsContent() {
   );
 }
 
+/** 日志时间：「09-23 12:51:27」。日志只保留 24 小时，年份和上下午都是多余的。 */
+function formatLogTime(value: string | number | Date) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 function PanelLogsSection() {
+  const confirmDialog = useConfirmDialog();
   const [panelLogLevel, setPanelLogLevel] = useState<PanelLogLevel>("all");
-  const [exportLevel, setExportLevel] = useState<PanelLogLevel>("all");
   const [panelLogOffset, setPanelLogOffset] = useState(0);
   const panelLogSummaryRef = useRef<PanelLogSummary>(EMPTY_PANEL_LOG_SUMMARY);
   const [supportTaskId, setSupportTaskId] = useState("");
@@ -897,42 +966,66 @@ function PanelLogsSection() {
               </CardTitle>
               <CardDescription>最近 24 小时运行日志。</CardDescription>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="flex items-center gap-2">
-                <Select value={exportLevel} onValueChange={(value) => setExportLevel(value as typeof exportLevel)}>
-                  <SelectTrigger aria-label="导出日志级别" className="h-9 w-28">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {levelTabs.map((tab) => (
-                      <SelectItem key={tab.value} value={tab.value}>{tab.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => exportLogsMutation.mutate({ level: exportLevel })}
-                  disabled={exportLogsMutation.isPending}
-                >
-                  <Download className="mr-1.5 h-3.5 w-3.5" />
-                  导出日志
-                </Button>
-              </div>
-              <Button variant="outline" size="sm" onClick={refreshPanelLogs} disabled={panelLogsFetching}>刷新</Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => startSupportBundleMutation.mutate()}
-                disabled={startSupportBundleMutation.isPending || !!supportTaskId}
-                title="收集面板日志、配置审计和在线 Agent 的脱敏诊断"
-              >
-                {supportTaskId ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
-                {supportTaskId ? `收集中 ${supportBundleQuery.data?.total ? supportBundleQuery.data.total - supportBundleQuery.data.pending : 0}/${supportBundleQuery.data?.total || 0}` : "生成支持包"}
-              </Button>
-              <Button variant="destructive" size="sm" onClick={() => clearLogsMutation.mutate()} disabled={clearLogsMutation.isPending}>清空日志</Button>
-            </div>
+            {/*
+              原来这里并排五样：一个「导出级别」选择框、导出、刷新、生成支持包、一个红色实心的
+              「清空日志」—— 点一下就清，没有确认。选择框和下面那排级别标签是两套筛选，
+              一个管看、一个管导出，谁也说不清导出的是哪一种。
+
+              现在：导出的就是正在看的那一级（看 Warn 时导出 Warn）；外面留导出和刷新，
+              支持包和清空收进「···」，清空排最后、先确认。
+            */}
+            <EntityActions
+              primary={[
+                {
+                  key: "export",
+                  label: panelLogLevel === "all" ? "导出日志" : `导出 ${levelTabs.find((tab) => tab.value === panelLogLevel)?.label ?? ""} 日志`,
+                  icon: <Download className="h-3.5 w-3.5" />,
+                  onSelect: () => exportLogsMutation.mutate({ level: panelLogLevel }),
+                  disabled: exportLogsMutation.isPending,
+                },
+                {
+                  key: "refresh",
+                  label: "刷新",
+                  icon: <RefreshCw className={cn("h-3.5 w-3.5", panelLogsFetching && "forwardx-icon-spin")} />,
+                  onSelect: refreshPanelLogs,
+                  disabled: panelLogsFetching,
+                },
+              ]}
+              menu={[
+                {
+                  key: "support",
+                  label: "生成支持包",
+                  icon: <Download className="h-3.5 w-3.5" />,
+                  onSelect: () => startSupportBundleMutation.mutate(),
+                  disabled: startSupportBundleMutation.isPending || !!supportTaskId,
+                },
+                {
+                  key: "clear",
+                  label: "清空日志",
+                  destructive: true,
+                  onSelect: () => {
+                    void confirmDialog({
+                      title: "清空面板日志",
+                      description: "最近 24 小时的面板日志会全部删除，删除后无法恢复。需要留底的话先导出。",
+                      confirmText: "清空",
+                      tone: "destructive",
+                    }).then((confirmed) => {
+                      if (confirmed) clearLogsMutation.mutate();
+                    });
+                  },
+                  disabled: clearLogsMutation.isPending,
+                },
+              ]}
+              menuLabel="更多日志操作"
+            />
           </div>
+          {supportTaskId ? (
+            /* 支持包收进菜单之后，进度不能跟着藏起来：收集要几十秒，得看得见在干活。 */
+            <p className="flex items-center gap-1.5 text-meta text-muted-foreground" title="收集面板日志、配置审计和在线 Agent 的脱敏诊断">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              正在收集支持包 {supportBundleQuery.data?.total ? supportBundleQuery.data.total - supportBundleQuery.data.pending : 0}/{supportBundleQuery.data?.total || 0}，完成后自动下载
+            </p>
+          ) : null}
         </CardHeader>
         <CardContent>
           <Tabs value={panelLogLevel} onValueChange={(v) => resetPanelLogs(v as typeof panelLogLevel)} className="space-y-3">
@@ -954,8 +1047,15 @@ function PanelLogsSection() {
             ) : (
               <div className="space-y-1">
                 {panelLogEntries.map((entry: any) => (
-                  <div key={entry.id} className="grid gap-2 sm:grid-cols-[150px_56px_1fr]">
-                    <span className="text-muted-foreground">{new Date(entry.createdAt).toLocaleString()}</span>
+                  <div key={entry.id} className="grid gap-x-2 sm:grid-cols-[112px_48px_1fr]">
+                    {/*
+                      原来是 toLocaleString()：英文系统上是「9/23/2026, 12:51:27 PM」，150px 的列放不下，
+                      每一条都折成两行，一屏只剩一半的日志。日志只看最近 24 小时，年份不用写；
+                      固定成「09-23 12:51:27」，完整时间悬停看。
+                    */}
+                    <span className="whitespace-nowrap text-muted-foreground" title={new Date(entry.createdAt).toLocaleString()}>
+                      {formatLogTime(entry.createdAt)}
+                    </span>
                     <span className={logLevelClass(entry.level)}>{String(entry.level).toUpperCase()}</span>
                     <span className="whitespace-pre-wrap break-words text-foreground/90">{entry.message}</span>
                   </div>
@@ -1582,25 +1682,11 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {[
-          { label: "当前用户", value: displayBackupSummary.userCount },
-          { label: "当前主机", value: displayBackupSummary.hostCount },
-          { label: "当前规则", value: displayBackupSummary.ruleCount },
-          { label: "当前隧道", value: displayBackupSummary.tunnelCount },
-          { label: "转发组", value: displayBackupSummary.forwardGroupCount },
-        ].map((item) => (
-          <Card key={item.label} className="border-border bg-card">
-            <CardContent className="min-h-[80px] p-4">
-              <p className="text-xs text-muted-foreground">{item.label}</p>
-              <div className="mt-1 flex h-7 items-center">
-                <p className="text-xl font-semibold leading-7">{item.value ?? 0}</p>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
+      {/*
+        原来顶上是五张数字卡片（用户 / 主机 / 规则 / 隧道 / 转发组），下面紧跟一条提示
+        「已有业务数据，迁移按增量执行」。这五个数不是要盯着看的指标，是那句话的**依据**
+        —— 为什么是增量、增量会保留哪些东西。放回那句话里：一行字说清，不占五个框。
+      */}
       <Alert>
         <ShieldCheck className="h-4 w-4" />
         <AlertTitle>
@@ -1611,13 +1697,24 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
               : "当前面板没有业务数据，可作为完整恢复执行"}
         </AlertTitle>
         <AlertDescription>
-          {backupSummaryReady
-            ? "增量迁移会保留新面板现有主机、用户、规则和订单数据，并把旧面板数据追加导入；重复的用户账号、主机 Token、订单号、兑换码会复用现有记录。"
-            : "首次进入没有缓存时会先显示 0；接口返回真实数据后会自动更新并缓存，后续进入可直接展示上次统计。"}
+          <span className="block tabular-nums text-foreground">
+            {[
+              `${displayBackupSummary.userCount ?? 0} 个用户`,
+              `${displayBackupSummary.hostCount ?? 0} 台主机`,
+              `${displayBackupSummary.ruleCount ?? 0} 条规则`,
+              `${displayBackupSummary.tunnelCount ?? 0} 条隧道`,
+              `${displayBackupSummary.forwardGroupCount ?? 0} 个转发组`,
+            ].join(" · ")}
+          </span>
+          <span className="block">
+            {backupSummaryReady
+              ? "增量迁移会保留新面板现有主机、用户、规则和订单数据，并把旧面板数据追加导入；重复的用户账号、主机 Token、订单号、兑换码会复用现有记录。"
+              : "首次进入没有缓存时会先显示 0；接口返回真实数据后会自动更新并缓存，后续进入可直接展示上次统计。"}
+          </span>
         </AlertDescription>
       </Alert>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4 @[58rem]:grid-cols-2">
         <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -1783,62 +1880,62 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            {(["sqlite", "mysql", "postgresql"] as DatabaseType[]).map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => {
-                  setDatabaseSwitchType(type);
-                  setTestedDatabaseSwitchKey("");
-                }}
-                className={`rounded-lg border p-3 text-left transition ${
-                  databaseSwitchType === type
-                    ? "border-primary/50 bg-primary/10"
-                    : "border-border/50 bg-background/40 hover:border-primary/30"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-semibold">
-                    {type === "sqlite" ? "SQLite" : type === "mysql" ? "MySQL" : "PostgreSQL"}
-                  </span>
-                  {databaseSwitchType === type && <CheckCircle2 className="h-4 w-4 text-primary" />}
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {type === "sqlite" ? "本地数据文件" : type === "mysql" ? "外部 MySQL 数据库" : "外部 PostgreSQL 数据库"}
-                </p>
-              </button>
-            ))}
-          </div>
-
-          <Alert className="border-primary/20 bg-primary/5 text-primary">
-            <Database className="h-4 w-4" />
-            <AlertTitle>数据库版本要求</AlertTitle>
-            <AlertDescription>
-              SQLite 无需额外服务；MySQL 需要 8.0.13 或更高版本；PostgreSQL 建议使用 12 或更高版本。
-            </AlertDescription>
-          </Alert>
-
-          <div className="grid gap-4 rounded-lg border border-border/40 bg-muted/20 p-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-medium">
-                  当前数据库：{databaseSwitchStatus?.currentType
+          {/*
+            三种数据库原来是三张可点的卡片，下面一条「数据库版本要求」的提示框把三种的要求
+            一起列出来，再下面是一个套在卡片里的灰框装着字段 —— 三层框。它就是三选一：一个
+            分段控件，下面一行只说选中那一种的要求，字段直接跟着。
+          */}
+          <SettingList>
+            <SettingRow
+              label="当前数据库"
+              description="目标数据库需要为空库；迁移完成后面板会自动重启或刷新连接。"
+              control={(
+                <span className="text-secondary-type font-medium">
+                  {databaseSwitchStatus?.currentType
                     ? databaseSwitchStatus.currentType === "sqlite"
                       ? "SQLite"
                       : databaseSwitchStatus.currentType === "mysql"
                         ? "MySQL"
                         : "PostgreSQL"
                     : "未识别"}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  目标数据库需要为空库；迁移完成后面板会自动重启或刷新连接。
-                </p>
+                </span>
+              )}
+            />
+            <SettingRow
+              label="切换到"
+              control={(
+                <Badge variant={isDatabaseSwitchTested ? "default" : "outline"} className="w-fit">
+                  {isDatabaseSwitchTested ? "连接与写入已验证" : "等待测试"}
+                </Badge>
+              )}
+            >
+              <div className={`${segmentedControlClassName} grid grid-cols-3 gap-1`} role="group" aria-label="目标数据库">
+                {(["sqlite", "mysql", "postgresql"] as DatabaseType[]).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    aria-pressed={databaseSwitchType === type}
+                    onClick={() => {
+                      setDatabaseSwitchType(type);
+                      setTestedDatabaseSwitchKey("");
+                    }}
+                    className={segmentedOptionClassName(databaseSwitchType === type)}
+                  >
+                    {type === "sqlite" ? "SQLite" : type === "mysql" ? "MySQL" : "PostgreSQL"}
+                  </button>
+                ))}
               </div>
-              <Badge variant={isDatabaseSwitchTested ? "default" : "outline"} className="w-fit">
-                {isDatabaseSwitchTested ? "连接与写入已验证" : "等待测试"}
-              </Badge>
-            </div>
+              <p className="text-meta text-muted-foreground">
+                {databaseSwitchType === "sqlite"
+                  ? "本地数据文件，无需额外服务。"
+                  : databaseSwitchType === "mysql"
+                    ? "外部 MySQL 数据库，需要 8.0.13 或更高版本。"
+                    : "外部 PostgreSQL 数据库，建议 12 或更高版本。"}
+              </p>
+            </SettingRow>
+          </SettingList>
+
+          <div className="grid gap-4">
 
             {databaseSwitchStatus?.blockedReason && (
               <Alert variant="destructive">
@@ -1923,19 +2020,22 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
                     }}
                   />
                 </FormField>
-                <div className="flex items-center justify-between rounded-md border border-border/50 bg-background/40 p-3">
-                  <div>
-                    <p className="text-sm font-medium">启用 SSL</p>
-                    <p className="text-xs text-muted-foreground">远程数据库或云数据库可按需开启。</p>
-                  </div>
-                  <Checkbox aria-label="启用 SSL"
-                    checked={databaseSwitchExternal.ssl}
-                    onCheckedChange={(ssl) => {
-                      setDatabaseSwitchExternal({ ...databaseSwitchExternal, ssl });
-                      setTestedDatabaseSwitchKey("");
-                    }}
+                <SettingList>
+                  <SettingRow
+                    asLabel
+                    label="启用 SSL"
+                    description="远程数据库或云数据库可按需开启。"
+                    control={(
+                      <Checkbox aria-label="启用 SSL"
+                        checked={databaseSwitchExternal.ssl}
+                        onCheckedChange={(ssl) => {
+                          setDatabaseSwitchExternal({ ...databaseSwitchExternal, ssl });
+                          setTestedDatabaseSwitchKey("");
+                        }}
+                      />
+                    )}
                   />
-                </div>
+                </SettingList>
               </div>
             )}
 
@@ -2062,7 +2162,7 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4 @[58rem]:grid-cols-2">
         <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -2386,38 +2486,40 @@ function TelegramBotSettingsCard() {
           <DataSectionLoading label="正在加载 Telegram 配置" minHeight="min-h-[120px]" />
         ) : (
           <>
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
-              <FormField className="space-y-2">
-                <Label>Bot Token</Label>
-                <Input
-                  type="text"
-                  placeholder={settings?.telegram?.tokenMasked || "从 @BotFather 获取，例如 123456:ABC..."}
-                  value={telegramTokenDisplayValue}
-                  onChange={(e) => {
-                    if (!telegramTokenLocked) setTelegramBotTokenInput(e.target.value);
-                  }}
-                  readOnly={telegramTokenLocked}
-                  disabled={settings?.telegram?.tokenSource === "env"}
-                  onMouseDown={(e) => {
-                    if (telegramTokenLocked) e.preventDefault();
-                  }}
-                  onSelect={(e) => {
-                    if (telegramTokenLocked) e.currentTarget.setSelectionRange(0, 0);
-                  }}
-                  className={telegramTokenLocked ? "select-none font-mono" : "font-mono"}
-                />
-                <p className="text-xs text-muted-foreground">
-                  来源：{tokenSourceLabel}
-                </p>
-              </FormField>
-              <div className="rounded-lg border border-border/40 bg-background/50 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">启用机器人</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {settings?.telegram?.botUsername ? `@${settings.telegram.botUsername}` : "保存 Token 后自动识别机器人"}
-                    </p>
-                  </div>
+            <FormField className="space-y-2">
+              <Label>Bot Token</Label>
+              <Input
+                type="text"
+                placeholder={settings?.telegram?.tokenMasked || "从 @BotFather 获取，例如 123456:ABC..."}
+                value={telegramTokenDisplayValue}
+                onChange={(e) => {
+                  if (!telegramTokenLocked) setTelegramBotTokenInput(e.target.value);
+                }}
+                readOnly={telegramTokenLocked}
+                disabled={settings?.telegram?.tokenSource === "env"}
+                onMouseDown={(e) => {
+                  if (telegramTokenLocked) e.preventDefault();
+                }}
+                onSelect={(e) => {
+                  if (telegramTokenLocked) e.currentTarget.setSelectionRange(0, 0);
+                }}
+                className={telegramTokenLocked ? "select-none font-mono" : "font-mono"}
+              />
+              <p className="text-xs text-muted-foreground">
+                来源：{tokenSourceLabel}
+              </p>
+            </FormField>
+            {/*
+              开关和提醒原来各是一个描边小框，四个框排成两行半，第三行只有一个，右边空着。
+              它们是一张清单：「机器人开不开、三种提醒各开不开」，写成一组行，提醒自己的
+              参数（提前几天、阈值多少）跟在那一行下面。
+            */}
+            <SettingList>
+              <SettingRow
+                asLabel
+                label="启用机器人"
+                description={settings?.telegram?.botUsername ? `@${settings.telegram.botUsername}` : "保存 Token 后自动识别机器人"}
+                control={(
                   <Checkbox aria-label="启用机器人"
                     checked={telegramEnabled}
                     onCheckedChange={(checked) => {
@@ -2428,31 +2530,22 @@ function TelegramBotSettingsCard() {
                       setTelegramEnabled(checked);
                     }}
                   />
-                </div>
-              </div>
-            </div>
-            <Alert>
-              <Globe className="h-4 w-4" />
-              <AlertTitle>快捷登录需要域名</AlertTitle>
-              <AlertDescription>
-                在系统配置填写公开地址，并在 @BotFather 绑定同一域名。
-              </AlertDescription>
-            </Alert>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              <div className="rounded-lg border border-border/40 bg-background/50 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">到期提醒</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || `到期前第 ${expiryReminderDays} 天各提醒一次。`}</p>
-                  </div>
+                )}
+              />
+              <SettingRow
+                asLabel
+                label="到期提醒"
+                description={telegramReminderHint || `到期前第 ${expiryReminderDays} 天各提醒一次。`}
+                control={(
                   <Checkbox aria-label="到期提醒"
                     checked={telegramRemindersReady && telegramExpiryReminder}
                     disabled={!telegramRemindersReady}
                     onCheckedChange={setTelegramExpiryReminder}
                   />
-                </div>
-                <div className="mt-3 space-y-1.5">
-                  <FormField className="flex items-center gap-2">
+                )}
+              >
+                <div className="space-y-1.5">
+                  <FormField className="flex max-w-xs items-center gap-2">
                     <Label className="shrink-0 text-xs text-muted-foreground">提前天数</Label>
                     <Input
                       className="h-8"
@@ -2466,33 +2559,32 @@ function TelegramBotSettingsCard() {
                     逗号分隔，在这几天各发一次。邮件提醒和面板顶上的到期横幅共用这个值；填 0 表示当天也发。
                   </p>
                 </div>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-background/50 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">主机上线/离线通知</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || "仅发送给已绑定 Telegram 的管理员。"}</p>
-                  </div>
+              </SettingRow>
+              <SettingRow
+                asLabel
+                label="主机上线/离线通知"
+                description={telegramReminderHint || "仅发送给已绑定 Telegram 的管理员。"}
+                control={(
                   <Checkbox aria-label="主机上线/离线通知"
                     checked={telegramRemindersReady && telegramHostStatusNotify}
                     disabled={!telegramRemindersReady}
                     onCheckedChange={setTelegramHostStatusNotify}
                   />
-                </div>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-background/50 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">流量提醒</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{telegramReminderHint || "低于阈值时提醒。"}</p>
-                  </div>
+                )}
+              />
+              <SettingRow
+                asLabel
+                label="流量提醒"
+                description={telegramReminderHint || "低于阈值时提醒。"}
+                control={(
                   <Checkbox aria-label="流量提醒"
                     checked={telegramRemindersReady && telegramTrafficReminder}
                     disabled={!telegramRemindersReady}
                     onCheckedChange={setTelegramTrafficReminder}
                   />
-                </div>
-                <FormField className="mt-3 flex items-center gap-2">
+                )}
+              >
+                <FormField className="flex items-center gap-2">
                   <Label className="shrink-0 text-xs text-muted-foreground">阈值</Label>
                   <Input
                     type="number"
@@ -2504,8 +2596,15 @@ function TelegramBotSettingsCard() {
                   />
                   <span className="text-xs text-muted-foreground">%</span>
                 </FormField>
-              </div>
-            </div>
+              </SettingRow>
+            </SettingList>
+            <Alert>
+              <Globe className="h-4 w-4" />
+              <AlertTitle>快捷登录需要域名</AlertTitle>
+              <AlertDescription>
+                在系统配置填写公开地址，并在 @BotFather 绑定同一域名。
+              </AlertDescription>
+            </Alert>
             <div className="flex flex-wrap gap-2">
               <Button onClick={handleSaveTelegram} disabled={updateSettingsMutation.isPending}>
                 保存 Telegram 配置
@@ -2778,6 +2877,32 @@ function DeepSeekSettingsCard() {
             <DataSectionLoading label="正在加载 AI 配置" minHeight="min-h-[120px]" />
           ) : (
             <>
+              {/*
+                「启用 AI 助手」原来画成一个输入框的样子（40px 高、描边、里面一行灰字 + 复选框），
+                和旁边的「提供商」选择框并排 —— 看上去像另一个要填的字段。它是一个开关，
+                放到最上面一行：先说开不开，再说用谁。
+              */}
+              <SettingList>
+                <SettingRow
+                  asLabel
+                  label="启用 AI 助手"
+                  description={providerConfigured
+                    ? `${providerLabel} · ${deepseekModel}${selectedModelMeta?.isFree === true ? " · Free" : (selectedModelMeta?.isFree === false ? " · Paid" : "")}`
+                    : "保存 API Key 后启用"}
+                  control={(
+                    <Checkbox aria-label="启用 AI 助手"
+                      checked={deepseekEnabled}
+                      onCheckedChange={(checked) => {
+                        if (checked && !hasDeepSeekKeyForEnable) {
+                          toast.error("请先填写 AI API Key");
+                          return;
+                        }
+                        setDeepseekEnabled(checked);
+                      }}
+                    />
+                  )}
+                />
+              </SettingList>
               <div className="grid gap-3 md:grid-cols-2">
                 <FormField className="space-y-2">
                   <Label>提供商</Label>
@@ -2792,30 +2917,10 @@ function DeepSeekSettingsCard() {
                     </SelectContent>
                   </Select>
                 </FormField>
-                <div className="space-y-2">
-                  <Label>启用 AI 助手</Label>
-                  <div className="flex h-10 items-center justify-between rounded-md border border-border/40 bg-background/50 px-3">
-                    <p className="min-w-0 flex-1 truncate pr-3 text-sm text-muted-foreground">
-                      {providerConfigured
-                        ? `${providerLabel} · ${deepseekModel}${selectedModelMeta?.isFree === true ? " · Free" : (selectedModelMeta?.isFree === false ? " · Paid" : "")}`
-                        : "保存 API Key 后启用"}
-                    </p>
-                    <Checkbox aria-label="启用 AI 助手"
-                      checked={deepseekEnabled}
-                      onCheckedChange={(checked) => {
-                        if (checked && !hasDeepSeekKeyForEnable) {
-                          toast.error("请先填写 AI API Key");
-                          return;
-                        }
-                        setDeepseekEnabled(checked);
-                      }}
-                    />
-                  </div>
-                </div>
               </div>
 
-              <div className="grid gap-3 lg:grid-cols-12">
-                <FormField className="space-y-2 lg:col-span-5">
+              <div className="grid gap-3 @[42rem]:grid-cols-12">
+                <FormField className="space-y-2 @[42rem]:col-span-5">
                   <Label>API Key</Label>
                   <Input
                     type="text"
@@ -2837,7 +2942,7 @@ function DeepSeekSettingsCard() {
                     按提供商分别保存 API Key，切换提供商时会自动带出对应配置。
                   </p>
                 </FormField>
-                <FormField className="space-y-2 lg:col-span-3">
+                <FormField className="space-y-2 @[42rem]:col-span-3">
                   <Label>接口地址</Label>
                   <Input
                     type="text"
@@ -2847,7 +2952,7 @@ function DeepSeekSettingsCard() {
                     className="font-mono"
                   />
                 </FormField>
-                <FormField className="space-y-2 lg:col-span-4">
+                <FormField className="space-y-2 @[42rem]:col-span-4">
                   <Label>模型</Label>
                   <Input
                     type="text"
@@ -2859,8 +2964,8 @@ function DeepSeekSettingsCard() {
                 </FormField>
               </div>
 
-              <div className="rounded-lg border border-border/40 bg-background/50 p-2.5">
-                <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
                   <p className="text-xs text-muted-foreground">可用聊天模型（支持展示 Free 状态）</p>
                   <Button
                     type="button"
@@ -2929,47 +3034,44 @@ function DeepSeekSettingsCard() {
                 </FormField>
               </div>
 
-              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px]">
-                <div className="rounded-lg border border-border/40 bg-background/50 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium">普通用户可用 AI 管理</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        关闭后普通用户不能使用 AI 对话执行管理操作。
-                      </p>
-                    </div>
+              <SettingList>
+                <SettingRow
+                  asLabel
+                  label="普通用户可用 AI 管理"
+                  description="关闭后普通用户不能使用 AI 对话执行管理操作。"
+                  control={(
                     <Checkbox aria-label="普通用户可用 AI 管理"
                       checked={deepseekTelegramUserManageEnabled}
                       onCheckedChange={setDeepseekTelegramUserManageEnabled}
                     />
-                  </div>
-                </div>
-                <div className="rounded-lg border border-border/40 bg-background/50 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium">机器人信息自动撤回</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        仅对 AI 相关聊天内容生效，默认关闭。
-                      </p>
-                    </div>
+                  )}
+                />
+                {/* 撤回时间是「自动撤回」的参数，原来单独占一个框，和它隔着一格。 */}
+                <SettingRow
+                  asLabel
+                  label="机器人信息自动撤回"
+                  description="仅对 AI 相关聊天内容生效，默认关闭。"
+                  control={(
                     <Checkbox aria-label="机器人信息自动撤回"
                       checked={deepseekTelegramAutoRecallEnabled}
                       onCheckedChange={setDeepseekTelegramAutoRecallEnabled}
                     />
-                  </div>
-                </div>
-                <FormField className="space-y-2 rounded-lg border border-border/40 bg-background/50 p-3">
-                  <Label className="text-xs text-muted-foreground">撤回时间（秒）</Label>
-                  <Input
-                    type="number"
-                    min={30}
-                    max={1200}
-                    value={deepseekTelegramAutoRecallSeconds}
-                    onChange={(e) => setDeepseekTelegramAutoRecallSeconds(Math.min(1200, Math.max(30, Number(e.target.value) || 60)))}
-                  />
-                  <p className="text-xs text-muted-foreground">范围 30-1200 秒，默认 60 秒。</p>
-                </FormField>
-              </div>
+                  )}
+                >
+                  <FormField className="flex flex-wrap items-center gap-2">
+                    <Label className="shrink-0 text-xs text-muted-foreground">撤回时间</Label>
+                    <Input
+                      type="number"
+                      min={30}
+                      max={1200}
+                      value={deepseekTelegramAutoRecallSeconds}
+                      onChange={(e) => setDeepseekTelegramAutoRecallSeconds(Math.min(1200, Math.max(30, Number(e.target.value) || 60)))}
+                      className="h-8 w-24"
+                    />
+                    <span className="text-xs text-muted-foreground">秒（30–1200，默认 60）</span>
+                  </FormField>
+                </SettingRow>
+              </SettingList>
 
               <div className="flex flex-wrap gap-2">
                 <Button onClick={handleSaveDeepSeek} disabled={updateSettingsMutation.isPending}>
@@ -3474,7 +3576,7 @@ function PersonalizationSettingsSection() {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4 @[58rem]:grid-cols-2">
         <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -3663,7 +3765,7 @@ function PersonalizationSettingsSection() {
           </Button>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <div className="grid gap-3 md:grid-cols-2 @[58rem]:grid-cols-6">
             {PERSONALIZATION_THEME_PRESETS.map((preset) => {
               const active = personalizationTheme === preset.id;
               const saving = isSavingPersonalization("theme") && active;
@@ -3732,7 +3834,7 @@ function PersonalizationSettingsSection() {
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <div className="grid gap-5 @[58rem]:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
             <div className="space-y-4">
               <div className="relative min-h-52 overflow-hidden rounded-lg border border-border/40 bg-muted/30">
                 {previewBackgroundUrl ? (
@@ -3797,7 +3899,7 @@ function PersonalizationSettingsSection() {
 
               {backgroundEnabled && (
                 <div className="space-y-3">
-                  <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+                  <div className="grid gap-4 @[42rem]:grid-cols-2 [&>*]:min-w-0">
                     <FormField className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_6rem] sm:items-center">
                       <div className="space-y-2">
                         <Label>背景不透明度</Label>
@@ -3878,7 +3980,7 @@ function PersonalizationSettingsSection() {
               {backgroundSourceMode === "builtin" && (
                 <div className="space-y-2">
                   <p className="text-sm font-medium">内置壁纸</p>
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 @[58rem]:grid-cols-5">
                     {BUILTIN_WALLPAPERS.map((item) => {
                       const active = backgroundConfig.source === "builtin" && backgroundConfig.selectedId === item.id;
                       return (
@@ -3928,7 +4030,7 @@ function PersonalizationSettingsSection() {
                     </div>
                   </div>
                   {backgroundConfig.images.length > 0 ? (
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid gap-3 sm:grid-cols-2 @[58rem]:grid-cols-3">
                       {backgroundConfig.images.map((item) => {
                         const active = backgroundConfig.source === "upload" && backgroundConfig.selectedId === item.id;
                         return (
@@ -3978,7 +4080,7 @@ function PersonalizationSettingsSection() {
                       </a>
                     </Button>
                   </div>
-                  <div className="grid gap-2 lg:grid-cols-[9rem_minmax(0,1fr)_auto]">
+                  <div className="grid gap-2 @[42rem]:grid-cols-[9rem_minmax(0,1fr)_auto]">
                     <Select value={backgroundUrlType} onValueChange={(value) => setBackgroundUrlType(value as PersonalizationBackgroundUrlType)}>
                       <SelectTrigger aria-label="背景链接类型">
                         <SelectValue />
@@ -4024,22 +4126,20 @@ function PersonalizationSettingsSection() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid gap-3 lg:grid-cols-2">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-              <div>
-                <p className="text-sm font-medium">启用公开首页</p>
-                <p className="text-xs text-muted-foreground">关闭后直接进入登录页。</p>
-              </div>
-              <Checkbox aria-label="启用公开首页" checked={homepageEnabled} onCheckedChange={setHomepageEnabled} />
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-              <div>
-                <p className="text-sm font-medium">使用自定义 H5</p>
-                <p className="text-xs text-muted-foreground">优先展示自定义页面。</p>
-              </div>
-              <Checkbox aria-label="使用自定义 H5" checked={homepageCustomEnabled} onCheckedChange={setHomepageCustomEnabled} />
-            </div>
-          </div>
+          <SettingList>
+            <SettingRow
+              asLabel
+              label="启用公开首页"
+              description="关闭后直接进入登录页。"
+              control={<Checkbox aria-label="启用公开首页" checked={homepageEnabled} onCheckedChange={setHomepageEnabled} />}
+            />
+            <SettingRow
+              asLabel
+              label="使用自定义 H5"
+              description="优先展示自定义页面。"
+              control={<Checkbox aria-label="使用自定义 H5" checked={homepageCustomEnabled} onCheckedChange={setHomepageCustomEnabled} />}
+            />
+          </SettingList>
           {homepageCustomEnabled && (
             <div className="space-y-2">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -4920,7 +5020,7 @@ function SystemInfoSection() {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+      <div className="grid gap-4 @[58rem]:grid-cols-2 [&>*]:min-w-0">
         <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -4932,18 +5032,20 @@ function SystemInfoSection() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">普通用户可见网络测试</p>
-                <p className="text-xs text-muted-foreground">
-                  关闭后侧边栏入口和接口都会对普通用户禁用。
-                </p>
-              </div>
-              <Checkbox aria-label="普通用户可见网络测试" className="shrink-0" checked={lookingGlassUserEnabled} onCheckedChange={setLookingGlassUserEnabled} />
+            <SettingList>
+              <SettingRow
+                asLabel
+                label="普通用户可见网络测试"
+                description="关闭后侧边栏入口和接口都会对普通用户禁用。"
+                control={<Checkbox aria-label="普通用户可见网络测试" checked={lookingGlassUserEnabled} onCheckedChange={setLookingGlassUserEnabled} />}
+              />
+            </SettingList>
+            {/* 保存放右下角：这一页别的卡片都是这个位置，只有这一张在左边。 */}
+            <div className="flex justify-end">
+              <Button onClick={handleSaveLookingGlass} disabled={isSavingSetting("networkTest")}>
+                保存
+              </Button>
             </div>
-            <Button onClick={handleSaveLookingGlass} disabled={isSavingSetting("networkTest")}>
-              保存
-            </Button>
           </CardContent>
         </Card>
         <Card className="border-border bg-card">
@@ -4963,24 +5065,18 @@ function SystemInfoSection() {
             </Button>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-lg border border-border/40 bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">全部协议</p>
-                <p className="mt-1 text-lg font-semibold">{totalProtocolEnabledCount} / {totalProtocolCount}</p>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">端口转发</p>
-                <p className="mt-1 text-lg font-semibold">{directProtocolEnabledCount} / {directForwardProtocolKeys.length}</p>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">隧道协议</p>
-                <p className="mt-1 text-lg font-semibold">{tunnelProtocolEnabledCount} / {tunnelForwardProtocolKeys.length}</p>
-              </div>
-            </div>
+            {/*
+              原来是三个小框各放一个数（全部 / 端口转发 / 隧道）。「全部」就是后两个相加，
+              单独占一格不多说任何事；剩下两个是「这一类开了几个」，和别的设置一样写成行。
+            */}
+            <SettingList>
+              <SettingRow label="端口转发" control={<EnabledCount enabled={directProtocolEnabledCount} total={directForwardProtocolKeys.length} />} />
+              <SettingRow label="隧道协议" control={<EnabledCount enabled={tunnelProtocolEnabledCount} total={tunnelForwardProtocolKeys.length} />} />
+            </SettingList>
           </CardContent>
         </Card>
       </div>
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4 @[58rem]:grid-cols-2">
         {/* 面板公开访问地址 */}
         <Card className="border-border bg-card">
           <CardHeader>
@@ -5065,7 +5161,7 @@ function SystemInfoSection() {
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card xl:col-span-2">
+        <Card className="border-border bg-card @[58rem]:col-span-2">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Lock className="h-4 w-4 text-primary" />
@@ -5076,133 +5172,103 @@ function SystemInfoSection() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">启用 HTTPS</p>
-                <p className="text-xs text-muted-foreground">
-                  当前协议：{settings?.panelSsl?.activeProtocol === "https" ? "HTTPS" : "HTTP"}，端口：{webPortDisplay}
-                </p>
-              </div>
-              <Checkbox aria-label="启用 HTTPS" className="shrink-0" checked={panelSslEnabled} onCheckedChange={setPanelSslEnabled} />
-            </div>
-            <div className="flex flex-col gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 items-start gap-2">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                <div className="min-w-0">
-                  <p className="font-medium">当前证书来源：{panelSslSourceLabel}</p>
-                  <p className="text-xs text-muted-foreground">
-                    仅使用当前选中的证书来源。
-                  </p>
-                </div>
-              </div>
-              <Badge variant="outline" className="w-fit shrink-0 border-primary/30 bg-background/70 text-primary">
-                {panelSslEnabled ? "HTTPS 将按此来源启动" : "启用后按此来源启动"}
-              </Badge>
-            </div>
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-              <div className={`space-y-3 rounded-lg border p-3 transition-colors ${panelSslPathActive ? "border-primary/40 bg-primary/5 shadow-sm" : "border-border/40 bg-muted/10 opacity-80"}`}>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium">服务器文件路径</p>
-                      <Badge variant={panelSslPathActive ? "default" : "outline"} className="text-[10px]">
-                        {panelSslPathActive ? "当前使用" : panelSslPathConfigured ? "已保存备用" : "未配置"}
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      读取服务器上的证书和私钥文件。
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={panelSslPathActive ? "default" : "outline"}
-                    onClick={() => setPanelSslMode("path")}
-                    disabled={panelSslPathActive}
-                  >
-                    {panelSslPathActive ? "正在使用" : "使用此来源"}
-                  </Button>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="panel-ssl-cert-path">证书文件路径</Label>
-                <Input
-                  id="panel-ssl-cert-path"
-                  value={panelSslCertPath}
-                  onChange={(e) => setPanelSslCertPath(e.target.value)}
-                  placeholder="/data/certs/fullchain.pem"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="panel-ssl-key-path">私钥文件路径</Label>
-                <Input
-                  id="panel-ssl-key-path"
-                  value={panelSslKeyPath}
-                  onChange={(e) => setPanelSslKeyPath(e.target.value)}
-                  placeholder="/data/certs/privkey.pem"
-                />
-              </div>
-                </div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setPanelSslMode("path");
-                  handleGeneratePanelSelfSigned();
-                }}
-                disabled={generatePanelSelfSignedMutation.isPending}
-              >
-                {generatePanelSelfSignedMutation.isPending ? "生成中..." : "生成自签证书"}
-              </Button>
-              </div>
+            <SettingList>
+              <SettingRow
+                asLabel
+                label="启用 HTTPS"
+                description={`当前协议：${settings?.panelSsl?.activeProtocol === "https" ? "HTTPS" : "HTTP"}，端口：${webPortDisplay}`}
+                control={<Checkbox aria-label="启用 HTTPS" checked={panelSslEnabled} onCheckedChange={setPanelSslEnabled} />}
+              />
+              {/*
+                证书来源：原来是两个并排的大框，各带徽标（当前使用 / 已保存备用 / 未配置）和
+                「使用此来源」按钮，没选中的那个调成 80% 透明，上面再加一条「当前证书来源：…」
+                的提示框 —— 同一件事（选哪一种）说了三遍，框套了三层。
 
-              <div className={`space-y-3 rounded-lg border p-3 transition-colors ${panelSslPemActive ? "border-primary/40 bg-primary/5 shadow-sm" : "border-border/40 bg-muted/10 opacity-80"}`}>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium">粘贴 PEM 内容</p>
-                      <Badge variant={panelSslPemActive ? "default" : "outline"} className="text-[10px]">
-                        {panelSslPemActive ? "当前使用" : panelSslPemConfigured ? "已保存备用" : "未配置"}
-                      </Badge>
+                它就是二选一：一个分段控件，下面只摆选中那一种的字段。另一种填过的内容还在，
+                切过去就看得见；在分段下面用一行字说它是「已保存备用」还是「未配置」。
+              */}
+              <SettingRow
+                label="证书来源"
+                description={panelSslEnabled ? "HTTPS 按选中的来源启动。" : "启用后按选中的来源启动。"}
+              >
+                <div className={`${segmentedControlClassName} grid grid-cols-2 gap-1`} role="group" aria-label="证书来源">
+                  {([
+                    { value: "path", label: "服务器文件路径" },
+                    { value: "pem", label: "粘贴 PEM 内容" },
+                  ] as const).map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={panelSslMode === option.value}
+                      onClick={() => setPanelSslMode(option.value)}
+                      className={segmentedOptionClassName(panelSslMode === option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-meta text-muted-foreground">
+                  {panelSslPathActive
+                    ? `读取服务器上的证书和私钥文件。PEM 内容：${panelSslPemConfigured ? "已保存备用" : "未配置"}。`
+                    : `直接保存证书和私钥 PEM 内容。文件路径：${panelSslPathConfigured ? "已保存备用" : "未配置"}。`}
+                </p>
+                {panelSslPathActive ? (
+                  <div className="space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="panel-ssl-cert-path">证书文件路径</Label>
+                        <Input
+                          id="panel-ssl-cert-path"
+                          value={panelSslCertPath}
+                          onChange={(e) => setPanelSslCertPath(e.target.value)}
+                          placeholder="/data/certs/fullchain.pem"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="panel-ssl-key-path">私钥文件路径</Label>
+                        <Input
+                          id="panel-ssl-key-path"
+                          value={panelSslKeyPath}
+                          onChange={(e) => setPanelSslKeyPath(e.target.value)}
+                          placeholder="/data/certs/privkey.pem"
+                        />
+                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      直接保存证书和私钥 PEM 内容。
-                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleGeneratePanelSelfSigned}
+                      disabled={generatePanelSelfSignedMutation.isPending}
+                    >
+                      {generatePanelSelfSignedMutation.isPending ? "生成中..." : "生成自签证书"}
+                    </Button>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={panelSslPemActive ? "default" : "outline"}
-                    onClick={() => setPanelSslMode("pem")}
-                    disabled={panelSslPemActive}
-                  >
-                    {panelSslPemActive ? "正在使用" : "使用此来源"}
-                  </Button>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="panel-ssl-cert-pem">证书 PEM</Label>
-                  <Textarea
-                    id="panel-ssl-cert-pem"
-                    value={panelSslCertPem}
-                    onChange={(e) => setPanelSslCertPem(e.target.value)}
-                    placeholder="-----BEGIN CERTIFICATE-----"
-                    className="min-h-44 resize-y font-mono text-xs leading-5"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="panel-ssl-key-pem">私钥 PEM</Label>
-                  <Textarea
-                    id="panel-ssl-key-pem"
-                    value={panelSslKeyPem}
-                    onChange={(e) => setPanelSslKeyPem(e.target.value)}
-                    placeholder="-----BEGIN PRIVATE KEY-----"
-                    className="min-h-44 resize-y font-mono text-xs leading-5"
-                  />
-                </div>
-                </div>
-              </div>
-            </div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="panel-ssl-cert-pem">证书 PEM</Label>
+                      <Textarea
+                        id="panel-ssl-cert-pem"
+                        value={panelSslCertPem}
+                        onChange={(e) => setPanelSslCertPem(e.target.value)}
+                        placeholder="-----BEGIN CERTIFICATE-----"
+                        className="min-h-44 resize-y font-mono text-xs leading-5"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="panel-ssl-key-pem">私钥 PEM</Label>
+                      <Textarea
+                        id="panel-ssl-key-pem"
+                        value={panelSslKeyPem}
+                        onChange={(e) => setPanelSslKeyPem(e.target.value)}
+                        placeholder="-----BEGIN PRIVATE KEY-----"
+                        className="min-h-44 resize-y font-mono text-xs leading-5"
+                      />
+                    </div>
+                  </div>
+                )}
+              </SettingRow>
+            </SettingList>
             <p className="text-xs text-muted-foreground">
               默认关闭。保存时会校验证书和私钥，配置生效需要重启面板；端口不变。
             </p>
@@ -5273,7 +5339,7 @@ function SystemInfoSection() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4 @[58rem]:grid-cols-2">
         <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -5285,15 +5351,14 @@ function SystemInfoSection() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-              <div>
-                <p className="text-sm font-medium">开放注册</p>
-                <p className="text-xs text-muted-foreground">
-                  关闭后仅管理员可添加用户。
-                </p>
-              </div>
-              <Checkbox aria-label="开放注册" checked={registrationEnabled} onCheckedChange={setRegistrationEnabled} />
-            </div>
+            <SettingList>
+              <SettingRow
+                asLabel
+                label="开放注册"
+                description="关闭后仅管理员可添加用户。"
+                control={<Checkbox aria-label="开放注册" checked={registrationEnabled} onCheckedChange={setRegistrationEnabled} />}
+              />
+            </SettingList>
             <div className="flex justify-end">
               <Button onClick={handleSaveRegistration} disabled={isSavingSetting("registration")}>
                 保存注册设置
@@ -5313,15 +5378,14 @@ function SystemInfoSection() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-              <div>
-                <p className="text-sm font-medium">启用 2FA 软件支持</p>
-                <p className="text-xs text-muted-foreground">
-                  关闭后隐藏绑定入口。
-                </p>
-              </div>
-              <Checkbox aria-label="启用 2FA 软件支持" checked={twoFactorEnabled} onCheckedChange={setTwoFactorEnabled} />
-            </div>
+            <SettingList>
+              <SettingRow
+                asLabel
+                label="启用 2FA 软件支持"
+                description="关闭后隐藏绑定入口。"
+                control={<Checkbox aria-label="启用 2FA 软件支持" checked={twoFactorEnabled} onCheckedChange={setTwoFactorEnabled} />}
+              />
+            </SettingList>
             <div className="flex justify-end">
               <Button onClick={handleSaveTwoFactor} disabled={isSavingSetting("twoFactor")}>
                 保存双重验证设置
@@ -5342,22 +5406,27 @@ function SystemInfoSection() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 lg:grid-cols-2">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">启用 DDNS</p>
-                <p className="text-xs text-muted-foreground">关闭后不更新域名。</p>
-              </div>
-              <Checkbox aria-label="启用 DDNS" className="shrink-0" checked={ddnsEnabled} onCheckedChange={setDdnsEnabled} />
-            </div>
-            <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">服务商</p>
-                <p className="text-xs text-muted-foreground">选择用于同步域名的 DDNS 服务。</p>
-              </div>
-              <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-56">
+          <SettingList>
+            <SettingRow
+              asLabel
+              label="启用 DDNS"
+              description="关闭后不更新域名。"
+              control={<Checkbox aria-label="启用 DDNS" checked={ddnsEnabled} onCheckedChange={setDdnsEnabled} />}
+            />
+            <SettingRow
+              label="服务商"
+              description={(
+                <>
+                  选择用于同步域名的 DDNS 服务。
+                  <a href={ddnsProviderGuideUrl(ddnsProvider)} target="_blank" rel="noreferrer" className="ml-1 inline-flex items-center gap-0.5 font-medium text-foreground underline-offset-2 hover:underline">
+                    配置教程
+                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                  </a>
+                </>
+              )}
+              control={(
                 <Select value={ddnsProvider} onValueChange={(v) => setDdnsProvider(v as any)}>
-                  <SelectTrigger aria-label="DDNS 服务商"><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label="DDNS 服务商" className="w-40 sm:w-52"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="disabled">不使用</SelectItem>
                     <SelectItem value="cloudflare">Cloudflare</SelectItem>
@@ -5367,15 +5436,9 @@ function SystemInfoSection() {
                     <SelectItem value="webhook">自定义 Webhook</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button type="button" variant="outline" size="sm" className="justify-center gap-2" asChild>
-                  <a href={ddnsProviderGuideUrl(ddnsProvider)} target="_blank" rel="noreferrer">
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    查看配置教程
-                  </a>
-                </Button>
-              </div>
-            </div>
-          </div>
+              )}
+            />
+          </SettingList>
 
           <FormField className="space-y-2">
             <Label>TTL</Label>
@@ -5404,7 +5467,7 @@ function SystemInfoSection() {
 
           {ddnsProvider === "huaweicloud" && (
             <div className="space-y-3">
-              <div className="grid gap-3 lg:grid-cols-2">
+              <div className="grid gap-3 @[42rem]:grid-cols-2">
                 <FormField className="space-y-2">
                   <Label>Access Key ID</Label>
                   <Input value={ddnsHuaweiCloudAccessKeyId} onChange={(e) => setDdnsHuaweiCloudAccessKeyId(e.target.value)} placeholder="华为云 AK" />
@@ -5418,7 +5481,7 @@ function SystemInfoSection() {
                   />
                 </FormField>
               </div>
-              <div className="grid gap-3 lg:grid-cols-2">
+              <div className="grid gap-3 @[42rem]:grid-cols-2">
                 <FormField className="space-y-2">
                   <Label>公网 Zone ID</Label>
                   <Input value={ddnsHuaweiCloudZoneId} onChange={(e) => setDdnsHuaweiCloudZoneId(e.target.value)} placeholder="公网域名 Zone ID" />
@@ -5428,7 +5491,7 @@ function SystemInfoSection() {
                   <Input value={ddnsHuaweiCloudRegion} onChange={(e) => setDdnsHuaweiCloudRegion(e.target.value)} placeholder="cn-north-4" />
                 </FormField>
               </div>
-              <div className="grid gap-3 lg:grid-cols-2">
+              <div className="grid gap-3 @[42rem]:grid-cols-2">
                 <FormField className="space-y-2">
                   <Label>默认线路</Label>
                   <Input value={ddnsHuaweiCloudLine} onChange={(e) => setDdnsHuaweiCloudLine(e.target.value)} placeholder="default_view" />
@@ -5443,7 +5506,7 @@ function SystemInfoSection() {
 
           {ddnsProvider === "aliyun" && (
             <div className="space-y-3">
-              <div className="grid gap-3 lg:grid-cols-2">
+              <div className="grid gap-3 @[42rem]:grid-cols-2">
                 <FormField className="space-y-2">
                   <Label>AccessKey ID</Label>
                   <Input value={ddnsAliyunAccessKeyId} onChange={(e) => setDdnsAliyunAccessKeyId(e.target.value)} placeholder="阿里云 AccessKey ID" />
@@ -5457,7 +5520,7 @@ function SystemInfoSection() {
                   />
                 </FormField>
               </div>
-              <div className="grid gap-3 lg:grid-cols-2">
+              <div className="grid gap-3 @[42rem]:grid-cols-2">
                 <FormField className="space-y-2">
                   <Label>主域名</Label>
                   <Input value={ddnsAliyunDomainName} onChange={(e) => setDdnsAliyunDomainName(e.target.value)} placeholder="example.com" />
@@ -5467,7 +5530,7 @@ function SystemInfoSection() {
                   <Input value={ddnsAliyunEndpoint} onChange={(e) => setDdnsAliyunEndpoint(e.target.value)} placeholder="https://alidns.aliyuncs.com" />
                 </FormField>
               </div>
-              <div className="grid gap-3 lg:grid-cols-2">
+              <div className="grid gap-3 @[42rem]:grid-cols-2">
                 <FormField className="space-y-2">
                   <Label>默认线路</Label>
                   <Input value={ddnsAliyunLine} onChange={(e) => setDdnsAliyunLine(e.target.value)} placeholder="default" />
@@ -5478,7 +5541,7 @@ function SystemInfoSection() {
 
           {ddnsProvider === "tencentcloud" && (
             <div className="space-y-3">
-              <div className="grid gap-3 lg:grid-cols-2">
+              <div className="grid gap-3 @[42rem]:grid-cols-2">
                 <FormField className="space-y-2">
                   <Label>SecretId</Label>
                   <Input value={ddnsTencentCloudSecretId} onChange={(e) => setDdnsTencentCloudSecretId(e.target.value)} placeholder="腾讯云 SecretId" />
@@ -5492,13 +5555,13 @@ function SystemInfoSection() {
                   />
                 </FormField>
               </div>
-              <div className="grid gap-3 lg:grid-cols-2">
+              <div className="grid gap-3 @[42rem]:grid-cols-2">
                 <FormField className="space-y-2">
                   <Label>主域名</Label>
                   <Input value={ddnsTencentCloudDomainName} onChange={(e) => setDdnsTencentCloudDomainName(e.target.value)} placeholder="example.com" />
                 </FormField>
               </div>
-              <div className="grid gap-3 lg:grid-cols-2">
+              <div className="grid gap-3 @[42rem]:grid-cols-2">
                 <FormField className="space-y-2">
                   <Label>默认线路名称</Label>
                   <Input value={ddnsTencentCloudRecordLine} onChange={(e) => setDdnsTencentCloudRecordLine(e.target.value)} placeholder="默认" />
@@ -5513,7 +5576,7 @@ function SystemInfoSection() {
 
           {ddnsProvider === "webhook" && (
             <div className="space-y-3">
-              <div className="grid gap-3 lg:grid-cols-[160px_minmax(0,1fr)]">
+              <div className="grid gap-3 @[42rem]:grid-cols-[160px_minmax(0,1fr)]">
                 <FormField className="space-y-2">
                   <Label>请求方法</Label>
                   <Select value={ddnsWebhookMethod} onValueChange={(v) => setDdnsWebhookMethod(v as any)}>
@@ -5564,15 +5627,17 @@ function SystemInfoSection() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium">允许免登录查看主机监控</p>
-            </div>
-            <Checkbox aria-label="允许免登录查看主机监控" className="shrink-0" checked={publicHostMonitorEnabled} onCheckedChange={setPublicHostMonitorEnabled} />
-          </div>
+          <SettingList>
+            <SettingRow
+              asLabel
+              label="允许免登录查看主机监控"
+              description="打开后，知道下面访问地址的人不用登录就能看主机状态。"
+              control={<Checkbox aria-label="允许免登录查看主机监控" checked={publicHostMonitorEnabled} onCheckedChange={setPublicHostMonitorEnabled} />}
+            />
+          </SettingList>
 
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
-            <FormField className="space-y-2 lg:col-span-2">
+          <div className="grid gap-3 @[42rem]:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
+            <FormField className="space-y-2 @[42rem]:col-span-2">
               <Label>展示标题</Label>
               <Input
                 value={publicHostMonitorTitle}
@@ -5614,7 +5679,7 @@ function SystemInfoSection() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4 @[58rem]:grid-cols-2">
         <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -5626,15 +5691,14 @@ function SystemInfoSection() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">允许多设备在线</p>
-                <p className="text-xs text-muted-foreground">
-                  关闭时后登录的设备会立即接管，正在使用的旧会话将退出；仅保留 Cookie 但未在使用的设备不会阻止新登录。
-                </p>
-              </div>
-              <Checkbox aria-label="允许多设备在线" className="shrink-0" checked={allowMultiDeviceLogin} onCheckedChange={setAllowMultiDeviceLogin} />
-            </div>
+            <SettingList>
+              <SettingRow
+                asLabel
+                label="允许多设备在线"
+                description="关闭时后登录的设备会立即接管，正在使用的旧会话将退出；仅保留 Cookie 但未在使用的设备不会阻止新登录。"
+                control={<Checkbox aria-label="允许多设备在线" checked={allowMultiDeviceLogin} onCheckedChange={setAllowMultiDeviceLogin} />}
+              />
+            </SettingList>
             <div className="flex justify-end">
               <Button onClick={handleSaveSessionPolicy} disabled={isSavingSetting("sessionPolicy")}>
                 {isSavingSetting("sessionPolicy") && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -5661,10 +5725,9 @@ function SystemInfoSection() {
             </Button>
           </CardHeader>
           <CardContent>
-            <div className="rounded-lg border border-border/40 bg-muted/20 p-3">
-              <p className="text-xs text-muted-foreground">已开启菜单</p>
-              <p className="mt-1 text-lg font-semibold">{sidebarMenuEnabledCount} / {SIDEBAR_MENU_KEYS.length}</p>
-            </div>
+            <SettingList>
+              <SettingRow label="常用入口" control={<EnabledCount enabled={sidebarMenuEnabledCount} total={SIDEBAR_MENU_KEYS.length} />} />
+            </SettingList>
           </CardContent>
         </Card>
       </div>
@@ -5782,7 +5845,7 @@ function SystemInfoSection() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+      <div className="grid gap-4 @[58rem]:grid-cols-2 [&>*]:min-w-0">
         {/* 版本升级 */}
         <Card className="border-border bg-card">
           <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -5797,22 +5860,15 @@ function SystemInfoSection() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(220px,0.9fr)]">
-              <div className="rounded-lg border border-border/40 bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">当前面板版本</p>
-                <p className="mt-1 font-mono text-sm">v{upgradeStatus?.currentVersion || settings?.version}</p>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">当前 Agent 目标版本</p>
-                <p className="mt-1 font-mono text-sm">v{upgradeStatus?.currentAgentVersion || settings?.agentVersion || "-"}</p>
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">自动检查更新</p>
-                  <p className="text-xs text-muted-foreground">开启后定期检查面板和 Agent 更新。</p>
-                </div>
+            <SettingList>
+              <SettingRow label="当前面板版本" control={<span className="font-mono text-secondary-type">v{upgradeStatus?.currentVersion || settings?.version}</span>} />
+              <SettingRow label="当前 Agent 目标版本" control={<span className="font-mono text-secondary-type">v{upgradeStatus?.currentAgentVersion || settings?.agentVersion || "-"}</span>} />
+              <SettingRow
+                asLabel
+                label="自动检查更新"
+                description="开启后定期检查面板和 Agent 更新。"
+                control={(
                 <OptimisticSwitch aria-label="自动检查更新"
-                  className="shrink-0"
                   checked={updateAutoCheckEnabled}
                   onCheckedChangeAsync={(checked) => updateAutoCheckMutation.mutateAsync({ updateAutoCheckEnabled: checked })}
                   onToggleSuccess={(checked) => {
@@ -5823,8 +5879,9 @@ function SystemInfoSection() {
                   }}
                   onToggleError={(error) => toast.error(error instanceof Error ? error.message : "自动检查更新失败")}
                 />
-              </div>
-            </div>
+                )}
+              />
+            </SettingList>
 
           {updateInfo?.error && (
             <Alert variant="destructive">
@@ -5876,9 +5933,9 @@ function SystemInfoSection() {
           )}
 
           {updateInfo && !updateInfo.error && !updateInfo.pendingReason && !updateInfo.hasUpdate && (
-            <div className="rounded-lg border border-border/40 bg-muted/20 p-3 text-sm text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               当前已是最新版本，上次检查时间：{new Date(updateInfo.checkedAt).toLocaleString()}
-            </div>
+            </p>
           )}
 
           <div className="flex flex-wrap gap-2">
@@ -6056,39 +6113,26 @@ function SystemInfoSection() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 lg:grid-cols-2">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">启用 GitHub 加速地址</p>
-                <p className="text-xs text-muted-foreground">
-                  开启并填写地址后，GitHub 真实地址会拼接在加速地址后面。
-                </p>
-              </div>
-              <Checkbox aria-label="启用 GitHub 加速地址" className="shrink-0" checked={githubAcceleratorEnabled} onCheckedChange={setGithubAcceleratorEnabled} />
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">优先连接面板安装 Agent</p>
-                <p className="text-xs text-muted-foreground">
-                  开启后先从面板拉取安装脚本和 Agent 程序，失败后回退 GitHub。
-                </p>
-              </div>
-              <Checkbox aria-label="优先连接面板安装 Agent" className="shrink-0" checked={agentPreferPanelInstall} onCheckedChange={setAgentPreferPanelInstall} />
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 lg:col-span-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">面板更新使用加速站</p>
-                <p className="text-xs text-muted-foreground">
-                  版本检查、Release 安装包、版本回退和升级脚本优先使用加速地址，失败时自动回退直连。
-                </p>
-              </div>
-              <Checkbox aria-label="面板更新使用加速站"
-                className="shrink-0"
-                checked={githubAcceleratorPanelUpdateEnabled}
-                onCheckedChange={setGithubAcceleratorPanelUpdateEnabled}
-              />
-            </div>
-          </div>
+          <SettingList>
+            <SettingRow
+              asLabel
+              label="启用 GitHub 加速地址"
+              description="开启并填写地址后，GitHub 真实地址会拼接在加速地址后面。"
+              control={<Checkbox aria-label="启用 GitHub 加速地址" checked={githubAcceleratorEnabled} onCheckedChange={setGithubAcceleratorEnabled} />}
+            />
+            <SettingRow
+              asLabel
+              label="优先连接面板安装 Agent"
+              description="开启后先从面板拉取安装脚本和 Agent 程序，失败后回退 GitHub。"
+              control={<Checkbox aria-label="优先连接面板安装 Agent" checked={agentPreferPanelInstall} onCheckedChange={setAgentPreferPanelInstall} />}
+            />
+            <SettingRow
+              asLabel
+              label="面板更新使用加速站"
+              description="版本检查、Release 安装包、版本回退和升级脚本优先使用加速地址，失败时自动回退直连。"
+              control={<Checkbox aria-label="面板更新使用加速站" checked={githubAcceleratorPanelUpdateEnabled} onCheckedChange={setGithubAcceleratorPanelUpdateEnabled} />}
+            />
+          </SettingList>
           <FormField className="space-y-2">
             <Label>GitHub 加速地址</Label>
             <Input
@@ -6375,8 +6419,12 @@ function SystemInfoSection() {
             项目地址与联系渠道。
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
+        <CardContent>
+          {/*
+            两个链接原来各是一个描边小框（外面再套一个图标方块），下面两行版本号又是另一种
+            写法。都是「一项 → 一个值」，写成同一组行：链接那两行整行可点。
+          */}
+          <SettingList>
             {contactLinks.map((item) => {
               const Icon = item.icon;
               return (
@@ -6385,31 +6433,20 @@ function SystemInfoSection() {
                   href={item.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex min-w-0 items-center justify-between rounded-lg border border-border/40 p-3 transition-colors hover:bg-accent/40"
+                  className="fx-list-row group flex min-w-0 items-center gap-3 py-3 first:pt-0 last:pb-0"
                 >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted/50">
-                      <Icon className={`h-4 w-4 ${item.iconClassName}`} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{item.label}</p>
-                      <p className="truncate font-mono text-xs text-muted-foreground">{item.url}</p>
-                    </div>
-                  </div>
-                  <ExternalLink className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <Icon className={`h-4 w-4 shrink-0 ${item.iconClassName}`} aria-hidden="true" />
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="truncate text-secondary-type font-medium text-foreground group-hover:underline">{item.label}</span>
+                    <span className="truncate font-mono text-meta text-muted-foreground">{item.url}</span>
+                  </span>
+                  <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </a>
               );
             })}
-          </div>
-
-          <div className="flex items-center justify-between text-xs text-muted-foreground pt-2">
-            <span>当前版本</span>
-            <code className="font-mono">v{settings?.version}</code>
-          </div>
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Android APP</span>
-            <code className="font-mono">v{settings?.androidAppVersion}</code>
-          </div>
+            <SettingRow label="当前版本" control={<span className="font-mono text-secondary-type">v{settings?.version}</span>} />
+            <SettingRow label="Android APP" control={<span className="font-mono text-secondary-type">v{settings?.androidAppVersion}</span>} />
+          </SettingList>
         </CardContent>
       </Card>
     </div>

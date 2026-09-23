@@ -1,0 +1,60 @@
+import type { ReactNode } from "react";
+
+import { cn } from "@/lib/utils";
+
+/**
+ * 卡片里的一组设置：一行一项，名字和说明在左，控件在右，行与行之间一根细线。
+ *
+ * 取代设置页里那种「一个开关一个小框」（圆角 + 描边 + 灰底 + 12px 内边距）。
+ * 手册的规矩是块里面再分组先用间距和细线（L2），小框是 V1 的「框里套框」——
+ * 系统设置六个分区的卡片里一共套着 48 个这种框（系统配置一页 22 个）。框本身不说
+ * 任何事，一屏几十个框读起来就是线框图。
+ *
+ * 分隔线和分组列表是同一条（.fx-list-row 相邻时画上边线），所以一张卡片里的设置行和
+ * 一张分组列表里的行看起来是一回事。首行上面、末行下面不留内边距：列表贴着卡片自己的
+ * 内边距走，不在卡片的留白上再叠一层。
+ */
+export function SettingList({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={cn("flex min-w-0 flex-col", className)}>{children}</div>;
+}
+
+export function SettingRow({
+  label,
+  description,
+  control,
+  asLabel = false,
+  className,
+  children,
+}: {
+  label: ReactNode;
+  description?: ReactNode;
+  /** 右边的控件：开关、复选框、短的选择框或一个按钮。 */
+  control?: ReactNode;
+  /**
+   * 整行做成 <label>：点名字、点说明都等于点右边那个开关。只在控件是**一个**开关或
+   * 复选框时用 —— 手机上那个 20px 的方块不好点，整行就是 44px 以上的一块。
+   * 右边是选择框或按钮时别开：点名字会去开选择框。
+   */
+  asLabel?: boolean;
+  className?: string;
+  /** 这一项打开之后才出现的那几个字段，跟在这一行下面、同一格里。 */
+  children?: ReactNode;
+}) {
+  const Row = asLabel ? "label" : "div";
+  return (
+    <div className={cn("fx-list-row flex min-w-0 flex-col gap-3 py-3 first:pt-0 last:pb-0", className)}>
+      <Row className={cn("flex min-w-0 items-center justify-between gap-3", asLabel && "cursor-pointer")}>
+        {/*
+          说明用 span 不用 p：手机上 `.workspace-main p` 会给每个段落加上下各 12px 的外边距，
+          一行设置会被撑成三行高。
+        */}
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-secondary-type font-medium text-foreground">{label}</span>
+          {description ? <span className="text-meta text-muted-foreground">{description}</span> : null}
+        </span>
+        {control ? <span className="flex shrink-0 items-center gap-2">{control}</span> : null}
+      </Row>
+      {children}
+    </div>
+  );
+}

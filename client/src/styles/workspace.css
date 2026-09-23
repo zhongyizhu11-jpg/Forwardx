@@ -725,6 +725,21 @@
 
   选择器同样带 .workspace-main 打平特指度，再靠后写赢。
 */
+/*
+  分区标题：设置页右栏顶上、手机上进到某个分区之后那一行。
+
+  和上面的分组小标题一个道理：必须是 h2，而手机上 `.workspace-main h2` 会把它改成
+  20px —— 手册里区块标题在手机上是 17px。用专门的类钉住，别跟页面级规则拼特指度。
+*/
+.fx-pane-title,
+.workspace-main .fx-pane-title {
+  font-size: var(--fx-size-section);
+  line-height: var(--fx-line-section);
+  font-weight: 600;
+  letter-spacing: -.01em;
+  color: var(--fx-text);
+}
+
 .fx-list-section-header,
 .workspace-main .fx-list-section-header {
   padding-inline: 4px;
