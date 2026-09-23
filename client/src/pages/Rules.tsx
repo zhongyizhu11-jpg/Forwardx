@@ -110,6 +110,7 @@ import {
   type FailoverSchedule,
   type FailoverScheduleWindow,
 } from "@shared/failoverSchedule";
+import { readFailoverPin } from "@shared/failoverPin";
 import {
   describeFailoverLines,
   failoverLineHintText,
@@ -2695,12 +2696,16 @@ function RulesContent() {
       failoverProbeTarget: String(rule.failoverProbeTarget || ""),
       failoverSchedule: parseFailoverSchedule(rule.failoverSchedule),
       failoverMinHoldSeconds: Number(rule.failoverMinHoldSeconds || 0),
-      failoverPin: Number.isInteger(Number(rule.failoverPinnedIndex))
-        ? {
-          index: Number(rule.failoverPinnedIndex),
-          until: rule.failoverPinnedUntil ? Math.floor(new Date(rule.failoverPinnedUntil).getTime() / 1000) : null,
-        }
-        : null,
+      /*
+        钉子怎么读交给 shared/failoverPin。上一版这里是 Number.isInteger(Number(...))，
+        而没钉的规则这一列是 null —— Number(null) 是 0，于是打开任何一条主备规则，
+        编辑框都显示「强制走 主出站 · 一直钉着」，保存一次就真的钉死了。
+        已经过期的钉子也按没钉处理，不再显示一个早就交回的期限。
+      */
+      failoverPin: (() => {
+        const pin = readFailoverPin(rule);
+        return pin ? { index: pin.index, until: pin.untilMs ? Math.floor(pin.untilMs / 1000) : null } : null;
+      })(),
       failoverPreferFastest: !!rule.failoverPreferFastest,
       failoverSeconds: Number(rule.failoverSeconds || 60),
       recoverSeconds: Number(rule.recoverSeconds || 120),
