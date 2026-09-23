@@ -20,6 +20,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import DashboardLayout from "@/components/DashboardLayout";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import DatePickerInput, { formatDateInputValue, parseDateInputValue } from "@/components/DatePickerInput";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import { AvatarPicker } from "@/components/AvatarPicker";
@@ -74,10 +75,7 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 import { trpc } from "@/lib/trpc";
 import { forwardAccessResultMessage } from "@shared/forwardAccessMessage";
 import {
-  ArrowDownToLine,
-  ArrowRightLeft,
   ChevronRight,
-  ArrowUpFromLine,
   ShieldOff,
   Package,
   Plus,
@@ -98,7 +96,7 @@ import {
   MoreHorizontal,
   Pencil,
 } from "lucide-react";
-import { useState, useEffect, useMemo, type ElementType } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { BILLING_DATE_TIME_FORMAT_OPTIONS, billingCalendarParts } from "@shared/billingTime";
@@ -153,63 +151,6 @@ function currentBillingResetDay() {
 
 function isSubscriptionActive(sub: any) {
   return sub?.status === "active" && (!sub.expiresAt || new Date(sub.expiresAt).getTime() > Date.now());
-}
-
-function UserStatCard({
-  title,
-  value,
-  subtitle,
-  icon: Icon,
-  loading,
-  cacheKey,
-  fallbackValue,
-  className,
-}: {
-  title: string;
-  value: string | number;
-  subtitle?: string;
-  icon: ElementType;
-  loading?: boolean;
-  cacheKey: string;
-  fallbackValue?: string | number;
-  className?: string;
-}) {
-  return (
-    <Card className={`group relative overflow-hidden border-border bg-card transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5 ${className || ""}`}>
-      <CardContent className="relative p-3 sm:p-4">
-        <div className="flex items-start justify-between gap-2 sm:gap-3">
-          <div className="min-w-0 flex-1 space-y-1">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
-            <AnimatedStatValue
-              as="p"
-              value={value}
-              loading={loading}
-              cacheKey={cacheKey}
-              fallbackValue={fallbackValue}
-              className="break-words text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl"
-            />
-            {subtitle && (
-              <AnimatedStatValue
-                as="p"
-                value={subtitle}
-                loading={loading}
-                cacheKey={`${cacheKey}.subtitle`}
-                fallbackValue=""
-                className="break-words text-xs text-muted-foreground"
-              />
-            )}
-          </div>
-          {/*
-            图标方块以前按卡片刷不同的渐变色（余额绿、折扣码琥珀…）—— 那不是状态，
-            只是四张卡各挑了一个颜色。颜色在这套面板里只说状态，所以改中性。
-          */}
-          <div className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--fx-l3-control-fill)] sm:flex">
-            <Icon className="h-5 w-5 text-[var(--fx-text-secondary)]" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
 }
 
 function UsersContent() {
@@ -1421,46 +1362,16 @@ function UsersContent() {
           </Button>
         </>} />
 
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        <UserStatCard
-          title="用户总数"
-          value={userSummary?.totalUsers ?? userPageQuery.data?.totalItems ?? 0}
-          subtitle={`${adminCount} 个管理员`}
-          icon={UsersIcon}
-          loading={summaryLoading || isLoading}
-          cacheKey="users.summary.totalUsers"
-          fallbackValue={0}
-        />
-        <UserStatCard
-          title="转发规则"
-          value={userSummary?.totalRules ?? 0}
-          subtitle={`${userSummary?.activeRules ?? 0} 条已启用`}
-          icon={ArrowRightLeft}
-          loading={summaryLoading}
-          cacheKey="users.summary.totalRules"
-          fallbackValue={0}
-        />
-        <UserStatCard
-          title="入站流量"
-          value={formatBytes(userSummary?.totalTrafficIn ?? 0)}
-          subtitle="所有用户累计入站"
-          icon={ArrowDownToLine}
-          loading={summaryLoading}
-          cacheKey="users.summary.totalTrafficIn"
-          fallbackValue="0 B"
-          className="col-span-2 sm:col-span-1"
-        />
-        <UserStatCard
-          title="出站流量"
-          value={formatBytes(userSummary?.totalTrafficOut ?? 0)}
-          subtitle="所有用户累计出站"
-          icon={ArrowUpFromLine}
-          loading={summaryLoading}
-          cacheKey="users.summary.totalTrafficOut"
-          fallbackValue="0 B"
-          className="col-span-2 sm:col-span-1"
-        />
-      </div>
+      <SummaryStrip
+        ariaLabel="用户概况"
+        loading={summaryLoading}
+        items={[
+          { key: "users", label: "用户", value: userSummary?.totalUsers ?? userPageQuery.data?.totalItems ?? 0, hint: `${adminCount} 个管理员`, loading: summaryLoading || isLoading, cacheKey: "users.summary.totalUsers", fallbackValue: 0 },
+          { key: "rules", label: "转发规则", value: userSummary?.totalRules ?? 0, hint: `${userSummary?.activeRules ?? 0} 条已启用`, cacheKey: "users.summary.totalRules", fallbackValue: 0 },
+          { key: "in", label: "累计入站", value: formatBytes(userSummary?.totalTrafficIn ?? 0), hint: "所有用户", cacheKey: "users.summary.totalTrafficIn", fallbackValue: "0 B" },
+          { key: "out", label: "累计出站", value: formatBytes(userSummary?.totalTrafficOut ?? 0), hint: "所有用户", cacheKey: "users.summary.totalTrafficOut", fallbackValue: "0 B" },
+        ]}
+      />
 
       <Tabs value={manageType} onValueChange={handleManageTypeChange} className="space-y-4">
         <SlidingTabsList items={userManageTabItems} activeValue={manageType} ariaLabel="用户管理" minItemWidthRem={10.5} />

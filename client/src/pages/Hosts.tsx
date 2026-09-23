@@ -23,7 +23,7 @@ import HostCard, { HostActionButtons } from "@/components/hosts/HostCard";
 // 本页 902 行已有一个同名的统计小卡，这里取别名区分：这个是主机列表里的实体卡
 import HostEntitySummaryCard from "@/components/hosts/HostSummaryCard";
 import HostDetailDialog from "@/components/hosts/HostDetailDialog";
-import { Metric } from "@/components/entity/Metric";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import HostGroupManager, { compareHostGroupDisplayOrder, type HostGroupView, type HostGroupViewMode } from "@/components/hosts/HostGroupManager";
 import HostProbeServiceManager, { type HostProbeServiceViewMode } from "@/components/hosts/HostProbeServiceManager";
 import HostProbeServiceLatencyDialog from "@/components/hosts/HostProbeServiceLatencyDialog";
@@ -2485,38 +2485,35 @@ function HostsContent() {
 
           这是 Surface A（页面级模块）：一个面，内部靠竖线分栏，不各画各的框。
         */}
-        <div className="stat-strip grid grid-cols-3 divide-x divide-[var(--fx-stroke-weak)] rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)]">
-          <div className="min-w-0 px-3 py-2.5">
-            <Metric
-              label="在线"
-              value={`${effectiveHostSummary?.onlineHosts ?? onlineCount} / ${effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length}`}
-              size="inline"
-              hint={(() => {
+        <SummaryStrip
+          ariaLabel="主机概况"
+          items={[
+            {
+              key: "online",
+              label: "在线",
+              value: `${effectiveHostSummary?.onlineHosts ?? onlineCount} / ${effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length}`,
+              hint: (() => {
                 if (!effectiveHostSummary) return "暂无统计";
                 const total = effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length;
                 const online = effectiveHostSummary?.onlineHosts ?? onlineCount;
                 const offline = Math.max(0, total - online);
                 return offline > 0 ? `离线 ${offline} 台` : "全部在线";
-              })()}
-            />
-          </div>
-          <div className="min-w-0 px-3 py-2.5">
-            <Metric
-              label="瞬时"
-              value={`↓ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficIn)}`}
-              size="inline"
-              hint={`↑ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficOut)}`}
-            />
-          </div>
-          <div className="min-w-0 px-3 py-2.5">
-            <Metric
-              label="累计"
-              value={`↓ ${formatBytes(effectiveHostSummary?.totalTrafficIn)}`}
-              size="inline"
-              hint={`↑ ${formatBytes(effectiveHostSummary?.totalTrafficOut)}`}
-            />
-          </div>
-        </div>
+              })(),
+            },
+            {
+              key: "rate",
+              label: "瞬时",
+              value: `↓ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficIn)}`,
+              hint: `↑ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficOut)}`,
+            },
+            {
+              key: "total",
+              label: "累计",
+              value: `↓ ${formatBytes(effectiveHostSummary?.totalTrafficIn)}`,
+              hint: `↑ ${formatBytes(effectiveHostSummary?.totalTrafficOut)}`,
+            },
+          ]}
+        />
         {user?.role === "admin" && (
           <HostGroupFilterBar
             groups={hostGroups as HostGroupView[]}

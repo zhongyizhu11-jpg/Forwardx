@@ -8,7 +8,7 @@ import { proxyNodeMetaText, type ProxyNodeRowSpec } from "@/components/proxy/Pro
 import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import DataSectionError from "@/components/DataSectionError";
-import StatCard from "@/components/StatCard";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -78,7 +78,6 @@ import {
   Atom,
   AudioLines,
   Cat,
-  CheckCircle2,
   ChevronDown,
   Copy,
   Eye,
@@ -92,7 +91,6 @@ import {
   Plus,
   QrCode,
   Rocket,
-  Server,
   Share2,
   Shield,
   Boxes,
@@ -960,57 +958,42 @@ export default function ClientSubscriptionsPage() {
         {/*
           顶上这一排概览。
           原来一进来就是两张大卡片，得逐个展开才知道「我现在到底有几条线路、有没有
-          东西要处理」。这几个数就是这一页的全部问题，摆在最前面，和仪表盘同一种卡片。
+          东西要处理」。这几个数就是这一页的全部问题，摆在最前面 —— 一条摘要，和主机页
+          同一种画法，不是四张各带图标的卡片。
         */}
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-          <StatCard
-            title="客户端线路"
-            value={preview?.nodes.length ?? 0}
-            subtitle={`中转 ${relayPreviewNodes.length} · 直连 ${directPreviewNodes.length}`}
-            icon={Zap}
-            loading={previewQuery.isLoading}
-            cacheKey="subscriptions.stats.nodes"
-            fallbackValue={0}
-            index={0}
-            /*
-              「客户端线路」和「待处理」讲的是同一件事的两面 —— 订阅里有什么、还差什么。
-              所以两张卡都通向「订阅内容」那个弹窗：想看细节的人不必再去找那个按钮。
-            */
-            onClick={(preview?.nodes.length ?? 0) > 0 ? () => setPreviewOpen(true) : undefined}
-          />
-          <StatCard
-            title="落地节点"
-            value={nodeCount}
-            subtitle={healthSummary.subtitle}
-            icon={Server}
-            loading={nodesQuery.isLoading}
-            cacheKey="subscriptions.stats.landing"
-            fallbackValue={0}
-            index={1}
-          />
-          <StatCard
-            title="订阅链接"
-            value={tokens.length}
-            subtitle={tokens.length > 0 ? "导入客户端用的地址" : "还没建"}
-            icon={Link2}
-            loading={tokensQuery.isLoading}
-            cacheKey="subscriptions.stats.tokens"
-            fallbackValue={0}
-            index={2}
-          />
-          <StatCard
-            title="待处理"
-            value={pendingCount}
-            subtitle={pendingSubtitle}
-            icon={pendingCount > 0 ? AlertTriangle : CheckCircle2}
-            loading={previewQuery.isLoading}
-            cacheKey="subscriptions.stats.pending"
-            fallbackValue={0}
-            index={3}
-            // 写着「你有 N 件事要处理」的卡片，本来就该是点进去处理的入口。
-            onClick={pendingCount > 0 ? () => setPreviewOpen(true) : undefined}
-          />
-        </div>
+        <SummaryStrip
+          ariaLabel="订阅概况"
+          items={[
+            {
+              key: "nodes",
+              label: "客户端线路",
+              value: preview?.nodes.length ?? 0,
+              hint: `中转 ${relayPreviewNodes.length} · 直连 ${directPreviewNodes.length}`,
+              loading: previewQuery.isLoading,
+              cacheKey: "subscriptions.stats.nodes",
+              fallbackValue: 0,
+              /*
+                「客户端线路」和「待处理」讲的是同一件事的两面 —— 订阅里有什么、还差什么。
+                所以两个数都通向「订阅内容」那个弹窗：想看细节的人不必再去找那个按钮。
+              */
+              onClick: (preview?.nodes.length ?? 0) > 0 ? () => setPreviewOpen(true) : undefined,
+            },
+            { key: "landing", label: "落地节点", value: nodeCount, hint: healthSummary.subtitle, loading: nodesQuery.isLoading, cacheKey: "subscriptions.stats.landing", fallbackValue: 0 },
+            { key: "tokens", label: "订阅链接", value: tokens.length, hint: tokens.length > 0 ? "导入客户端用的地址" : "还没建", loading: tokensQuery.isLoading, cacheKey: "subscriptions.stats.tokens", fallbackValue: 0 },
+            {
+              key: "pending",
+              label: "待处理",
+              value: pendingCount,
+              hint: pendingSubtitle,
+              tone: pendingCount > 0 ? "warn" : undefined,
+              loading: previewQuery.isLoading,
+              cacheKey: "subscriptions.stats.pending",
+              fallbackValue: 0,
+              // 写着「你有 N 件事要处理」的数，本来就该是点进去处理的入口。
+              onClick: pendingCount > 0 ? () => setPreviewOpen(true) : undefined,
+            },
+          ]}
+        />
 
         {/*
           订阅链接排在最前面。

@@ -8,7 +8,8 @@ import { formatMoneyCents as money } from "@shared/formatMoney";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DashboardLayout from "@/components/DashboardLayout";
 import DataSectionLoading from "@/components/DataSectionLoading";
-import { DataTableErrorRow } from "@/components/DataSectionError";
+import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
+import { LedgerRow, ledgerMeta } from "@/components/LedgerRow";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -192,6 +193,30 @@ export default function Wallet() {
             {ledgerLoading ? (
               <DataSectionLoading label="正在加载账单流水" />
             ) : (
+            <>
+            {/* 手机上不画表：六列挤进 393px，「类型」那一列会被压成一个字一行。 */}
+            <div className="md:hidden" data-testid="ledger-mobile">
+              {ledger.length === 0 ? (
+                ledgerError ? (
+                  <DataSectionError label="账单流水" error={ledgerError} retrying={ledgerFetching} onRetry={() => { void refetchLedger(); }} minHeight="min-h-[120px]" />
+                ) : (
+                  <p className="py-6 text-center text-sm text-muted-foreground">暂无账单流水</p>
+                )
+              ) : ledger.map((item: any) => {
+                const Icon = ledgerIcon(item);
+                return (
+                  <LedgerRow
+                    key={item.id}
+                    icon={<Icon className="h-4 w-4" />}
+                    title={item.title}
+                    meta={ledgerMeta(item.description, item.category !== item.title && item.category, item.statusLabel || item.status, dateText(item.createdAt))}
+                    amount={item.kind === "subscription" && Number(item.amountCents || 0) === 0 ? "-" : money(item.amountCents, item.currency || "CNY")}
+                    amountClassName={ledgerTone(item)}
+                  />
+                );
+              })}
+            </div>
+            <div className="hidden md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -252,6 +277,8 @@ export default function Wallet() {
                 ))}
               </TableBody>
             </Table>
+            </div>
+            </>
             )}
           </CardContent>
         </Card>
@@ -267,6 +294,21 @@ export default function Wallet() {
             {walletLoading ? (
               <DataSectionLoading label="正在加载余额流水" />
             ) : (
+            <>
+            <div className="md:hidden" data-testid="wallet-mobile">
+              {(wallet?.transactions || []).length === 0 ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">暂无余额流水</p>
+              ) : (wallet?.transactions || []).map((tx: any) => (
+                <LedgerRow
+                  key={tx.id}
+                  title={tx.typeLabel || balanceTypeLabel(tx.type)}
+                  meta={ledgerMeta(tx.description, `余额 ${money(tx.balanceAfterCents)}`, dateText(tx.createdAt))}
+                  amount={money(tx.amountCents)}
+                  amountClassName={Number(tx.amountCents) >= 0 ? "text-[var(--fx-healthy-text)]" : "text-destructive"}
+                />
+              ))}
+            </div>
+            <div className="hidden md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -300,6 +342,8 @@ export default function Wallet() {
                 )}
               </TableBody>
             </Table>
+            </div>
+            </>
             )}
           </CardContent>
         </Card>
@@ -315,6 +359,24 @@ export default function Wallet() {
             {paymentOrdersLoading ? (
               <DataSectionLoading label="正在加载支付流水" />
             ) : (
+            <>
+            <div className="md:hidden" data-testid="payments-mobile">
+              {paymentOrders.length === 0 ? (
+                paymentOrdersError ? (
+                  <DataSectionError label="支付流水" error={paymentOrdersError} retrying={paymentOrdersFetching} onRetry={() => { void refetchPaymentOrders(); }} minHeight="min-h-[120px]" />
+                ) : (
+                  <p className="py-6 text-center text-sm text-muted-foreground">暂无支付流水</p>
+                )
+              ) : paymentOrders.map((order: any) => (
+                <LedgerRow
+                  key={order.id}
+                  title={orderTypeText(order.orderType)}
+                  meta={ledgerMeta(order.outTradeNo, paymentMethodText(order.paymentType || order.provider), order.status, dateText(order.createdAt))}
+                  amount={money(order.amountCents, order.currency || "CNY")}
+                />
+              ))}
+            </div>
+            <div className="hidden md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -360,6 +422,8 @@ export default function Wallet() {
                 ))}
               </TableBody>
             </Table>
+            </div>
+            </>
             )}
           </CardContent>
         </Card>

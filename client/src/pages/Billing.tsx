@@ -3,7 +3,8 @@ import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import { ledgerTone } from "@/lib/ledgerTone";
 import MobileInfoRow from "@/components/MobileInfoRow";
-import StatCard from "@/components/StatCard";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
+import { ListRow, ListSection } from "@/components/ios/GroupedList";
 import { balanceTypeLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -73,7 +74,11 @@ function discountStatus(code: any) {
   return "生效中";
 }
 
-function BillingToggleCard({
+/*
+  用户那边的两个入口开关。原来是两张各带边框的小卡片（billing-entry-control，一段专门的
+  CSS）；它们是设置，不是数据 —— 和设置页一样用分组列表的一行：名字、状态、开关。
+*/
+function BillingToggleRow({
   title,
   enabled,
   onCheckedChange,
@@ -87,13 +92,12 @@ function BillingToggleCard({
   loading?: boolean;
 }) {
   return (
-    <div className="billing-entry-control">
-      <Icon className="h-4 w-4" />
-      <div className="min-w-0"><p>{title}</p>
-        <small>{loading ? "正在加载" : enabled ? "已开启 · 用户可使用" : "已关闭 · 用户不可使用"}</small>
-      </div>
-      <OptimisticSwitch aria-label={title} checked={enabled} onCheckedChangeAsync={onCheckedChange} disabled={loading} />
-    </div>
+    <ListRow
+      icon={<Icon className="h-4 w-4" />}
+      label={title}
+      detail={loading ? "正在加载" : enabled ? "已开启 · 用户可使用" : "已关闭 · 用户不可使用"}
+      trailing={<OptimisticSwitch aria-label={title} checked={enabled} onCheckedChangeAsync={onCheckedChange} disabled={loading} />}
+    />
   );
 }
 
@@ -492,51 +496,31 @@ export default function Billing() {
     <DashboardLayout>
       <div className="space-y-6">
         <WorkspaceHeader title="账单与兑换" description="查看资金流水，管理用户兑换与折扣" />
-        <div className="grid grid-cols-3 gap-3">
-          <StatCard
-            title="用户余额总额"
-            value={money(totalBalance)}
-            subtitle={`${Number(billingSummary?.userCount || 0)} 个用户`}
-            icon={WalletCards}
-            loading={billingSummaryLoading}
-            cacheKey="billing.totalBalance"
-            fallbackValue={money(0)}
-          />
-          <StatCard
-            title="可用兑换码"
-            value={activeRedemptionCodes}
-            subtitle="未使用且已启用"
-            icon={Gift}
-            loading={billingSummaryLoading}
-            cacheKey="billing.activeRedemptionCodes"
-            fallbackValue={0}
-          />
-          <StatCard
-            title="生效折扣码"
-            value={activeDiscountCodes}
-            subtitle="当前可抵扣"
-            icon={TicketPercent}
-            loading={billingSummaryLoading}
-            cacheKey="billing.activeDiscountCodes"
-            fallbackValue={0}
-          />
-        </div>
-        <div className="billing-entry-controls">
-          <BillingToggleCard
+        <SummaryStrip
+          ariaLabel="账单概况"
+          loading={billingSummaryLoading}
+          items={[
+            { key: "balance", label: "用户余额总额", value: money(totalBalance), hint: `${Number(billingSummary?.userCount || 0)} 个用户`, cacheKey: "billing.totalBalance", fallbackValue: money(0) },
+            { key: "redemption", label: "可用兑换码", value: activeRedemptionCodes, hint: "未使用且已启用", cacheKey: "billing.activeRedemptionCodes", fallbackValue: 0 },
+            { key: "discount", label: "生效折扣码", value: activeDiscountCodes, hint: "当前可抵扣", cacheKey: "billing.activeDiscountCodes", fallbackValue: 0 },
+          ]}
+        />
+        <ListSection header="用户入口">
+          <BillingToggleRow
             title="用户兑换入口"
             enabled={featureStatus?.redemptionEnabled ?? true}
             onCheckedChange={(redemptionEnabled) => setFeatureStatus.mutateAsync({ redemptionEnabled })}
             icon={Gift}
             loading={featureStatusLoading}
           />
-          <BillingToggleCard
+          <BillingToggleRow
             title="购买折扣入口"
             enabled={featureStatus?.discountEnabled ?? true}
             onCheckedChange={(discountEnabled) => setFeatureStatus.mutateAsync({ discountEnabled })}
             icon={TicketPercent}
             loading={featureStatusLoading}
           />
-        </div>
+        </ListSection>
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as BillingTab)}>
           <SlidingTabsList items={BILLING_TAB_ITEMS} activeValue={activeTab} ariaLabel="账单与兑换" minItemWidthRem={6.75} />

@@ -9,7 +9,8 @@ import { formatQuotaBytes } from "@shared/formatBytes";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import DashboardLayout from "@/components/DashboardLayout";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
-import AnimatedStatValue from "@/components/AnimatedStatValue";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
+import { ListRow, ListSection } from "@/components/ios/GroupedList";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +20,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { OptimisticSwitch, Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -41,7 +41,7 @@ import {
   PLAN_PRICE_TIER_LIMIT,
   planMonthlyEquivalentCents,
 } from "@shared/planPricing";
-import { ArrowRight, Check, CheckCircle2, Coins, LayoutGrid, List, Package, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
+import { Check, CheckCircle2, Coins, LayoutGrid, List, Package, Plus, RefreshCw, Settings2, ShoppingBag, Trash2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -867,6 +867,15 @@ export default function Plans() {
     + planResourceSummary.groups
     + planResourceSummary.legacyHosts
     + planResourceSummary.otherForwardResources;
+  // 资源明细只列有的那几类：「0 个端口转发 · 3 条隧道」里那个 0 是噪音。
+  const planResourceBreakdown = [
+    planResourceSummary.ports > 0 ? `${planResourceSummary.ports} 个端口转发` : "",
+    planResourceSummary.tunnels > 0 ? `${planResourceSummary.tunnels} 条隧道` : "",
+    planResourceSummary.chains > 0 ? `${planResourceSummary.chains} 条转发链` : "",
+    planResourceSummary.groups > 0 ? `${planResourceSummary.groups} 个转发组` : "",
+    planResourceSummary.legacyHosts > 0 ? `${planResourceSummary.legacyHosts} 个历史主机` : "",
+    planResourceSummary.otherForwardResources > 0 ? `${planResourceSummary.otherForwardResources} 个兼容资源` : "",
+  ].filter(Boolean).join(" · ");
   const selectedTunnelIds = useMemo(() => new Set(form.tunnelIds.map(Number)), [form.tunnelIds]);
   const selectedForwardGroupIds = useMemo(() => new Set(form.forwardGroupIds.map(Number)), [form.forwardGroupIds]);
   const portForwardGroups = useMemo(() => forwardGroups.filter((group: any) => isPortForwardGroup(group)), [forwardGroups]);
@@ -1085,9 +1094,39 @@ export default function Plans() {
             )}
           </>} />
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {/*
+          页头原来是四张卡：两张是开关（按量计费、商店），两张是数（套餐、资源），长得一样。
+          数放进一条摘要；开关是设置，照设置页的写法放进分组列表 —— 手机上四张卡原来要翻
+          一整屏才看到第一个套餐。
+        */}
+        <SummaryStrip
+          ariaLabel="套餐概况"
+          loading={planSummaryLoading}
+          items={[
+            { key: "plans", label: "套餐", value: Number(planSummary?.totalItems || 0), hint: `${activePlans} 个已启用`, cacheKey: "plans.count", fallbackValue: 0 },
+            { key: "resources", label: "套餐资源", value: planResourceTotal, hint: planResourceBreakdown || "还没有资源", title: planResourceBreakdown || undefined, cacheKey: "plans.resourceTotal", fallbackValue: 0 },
+          ]}
+        />
+        <ListSection header="对用户开放">
+          <ListRow
+            icon={<ShoppingBag className="h-4 w-4" />}
+            label="商店"
+            detail={storeEnabled
+              ? "开着：用户可以自助购买。"
+              : storeVisiblePlans > 0
+                ? `关着：${storeVisiblePlans} 个套餐的「购买入口」都不生效。`
+                : "关着：用户面板里没有商店。"}
+            trailing={(
+              <OptimisticSwitch
+                aria-label="商店"
+                checked={storeEnabled}
+                disabled={storeStatusLoading}
+                onCheckedChangeAsync={(enabled) => setStoreEnabled.mutateAsync({ enabled })}
+              />
+            )}
+          />
           {/*
-            按量计费的状态卡：只读，开关在旁边的「流量计费」tab 里统一管。
+            按量计费：只读，开关在「流量计费」tab 里统一管，点这一行就过去。
 
             原来这里也有一个开关，但它读的 trafficBilling.configs 查询带着
             `enabled: activeTab === "billing"` —— 默认 tab 是「套餐」，查询根本不发，
@@ -1095,79 +1134,16 @@ export default function Plans() {
             收钱其实在收；想关掉它，看到「已关闭」就不会去动。
             现在查询无条件发，状态是真的；要改切到「流量计费」tab。
           */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>按量计费</CardDescription>
-              <CardTitle className="flex items-center justify-between gap-3">
-                {trafficBillingLoading
-                  ? <Skeleton className="h-7 w-16" />
-                  : <span>{trafficBillingEnabled ? "已开启" : "已关闭"}</span>}
-                <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1 text-xs" onClick={() => setActiveTab("billing")}>
-                  去设置 <ArrowRight className="h-3 w-3" />
-                </Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              {trafficBillingEnabled
-                ? `${trafficBillingConfigs.length} 个资源在按 GB 扣余额。`
-                : "关着的时候，配了价的资源一分钱都不扣，流量照旧记进各自的套餐额度。"}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>商店状态</CardDescription>
-              <CardTitle className="flex items-center justify-between">
-                <span>{storeEnabled ? "已开启" : "已关闭"}</span>
-                <OptimisticSwitch aria-label="商店状态"
-                  checked={storeEnabled}
-                  disabled={storeStatusLoading}
-                  onCheckedChangeAsync={(enabled) => setStoreEnabled.mutateAsync({ enabled })}
-                />
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              {storeEnabled
-                ? "开启后用户可自助购买。"
-                : storeVisiblePlans > 0
-                  ? `关着的时候，${storeVisiblePlans} 个套餐的「购买入口」都不生效。`
-                  : "关着的时候，用户面板里没有商店。"}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>套餐数量</CardDescription>
-              <CardTitle>
-                <AnimatedStatValue value={Number(planSummary?.totalItems || 0)} loading={planSummaryLoading} cacheKey="plans.count" fallbackValue={0} />
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              <AnimatedStatValue
-                value={`${activePlans} 个已启用`}
-                loading={planSummaryLoading}
-                cacheKey="plans.activeCount"
-                fallbackValue="0 个已启用"
-              />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>套餐资源</CardDescription>
-              <CardTitle>
-                <AnimatedStatValue
-                  value={planResourceTotal}
-                  loading={planSummaryLoading}
-                  cacheKey="plans.resourceTotal"
-                  fallbackValue={0}
-                />
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              {planResourceSummary.ports} 个端口转发 · {planResourceSummary.tunnels} 条隧道 · {planResourceSummary.chains} 条转发链 · {planResourceSummary.groups} 个转发组
-              {planResourceSummary.legacyHosts > 0 ? ` · ${planResourceSummary.legacyHosts} 个历史主机` : ""}
-              {planResourceSummary.otherForwardResources > 0 ? ` · ${planResourceSummary.otherForwardResources} 个兼容资源` : ""}
-            </CardContent>
-          </Card>
-          </div>
+          <ListRow
+            icon={<Coins className="h-4 w-4" />}
+            label="按量计费"
+            detail={trafficBillingEnabled
+              ? `${trafficBillingConfigs.length} 个资源在按 GB 扣余额。`
+              : "关着：配了价的资源一分钱都不扣，流量照旧记进各自的套餐额度。"}
+            value={trafficBillingLoading ? "…" : trafficBillingEnabled ? "已开启" : "已关闭"}
+            onSelect={() => setActiveTab("billing")}
+          />
+        </ListSection>
 
         {storeGateBlocking && (
           <div className="flex flex-col gap-2 rounded-lg border border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">

@@ -3,7 +3,7 @@ import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import MobileInfoRow from "@/components/MobileInfoRow";
 import DashboardLayout from "@/components/DashboardLayout";
-import AnimatedStatValue from "@/components/AnimatedStatValue";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -220,44 +220,6 @@ function statusBadge(status: string) {
       ? "border-[var(--fx-warn-soft)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]"
       : "border-slate-200 bg-slate-50 text-slate-600";
   return <Badge variant="outline" className={tone}>{text[status] || status}</Badge>;
-}
-
-function PaymentStatCard({
-  label,
-  value,
-  icon: Icon,
-  tone = "text-primary",
-  loading = false,
-  cacheKey,
-  fallbackValue,
-}: {
-  label: string;
-  value: string | number;
-  icon: React.ElementType;
-  tone?: string;
-  loading?: boolean;
-  cacheKey: string;
-  fallbackValue?: string | number;
-}) {
-  return (
-    <Card className="group relative overflow-hidden border-border bg-card transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-      <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
-      <CardContent className="relative flex min-h-[82px] items-center justify-between gap-4 p-4 sm:p-5">
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          <AnimatedStatValue
-            as="p"
-            value={value}
-            loading={loading}
-            cacheKey={cacheKey}
-            fallbackValue={fallbackValue}
-            className="mt-1.5 truncate text-2xl font-bold leading-none tracking-tight tabular-nums"
-          />
-        </div>
-        <Icon className={`h-5 w-5 shrink-0 ${tone}`} />
-      </CardContent>
-    </Card>
-  );
 }
 
 /*
@@ -485,44 +447,17 @@ export default function Payments() {
           </Button>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-4">
-          <PaymentStatCard
-            label="支付状态"
-            value={form.enabled ? "已启用" : "未启用"}
-            icon={ShieldCheck}
-            tone={form.enabled ? "text-[var(--fx-healthy-text)]" : "text-muted-foreground"}
-            loading={isLoading}
-            cacheKey="payments.enabled"
-            fallbackValue="未启用"
-          />
-          <PaymentStatCard
-            label="已支付金额"
-            value={formatMoney(stats?.paidAmountCents)}
-            icon={WalletCards}
-            tone="text-primary"
-            loading={statsLoading}
-            cacheKey="payments.paidAmount"
-            fallbackValue={formatMoney(0)}
-          />
-          <PaymentStatCard
-            label="已支付订单"
-            value={stats?.paidOrders || 0}
-            icon={CheckCircle2}
-            tone="text-[var(--fx-healthy-text)]"
-            loading={statsLoading}
-            cacheKey="payments.paidOrders"
-            fallbackValue={0}
-          />
-          <PaymentStatCard
-            label="待支付订单"
-            value={stats?.pendingOrders || 0}
-            icon={RefreshCw}
-            tone="text-[var(--fx-warn-text)]"
-            loading={statsLoading}
-            cacheKey="payments.pendingOrders"
-            fallbackValue={0}
-          />
-        </div>
+        {/* 颜色只说状态：支付开着是绿；订单数是数，不是状态，待支付也只是还没付。 */}
+        <SummaryStrip
+          ariaLabel="支付概况"
+          loading={statsLoading}
+          items={[
+            { key: "enabled", label: "支付状态", value: form.enabled ? "已启用" : "未启用", tone: form.enabled ? "healthy" : undefined, loading: isLoading, cacheKey: "payments.enabled", fallbackValue: "未启用" },
+            { key: "paid", label: "已支付金额", value: formatMoney(stats?.paidAmountCents), cacheKey: "payments.paidAmount", fallbackValue: formatMoney(0) },
+            { key: "paidOrders", label: "已支付订单", value: stats?.paidOrders || 0, cacheKey: "payments.paidOrders", fallbackValue: 0 },
+            { key: "pending", label: "待支付订单", value: stats?.pendingOrders || 0, cacheKey: "payments.pendingOrders", fallbackValue: 0 },
+          ]}
+        />
 
         <Alert className="border-primary/15 bg-primary/5 text-foreground">
           <ShieldCheck className="h-4 w-4" />

@@ -48,12 +48,6 @@
 .workspace-metric-label { display: flex; align-items: center; gap: 8px; color: var(--fx-muted); font-size: 12px; }
 .workspace-metric-value { display: block; margin-top: 8px; font-size: clamp(15px, 2vw, 24px); font-weight: 600; line-height: 1.25; letter-spacing: -.03em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .workspace-metric-detail { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; font-size: 11px; color: var(--fx-muted); font-variant-numeric: tabular-nums; }
-.billing-entry-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.billing-entry-control { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); }
-.billing-entry-control > svg { color: var(--fx-muted); flex-shrink: 0; }
-.billing-entry-control p { font-size: 13px; font-weight: 500; }
-.billing-entry-control small { display: block; margin-top: 4px; color: var(--fx-muted); font-size: 11px; }
-.billing-entry-control > button { margin-left: auto; }
 .stat-card-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--fx-radius); background: var(--fx-subtle); color: var(--fx-muted); }
 [data-slot="card-title"] { line-height: 1.4; }
 [data-slot="table-header"] { background: var(--fx-subtle); }
@@ -102,23 +96,6 @@
   .workspace-tabs .workspace-tab > svg { display: none; }
   .workspace-tab-count { min-width: 17px; height: 17px; font-size: 10.5px; border-radius: 5px; }
 
-  /*
-    页面顶部那一排概览卡。实测每张 240px 高、三张 720px，而它们一共只说了
-    5 个数字 —— 在 393×760 的屏幕上，列表要翻过一整屏才开始。
-
-    占高度的是装饰不是数据：每张卡有一个 36px 的彩色圆角图标方块（有的两个），
-    外加 112px 的最小高度和 24px 的大号数字。标题已经写着「在线状态」
-    「累计流量」，那个图标方块再说一遍同一件事。
-
-    手机上去掉图标方块、放开最小高度、数字降一档。三张卡从 720px 收到约 240px。
-  */
-  [data-slot="card-content"]:has(> p + div [class*="rounded-"][class*="shadow-sm"]), .stat-strip [data-slot="card-content"] { min-height: 0; padding: 10px 12px; }
-  .stat-strip [data-slot="card-content"] > div[class*="absolute"] { display: none; }
-  .stat-strip [class*="rounded-xl"][class*="shadow-sm"],
-  .stat-strip [class*="rounded-lg"][class*="shadow-sm"] { display: none; }
-  .stat-strip [class*="text-2xl"] { font-size: 19px; line-height: 1.15; }
-  .stat-strip [class*="pr-12"] { padding-right: 0; }
-  .stat-strip p[class*="mt-2"] { margin-top: 2px; }
 
   /*
     ══ 文档式排版 ══
@@ -578,7 +555,6 @@
   .workspace-metrics > div { padding: 12px; }
   .workspace-metric-label > svg { display: none; }
   .workspace-metric-label { font-size: 11px; }
-  .billing-entry-controls { grid-template-columns: 1fr; gap: 8px; }
   .workspace-main [data-slot="card-header"] { padding: 16px; }
   .workspace-main [data-slot="card-content"] { padding-inline: 16px; padding-bottom: 16px; }
   .workspace-main [data-slot="card-title"] { font-size: 18px; }

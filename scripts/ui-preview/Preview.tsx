@@ -10,7 +10,8 @@ import SystemStatusHeader, { type SystemHealth } from "@/components/SystemStatus
 import { AttentionSection } from "@/features/dashboard/AttentionSection";
 import { TrafficSurface, type TrafficChartPoint } from "@/features/dashboard/TrafficSurface";
 import { emptyAttentionTotals } from "@shared/dashboardAttention";
-import StatCard from "@/components/StatCard";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
+import { ListRow, ListSection } from "@/components/ios/GroupedList";
 import EmptyState from "@/components/EmptyState";
 import DataSectionError from "@/components/DataSectionError";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -157,8 +158,8 @@ function Demo() {
           </Tabs>
         </>:page==="账单与兑换"?<>
           <WorkspaceHeader title="账单与兑换" description="查看收支流水，管理兑换码与折扣码。"/>
-          <div className="grid grid-cols-3 gap-3">{[["累计收入","¥ 1,280.00"],["生效订阅","24"],["可用兑换码","12"]].map(([title,value])=><StatCard key={title} title={title} value={value} icon={Wallet} cacheKey={`preview.${title}`}/>)}</div>
-          <div className="billing-entry-controls">{[["用户兑换入口",redeem,setRedeem],["购买折扣入口",discount,setDiscount]].map(([title,on,set])=><div className="billing-entry-control" key={String(title)}><Gift className="h-4 w-4"/><div><p>{String(title)}</p><small>{on?"已开启":"已关闭"}</small></div><Switch aria-label={String(title)} checked={Boolean(on)} onCheckedChange={set as (value:boolean)=>void}/></div>)}</div>
+          <SummaryStrip ariaLabel="账单概况" items={[["累计收入","¥ 1,280.00"],["生效订阅","24"],["可用兑换码","12"]].map(([title,value])=>({key:title,label:title,value,cacheKey:`preview.${title}`}))}/>
+          <ListSection header="用户入口">{[["用户兑换入口",redeem,setRedeem],["购买折扣入口",discount,setDiscount]].map(([title,on,set])=><ListRow key={String(title)} icon={<Gift className="h-4 w-4"/>} label={String(title)} detail={on?"已开启 · 用户可使用":"已关闭 · 用户不可使用"} trailing={<Switch aria-label={String(title)} checked={Boolean(on)} onCheckedChange={set as (value:boolean)=>void}/>}/>)}</ListSection>
           <Tabs value={billingTab} onValueChange={setBillingTab} className="space-y-4"><SlidingTabsList items={[{value:"bills",label:"账单流水"},{value:"subscriptions",label:"订阅记录"},{value:"balance",label:"余额流水"},{value:"redeem",label:"兑换码"},{value:"discount",label:"折扣码"}]} activeValue={billingTab} ariaLabel="账单分类"/>
             <TabsContent value="redeem"><Card><CardHeader><CardTitle>生成兑换码</CardTitle><CardDescription>一次性兑换套餐或余额。</CardDescription></CardHeader><CardContent className="space-y-5"><FormField className="space-y-2"><Label>兑换码（选填）</Label><Input placeholder="留空自动生成" /></FormField><SelectField label="类型" options={["余额","套餐"]}/><FormField className="space-y-2"><Label>金额（元）</Label><Input type="number" placeholder="0.00" min={0}/></FormField><div className="border-t pt-4"><Button onClick={()=>setMessage("演示预览不会生成实际兑换码")}>生成兑换码</Button></div></CardContent></Card></TabsContent>
             {billingTab!=="redeem"&&<Card><EmptyState icon={<Wallet/>} title="暂无记录" description="业务发生后，流水会显示在这里。"/></Card>}

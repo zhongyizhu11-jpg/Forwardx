@@ -5,7 +5,7 @@ import { MILLI_CENTS_PER_CENT, pricePerGbMilliCentsOf } from "@shared/trafficBil
 import { renderStatusDot } from "@/lib/statusDot";
 import { forwardGroupModeOf, forwardGroupTypeText, type ForwardGroupMode } from "@shared/forwardTypes";
 import MobileInfoRow from "@/components/MobileInfoRow";
-import StatCard from "@/components/StatCard";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -26,7 +26,7 @@ import { getTunnelRouteText } from "@/lib/tunnelDisplay";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { formatTrafficMultiplier } from "@shared/trafficMultiplier";
-import { Coins, Gauge, LayoutGrid, List, Pencil, Plus, ReceiptText, Route, Server, Trash2 } from "lucide-react";
+import { LayoutGrid, List, Pencil, Plus, Route, Server, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -401,35 +401,14 @@ export default function TrafficBillingConfigManager({
       )}
 
       {showSummary && (
-        <div className="grid gap-4 md:grid-cols-3">
-          <StatCard
-            title="累计扣费"
-            value={money(totalCharged)}
-            subtitle="历史扣费合计"
-            icon={Coins}
-            loading={summaryLoading}
-            cacheKey="trafficBilling.totalCharged"
-            fallbackValue={money(0)}
-          />
-          <StatCard
-            title="已计费流量"
-            value={`${totalGb} GB`}
-            subtitle="扣费记录累计"
-            icon={Gauge}
-            loading={summaryLoading}
-            cacheKey="trafficBilling.totalGb"
-            fallbackValue="0 GB"
-          />
-          <StatCard
-            title="计费资源"
-            value={data?.configs?.length || 0}
-            subtitle="已配置资源"
-            icon={ReceiptText}
-            loading={configsLoading}
-            cacheKey="trafficBilling.configsCount"
-            fallbackValue={0}
-          />
-        </div>
+        <SummaryStrip
+          ariaLabel="按量计费概况"
+          items={[
+            { key: "charged", label: "累计扣费", value: money(totalCharged), hint: "历史扣费合计", loading: summaryLoading, cacheKey: "trafficBilling.totalCharged", fallbackValue: money(0) },
+            { key: "gb", label: "已计费流量", value: `${totalGb} GB`, hint: "扣费记录累计", loading: summaryLoading, cacheKey: "trafficBilling.totalGb", fallbackValue: "0 GB" },
+            { key: "configs", label: "计费资源", value: data?.configs?.length || 0, hint: "已配置资源", loading: configsLoading, cacheKey: "trafficBilling.configsCount", fallbackValue: 0 },
+          ]}
+        />
       )}
 
       <Card>
