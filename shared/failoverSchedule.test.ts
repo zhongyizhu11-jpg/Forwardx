@@ -83,7 +83,7 @@ test("存进库再读回来还是同一张表", () => {
 test("时段表的文字描述要让人看懂跨没跨午夜", () => {
   assert.equal(
     describeFailoverScheduleWindow({ days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 2 }),
-    "工作日 18:00-01:00（次日） → 备用出站 2",
+    "工作日 18:00-01:00（次日） → 备用 2",
   );
   assert.equal(
     describeFailoverScheduleWindow({ days: [], from: "02:00", to: "06:00", targetIndex: 0 }),
@@ -91,7 +91,7 @@ test("时段表的文字描述要让人看懂跨没跨午夜", () => {
   );
   assert.equal(
     describeFailoverScheduleWindow({ days: [0, 6], from: "20:00", to: "23:00", targetIndex: 1 }),
-    "周末 20:00-23:00 → 备用出站 1",
+    "周末 20:00-23:00 → 备用 1",
   );
 });
 

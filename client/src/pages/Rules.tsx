@@ -125,6 +125,9 @@ import {
   type FailoverTarget,
 } from "@shared/failoverTargets";
 import { describeFailoverLineDisplay, type FailoverLineTone } from "@/lib/failoverLineDisplay";
+import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
+import { describeRoutePolicy, pinUntilSeconds } from "@shared/routePolicy";
+import { failoverLineLabel } from "@shared/failoverActiveLine";
 import {
   forwardRuleFormBlocker,
   isAdvancedSectionBlocker,
@@ -2110,6 +2113,8 @@ function RulesContent() {
   const [editingOriginalProtocol, setEditingOriginalProtocol] = useState<RuleProtocol | null>(null);
   const [legacyLocalRuleEditId, setLegacyLocalRuleEditId] = useState<number | null>(null);
   const [deleteRule, setDeleteRule] = useState<any | null>(null);
+  // 主备策略面板开着的是哪条规则。存 id 不存整行：强制走之后列表会刷新，面板要跟着新数据走。
+  const [policyRuleId, setPolicyRuleId] = useState<number | null>(null);
   const [resetTrafficTarget, setResetTrafficTarget] = useState<{ scope: "all" } | { scope: "rule"; rule: any } | null>(null);
   const [showCopyDialog, setShowCopyDialog] = useState(false);
   const [form, setForm] = useState<RuleFormData>(defaultForm);
@@ -2371,6 +2376,25 @@ function RulesContent() {
     onError: (err) => toast.error(err.message || "创建失败"),
   });
 
+  /*
+    主备策略面板里的「强制走 / 交回自动」。
+
+    不复用编辑框那个 updateMutation：它成功后会关编辑框、清表单、说「规则已更新」。
+    这里只传钉子那两个字段 —— 服务端会整份重新归一化主备配置，并当场推给 Agent
+    （这两件事上一版都没有：只传钉子会直接报错，改了也要等五分钟一次的对账）。
+  */
+  const pinMutation = trpc.rules.update.useMutation({
+    onSuccess: (_data, variables) => {
+      utils.rules.list.invalidate();
+      utils.rules.listPage.invalidate();
+      utils.rules.mapItems.invalidate();
+      // 只说做了什么，不说「已生效」：机器离线时要等它连上才会照做。
+      toast.success(variables.failoverPinnedIndex === null || variables.failoverPinnedIndex === undefined
+        ? "已交回自动"
+        : `已强制走 ${failoverLineLabel(variables.failoverPinnedIndex, "")}`);
+    },
+    onError: (error) => toast.error(error.message || "操作失败"),
+  });
   const updateMutation = trpc.rules.update.useMutation({
     onSuccess: (data, variables) => {
       invalidateRuleProbeStatuses([Number(variables.id)]);
@@ -6119,24 +6143,32 @@ function RulesContent() {
     看不见了，这正是「主备到底在哪儿用」说不清楚的地方。
   */
   const failoverToneClass: Record<FailoverLineTone, string> = {
-    idle: "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]",
-    backup: "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]",
+    normal: "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]",
+    deviated: "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]",
     warn: "border-destructive/40 text-destructive",
-    unreported: "border-border text-muted-foreground",
+    muted: "border-border text-muted-foreground",
   };
 
   const renderFailoverLineBadge = (rule: any) => {
-    const display = describeFailoverLineDisplay(rule);
+    const display = describeFailoverLineDisplay(rule, hostById.get(Number(rule.hostId)));
     if (!display) return null;
+    // 点进去是主备策略：现在走哪条、按什么选、什么时候切、应急强制走。
     return (
-      <Badge
-        variant="outline"
-        className={cn("h-5 shrink-0 gap-1 px-1.5 text-[10px] font-medium", failoverToneClass[display.tone])}
+      <button
+        type="button"
+        className="shrink-0 rounded-[var(--fx-radius-control)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setPolicyRuleId(Number(rule.id))}
         title={display.title}
+        aria-label={`主备策略：${display.title}`}
       >
-        <GitBranch className="h-3 w-3" aria-hidden="true" />
-        {display.text}
-      </Badge>
+        <Badge
+          variant="outline"
+          className={cn("h-5 cursor-pointer gap-1 px-1.5 text-[10px] font-medium", failoverToneClass[display.tone])}
+        >
+          <GitBranch className="h-3 w-3" aria-hidden="true" />
+          {display.text}
+        </Badge>
+      </button>
     );
   };
 
@@ -6637,7 +6669,13 @@ function RulesContent() {
         </TableCell>
         <TableCell className="px-3 py-2">{renderTableTransferEntry(rule)}</TableCell>
         <TableCell className="px-3 py-2">{renderTableTransferExit(rule)}</TableCell>
-        <TableCell className="px-3 py-2">{renderRouteBadge(rule, true)}</TableCell>
+        <TableCell className="px-3 py-2">
+          {/* 主备那一小块跟着线路走：它说的是「现在走哪条」，点进去是策略。 */}
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {renderRouteBadge(rule, true)}
+            {renderFailoverLineBadge(rule)}
+          </div>
+        </TableCell>
         <TableCell className="px-3 py-2 text-center">
           <Badge variant="secondary" className="whitespace-nowrap text-[10px]">{formatForwardRuleProtocol(rule.protocol)}</Badge>
         </TableCell>
@@ -6795,7 +6833,14 @@ function RulesContent() {
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div className="min-w-0">
               <div className="mb-1 text-muted-foreground">链路</div>
-              {renderRouteBadge(rule, false, ruleDrawsFlow(rule))}
+              {/*
+                2.3.366 只给紧凑卡加了主备标记，大卡和表格上看不出这条规则配了主备、
+                现在走哪条。三种布局都要有 —— 它也是主备策略面板的入口。
+              */}
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {renderRouteBadge(rule, false, ruleDrawsFlow(rule))}
+                {renderFailoverLineBadge(rule)}
+              </div>
             </div>
             <div className="min-w-0">
               <div className="mb-1 text-muted-foreground">协议</div>
@@ -8933,6 +8978,30 @@ function RulesContent() {
         </DialogContent>
       </Dialog>
 
+      {(() => {
+        const policyRule = policyRuleId === null ? null : (rules || []).find((rule: any) => Number(rule.id) === policyRuleId);
+        const policy = policyRule ? describeRoutePolicy(policyRule, { host: hostById.get(Number(policyRule.hostId)) }) : null;
+        return (
+          <RoutePolicySheet
+            open={policyRuleId !== null}
+            onOpenChange={(open) => !open && setPolicyRuleId(null)}
+            ruleName={String(policyRule?.name || "")}
+            policy={policy}
+            canEdit
+            pending={pinMutation.isPending}
+            onPin={(index, durationSeconds) => pinMutation.mutate({
+              id: Number(policyRule.id),
+              failoverPinnedIndex: index,
+              failoverPinnedUntil: pinUntilSeconds(durationSeconds),
+            })}
+            onUnpin={() => pinMutation.mutate({ id: Number(policyRule.id), failoverPinnedIndex: null, failoverPinnedUntil: null })}
+            onEdit={() => {
+              setPolicyRuleId(null);
+              openEdit(policyRule);
+            }}
+          />
+        );
+      })()}
       <Dialog open={!!deleteRule} onOpenChange={(open) => !open && setDeleteRule(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

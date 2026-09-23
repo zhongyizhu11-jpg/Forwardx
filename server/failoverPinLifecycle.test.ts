@@ -21,7 +21,14 @@ import test from "node:test";
 
 type Dispatched = { pinnedIndex?: number | null; pinnedUntil?: number };
 type StoredPin = { index: number | null; until: number | null };
-type Saved = StoredPin & { schedule: string | null; probe: string | null; strategy: string; error: string | null };
+type Saved = StoredPin & {
+  schedule: string | null;
+  probe: string | null;
+  strategy: string;
+  enabled: boolean;
+  targets: number;
+  error: string | null;
+};
 
 type Outcome = {
   now: number;
@@ -114,7 +121,8 @@ function runLifecycle(): Outcome {
     const stored = async (id) => {
       const row = (await runtime.queryRaw(
         'SELECT "failoverPinnedIndex" AS pinIndex, "failoverPinnedUntil" AS pinUntil, "failoverSchedule" AS schedule,'
-          + ' "failoverProbeTarget" AS probe, "failoverStrategy" AS strategy FROM forward_rules WHERE id = ?',
+          + ' "failoverProbeTarget" AS probe, "failoverStrategy" AS strategy, "failoverEnabled" AS enabled,'
+          + ' "failoverTargets" AS targets FROM forward_rules WHERE id = ?',
         [id],
       ))[0];
       return {
@@ -123,6 +131,8 @@ function runLifecycle(): Outcome {
         schedule: row.schedule ?? null,
         probe: row.probe ?? null,
         strategy: row.strategy,
+        enabled: Number(row.enabled) === 1,
+        targets: JSON.parse(row.targets || "[]").length,
       };
     };
     // 编辑框每次保存都带着整份主备配置，照它的样子传。
@@ -159,7 +169,7 @@ function runLifecycle(): Outcome {
     await rule(12, 1, now - 60);
     updated.expiredUntouched = await save(12, { failoverSeconds: 90 });
 
-    await rule(13, null, null);
+    await rule(13, null, null, { probe: "198.51.100.7:9443" });
     updated.pinOnly = await save(13, { failoverPinnedIndex: 2, failoverPinnedUntil: now + 7200 });
 
     await rule(14, null, null, { schedule: null });
@@ -298,6 +308,12 @@ test("只改钉子的一次保存也走归一化：期限按秒传进来，存�
   assert.equal(outcome.updated.pinOnly.error, null, "只改钉子的保存报错了");
   assert.equal(outcome.updated.pinOnly.index, 2);
   assert.equal(outcome.updated.pinOnly.until, outcome.now + 7200);
+  // 整份重新归一化时，没传的那些照库里的来：主备还开着，两条备用、时段表、探测目标都还在。
+  // 「强制走」点一下把整套主备配置冲掉的话，比不能强制走糟得多。
+  assert.equal(outcome.updated.pinOnly.enabled, true, "只改钉子，主备被关掉了");
+  assert.equal(outcome.updated.pinOnly.targets, 2, "只改钉子，备用出站没了");
+  assert.notEqual(outcome.updated.pinOnly.schedule, null, "只改钉子，时段表没了");
+  assert.equal(outcome.updated.pinOnly.probe, "198.51.100.7:9443", "只改钉子，探测目标没了");
 });
 
 test("轮询不存钉子：Agent 不看它，存着只会让面板写着「强制走」而机器上什么都没发生", () => {

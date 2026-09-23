@@ -129,21 +129,29 @@ function windowMatches(window: FailoverScheduleWindow, weekday: number, minutes:
 }
 
 /**
- * 此刻首选第几条出站；没有时段命中返回 null（也就是按原来的优先级走）。
+ * 此刻命中的是第几个时段；没有命中返回 null。
  *
- * 从上往下取第一条命中的：例外写在前面才有意义。
+ * 从上往下取第一条命中的：例外写在前面才有意义。策略面板要把命中的那一行高亮出来，
+ * 所以单独给出「哪一行」，而不只是「走哪条」。
  */
-export function failoverScheduleTargetIndexAt(
+export function failoverScheduleWindowIndexAt(
   schedule: FailoverSchedule | null | undefined,
   at: Date,
 ): number | null {
   if (!schedule || schedule.windows.length === 0) return null;
   const local = scheduleLocalParts(at, schedule.timezone);
   if (!local) return null;
-  for (const window of schedule.windows) {
-    if (windowMatches(window, local.weekday, local.minutes)) return window.targetIndex;
-  }
-  return null;
+  const index = schedule.windows.findIndex((window) => windowMatches(window, local.weekday, local.minutes));
+  return index >= 0 ? index : null;
+}
+
+/** 此刻首选第几条出站；没有时段命中返回 null（也就是按原来的优先级走）。 */
+export function failoverScheduleTargetIndexAt(
+  schedule: FailoverSchedule | null | undefined,
+  at: Date,
+): number | null {
+  const index = failoverScheduleWindowIndexAt(schedule, at);
+  return index === null ? null : schedule!.windows[index].targetIndex;
 }
 
 const WEEKDAY_LABELS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -157,7 +165,7 @@ export function describeFailoverScheduleDays(days: number[]): string {
 
 export function describeFailoverScheduleWindow(window: FailoverScheduleWindow, targetLabel?: string): string {
   const crossesMidnight = (parseScheduleMinutes(window.to) ?? 0) <= (parseScheduleMinutes(window.from) ?? 0);
-  const target = targetLabel || (window.targetIndex === 0 ? "主出站" : `备用出站 ${window.targetIndex}`);
+  const target = targetLabel || (window.targetIndex === 0 ? "主出站" : `备用 ${window.targetIndex}`);
   return `${describeFailoverScheduleDays(window.days)} ${window.from}-${window.to}${crossesMidnight ? "（次日）" : ""} → ${target}`;
 }
 
