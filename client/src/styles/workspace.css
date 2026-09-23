@@ -40,14 +40,7 @@
 .connection-value { margin-top: 4px; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; color: var(--fx-text); }
 .workspace-main .action-card { border-color: var(--fx-stroke); background: var(--fx-surface); backdrop-filter: none; }
 .workspace-main .action-card-content { padding: 16px; }
-.workspace-main .action-card-footer { background: var(--fx-subtle); margin: 4px -16px -16px; padding: 8px 12px; border-top: 1px solid var(--fx-stroke); border-radius: 0 0 var(--fx-radius-card) var(--fx-radius-card); }
 .workspace-main .action-card [class*="animate-pulse"] { animation: none; }
-.workspace-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); box-shadow: var(--fx-shadow); overflow: hidden; }
-.workspace-metrics > div { min-width: 0; padding: 16px; }
-.workspace-metrics > div + div { border-left: 1px solid var(--fx-stroke); }
-.workspace-metric-label { display: flex; align-items: center; gap: 8px; color: var(--fx-muted); font-size: 12px; }
-.workspace-metric-value { display: block; margin-top: 8px; font-size: clamp(15px, 2vw, 24px); font-weight: 600; line-height: 1.25; letter-spacing: -.03em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.workspace-metric-detail { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; font-size: 11px; color: var(--fx-muted); font-variant-numeric: tabular-nums; }
 .stat-card-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--fx-radius); background: var(--fx-subtle); color: var(--fx-muted); }
 [data-slot="card-title"] { line-height: 1.4; }
 [data-slot="table-header"] { background: var(--fx-subtle); }
@@ -224,20 +217,6 @@
     content: ""; position: absolute; inset: -11px -6px;
   }
 
-  /*
-    操作图标行原来带一块灰底 —— 在一个已经没有盒子的列表里，那块灰是唯一
-    还在画框的东西，反而最抢眼。去掉底色和分隔线，图标本身退到 muted，
-    只在这一条被点/悬停时才需要看见它们。
-  */
-  /*
-    操作行：上面一条细线把它和数据分开（它是「能做什么」不是「是什么」），
-    但不给底色 —— 参考图里每个按钮一块彩底，那才是没质感的来源。
-    危险操作保留红色：那不是装饰，是唯一需要在点之前就看见的信息。
-  */
-  .workspace-main .action-card-footer {
-    background: transparent; border-top: 1px solid var(--fx-stroke);
-    margin: 3px -12px 0; padding: 4px 12px 0; border-radius: 0;
-  }
 
   /*
     ── 转发路径：竖排改横排 ──
@@ -289,20 +268,6 @@
   .workspace-main .space-y-4 > * + * { margin-top: 10px; }
   .workspace-main .space-y-3 > * + * { margin-top: 8px; }
 
-  /*
-    列表卡底部那排操作图标。每张卡 5 个 44px 的图标按钮独占一行 —— 实测
-    130px，而一张紧凑规则卡总共才 500px。收成一行 34px 高的图标，命中区
-    靠 ::after 往外撑，不占版面（同一批图标之间本来就有 28px 以上空当）。
-  */
-  /*
-    操作图标再缩一档：34×30 → 28×24，图标 15 → 14px。命中区仍由 ::after
-    撑到 44 —— 这排图标之间本来就有 28px 以上空当，往外撑不会盖到邻居。
-    整行从 35px 收到 27px。
-  */
-  .action-card-footer { padding-top: 4px; margin-top: 0; gap: 0; }
-  .action-card-footer [data-slot="button"] { position: relative; height: 24px; min-height: 24px; width: 28px; min-width: 28px; }
-  .action-card-footer [data-slot="button"]::after { content: ""; position: absolute; inset: -10px -8px; }
-  .action-card-footer [data-slot="button"] > svg { width: 14px; height: 14px; }
 
   /*
     对话框：rounded-2xl(16px) + p-4，而真正吃掉高度的是 gap-5 —— 面板是个
@@ -411,10 +376,6 @@
 
   /*
     卡内：入口/目标那块 46px（两行各 22 + 间距），收到一行 20px。
-
-    操作行那条线的上下边距归上面那一条 .workspace-main .action-card-footer 管
-    （同样的选择器在这里再写一遍，只会把上面的值盖掉 —— 这种「写了不生效」
-    这一轮已经踩过六次了）。
   */
   .workspace-main [data-slot="card"] .font-mono { line-height: 20px; }
 
@@ -552,9 +513,6 @@
   .workspace-filter-search { flex-basis: 0; }
   .workspace-filter-options { flex-basis: 100%; padding: 12px; background: var(--fx-subtle); border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); }
   .workspace-filter-options > button { flex: 1 1 120px; max-width: none; }
-  .workspace-metrics > div { padding: 12px; }
-  .workspace-metric-label > svg { display: none; }
-  .workspace-metric-label { font-size: 11px; }
   .workspace-main [data-slot="card-header"] { padding: 16px; }
   .workspace-main [data-slot="card-content"] { padding-inline: 16px; padding-bottom: 16px; }
   .workspace-main [data-slot="card-title"] { font-size: 18px; }

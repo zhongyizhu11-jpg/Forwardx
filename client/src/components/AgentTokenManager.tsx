@@ -1,4 +1,6 @@
 import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getStoredAgentTokenViewMode, storeAgentTokenViewMode, type AgentTokenViewMode } from "@/lib/agentTokenViewMode";
 import { usePageVisible } from "@/hooks/usePageVisible";
@@ -176,41 +178,25 @@ function TokenActionButtons({
   onEdit: (tokenItem: any) => void;
   onDelete: (tokenItem: any) => void;
 }) {
+  // 原来是三个只有悬停提示、没有读屏名字的图标；拿安装命令是这里最常做的事，带字放外面。
+  const loading = loadingScriptTokenId === tokenItem.id;
+  const name = tokenItem.remark || tokenItem.name || `Token #${tokenItem.id}`;
   return (
-    <div className="flex items-center justify-end gap-1">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="查看安装命令"
-        disabled={loadingScriptTokenId === tokenItem.id}
-        onClick={() => onOpenScript(tokenItem.id)}
-      >
-        {loadingScriptTokenId === tokenItem.id ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Terminal className="h-3.5 w-3.5" />
-        )}
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="编辑备注"
-        onClick={() => onEdit(tokenItem)}
-      >
-        <Pencil className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8 text-destructive hover:text-destructive"
-        title="删除 Token"
-        onClick={() => onDelete(tokenItem)}
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
-    </div>
+    <EntityActions
+      primary={[
+        {
+          key: "script",
+          label: "安装命令",
+          ariaLabel: `查看 ${name} 的安装命令`,
+          icon: loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Terminal className="h-3.5 w-3.5" />,
+          disabled: loading,
+          onSelect: () => onOpenScript(tokenItem.id),
+        },
+        { key: "edit", label: "编辑", ariaLabel: `编辑 ${name} 的备注`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => onEdit(tokenItem) },
+      ]}
+      menu={[{ key: "delete", label: "删除", ariaLabel: `删除 ${name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => onDelete(tokenItem) }]}
+      menuLabel={`${name} 的更多操作`}
+    />
   );
 }
 
@@ -271,7 +257,7 @@ function AgentTokenCard({
           <TokenHostInfo tokenItem={tokenItem} compact />
         </div>
 
-        <div className="action-card-footer flex justify-end border-t border-border/40 pt-2">
+        <CardActions>
           <TokenActionButtons
             tokenItem={tokenItem}
             loadingScriptTokenId={loadingScriptTokenId}
@@ -279,7 +265,7 @@ function AgentTokenCard({
             onEdit={onEdit}
             onDelete={onDelete}
           />
-        </div>
+        </CardActions>
       </CardContent>
     </Card>
   );

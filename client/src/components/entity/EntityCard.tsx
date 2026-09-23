@@ -163,6 +163,21 @@ export function EntityDivider({ className }: { className?: string }) {
  *
  * 一级操作最多 2 个，其余收进 ActionMenu —— 规则写在 EntityActions 里。
  */
+/**
+ * 还没换成 EntityCard 的列表卡（隧道、转发组、规则）底部的操作区。
+ *
+ * 原来这一行是 `.action-card-footer`：一条灰底带，里面五个图标，再由 workspace.css 分三个
+ * 断点各覆盖一遍 —— 手机上把按钮压成 28×24 的纯图标，带字的按钮放进去会被压坏。
+ * 这里只画一条细线、右对齐，不给底色；里面放 EntityActions（最多两个带字的 + ···）。
+ */
+export function CardActions({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <div className={cn("fx-card-actions mt-auto flex min-w-0 items-center justify-end border-t border-[var(--fx-stroke-weak)] pt-1", className)}>
+      {children}
+    </div>
+  );
+}
+
 export function EntityFooter({
   className,
   children,

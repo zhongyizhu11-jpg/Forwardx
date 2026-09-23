@@ -1,4 +1,6 @@
 import DataSectionLoading from "@/components/DataSectionLoading";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
 import HostStatusLabel from "@/components/HostStatusLabel";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useOptimisticSortableOrder, useSortableReorder } from "@/components/SortableDragHandle";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -338,14 +340,11 @@ export default function HostGroupManager({
 
   const pending = createMutation.isPending || updateMutation.isPending;
   const groupActionButtons = (group: HostGroupView) => (
-    <div className="flex justify-end gap-1">
-      <Button variant="ghost" size="icon" className="h-8 w-8" title="编辑分组" onClick={() => openEdit(group)}>
-        <Pencil className="h-3.5 w-3.5" />
-      </Button>
-      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" title="删除分组" onClick={() => confirmDelete(group)}>
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
-    </div>
+    <EntityActions
+      primary={[{ key: "edit", label: "编辑", ariaLabel: `编辑分组 ${group.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => openEdit(group) }]}
+      menu={[{ key: "delete", label: "删除", ariaLabel: `删除分组 ${group.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => confirmDelete(group) }]}
+      menuLabel={`分组 ${group.name} 的更多操作`}
+    />
   );
 
   const renderEmptyState = (className = "") => (
@@ -389,9 +388,7 @@ export default function HostGroupManager({
 
           <HostGroupHostPreview hostIds={hostIds} hostsById={hostsById} />
 
-          <div className="action-card-footer flex justify-end border-t border-border/40 pt-2">
-            {groupActionButtons(group)}
-          </div>
+          <CardActions>{groupActionButtons(group)}</CardActions>
         </CardContent>
       </Card>
     );

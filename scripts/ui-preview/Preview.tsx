@@ -11,6 +11,7 @@ import { AttentionSection } from "@/features/dashboard/AttentionSection";
 import { TrafficSurface, type TrafficChartPoint } from "@/features/dashboard/TrafficSurface";
 import { emptyAttentionTotals } from "@shared/dashboardAttention";
 import { SummaryStrip } from "@/components/entity/SummaryStrip";
+import { CardActions } from "@/components/entity/EntityCard";
 import { ListRow, ListSection } from "@/components/ios/GroupedList";
 import EmptyState from "@/components/EmptyState";
 import DataSectionError from "@/components/DataSectionError";
@@ -153,7 +154,7 @@ function Demo() {
               <div className="flex items-start justify-between gap-3"><div><h2 className="text-base font-semibold">{name}</h2><p className="mt-1 flex items-center gap-2 text-xs text-muted-foreground"><span className={`h-1.5 w-1.5 rounded-full ${enabled[name]===false?"bg-muted-foreground":"bg-emerald-600"}`}/>{enabled[name]===false?"已停用":"运行正常"}<span>·</span>ForwardX</p></div><Switch checked={enabled[name]!==false} onCheckedChange={v=>setEnabled({...enabled,[name]:v})} aria-label={`启用${name}`}/></div>
               <ConnectionPath steps={page==="链路管理"?[{key:"entry",label:"入口",content:<strong className="font-medium">华南入口</strong>},{key:"exit",label:"出口",content:<strong className="font-medium">{index===0?"香港出口":"东京出口"}</strong>}]:[{key:"entry",label:"入口 · 点击复制",content:<button className="flex w-full items-start justify-between gap-2 text-left" onClick={()=>setMessage("演示：地址已复制")}><code className="break-all">{index===2?"[2001:db8:85a3:0000:0000:8a2e:0370:7334]:443":"203.0.113.10:44760"}</code><Copy className="h-4 w-4 shrink-0"/></button>},{key:"exit",label:"目标地址",content:<code>service.example.com:443</code>}]}/>
               <div className="flex items-center justify-between gap-2"><Badge variant="secondary">TCP + UDP</Badge><span className="text-xs text-muted-foreground">延迟 <strong className="ml-1 font-medium text-foreground">23 ms</strong></span></div>
-              <div className="action-card-footer flex justify-end gap-2"><Button variant="ghost" size="sm" onClick={()=>setDialog(true)}>编辑</Button><Button variant="ghost" size="sm" onClick={()=>setMessage("演示：线路连通，23 ms")}>测试连接</Button></div>
+              <CardActions><Button variant="ghost" size="sm" onClick={()=>setDialog(true)}>编辑</Button><Button variant="ghost" size="sm" onClick={()=>setMessage("演示：线路连通，23 ms")}>测试连接</Button></CardActions>
             </CardContent></Card>)}</div>}
           </Tabs>
         </>:page==="账单与兑换"?<>

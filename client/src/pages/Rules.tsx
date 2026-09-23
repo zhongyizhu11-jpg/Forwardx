@@ -122,6 +122,8 @@ import {
 } from "@shared/failoverTargets";
 import { FAILOVER_TONE_CLASS, describeFailoverLineDisplay } from "@/lib/failoverLineDisplay";
 import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
 import { FailoverPolicyFields } from "@/features/rules/FailoverPolicyFields";
 import { describeRoutePolicy, pinUntilSeconds } from "@shared/routePolicy";
 import { failoverLineLabel } from "@shared/failoverActiveLine";
@@ -6411,84 +6413,48 @@ function RulesContent() {
     return <span className="whitespace-nowrap text-xs text-muted-foreground">未测试</span>;
   };
 
+  /*
+    规则卡、表格行上的操作。原来五个图标常驻（延迟、自测、重置、编辑、删除）—— 十二条规则
+    就是六十个图标，而且得记住听诊器是「自测」、转圈的箭头是「重置统计」。常用的两个带字
+    放外面，其余收进 ···；删除永远在菜单最后、红色、隔一条线。
+  */
   const renderRuleActions = (rule: any) => {
-    const supported = isRuleSupported(rule);
-    if (!supported) {
-      return (
-        <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => openEdit(rule)}
-            title="编辑并切换到可用转发资源"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-destructive hover:text-destructive"
-            onClick={() => setDeleteRule(rule)}
-            title="删除规则"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      );
-    }
     const ruleCategory = getRuleCategory(rule, forwardGroupById);
     const isForwardChainRule = ruleCategory === "chain";
     const probeMethod = ruleLatencyProbeMethodForRule(rule);
+    const resetting = resetTrafficMutation.isPending && resetTrafficTarget?.scope === "rule" && Number(resetTrafficTarget.rule?.id) === Number(rule.id);
     return (
-      <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => setTrafficDetailRule({ id: rule.id, name: rule.name, isForwardChain: isForwardChainRule, probeMethod })}
-          title={isForwardChainRule ? "查看链路延迟" : probeMethod === "ping" ? "查看 Ping 延迟" : "查看 TCPing 延迟"}
-        >
-          <Activity className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => setSelfTestRule({ id: rule.id, name: rule.name })}
-          title="转发链路自测"
-        >
-          <Stethoscope className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => setResetTrafficTarget({ scope: "rule", rule })}
-          disabled={resetTrafficMutation.isPending}
-          title={resetTrafficMutation.isPending ? "正在重置统计数据" : "重置规则数据"}
-        >
-          {resetTrafficMutation.isPending && resetTrafficTarget?.scope === "rule" && Number(resetTrafficTarget.rule?.id) === Number(rule.id)
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : <RotateCcw className="h-3.5 w-3.5" />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon" aria-label={`编辑 ${rule.name}`}
-          className="h-8 w-8"
-          onClick={() => openEdit(rule)}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon" aria-label={`删除 ${rule.name}`}
-          className="h-8 w-8 text-destructive hover:text-destructive"
-          onClick={() => setDeleteRule(rule)}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+      <EntityActions
+        primary={[
+          {
+            key: "test",
+            label: "诊断",
+            ariaLabel: `诊断 ${rule.name}：转发链路自测`,
+            icon: <Stethoscope className="h-3.5 w-3.5" />,
+            onSelect: () => setSelfTestRule({ id: rule.id, name: rule.name }),
+          },
+          { key: "edit", label: "编辑", ariaLabel: `编辑 ${rule.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => openEdit(rule) },
+        ]}
+        menu={[
+          {
+            key: "latency",
+            label: isForwardChainRule ? "链路延迟" : probeMethod === "ping" ? "Ping 延迟" : "TCPing 延迟",
+            ariaLabel: `查看 ${rule.name} 的延迟`,
+            icon: <Activity className="h-3.5 w-3.5" />,
+            onSelect: () => setTrafficDetailRule({ id: rule.id, name: rule.name, isForwardChain: isForwardChainRule, probeMethod }),
+          },
+          {
+            key: "reset",
+            label: resetting ? "正在重置统计" : "重置统计",
+            ariaLabel: `重置 ${rule.name} 的统计数据`,
+            icon: resetting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />,
+            disabled: resetTrafficMutation.isPending,
+            onSelect: () => setResetTrafficTarget({ scope: "rule", rule }),
+          },
+          { key: "delete", label: "删除", ariaLabel: `删除 ${rule.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => setDeleteRule(rule) },
+        ]}
+        menuLabel={`${rule.name} 的更多操作`}
+      />
     );
   };
 
@@ -6786,9 +6752,7 @@ function RulesContent() {
               {renderRuleDailyTrafficValue(rule, "out")}
             </div>
 
-            <div className="action-card-footer flex justify-end border-t border-border/40 pt-1">
-              {renderRuleActions(rule)}
-            </div>
+            <CardActions>{renderRuleActions(rule)}</CardActions>
           </CardContent>
         </Card>
       );
@@ -6882,9 +6846,7 @@ function RulesContent() {
               {renderLatestLatency(rule)}
             </div>
           </div>
-          <div className="action-card-footer flex justify-end border-t border-border/40 pt-2">
-            {renderRuleActions(rule)}
-          </div>
+          <CardActions>{renderRuleActions(rule)}</CardActions>
         </CardContent>
       </Card>
     );

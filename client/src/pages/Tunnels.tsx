@@ -146,6 +146,8 @@ import {
 } from "recharts";
 import MultiHopEditor from "@/components/MultiHopEditor";
 import { ForwardGroupsContent } from "@/pages/ForwardGroups";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
 
 const ReactGlobe = lazy(loadReactGlobe) as typeof import("react-globe.gl").default;
 
@@ -3693,6 +3695,38 @@ function TunnelsContent() {
     }
   };
   const selectedCreateDisabled = selectedCreateType === "tunnel" ? !canCreateTunnel : !canCreateChain;
+  /*
+    隧道卡、表格行上的操作。原来是四个图标（延迟、测试、编辑、删除）常驻 —— 十条隧道就是四十个
+    图标，而且得记住听诊器是「测试」、波形是「延迟」。常用的两个带字放外面，其余收进 ···，
+    删除永远在菜单最后、红色、隔一条线（顺序由 partitionEntityActions 保证）。
+    协议被停用的隧道只剩删除。
+  */
+  const renderTunnelActions = (tunnel: any, supported: boolean) => (
+    <EntityActions
+      primary={supported ? [
+        {
+          key: "test",
+          label: "诊断",
+          ariaLabel: `诊断隧道 ${tunnel.name}：测试入口到出口的延迟`,
+          icon: <Stethoscope className="h-3.5 w-3.5" />,
+          onSelect: () => setTestTunnel({ id: tunnel.id, name: tunnel.name }),
+        },
+        { key: "edit", label: "编辑", ariaLabel: `编辑隧道 ${tunnel.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => openEdit(tunnel) },
+      ] : []}
+      menu={[
+        ...(supported ? [{
+          key: "latency",
+          label: "延迟记录",
+          ariaLabel: `查看隧道 ${tunnel.name} 的延迟`,
+          icon: <Activity className="h-3.5 w-3.5" />,
+          onSelect: () => setLatencyTunnel({ id: tunnel.id, name: tunnel.name }),
+        }] : []),
+        { key: "delete", label: "删除", ariaLabel: `删除隧道 ${tunnel.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => setDeleteTunnel(tunnel) },
+      ]}
+      menuLabel={`隧道 ${tunnel.name} 的更多操作`}
+    />
+  );
+
   const renderUnsupportedHint = (children: ReactNode) => (
     <TooltipProvider>
       <Tooltip>
@@ -3924,31 +3958,7 @@ function TunnelsContent() {
                       {renderTunnelLatencyBreakdown(tunnel, true)}
                     </div>
 
-                    <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
-                      {supported && (
-                        <>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" aria-label={`查看隧道 ${tunnel.name} 的延迟`} onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
-                            <Activity className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" aria-label={`测试隧道 ${tunnel.name} 的延迟`} onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
-                            <Stethoscope className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                        </>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        title={!supported ? unsupportedProtocolTitle : undefined}
-                        aria-label={`删除隧道 ${tunnel.name}`}
-                        onClick={() => setDeleteTunnel(tunnel)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                    <CardActions>{renderTunnelActions(tunnel, supported)}</CardActions>
                     </CardContent>
                   </Card>
                 )}
@@ -4022,31 +4032,7 @@ function TunnelsContent() {
                       {renderTunnelLatencyBreakdown(tunnel, true)}
                     </div>
 
-                    <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
-                      {supported && (
-                        <>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" aria-label={`查看隧道 ${tunnel.name} 的延迟`} onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
-                            <Activity className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" aria-label={`测试隧道 ${tunnel.name} 的延迟`} onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
-                            <Stethoscope className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                        </>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        title={!supported ? unsupportedProtocolTitle : undefined}
-                        aria-label={`删除隧道 ${tunnel.name}`}
-                        onClick={() => setDeleteTunnel(tunnel)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                    <CardActions>{renderTunnelActions(tunnel, supported)}</CardActions>
                     </CardContent>
                   </Card>
                 )}
@@ -4133,45 +4119,7 @@ function TunnelsContent() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {supported && (
-                            <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title="查看入口到出口延迟"
-                                aria-label={`查看隧道 ${tunnel.name} 的延迟`}
-                                onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}
-                              >
-                                <Activity className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title="测试入口到出口延迟"
-                                aria-label={`测试隧道 ${tunnel.name} 的延迟`}
-                                onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}
-                              >
-                                <Stethoscope className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                            </>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                            title={!supported ? unsupportedProtocolTitle : undefined}
-                            aria-label={`删除隧道 ${tunnel.name}`}
-                            onClick={() => setDeleteTunnel(tunnel)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
+                        <div className="flex items-center justify-end">{renderTunnelActions(tunnel, supported)}</div>
                       </TableCell>
                     </TableRow>
                     )}

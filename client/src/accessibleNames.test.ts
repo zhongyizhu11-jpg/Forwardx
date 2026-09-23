@@ -248,7 +248,12 @@ test("只有图标的按钮都有可访问名称", () => {
       if (!item.named) offenders.push(item.loc);
     }
   }
-  assert.ok(total >= 100, `只扫到 ${total} 个图标按钮，扫描逻辑可能失效了`);
+  /*
+    这道下限只防「扫描逻辑坏了、一个都没扫到还算通过」。卡片底部那排图标（规则、隧道、转发组、
+    主机分组 / Token / 服务）换成带字的操作之后，图标按钮从 100 多个少到 91 个 —— 少了是好事，
+    下限跟着放到 60。
+  */
+  assert.ok(total >= 60, `只扫到 ${total} 个图标按钮，扫描逻辑可能失效了`);
   const 新增 = offenders.filter((x) => !图标按钮待补.includes(x));
   assert.deepEqual(新增, [], `图标按钮没有名字，读屏里只会念出「按钮」：\n  ${新增.join("\n  ")}`);
   const 已补好 = 图标按钮待补.filter((x) => !offenders.includes(x));

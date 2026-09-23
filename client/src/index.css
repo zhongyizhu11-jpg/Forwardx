@@ -719,10 +719,6 @@
     flex-direction: column;
   }
 
-  .action-card-footer {
-    margin-top: auto;
-  }
-
   .card-mode-transition {
     animation: card-mode-transition-in 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
     will-change: opacity, transform;
@@ -1579,14 +1575,6 @@
 /* 紧凑开关的命中区再补 4px：量下来是 49×40，纵向差一点点。 */
 .switch-compact::after {
   inset: -20px -13px;
-}
-
-/* Touch action rows need spacing as well as large targets. */
-@media (pointer: coarse) {
-  .action-card-footer {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
 }
 
 /*

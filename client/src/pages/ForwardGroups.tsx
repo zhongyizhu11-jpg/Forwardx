@@ -3,6 +3,8 @@ import { NetworkPath } from "@/components/network/NetworkPath";
 import { buildChainPath } from "@/features/links/chainPath";
 import { GroupFailoverPolicyFields } from "@/features/links/GroupFailoverPolicyFields";
 import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
 import { FAILOVER_TONE_CLASS, describeGroupPolicyDisplay } from "@/lib/failoverLineDisplay";
 import { FormField } from "@/components/ui/form-field";
 import DataSectionError from "@/components/DataSectionError";
@@ -1954,24 +1956,7 @@ export function ForwardGroupsContent({
                     </div>
                   </div>
 
-                  <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
-                    {chainLatencyActions(group)}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      aria-label={`删除链路 ${group.name}`}
-                      onClick={() => setDeleteGroup(group)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
+                  <CardActions>{renderGroupActions(group)}</CardActions>
                   </CardContent>
                 </Card>
       )}
@@ -2016,28 +2001,48 @@ export function ForwardGroupsContent({
     return <LatencyRating latencyMs={latency} isTimeout={!!group.latestLatencyIsTimeout} />;
   };
 
-  const chainLatencyActions = (group: any) => group.groupMode === "chain" ? (
-    <>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="查看延迟"
-        onClick={() => setLatencyGroup({ id: Number(group.id), name: group.name })}
-      >
-        <Activity className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="链路自测"
-        onClick={() => setTestGroup({ id: Number(group.id), name: group.name })}
-      >
-        <Stethoscope className="h-3.5 w-3.5" />
-      </Button>
-    </>
-  ) : null;
+  /*
+    转发组卡片、表格行上的操作。原来常驻四五个图标（转发链多出延迟、自测两个），读屏念出来
+    一律是「……链路」—— 哪怕它是转发组、入口组。常用的带字放外面：转发链是「诊断 + 编辑」，
+    其余只有「编辑」；同步、延迟记录收进 ···，删除永远最后、红色、隔一条线。
+  */
+  const renderGroupActions = (group: any) => {
+    const resource = groupModeDisplayLabel(group.groupMode);
+    const isChain = normalizeGroupMode(group.groupMode) === "chain";
+    return (
+      <EntityActions
+        primary={[
+          ...(isChain ? [{
+            key: "test",
+            label: "诊断",
+            ariaLabel: `诊断${resource} ${group.name}：逐段自测`,
+            icon: <Stethoscope className="h-3.5 w-3.5" />,
+            onSelect: () => setTestGroup({ id: Number(group.id), name: group.name }),
+          }] : []),
+          { key: "edit", label: "编辑", ariaLabel: `编辑${resource} ${group.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => openEdit(group) },
+        ]}
+        menu={[
+          ...(isChain ? [{
+            key: "latency",
+            label: "延迟记录",
+            ariaLabel: `查看${resource} ${group.name} 的延迟`,
+            icon: <Activity className="h-3.5 w-3.5" />,
+            onSelect: () => setLatencyGroup({ id: Number(group.id), name: group.name }),
+          }] : []),
+          {
+            key: "sync",
+            label: "同步",
+            ariaLabel: `同步${resource} ${group.name}`,
+            icon: <RefreshCw className="h-3.5 w-3.5" />,
+            disabled: syncMutation.isPending,
+            onSelect: () => syncMutation.mutate({ id: group.id }),
+          },
+          { key: "delete", label: "删除", ariaLabel: `删除${resource} ${group.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => setDeleteGroup(group) },
+        ]}
+        menuLabel={`${resource} ${group.name} 的更多操作`}
+      />
+    );
+  };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
   const handleViewModeChange = (nextViewMode: ForwardGroupViewMode) => {
@@ -2242,24 +2247,7 @@ export function ForwardGroupsContent({
                       </TableCell>
                       <TableCell className="hidden py-3 md:table-cell">{normalizeGroupMode(group.groupMode) === "chain" ? renderChainLatencySummary(group) : isCollectionMode(normalizeGroupMode(group.groupMode)) ? (normalizeGroupMode(group.groupMode) === "entry" ? "固定入口" : "固定出口") : Number(group.templateRuleCount || 0)}</TableCell>
                       <TableCell className="py-3 text-right">
-                        <div className="flex justify-end gap-1">
-                          {chainLatencyActions(group)}
-                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
-                            <RefreshCw className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                            aria-label={`删除链路 ${group.name}`}
-                            onClick={() => setDeleteGroup(group)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
+                        <div className="flex justify-end">{renderGroupActions(group)}</div>
                       </TableCell>
                     </TableRow>
                     )}

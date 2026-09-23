@@ -25,6 +25,11 @@ import {
 export type EntityAction = {
   key: string;
   label: string;
+  /**
+   * 读屏念的完整名字（「编辑隧道 HK -> JP」）。一列卡片上十个「编辑」，读屏用户分不清是哪一个；
+   * 看得见的字仍然是 label，而且完整名字要以它开头（看得见的字得在念出来的名字里）。
+   */
+  ariaLabel?: string;
   icon?: ReactNode;
   onSelect: () => void;
   disabled?: boolean;
@@ -81,6 +86,7 @@ export function EntityActions({
           size="sm"
           disabled={action.disabled}
           onClick={action.onSelect}
+          aria-label={action.ariaLabel}
           className="gap-1.5"
         >
           {action.icon}
@@ -97,7 +103,7 @@ export function EntityActions({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {safe.map((action) => (
-              <DropdownMenuItem key={action.key} disabled={action.disabled} onSelect={action.onSelect}>
+              <DropdownMenuItem key={action.key} disabled={action.disabled} onSelect={action.onSelect} aria-label={action.ariaLabel}>
                 {action.icon}
                 {action.label}
               </DropdownMenuItem>
@@ -108,6 +114,7 @@ export function EntityActions({
                 key={action.key}
                 disabled={action.disabled}
                 onSelect={action.onSelect}
+                aria-label={action.ariaLabel}
                 /*
                   破坏性操作保留红色。那不是装饰 —— 它是唯一需要在点下去之前就
                   被看见的信息。

@@ -35,6 +35,10 @@ export type SummaryItem = {
   loading?: boolean;
   /** 刷新时先显示上次的值，不闪回 0（AnimatedStatValue 的缓存键）。 */
   cacheKey?: string;
+  /** 这个键还没有值时，依次借这几个键的值（切换筛选时借上一个范围的数，不闪回 0）。 */
+  fallbackCacheKeys?: string[];
+  /** 同时写进这几个键，给下一次借用。 */
+  mirrorCacheKeys?: string[];
   fallbackValue?: string | number;
 };
 
@@ -77,6 +81,8 @@ export function SummaryStrip({
                 value={item.value}
                 loading={item.loading ?? loading}
                 cacheKey={item.cacheKey}
+                fallbackCacheKeys={item.fallbackCacheKeys}
+                mirrorCacheKeys={item.mirrorCacheKeys}
                 fallbackValue={item.fallbackValue}
                 className="block truncate text-primary-type font-semibold tabular-nums"
               />

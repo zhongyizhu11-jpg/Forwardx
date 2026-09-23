@@ -166,3 +166,17 @@ test("组件里不出现调色板颜色，只出现语义令牌", () => {
   assert.doesNotMatch(html, /emerald|amber-\d|#[0-9a-fA-F]{6}/);
   assert.match(html, /var\(--fx-/);
 });
+
+test("外面的操作念得出是哪一条：看得见的字是「编辑」，读屏念「编辑隧道 X」，而且以看得见的字开头", () => {
+  const html = renderToStaticMarkup(
+    <EntityActions primary={[{ key: "edit", label: "编辑", ariaLabel: "编辑隧道 HK -> JP", onSelect: () => {} }]} />,
+  );
+  assert.match(html, /aria-label="编辑隧道 HK -&gt; JP"[^>]*>编辑</);
+});
+
+test("卡片底部的操作区只画一条细线，不给底色", async () => {
+  const { CardActions } = await import("./EntityCard");
+  const html = renderToStaticMarkup(<CardActions><span>x</span></CardActions>);
+  assert.match(html, /class="fx-card-actions[^"]*border-t border-\[var\(--fx-stroke-weak\)\]/);
+  assert.doesNotMatch(html, /bg-/);
+});
