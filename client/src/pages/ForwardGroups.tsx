@@ -90,7 +90,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import {
@@ -1814,6 +1814,44 @@ export function ForwardGroupsContent({
   };
 
   /**
+   * 卡片底部的几条「名字 · 值」。
+   *
+   * 原来是两个带边框的小框，一个值一个框（手册「不要一个数一个小框」说的就是它），而且
+   * 五种形态里一半是在重复上面已经写过的话：端口转发的「所属主机」就是成员那一块的标题和
+   * 胶囊；「引用规则 N」状态那句已经写了「已被 N 条转发规则引用」；入口组、出口组的「用途 ·
+   * 固定入口 / 固定出口」就是所在的那个 tab；出口组的「N 台主机」就是下面那几个胶囊；
+   * 有入口组的转发链，「入口」就是路径的第一个节点。
+   *
+   * 只留上面没说过的：转发组、入口组的 DDNS 域名；转发链的链路延迟，没有入口组时再加一行
+   * 入口地址（路径上画的是主机名，连的是这个地址）。和套餐卡、监控卡同一种小表：细线下两列。
+   */
+  const renderGroupFacts = (group: any) => {
+    const mode = normalizeGroupMode(group.groupMode);
+    const rows: Array<{ key: string; label: string; value: ReactNode; title?: string }> = [];
+    if (mode === "failover" || mode === "entry") {
+      rows.push({ key: "ddns", label: "DDNS", value: groupDdnsText(group), title: groupDdnsText(group) });
+    }
+    if (mode === "chain") {
+      const entryAddress = String(group.members?.[0]?.entryAddress || "").trim();
+      if (!entryGroupDisplayText(group, groupsByMode) && entryAddress) {
+        rows.push({ key: "entry", label: "入口地址", value: entryAddress, title: entryAddress });
+      }
+      rows.push({ key: "latency", label: "链路延迟", value: renderChainLatencySummary(group) });
+    }
+    if (rows.length === 0) return null;
+    return (
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-[var(--fx-stroke-weak)] pt-2 text-meta">
+        {rows.map((row) => (
+          <Fragment key={row.key}>
+            <dt className="text-muted-foreground">{row.label}</dt>
+            <dd className="min-w-0 truncate text-right text-foreground" title={row.title}>{row.value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    );
+  };
+
+  /**
    * 一张转发组卡片。
    *
    * 原来这 95 行在文件里**一字不差地写了两遍** —— 一处给卡片视图，一处给表格
@@ -1937,16 +1975,7 @@ export function ForwardGroupsContent({
                     {renderGroupMembers(group)}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="min-w-0 rounded-md border border-border/40 bg-background/35 p-2">
-                      <p className="text-muted-foreground">{normalizeGroupMode(group.groupMode) === "port" ? "所属主机" : normalizeGroupMode(group.groupMode) === "chain" ? "入口" : normalizeGroupMode(group.groupMode) === "exit" ? "出口" : "DDNS"}</p>
-                      <p className="mt-1 truncate">{normalizeGroupMode(group.groupMode) === "port" ? ((group.members || []).length ? memberLabel((group.members || [])[0]) : "未选择") : normalizeGroupMode(group.groupMode) === "chain" ? chainEntryText(group) : normalizeGroupMode(group.groupMode) === "exit" ? `${(group.members || []).length} 台主机` : groupDdnsText(group)}</p>
-                    </div>
-                    <div className="min-w-0 rounded-md border border-border/40 bg-background/35 p-2">
-                      <p className="text-muted-foreground">{normalizeGroupMode(group.groupMode) === "chain" ? "链路延迟" : isCollectionMode(normalizeGroupMode(group.groupMode)) ? "用途" : "引用规则"}</p>
-                      <div className="mt-1">{normalizeGroupMode(group.groupMode) === "chain" ? renderChainLatencySummary(group) : isCollectionMode(normalizeGroupMode(group.groupMode)) ? (normalizeGroupMode(group.groupMode) === "entry" ? "固定入口" : "固定出口") : Number(group.templateRuleCount || 0)}</div>
-                    </div>
-                  </div>
+                  {renderGroupFacts(group)}
 
                   <CardActions>{renderGroupActions(group)}</CardActions>
                   </CardContent>
