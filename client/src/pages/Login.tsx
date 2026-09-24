@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import "@cap.js/widget";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -81,6 +80,31 @@ function captchaRetryAfterSeconds(message: string) {
   return match ? Math.max(1, Number(match[1])) : 0;
 }
 
+/*
+  验证组件（@cap.js/widget，压缩前 42 kB）用到时才下载。
+
+  登录页是同步打进入口包的，原来顶部一句 import 就让每个人首屏都带上它 ——
+  可验证只在「同一账号连续输错」和「注册」时才出现，绝大多数登录根本用不到。
+  cap-widget 是自定义元素，模块加载完才注册；所以等它 ready 了再创建元素，
+  不去依赖浏览器事后升级（升级前设的属性和监听虽然也保得住，但少一种时序可想）。
+*/
+let capWidgetLoaded = false;
+let capWidgetPromise: Promise<void> | null = null;
+function loadCapWidget() {
+  if (!capWidgetPromise) {
+    capWidgetPromise = import("@cap.js/widget").then(
+      () => {
+        capWidgetLoaded = true;
+      },
+      (error) => {
+        capWidgetPromise = null;
+        throw error;
+      },
+    );
+  }
+  return capWidgetPromise;
+}
+
 function CapVerificationField(props: {
   purpose: "login" | "register";
   disabled?: boolean;
@@ -89,10 +113,31 @@ function CapVerificationField(props: {
   onError: (message: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [widgetReady, setWidgetReady] = useState(capWidgetLoaded);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+
+  useEffect(() => {
+    if (widgetReady) return;
+    let cancelled = false;
+    setLoadFailed(false);
+    loadCapWidget()
+      .then(() => {
+        if (!cancelled) setWidgetReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLoadFailed(true);
+        props.onError("CAPTCHA_LOAD_FAILED");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadAttempt, props.onError, widgetReady]);
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || !widgetReady) return;
     const widget = document.createElement("cap-widget");
     const panelBase = mobileAuth.isNative ? mobileAuth.normalizePanelUrl(mobileAuth.getPanelUrl()) : "";
     widget.setAttribute("data-cap-api-endpoint", `${panelBase}/api/auth/cap/${props.purpose}/`);
@@ -126,12 +171,26 @@ function CapVerificationField(props: {
       widget.removeEventListener("error", handleError);
       widget.remove();
     };
-  }, [props.disabled, props.onError, props.onToken, props.purpose, props.resetKey]);
+  }, [props.disabled, props.onError, props.onToken, props.purpose, props.resetKey, widgetReady]);
 
   return (
     <div className="space-y-2">
       <Label>人机验证</Label>
-      <div ref={containerRef} className="min-h-14" aria-live="polite" />
+      <div className="min-h-14" aria-live="polite">
+        {!widgetReady && (loadFailed ? (
+          <button
+            type="button"
+            className="flex min-h-14 w-full items-center text-left text-meta text-destructive underline-offset-4 hover:underline"
+            onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+          >
+            验证没加载出来，点这里重试
+          </button>
+        ) : (
+          <p className="flex min-h-14 items-center text-meta text-muted-foreground">正在加载验证…</p>
+        ))}
+        {/* 组件是命令式塞进去的，单独一个空 div，不和 React 管的占位文字混在一起 */}
+        <div ref={containerRef} />
+      </div>
     </div>
   );
 }

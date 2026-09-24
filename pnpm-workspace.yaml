@@ -10,3 +10,5 @@ onlyBuiltDependencies:
 
 patchedDependencies:
   avataaars@2.0.0: patches/avataaars@2.0.0.patch
+  globe.gl@2.46.1: patches/globe.gl@2.46.1.patch
+  three-globe@2.45.2: patches/three-globe@2.45.2.patch

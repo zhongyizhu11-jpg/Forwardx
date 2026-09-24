@@ -1,0 +1,25 @@
+diff --git a/dist/globe.gl.mjs b/dist/globe.gl.mjs
+index 696c5a4bd5a01cfe7da8eeb963a3be541e42b67a..cd33a46723578ccb9d33602aa7af42f0c847c693 100644
+--- a/dist/globe.gl.mjs
++++ b/dist/globe.gl.mjs
+@@ -507,6 +507,12 @@ var globe = Kapsule({
+     var globe = new ThreeGlobe(_objectSpread2({
+       waitForGlobeReady: waitForGlobeReady
+     }, globeInitConfig));
++    // ForwardX patch: ThreeGlobe starts its tween cycle and layer FrameTickers as soon as it is
++    // constructed, i.e. during render (react-kapsule builds the instance in useMemo). React 19 can
++    // throw such a render away (e.g. a Suspense retry that gets interrupted) and never mounts or
++    // destroys that instance, so its loops ran for the rest of the session. Keep it paused until
++    // init() below, which only runs for the instance that actually mounts.
++    globe.pauseAnimation();
+     return {
+       globe: globe,
+       renderObjs: ThreeRenderObjects({
+@@ -785,6 +791,7 @@ var globe = Kapsule({
+     //
+ 
+     // Kick-off renderer
++    state.globe.resumeAnimation(); // ForwardX patch: paused in stateInit, see above
+     this._animationCycle();
+   }
+ });

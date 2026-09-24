@@ -1,5 +1,16 @@
-import Avataaars from "avataaars";
+import { lazy, Suspense } from "react";
 import { cn } from "@/lib/utils";
+
+/*
+  头像库按需加载。
+
+  avataaars 连同它引用的 lodash 原来是跟着侧边栏的用户头像静态打进入口包的，
+  登录后第一屏要先把一套卡通人脸的全部部件下完才能出来。它和二维码、验证组件
+  一起拆出去之后，入口包 1464 kB → 862 kB（gzip 446 → 268 kB），头像库占了
+  其中的大头。头像只是角落里 28px 的一个圆，晚半拍
+  出现完全可以接受：先放一个同尺寸的灰圆占位，不挤布局。
+*/
+const Avataaars = lazy(() => import("avataaars"));
 
 type GeneratedAvatarProps = {
   seed: string;
@@ -78,10 +89,12 @@ function propsFromSeed(seed: string) {
 
 export function GeneratedAvatar({ seed, className }: GeneratedAvatarProps) {
   return (
-    <Avataaars
-      {...propsFromSeed(seed)}
-      className={cn("h-full w-full", className)}
-      style={{ width: "100%", height: "100%" }}
-    />
+    <Suspense fallback={<span aria-hidden className={cn("block h-full w-full rounded-full bg-muted", className)} />}>
+      <Avataaars
+        {...propsFromSeed(seed)}
+        className={cn("h-full w-full", className)}
+        style={{ width: "100%", height: "100%" }}
+      />
+    </Suspense>
   );
 }

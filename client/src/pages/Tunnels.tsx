@@ -2243,10 +2243,6 @@ function TunnelsContent() {
     { enabled: !!deleteTunnel },
   );
 
-  useEffect(() => {
-    prefetchReactGlobe();
-  }, []);
-
   const forwardProtocolSettings = useMemo(
     () => normalizeForwardProtocolSettings(systemSettings?.forwardProtocols),
     [systemSettings?.forwardProtocols]
@@ -3816,6 +3812,8 @@ function TunnelsContent() {
               aria-label="3D 地球视图"
               aria-pressed={activeViewMode === "globe"}
               onClick={() => handleActiveViewModeChange("globe")}
+              onPointerEnter={prefetchReactGlobe}
+              onFocus={prefetchReactGlobe}
             >
               <Globe className="h-4 w-4" />
             </Button>}

@@ -201,11 +201,10 @@ import {
   pushUniqueHostEntryAddress,
   type HostEntryAddress,
 } from "@shared/hostEntryAddress";
-import { Fragment, lazy, Suspense, useState, useMemo, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { Fragment, lazy, memo, Suspense, useState, useMemo, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { useLocation, useSearch } from "wouter";
-import { TcpingDetailDialog } from "@/components/rules/TcpingDetailDialog";
 import { countryFeatureHasCode, normalizeCountryCode, type CountryFeatureLike } from "@/lib/countryFeatures";
 import {
   addHostNodeMeta,
@@ -231,6 +230,27 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 import { useIsMobile } from "@/hooks/useMobile";
 
 const ReactGlobe = lazy(loadReactGlobe) as typeof import("react-globe.gl").default;
+// 延迟详情里的曲线图要用 recharts（约 100 kB gzip）；只有点开某条规则的延迟才需要，不跟规则页一起下
+const TcpingDetailDialog = lazy(() => import("@/components/rules/TcpingDetailDialog").then((module) => ({ default: module.TcpingDetailDialog })));
+
+/*
+  对话框开着的时候，背后的列表不跟着重渲染。
+
+  新建 / 编辑规则的表单状态（form）挂在整页组件上，于是在对话框里每敲一个字，
+  整页几十张规则卡都跟着重算一遍：手机档（CPU 降速 4 倍）实测每个字一个
+  95～130 ms 的长任务，按键到画面更新的中位数 144 ms、最慢 272 ms，打字
+  明显跟不上手。这几个对话框都是模态的，背后被遮着、也点不到，那段时间
+  列表没必要跟着变 —— 冻住，关掉对话框时再一次性追上。
+
+  只拦父组件带来的重渲染：卡片内部自己的状态（菜单开合、各自订阅的数据）
+  照常更新。刚冻住的那一次也直接跳过 —— 那一刻屏幕上的就是最新的。
+*/
+const FreezeWhile = memo(
+  function FreezeWhile({ render }: { frozen: boolean; render: () => ReactNode }) {
+    return <>{render()}</>;
+  },
+  (_previous, next) => next.frozen,
+);
 
 function clearRuleTrafficStatCaches() {
   if (typeof window === "undefined") return;
@@ -2467,10 +2487,6 @@ function RulesContent() {
 
   const [trafficDetailRule, setTrafficDetailRule] = useState<{ id: number; name: string; isForwardChain?: boolean; probeMethod?: "tcping" | "ping" } | null>(null);
   const [selfTestRule, setSelfTestRule] = useState<{ id: number; name: string } | null>(null);
-
-  useEffect(() => {
-    prefetchReactGlobe();
-  }, []);
 
   const setRouteMode = (mode: RuleRouteMode) => {
     if (mode === form.routeMode) return;
@@ -6875,6 +6891,8 @@ function RulesContent() {
               size="icon"
               className="h-8 w-8 rounded-none"
               onClick={() => handleDisplayModeChange("globe")}
+              onPointerEnter={prefetchReactGlobe}
+              onFocus={prefetchReactGlobe}
               title="3D 流量转发图"
             >
               <Globe className="h-4 w-4" />
@@ -6895,6 +6913,7 @@ function RulesContent() {
           ) : null}
       </>} />
 
+      <FreezeWhile frozen={showDialog || showImportDialog || showCopyDialog} render={() => <>
       <TrafficOverview total={totalTrafficTotals} daily={dailyTrafficTotals}
         totalLoading={totalTrafficTotalsLoading} dailyLoading={dailyTrafficTotalsLoading}
         scope={trafficTotalsCacheScope} lastScope={trafficTotalsLastCacheScope} />
@@ -7267,18 +7286,21 @@ function RulesContent() {
         </Card>
       )}
       </SectionTransition>
+      </>} />
 
       {trafficDetailRule && (
-        <TcpingDetailDialog
-          ruleId={trafficDetailRule.id}
-          ruleName={trafficDetailRule.name}
-          isForwardChain={!!trafficDetailRule.isForwardChain}
-          probeMethod={trafficDetailRule.probeMethod}
-          open={!!trafficDetailRule}
-          onOpenChange={(v) => {
-            if (!v) setTrafficDetailRule(null);
-          }}
-        />
+        <Suspense fallback={null}>
+          <TcpingDetailDialog
+            ruleId={trafficDetailRule.id}
+            ruleName={trafficDetailRule.name}
+            isForwardChain={!!trafficDetailRule.isForwardChain}
+            probeMethod={trafficDetailRule.probeMethod}
+            open={!!trafficDetailRule}
+            onOpenChange={(v) => {
+              if (!v) setTrafficDetailRule(null);
+            }}
+          />
+        </Suspense>
       )}
 
       {selfTestRule && (

@@ -1,0 +1,36 @@
+diff --git a/dist/three-globe.mjs b/dist/three-globe.mjs
+index cc53c4e1a7cae3dadd17d56f3d6ff2c73d1558c4..3d49d59ecdbf5053d616d430d20d90d3ebf6ac93 100644
+--- a/dist/three-globe.mjs
++++ b/dist/three-globe.mjs
+@@ -415,6 +415,11 @@ var emptyObject = function emptyObject(obj) {
+ 
+ function linkKapsule (kapsulePropName, kapsuleType) {
+   var dummyK = new kapsuleType(); // To extract defaults
++  // ForwardX patch: the dummy is only read for default values. Arcs/Paths layers start a
++  // FrameTicker (a perpetual requestAnimationFrame loop) in stateInit, so an undisposed dummy
++  // keeps several 60fps loops running for the whole session as soon as this module is imported.
++  // globe.gl's own linkKapsule already disposes its dummy the same way.
++  dummyK._destructor && dummyK._destructor();
+ 
+   return {
+     linkProp: function linkProp(prop) {
+@@ -4219,7 +4224,10 @@ function fromKapsule (kapsule) {
+     _inherits(Globe, _baseClass);
+     return _createClass(Globe);
+   }(baseClass); // attach kapsule props/methods to class prototype
+-  Object.keys(kapsule()).forEach(function (m) {
++  // ForwardX patch: this throwaway instance only lists method names, but its stateInit already
++  // created the arcs/paths layers and their running FrameTickers. Dispose it like the dummies above.
++  var methodLister = kapsule();
++  Object.keys(methodLister).forEach(function (m) {
+     return Globe.prototype[m] = function () {
+       var _this$__kapsuleInstan;
+       var returnVal = (_this$__kapsuleInstan = this.__kapsuleInstance)[m].apply(_this$__kapsuleInstan, arguments);
+@@ -4227,6 +4235,7 @@ function fromKapsule (kapsule) {
+       : returnVal;
+     };
+   });
++  methodLister._destructor && methodLister._destructor();
+   return Globe;
+ }
+ 
