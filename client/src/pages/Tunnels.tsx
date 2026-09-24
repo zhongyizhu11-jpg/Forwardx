@@ -17,6 +17,7 @@ import SectionTransition from "@/components/SectionTransition";
 import { loadReactGlobe, prefetchReactGlobe } from "@/lib/reactGlobeLoader";
 import { escapeTooltipHtml, hostGeoCoordinate } from "@/lib/hostGeo";
 import DashboardLayout from "@/components/DashboardLayout";
+import { DiagnoseDialog } from "@/components/DiagnoseDialog";
 import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { LatencyRating } from "@/components/LatencyRating";
@@ -1434,7 +1435,7 @@ function TunnelSelfTestDialog({
       manualTestRef.current = false;
       manualTestBaselineAtRef.current = "";
       manualTestResultObservedRef.current = false;
-      toast.error(e.message || "测试失败");
+      toast.error(e.message || "诊断没发出去");
     },
   });
 
@@ -1692,7 +1693,7 @@ function TunnelSelfTestDialog({
               const latency = typeof detail?.latencyMs === "number" && Number.isFinite(detail.latencyMs)
                 ? `${detail.latencyMs}ms`
                 : pending
-                  ? "探测中"
+                  ? "诊断中"
                   : detail
                     ? "失败"
                     : latestLatency !== null
@@ -1833,7 +1834,7 @@ function TunnelSelfTestDialog({
       if (lastFailureToastKey.current !== key) {
         lastFailureToastKey.current = key;
         manualTestRef.current = false;
-        toast.error("隧道链路自测失败", {
+        toast.error("诊断没通过", {
           description: message,
           duration: 12000,
         });
@@ -1848,50 +1849,40 @@ function TunnelSelfTestDialog({
   const probeDialogSizeClass = plannedSegmentCount >= 3 ? "sm:max-w-4xl" : plannedSegmentCount >= 2 ? "sm:max-w-3xl" : "sm:max-w-xl";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`${probeDialogSizeClass} min-w-0`}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            延迟探测
-          </DialogTitle>
-          <DialogDescription>{tunnelName}</DialogDescription>
-        </DialogHeader>
-
-        <LinkTestProbeView
-          parsed={parsedMessage}
-          fallbackLatencyMs={latencyMs}
-          isSuccess={displaySuccess}
-          isTesting={displayTesting}
-          sourceLabel={linkTestNodeData.sourceLabel}
-          targetLabel={linkTestNodeData.targetLabel}
-          nodeMeta={linkTestNodeData.nodeMeta}
-          nodeTooltips={linkTestNodeData.nodeTooltips}
-          plannedSegments={linkTestNodeData.plannedSegments}
-        />
-
-        <DialogFooter className="gap-2">
-          <Button
-            onClick={() => {
-              lastFailureToastKey.current = "";
-              manualTestRef.current = true;
-              manualTestBaselineAtRef.current = lastTestAt || "";
-              manualTestResultObservedRef.current = false;
-              setStartedLastTestAt(lastTestAt || "__none__");
-              setSawServerTesting(false);
-              setPostMutationQueryBaseline(null);
-              setOptimisticTesting(true);
-              testMutation.mutate({ id: tunnelId });
-            }}
-            disabled={displayTesting}
-            className="w-full min-w-0 gap-2 sm:w-auto sm:min-w-[112px]"
-          >
-            {displayTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
-            {displayTesting ? "探测中..." : "链路测试"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <DiagnoseDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      subjectName={tunnelName}
+      scope="从入口测到出口"
+      sizeClassName={probeDialogSizeClass}
+      testing={displayTesting}
+      lastRunAt={lastTestAt || null}
+      outcome={displaySuccess ? "success" : status === "timeout" ? "timeout" : isFailed ? "failed" : null}
+      failureReason={parsedMessage.message}
+      onRun={() => {
+        lastFailureToastKey.current = "";
+        manualTestRef.current = true;
+        manualTestBaselineAtRef.current = lastTestAt || "";
+        manualTestResultObservedRef.current = false;
+        setStartedLastTestAt(lastTestAt || "__none__");
+        setSawServerTesting(false);
+        setPostMutationQueryBaseline(null);
+        setOptimisticTesting(true);
+        testMutation.mutate({ id: tunnelId });
+      }}
+    >
+      <LinkTestProbeView
+        parsed={parsedMessage}
+        fallbackLatencyMs={latencyMs}
+        isSuccess={displaySuccess}
+        isTesting={displayTesting}
+        sourceLabel={linkTestNodeData.sourceLabel}
+        targetLabel={linkTestNodeData.targetLabel}
+        nodeMeta={linkTestNodeData.nodeMeta}
+        nodeTooltips={linkTestNodeData.nodeTooltips}
+        plannedSegments={linkTestNodeData.plannedSegments}
+      />
+    </DiagnoseDialog>
   );
 }
 

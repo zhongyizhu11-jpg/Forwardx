@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { forwardTests, InsertForwardTest, tunnelLatencyStats } from "../../drizzle/schema";
-import { executeRaw, getDb, insertAndGetId, nowDate, queryRaw, rawAffectedRows } from "../dbRuntime";
+import { executeRaw, getDb, insertAndGetId, nowDate, queryRaw, rawAffectedRows, rawEpochToDate } from "../dbRuntime";
 import { quoteIdentifier } from "../dbCompat";
 import { selfTestSweepActivity } from "../selfTestTiming";
 
@@ -126,6 +126,12 @@ export async function getLatestTunnelLatency(tunnelId: number) {
   return rows[0];
 }
 
+/** queryRaw 查出来的一行测试记录：时间列换成 Date（见 rawEpochToDate）。 */
+export function withForwardTestDates<T extends Record<string, any> | undefined>(row: T): T {
+  if (!row) return row;
+  return { ...row, createdAt: rawEpochToDate(row.createdAt), updatedAt: rawEpochToDate(row.updatedAt) } as T;
+}
+
 export async function getLatestForwardTest(ruleId: number, options: { includeActive?: boolean } = {}) {
   const db = await getDb();
   if (!db) return undefined;
@@ -141,13 +147,13 @@ export async function getLatestForwardTest(ruleId: number, options: { includeAct
       `SELECT * FROM ${table} WHERE ${ruleCol} = ? AND ${statusCol} IN ('pending', 'running') ORDER BY ${updatedCol} DESC, ${createdCol} DESC, ${idCol} DESC LIMIT 1`,
       [ruleId],
     );
-    if (pendingRows[0]) return pendingRows[0];
+    if (pendingRows[0]) return withForwardTestDates(pendingRows[0]);
   }
   const rows = await queryRaw<any>(
     `SELECT * FROM ${table} WHERE ${ruleCol} = ? AND ${statusCol} IN ('success', 'failed', 'timeout') ORDER BY ${updatedCol} DESC, CASE WHEN ${messageCol} LIKE '%forward-chain-hop-summary%' OR ${messageCol} LIKE '%"kind":"forward-via-tunnel"%' THEN 0 ELSE 1 END, ${createdCol} DESC, ${idCol} DESC LIMIT 1`,
     [ruleId],
   );
-  return rows[0];
+  return withForwardTestDates(rows[0]);
 }
 
 export async function getForwardTestById(id: number) {

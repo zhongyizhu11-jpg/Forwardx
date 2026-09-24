@@ -17,8 +17,8 @@ test("an unopened link test waits instead of claiming that a probe is running", 
     />,
   );
 
-  assert.match(html, /等待探测/);
-  assert.doesNotMatch(html, /探测中/);
+  assert.match(html, /未诊断/);
+  assert.doesNotMatch(html, /诊断中/);
 });
 
 test("the last reported latency remains visible before a new manual probe", () => {
@@ -33,7 +33,7 @@ test("the last reported latency remains visible before a new manual probe", () =
   );
 
   assert.match(html, /42 ms/);
-  assert.doesNotMatch(html, /等待探测|探测中/);
+  assert.doesNotMatch(html, /未诊断|诊断中/);
 });
 
 test("a user-started link test is the only state rendered as probing", () => {
@@ -46,8 +46,8 @@ test("a user-started link test is the only state rendered as probing", () => {
     />,
   );
 
-  assert.match(html, /探测中/);
-  assert.doesNotMatch(html, /等待探测/);
+  assert.match(html, /诊断中/);
+  assert.doesNotMatch(html, /未诊断/);
 });
 
 test("a completed manual test replaces the inactive cache before the query key switches", () => {
@@ -169,7 +169,7 @@ test("an unmatched final target is not invented from an earlier hop result", () 
 
   assert.equal(html.match(/23 ms/g)?.length, 2);
   assert.match(html, /Public target/);
-  assert.match(html, /等待探测/);
+  assert.match(html, /未诊断/);
   assert.doesNotMatch(html, />--</);
 });
 
@@ -344,7 +344,7 @@ test("an entry that has not reported remains visible after a partial multi-entry
   assert.match(html, /Entry 1/);
   assert.match(html, /Entry 2/);
   assert.match(html, /Exit/);
-  assert.match(html, /等待探测/);
+  assert.match(html, /未诊断/);
 });
 
 test("current rule details discard an older planned tunnel latency fallback", () => {
@@ -412,7 +412,7 @@ test("a tunnel timeout marks the missing first segment and never totals only the
   assert.match(html, /Exit/);
   assert.match(html, /Target/);
   assert.match(html, /超时/);
-  assert.doesNotMatch(html, /等待探测|探测中/);
+  assert.doesNotMatch(html, /未诊断|诊断中/);
   assert.equal(html.match(/39 ms/g)?.length, 1);
 });
 
@@ -448,5 +448,5 @@ test("a tunnel rule keeps the current tunnel segment when it reconciles with the
   assert.equal(html.match(/8 ms/g)?.length, 1);
   assert.equal(html.match(/33 ms/g)?.length, 1);
   assert.equal(html.match(/41 ms/g)?.length, 1);
-  assert.doesNotMatch(html, /等待探测|探测中/);
+  assert.doesNotMatch(html, /未诊断|诊断中/);
 });

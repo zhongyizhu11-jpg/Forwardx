@@ -16,6 +16,7 @@ import { formatBytes } from "@shared/formatBytes";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import DashboardLayout from "@/components/DashboardLayout";
+import { DiagnoseDialog } from "@/components/DiagnoseDialog";
 import { LatencyRating } from "@/components/LatencyRating";
 import { LinkTestProbeView, parseLinkTestMessage, type LinkTestPlannedSegment } from "@/components/LinkTestLatencySummary";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
@@ -8732,7 +8733,7 @@ function SelfTestDialog({
       setOptimisticTesting(false);
       setActiveTestId(null);
       manualTestRef.current = false;
-      toast.error(e?.message || "下发失败");
+      toast.error(e?.message || "诊断没发出去");
     },
   });
 
@@ -8790,56 +8791,44 @@ function SelfTestDialog({
       if (lastFailureToastKey.current !== key) {
         lastFailureToastKey.current = key;
         manualTestRef.current = false;
-        toast.error(isTimeout ? "转发链路自测超时" : "转发链路自测失败", { duration: 5000 });
+        toast.error(isTimeout ? "诊断超时" : "诊断没通过", { duration: 5000 });
       }
     }
   }, [open, isTesting, isSuccess, isTerminalStatus, isTimeout, latest, latest?.updatedAt, parsedMessage.message, ruleId, status]);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`${probeDialogSizeClass} min-w-0`}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            延迟探测
-          </DialogTitle>
-          <DialogDescription>{ruleName}</DialogDescription>
-        </DialogHeader>
-
-        <LinkTestProbeView
-          parsed={parsedMessage}
-          fallbackLatencyMs={typeof latest?.latencyMs === "number" && latest.latencyMs > 0 ? latest.latencyMs : null}
-          isSuccess={isSuccess}
-          isTesting={isTesting}
-          sourceLabel={sourceLabel}
-          targetLabel={targetLabel}
-          nodeMeta={nodeMeta}
-          plannedSegments={plannedSegments}
-          ignorePlannedResultsWhenDetailsPresent
-          compactFrom={3}
-          roomyNodes
-          mobileStacked
-          wrapDesktopRows
-        />
-
-        <DialogFooter className="gap-2">
-          <Button
-            className="w-full min-w-0 gap-2 sm:w-auto sm:min-w-[112px]"
-            disabled={isTesting}
-            onClick={() => {
-              manualTestRef.current = true;
-              setOptimisticTesting(true);
-              setActiveTestId(null);
-              startMutation.mutate({ ruleId });
-            }}
-          >
-            <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
-              {isTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
-            </span>
-            {isTesting ? "探测中..." : "链路测试"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <DiagnoseDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      subjectName={ruleName}
+      scope="从入口一段段测到目标地址"
+      sizeClassName={probeDialogSizeClass}
+      testing={isTesting}
+      lastRunAt={latest?.updatedAt ?? null}
+      outcome={isSuccess ? "success" : isTimeout ? "timeout" : isFailed ? "failed" : null}
+      failureReason={parsedMessage.message}
+      onRun={() => {
+        manualTestRef.current = true;
+        setOptimisticTesting(true);
+        setActiveTestId(null);
+        startMutation.mutate({ ruleId });
+      }}
+    >
+      <LinkTestProbeView
+        parsed={parsedMessage}
+        fallbackLatencyMs={typeof latest?.latencyMs === "number" && latest.latencyMs > 0 ? latest.latencyMs : null}
+        isSuccess={isSuccess}
+        isTesting={isTesting}
+        sourceLabel={sourceLabel}
+        targetLabel={targetLabel}
+        nodeMeta={nodeMeta}
+        plannedSegments={plannedSegments}
+        ignorePlannedResultsWhenDetailsPresent
+        compactFrom={3}
+        roomyNodes
+        mobileStacked
+        wrapDesktopRows
+      />
+    </DiagnoseDialog>
   );
 }
 export default function RulesPage() {

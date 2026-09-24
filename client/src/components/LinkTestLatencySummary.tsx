@@ -771,11 +771,11 @@ export function LinkTestProbeView({
     const ok = testing || segment.success;
     const timedOut = !testing && !idle && !ok && /(?:超时|timeout)/i.test(String(segment.message || ""));
     const label = testing
-      ? "探测中"
+      ? "诊断中"
       : idle
-        ? "等待探测"
+        ? "未诊断"
       : segment.pending
-        ? "探测中"
+        ? "诊断中"
         : segment.latencyLabel
           ? segment.latencyLabel
           : ok && hasUsableLatencyValue(segment.latencyMs)
@@ -1242,9 +1242,9 @@ export function LinkTestProbeView({
           totalLatency !== null ? "text-[var(--fx-healthy-text)]" : "text-muted-foreground",
         )}>
           {effectiveTesting
-            ? "探测中"
+            ? "诊断中"
             : !hasResult
-              ? "等待探测"
+              ? "未诊断"
               : parsed.tunnelProbeTimedOut && totalLatency === null
                 ? "超时"
                 : formatLatencyMs(totalLatency)}
@@ -1294,7 +1294,7 @@ export function LinkTestLatencySummary({
             >
               <span className="min-w-0 break-words">{formatLinkTestRoute(detail)}</span>
               {detail.pending ? (
-                <span className="font-normal text-primary">探测中</span>
+                <span className="font-normal text-primary">诊断中</span>
               ) : detail.success && hasLatencyValue(detail) ? (
                 renderLatencyValue(detail.latencyMs)
               ) : (

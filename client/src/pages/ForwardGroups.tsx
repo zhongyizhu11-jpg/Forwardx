@@ -15,6 +15,7 @@ import { hostIpv6Address, hostPrivateAddress, normalizeConnectHostForHost, sameA
 import { addressKey } from "@/lib/multiHopAddress";
 import SectionTransition from "@/components/SectionTransition";
 import DashboardLayout from "@/components/DashboardLayout";
+import { DiagnoseDialog } from "@/components/DiagnoseDialog";
 import EmptyState from "@/components/EmptyState";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { LatencyRating } from "@/components/LatencyRating";
@@ -691,7 +692,7 @@ function ForwardGroupSelfTestDialog({
     onError: (e) => {
       setOptimisticTesting(false);
       manualTestRef.current = false;
-      toast.error(e.message || "测试失败");
+      toast.error(e.message || "诊断没发出去");
     },
   });
   const status = latest?.status as string | undefined;
@@ -801,7 +802,7 @@ function ForwardGroupSelfTestDialog({
     if (lastFailureToastKey.current !== key) {
       lastFailureToastKey.current = key;
       manualTestRef.current = false;
-      toast.error("\u8f6c\u53d1\u94fe\u81ea\u6d4b\u5931\u8d25", { description: message, duration: 12000 });
+      toast.error("诊断没通过", { description: message, duration: 12000 });
     }
   }, [groupId, hasFreshResult, isFailed, isTesting, latest?.updatedAt, open, parsedMessage.message, status]);
 
@@ -813,44 +814,34 @@ function ForwardGroupSelfTestDialog({
   const probeDialogSizeClass = plannedSegmentCount >= 3 ? "sm:max-w-4xl" : plannedSegmentCount >= 2 ? "sm:max-w-3xl" : "sm:max-w-xl";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`${probeDialogSizeClass} min-w-0`}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            延迟探测
-          </DialogTitle>
-          <DialogDescription>{groupName}</DialogDescription>
-        </DialogHeader>
-
-        <LinkTestProbeView
-          parsed={parsedMessage}
-          fallbackLatencyMs={latest?.latencyMs}
-          isSuccess={isSuccess}
-          isTesting={isTesting}
-          sourceLabel={linkTestNodeData.sourceLabel}
-          targetLabel={linkTestNodeData.targetLabel}
-          nodeMeta={linkTestNodeData.nodeMeta}
-          plannedSegments={linkTestNodeData.plannedSegments}
-        />
-
-        <DialogFooter className="gap-2">
-          <Button
-            onClick={() => {
-              manualTestRef.current = true;
-              setBaselineTestId(latestTestId);
-              setOptimisticTesting(true);
-              testMutation.mutate({ groupId });
-            }}
-            disabled={isTesting}
-            className="w-full min-w-0 gap-2 sm:w-auto sm:min-w-[112px]"
-          >
-            {isTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
-            {isTesting ? "探测中..." : "链路测试"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <DiagnoseDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      subjectName={groupName}
+      scope="沿着链一段段测到出口"
+      sizeClassName={probeDialogSizeClass}
+      testing={isTesting}
+      lastRunAt={latest?.updatedAt ?? null}
+      outcome={isSuccess ? "success" : status === "timeout" ? "timeout" : isFailed ? "failed" : null}
+      failureReason={parsedMessage.message}
+      onRun={() => {
+        manualTestRef.current = true;
+        setBaselineTestId(latestTestId);
+        setOptimisticTesting(true);
+        testMutation.mutate({ groupId });
+      }}
+    >
+      <LinkTestProbeView
+        parsed={parsedMessage}
+        fallbackLatencyMs={latest?.latencyMs}
+        isSuccess={isSuccess}
+        isTesting={isTesting}
+        sourceLabel={linkTestNodeData.sourceLabel}
+        targetLabel={linkTestNodeData.targetLabel}
+        nodeMeta={linkTestNodeData.nodeMeta}
+        plannedSegments={linkTestNodeData.plannedSegments}
+      />
+    </DiagnoseDialog>
   );
 }
 

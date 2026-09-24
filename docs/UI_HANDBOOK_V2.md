@@ -475,7 +475,15 @@ EmptyState · LoadingState · ErrorState · OfflineState
 判断在 `shared/routePolicy.ts`），转发组的 `GroupFailoverPolicyFields`
 （`client/src/features/links/`，同一份模型、同一块面板）；页头的 `SummaryStrip`、
 手机上的流水行 `LedgerRow`、卡片底部的 `CardActions`（`EntityActions` 两个带字 + ···）、
-设置页的 `SettingList` / `SettingRow`。其余按 Phase 推进。
+设置页的 `SettingList` / `SettingRow`、诊断的 `DiagnoseDialog`、三种状态块 `EmptyState` /
+`DataSectionLoading` / `DataSectionError`。其余按 Phase 推进。
+
+**诊断一路叫诊断。** 卡片按钮、对话框标题、底部按钮、测的时候那几个字，都用「诊断」这一个词；
+标题下一句写「测的是什么」，路径下一行写「上次诊断 几点 · 通 / 超时 / 没通」—— 看不出几点
+测的结果，就不是结果。
+
+**三种状态各一个样子**：没有（EmptyState）、加载中（DataSectionLoading）、没读到
+（DataSectionError）。都是一块 surface、不描边；搜着东西没搜到时说「未找到匹配…」，不说「暂无…」。
 
 **设置行**（`SettingRow`）：名字 + 说明在左，控件在右，行间一根细线（和分组列表同一条
 `.fx-list-row`），不画框。控件是**一个**开关或复选框时 `asLabel`，整行都能点；这一项
@@ -530,10 +538,10 @@ Tailwind 工具类是 `(0,1,0)`；一条 `[data-slot="x"]` 也是 `(0,1,0)`，�
 | 1 | Foundations：令牌、字体、间距、圆角、颜色、表面、状态体系 | ✅ |
 | 2 | Visual Language：Node / Path / Edge / Flow / Health | ✅ |
 | 3 | 核心三页：总览 → 主机 → 链路 | ✅ |
-| 4 | 操作系统：Drawer、Bottom Sheet、ActionMenu、创建流程、诊断流程 | 部分：Sheet / 操作表 / 创建流程；诊断流程未动 |
+| 4 | 操作系统：Drawer、Bottom Sheet、ActionMenu、创建流程、诊断流程 | ✅ 诊断：规则、隧道、转发链共用 `DiagnoseDialog` |
 | 5 | 转发系统：规则、链、组，以及 Route Policy 抽象 | ✅ |
 | 6 | Subscription + Settings 迁移 | ✅ 设置页宽屏两栏 + 设置行；商店、套餐、个人资料、订阅 |
-| 7 | Polish：Skeleton / Loading / Empty / Error / 转场 / 深色 / 响应式 | |
+| 7 | Polish：Skeleton / Loading / Empty / Error / 转场 / 深色 / 响应式 | 部分：Loading / Empty / Error 统一；深色、393 / 1024 / 1280 逐页走查；骨架屏只在首页流量那一块 |
 
 按 PR 拆的推进表（和这张表是同一件事的另一种切法）在
 `FORWARDX_PRODUCT_UI_CN.md` 第八节。
