@@ -8,6 +8,7 @@ import MobileInfoRow from "@/components/MobileInfoRow";
 import { formatQuotaBytes } from "@shared/formatBytes";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import DashboardLayout from "@/components/DashboardLayout";
+import EmptyState from "@/components/EmptyState";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import { ListRow, ListSection } from "@/components/ios/GroupedList";
@@ -1258,7 +1259,7 @@ export default function Plans() {
                             minHeight="min-h-[120px]"
                           />
                         ) : (
-                          <div className="col-span-full rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)] p-6 text-center text-secondary-type text-muted-foreground">还没有套餐</div>
+                          <EmptyState className="col-span-full" icon={<Package />} title="还没有套餐" description="用「新增套餐」建第一个；建好之后可以放上商店，也可以手动分配给用户。" />
                         ))}
                       </AutoAnimateContainer>
                     ) : (

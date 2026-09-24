@@ -1,5 +1,6 @@
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DashboardLayout from "@/components/DashboardLayout";
+import EmptyState from "@/components/EmptyState";
 import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import { quotaSourceLabel, subscriptionSourceLabel, subscriptionStatusLabel } from "@shared/ledgerLabels";
 import { formatQuotaBytes } from "@shared/formatBytes";
@@ -379,10 +380,11 @@ export default function Subscriptions() {
         )}
 
         {!isLoading && !subscriptionsError && visibleSubscriptions.length === 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Package className="h-5 w-5" /> 暂无可显示订阅</CardTitle>
-              <CardDescription>
+          <EmptyState
+            icon={<Package />}
+            title="暂无可显示订阅"
+            description={(
+              <>
                 {cancelledCount > 0
                   ? "已取消记录当前处于隐藏状态。"
                   /*
@@ -394,16 +396,14 @@ export default function Subscriptions() {
                     : storeStatus?.enabled
                       ? "当前账户还没有套餐记录，可以去商店自助下单。"
                       : "当前账户还没有套餐记录。商店暂未开放，请联系管理员为你分配套餐。"}
-              </CardDescription>
-            </CardHeader>
-            {storeStatus?.enabled && (
-              <CardFooter>
-                <Button onClick={() => setLocation("/store")}>
-                  <ShoppingBag className="mr-2 h-4 w-4" /> 去商店下单
-                </Button>
-              </CardFooter>
+              </>
             )}
-          </Card>
+            actions={storeStatus?.enabled ? (
+              <Button onClick={() => setLocation("/store")}>
+                <ShoppingBag className="mr-2 h-4 w-4" /> 去商店下单
+              </Button>
+            ) : undefined}
+          />
         )}
 
         <div className="grid gap-4 lg:grid-cols-2">

@@ -8,6 +8,7 @@ import { ListRow, ListSection } from "@/components/ios/GroupedList";
 import { balanceTypeLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import DashboardLayout from "@/components/DashboardLayout";
+import EmptyState from "@/components/EmptyState";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -614,7 +615,7 @@ export default function Billing() {
                   {visibleLedger.length === 0 && (ledgerError ? (
                     <DataSectionError label="账单流水" error={ledgerError} retrying={ledgerFetching} onRetry={() => { void refetchLedger(); }} minHeight="min-h-[120px]" />
                   ) : (
-                    <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">暂无账单流水</div>
+                    <EmptyState icon={<ReceiptText />} title="暂无账单流水" />
                   ))}
                 </div>
                 <div className="hidden overflow-x-auto md:block">
@@ -718,7 +719,7 @@ export default function Billing() {
                     </div>
                   ))}
                   {subscriptions.length === 0 && (
-                    <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">暂无订阅记录</div>
+                    <EmptyState icon={<Package />} title="暂无订阅记录" />
                   )}
                 </div>
                 <div className="hidden overflow-x-auto md:block">
@@ -788,7 +789,7 @@ export default function Billing() {
                   {transactions.length === 0 && (transactionsError ? (
                     <DataSectionError label="余额流水" error={transactionsError} retrying={transactionsFetching} onRetry={() => { void refetchTransactions(); }} minHeight="min-h-[120px]" />
                   ) : (
-                    <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">暂无余额流水</div>
+                    <EmptyState icon={<WalletCards />} title="暂无余额流水" />
                   ))}
                 </div>
                 <div className="hidden overflow-x-auto md:block">
@@ -916,7 +917,7 @@ export default function Billing() {
                     );
                   })}
                   {filteredRedemptionCodes.length === 0 && (
-                    <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">暂无兑换码</div>
+                    <EmptyState icon={<Gift />} title="暂无兑换码" />
                   )}
                 </div>
                 <div className="hidden overflow-x-auto md:block">
@@ -1022,7 +1023,7 @@ export default function Billing() {
                     );
                   })}
                   {discountCodes.length === 0 && (
-                    <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">暂无折扣码</div>
+                    <EmptyState icon={<TicketPercent />} title="暂无折扣码" />
                   )}
                 </div>
                 <div className="hidden overflow-x-auto md:block">

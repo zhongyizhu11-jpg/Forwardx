@@ -27,6 +27,7 @@ import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { formatTrafficMultiplier } from "@shared/trafficMultiplier";
 import { LayoutGrid, List, Pencil, Plus, Route, Server, Trash2 } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
 import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -454,7 +455,7 @@ export default function TrafficBillingConfigManager({
                     />
                   ))}
                   {(data?.configs || []).length === 0 && (
-                    <div className="col-span-full rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">暂无计费配置</div>
+                    <EmptyState className="col-span-full" icon={<Route />} title="暂无计费配置" description="给主机、隧道或转发组设一个单价，用户就能按 GB 扣余额用它。" />
                   )}
                 </AutoAnimateContainer>
               ) : (

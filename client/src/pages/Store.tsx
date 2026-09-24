@@ -1,5 +1,6 @@
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DashboardLayout from "@/components/DashboardLayout";
+import EmptyState from "@/components/EmptyState";
 import { MILLI_CENTS_PER_CENT, pricePerGbMilliCentsOf } from "@shared/trafficBillingPrice";
 import { formatQuotaBytes } from "@shared/formatBytes";
 import { formatMoneyCents as money, formatMoneyMilliCents as moneyFromMilliCents } from "@shared/formatMoney";
@@ -405,12 +406,12 @@ export default function Store() {
                       onRetry={() => { void refetchPlans(); }}
                     />
                   ) : (
-                    <Card className="col-span-full">
-                      <CardHeader>
-                        <CardTitle>暂无可购买套餐</CardTitle>
-                        <CardDescription>管理员还没有把套餐放上商店，需要的话可以联系他分配。</CardDescription>
-                      </CardHeader>
-                    </Card>
+                    <EmptyState
+                      className="col-span-full"
+                      icon={<Package />}
+                      title="暂无可购买套餐"
+                      description="管理员还没有把套餐放上商店，需要的话可以联系他分配。"
+                    />
                   ))}
                 </AutoAnimateContainer>
               )}
@@ -471,12 +472,12 @@ export default function Store() {
                     />
                   )}
                   {(trafficBillingStore?.configs || []).length === 0 && !trafficBillingError && (
-                    <Card className="col-span-full">
-                      <CardHeader>
-                        <CardTitle>暂无公开按量计费资源</CardTitle>
-                        <CardDescription>管理员公开资源后会在这里展示倍率和单价。</CardDescription>
-                      </CardHeader>
-                    </Card>
+                    <EmptyState
+                      className="col-span-full"
+                      icon={<Coins />}
+                      title="暂无公开按量计费资源"
+                      description="管理员公开资源后会在这里展示倍率和单价。"
+                    />
                   )}
                 </AutoAnimateContainer>
               )}

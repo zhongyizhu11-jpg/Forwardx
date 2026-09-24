@@ -21,6 +21,7 @@ import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import EmptyState from "@/components/EmptyState";
 
 type ServiceForm = {
   name: string;
@@ -447,13 +448,12 @@ export default function HostProbeServiceManager({
               <DataSectionLoading label="正在加载服务" />
             </div>
           ) : displayedServiceItems.length === 0 ? (
-            <div className="flex min-h-[220px] flex-col items-center justify-center text-muted-foreground">
-              <RadioTower className="mb-3 h-9 w-9 opacity-40" />
-              <p className="text-sm">{isTextFiltered && serviceItems.length > 0 ? "未找到匹配服务" : "暂无服务"}</p>
-              {isTextFiltered && serviceItems.length > 0 && (
-                <p className="mt-1 text-xs text-muted-foreground/60">调整筛选内容或清空搜索</p>
-              )}
-            </div>
+            <EmptyState
+              className="min-h-[220px]"
+              icon={<RadioTower />}
+              title={isTextFiltered && serviceItems.length > 0 ? "未找到匹配服务" : "暂无服务"}
+              description={isTextFiltered && serviceItems.length > 0 ? "调整筛选内容或清空搜索" : "加一个 Ping / TCPing 目标，选中的主机会定时探测它的延迟。"}
+            />
           ) : viewMode === "card" ? (
             <SortableReorderContext sortable={serviceSortable} ids={displayedServiceItems.map((service) => Number(service.id))} strategy="rect">
               <div key="host-probe-service-card-view" className="standard-card-grid card-mode-transition gap-4 p-3">

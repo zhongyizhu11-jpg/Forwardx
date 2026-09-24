@@ -7,6 +7,7 @@ import { balanceTypeLabel } from "@shared/ledgerLabels";
 import { formatMoneyCents as money } from "@shared/formatMoney";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import DashboardLayout from "@/components/DashboardLayout";
+import EmptyState from "@/components/EmptyState";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import { LedgerRow, ledgerMeta } from "@/components/LedgerRow";
@@ -200,7 +201,7 @@ export default function Wallet() {
                 ledgerError ? (
                   <DataSectionError label="账单流水" error={ledgerError} retrying={ledgerFetching} onRetry={() => { void refetchLedger(); }} minHeight="min-h-[120px]" />
                 ) : (
-                  <p className="py-6 text-center text-sm text-muted-foreground">暂无账单流水</p>
+                  <EmptyState icon={<ReceiptText />} title="暂无账单流水" />
                 )
               ) : ledger.map((item: any) => {
                 const Icon = ledgerIcon(item);
@@ -297,7 +298,7 @@ export default function Wallet() {
             <>
             <div className="md:hidden" data-testid="wallet-mobile">
               {(wallet?.transactions || []).length === 0 ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">暂无余额流水</p>
+                <EmptyState icon={<WalletCards />} title="暂无余额流水" />
               ) : (wallet?.transactions || []).map((tx: any) => (
                 <LedgerRow
                   key={tx.id}
@@ -365,7 +366,7 @@ export default function Wallet() {
                 paymentOrdersError ? (
                   <DataSectionError label="支付流水" error={paymentOrdersError} retrying={paymentOrdersFetching} onRetry={() => { void refetchPaymentOrders(); }} minHeight="min-h-[120px]" />
                 ) : (
-                  <p className="py-6 text-center text-sm text-muted-foreground">暂无支付流水</p>
+                  <EmptyState icon={<CreditCard />} title="暂无支付流水" />
                 )
               ) : paymentOrders.map((order: any) => (
                 <LedgerRow

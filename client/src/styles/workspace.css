@@ -564,11 +564,21 @@
   屏幕的三分之一，只为了说一句「暂无出口组」。它是「这里现在没东西」，不是这一页
   的主角。
 */
-.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 0; padding: 20px 16px; text-align: center; }
-.empty-state-icon { padding: 8px; border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); background: var(--fx-subtle); color: var(--fx-muted); }
-.empty-state-icon svg { width: 18px; height: 18px; margin: 0; opacity: 1; }
-.empty-state h2 { font-size: 14px; font-weight: 600; color: var(--fx-text); }
-.empty-state p { max-width: 340px; font-size: 12px; line-height: 1.6; color: var(--fx-muted); }
+/*
+  空状态：一块白底（和卡片同一种 surface），图标 + 一句是什么 + 一句下一步。
+  图标原来套在一个描边的灰方块里 —— 框里又一个小框，那个框不说任何事，去掉。
+  调用方给的图标尺寸五花八门（h-7 / h-8 / h-10、opacity-30 / 40），在这里统一。
+*/
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  min-height: 0; padding: 32px 16px; text-align: center;
+  border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface);
+}
+.empty-state-icon { color: var(--fx-muted); }
+.empty-state-icon svg { width: 24px; height: 24px; margin: 0; opacity: 1; }
+.empty-state h2,
+.workspace-main .empty-state h2 { font-size: var(--fx-size-secondary); line-height: var(--fx-line-secondary); font-weight: 600; letter-spacing: 0; color: var(--fx-text); }
+.empty-state p { max-width: 360px; margin: 0; font-size: var(--fx-size-meta); line-height: var(--fx-line-meta); color: var(--fx-muted); }
 .public-home-shell { font-family: var(--fx-font); background: var(--fx-surface); }
 .public-home-container { width: 100%; max-width: 1152px; margin-inline: auto; padding-inline: 24px; }
 .public-home-nav { border-bottom: 1px solid var(--fx-stroke); background: var(--fx-surface); }

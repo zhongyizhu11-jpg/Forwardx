@@ -1276,6 +1276,7 @@ function HostsContent() {
       ? fullHostQuery.isError
       : hostPageQuery.isError;
   const error = isHostMapView ? hostMapQuery.error : needsFullHostList ? fullHostQuery.error : hostPageQuery.error;
+  const isFetching = isHostMapView ? hostMapQuery.isFetching : needsFullHostList ? fullHostQuery.isFetching : hostPageQuery.isFetching;
   const refetch = () => isHostMapView
     ? hostMapQuery.refetch()
     : needsFullHostList
@@ -2415,23 +2416,19 @@ function HostsContent() {
       {isInitialLoadingWithoutCache ? (
         <DataSectionLoading label="正在加载主机数据" minHeight="min-h-[260px]" />
       ) : isError ? (
-        <Card className="border-border bg-card">
-          <CardContent className="p-0">
-            <div className="flex flex-col items-center justify-center px-4 py-20 text-center text-muted-foreground">
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
-                <AlertTriangle className="h-8 w-8" />
-              </div>
-              <p className="text-lg font-medium text-foreground">主机加载失败</p>
-              <p className="mt-2 max-w-xl break-words text-sm text-muted-foreground">
-                {error?.message || "无法获取主机列表，请稍后重试"}
-              </p>
-              <Button variant="outline" className="mt-5 gap-2" onClick={() => refetch()}>
-                <RefreshCw className="h-4 w-4" />
-                重新加载
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        /*
+          别的页读失败都是 DataSectionError（同一句「X 加载失败」、同一种原因提示和「重试」），
+          只有主机页自己拼了一张大卡：80px 高的红色图标方块、18px 的标题、原样的报错全文。
+          换成同一个：原因会被 queryErrorHint 翻成人话（登录失效、网络断了、服务端报错），
+          原文放在下面一行小字里。
+        */
+        <DataSectionError
+          label="主机列表"
+          error={error}
+          retrying={isFetching}
+          onRetry={() => { void refetch(); }}
+          minHeight="min-h-[260px]"
+        />
       ) : hasFilteredDisplayHosts ? (
         <>
         {viewMode === "map" ? (

@@ -51,6 +51,7 @@ import {
 import { applyLatencyPeakCut, getLatencyYAxisTicks, normalizeLatencyProbeCounts } from "@/lib/latencyChart";
 import { cn } from "@/lib/utils";
 import NotFound from "@/pages/NotFound";
+import EmptyState from "@/components/EmptyState";
 
 type HostMonitorViewMode = "card" | "compact-card" | "table";
 
@@ -1080,13 +1081,7 @@ export default function HostMonitor() {
               </div>
               )
             ) : (
-              <Card className="border-border bg-card">
-                <CardContent className="flex min-h-[240px] flex-col items-center justify-center p-8 text-center text-muted-foreground">
-                  <Server className="mb-3 h-10 w-10 opacity-50" />
-                  <p className="font-medium text-foreground">暂无主机</p>
-                  <p className="mt-1 text-sm">后台添加主机后会在这里展示。</p>
-                </CardContent>
-              </Card>
+              <EmptyState className="min-h-[240px]" icon={<Server />} title="暂无主机" description="后台添加主机后会在这里展示。" />
             )}
           </>
         )}

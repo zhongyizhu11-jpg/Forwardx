@@ -15,6 +15,7 @@ import { hostIpv6Address, hostPrivateAddress, normalizeConnectHostForHost, sameA
 import { addressKey } from "@/lib/multiHopAddress";
 import SectionTransition from "@/components/SectionTransition";
 import DashboardLayout from "@/components/DashboardLayout";
+import EmptyState from "@/components/EmptyState";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { LatencyRating } from "@/components/LatencyRating";
 import { LatencyPeakCutToggle } from "@/components/LatencyPeakCutToggle";
@@ -2279,17 +2280,20 @@ export function ForwardGroupsContent({
           </CardContent>
         </Card>
       ) : (
-        <Card className="border-border/40 bg-card/60">
-          <CardContent className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/30">
-              <Layers3 className="h-8 w-8 opacity-40" />
-            </div>
-            <p className="text-lg font-medium">{emptyTitle}</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {emptyDescription}
-            </p>
-          </CardContent>
-        </Card>
+        /*
+          原来是一张卡里自己拼的大号居中块（80px 的灰方块套图标、18px 标题），和隧道、主机页的
+          空状态不是一个样子；搜着东西没搜到时也照样说「暂无转发组 · 创建后可…」。
+        */
+        normalizedSearchQuery ? (
+          <EmptyState
+            className="min-h-[260px]"
+            icon={<Layers3 />}
+            title={`未找到匹配的${emptyTitle.replace(/^暂无/, "")}`}
+            description="调整搜索内容或清空搜索"
+          />
+        ) : (
+          <EmptyState className="min-h-[260px]" icon={<Layers3 />} title={emptyTitle} description={emptyDescription} />
+        )
         )}
       </SectionTransition>
 
@@ -2869,7 +2873,7 @@ export function ForwardGroupsContent({
                         </div>
                       ))}
                       {form.members.length === 0 && (
-                        <div className="rounded-md border border-dashed border-border/70 p-6 text-center text-sm text-muted-foreground">还没有成员</div>
+                        <EmptyState className="py-6" title="还没有成员" description="用上面的选择框把成员加进来。" />
                       )}
                     </div>
                   </>

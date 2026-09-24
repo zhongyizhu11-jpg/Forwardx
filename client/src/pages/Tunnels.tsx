@@ -4150,7 +4150,15 @@ function TunnelsContent() {
                 minHeight="min-h-[260px]"
               />
             ) : (
-            <EmptyState icon={<Network className="h-8 w-8 opacity-40" />} title={<>暂无隧道</>} description={<>选择两台 Agent 创建第一条隧道</>} />
+            /*
+              搜着东西没搜到时不能说「暂无隧道 · 创建第一条隧道」—— 那是在说一条都没有，而他明明
+              有，只是这个词对不上。主机页一直是分开说的，这里补上。
+            */
+            normalizedLinkSearchQuery ? (
+              <EmptyState icon={<Network />} title="未找到匹配隧道" description="调整搜索内容或清空搜索" />
+            ) : (
+              <EmptyState icon={<Network />} title="暂无隧道" description="选择两台 Agent 创建第一条隧道" />
+            )
             )}
           </CardContent>
         </Card>

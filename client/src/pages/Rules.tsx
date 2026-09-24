@@ -7264,7 +7264,7 @@ function RulesContent() {
               />
             ) : (rules && rules.length > 0) || ruleScopeTotal > 0 || hasActiveRuleFilter ? (
               <EmptyState icon={<Filter className="h-10 w-10 mb-3 opacity-30" />} title={<>没有匹配的规则</>} description={<>尝试调整筛选条件</>} actions={<>{hasActiveRuleFilter && (
-                  <Button type="button" variant="outline" className="mt-4 gap-2" onClick={clearRuleFilters}>
+                  <Button type="button" variant="outline" className="gap-2" onClick={clearRuleFilters}>
                     <XCircle className="h-4 w-4" />
                     清除筛选
                   </Button>

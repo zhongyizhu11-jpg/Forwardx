@@ -49,6 +49,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { isTokenHostOnline } from "@/lib/agentTokenStatus";
 import { buildAgentScriptCommand, type AgentScriptAction } from "@shared/agentInstallCommand";
+import EmptyState from "@/components/EmptyState";
 
 type AgentTokenManagerProps = {
   createSignal?: number;
@@ -772,25 +773,17 @@ export default function AgentTokenManager({
               )}
             </>
           ) : (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <div className="h-16 w-16 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
-                <Key className="h-8 w-8 opacity-40" />
-              </div>
-              <p className="text-lg font-medium">{isTextFiltered && tokenItems.length > 0 ? "未找到匹配 Token" : "暂无 Token"}</p>
-              <p className="text-sm mt-1 text-muted-foreground">
-                {isTextFiltered && tokenItems.length > 0 ? "调整筛选内容或清空搜索" : "添加主机后会生成 Agent 安装命令"}
-              </p>
-              {showCreateButton && (
-                <Button
-                  onClick={openCreateDialog}
-                  variant="outline"
-                  className="mt-4 gap-2"
-                >
+            <EmptyState
+              icon={<Key />}
+              title={isTextFiltered && tokenItems.length > 0 ? "未找到匹配 Token" : "暂无 Token"}
+              description={isTextFiltered && tokenItems.length > 0 ? "调整筛选内容或清空搜索" : "添加主机后会生成 Agent 安装命令"}
+              actions={showCreateButton ? (
+                <Button onClick={openCreateDialog} variant="outline" className="gap-2">
                   <Plus className="h-4 w-4" />
                   添加主机
                 </Button>
-              )}
-            </div>
+              ) : undefined}
+            />
           )}
         </CardContent>
       </Card>
