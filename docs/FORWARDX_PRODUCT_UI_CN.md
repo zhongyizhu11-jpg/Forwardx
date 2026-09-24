@@ -39,7 +39,7 @@ DDNS Failover · Latency Probe · Topology · Traffic · Client Subscription
 | **Path** | 两个节点之间的关系 | 连线 | `PathEdge` / `NetworkPath` |
 | **Flow** | 流量的方向 | 箭头、从上到下 / 从左到右的顺序 | `NetworkPath` |
 | **Group** | 一组节点或一组线路 | 容器（缩进、分支符、浅色带） | `PathBranch` |
-| **Policy** | 决定走哪条的条件 | 条件行 + 当前生效项高亮 | Phase 5 |
+| **Policy** | 决定走哪条的条件 | 条件行 + 当前生效项高亮 | `RoutePolicyPanel` / `FailoverPolicyFields` / `GroupFailoverPolicyFields` |
 | **Health** | 现在好不好 | **颜色 + 线型**，不是文字 | `StatusDot` / `HealthBadge` |
 | **Metric** | 数值反馈 | 数字大、标签和单位小 | `Metric` / `PathMetric` |
 
@@ -154,8 +154,19 @@ components/entity/EntityActions  EntityActions · partitionEntityActions
 lib/chartPalette                 图表色板
 ```
 
+已落地（PR 6）：
+
+```
+shared/routePolicy.ts            策略模型：首选 / 实际 / 哪一层在决定，全站唯一一份（规则的主备 + 转发组的故障转移）
+shared/failoverPin.ts            人工钉住怎么读（null 不是 0）
+features/rules/RoutePolicySheet  RoutePolicyPanel · RoutePolicySheet（规则卡、转发组卡片上点开）
+features/rules/PolicyBlocks      PolicyGroup · ConditionBlock（编辑框里「按什么选 / 什么时候切」的画法）
+features/rules/FailoverPolicyFields      规则编辑框里的主备那一块
+features/links/GroupFailoverPolicyFields 转发组编辑框里的故障转移那一块
+```
+
 待建：`AppShell`、`PageHeader`、`SectionHeader`、`Sparkline`、`SegmentControl`、
-`BottomSheet`、`Drawer`、`OfflineState`、Route Policy 一族。
+`BottomSheet`、`Drawer`、`OfflineState`。
 
 ---
 
@@ -166,16 +177,70 @@ lib/chartPalette                 图表色板
 | PR | 内容 | 状态 |
 |---|---|---|
 | 1 | **UI Architecture**：Entity 系列、Path 系列、Health、Metric、色板、本文档。**不大改视觉** | ✅ |
-| 2 | **Hosts 2.0**：列表压缩、Summary/Detail 分离、离线态改善、统一 ActionMenu | |
-| 3 | **Links 2.0**：TunnelCard / ChainCard / GroupCard / Topology，Tunnels.tsx 拆分到 `features/links/` | |
-| 4 | **Rules 2.0**：Rule 从配置卡变成 Flow 卡，创建流程改渐进式披露 | |
-| 5 | **Dashboard 2.0**：Health / Traffic / Attention 三段，减少饼图和孤立统计卡 | |
-| 6 | **Route Policy**：主备、多线路、定时、自动故障切换、手动、恢复，统一进策略 UI | |
-| 7 | Subscription / Settings 迁移 | |
-| 8 | **CSS 债清理**：删 legacy override、宽泛选择器、重复样式 | |
+| 2 | **Hosts 2.0**：列表压缩、Summary/Detail 分离、离线态改善、统一 ActionMenu | ✅ |
+| 3 | **Links 2.0**：TunnelCard / ChainCard / GroupCard / Topology，Tunnels.tsx 拆分到 `features/links/` | ✅ 拆分只迈了第一步 |
+| 4 | **Rules 2.0**：Rule 从配置卡变成 Flow 卡，创建流程改渐进式披露 | ✅ |
+| 5 | **Dashboard 2.0**：Health / Traffic / Attention 三段，减少饼图和孤立统计卡 | ✅ |
+| 6 | **Route Policy**：主备、多线路、定时、自动故障切换、手动、恢复，统一进策略 UI | ✅ 规则级主备 + 转发组的故障转移 |
+| 7 | Subscription / Settings 迁移 | ✅ 设置页宽屏两栏 + 设置行；商店、套餐、个人资料、订阅 |
+| 8 | **CSS 债清理**：删 legacy override、宽泛选择器、重复样式 | 第一步：猜 DOM 的选择器清零、卡片四种宽度统一；手机密度那一段还在 |
+
+PR 3 的拆分只迈了第一步：`features/links/` 里目前是路径和状态的几个纯函数
+（`tunnelPath` / `chainPath` / `tunnelHealth`）和创建转发时就地建线路的表单，
+`Tunnels.tsx` 本身还有 4900 行（`Rules.tsx` 9100 行）—— 别以为已经拆完了。
 
 **CSS 清理放最后**，不是因为不重要，而是一开始大删很容易引入全站回归 ——
 等页面都迁到明确的 class 之后再删，删的是确定没人用的东西。
+
+### PR 5 落地时定下的几条
+
+- **首页的数和列表出自同一次调用**（`dashboard.health` 同时返回计数和「需要关注」
+  的行）。拆成两个接口各自缓存，总有一瞬间顶上写 2 处、列表画 3 行。
+- **「需要关注」按「从根上往下」排**：同一档状态里主机 → 隧道 → 转发组 → 转发。
+  一台机器掉了，挂在它上面的会一起报，根因要排在症状前面。
+- **按设计停着的不是异常**：转发组的模板规则（自己从不运行，看子规则）、主人被
+  计费暂停的规则（管理员那边不算，租户自己那边合成一行「转发已暂停」）。
+- **没有要处理的事时「需要关注」整块不出现** —— 顶上已经写了「运行正常」。
+- 组件在 `client/src/features/dashboard/`：`AttentionSection`、`TrafficSurface`、
+  `AccountSection`，纯函数在 `shared/dashboardAttention.ts` 和
+  `features/dashboard/trafficRanking.ts`。三块都是 iOS 分组列表那一套（组名在块外、
+  块纯白不描边），和设置页同一个组件。
+
+### PR 6 落地时定下的几条
+
+- **先看数据是不是真的，再画高亮。** 做策略界面之前把每一层到底生效没有过了一遍，
+  结果人工钉住那一层把「没钉」读成了「钉在主出站」（时段表和自动择优从上线起就没
+  生效过），「现在走哪条」的切换事件大多在心跳早退时被丢掉、时间单位还存错了。
+  在错的数据上画一个高亮，只会让错的答案更显眼。修法和一次性修正见 CHANGELOG。
+- **选路的规矩只有一份，写在 Agent 里**（`priorityOrderLocked`：人工指定 > 时段表 >
+  自动择优 > 出站顺序）。面板用 `shared/routePolicy` 把同一套规矩再算一遍，只为
+  说清楚「为什么走这条」，不替 Agent 做决定。择优门槛这类照抄 Agent 常数的文案，
+  测试直接读 `agent/main.go` 核对。
+- **「首选」和「实际」分开说。** 首选是面板按规矩算的（自动择优在决定时是 null ——
+  谁更快是 Agent 实测的，不猜）；实际是 Agent 报的，报告能信到什么程度看那台
+  Agent 的版本和在不在线：`2.2.197` 起每次心跳确认，叫「现在走」；`2.2.196` 只报
+  切换事件，叫「最近一次切到」；离线就不说；没有记录时不替它说「走主出站」。
+- **条件行的三种状态**：`deciding`（此刻在决定，一根路径色竖条 + 「此刻」）、
+  `overridden`（此刻本该轮到它、被上面那层压着 —— 钉子一到期它就接手，这是最该被
+  看见的）、`idle`。高亮不整行染色：白块里再染一块面就是又一层。
+- **颜色看「走的是不是首选」，不看「是不是在备用上」**：按时段表晚上走备用 1 是排好的。
+- **策略面板和编辑框说同一种话**：线路 → 按什么选 → 什么时候切，「按什么选」按优先级
+  从上往下。编辑框里的「此刻」拿还没保存的表单当场算。
+- **对话框里放分组列表时，对话框自己当 L0**（`bg-[var(--fx-l0-page)]`）：白块放在白底
+  上看不出分组。仍然是「底灰、面白」那一次底色差。
+- **转发组的故障转移用同一份模型、同一块面板**（`describeGroupRoutePolicy`，`subject: "group"`）。
+  两套机器：规则级是 Agent 在本地切出站，转发组是面板每轮检查成员健康、切 DDNS 解析；
+  回答的是同一个问题 —— 现在用的是哪个、为什么是它、什么时候会换。照着
+  `runForwardGroupFailoverForGroups` 的实际行为写，不照设置项的字面意思写：Agent 已经
+  给出结论的不等观察时间；系统 DDNS 没开时只是「建议入口」；没配域名就不切换；没有规则
+  在用时不探转发、库里的健康是旧的。
+- **没有的层不硬凑。** 转发组没有人工钉住、时段表、自动择优，面板上只有「按成员顺序」一行；
+  手动能做的是「换一个首选」（改成员顺序，一直有效）和「现在按顺序重新选」（不等观察时间）。
+  硬凑成同样的几行，只会让人以为能配。
+- **写下来的时刻只说它能说明的事。** 转发组的 `lastDdnsAt` 是「最近一次写解析」，手动同步、
+  面板重启后都会原样重写，所以不说「21:30 起」。
+- **入口放在它回答的问题旁边。** 「解析 · JP exit 02」放在卡片「成员优先级」那一行，不放标题行：
+  手机上名字 + 状态已经占满一行，它会折下去，还被触屏 44px 的按钮高度撑出一块空白。
 
 ---
 
@@ -183,19 +248,25 @@ lib/chartPalette                 图表色板
 
 这些是明确看到但本轮没动的，记下来免得以为已经处理了：
 
-- **`workspace.css` 里的宽泛选择器**。`[class*="rounded-"][class*="border"]` 和
-  `.workspace-main > .route-content-enter > div > .space-y-6 > * + *` 这类规则
-  今天解决了密度问题，但以后加一个业务组件可能莫名其妙被全局 CSS 改掉。
-  目标是把 CSS 从「猜 DOM」变成「设计系统 API」：`fx-page` / `fx-section` /
-  `fx-entity-card` / `fx-entity-body` / `fx-entity-footer` / `fx-path` 这类明确
-  的类名。PR 8 做。
-- **`Home.tsx` 里还有 `bg-emerald-500` 的小圆点和徽标**。图表色已经收口，这些
-  装饰性的点要等 Dashboard 2.0 换成 `StatusDot`。
+- **`workspace.css` 里的宽泛选择器** —— PR 8 做了第一步：按类名片段猜 DOM 的
+  （`[class*="rounded-"][class*="border"]`、`[class*="animate-pulse"]`）清零，
+  `.workspace-main p { margin-block: 12px }` 删掉，工作区卡片「不描边、不投影」从手机段
+  挪到最外层（桌面上原来有框）；`workspaceCss.test.ts` 守着这三条。**还没动的**是手机段里
+  按 Tailwind 类名改密度的那一批：`.space-y-4 > * + *`、`.space-y-3 > * + *`、页面级
+  `.space-y-6`、卡片内容子元素一律 6px、卡片里 `.text-sm.font-medium` 改 16px。它们是
+  有意的手机密度，删掉会整站变松；要换成 `fx-page` / `fx-section` / `fx-entity-body`
+  这类明确的类名，得一页一页迁，下一轮做。
+- **对话框里的开关小框**：列表卡片上的「一个值一个框」已经清完（2.3.370 走查时最后两处是
+  公开监控页和转发组卡片底部），但创建 / 编辑转发、转发组的表单里还有不少带边框的开关
+  小框（「接收 PROXY」「发送 PROXY」这类一个复选框一个框）。设置页已经换成设置行，
+  这两个表单还没跟上。
+- ~~`Home.tsx` 里还有 `bg-emerald-500` 的小圆点和徽标~~ —— 2.3.369 的色板清理换成
+  了令牌，Dashboard 2.0 把这些点所在的卡片整张删掉了；首页的状态点现在全是 `StatusDot`。
 - **`Tunnels.tsx` / `Rules.tsx` 是巨型文件**，几乎承载了各自全部业务 UI。
   拆分到 `features/` 在 PR 3 / PR 4。
-- **移动端顶栏承担了身份 + 主操作 + 全局操作三件事**，因为正文 H1 在手机上被
-  隐藏了。目标形态是 `☰  链路管理  ＋`：右上角只放当前页的主操作，搜索回到
-  内容区，主题进账户菜单。
+- ~~移动端顶栏承担了身份 + 主操作 + 全局操作三件事~~ —— 2.3.369 换成了 iOS 大标题
+  导航栏 + 底部标签栏，常驻顶栏删掉了。形态和原来设想的略有不同：搜索留在导航栏
+  右侧（它是全局功能），主题进「更多」。
 - **桌面端仍是响应式缩放，不是 Master–Detail**。Hosts / Links / Rules 都应该是
   左列表右详情，这比把每张卡做得越来越复杂效果好得多。
 - **Globe 是 wow factor，不该承担运维主操作**。链路页最终应有「列表 / 拓扑 /

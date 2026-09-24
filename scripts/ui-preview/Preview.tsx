@@ -6,8 +6,13 @@ import ConnectionPath from "@/components/ConnectionPath";
 import EntityGallery from "./EntityGallery";
 import FilterToolbar from "@/components/FilterToolbar";
 import TrafficOverview from "@/components/TrafficOverview";
-import SystemStatusHeader from "@/components/SystemStatusHeader";
-import StatCard from "@/components/StatCard";
+import SystemStatusHeader, { type SystemHealth } from "@/components/SystemStatusHeader";
+import { AttentionSection } from "@/features/dashboard/AttentionSection";
+import { TrafficSurface, type TrafficChartPoint } from "@/features/dashboard/TrafficSurface";
+import { emptyAttentionTotals } from "@shared/dashboardAttention";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
+import { CardActions } from "@/components/entity/EntityCard";
+import { ListRow, ListSection } from "@/components/ios/GroupedList";
 import EmptyState from "@/components/EmptyState";
 import DataSectionError from "@/components/DataSectionError";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -27,6 +32,40 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import "@/index.css";
 import "./preview.css";
+
+/*
+  总览页的示例数据。故意凑了一个「一台机器掉线牵连出一串」的场景：掉线主机、
+  它上面没在跑的隧道、备线没了的转发组，外加一台还没装 Agent 的新机器 ——
+  这几种状态在真实面板里很难同时凑齐，而「需要关注」要的正是它们排在一起的样子。
+*/
+const previewNow = Date.now();
+const previewAttentionTotals = { ...emptyAttentionTotals(), "host-offline": 1, "tunnel-stopped": 1, "group-degraded": 1, "host-never-connected": 1 };
+const previewHealth: SystemHealth = {
+  hosts: { total: 5, online: 3, offline: 1, neverConnected: 1 },
+  links: { total: 6, healthy: 4, unhealthy: 1, degraded: 1 },
+  forwards: { total: 12, running: 12, stalled: 0, paused: 0, disabled: 0 },
+  issues: 2,
+  attention: {
+    totals: previewAttentionTotals,
+    rows: [
+      { reason: "host-offline", id: 1, name: "US backup 04", at: previewNow - 18 * 60_000 },
+      { reason: "tunnel-stopped", id: 2, name: "SG → US WSS", at: previewNow - 17 * 60_000, entryName: "SG relay 03", exitName: "US backup 04" },
+      { reason: "group-degraded", id: 3, name: "Media failover", at: previewNow - 16 * 60_000, message: "SG 在用，US 备线不可用", groupMode: "failover" },
+      { reason: "host-never-connected", id: 4, name: "新机器 · 东京", at: previewNow - 5 * 60_000 },
+    ],
+  },
+};
+const previewTraffic: TrafficChartPoint[] = Array.from({ length: 24 }, (_, index) => {
+  const hour = new Date(previewNow - (23 - index) * 3_600_000);
+  const label = `${String(hour.getHours()).padStart(2, "0")}:00`;
+  const wave = 1 + Math.sin((index / 24) * Math.PI * 2 - 1.2) * 0.6;
+  return { label, fullLabel: label, bytesIn: Math.round(wave * 1.9 * 1024 ** 3), bytesOut: Math.round(wave * 2.4 * 1024 ** 3) };
+});
+const previewBreakdown = {
+  tunnelRules: [{ id: 11, name: "香港 → 东京 TLS", totalBytes: 38 * 1024 ** 3 }, { id: 12, name: "新加坡中转", totalBytes: 9 * 1024 ** 3 }],
+  portRules: [{ id: 21, name: "游戏 TCP+UDP", totalBytes: 21 * 1024 ** 3 }, { id: 22, name: "网站 443", totalBytes: 4 * 1024 ** 3 }],
+  forwardGroupRules: [{ id: 31, name: "API 主备", totalBytes: 15 * 1024 ** 3 }, { id: 32, name: "媒体主备", totalBytes: 2 * 1024 ** 3 }],
+};
 
 const sections = [
   {name:"总览", icon:LayoutDashboard}, {name:"网络语言",icon:Network}, {name:"转发规则",icon:ArrowRightLeft},
@@ -97,9 +136,9 @@ function Demo() {
           <EntityGallery/>
         </>:page==="总览"?<>
           <WorkspaceHeader title="总览" description="查看运行状态、资源使用和流量趋势。" />
-          <SystemStatusHeader isAdmin health={{hosts:{total:4,online:4,offline:0,neverConnected:0},links:{total:2,healthy:2,unhealthy:0},forwards:{total:3,running:3,stalled:0,disabled:0},issues:0}} recentBytes={1717986918}/>
-          <TrafficOverview total={{bytesIn:1148900000,bytesOut:11124000000,connections:61794}} daily={{bytesIn:111620000,bytesOut:1664300000,connections:7248}} totalLoading={false} dailyLoading={false} scope="preview" lastScope="preview"/>
-          <Card><CardHeader><CardTitle>资源状态</CardTitle><CardDescription>主机与链路的当前状态</CardDescription></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>资源</TableHead><TableHead>类型</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{[["香港入口","主机","在线"],["东京出口","主机","在线"],["华南 · 香港","隧道","正常"]].map(row=><TableRow key={row[0]}>{row.map(cell=><TableCell key={cell}>{cell}</TableCell>)}</TableRow>)}</TableBody></Table></CardContent></Card>
+          <SystemStatusHeader isAdmin health={previewHealth}/>
+          <AttentionSection isAdmin attention={previewHealth.attention} onOpen={()=>{}} now={previewNow}/>
+          <TrafficSurface recentBytes={previewTraffic.reduce((sum,point)=>sum+point.bytesIn+point.bytesOut,0)} chartData={previewTraffic} chartLoading={false} breakdown={previewBreakdown} breakdownLoading={false} totals={{totalTrafficIn:1.69*1024**4,totalTrafficOut:1.74*1024**4}} totalsLoading={false}/>
         </>:page==="转发规则"||page==="链路管理"?<>
           <WorkspaceHeader title={page} description={page==="链路管理"?"管理隧道、端口转发、转发链及入口/出口组":"管理转发规则和运行状态"}
             status={<Badge variant="outline"><Activity className="mr-1 h-3 w-3"/>{page==="链路管理"?"2 / 2 可用":"3 / 3 已启用"}</Badge>}
@@ -115,13 +154,13 @@ function Demo() {
               <div className="flex items-start justify-between gap-3"><div><h2 className="text-base font-semibold">{name}</h2><p className="mt-1 flex items-center gap-2 text-xs text-muted-foreground"><span className={`h-1.5 w-1.5 rounded-full ${enabled[name]===false?"bg-muted-foreground":"bg-emerald-600"}`}/>{enabled[name]===false?"已停用":"运行正常"}<span>·</span>ForwardX</p></div><Switch checked={enabled[name]!==false} onCheckedChange={v=>setEnabled({...enabled,[name]:v})} aria-label={`启用${name}`}/></div>
               <ConnectionPath steps={page==="链路管理"?[{key:"entry",label:"入口",content:<strong className="font-medium">华南入口</strong>},{key:"exit",label:"出口",content:<strong className="font-medium">{index===0?"香港出口":"东京出口"}</strong>}]:[{key:"entry",label:"入口 · 点击复制",content:<button className="flex w-full items-start justify-between gap-2 text-left" onClick={()=>setMessage("演示：地址已复制")}><code className="break-all">{index===2?"[2001:db8:85a3:0000:0000:8a2e:0370:7334]:443":"203.0.113.10:44760"}</code><Copy className="h-4 w-4 shrink-0"/></button>},{key:"exit",label:"目标地址",content:<code>service.example.com:443</code>}]}/>
               <div className="flex items-center justify-between gap-2"><Badge variant="secondary">TCP + UDP</Badge><span className="text-xs text-muted-foreground">延迟 <strong className="ml-1 font-medium text-foreground">23 ms</strong></span></div>
-              <div className="action-card-footer flex justify-end gap-2"><Button variant="ghost" size="sm" onClick={()=>setDialog(true)}>编辑</Button><Button variant="ghost" size="sm" onClick={()=>setMessage("演示：线路连通，23 ms")}>测试连接</Button></div>
+              <CardActions><Button variant="ghost" size="sm" onClick={()=>setDialog(true)}>编辑</Button><Button variant="ghost" size="sm" onClick={()=>setMessage("演示：线路连通，23 ms")}>测试连接</Button></CardActions>
             </CardContent></Card>)}</div>}
           </Tabs>
         </>:page==="账单与兑换"?<>
           <WorkspaceHeader title="账单与兑换" description="查看收支流水，管理兑换码与折扣码。"/>
-          <div className="grid grid-cols-3 gap-3">{[["累计收入","¥ 1,280.00"],["生效订阅","24"],["可用兑换码","12"]].map(([title,value])=><StatCard key={title} title={title} value={value} icon={Wallet} cacheKey={`preview.${title}`}/>)}</div>
-          <div className="billing-entry-controls">{[["用户兑换入口",redeem,setRedeem],["购买折扣入口",discount,setDiscount]].map(([title,on,set])=><div className="billing-entry-control" key={String(title)}><Gift className="h-4 w-4"/><div><p>{String(title)}</p><small>{on?"已开启":"已关闭"}</small></div><Switch aria-label={String(title)} checked={Boolean(on)} onCheckedChange={set as (value:boolean)=>void}/></div>)}</div>
+          <SummaryStrip ariaLabel="账单概况" items={[["累计收入","¥ 1,280.00"],["生效订阅","24"],["可用兑换码","12"]].map(([title,value])=>({key:title,label:title,value,cacheKey:`preview.${title}`}))}/>
+          <ListSection header="用户入口">{[["用户兑换入口",redeem,setRedeem],["购买折扣入口",discount,setDiscount]].map(([title,on,set])=><ListRow key={String(title)} icon={<Gift className="h-4 w-4"/>} label={String(title)} detail={on?"已开启 · 用户可使用":"已关闭 · 用户不可使用"} trailing={<Switch aria-label={String(title)} checked={Boolean(on)} onCheckedChange={set as (value:boolean)=>void}/>}/>)}</ListSection>
           <Tabs value={billingTab} onValueChange={setBillingTab} className="space-y-4"><SlidingTabsList items={[{value:"bills",label:"账单流水"},{value:"subscriptions",label:"订阅记录"},{value:"balance",label:"余额流水"},{value:"redeem",label:"兑换码"},{value:"discount",label:"折扣码"}]} activeValue={billingTab} ariaLabel="账单分类"/>
             <TabsContent value="redeem"><Card><CardHeader><CardTitle>生成兑换码</CardTitle><CardDescription>一次性兑换套餐或余额。</CardDescription></CardHeader><CardContent className="space-y-5"><FormField className="space-y-2"><Label>兑换码（选填）</Label><Input placeholder="留空自动生成" /></FormField><SelectField label="类型" options={["余额","套餐"]}/><FormField className="space-y-2"><Label>金额（元）</Label><Input type="number" placeholder="0.00" min={0}/></FormField><div className="border-t pt-4"><Button onClick={()=>setMessage("演示预览不会生成实际兑换码")}>生成兑换码</Button></div></CardContent></Card></TabsContent>
             {billingTab!=="redeem"&&<Card><EmptyState icon={<Wallet/>} title="暂无记录" description="业务发生后，流水会显示在这里。"/></Card>}

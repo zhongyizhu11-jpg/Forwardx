@@ -16,6 +16,7 @@ import { formatBytes } from "@shared/formatBytes";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import DashboardLayout from "@/components/DashboardLayout";
+import { DiagnoseDialog } from "@/components/DiagnoseDialog";
 import { LatencyRating } from "@/components/LatencyRating";
 import { LinkTestProbeView, parseLinkTestMessage, type LinkTestPlannedSegment } from "@/components/LinkTestLatencySummary";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
@@ -103,16 +104,13 @@ import {
   BILLING_TIME_ZONE,
 } from "@shared/billingTime";
 import {
-  MAX_FAILOVER_SCHEDULE_WINDOWS,
-  describeFailoverScheduleWindow,
   failoverSchedulePayload,
   parseFailoverSchedule,
   type FailoverSchedule,
-  type FailoverScheduleWindow,
 } from "@shared/failoverSchedule";
+import { readFailoverPin } from "@shared/failoverPin";
 import {
   describeFailoverLines,
-  failoverLineHintText,
   type RelayCandidate,
 } from "@/lib/failoverRelayHints";
 import {
@@ -123,7 +121,13 @@ import {
   parseFailoverTargets,
   type FailoverTarget,
 } from "@shared/failoverTargets";
-import { describeFailoverLineDisplay, type FailoverLineTone } from "@/lib/failoverLineDisplay";
+import { FAILOVER_TONE_CLASS, describeFailoverLineDisplay } from "@/lib/failoverLineDisplay";
+import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
+import { FailoverPolicyFields } from "@/features/rules/FailoverPolicyFields";
+import { describeRoutePolicy, pinUntilSeconds } from "@shared/routePolicy";
+import { failoverLineLabel } from "@shared/failoverActiveLine";
 import {
   forwardRuleFormBlocker,
   isAdvancedSectionBlocker,
@@ -2109,6 +2113,8 @@ function RulesContent() {
   const [editingOriginalProtocol, setEditingOriginalProtocol] = useState<RuleProtocol | null>(null);
   const [legacyLocalRuleEditId, setLegacyLocalRuleEditId] = useState<number | null>(null);
   const [deleteRule, setDeleteRule] = useState<any | null>(null);
+  // 主备策略面板开着的是哪条规则。存 id 不存整行：强制走之后列表会刷新，面板要跟着新数据走。
+  const [policyRuleId, setPolicyRuleId] = useState<number | null>(null);
   const [resetTrafficTarget, setResetTrafficTarget] = useState<{ scope: "all" } | { scope: "rule"; rule: any } | null>(null);
   const [showCopyDialog, setShowCopyDialog] = useState(false);
   const [form, setForm] = useState<RuleFormData>(defaultForm);
@@ -2370,6 +2376,25 @@ function RulesContent() {
     onError: (err) => toast.error(err.message || "创建失败"),
   });
 
+  /*
+    主备策略面板里的「强制走 / 交回自动」。
+
+    不复用编辑框那个 updateMutation：它成功后会关编辑框、清表单、说「规则已更新」。
+    这里只传钉子那两个字段 —— 服务端会整份重新归一化主备配置，并当场推给 Agent
+    （这两件事上一版都没有：只传钉子会直接报错，改了也要等五分钟一次的对账）。
+  */
+  const pinMutation = trpc.rules.update.useMutation({
+    onSuccess: (_data, variables) => {
+      utils.rules.list.invalidate();
+      utils.rules.listPage.invalidate();
+      utils.rules.mapItems.invalidate();
+      // 只说做了什么，不说「已生效」：机器离线时要等它连上才会照做。
+      toast.success(variables.failoverPinnedIndex === null || variables.failoverPinnedIndex === undefined
+        ? "已交回自动"
+        : `已强制走 ${failoverLineLabel(variables.failoverPinnedIndex, "")}`);
+    },
+    onError: (error) => toast.error(error.message || "操作失败"),
+  });
   const updateMutation = trpc.rules.update.useMutation({
     onSuccess: (data, variables) => {
       invalidateRuleProbeStatuses([Number(variables.id)]);
@@ -2695,12 +2720,16 @@ function RulesContent() {
       failoverProbeTarget: String(rule.failoverProbeTarget || ""),
       failoverSchedule: parseFailoverSchedule(rule.failoverSchedule),
       failoverMinHoldSeconds: Number(rule.failoverMinHoldSeconds || 0),
-      failoverPin: Number.isInteger(Number(rule.failoverPinnedIndex))
-        ? {
-          index: Number(rule.failoverPinnedIndex),
-          until: rule.failoverPinnedUntil ? Math.floor(new Date(rule.failoverPinnedUntil).getTime() / 1000) : null,
-        }
-        : null,
+      /*
+        钉子怎么读交给 shared/failoverPin。上一版这里是 Number.isInteger(Number(...))，
+        而没钉的规则这一列是 null —— Number(null) 是 0，于是打开任何一条主备规则，
+        编辑框都显示「强制走 主出站 · 一直钉着」，保存一次就真的钉死了。
+        已经过期的钉子也按没钉处理，不再显示一个早就交回的期限。
+      */
+      failoverPin: (() => {
+        const pin = readFailoverPin(rule);
+        return pin ? { index: pin.index, until: pin.untilMs ? Math.floor(pin.untilMs / 1000) : null } : null;
+      })(),
       failoverPreferFastest: !!rule.failoverPreferFastest,
       failoverSeconds: Number(rule.failoverSeconds || 60),
       recoverSeconds: Number(rule.recoverSeconds || 120),
@@ -3107,6 +3136,32 @@ function RulesContent() {
     parseLine: parseFailoverTargetLine as any,
     formatEndpoint: formatFailoverEndpoint,
   }), [form.failoverTargetsText, form.targetIp, form.targetPort, relayCandidatesQuery.data]);
+  /*
+    编辑框里的「此刻」：拿还没保存的表单走和策略面板同一份模型算一遍。转发方式和协议
+    不传 —— 那两样用不了主备时，这一块上面已经有一句专门的说明，不重复。
+  */
+  const formRoutePolicy = useMemo(() => {
+    if (!form.failoverEnabled) return null;
+    return describeRoutePolicy({
+      failoverEnabled: true,
+      failoverStrategy: form.failoverStrategy,
+      targetIp: form.targetIp,
+      targetPort: form.targetPort,
+      failoverTargets: JSON.stringify(normalizeFailoverTargetsForSubmit(form.failoverTargetsText).targets || []),
+      failoverSchedule: form.failoverSchedule,
+      failoverPinnedIndex: form.failoverPin?.index ?? null,
+      failoverPinnedUntil: form.failoverPin?.until ?? null,
+      failoverPreferFastest: form.failoverPreferFastest,
+      failoverMinHoldSeconds: form.failoverMinHoldSeconds,
+      failoverSeconds: form.failoverSeconds,
+      recoverSeconds: form.recoverSeconds,
+      autoFailback: form.autoFailback,
+    }, { host: form.hostId ? hostById.get(Number(form.hostId)) : undefined });
+  }, [
+    form.failoverEnabled, form.failoverStrategy, form.targetIp, form.targetPort, form.failoverTargetsText,
+    form.failoverSchedule, form.failoverPin, form.failoverPreferFastest, form.failoverMinHoldSeconds,
+    form.failoverSeconds, form.recoverSeconds, form.autoFailback, form.hostId, hostById,
+  ]);
   const advancedBlocked = isAdvancedSectionBlocker(submitBlocker);
   const advancedOpen = showAdvanced || advancedBlocked;
   const routeModeTabItems: SlidingTabItem<RuleRouteMode>[] = [
@@ -3732,11 +3787,11 @@ function RulesContent() {
         return;
       }
       if (!Number.isInteger(form.failoverSeconds) || form.failoverSeconds < 10 || form.failoverSeconds > 3600) {
-        toast.error("健康检查切换时间必须在 10-3600 秒之间");
+        toast.error("切换时间必须在 10-3600 秒之间");
         return;
       }
       if (!Number.isInteger(form.recoverSeconds) || form.recoverSeconds < 10 || form.recoverSeconds > 3600) {
-        toast.error("恢复观察时间必须在 10-3600 秒之间");
+        toast.error("恢复观察必须在 10-3600 秒之间");
         return;
       }
     }
@@ -3749,8 +3804,9 @@ function RulesContent() {
         ? failoverSchedulePayload(form.failoverSchedule, form.failoverStrategy)
         : null,
       failoverMinHoldSeconds: canUseMainBackup && form.failoverEnabled ? form.failoverMinHoldSeconds : 0,
-      failoverPinnedIndex: canUseMainBackup && form.failoverEnabled ? (form.failoverPin?.index ?? null) : null,
-      failoverPinnedUntil: canUseMainBackup && form.failoverEnabled ? (form.failoverPin?.until ?? null) : null,
+      // 钉子和自动择优一样只对主备有意义：轮询这类没有「首选」，Agent 也不看。
+      failoverPinnedIndex: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback" ? (form.failoverPin?.index ?? null) : null,
+      failoverPinnedUntil: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback" ? (form.failoverPin?.until ?? null) : null,
       failoverPreferFastest: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback"
         ? form.failoverPreferFastest
         : false,
@@ -6113,25 +6169,26 @@ function RulesContent() {
     知道的是「现在走的哪条」。配了主备和没配在列表上几乎长一样，功能配完就
     看不见了，这正是「主备到底在哪儿用」说不清楚的地方。
   */
-  const failoverToneClass: Record<FailoverLineTone, string> = {
-    idle: "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]",
-    backup: "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]",
-    warn: "border-destructive/40 text-destructive",
-    unreported: "border-border text-muted-foreground",
-  };
-
   const renderFailoverLineBadge = (rule: any) => {
-    const display = describeFailoverLineDisplay(rule);
+    const display = describeFailoverLineDisplay(rule, hostById.get(Number(rule.hostId)));
     if (!display) return null;
+    // 点进去是主备策略：现在走哪条、按什么选、什么时候切、应急强制走。
     return (
-      <Badge
-        variant="outline"
-        className={cn("h-5 shrink-0 gap-1 px-1.5 text-[10px] font-medium", failoverToneClass[display.tone])}
+      <button
+        type="button"
+        className="shrink-0 rounded-[var(--fx-radius-control)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setPolicyRuleId(Number(rule.id))}
         title={display.title}
+        aria-label={`主备策略：${display.title}`}
       >
-        <GitBranch className="h-3 w-3" aria-hidden="true" />
-        {display.text}
-      </Badge>
+        <Badge
+          variant="outline"
+          className={cn("h-5 cursor-pointer gap-1 px-1.5 text-[10px] font-medium", FAILOVER_TONE_CLASS[display.tone])}
+        >
+          <GitBranch className="h-3 w-3" aria-hidden="true" />
+          {display.text}
+        </Badge>
+      </button>
     );
   };
 
@@ -6357,84 +6414,48 @@ function RulesContent() {
     return <span className="whitespace-nowrap text-xs text-muted-foreground">未测试</span>;
   };
 
+  /*
+    规则卡、表格行上的操作。原来五个图标常驻（延迟、自测、重置、编辑、删除）—— 十二条规则
+    就是六十个图标，而且得记住听诊器是「自测」、转圈的箭头是「重置统计」。常用的两个带字
+    放外面，其余收进 ···；删除永远在菜单最后、红色、隔一条线。
+  */
   const renderRuleActions = (rule: any) => {
-    const supported = isRuleSupported(rule);
-    if (!supported) {
-      return (
-        <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => openEdit(rule)}
-            title="编辑并切换到可用转发资源"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-destructive hover:text-destructive"
-            onClick={() => setDeleteRule(rule)}
-            title="删除规则"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      );
-    }
     const ruleCategory = getRuleCategory(rule, forwardGroupById);
     const isForwardChainRule = ruleCategory === "chain";
     const probeMethod = ruleLatencyProbeMethodForRule(rule);
+    const resetting = resetTrafficMutation.isPending && resetTrafficTarget?.scope === "rule" && Number(resetTrafficTarget.rule?.id) === Number(rule.id);
     return (
-      <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => setTrafficDetailRule({ id: rule.id, name: rule.name, isForwardChain: isForwardChainRule, probeMethod })}
-          title={isForwardChainRule ? "查看链路延迟" : probeMethod === "ping" ? "查看 Ping 延迟" : "查看 TCPing 延迟"}
-        >
-          <Activity className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => setSelfTestRule({ id: rule.id, name: rule.name })}
-          title="转发链路自测"
-        >
-          <Stethoscope className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => setResetTrafficTarget({ scope: "rule", rule })}
-          disabled={resetTrafficMutation.isPending}
-          title={resetTrafficMutation.isPending ? "正在重置统计数据" : "重置规则数据"}
-        >
-          {resetTrafficMutation.isPending && resetTrafficTarget?.scope === "rule" && Number(resetTrafficTarget.rule?.id) === Number(rule.id)
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : <RotateCcw className="h-3.5 w-3.5" />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon" aria-label={`编辑 ${rule.name}`}
-          className="h-8 w-8"
-          onClick={() => openEdit(rule)}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon" aria-label={`删除 ${rule.name}`}
-          className="h-8 w-8 text-destructive hover:text-destructive"
-          onClick={() => setDeleteRule(rule)}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+      <EntityActions
+        primary={[
+          {
+            key: "test",
+            label: "诊断",
+            ariaLabel: `诊断 ${rule.name}：转发链路自测`,
+            icon: <Stethoscope className="h-3.5 w-3.5" />,
+            onSelect: () => setSelfTestRule({ id: rule.id, name: rule.name }),
+          },
+          { key: "edit", label: "编辑", ariaLabel: `编辑 ${rule.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => openEdit(rule) },
+        ]}
+        menu={[
+          {
+            key: "latency",
+            label: isForwardChainRule ? "链路延迟" : probeMethod === "ping" ? "Ping 延迟" : "TCPing 延迟",
+            ariaLabel: `查看 ${rule.name} 的延迟`,
+            icon: <Activity className="h-3.5 w-3.5" />,
+            onSelect: () => setTrafficDetailRule({ id: rule.id, name: rule.name, isForwardChain: isForwardChainRule, probeMethod }),
+          },
+          {
+            key: "reset",
+            label: resetting ? "正在重置统计" : "重置统计",
+            ariaLabel: `重置 ${rule.name} 的统计数据`,
+            icon: resetting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />,
+            disabled: resetTrafficMutation.isPending,
+            onSelect: () => setResetTrafficTarget({ scope: "rule", rule }),
+          },
+          { key: "delete", label: "删除", ariaLabel: `删除 ${rule.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => setDeleteRule(rule) },
+        ]}
+        menuLabel={`${rule.name} 的更多操作`}
+      />
     );
   };
 
@@ -6632,7 +6653,13 @@ function RulesContent() {
         </TableCell>
         <TableCell className="px-3 py-2">{renderTableTransferEntry(rule)}</TableCell>
         <TableCell className="px-3 py-2">{renderTableTransferExit(rule)}</TableCell>
-        <TableCell className="px-3 py-2">{renderRouteBadge(rule, true)}</TableCell>
+        <TableCell className="px-3 py-2">
+          {/* 主备那一小块跟着线路走：它说的是「现在走哪条」，点进去是策略。 */}
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {renderRouteBadge(rule, true)}
+            {renderFailoverLineBadge(rule)}
+          </div>
+        </TableCell>
         <TableCell className="px-3 py-2 text-center">
           <Badge variant="secondary" className="whitespace-nowrap text-[10px]">{formatForwardRuleProtocol(rule.protocol)}</Badge>
         </TableCell>
@@ -6726,9 +6753,7 @@ function RulesContent() {
               {renderRuleDailyTrafficValue(rule, "out")}
             </div>
 
-            <div className="action-card-footer flex justify-end border-t border-border/40 pt-1">
-              {renderRuleActions(rule)}
-            </div>
+            <CardActions>{renderRuleActions(rule)}</CardActions>
           </CardContent>
         </Card>
       );
@@ -6790,7 +6815,14 @@ function RulesContent() {
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div className="min-w-0">
               <div className="mb-1 text-muted-foreground">链路</div>
-              {renderRouteBadge(rule, false, ruleDrawsFlow(rule))}
+              {/*
+                2.3.366 只给紧凑卡加了主备标记，大卡和表格上看不出这条规则配了主备、
+                现在走哪条。三种布局都要有 —— 它也是主备策略面板的入口。
+              */}
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {renderRouteBadge(rule, false, ruleDrawsFlow(rule))}
+                {renderFailoverLineBadge(rule)}
+              </div>
             </div>
             <div className="min-w-0">
               <div className="mb-1 text-muted-foreground">协议</div>
@@ -6815,9 +6847,7 @@ function RulesContent() {
               {renderLatestLatency(rule)}
             </div>
           </div>
-          <div className="action-card-footer flex justify-end border-t border-border/40 pt-2">
-            {renderRuleActions(rule)}
-          </div>
+          <CardActions>{renderRuleActions(rule)}</CardActions>
         </CardContent>
       </Card>
     );
@@ -7235,7 +7265,7 @@ function RulesContent() {
               />
             ) : (rules && rules.length > 0) || ruleScopeTotal > 0 || hasActiveRuleFilter ? (
               <EmptyState icon={<Filter className="h-10 w-10 mb-3 opacity-30" />} title={<>没有匹配的规则</>} description={<>尝试调整筛选条件</>} actions={<>{hasActiveRuleFilter && (
-                  <Button type="button" variant="outline" className="mt-4 gap-2" onClick={clearRuleFilters}>
+                  <Button type="button" variant="outline" className="gap-2" onClick={clearRuleFilters}>
                     <XCircle className="h-4 w-4" />
                     清除筛选
                   </Button>
@@ -7662,7 +7692,8 @@ function RulesContent() {
             />
             </FormField>
             {showMainBackupConfig && (
-            <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+            /* L2 分组：灰底、不描边。原来是一个描边的框，里面又套两层描边的框。 */
+            <div className="space-y-3 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] p-3">
               <FormField className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   {/* 面板以前叫它「出站策略」，而这件事本身叫主备线路 —— 两个名字指一件事，
@@ -7706,340 +7737,15 @@ function RulesContent() {
                 </p>
               )}
               {form.failoverEnabled && (
-                <div className="space-y-2">
-                  <FormField className="space-y-2">
-                    <Label className="flex items-baseline gap-1.5">
-                    主出站探测目标
-                    <span className="text-xs font-normal text-muted-foreground">留空就探主出站地址本身</span>
-                    </Label>
-                    <Input
-                      value={form.failoverProbeTarget}
-                      onChange={(event) => setForm({ ...form, failoverProbeTarget: event.target.value })}
-                      placeholder="例如 10.0.0.1:9000"
-                      className="font-mono text-sm"
-                      spellCheck={false}
-                    />
-                  </FormField>
-                  <FormField className="space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Label>备用出站（每行一个，最多 10 个）</Label>
-                    {/*
-                      从面板认得的中转里选，而不是让人照着别处抄一个 地址:端口 过来。
-                      抄错了没有任何提示，要等真出事那天才发现备用线路根本连不上。
-                    */}
-                    {(relayCandidatesQuery.data || []).length > 0 && (
-                    <Select
-                      value=""
-                      onValueChange={(value) => {
-                      const existing = form.failoverTargetsText.replace(/\s*$/, "");
-                      setForm({ ...form, failoverTargetsText: existing ? `${existing}\n${value}` : value });
-                      }}
-                    >
-                      <SelectTrigger className="h-8 w-auto min-w-44 text-xs" aria-label="从中转里选一条加进备用出站">
-                      <SelectValue placeholder="从中转里选一条加进来" />
-                      </SelectTrigger>
-                      <SelectContent>
-                      {(relayCandidatesQuery.data || []).map((candidate: RelayCandidate) => (
-                      <SelectItem key={candidate.id} value={candidate.address}>
-                      {candidate.hostName} · {candidate.label}（{candidate.address}）
-                      </SelectItem>
-                      ))}
-                      </SelectContent>
-                    </Select>
-                    )}
-                    </div>
-                    <Textarea
-                      value={form.failoverTargetsText}
-                      onChange={(event) => setForm({ ...form, failoverTargetsText: event.target.value })}
-                      placeholder={"10.0.0.1:80\n10.0.0.2:80  10.0.0.2:9000"}
-                      className="min-h-24 font-mono text-sm"
-                      spellCheck={false}
-                    />
-                    {/*
-                      认出来的每一行在这儿说清楚：是哪台中转的哪条规则、探测有没有盲区、
-                      和主出站是不是同一个落地。这三件事手填时完全看不见，而任何一件出错
-                      都要等真出事那天才暴露。
-                    */}
-                    {failoverLineHints.map((hint) => {
-                    const text = failoverLineHintText(hint);
-                    if (!text) return null;
-                    return (
-                    <p
-                      key={hint.line}
-                      className={`text-xs leading-5 ${hint.probeBlindSpot || hint.sameDestination === false ? "text-[var(--fx-warn-text)]" : "text-muted-foreground"}`}
-                    >
-                      第 {hint.line} 行：{text}
-                    </p>
-                    );
-                    })}
-                  </FormField>
-                  {/*
-                    这段必须说，而且必须说得具体。
-
-                    健康检查就是对出站地址做一次 TCP 连接。出站是 iptables/DNAT 类中转时，
-                    握手实际是和最终落地完成的 —— 这一次连接就是端到端的。出站是 gost、
-                    realm 这类用户态转发时，中转在本地就把连接收下了：连得上只能证明中转
-                    活着，证明不了它到落地那一段还通。
-
-                    后一种情况下中转的上游断了，主备**不会切**，流量继续往死路里送，而
-                    面板上一切正常 —— 用户的体感是「备用线路配了，关键时刻没兜住」。
-                    不写清楚的话，他根本不会知道去填探测目标。
-                  */}
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    健康检查是对出站地址连一次 TCP。中转用 iptables/DNAT 时这一连就是端到端的；
-                    中转用 gost、realm 这类用户态转发时，连得上只说明中转活着，
-                    不代表它到落地那段还通 —— 这时填个探测目标（每行第二个地址，空格隔开），
-                    指向能反映整条路径的端口。
-                  </p>
-                  {/*
-                    时段表：晚高峰错峰。
-
-                    它只决定「首选是谁」，切不切得过去仍然由健康检查说了算 ——
-                    18 点到了而那条线正挂着，不该机械地切过去。这两件事是正交的，
-                    所以时段表放在这儿，和下面的切换/恢复时间并列，而不是替代它们。
-                  */}
-                  {/*
-                    人工钉住：应急时压过所有自动判断，走指定的那一条。
-
-                    两件事写死在这儿：
-                      · 钉住是「排到最前」，不是「只许走它」—— 钉住的那条挂了仍然
-                        会往下找。用一个应急开关制造一次故障，是最糟的那种设计。
-                      · **必须有期限**。应急处理完没人记得关，那条线就一直被钉着，
-                        后面所有自动切换（包括时段表）全部静默失效，而面板上看不出
-                        任何异常。所以「一直钉着」不是默认项，要主动选。
-                  */}
-                  <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/50 bg-background/40 p-2.5">
-                    <Label className="text-sm">强制走</Label>
-                    <Select
-                      value={form.failoverPin ? String(form.failoverPin.index) : "auto"}
-                      onValueChange={(value) => setForm({
-                      ...form,
-                      failoverPin: value === "auto"
-                        ? null
-                        : { index: Number(value), until: form.failoverPin?.until ?? Math.floor(Date.now() / 1000) + 2 * 3600 },
-                      })}
-                    >
-                      <SelectTrigger className="h-8 w-28 text-xs" aria-label="强制走哪条出站"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                      <SelectItem value="auto">自动</SelectItem>
-                      <SelectItem value="0">主出站</SelectItem>
-                      {failoverLineHints.map((hint) => (
-                      <SelectItem key={hint.line} value={String(hint.line)}>备用 {hint.line}</SelectItem>
-                      ))}
-                      </SelectContent>
-                    </Select>
-                    {form.failoverPin && (
-                    <>
-                    <Label className="text-sm">持续</Label>
-                    <Select
-                      value={form.failoverPin.until === null ? "forever" : String(form.failoverPin.until)}
-                      onValueChange={(value) => setForm({
-                      ...form,
-                      failoverPin: { index: form.failoverPin!.index, until: value === "forever" ? null : Number(value) },
-                      })}
-                    >
-                      <SelectTrigger className="h-8 w-32 text-xs" aria-label="强制走这条出站持续多久"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                      {[["30 分钟", 1800], ["2 小时", 7200], ["12 小时", 43200], ["24 小时", 86400]].map(([label, seconds]) => (
-                      <SelectItem key={String(label)} value={String(Math.floor(Date.now() / 1000) + Number(seconds))}>
-                      {label}
-                      </SelectItem>
-                      ))}
-                      <SelectItem value="forever">一直钉着</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="w-full text-xs leading-5 text-[var(--fx-warn-text)]">
-                      {form.failoverPin.until === null
-                        ? "一直钉着：时段表和自动切换都不会再改变走向，直到你在这里改回「自动」。"
-                        : `到 ${new Date(form.failoverPin.until * 1000).toLocaleString("zh-CN")} 自动交回。钉住的这条要是挂了，仍然会往下切。`}
-                    </p>
-                    </>
-                    )}
-                  </div>
-                  {form.failoverStrategy !== "fallback" && (form.failoverSchedule?.windows.length || 0) > 0 && (
-                  /*
-                    配好时段表之后又把策略改成了轮询/随机/哈希。这几种策略本来就不存在
-                    「首选出站」，时段表不适用 —— 提交时会被归零。
-
-                    必须提前说：等用户保存完回来发现时段表空了，比现在多一行字糟得多。
-                    界面上那份还留着，改回主备就在，不用重配。
-                  */
-                  <p className="rounded-md bg-[var(--fx-warn-soft)] px-3 py-2 text-xs leading-5 text-[var(--fx-warn-text)]">
-                    {failoverModeOptions.find((option) => option.value === form.failoverStrategy)?.label || "当前策略"}
-                    下没有「首选出站」，时段表不适用，保存后会清空。改回主备模式可以继续用。
-                  </p>
-                  )}
-                  {form.failoverStrategy === "fallback" && (
-                  <div className="space-y-2 rounded-md border border-border/50 bg-background/40 p-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Label className="flex items-baseline gap-1.5">
-                    时段表
-                    <span className="text-xs font-normal text-muted-foreground">
-                    按 {BILLING_TIME_ZONE} 计时，没配就一直按优先级走
-                    </span>
-                    </Label>
-                    {(form.failoverSchedule?.windows.length || 0) < MAX_FAILOVER_SCHEDULE_WINDOWS && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => {
-                      const windows = [...(form.failoverSchedule?.windows || []), {
-                      days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1,
-                      } as FailoverScheduleWindow];
-                      setForm({ ...form, failoverSchedule: { timezone: BILLING_TIME_ZONE, windows } });
-                      }}
-                    >
-                      添加时段
-                    </Button>
-                    )}
-                    </div>
-                    {(form.failoverSchedule?.windows || []).map((window, index) => {
-                    const patch = (next: Partial<FailoverScheduleWindow>) => {
-                    const windows = (form.failoverSchedule?.windows || []).map((item, position) => (
-                    position === index ? { ...item, ...next } : item
-                    ));
-                    setForm({ ...form, failoverSchedule: { timezone: BILLING_TIME_ZONE, windows } });
-                    };
-                    return (
-                    <div key={index} className="flex flex-wrap items-center gap-1.5">
-                      <Select
-                      value={window.days.length === 0 ? "all" : window.days.length === 2 && window.days.includes(0) ? "weekend" : "weekday"}
-                      onValueChange={(value) => patch({
-                      days: value === "all" ? [] : value === "weekend" ? [0, 6] : [1, 2, 3, 4, 5],
-                      })}
-                      >
-                      <SelectTrigger className="h-8 w-24 text-xs" aria-label={`第 ${index + 1} 个时段：星期`}><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                      <SelectItem value="all">每天</SelectItem>
-                      <SelectItem value="weekday">工作日</SelectItem>
-                      <SelectItem value="weekend">周末</SelectItem>
-                      </SelectContent>
-                      </Select>
-                      <Input
-                      type="time"
-                      value={window.from}
-                      onChange={(event) => patch({ from: event.target.value })}
-                      className="h-8 w-28 text-xs"
-                      aria-label={`第 ${index + 1} 个时段：开始时间`}
-                      />
-                      <span className="text-xs text-muted-foreground">至</span>
-                      <Input
-                      type="time"
-                      value={window.to}
-                      onChange={(event) => patch({ to: event.target.value })}
-                      className="h-8 w-28 text-xs"
-                      aria-label={`第 ${index + 1} 个时段：结束时间`}
-                      />
-                      <Select
-                      value={String(window.targetIndex)}
-                      onValueChange={(value) => patch({ targetIndex: Number(value) })}
-                      >
-                      <SelectTrigger className="h-8 w-28 text-xs" aria-label={`第 ${index + 1} 个时段：优先走哪条出站`}><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                      <SelectItem value="0">主出站</SelectItem>
-                      {failoverLineHints.map((hint) => (
-                      <SelectItem key={hint.line} value={String(hint.line)}>备用 {hint.line}</SelectItem>
-                      ))}
-                      </SelectContent>
-                      </Select>
-                      <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      aria-label={`删除第 ${index + 1} 个时段`}
-                      onClick={() => {
-                      const windows = (form.failoverSchedule?.windows || []).filter((_, position) => position !== index);
-                      setForm({ ...form, failoverSchedule: windows.length > 0 ? { timezone: BILLING_TIME_ZONE, windows } : null });
-                      }}
-                      >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                    );
-                    })}
-                    {/* 配好之后用一句话复述一遍：跨午夜那一段最容易理解反。 */}
-                    {(form.failoverSchedule?.windows || []).map((window, index) => (
-                    <p key={`hint-${index}`} className="text-xs leading-5 text-muted-foreground">
-                    {describeFailoverScheduleWindow(window)}
-                    </p>
-                    ))}
-                  </div>
-                  )}
-                  <div className="grid gap-2 sm:grid-cols-4">
-                    <FormField className="space-y-2">
-                      <Label>切换时间（秒）</Label>
-                      <Input
-                        type="number"
-                        min={10}
-                        max={3600}
-                        step={1}
-                        value={form.failoverSeconds || ""}
-                        onChange={(event) => setForm({ ...form, failoverSeconds: parseInt(event.target.value) || 0 })}
-                      />
-                    </FormField>
-                    <FormField className="space-y-2">
-                      <Label>恢复观察（秒）</Label>
-                      <Input
-                        type="number"
-                        min={10}
-                        max={3600}
-                        step={1}
-                        value={form.recoverSeconds || ""}
-                        onChange={(event) => setForm({ ...form, recoverSeconds: parseInt(event.target.value) || 0 })}
-                      />
-                    </FormField>
-                    <FormField className="space-y-2">
-                      {/*
-                        最短驻留拦的是「好线路之间来回切」，不是「逃离一条死路」——
-                        当前这条挂了的时候它不生效，守着死路比抖动更糟。
-                      */}
-                      <Label className="flex items-baseline gap-1.5">
-                      最短驻留（秒）
-                      <span className="text-xs font-normal text-muted-foreground">0=不限</span>
-                      </Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={86400}
-                        step={1}
-                        value={form.failoverMinHoldSeconds || ""}
-                        onChange={(event) => setForm({ ...form, failoverMinHoldSeconds: parseInt(event.target.value) || 0 })}
-                      />
-                    </FormField>
-                    {form.failoverStrategy === "fallback" && (
-                      <FormField className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
-                        <div className="min-w-0">
-                          {/*
-                            不是「谁快切谁」：那样线路会一直漂。候选必须同时快过绝对
-                            门槛和百分比门槛，而且连着三分钟都更快，才会被提到最前。
-                            三个数写死在 Agent 里 —— 多一个旋钮就多一次「填多少合适」
-                            的为难，而它们的合理范围很窄。
-                          */}
-                          <Label className="text-sm">自动择优</Label>
-                          <p className="text-xs text-muted-foreground">按实测延迟挑明显更快的那条</p>
-                        </div>
-                        <Checkbox
-                          checked={form.failoverPreferFastest}
-                          onCheckedChange={(checked) => setForm({ ...form, failoverPreferFastest: checked })}
-                        />
-                      </FormField>
-                    )}
-                    {form.failoverStrategy === "fallback" && (
-                      <FormField className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2">
-                        <div>
-                          <Label className="text-sm">恢复后切回</Label>
-                        </div>
-                        <Checkbox
-                          checked={form.autoFailback}
-                          onCheckedChange={(checked) => setForm({ ...form, autoFailback: checked })}
-                        />
-                      </FormField>
-                    )}
-                  </div>
-                </div>
+                <FailoverPolicyFields
+                  value={form}
+                  onChange={(patch) => setForm({ ...form, ...patch })}
+                  policy={formRoutePolicy}
+                  lineHints={failoverLineHints}
+                  relayCandidates={(relayCandidatesQuery.data || []) as RelayCandidate[]}
+                  strategyLabel={failoverModeOptions.find((option) => option.value === form.failoverStrategy)?.label || "当前策略"}
+                  scheduleTimeZone={BILLING_TIME_ZONE}
+                />
               )}
             </div>
             )}
@@ -8928,6 +8634,30 @@ function RulesContent() {
         </DialogContent>
       </Dialog>
 
+      {(() => {
+        const policyRule = policyRuleId === null ? null : (rules || []).find((rule: any) => Number(rule.id) === policyRuleId);
+        const policy = policyRule ? describeRoutePolicy(policyRule, { host: hostById.get(Number(policyRule.hostId)) }) : null;
+        return (
+          <RoutePolicySheet
+            open={policyRuleId !== null}
+            onOpenChange={(open) => !open && setPolicyRuleId(null)}
+            subjectName={String(policyRule?.name || "")}
+            policy={policy}
+            canEdit
+            pending={pinMutation.isPending}
+            onPin={(index, durationSeconds) => pinMutation.mutate({
+              id: Number(policyRule.id),
+              failoverPinnedIndex: index,
+              failoverPinnedUntil: pinUntilSeconds(durationSeconds),
+            })}
+            onUnpin={() => pinMutation.mutate({ id: Number(policyRule.id), failoverPinnedIndex: null, failoverPinnedUntil: null })}
+            onEdit={() => {
+              setPolicyRuleId(null);
+              openEdit(policyRule);
+            }}
+          />
+        );
+      })()}
       <Dialog open={!!deleteRule} onOpenChange={(open) => !open && setDeleteRule(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -9003,7 +8733,7 @@ function SelfTestDialog({
       setOptimisticTesting(false);
       setActiveTestId(null);
       manualTestRef.current = false;
-      toast.error(e?.message || "下发失败");
+      toast.error(e?.message || "诊断没发出去");
     },
   });
 
@@ -9061,56 +8791,44 @@ function SelfTestDialog({
       if (lastFailureToastKey.current !== key) {
         lastFailureToastKey.current = key;
         manualTestRef.current = false;
-        toast.error(isTimeout ? "转发链路自测超时" : "转发链路自测失败", { duration: 5000 });
+        toast.error(isTimeout ? "诊断超时" : "诊断没通过", { duration: 5000 });
       }
     }
   }, [open, isTesting, isSuccess, isTerminalStatus, isTimeout, latest, latest?.updatedAt, parsedMessage.message, ruleId, status]);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`${probeDialogSizeClass} min-w-0`}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            延迟探测
-          </DialogTitle>
-          <DialogDescription>{ruleName}</DialogDescription>
-        </DialogHeader>
-
-        <LinkTestProbeView
-          parsed={parsedMessage}
-          fallbackLatencyMs={typeof latest?.latencyMs === "number" && latest.latencyMs > 0 ? latest.latencyMs : null}
-          isSuccess={isSuccess}
-          isTesting={isTesting}
-          sourceLabel={sourceLabel}
-          targetLabel={targetLabel}
-          nodeMeta={nodeMeta}
-          plannedSegments={plannedSegments}
-          ignorePlannedResultsWhenDetailsPresent
-          compactFrom={3}
-          roomyNodes
-          mobileStacked
-          wrapDesktopRows
-        />
-
-        <DialogFooter className="gap-2">
-          <Button
-            className="w-full min-w-0 gap-2 sm:w-auto sm:min-w-[112px]"
-            disabled={isTesting}
-            onClick={() => {
-              manualTestRef.current = true;
-              setOptimisticTesting(true);
-              setActiveTestId(null);
-              startMutation.mutate({ ruleId });
-            }}
-          >
-            <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
-              {isTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
-            </span>
-            {isTesting ? "探测中..." : "链路测试"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <DiagnoseDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      subjectName={ruleName}
+      scope="从入口一段段测到目标地址"
+      sizeClassName={probeDialogSizeClass}
+      testing={isTesting}
+      lastRunAt={latest?.updatedAt ?? null}
+      outcome={isSuccess ? "success" : isTimeout ? "timeout" : isFailed ? "failed" : null}
+      failureReason={parsedMessage.message}
+      onRun={() => {
+        manualTestRef.current = true;
+        setOptimisticTesting(true);
+        setActiveTestId(null);
+        startMutation.mutate({ ruleId });
+      }}
+    >
+      <LinkTestProbeView
+        parsed={parsedMessage}
+        fallbackLatencyMs={typeof latest?.latencyMs === "number" && latest.latencyMs > 0 ? latest.latencyMs : null}
+        isSuccess={isSuccess}
+        isTesting={isTesting}
+        sourceLabel={sourceLabel}
+        targetLabel={targetLabel}
+        nodeMeta={nodeMeta}
+        plannedSegments={plannedSegments}
+        ignorePlannedResultsWhenDetailsPresent
+        compactFrom={3}
+        roomyNodes
+        mobileStacked
+        wrapDesktopRows
+      />
+    </DiagnoseDialog>
   );
 }
 export default function RulesPage() {

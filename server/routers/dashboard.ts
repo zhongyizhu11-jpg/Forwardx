@@ -30,14 +30,17 @@ export const dashboardRouter = router({
         () => db.getDashboardStats(scope, { includeTraffic: false }),
       );
     }),
-    /** 首页顶上那一行的依据：现在系统是否正常。 */
+    /**
+     * 首页顶上那一块的依据：现在系统是否正常，以及「需要关注」里具体是谁。
+     * 数和行一起返回 —— 分成两个接口各自缓存的话，总有一瞬间两边对不上。
+     */
     health: protectedProcedure.query(async ({ ctx }) => {
       const scope = dashboardScopeUserId(ctx.user);
       return cachedDashboardQuery(
         `health:${ctx.user.id}`,
         5_000,
         30_000,
-        () => db.getSystemHealthSummary(scope),
+        () => db.getDashboardHealth(scope),
       );
     }),
     trafficTotals: protectedProcedure.query(async ({ ctx }) => {

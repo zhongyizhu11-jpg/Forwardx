@@ -1,4 +1,6 @@
 import DataSectionLoading from "@/components/DataSectionLoading";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
 import { useEffect, useMemo, useState } from "react";
 import { Activity, LayoutGrid, List, Loader2, Pencil, RadioTower, Trash2 } from "lucide-react";
 import HostStatusLabel from "@/components/HostStatusLabel";
@@ -19,6 +21,7 @@ import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import EmptyState from "@/components/EmptyState";
 
 type ServiceForm = {
   name: string;
@@ -115,14 +118,11 @@ function ServiceActionButtons({
   onDelete: (service: any) => void;
 }) {
   return (
-    <div className="flex justify-end gap-1">
-      <Button variant="ghost" size="icon" className="h-8 w-8" title="编辑服务" onClick={() => onEdit(service)}>
-        <Pencil className="h-3.5 w-3.5" />
-      </Button>
-      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" title="删除服务" onClick={() => onDelete(service)}>
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
-    </div>
+    <EntityActions
+      primary={[{ key: "edit", label: "编辑", ariaLabel: `编辑服务 ${service.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => onEdit(service) }]}
+      menu={[{ key: "delete", label: "删除", ariaLabel: `删除服务 ${service.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => onDelete(service) }]}
+      menuLabel={`服务 ${service.name} 的更多操作`}
+    />
   );
 }
 
@@ -219,9 +219,9 @@ function ServiceCard({
           <p className="truncate text-sm" title={scope}>{scope}</p>
         </div>
 
-        <div className="action-card-footer flex justify-end border-t border-border/40 pt-2">
+        <CardActions>
           <ServiceActionButtons service={service} onEdit={onEdit} onDelete={onDelete} />
-        </div>
+        </CardActions>
       </CardContent>
     </Card>
   );
@@ -448,13 +448,12 @@ export default function HostProbeServiceManager({
               <DataSectionLoading label="正在加载服务" />
             </div>
           ) : displayedServiceItems.length === 0 ? (
-            <div className="flex min-h-[220px] flex-col items-center justify-center text-muted-foreground">
-              <RadioTower className="mb-3 h-9 w-9 opacity-40" />
-              <p className="text-sm">{isTextFiltered && serviceItems.length > 0 ? "未找到匹配服务" : "暂无服务"}</p>
-              {isTextFiltered && serviceItems.length > 0 && (
-                <p className="mt-1 text-xs text-muted-foreground/60">调整筛选内容或清空搜索</p>
-              )}
-            </div>
+            <EmptyState
+              className="min-h-[220px]"
+              icon={<RadioTower />}
+              title={isTextFiltered && serviceItems.length > 0 ? "未找到匹配服务" : "暂无服务"}
+              description={isTextFiltered && serviceItems.length > 0 ? "调整筛选内容或清空搜索" : "加一个 Ping / TCPing 目标，选中的主机会定时探测它的延迟。"}
+            />
           ) : viewMode === "card" ? (
             <SortableReorderContext sortable={serviceSortable} ids={displayedServiceItems.map((service) => Number(service.id))} strategy="rect">
               <div key="host-probe-service-card-view" className="standard-card-grid card-mode-transition gap-4 p-3">

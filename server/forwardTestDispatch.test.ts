@@ -99,6 +99,9 @@ test("forward self-test leases recover lost deliveries and give claimed work a f
       );
       const latestCompleted = await tests.getLatestForwardTest(20, { includeActive: false });
       assert.equal(Number(latestCompleted?.id), 7, "completed rows with equal timestamps must prefer the larger id");
+      // 原生 SQL 拿到的是秒；返回前要换成 Date，否则前端 new Date(秒) 会落到 1970 年
+      assert.ok(latestCompleted?.updatedAt instanceof Date, "updatedAt must come back as a Date");
+      assert.equal(latestCompleted.updatedAt.getTime(), Number(now) * 1000);
 
       await runtime.executeRaw(
         'INSERT INTO "forward_tests" ("id", "ruleId", "hostId", "userId", "status", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)',

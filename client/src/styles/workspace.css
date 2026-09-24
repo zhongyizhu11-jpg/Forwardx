@@ -38,23 +38,7 @@
 .connection-arrow { position: absolute; bottom: -8px; z-index: 1; color: var(--fx-muted); background: var(--fx-l1-surface); }
 .connection-label { display: block; font-size: 11px; line-height: 16px; color: var(--fx-muted); }
 .connection-value { margin-top: 4px; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; color: var(--fx-text); }
-.workspace-main .action-card { border-color: var(--fx-stroke); background: var(--fx-surface); backdrop-filter: none; }
 .workspace-main .action-card-content { padding: 16px; }
-.workspace-main .action-card-footer { background: var(--fx-subtle); margin: 4px -16px -16px; padding: 8px 12px; border-top: 1px solid var(--fx-stroke); border-radius: 0 0 var(--fx-radius-card) var(--fx-radius-card); }
-.workspace-main .action-card [class*="animate-pulse"] { animation: none; }
-.workspace-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); box-shadow: var(--fx-shadow); overflow: hidden; }
-.workspace-metrics > div { min-width: 0; padding: 16px; }
-.workspace-metrics > div + div { border-left: 1px solid var(--fx-stroke); }
-.workspace-metric-label { display: flex; align-items: center; gap: 8px; color: var(--fx-muted); font-size: 12px; }
-.workspace-metric-value { display: block; margin-top: 8px; font-size: clamp(15px, 2vw, 24px); font-weight: 600; line-height: 1.25; letter-spacing: -.03em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.workspace-metric-detail { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; font-size: 11px; color: var(--fx-muted); font-variant-numeric: tabular-nums; }
-.billing-entry-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.billing-entry-control { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); }
-.billing-entry-control > svg { color: var(--fx-muted); flex-shrink: 0; }
-.billing-entry-control p { font-size: 13px; font-weight: 500; }
-.billing-entry-control small { display: block; margin-top: 4px; color: var(--fx-muted); font-size: 11px; }
-.billing-entry-control > button { margin-left: auto; }
-.stat-card-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--fx-radius); background: var(--fx-subtle); color: var(--fx-muted); }
 [data-slot="card-title"] { line-height: 1.4; }
 [data-slot="table-header"] { background: var(--fx-subtle); }
 [data-slot="table"] { font-variant-numeric: tabular-nums; }
@@ -102,23 +86,6 @@
   .workspace-tabs .workspace-tab > svg { display: none; }
   .workspace-tab-count { min-width: 17px; height: 17px; font-size: 10.5px; border-radius: 5px; }
 
-  /*
-    页面顶部那一排概览卡。实测每张 240px 高、三张 720px，而它们一共只说了
-    5 个数字 —— 在 393×760 的屏幕上，列表要翻过一整屏才开始。
-
-    占高度的是装饰不是数据：每张卡有一个 36px 的彩色圆角图标方块（有的两个），
-    外加 112px 的最小高度和 24px 的大号数字。标题已经写着「在线状态」
-    「累计流量」，那个图标方块再说一遍同一件事。
-
-    手机上去掉图标方块、放开最小高度、数字降一档。三张卡从 720px 收到约 240px。
-  */
-  [data-slot="card-content"]:has(> p + div [class*="rounded-"][class*="shadow-sm"]), .stat-strip [data-slot="card-content"] { min-height: 0; padding: 10px 12px; }
-  .stat-strip [data-slot="card-content"] > div[class*="absolute"] { display: none; }
-  .stat-strip [class*="rounded-xl"][class*="shadow-sm"],
-  .stat-strip [class*="rounded-lg"][class*="shadow-sm"] { display: none; }
-  .stat-strip [class*="text-2xl"] { font-size: 19px; line-height: 1.15; }
-  .stat-strip [class*="pr-12"] { padding-right: 0; }
-  .stat-strip p[class*="mt-2"] { margin-top: 2px; }
 
   /*
     ══ 文档式排版 ══
@@ -142,7 +109,13 @@
     列表，不是一篇文章：1.75 等于每一行凭空多 4px，十二条规则就是 48px。
   */
   .workspace-main { font-size: 16px; line-height: 1.5; }
-  .workspace-main p { margin-block: 12px; }
+  /*
+    这里原来还有一条 `.workspace-main p { margin-block: 12px; }`：照文档站的正文排版抄来的，
+    给手机上**每一个** <p> 加上下各 12px。面板里的 <p> 大多不是段落，是「标签 / 数值」这种
+    两行一组的小字 —— 桌面上外边距是 0，组件照 0 设计；到了手机上一组被撑开 24px，
+    「我的套餐」里余额那一格「当前余额」和「¥1,000.00」之间隔出一大块。删掉之前量过：
+    手机上带这 12px 的 <p>，账单中心 16 个、钱包 30 个、转发组 16 个。
+  */
 
   /*
     手册的字号分布是 12px 1377 次、14px 815 次 —— 两档，没有中间值。
@@ -170,11 +143,8 @@
 
     圆角走 surface 档（16px）：没有边框之后，圆角是唯一还在勾勒轮廓的东西。
   */
-  .workspace-main [data-slot="card"] {
-    border: 0; border-radius: var(--fx-radius-surface);
-    background: var(--fx-l1-surface); box-shadow: none;
-    padding: 0; margin-top: 0;
-  }
+  /* 底色、圆角、不描边、不投影已经挪到下面「工作区里的卡片」，四种宽度共用；手机上只多这两项。 */
+  .workspace-main [data-slot="card"] { padding: 0; margin-top: 0; }
   .workspace-main [data-slot="card-header"] { padding: 12px 12px 0; }
   .workspace-main [data-slot="card-content"] { padding: 12px; }
   .workspace-main [data-slot="card-footer"] { padding: 0 12px 12px; }
@@ -247,20 +217,6 @@
     content: ""; position: absolute; inset: -11px -6px;
   }
 
-  /*
-    操作图标行原来带一块灰底 —— 在一个已经没有盒子的列表里，那块灰是唯一
-    还在画框的东西，反而最抢眼。去掉底色和分隔线，图标本身退到 muted，
-    只在这一条被点/悬停时才需要看见它们。
-  */
-  /*
-    操作行：上面一条细线把它和数据分开（它是「能做什么」不是「是什么」），
-    但不给底色 —— 参考图里每个按钮一块彩底，那才是没质感的来源。
-    危险操作保留红色：那不是装饰，是唯一需要在点之前就看见的信息。
-  */
-  .workspace-main .action-card-footer {
-    background: transparent; border-top: 1px solid var(--fx-stroke);
-    margin: 3px -12px 0; padding: 4px 12px 0; border-radius: 0;
-  }
 
   /*
     ── 转发路径：竖排改横排 ──
@@ -281,28 +237,11 @@
   /* 竖线和箭头都归 rail 管，rail 收起来之后一并消失。 */
 
   /*
-    ── 全站盒子密度 ──
-    卡片的默认内边距已经在 ui/card.tsx 里从 24px 改到 12px（手机）/16px（≥sm），
-    所以这里不再重复。剩下的是**调用方自己写死的**那些盒子 —— 全站有几十处
-    `rounded-md border bg-muted/30 p-2.5`、`rounded-lg border p-4` 这样的子盒子，
-    它们不走 Card，所以默认值改小碰不到它们。
-
-    只收内边距和圆角，不动边框和背景：那两样是「这是一组」的信号，去掉会让
-    密集的列表糊成一片。
+    这里原来有一条「全站盒子密度」：`[class*="rounded-"][class*="border"]` —— 类名里同时有
+    rounded- 和 border 的元素，手机上圆角一律改成 9px。它按类名片段猜 DOM，已经误伤过
+    Entity 卡片的圆角；而它要收的那些「开关小框、数字小框」，这一轮已经换成了设置行和摘要条。
+    剩下带框的是提示框、分段控件、日志窗这类本来就该自成一块的东西，圆角照它们自己的类名走。
   */
-  /*
-    ⚠ 这条是「猜 DOM」而不是设计系统 API：任何带圆角和边框的元素都被它改掉，
-    包括以后新加的业务组件。它已经误伤过一次 —— Entity 卡片自己声明了
-    12px（卡片档），被这条按 9px 盖掉，而 V2 的圆角分级正是靠这个差别建立
-    层级的。
-
-    所以排除 [data-fx-entity]：凡是走设计系统的组件，自己的令牌说了算。
-    这条规则本身要在 CSS 减法那一轮整个删掉，换成明确的 fx-* 类名。
-  */
-  .workspace-main [class*="rounded-"][class*="border"]:not([data-slot]):not([data-fx-entity]):not(button):not(input):not(textarea):not([role="button"]),
-  [role="dialog"] [class*="rounded-"][class*="border"]:not([data-slot]):not([data-fx-entity]):not(button):not(input):not(textarea):not([role="button"]) {
-    border-radius: 9px;
-  }
 
   /*
     页面竖向节奏。各页外层普遍是 space-y-6（24px），在 393px 宽的屏幕上，
@@ -312,20 +251,6 @@
   .workspace-main .space-y-4 > * + * { margin-top: 10px; }
   .workspace-main .space-y-3 > * + * { margin-top: 8px; }
 
-  /*
-    列表卡底部那排操作图标。每张卡 5 个 44px 的图标按钮独占一行 —— 实测
-    130px，而一张紧凑规则卡总共才 500px。收成一行 34px 高的图标，命中区
-    靠 ::after 往外撑，不占版面（同一批图标之间本来就有 28px 以上空当）。
-  */
-  /*
-    操作图标再缩一档：34×30 → 28×24，图标 15 → 14px。命中区仍由 ::after
-    撑到 44 —— 这排图标之间本来就有 28px 以上空当，往外撑不会盖到邻居。
-    整行从 35px 收到 27px。
-  */
-  .action-card-footer { padding-top: 4px; margin-top: 0; gap: 0; }
-  .action-card-footer [data-slot="button"] { position: relative; height: 24px; min-height: 24px; width: 28px; min-width: 28px; }
-  .action-card-footer [data-slot="button"]::after { content: ""; position: absolute; inset: -10px -8px; }
-  .action-card-footer [data-slot="button"] > svg { width: 14px; height: 14px; }
 
   /*
     对话框：rounded-2xl(16px) + p-4，而真正吃掉高度的是 gap-5 —— 面板是个
@@ -434,10 +359,6 @@
 
   /*
     卡内：入口/目标那块 46px（两行各 22 + 间距），收到一行 20px。
-
-    操作行那条线的上下边距归上面那一条 .workspace-main .action-card-footer 管
-    （同样的选择器在这里再写一遍，只会把上面的值盖掉 —— 这种「写了不生效」
-    这一轮已经踩过六次了）。
   */
   .workspace-main [data-slot="card"] .font-mono { line-height: 20px; }
 
@@ -565,7 +486,6 @@
 @media (pointer: coarse) { .workspace-nav-search, .public-journey-switch button { min-height: 44px; } }
 @media (hover: hover) {
   .workspace-tab:hover:not([data-state="active"]) { color: var(--fx-text); background: var(--fx-stroke); }
-  .workspace-main .action-card:hover { border-color: color-mix(in srgb, var(--fx-muted) 50%, var(--fx-stroke)); box-shadow: var(--fx-shadow-raised); }
 }
 @media (max-width: 639px) {
   .workspace-header { gap: 12px; }
@@ -575,10 +495,6 @@
   .workspace-filter-search { flex-basis: 0; }
   .workspace-filter-options { flex-basis: 100%; padding: 12px; background: var(--fx-subtle); border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); }
   .workspace-filter-options > button { flex: 1 1 120px; max-width: none; }
-  .workspace-metrics > div { padding: 12px; }
-  .workspace-metric-label > svg { display: none; }
-  .workspace-metric-label { font-size: 11px; }
-  .billing-entry-controls { grid-template-columns: 1fr; gap: 8px; }
   .workspace-main [data-slot="card-header"] { padding: 16px; }
   .workspace-main [data-slot="card-content"] { padding-inline: 16px; padding-bottom: 16px; }
   .workspace-main [data-slot="card-title"] { font-size: 18px; }
@@ -614,6 +530,23 @@
 .workspace-header-actions > [data-slot="button"] { width: auto; }
 .workspace-header-actions > [data-slot="badge"] { align-self: center; }
 .workspace-layout [data-slot="card"], .public-home-shell [data-slot="card"] { background: var(--fx-surface); border-color: var(--fx-stroke); box-shadow: var(--fx-shadow); backdrop-filter: none; }
+/*
+  工作区里的卡片：任何宽度都是纯白、大圆角、不描边、不投影 —— 和 EntityCard 一个样子。
+
+  原来这几样只写在手机那一段里；桌面上的 Card 还带着 1px 边框和一层投影，而 EntityCard
+  （主机、规则、套餐）没有 —— 同一页上两种卡并排，一种有框一种没有。手册定的是「底灰、
+  面白」这一次底色差成形，卡片不描边。放在上面那条后面，同样的特指度靠后写赢。
+
+  卡片整张不可点，所以也不要悬停抬起（原来 .action-card:hover 会加边框色和投影，看上去
+  像能点进去）。backdrop-filter 一并关掉：不透明的白底上做模糊，只是白白占 GPU。
+*/
+.workspace-main [data-slot="card"] {
+  border: 0;
+  border-radius: var(--fx-radius-surface);
+  background: var(--fx-l1-surface);
+  box-shadow: none;
+  backdrop-filter: none;
+}
 .workspace-layout [data-sidebar="sidebar"] { background: var(--fx-surface); }
 [data-sidebar="menu-button"] { min-height: 38px; }
 [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-hover); color: var(--fx-text); font-weight: 600; }
@@ -631,11 +564,21 @@
   屏幕的三分之一，只为了说一句「暂无出口组」。它是「这里现在没东西」，不是这一页
   的主角。
 */
-.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 0; padding: 20px 16px; text-align: center; }
-.empty-state-icon { padding: 8px; border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); background: var(--fx-subtle); color: var(--fx-muted); }
-.empty-state-icon svg { width: 18px; height: 18px; margin: 0; opacity: 1; }
-.empty-state h2 { font-size: 14px; font-weight: 600; color: var(--fx-text); }
-.empty-state p { max-width: 340px; font-size: 12px; line-height: 1.6; color: var(--fx-muted); }
+/*
+  空状态：一块白底（和卡片同一种 surface），图标 + 一句是什么 + 一句下一步。
+  图标原来套在一个描边的灰方块里 —— 框里又一个小框，那个框不说任何事，去掉。
+  调用方给的图标尺寸五花八门（h-7 / h-8 / h-10、opacity-30 / 40），在这里统一。
+*/
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  min-height: 0; padding: 32px 16px; text-align: center;
+  border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface);
+}
+.empty-state-icon { color: var(--fx-muted); }
+.empty-state-icon svg { width: 24px; height: 24px; margin: 0; opacity: 1; }
+.empty-state h2,
+.workspace-main .empty-state h2 { font-size: var(--fx-size-secondary); line-height: var(--fx-line-secondary); font-weight: 600; letter-spacing: 0; color: var(--fx-text); }
+.empty-state p { max-width: 360px; margin: 0; font-size: var(--fx-size-meta); line-height: var(--fx-line-meta); color: var(--fx-muted); }
 .public-home-shell { font-family: var(--fx-font); background: var(--fx-surface); }
 .public-home-container { width: 100%; max-width: 1152px; margin-inline: auto; padding-inline: 24px; }
 .public-home-nav { border-bottom: 1px solid var(--fx-stroke); background: var(--fx-surface); }
@@ -698,7 +641,8 @@
 .auth-mode-panel { min-height: 0; }
 .setup-shell { min-height: 100svh; background: var(--fx-canvas); }
 .setup-progress { border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); padding: 16px; box-shadow: var(--fx-shadow); }
-.system-health { border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); box-shadow: var(--fx-shadow); }
+/* 首页状态区：和全站卡片同一套 —— 纯白、不描边、不投影，靠页面的浅灰底浮起来。 */
+.system-health { border: 0; border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface); box-shadow: none; }
 @media (min-width: 1024px) { .public-home-hero { grid-template-columns: 1.1fr 1fr; padding-block: 96px 88px; } }
 @media (min-width: 640px) { .public-nav-link.hidden { display: inline-flex; } }
 @media (max-width: 639px) {
@@ -790,6 +734,21 @@
 
   选择器同样带 .workspace-main 打平特指度，再靠后写赢。
 */
+/*
+  分区标题：设置页右栏顶上、手机上进到某个分区之后那一行。
+
+  和上面的分组小标题一个道理：必须是 h2，而手机上 `.workspace-main h2` 会把它改成
+  20px —— 手册里区块标题在手机上是 17px。用专门的类钉住，别跟页面级规则拼特指度。
+*/
+.fx-pane-title,
+.workspace-main .fx-pane-title {
+  font-size: var(--fx-size-section);
+  line-height: var(--fx-line-section);
+  font-weight: 600;
+  letter-spacing: -.01em;
+  color: var(--fx-text);
+}
+
 .fx-list-section-header,
 .workspace-main .fx-list-section-header {
   padding-inline: 4px;

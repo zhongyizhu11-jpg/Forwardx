@@ -1,6 +1,11 @@
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { NetworkPath } from "@/components/network/NetworkPath";
 import { buildChainPath } from "@/features/links/chainPath";
+import { GroupFailoverPolicyFields } from "@/features/links/GroupFailoverPolicyFields";
+import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
+import { FAILOVER_TONE_CLASS, describeGroupPolicyDisplay } from "@/lib/failoverLineDisplay";
 import { FormField } from "@/components/ui/form-field";
 import DataSectionError from "@/components/DataSectionError";
 import { sameNullableStringArray } from "@/lib/multiHopAddress";
@@ -10,6 +15,8 @@ import { hostIpv6Address, hostPrivateAddress, normalizeConnectHostForHost, sameA
 import { addressKey } from "@/lib/multiHopAddress";
 import SectionTransition from "@/components/SectionTransition";
 import DashboardLayout from "@/components/DashboardLayout";
+import { DiagnoseDialog } from "@/components/DiagnoseDialog";
+import EmptyState from "@/components/EmptyState";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { LatencyRating } from "@/components/LatencyRating";
 import { LatencyPeakCutToggle } from "@/components/LatencyPeakCutToggle";
@@ -69,6 +76,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronRight,
+  Globe,
   GripVertical,
   Layers3,
   LayoutGrid,
@@ -82,7 +90,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import {
@@ -95,6 +103,7 @@ import {
   YAxis,
 } from "recharts";
 import { MAX_FORWARD_GROUP_MEMBERS } from "@shared/forwardGroup";
+import { describeGroupRoutePolicy, type GroupRoutePolicyOptions } from "@shared/routePolicy";
 import { LinkTestProbeView, parseLinkTestMessage, type LinkTestPlannedSegment } from "@/components/LinkTestLatencySummary";
 import { BandwidthAggregationSummary } from "@/components/BandwidthAggregationSummary";
 import { addHostNodeMeta, addNodeMetaAliases, hostDisplayName } from "@/lib/linkTestNodeMeta";
@@ -683,7 +692,7 @@ function ForwardGroupSelfTestDialog({
     onError: (e) => {
       setOptimisticTesting(false);
       manualTestRef.current = false;
-      toast.error(e.message || "测试失败");
+      toast.error(e.message || "诊断没发出去");
     },
   });
   const status = latest?.status as string | undefined;
@@ -793,7 +802,7 @@ function ForwardGroupSelfTestDialog({
     if (lastFailureToastKey.current !== key) {
       lastFailureToastKey.current = key;
       manualTestRef.current = false;
-      toast.error("\u8f6c\u53d1\u94fe\u81ea\u6d4b\u5931\u8d25", { description: message, duration: 12000 });
+      toast.error("诊断没通过", { description: message, duration: 12000 });
     }
   }, [groupId, hasFreshResult, isFailed, isTesting, latest?.updatedAt, open, parsedMessage.message, status]);
 
@@ -805,44 +814,34 @@ function ForwardGroupSelfTestDialog({
   const probeDialogSizeClass = plannedSegmentCount >= 3 ? "sm:max-w-4xl" : plannedSegmentCount >= 2 ? "sm:max-w-3xl" : "sm:max-w-xl";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`${probeDialogSizeClass} min-w-0`}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            延迟探测
-          </DialogTitle>
-          <DialogDescription>{groupName}</DialogDescription>
-        </DialogHeader>
-
-        <LinkTestProbeView
-          parsed={parsedMessage}
-          fallbackLatencyMs={latest?.latencyMs}
-          isSuccess={isSuccess}
-          isTesting={isTesting}
-          sourceLabel={linkTestNodeData.sourceLabel}
-          targetLabel={linkTestNodeData.targetLabel}
-          nodeMeta={linkTestNodeData.nodeMeta}
-          plannedSegments={linkTestNodeData.plannedSegments}
-        />
-
-        <DialogFooter className="gap-2">
-          <Button
-            onClick={() => {
-              manualTestRef.current = true;
-              setBaselineTestId(latestTestId);
-              setOptimisticTesting(true);
-              testMutation.mutate({ groupId });
-            }}
-            disabled={isTesting}
-            className="w-full min-w-0 gap-2 sm:w-auto sm:min-w-[112px]"
-          >
-            {isTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
-            {isTesting ? "探测中..." : "链路测试"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <DiagnoseDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      subjectName={groupName}
+      scope="沿着链一段段测到出口"
+      sizeClassName={probeDialogSizeClass}
+      testing={isTesting}
+      lastRunAt={latest?.updatedAt ?? null}
+      outcome={isSuccess ? "success" : status === "timeout" ? "timeout" : isFailed ? "failed" : null}
+      failureReason={parsedMessage.message}
+      onRun={() => {
+        manualTestRef.current = true;
+        setBaselineTestId(latestTestId);
+        setOptimisticTesting(true);
+        testMutation.mutate({ groupId });
+      }}
+    >
+      <LinkTestProbeView
+        parsed={parsedMessage}
+        fallbackLatencyMs={latest?.latencyMs}
+        isSuccess={isSuccess}
+        isTesting={isTesting}
+        sourceLabel={linkTestNodeData.sourceLabel}
+        targetLabel={linkTestNodeData.targetLabel}
+        nodeMeta={linkTestNodeData.nodeMeta}
+        plannedSegments={linkTestNodeData.plannedSegments}
+      />
+    </DiagnoseDialog>
   );
 }
 
@@ -886,6 +885,8 @@ export function ForwardGroupsContent({
   const [latencyGroup, setLatencyGroup] = useState<{ id: number; name: string } | null>(null);
   const [testGroup, setTestGroup] = useState<{ id: number; name: string } | null>(null);
   const [deleteGroup, setDeleteGroup] = useState<any | null>(null);
+  // 点开故障转移策略面板的那个组。只存 id：面板跟着列表轮询刷新，不拿一份旧快照。
+  const [policyGroupId, setPolicyGroupId] = useState<number | null>(null);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
   const lastCreateRequestKeyRef = useRef(createRequestKey ?? 0);
   const lastEditRequestKeyRef = useRef(0);
@@ -1270,6 +1271,29 @@ export function ForwardGroupsContent({
     onError: (e) => toast.error(e.message || "执行失败"),
   });
 
+  /*
+    故障转移策略面板上的两个手动操作，用的是现成的两个接口：
+      换一个首选 = reorder（改成员顺序，一直有效），服务端改完立刻按新顺序重选一次；
+      现在重新选 = sync（卡片上「同步」那个按钮做的事），不等观察时间直接挑最前面的健康成员。
+    各自一份 mutation：共用 syncMutation 的话，成功提示会是「已同步链路成员规则」，答非所问。
+  */
+  const preferMemberMutation = trpc.forwardGroups.reorder.useMutation({
+    onSuccess: () => {
+      utils.forwardGroups.options.invalidate();
+      utils.forwardGroups.listPage.invalidate();
+      toast.success("成员顺序已改，已按新顺序重新选了一次");
+    },
+    onError: (e) => toast.error(e.message || "调整成员顺序失败"),
+  });
+  const reselectMutation = trpc.forwardGroups.sync.useMutation({
+    onSuccess: () => {
+      utils.forwardGroups.options.invalidate();
+      utils.forwardGroups.listPage.invalidate();
+      toast.success("已按成员顺序重新选了一次");
+    },
+    onError: (e) => toast.error(e.message || "重新选失败"),
+  });
+
   const reorderGroupsMutation = trpc.forwardGroups.reorderGroups.useMutation({
     onError: (e) => toast.error(e.message || "排序保存失败"),
   });
@@ -1533,10 +1557,10 @@ export function ForwardGroupsContent({
     const failoverSeconds = Number(form.failoverSeconds);
     const recoverSeconds = Number(form.recoverSeconds);
     if (!Number.isInteger(failoverSeconds) || failoverSeconds < 10 || failoverSeconds > 3600) {
-      return toast.error("故障转移时间需为 10-3600 秒的整数");
+      return toast.error("切换时间需为 10-3600 秒的整数");
     }
     if (!Number.isInteger(recoverSeconds) || recoverSeconds < 10 || recoverSeconds > 3600) {
-      return toast.error("恢复观察时间需为 10-3600 秒的整数");
+      return toast.error("恢复观察需为 10-3600 秒的整数");
     }
     const trafficMultiplierValue = Number(form.trafficMultiplier);
     if ((isPortMode || isChainGroup || isFailoverMode) && (!Number.isFinite(trafficMultiplierValue) || trafficMultiplierValue < 0.01 || trafficMultiplierValue > 50)) {
@@ -1641,6 +1665,67 @@ export function ForwardGroupsContent({
     return tunnel ? `${tunnel.name} / ${getTunnelRouteText(tunnel, hosts)}` : `隧道 #${member.tunnelId}`;
   };
 
+  /*
+    系统 DDNS 没开时，面板照样按顺序挑成员，但只记成「建议入口」，解析不改 —— 策略面板要照实
+    说「建议」而不是「解析到」。设置还没加载出来时是 undefined，按开着说。
+  */
+  const groupPolicyOptions: GroupRoutePolicyOptions = {
+    ddnsSwitching: settings?.ddns ? !!settings.ddns.enabled && settings.ddns.provider !== "disabled" : undefined,
+    memberLabel: (member) => memberLabel(member),
+  };
+
+  /*
+    编辑框里「故障转移」那一块下面那几句话：拿还没保存的表单走同一份模型算。按「有规则在用」
+    来算 —— 编辑框要说的是「这样配会怎么做」；新建的组还没有规则，照实算的话「恢复后切回」那
+    一句会变成「一直挑最前面在线的」，跟着勾选框一动不动。
+  */
+  const formGroupPolicy = showDialog && form.groupMode === "failover"
+    ? describeGroupRoutePolicy({
+      groupMode: "failover",
+      isEnabled: form.isEnabled,
+      domain: form.domain,
+      recordType: form.recordType,
+      failoverSeconds: form.failoverSeconds,
+      recoverSeconds: form.recoverSeconds,
+      autoFailback: form.autoFailback,
+      chinaHealthCheckEnabled: form.chinaHealthCheckEnabled,
+      chinaHealthCheckTarget: form.chinaHealthCheckTarget,
+      chinaHealthCheckMethod: form.chinaHealthCheckMethod,
+      templateRuleCount: 1,
+      members: form.members.map((member, index) => ({
+        memberType: member.memberType,
+        hostId: member.hostId,
+        tunnelId: member.tunnelId,
+        priority: index,
+        isEnabled: member.isEnabled,
+      })),
+    }, groupPolicyOptions)
+    : null;
+
+  /** 故障转移组的「解析 · HK entry 01」：点开是策略面板，和规则卡上的「主备 · 备用 1」同一个东西。 */
+  const renderGroupPolicyBadge = (group: any) => {
+    if (normalizeGroupMode(group.groupMode) !== "failover") return null;
+    const display = describeGroupPolicyDisplay(group, groupPolicyOptions);
+    if (!display) return null;
+    return (
+      <button
+        type="button"
+        className="inline-flex min-w-0 max-w-full shrink items-center rounded-[var(--fx-radius-control)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setPolicyGroupId(Number(group.id))}
+        title={display.title}
+        aria-label={`故障转移策略：${display.title}`}
+      >
+        <Badge
+          variant="outline"
+          className={cn("h-5 max-w-full cursor-pointer gap-1 px-1.5 text-[10px] font-medium", FAILOVER_TONE_CLASS[display.tone])}
+        >
+          <Globe className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">{display.text}</span>
+        </Badge>
+      </button>
+    );
+  };
+
   const memberHealthTitle = (group: any, member: any) => {
     const active = isGroupMemberActive(group, member);
     const parts = [active ? "当前成员可用" : "当前成员不可用"];
@@ -1726,6 +1811,44 @@ export function ForwardGroupsContent({
     const connectLabel = normalizeGroupMode(group.groupMode) === "exit" ? memberConnectLabel(member) : "";
     const suffix = connectLabel ? ` · ${connectLabel}` : "";
     return `${index + 1}. ${prefix}${memberLabel(member)}${suffix}`;
+  };
+
+  /**
+   * 卡片底部的几条「名字 · 值」。
+   *
+   * 原来是两个带边框的小框，一个值一个框（手册「不要一个数一个小框」说的就是它），而且
+   * 五种形态里一半是在重复上面已经写过的话：端口转发的「所属主机」就是成员那一块的标题和
+   * 胶囊；「引用规则 N」状态那句已经写了「已被 N 条转发规则引用」；入口组、出口组的「用途 ·
+   * 固定入口 / 固定出口」就是所在的那个 tab；出口组的「N 台主机」就是下面那几个胶囊；
+   * 有入口组的转发链，「入口」就是路径的第一个节点。
+   *
+   * 只留上面没说过的：转发组、入口组的 DDNS 域名；转发链的链路延迟，没有入口组时再加一行
+   * 入口地址（路径上画的是主机名，连的是这个地址）。和套餐卡、监控卡同一种小表：细线下两列。
+   */
+  const renderGroupFacts = (group: any) => {
+    const mode = normalizeGroupMode(group.groupMode);
+    const rows: Array<{ key: string; label: string; value: ReactNode; title?: string }> = [];
+    if (mode === "failover" || mode === "entry") {
+      rows.push({ key: "ddns", label: "DDNS", value: groupDdnsText(group), title: groupDdnsText(group) });
+    }
+    if (mode === "chain") {
+      const entryAddress = String(group.members?.[0]?.entryAddress || "").trim();
+      if (!entryGroupDisplayText(group, groupsByMode) && entryAddress) {
+        rows.push({ key: "entry", label: "入口地址", value: entryAddress, title: entryAddress });
+      }
+      rows.push({ key: "latency", label: "链路延迟", value: renderChainLatencySummary(group) });
+    }
+    if (rows.length === 0) return null;
+    return (
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-[var(--fx-stroke-weak)] pt-2 text-meta">
+        {rows.map((row) => (
+          <Fragment key={row.key}>
+            <dt className="text-muted-foreground">{row.label}</dt>
+            <dd className="min-w-0 truncate text-right text-foreground" title={row.title}>{row.value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    );
   };
 
   /**
@@ -1840,39 +1963,21 @@ export function ForwardGroupsContent({
                   </div>
 
                   <div className="space-y-2 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] p-2.5">
-                    <div className="text-meta text-muted-foreground">{groupMemberTitle(group)}</div>
+                    {/*
+                      「解析 · HK entry 01」放在成员这一块的标题行上：它回答的就是「解析在哪个成员上」。
+                      放在卡片标题行时，手机上名字 + 状态已经占满一行，它折到第二行，还被触屏
+                      44px 的按钮高度撑出一大块空白。
+                    */}
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <div className="shrink-0 text-meta text-muted-foreground">{groupMemberTitle(group)}</div>
+                      {renderGroupPolicyBadge(group)}
+                    </div>
                     {renderGroupMembers(group)}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="min-w-0 rounded-md border border-border/40 bg-background/35 p-2">
-                      <p className="text-muted-foreground">{normalizeGroupMode(group.groupMode) === "port" ? "所属主机" : normalizeGroupMode(group.groupMode) === "chain" ? "入口" : normalizeGroupMode(group.groupMode) === "exit" ? "出口" : "DDNS"}</p>
-                      <p className="mt-1 truncate">{normalizeGroupMode(group.groupMode) === "port" ? ((group.members || []).length ? memberLabel((group.members || [])[0]) : "未选择") : normalizeGroupMode(group.groupMode) === "chain" ? chainEntryText(group) : normalizeGroupMode(group.groupMode) === "exit" ? `${(group.members || []).length} 台主机` : groupDdnsText(group)}</p>
-                    </div>
-                    <div className="min-w-0 rounded-md border border-border/40 bg-background/35 p-2">
-                      <p className="text-muted-foreground">{normalizeGroupMode(group.groupMode) === "chain" ? "链路延迟" : isCollectionMode(normalizeGroupMode(group.groupMode)) ? "用途" : "引用规则"}</p>
-                      <div className="mt-1">{normalizeGroupMode(group.groupMode) === "chain" ? renderChainLatencySummary(group) : isCollectionMode(normalizeGroupMode(group.groupMode)) ? (normalizeGroupMode(group.groupMode) === "entry" ? "固定入口" : "固定出口") : Number(group.templateRuleCount || 0)}</div>
-                    </div>
-                  </div>
+                  {renderGroupFacts(group)}
 
-                  <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
-                    {chainLatencyActions(group)}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      aria-label={`删除链路 ${group.name}`}
-                      onClick={() => setDeleteGroup(group)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
+                  <CardActions>{renderGroupActions(group)}</CardActions>
                   </CardContent>
                 </Card>
       )}
@@ -1917,28 +2022,48 @@ export function ForwardGroupsContent({
     return <LatencyRating latencyMs={latency} isTimeout={!!group.latestLatencyIsTimeout} />;
   };
 
-  const chainLatencyActions = (group: any) => group.groupMode === "chain" ? (
-    <>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="查看延迟"
-        onClick={() => setLatencyGroup({ id: Number(group.id), name: group.name })}
-      >
-        <Activity className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="链路自测"
-        onClick={() => setTestGroup({ id: Number(group.id), name: group.name })}
-      >
-        <Stethoscope className="h-3.5 w-3.5" />
-      </Button>
-    </>
-  ) : null;
+  /*
+    转发组卡片、表格行上的操作。原来常驻四五个图标（转发链多出延迟、自测两个），读屏念出来
+    一律是「……链路」—— 哪怕它是转发组、入口组。常用的带字放外面：转发链是「诊断 + 编辑」，
+    其余只有「编辑」；同步、延迟记录收进 ···，删除永远最后、红色、隔一条线。
+  */
+  const renderGroupActions = (group: any) => {
+    const resource = groupModeDisplayLabel(group.groupMode);
+    const isChain = normalizeGroupMode(group.groupMode) === "chain";
+    return (
+      <EntityActions
+        primary={[
+          ...(isChain ? [{
+            key: "test",
+            label: "诊断",
+            ariaLabel: `诊断${resource} ${group.name}：逐段自测`,
+            icon: <Stethoscope className="h-3.5 w-3.5" />,
+            onSelect: () => setTestGroup({ id: Number(group.id), name: group.name }),
+          }] : []),
+          { key: "edit", label: "编辑", ariaLabel: `编辑${resource} ${group.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => openEdit(group) },
+        ]}
+        menu={[
+          ...(isChain ? [{
+            key: "latency",
+            label: "延迟记录",
+            ariaLabel: `查看${resource} ${group.name} 的延迟`,
+            icon: <Activity className="h-3.5 w-3.5" />,
+            onSelect: () => setLatencyGroup({ id: Number(group.id), name: group.name }),
+          }] : []),
+          {
+            key: "sync",
+            label: "同步",
+            ariaLabel: `同步${resource} ${group.name}`,
+            icon: <RefreshCw className="h-3.5 w-3.5" />,
+            disabled: syncMutation.isPending,
+            onSelect: () => syncMutation.mutate({ id: group.id }),
+          },
+          { key: "delete", label: "删除", ariaLabel: `删除${resource} ${group.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => setDeleteGroup(group) },
+        ]}
+        menuLabel={`${resource} ${group.name} 的更多操作`}
+      />
+    );
+  };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
   const handleViewModeChange = (nextViewMode: ForwardGroupViewMode) => {
@@ -2123,10 +2248,11 @@ export function ForwardGroupsContent({
                           className="mx-auto"
                         />
                       </TableCell>
-                      <TableCell className="py-3">
-                        <div className="flex items-center gap-1.5">
+                      <TableCell className="max-w-[13rem] py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           {renderGroupEnabledSwitch(group)}
                           {groupStatusBadge(group)}
+                          {renderGroupPolicyBadge(group)}
                         </div>
                       </TableCell>
                       <TableCell className="max-w-[13rem] py-3">
@@ -2142,24 +2268,7 @@ export function ForwardGroupsContent({
                       </TableCell>
                       <TableCell className="hidden py-3 md:table-cell">{normalizeGroupMode(group.groupMode) === "chain" ? renderChainLatencySummary(group) : isCollectionMode(normalizeGroupMode(group.groupMode)) ? (normalizeGroupMode(group.groupMode) === "entry" ? "固定入口" : "固定出口") : Number(group.templateRuleCount || 0)}</TableCell>
                       <TableCell className="py-3 text-right">
-                        <div className="flex justify-end gap-1">
-                          {chainLatencyActions(group)}
-                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`同步链路 ${group.name}`} disabled={syncMutation.isPending} onClick={() => syncMutation.mutate({ id: group.id })}>
-                            <RefreshCw className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑链路 ${group.name}`} onClick={() => openEdit(group)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                            aria-label={`删除链路 ${group.name}`}
-                            onClick={() => setDeleteGroup(group)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
+                        <div className="flex justify-end">{renderGroupActions(group)}</div>
                       </TableCell>
                     </TableRow>
                     )}
@@ -2191,17 +2300,20 @@ export function ForwardGroupsContent({
           </CardContent>
         </Card>
       ) : (
-        <Card className="border-border/40 bg-card/60">
-          <CardContent className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted/30">
-              <Layers3 className="h-8 w-8 opacity-40" />
-            </div>
-            <p className="text-lg font-medium">{emptyTitle}</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {emptyDescription}
-            </p>
-          </CardContent>
-        </Card>
+        /*
+          原来是一张卡里自己拼的大号居中块（80px 的灰方块套图标、18px 标题），和隧道、主机页的
+          空状态不是一个样子；搜着东西没搜到时也照样说「暂无转发组 · 创建后可…」。
+        */
+        normalizedSearchQuery ? (
+          <EmptyState
+            className="min-h-[260px]"
+            icon={<Layers3 />}
+            title={`未找到匹配的${emptyTitle.replace(/^暂无/, "")}`}
+            description="调整搜索内容或清空搜索"
+          />
+        ) : (
+          <EmptyState className="min-h-[260px]" icon={<Layers3 />} title={emptyTitle} description={emptyDescription} />
+        )
         )}
       </SectionTransition>
 
@@ -2405,32 +2517,6 @@ export function ForwardGroupsContent({
                         ) : null}
                       </div>
                     )}
-                  </div>
-                )}
-
-                {false && form.groupMode === "failover" && (
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">单位：秒，范围 10-3600。</p>
-                    <div className="grid gap-3 sm:grid-cols-[minmax(0,130px)_minmax(0,130px)_minmax(0,1fr)]">
-                      <FormField className="space-y-2">
-                        <Label>故障转移时间</Label>
-                        <Input type="number" min={10} max={3600} value={form.failoverSeconds} onChange={(e) => setForm({ ...form, failoverSeconds: e.target.value })} placeholder="60" />
-                      </FormField>
-                      <FormField className="space-y-2">
-                        <Label>恢复观察时间</Label>
-                        <Input type="number" min={10} max={3600} value={form.recoverSeconds} onChange={(e) => setForm({ ...form, recoverSeconds: e.target.value })} placeholder="120" />
-                      </FormField>
-                      <div className="flex items-end gap-2">
-                        <label className="flex h-10 min-w-[128px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
-                          <span className="whitespace-nowrap text-sm">恢复后切回</span>
-                          <Checkbox aria-label="恢复后切回" checked={form.autoFailback} onCheckedChange={(autoFailback) => setForm({ ...form, autoFailback })} />
-                        </label>
-                        <label className="flex h-10 min-w-[92px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
-                          <span className="whitespace-nowrap text-sm">启用</span>
-                          <Checkbox aria-label="启用" checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
-                        </label>
-                      </div>
-                    </div>
                   </div>
                 )}
 
@@ -2807,7 +2893,7 @@ export function ForwardGroupsContent({
                         </div>
                       ))}
                       {form.members.length === 0 && (
-                        <div className="rounded-md border border-dashed border-border/70 p-6 text-center text-sm text-muted-foreground">还没有成员</div>
+                        <EmptyState className="py-6" title="还没有成员" description="用上面的选择框把成员加进来。" />
                       )}
                     </div>
                   </>
@@ -2816,87 +2902,40 @@ export function ForwardGroupsContent({
             )}
 
             {form.groupMode === "failover" && (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">单位：秒，范围 10-3600。</p>
-                  <div className="grid gap-3 sm:grid-cols-[minmax(0,130px)_minmax(0,130px)_minmax(0,1fr)]">
-                    <FormField className="space-y-2">
-                      <Label>故障转移时间</Label>
-                      <Input type="number" min={10} max={3600} value={form.failoverSeconds} onChange={(e) => setForm({ ...form, failoverSeconds: e.target.value })} placeholder="60" />
-                    </FormField>
-                    <FormField className="space-y-2">
-                      <Label>恢复观察时间</Label>
-                      <Input type="number" min={10} max={3600} value={form.recoverSeconds} onChange={(e) => setForm({ ...form, recoverSeconds: e.target.value })} placeholder="120" />
-                    </FormField>
-                    <div className="flex items-end gap-2">
-                      <label className="flex h-10 min-w-[128px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
-                        <span className="whitespace-nowrap text-sm">恢复后切回</span>
-                        <Checkbox aria-label="恢复后切回" checked={form.autoFailback} onCheckedChange={(autoFailback) => setForm({ ...form, autoFailback })} />
-                      </label>
-                      <label className="flex h-10 min-w-[92px] flex-1 items-center justify-between gap-3 rounded-md border border-border/60 px-3">
-                        <span className="whitespace-nowrap text-sm">启用</span>
-                        <Checkbox aria-label="启用" checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,200px)]">
-                  <div className="space-y-1.5">
-                    <Input
-                      aria-label="入口健康度检测目标"
-                      disabled={!form.chinaHealthCheckEnabled}
-                      value={form.chinaHealthCheckTarget}
-                      onChange={(e) => setForm({ ...form, chinaHealthCheckTarget: e.target.value })}
-                      placeholder={healthCheckTargetPlaceholder(form.chinaHealthCheckMethod)}
-                    />
-                    <Select
-                      value={form.chinaHealthCheckMethod}
-                      onValueChange={(value) => setForm({ ...form, chinaHealthCheckMethod: normalizeForwardGroupHealthCheckMethod(value) })}
-                      disabled={!form.chinaHealthCheckEnabled}
-                    >
-                      <SelectTrigger aria-label="健康度检测方式"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {FORWARD_GROUP_HEALTH_CHECK_METHODS.map((method) => (
-                          <SelectItem key={method} value={method}>
-                            {FORWARD_GROUP_HEALTH_CHECK_METHOD_LABELS[method]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {FORWARD_GROUP_HEALTH_CHECK_METHOD_HINTS[form.chinaHealthCheckMethod]}
-                      {healthCheckTargetNeedsPort(form.chinaHealthCheckMethod) ? " IPv6 格式：[地址]:端口。" : " IPv6 直接填地址。"}
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="flex h-10 items-center justify-between rounded-md border border-border/60 px-3">
-                      <span className="text-sm">入口健康度检测</span>
-                      <Checkbox aria-label="入口健康度检测" checked={form.chinaHealthCheckEnabled} onCheckedChange={(chinaHealthCheckEnabled) => setForm({ ...form, chinaHealthCheckEnabled })} />
-                    </label>
-                    <label
-                      className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2"
-                      title={telegramReady ? "仅在自动切换时发送 Telegram 告警。" : telegramSettingsLoaded ? "请先在系统设置中配置并启用 Telegram 机器人。" : "正在确认 Telegram 配置。"}
-                    >
-                      <span className="min-w-0">
-                        <span className="block text-sm">切换告警</span>
-                        <span className="block truncate text-[11px] text-muted-foreground">
-                          {telegramReady ? "仅自动切换提醒" : telegramSettingsLoaded ? "需先配置 Telegram" : "正在确认配置"}
-                        </span>
+              <div className="space-y-4">
+                <GroupFailoverPolicyFields
+                  value={form}
+                  onChange={(patch) => setForm({ ...form, ...patch })}
+                  policy={formGroupPolicy}
+                  ddnsSwitching={groupPolicyOptions.ddnsSwitching}
+                />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label
+                    className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2"
+                    title={telegramReady ? "仅在自动切换时发送 Telegram 告警。" : telegramSettingsLoaded ? "请先在系统设置中配置并启用 Telegram 机器人。" : "正在确认 Telegram 配置。"}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm">切换告警</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {telegramReady ? "仅自动切换提醒" : telegramSettingsLoaded ? "需先配置 Telegram" : "正在确认配置"}
                       </span>
-                      <Checkbox
-                        checked={form.telegramSwitchNotifyEnabled}
-                        disabled={telegramSettingsLoaded && !telegramReady && !form.telegramSwitchNotifyEnabled}
-                        onCheckedChange={(telegramSwitchNotifyEnabled) => {
-                          if (telegramSwitchNotifyEnabled && telegramSettingsLoaded && !telegramReady) {
-                            toast.error("请先在系统设置中配置并启用 Telegram 机器人");
-                            return;
-                          }
-                          setForm({ ...form, telegramSwitchNotifyEnabled });
-                        }}
-                      />
-                    </label>
-                  </div>
+                    </span>
+                    <Checkbox
+                      checked={form.telegramSwitchNotifyEnabled}
+                      disabled={telegramSettingsLoaded && !telegramReady && !form.telegramSwitchNotifyEnabled}
+                      onCheckedChange={(telegramSwitchNotifyEnabled) => {
+                        if (telegramSwitchNotifyEnabled && telegramSettingsLoaded && !telegramReady) {
+                          toast.error("请先在系统设置中配置并启用 Telegram 机器人");
+                          return;
+                        }
+                        setForm({ ...form, telegramSwitchNotifyEnabled });
+                      }}
+                    />
+                  </label>
+                  <label className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
+                    <span className="text-sm">启用</span>
+                    <Checkbox aria-label="启用" checked={form.isEnabled} onCheckedChange={(isEnabled) => setForm({ ...form, isEnabled })} />
+                  </label>
                 </div>
               </div>
             )}
@@ -2926,6 +2965,34 @@ export function ForwardGroupsContent({
           onOpenChange={(open) => !open && setTestGroup(null)}
         />
       )}
+      {(() => {
+        const policyGroup = policyGroupId === null ? null : (groups || []).find((group: any) => Number(group.id) === policyGroupId) || null;
+        const policy = policyGroup ? describeGroupRoutePolicy(policyGroup, groupPolicyOptions) : null;
+        const groupId = Number(policyGroup?.id || 0);
+        return (
+          <RoutePolicySheet
+            open={policyGroupId !== null}
+            onOpenChange={(open) => !open && setPolicyGroupId(null)}
+            subjectName={String(policyGroup?.name || "")}
+            policy={policy}
+            canEdit
+            pending={preferMemberMutation.isPending || reselectMutation.isPending}
+            onPrefer={(index) => {
+              if (!policy || !groupId) return;
+              // reorder 按给的次序把 priority 写成 0..n-1，所以要把全部成员都带上（停用的也算），只把选中的挪到最前。
+              const memberIds = policy.lines.map((line) => line.memberId).filter((id): id is number => !!id);
+              const chosen = policy.lines[index]?.memberId;
+              if (!chosen) return;
+              preferMemberMutation.mutate({ groupId, memberIds: [chosen, ...memberIds.filter((id) => id !== chosen)] });
+            }}
+            onReselect={() => groupId && reselectMutation.mutate({ id: groupId })}
+            onEdit={() => {
+              setPolicyGroupId(null);
+              if (policyGroup) openEdit(policyGroup);
+            }}
+          />
+        );
+      })()}
       <Dialog open={!!deleteGroup} onOpenChange={(open) => !open && setDeleteGroup(null)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>

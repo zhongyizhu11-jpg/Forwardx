@@ -23,7 +23,7 @@ import HostCard, { HostActionButtons } from "@/components/hosts/HostCard";
 // 本页 902 行已有一个同名的统计小卡，这里取别名区分：这个是主机列表里的实体卡
 import HostEntitySummaryCard from "@/components/hosts/HostSummaryCard";
 import HostDetailDialog from "@/components/hosts/HostDetailDialog";
-import { Metric } from "@/components/entity/Metric";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import HostGroupManager, { compareHostGroupDisplayOrder, type HostGroupView, type HostGroupViewMode } from "@/components/hosts/HostGroupManager";
 import HostProbeServiceManager, { type HostProbeServiceViewMode } from "@/components/hosts/HostProbeServiceManager";
 import HostProbeServiceLatencyDialog from "@/components/hosts/HostProbeServiceLatencyDialog";
@@ -86,9 +86,7 @@ import { cn } from "@/lib/utils";
 import {
   Activity,
   ArrowDown,
-  ArrowDownToLine,
   ArrowUp,
-  ArrowUpFromLine,
   ArrowRightLeft,
   CalendarDays,
   CircleCheck,
@@ -962,116 +960,6 @@ function HostSummaryCard({
   );
 }
 
-function HostTrafficDirectionStat({
-  label,
-  value,
-  icon: Icon,
-  tone,
-  loading,
-  cacheKey,
-  animated = true,
-  className,
-}: {
-  label: string;
-  value: string;
-  icon: typeof ActivitySquare;
-  tone: string;
-  loading?: boolean;
-  cacheKey: string;
-  animated?: boolean;
-  className?: string;
-}) {
-  return (
-    <div className={`min-w-0 ${className || ""}`.trim()}>
-      <div className="flex items-center gap-2.5">
-        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg shadow-sm ${tone}`}>
-          <Icon className="h-4 w-4 text-white" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {animated ? (
-            <AnimatedStatValue
-              as="p"
-              value={value}
-              loading={loading}
-              cacheKey={cacheKey}
-              fallbackValue="0 B/s"
-              className="mt-0.5 whitespace-nowrap text-base font-semibold leading-tight tabular-nums sm:text-lg"
-              title={value}
-            />
-          ) : (
-            <p
-              className="mt-0.5 whitespace-nowrap text-base font-semibold leading-tight tabular-nums sm:text-lg"
-              title={value}
-            >
-              {value}
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function HostTrafficSummaryCard({
-  title,
-  inValue,
-  outValue,
-  icon: Icon,
-  tone = "bg-gradient-to-br from-chart-1/10 to-transparent",
-  iconTone = "bg-chart-1/10 text-chart-1",
-  loading,
-  cacheKey,
-  animated = true,
-  className,
-}: {
-  title: string;
-  inValue: string;
-  outValue: string;
-  icon: typeof ActivitySquare;
-  tone?: string;
-  iconTone?: string;
-  loading?: boolean;
-  cacheKey: string;
-  animated?: boolean;
-  className?: string;
-}) {
-  return (
-    <Card className={`group relative h-full overflow-hidden border-border bg-card ${className || ""}`.trim()}>
-      <CardContent className="relative flex h-full flex-col justify-start p-3.5 sm:p-4">
-        <div className="flex min-h-0 items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1 pr-12">
-            <p className="text-xs font-medium text-muted-foreground">{title}</p>
-          </div>
-          <div className={`pointer-events-none absolute right-4 top-3.5 hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${iconTone}`}>
-            <Icon className="h-5 w-5" />
-          </div>
-        </div>
-        <div className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(145px,1fr))] gap-2.5">
-          <HostTrafficDirectionStat
-            label="入向"
-            value={inValue}
-            loading={loading}
-            cacheKey={`${cacheKey}.in`}
-            animated={animated}
-            icon={ArrowDownToLine}
-            tone="bg-[var(--fx-healthy)]"
-          />
-          <HostTrafficDirectionStat
-            label="出向"
-            value={outValue}
-            loading={loading}
-            cacheKey={`${cacheKey}.out`}
-            animated={animated}
-            icon={ArrowUpFromLine}
-            tone="bg-[var(--fx-warn)]"
-          />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 type HostViewMode = "card" | "compact-card" | "table" | "map" | "flat-map";
 type HostManageTab = "hosts" | "groups" | "services" | "tokens";
 type HostManageFilterStats = { filtered: number; total: number };
@@ -1388,6 +1276,7 @@ function HostsContent() {
       ? fullHostQuery.isError
       : hostPageQuery.isError;
   const error = isHostMapView ? hostMapQuery.error : needsFullHostList ? fullHostQuery.error : hostPageQuery.error;
+  const isFetching = isHostMapView ? hostMapQuery.isFetching : needsFullHostList ? fullHostQuery.isFetching : hostPageQuery.isFetching;
   const refetch = () => isHostMapView
     ? hostMapQuery.refetch()
     : needsFullHostList
@@ -2485,38 +2374,35 @@ function HostsContent() {
 
           这是 Surface A（页面级模块）：一个面，内部靠竖线分栏，不各画各的框。
         */}
-        <div className="stat-strip grid grid-cols-3 divide-x divide-[var(--fx-stroke-weak)] rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)]">
-          <div className="min-w-0 px-3 py-2.5">
-            <Metric
-              label="在线"
-              value={`${effectiveHostSummary?.onlineHosts ?? onlineCount} / ${effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length}`}
-              size="inline"
-              hint={(() => {
+        <SummaryStrip
+          ariaLabel="主机概况"
+          items={[
+            {
+              key: "online",
+              label: "在线",
+              value: `${effectiveHostSummary?.onlineHosts ?? onlineCount} / ${effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length}`,
+              hint: (() => {
                 if (!effectiveHostSummary) return "暂无统计";
                 const total = effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length;
                 const online = effectiveHostSummary?.onlineHosts ?? onlineCount;
                 const offline = Math.max(0, total - online);
                 return offline > 0 ? `离线 ${offline} 台` : "全部在线";
-              })()}
-            />
-          </div>
-          <div className="min-w-0 px-3 py-2.5">
-            <Metric
-              label="瞬时"
-              value={`↓ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficIn)}`}
-              size="inline"
-              hint={`↑ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficOut)}`}
-            />
-          </div>
-          <div className="min-w-0 px-3 py-2.5">
-            <Metric
-              label="累计"
-              value={`↓ ${formatBytes(effectiveHostSummary?.totalTrafficIn)}`}
-              size="inline"
-              hint={`↑ ${formatBytes(effectiveHostSummary?.totalTrafficOut)}`}
-            />
-          </div>
-        </div>
+              })(),
+            },
+            {
+              key: "rate",
+              label: "瞬时",
+              value: `↓ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficIn)}`,
+              hint: `↑ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficOut)}`,
+            },
+            {
+              key: "total",
+              label: "累计",
+              value: `↓ ${formatBytes(effectiveHostSummary?.totalTrafficIn)}`,
+              hint: `↑ ${formatBytes(effectiveHostSummary?.totalTrafficOut)}`,
+            },
+          ]}
+        />
         {user?.role === "admin" && (
           <HostGroupFilterBar
             groups={hostGroups as HostGroupView[]}
@@ -2530,23 +2416,19 @@ function HostsContent() {
       {isInitialLoadingWithoutCache ? (
         <DataSectionLoading label="正在加载主机数据" minHeight="min-h-[260px]" />
       ) : isError ? (
-        <Card className="border-border bg-card">
-          <CardContent className="p-0">
-            <div className="flex flex-col items-center justify-center px-4 py-20 text-center text-muted-foreground">
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
-                <AlertTriangle className="h-8 w-8" />
-              </div>
-              <p className="text-lg font-medium text-foreground">主机加载失败</p>
-              <p className="mt-2 max-w-xl break-words text-sm text-muted-foreground">
-                {error?.message || "无法获取主机列表，请稍后重试"}
-              </p>
-              <Button variant="outline" className="mt-5 gap-2" onClick={() => refetch()}>
-                <RefreshCw className="h-4 w-4" />
-                重新加载
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        /*
+          别的页读失败都是 DataSectionError（同一句「X 加载失败」、同一种原因提示和「重试」），
+          只有主机页自己拼了一张大卡：80px 高的红色图标方块、18px 的标题、原样的报错全文。
+          换成同一个：原因会被 queryErrorHint 翻成人话（登录失效、网络断了、服务端报错），
+          原文放在下面一行小字里。
+        */
+        <DataSectionError
+          label="主机列表"
+          error={error}
+          retrying={isFetching}
+          onRetry={() => { void refetch(); }}
+          minHeight="min-h-[260px]"
+        />
       ) : hasFilteredDisplayHosts ? (
         <>
         {viewMode === "map" ? (

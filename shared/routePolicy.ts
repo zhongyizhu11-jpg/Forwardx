@@ -1,0 +1,756 @@
+import { describeFailoverActiveLine, failoverLineEndpoints, failoverLineLabel } from "./failoverActiveLine";
+import { readFailoverPin, type FailoverPin } from "./failoverPin";
+import { defaultHealthCheckTarget, normalizeForwardGroupHealthCheckMethod } from "./forwardGroupHealthCheck";
+import {
+  describeFailoverScheduleDays,
+  failoverScheduleWindowIndexAt,
+  parseFailoverSchedule,
+  parseScheduleMinutes,
+} from "./failoverSchedule";
+import type { NetworkHealth } from "./networkHealth";
+import { timestampMillis } from "./timestamp";
+import { isAgentVersionAtLeast } from "./version";
+
+/**
+ * 一条主备规则的「路由策略」：此刻按什么规矩、首选哪条、实际走哪条。全站唯一一份。
+ *
+ * 选路是 Agent 在本地做的，规矩写死在 agent/main.go 的 priorityOrderLocked 里：
+ *
+ *     人工指定 > 时段表 > 自动择优 > 出站顺序
+ *
+ * 哪一层先给出答案，哪一层就决定「首选是谁」；首选挂了照样往下找，那是健康检查的事，
+ * 和选路是正交的。这里把同一套规矩在面板上再算一遍 —— 不是为了替 Agent 做决定，是为了
+ * 把「为什么走这条」说出来：界面上每一层是一行条件，此刻起作用的那一行高亮。
+ *
+ * 两件事要分开说，不能混成一句「现在走 X」：
+ *
+ *   · 首选（preferred）：面板按规矩算出来的。自动择优那一层面板算不了 —— 谁更快是
+ *     Agent 实测的 —— 这时候首选是 null，不瞎猜。
+ *   · 实际（report）：Agent 报上来的。新版 Agent 每次心跳报一遍，才能叫「现在」；
+ *     2.2.196 只报切换事件，只能叫「最近一次切换」；机器离线就什么都不说。
+ *
+ * 两者不一致不一定是故障（首选那条可能正挂着、刚恢复还在观察、「恢复后切回」关着），
+ * 所以不一致时只说确实可能的原因，不下结论。
+ *
+ * 转发组的故障转移也用这一份模型说话（describeGroupRoutePolicy），见文件后半。
+ */
+
+/** 探测目标、时段表、人工指定、自动择优、切换事件：Agent 2.2.196 起。更老的只认出站顺序。 */
+export const ROUTE_POLICY_AGENT_VERSION = "2.2.196";
+/** 每次心跳报「现在走哪条」：Agent 2.2.197 起。 */
+export const ACTIVE_LINE_SNAPSHOT_AGENT_VERSION = "2.2.197";
+
+export type RoutePolicyStrategy = "fallback" | "round_robin" | "random" | "ip_hash";
+
+export type RoutePolicyLine = {
+  /** 0 是主出站，1.. 是第几条备用出站 */
+  index: number;
+  /** 「主出站」「备用 1」 */
+  label: string;
+  endpoint: string;
+  /** 按规矩此刻排在最前的那条。由自动择优决定时谁都不是 —— 面板不知道 Agent 测出来谁快。 */
+  preferred: boolean;
+  /** Agent 报的正在走的那条（报告能用时才有）。转发组：解析指向（或建议）的那个成员。 */
+  active: boolean;
+  /** 转发组成员的 id —— 「设为首选」要拿它重排。规则的出站没有。 */
+  memberId?: number;
+  /** 转发组成员启用着没有。停用的不参与挑选，也不该出现在「换一个首选」里。 */
+  enabled?: boolean;
+  /**
+   * 转发组成员自己的健康，面板每轮检查写回库里的那份。规则的出站没有：那是 Agent 在
+   * 本地探的，面板看不到每条出站的健康。
+   */
+  health?: NetworkHealth;
+  /** 健康那一半的补充：「18ms」「不健康，21:30 起」「等检测结果」「已停用」。 */
+  note?: string | null;
+};
+
+export type RoutePolicyConditionKind = "pin" | "schedule" | "fastest" | "order" | "spread";
+
+export type RoutePolicyCondition = {
+  kind: RoutePolicyConditionKind;
+  key: string;
+  /** 条件那一半：什么时候。 */
+  when: string;
+  /** 结果那一半：走哪条。 */
+  then: string;
+  /** 指向哪条出站；「按顺序」「择优」「分摊」这种不指向单独一条的是 null。 */
+  targetIndex: number | null;
+  /** 时段表那几行：它是配置里的第几个时段（编辑框要把「此刻」标在对应的那一行上）。 */
+  windowIndex?: number;
+  /**
+   * - deciding：此刻就是它在决定首选
+   * - overridden：此刻本该轮到它，但被更靠前的一层压着（钉着的时候时段表命中了）
+   * - idle：此刻不适用（不在时段内），或者只是兜底的顺序
+   */
+  state: "deciding" | "overridden" | "idle";
+};
+
+export type RoutePolicyGuard = {
+  /** health / switch 只有转发组有：它的健康和切换都是面板做的，得说清楚按什么算、切的是什么。 */
+  key: "failover" | "recover" | "hold" | "health" | "switch";
+  label: string;
+  value: string;
+};
+
+export type RoutePolicyReport =
+  /** 新版 Agent 每次心跳确认的「现在」 */
+  | { kind: "current"; index: number; since: number | null }
+  /** 2.2.196 只报切换事件：这是最近一次切换，之后换过规格或重启过的话已经回到主出站 */
+  | { kind: "lastSwitch"; index: number; since: number | null }
+  /** 报上来的地址不在出站清单里 —— 多半刚改过配置 */
+  | { kind: "unlisted"; target: string }
+  /** 新版 Agent，还没报上来（刚起来、刚改过） */
+  | { kind: "pending" }
+  /** 2.2.196，没有切换记录 —— 不能当成「一直走主出站」：这一版之前面板会丢事件 */
+  | { kind: "noSwitch" }
+  | { kind: "offline" }
+  /** Agent 早于 2.2.196：不报告，也不执行时段表、人工指定、自动择优 */
+  | { kind: "unsupported" }
+  /**
+   * 转发组：解析指向这个成员。writtenAt 是面板最近一次写解析的时刻（Unix 秒）——
+   * **不是**「从什么时候起指向它」：手动同步、面板重启后的第一次核对都会原样重写一遍。
+   */
+  | { kind: "resolved"; index: number; writtenAt: number | null }
+  /** 转发组：系统 DDNS 没开，面板照样挑，但只记成「建议入口」，解析不改 */
+  | { kind: "suggested"; index: number }
+  /** 转发组：没配 DDNS 域名 —— 只看成员健康，不切换 */
+  | { kind: "noDomain" }
+  /** 转发组停用：不检测、不切换 */
+  | { kind: "groupDisabled" };
+
+export type RoutePolicy = {
+  /** 规则级主备（Agent 切出站），还是转发组（面板切解析）。说法不同的地方靠它分。 */
+  subject: "rule" | "group";
+  strategy: RoutePolicyStrategy;
+  lines: RoutePolicyLine[];
+  /** 从上往下就是优先级。 */
+  conditions: RoutePolicyCondition[];
+  guards: RoutePolicyGuard[];
+  /** 按规矩此刻首选第几条；null = 由 Agent 按实测延迟定，或者本来就没有首选（轮询这类）。 */
+  preferredIndex: number | null;
+  deciding: RoutePolicyConditionKind | null;
+  /** 此刻有效的人工指定（过期的、越界的不算）。 */
+  pin: FailoverPin | null;
+  report: RoutePolicyReport;
+  /** 首选和实际走的不是同一条（转发组还包括：在用的那个眼看要被换走）时，一句话说原因。 */
+  divergence: string | null;
+  /** 配了、但在这台机器上不会生效的东西。 */
+  warnings: string[];
+};
+
+export type RoutePolicyRule = {
+  failoverEnabled?: unknown;
+  forwardType?: unknown;
+  protocol?: unknown;
+  failoverStrategy?: unknown;
+  targetIp?: unknown;
+  targetPort?: unknown;
+  failoverTargets?: unknown;
+  failoverSchedule?: unknown;
+  failoverMinHoldSeconds?: unknown;
+  failoverPinnedIndex?: unknown;
+  failoverPinnedUntil?: unknown;
+  failoverPreferFastest?: unknown;
+  failoverSeconds?: unknown;
+  recoverSeconds?: unknown;
+  autoFailback?: unknown;
+  failoverActiveTarget?: unknown;
+  failoverActiveAt?: unknown;
+};
+
+export type RoutePolicyHost = { isOnline?: unknown; agentVersion?: unknown } | null | undefined;
+
+export type RoutePolicyOptions = {
+  host?: RoutePolicyHost;
+  nowMs?: number;
+  /** 钟点怎么写。默认按运行环境的时区；测试里传固定的。 */
+  timeZone?: string;
+};
+
+const STRATEGIES: RoutePolicyStrategy[] = ["fallback", "round_robin", "random", "ip_hash"];
+
+function normalizeStrategy(value: unknown): RoutePolicyStrategy {
+  const text = String(value || "").trim() as RoutePolicyStrategy;
+  return STRATEGIES.includes(text) ? text : "fallback";
+}
+
+function truthy(value: unknown, fallback: boolean) {
+  if (value === null || value === undefined) return fallback;
+  return value === true || value === 1 || value === "1" || String(value).toLowerCase() === "true";
+}
+
+/** 「60 秒」「2 分钟」「1.5 小时」这类说法。 */
+export function formatPolicyDuration(seconds: number): string {
+  const value = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (value < 120) return `${value} 秒`;
+  if (value < 7200) return `${Math.round(value / 60)} 分钟`;
+  const hours = value / 3600;
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} 小时`;
+}
+
+/** 钟点：同一天只写「21:30」，不是同一天带上日期。 */
+export function formatPolicyClock(ms: number, nowMs: number, timeZone?: string): string {
+  const parts = (at: number) => {
+    const formatted = new Intl.DateTimeFormat("zh-CN", {
+      timeZone,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(at));
+    const pick = (type: string) => formatted.find((part) => part.type === type)?.value || "";
+    return { y: pick("year"), m: pick("month"), d: pick("day"), clock: `${pick("hour")}:${pick("minute")}` };
+  };
+  const at = parts(ms);
+  const now = parts(nowMs);
+  if (at.y === now.y && at.m === now.m && at.d === now.d) return at.clock;
+  return `${at.m}月${at.d}日 ${at.clock}`;
+}
+
+function describeReport(
+  rule: RoutePolicyRule,
+  host: RoutePolicyHost,
+  lineCount: number,
+): RoutePolicyReport {
+  const version = String(host?.agentVersion || "");
+  if (host && version && !isAgentVersionAtLeast(version, ROUTE_POLICY_AGENT_VERSION)) return { kind: "unsupported" };
+  if (!host || !truthy(host.isOnline, false)) return { kind: "offline" };
+  const snapshots = isAgentVersionAtLeast(version, ACTIVE_LINE_SNAPSHOT_AGENT_VERSION);
+  const active = describeFailoverActiveLine({ ...rule, failoverEnabled: true });
+  if (!active) return snapshots ? { kind: "pending" } : { kind: "noSwitch" };
+  if (active.unknown || active.index >= lineCount) return { kind: "unlisted", target: active.target };
+  return { kind: snapshots ? "current" : "lastSwitch", index: active.index, since: active.since };
+}
+
+export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyOptions = {}): RoutePolicy | null {
+  if (!truthy(rule?.failoverEnabled, false)) return null;
+  const nowMs = options.nowMs ?? Date.now();
+  const clock = (ms: number) => formatPolicyClock(ms, nowMs, options.timeZone);
+  const strategy = normalizeStrategy(rule.failoverStrategy);
+  const endpoints = failoverLineEndpoints(rule);
+  const lineCount = endpoints.length;
+  const label = (index: number) => failoverLineLabel(index, endpoints[index] || "");
+  const report = describeReport(rule, options.host, lineCount);
+  const warnings: string[] = [];
+
+  const failoverSeconds = Math.max(0, Math.floor(Number(rule.failoverSeconds) || 60));
+  const recoverSeconds = Math.max(0, Math.floor(Number(rule.recoverSeconds) || 120));
+  const autoFailback = truthy(rule.autoFailback, true);
+  const minHoldSeconds = Math.max(0, Math.floor(Number(rule.failoverMinHoldSeconds) || 0));
+
+  const conditions: RoutePolicyCondition[] = [];
+  let preferredIndex: number | null = null;
+  let deciding: RoutePolicyConditionKind | null = null;
+  let pin: FailoverPin | null = null;
+
+  if (strategy !== "fallback") {
+    /*
+      轮询、随机、哈希没有「首选是谁」：每条新连接各走各的。人工指定、时段表、自动择优
+      在这几种策略下 Agent 都不看，保存时也会被清掉，所以这里只有一行。
+    */
+    const spread: Record<Exclude<RoutePolicyStrategy, "fallback">, string> = {
+      round_robin: `轮流走这 ${lineCount} 条`,
+      random: `从 ${lineCount} 条里随机挑一条`,
+      ip_hash: "按来源 IP 固定分到其中一条",
+    };
+    conditions.push({ kind: "spread", key: "spread", when: "每条新连接", then: spread[strategy], targetIndex: null, state: "deciding" });
+    deciding = "spread";
+  } else {
+    const supported = report.kind !== "unsupported";
+    pin = readFailoverPin(rule, { nowMs, lineCount });
+    const schedule = parseFailoverSchedule(rule.failoverSchedule);
+    const allWindows = schedule?.windows || [];
+    // 指向不存在的出站的时段不算（服务端也存不进去），但序号按配置里的原样给，编辑框才对得上行。
+    const validWindows = allWindows.map((window, index) => ({ window, index })).filter(({ window }) => window.targetIndex < lineCount);
+    const matchedValid = schedule ? failoverScheduleWindowIndexAt({ ...schedule, windows: validWindows.map(({ window }) => window) }, new Date(nowMs)) : null;
+    const matchedWindow = matchedValid === null ? null : validWindows[matchedValid].index;
+    const preferFastest = truthy(rule.failoverPreferFastest, false);
+
+    // 按 Agent 的次序一层层往下找第一个给出答案的。Agent 太旧时这三层它都不认，只剩出站顺序。
+    if (supported && pin) {
+      deciding = "pin";
+      preferredIndex = pin.index;
+    } else if (supported && matchedWindow !== null) {
+      deciding = "schedule";
+      preferredIndex = allWindows[matchedWindow].targetIndex;
+    } else if (supported && preferFastest) {
+      deciding = "fastest";
+      preferredIndex = null;
+    } else {
+      deciding = "order";
+      preferredIndex = 0;
+    }
+
+    if (pin) {
+      conditions.push({
+        kind: "pin",
+        key: "pin",
+        when: pin.untilMs ? `人工指定，到 ${clock(pin.untilMs)}` : "人工指定，一直",
+        then: `强制走 ${label(pin.index)}`,
+        targetIndex: pin.index,
+        state: deciding === "pin" ? "deciding" : "idle",
+      });
+    }
+    validWindows.forEach(({ window, index }) => {
+      const crossesMidnight = (parseScheduleMinutes(window.to) ?? 0) <= (parseScheduleMinutes(window.from) ?? 0);
+      const matched = index === matchedWindow;
+      conditions.push({
+        kind: "schedule",
+        key: `schedule-${index}`,
+        when: `${describeFailoverScheduleDays(window.days)} ${window.from}–${window.to}${crossesMidnight ? "（次日）" : ""}`,
+        then: `首选 ${label(window.targetIndex)}`,
+        targetIndex: window.targetIndex,
+        windowIndex: index,
+        state: matched && deciding === "schedule" ? "deciding" : matched && supported ? "overridden" : "idle",
+      });
+    });
+    if (preferFastest) {
+      conditions.push({
+        kind: "fastest",
+        key: "fastest",
+        when: "按实测延迟",
+        // 三道门槛写死在 Agent 里（failoverFastestMarginMs / Ratio / HoldSeconds），这里照抄。
+        then: "挑明显更快的那条（快 20ms 且快 20%，连续 3 分钟）",
+        targetIndex: null,
+        state: deciding === "fastest" ? "deciding" : supported && (deciding === "pin" || deciding === "schedule") ? "overridden" : "idle",
+      });
+    }
+    conditions.push({
+      kind: "order",
+      key: "order",
+      when: conditions.length > 0 ? "其余时候" : "按顺序",
+      then: endpoints.map((_, index) => label(index)).join(" → "),
+      targetIndex: null,
+      state: deciding === "order" ? "deciding" : "idle",
+    });
+    if (!supported && (pin || validWindows.length > 0 || preferFastest)) {
+      warnings.push(`这台机器的 Agent 早于 ${ROUTE_POLICY_AGENT_VERSION}：人工指定、时段表、自动择优它都不认，只按出站顺序走。`);
+    }
+  }
+
+  /*
+    主备只在 gost 的 TCP 转发上跑（心跳下发时别的一律不带主备规格）。界面上存不出这种
+    组合，但老数据里可能有 —— 那就照实说：配着，但机器上不会走主备。
+  */
+  const forwardType = String(rule.forwardType ?? "gost");
+  const protocol = String(rule.protocol ?? "tcp");
+  if (forwardType !== "gost" || protocol !== "tcp") {
+    warnings.push("主备只在 gost 的 TCP 转发上生效。这条规则的转发方式或协议不是，机器上不会走主备；保存一次时主备会被关掉。");
+  }
+
+  const guards: RoutePolicyGuard[] = [
+    { key: "failover", label: "挂了就切", value: `探测连续失败 ${formatPolicyDuration(failoverSeconds)}，或新连接拨不通` },
+  ];
+  if (strategy === "fallback") {
+    guards.push(autoFailback
+      ? { key: "recover", label: "切回首选", value: `首选那条恢复后稳定 ${formatPolicyDuration(recoverSeconds)}` }
+      : { key: "recover", label: "不切回", value: "当前这条不出问题就一直走它" });
+    if (minHoldSeconds > 0) {
+      guards.push({ key: "hold", label: "最短驻留", value: `切过去之后至少走 ${formatPolicyDuration(minHoldSeconds)}` });
+    }
+  }
+
+  const activeIndex = strategy === "fallback" && (report.kind === "current" || report.kind === "lastSwitch") ? report.index : null;
+  let divergence: string | null = null;
+  if (strategy === "fallback" && activeIndex !== null && preferredIndex !== null && activeIndex !== preferredIndex) {
+    if (!autoFailback) {
+      divergence = `首选是 ${label(preferredIndex)}，但「恢复后切回」关着：${label(activeIndex)} 不出问题就不会换过去。`;
+    } else {
+      const reasons = ["正挂着", `刚恢复还在观察（${formatPolicyDuration(recoverSeconds)}）`];
+      if (minHoldSeconds > 0) reasons.push(`刚切过还在最短驻留（${formatPolicyDuration(minHoldSeconds)}）里`);
+      divergence = `首选是 ${label(preferredIndex)}，没走它：它可能${reasons.join("、")}。`;
+    }
+  }
+
+  return {
+    subject: "rule",
+    strategy,
+    lines: endpoints.map((endpoint, index) => ({
+      index,
+      label: label(index),
+      endpoint,
+      preferred: strategy === "fallback" && preferredIndex === index,
+      active: activeIndex === index,
+    })),
+    conditions,
+    guards,
+    preferredIndex: strategy === "fallback" ? preferredIndex : null,
+    deciding,
+    pin,
+    report,
+    divergence,
+    warnings,
+  };
+}
+
+/*
+  ───────────────────────────── 转发组 ─────────────────────────────
+
+  转发组（故障转移模式）和规则级主备是两套机器，但回答的是同一个问题：现在用的是哪个、
+  为什么是它、什么时候会换。所以用同一份模型、同一块面板说话：
+
+    · 规则级主备：Agent 在本地探、本地切，切的是出站；面板只能等它报告。
+    · 转发组：面板每轮检查成员健康，切的是 DDNS 解析 —— 用户连的那个域名指向哪个成员。
+      判断和执行都在面板（server/repositories/forwardGroupRepository.ts 的
+      runForwardGroupFailoverForGroups），这里读的是面板自己写下的结论，不用猜。
+
+  规矩只有一层：按成员顺序，排在最前、而且健康的那个拿到解析。时段表、自动择优、人工
+  钉住转发组都没有 —— 硬凑成同样的几行，只会让人以为能配。能手动做的是两件：把一个成员
+  挪到第一位（改顺序，一直有效），和不等观察时间、立刻按顺序重选一次。
+*/
+
+export type RoutePolicyGroupMember = {
+  id?: unknown;
+  memberType?: unknown;
+  hostId?: unknown;
+  tunnelId?: unknown;
+  priority?: unknown;
+  isEnabled?: unknown;
+  healthStatus?: unknown;
+  lastLatencyMs?: unknown;
+  failureSince?: unknown;
+  healthySince?: unknown;
+  /** 按组的记录类型取的地址（A 取 IPv4、AAAA 取 IPv6）；空串 = 这台没有这种地址。 */
+  ddnsValue?: unknown;
+  entryAddress?: unknown;
+  host?: { name?: unknown } | null;
+};
+
+export type RoutePolicyGroup = {
+  groupMode?: unknown;
+  isEnabled?: unknown;
+  domain?: unknown;
+  recordType?: unknown;
+  failoverSeconds?: unknown;
+  recoverSeconds?: unknown;
+  autoFailback?: unknown;
+  chinaHealthCheckEnabled?: unknown;
+  chinaHealthCheckTarget?: unknown;
+  chinaHealthCheckMethod?: unknown;
+  activeMemberId?: unknown;
+  lastDdnsAt?: unknown;
+  /** 有几条转发规则在用这个组。0 的时候面板不探转发（没东西可探），只看机器在不在线。 */
+  templateRuleCount?: unknown;
+  members?: unknown;
+};
+
+export type GroupRoutePolicyOptions = {
+  nowMs?: number;
+  timeZone?: string;
+  /**
+   * 系统 DDNS 开着没有（系统设置里 ddns.enabled，且服务商不是 disabled）。没开时面板照样
+   * 按规矩挑成员，但只记成「建议入口」，解析不改。设置还没加载出来时不传，按开着说。
+   */
+  ddnsSwitching?: boolean;
+  /** 成员怎么称呼。页面上有主机、隧道的名字表，用它；不给就用成员自带的主机名。 */
+  memberLabel?: (member: RoutePolicyGroupMember) => string;
+};
+
+type GroupRecordType = "A" | "AAAA" | "CNAME";
+
+/** 成员没有这种记录要的地址时，行上那句话。 */
+const GROUP_MISSING_ADDRESS: Record<GroupRecordType, string> = {
+  A: "没有 IPv4 地址",
+  AAAA: "没有 IPv6 地址",
+  CNAME: "没有入口域名",
+};
+
+function normalizeGroupRecordType(value: unknown): GroupRecordType {
+  const text = String(value || "A").trim().toUpperCase();
+  return text === "AAAA" || text === "CNAME" ? text : "A";
+}
+
+/** 和服务端 forwardGroupFailoverDelayMs / forwardGroupRecoverDelayMs 一样：空值用默认，最少 10 秒。 */
+function groupDelaySeconds(value: unknown, fallback: number) {
+  const seconds = Number(value || fallback);
+  return Math.max(10, Number.isFinite(seconds) ? seconds : fallback);
+}
+
+function defaultGroupMemberLabel(member: RoutePolicyGroupMember) {
+  if (member.memberType === "tunnel") return `隧道 #${member.tunnelId}`;
+  return String(member.host?.name || "").trim() || `主机 #${member.hostId}`;
+}
+
+type GroupMemberState = {
+  enabled: boolean;
+  health: NetworkHealth;
+  note: string | null;
+  /** 不健康从什么时候起（毫秒）。 */
+  failureMs: number | null;
+  /** 健康从什么时候起（毫秒）。 */
+  healthyMs: number | null;
+};
+
+export function describeGroupRoutePolicy(group: RoutePolicyGroup, options: GroupRoutePolicyOptions = {}): RoutePolicy | null {
+  if (!group || String(group.groupMode || "failover") !== "failover") return null;
+  const nowMs = options.nowMs ?? Date.now();
+  const clock = (ms: number) => formatPolicyClock(ms, nowMs, options.timeZone);
+  const groupEnabled = truthy(group.isEnabled, true);
+  const domain = String(group.domain || "").trim();
+  const recordType = normalizeGroupRecordType(group.recordType);
+  const inUse = Number(group.templateRuleCount ?? 1) > 0;
+  const ddnsSwitching = options.ddnsSwitching !== false;
+  const failoverSeconds = groupDelaySeconds(group.failoverSeconds, 60);
+  const recoverSeconds = groupDelaySeconds(group.recoverSeconds, 120);
+  const autoFailback = truthy(group.autoFailback, true);
+  const labelOf = options.memberLabel ?? defaultGroupMemberLabel;
+
+  // 和服务端挑成员时一个次序：priority 小的在前，一样时 id 小的在前。
+  const members = (Array.isArray(group.members) ? (group.members as RoutePolicyGroupMember[]) : [])
+    .slice()
+    .sort((left, right) => (Number(left.priority) || 0) - (Number(right.priority) || 0) || (Number(left.id) || 0) - (Number(right.id) || 0));
+  const labels = members.map((member) => labelOf(member));
+
+  const states: GroupMemberState[] = members.map((member) => {
+    const enabled = truthy(member.isEnabled, true);
+    if (!enabled) return { enabled, health: "standby", note: "已停用", failureMs: null, healthyMs: null };
+    // 组停用了什么都不查；没有规则在用时不探转发，库里那份健康是旧的，不能拿来说事。
+    if (!groupEnabled) return { enabled, health: "standby", note: null, failureMs: null, healthyMs: null };
+    if (!inUse) return { enabled, health: "unknown", note: null, failureMs: null, healthyMs: null };
+    const failureMs = timestampMillis(member.failureSince) || null;
+    const healthyMs = timestampMillis(member.healthySince) || null;
+    const status = String(member.healthStatus || "").trim().toLowerCase();
+    if (status === "healthy") {
+      const raw = member.lastLatencyMs;
+      const latency = raw === null || raw === undefined || raw === "" ? Number.NaN : Number(raw);
+      return { enabled, health: "healthy", note: Number.isFinite(latency) ? `${Math.round(latency)}ms` : null, failureMs, healthyMs };
+    }
+    if (status === "unhealthy") {
+      return { enabled, health: "down", note: failureMs ? `不健康，${clock(failureMs)} 起` : "不健康", failureMs, healthyMs };
+    }
+    return { enabled, health: "unknown", note: "等检测结果", failureMs, healthyMs };
+  });
+
+  const enabledIndexes = states.flatMap((state, index) => (state.enabled ? [index] : []));
+  const preferredIndex = enabledIndexes[0] ?? null;
+  const activeId = Number(group.activeMemberId) || 0;
+  const activeFound = activeId > 0 ? members.findIndex((member) => Number(member.id) === activeId) : -1;
+  const activeIndex = activeFound >= 0 ? activeFound : null;
+
+  let report: RoutePolicyReport;
+  if (!groupEnabled) report = { kind: "groupDisabled" };
+  else if (!domain) report = { kind: "noDomain" };
+  else if (activeIndex === null) report = { kind: "pending" };
+  else if (!ddnsSwitching) report = { kind: "suggested", index: activeIndex };
+  else {
+    const writtenMs = timestampMillis(group.lastDdnsAt);
+    report = { kind: "resolved", index: activeIndex, writtenAt: writtenMs ? Math.floor(writtenMs / 1000) : null };
+  }
+  const showsActive = report.kind === "resolved" || report.kind === "suggested";
+  const switching = groupEnabled && !!domain && enabledIndexes.length > 0;
+
+  const conditions: RoutePolicyCondition[] = [{
+    kind: "order",
+    key: "order",
+    when: "按成员顺序",
+    then: enabledIndexes.length > 0 ? enabledIndexes.map((index) => labels[index]).join(" → ") : "没有启用的成员",
+    targetIndex: null,
+    state: switching ? "deciding" : "idle",
+  }];
+
+  const probe = truthy(group.chinaHealthCheckEnabled, false)
+    ? (() => {
+      const method = normalizeForwardGroupHealthCheckMethod(group.chinaHealthCheckMethod);
+      const target = String(group.chinaHealthCheckTarget || "").trim() || defaultHealthCheckTarget(method);
+      return `，而且从成员上 ${method === "ping" ? "Ping" : "TCPing"} ${target} 能通`;
+    })()
+    : "";
+  const guards: RoutePolicyGuard[] = [{
+    key: "health",
+    label: "怎么算健康",
+    value: inUse ? `成员上的转发在跑、Agent 探测通过${probe}` : `机器在线${probe}（还没有规则用这个组，没有转发可探）`,
+  }];
+  if (domain) {
+    /*
+      「Agent 已判定」那半句不能省：Agent 自己报了失败 / 健康的，面板不再等观察时间（见
+      evaluateMemberHealth 的 agentFailureFinal、allRuleHealthAgentFinal）。只写「满 60 秒」，
+      人会以为切换总要等一分钟。
+    */
+    if (inUse) {
+      guards.push({ key: "failover", label: "挂了就切", value: `在用的成员不健康满 ${formatPolicyDuration(failoverSeconds)}就换下一个健康的；Agent 已判定失败的不等` });
+      guards.push(autoFailback
+        ? { key: "recover", label: "切回首选", value: `更靠前的成员恢复了就切回：Agent 判定健康的马上切，否则等它稳定 ${formatPolicyDuration(recoverSeconds)}` }
+        : { key: "recover", label: "不切回", value: "在用的成员不出问题就一直用它" });
+    } else {
+      // 没有规则时服务端每轮直接挑「排在最前、机器在线」的那个，不看「恢复后切回」。
+      guards.push({ key: "failover", label: "挂了就切", value: `在用的成员机器离线满 ${formatPolicyDuration(failoverSeconds)}就换下一个在线的` });
+      guards.push({ key: "recover", label: "切回首选", value: "一直挑排在最前、在线的那个：前面的一上线就换回去" });
+    }
+  }
+  guards.push({
+    key: "switch",
+    label: "怎么切",
+    value: !domain
+      ? "没配 DDNS 域名，没有解析可切"
+      : !ddnsSwitching
+        ? `系统 DDNS 没开：挑出来的只记成建议入口，${domain} 的解析不会改`
+        : `改 ${domain} 的 ${recordType} 记录，指向在用成员的地址`,
+  });
+
+  const since = (ms: number | null) => (ms ? `（${clock(ms)} 起）` : "");
+  let divergence: string | null = null;
+  if (showsActive && inUse && activeIndex !== null) {
+    const active = states[activeIndex];
+    const activeLabel = labels[activeIndex];
+    const othersHealthy = states.some((state, index) => index !== activeIndex && state.enabled && state.health === "healthy");
+    if (!active.enabled) {
+      if (othersHealthy) divergence = `在用的 ${activeLabel} 已经停用，最晚满 ${formatPolicyDuration(failoverSeconds)}换走。`;
+    } else if (active.health === "down") {
+      if (othersHealthy) {
+        const downSeconds = active.failureMs ? (nowMs - active.failureMs) / 1000 : null;
+        divergence = downSeconds !== null && downSeconds < failoverSeconds
+          ? `在用的 ${activeLabel} 不健康${since(active.failureMs)}，最晚满 ${formatPolicyDuration(failoverSeconds)}换到下一个健康的。`
+          : `在用的 ${activeLabel} 不健康${since(active.failureMs)}，下一次检查就换走。`;
+      }
+    } else if (active.health === "unknown") {
+      divergence = `在用的 ${activeLabel} 在等检测结果：解析先不动。`;
+    } else if (preferredIndex !== null && preferredIndex !== activeIndex) {
+      const preferred = states[preferredIndex];
+      const preferredLabel = labels[preferredIndex];
+      if (preferred.health === "down") {
+        divergence = `首选 ${preferredLabel} 不健康${since(preferred.failureMs)}，所以用的是 ${activeLabel}。`;
+      } else if (preferred.health === "unknown") {
+        divergence = `首选 ${preferredLabel} 在等检测结果，先用着 ${activeLabel}。`;
+      } else if (!autoFailback) {
+        divergence = `首选 ${preferredLabel} 已经正常，但「恢复后切回」关着：${activeLabel} 不出问题就一直用它。`;
+      } else {
+        const upSeconds = preferred.healthyMs ? (nowMs - preferred.healthyMs) / 1000 : null;
+        divergence = upSeconds !== null && upSeconds < recoverSeconds
+          ? `首选 ${preferredLabel} 恢复了 ${formatPolicyDuration(upSeconds)}，最晚满 ${formatPolicyDuration(recoverSeconds)}切回。`
+          : `首选 ${preferredLabel} 已经恢复，下一次检查就切回去。`;
+      }
+    }
+  }
+
+  const warnings: string[] = [];
+  if (groupEnabled) {
+    if (members.length === 0) warnings.push("还没有成员。");
+    else if (enabledIndexes.length === 0) warnings.push("成员全停用了：没有能用的入口。");
+    else if (!inUse) warnings.push("还没有转发规则用这个组：不探测转发，只看成员机器在不在线。");
+    else if (enabledIndexes.every((index) => states[index].health === "down")) {
+      warnings.push(domain ? "眼下没有健康的成员：解析先保持原样，等有成员恢复。" : "眼下没有健康的成员。");
+    }
+  }
+
+  const missingAddress = GROUP_MISSING_ADDRESS[recordType];
+  return {
+    subject: "group",
+    strategy: "fallback",
+    lines: members.map((member, index) => {
+      // 列表接口按组的记录类型给了 ddnsValue：空串就是这台没有这种地址，解析指不过去。
+      const hasDdnsValue = member.ddnsValue !== undefined && member.ddnsValue !== null;
+      const endpoint = String((hasDdnsValue ? member.ddnsValue : member.entryAddress) || "").trim();
+      const state = states[index];
+      const notes = [state.note, !endpoint && state.enabled ? missingAddress : null].filter(Boolean);
+      return {
+        index,
+        label: labels[index],
+        endpoint,
+        preferred: index === preferredIndex,
+        active: showsActive && index === activeIndex,
+        memberId: Number(member.id) || undefined,
+        enabled: state.enabled,
+        health: state.health,
+        note: notes.length > 0 ? notes.join("，") : null,
+      };
+    }),
+    conditions,
+    guards,
+    preferredIndex,
+    deciding: switching ? "order" : null,
+    pin: null,
+    report,
+    divergence,
+    warnings,
+  };
+}
+
+export type RoutePolicyReportText = {
+  /** 「现在走 备用 1，21:30 起」 */
+  text: string;
+  /** 补一句这份报告能信到什么程度；没什么要补的是 null。 */
+  note: string | null;
+  /**
+   * - normal：走的就是按规矩该走的那条（包括时段表、自动择优有意选的备用）
+   * - deviated：没走首选 —— 多半首选那条出了事，值得看一眼
+   * - warn：报上来的对不上清单；转发组解析指向的成员不健康
+   * - muted：不知道
+   *
+   * 不按「是不是在备用上」定颜色：晚上按时段表走备用 1 是排好的，不是出事。
+   */
+  tone: "normal" | "deviated" | "warn" | "muted";
+};
+
+/** 「现在走哪条」那一句，给规则卡和策略面板共用。 */
+export function describeRoutePolicyReport(policy: RoutePolicy, options: { nowMs?: number; timeZone?: string } = {}): RoutePolicyReportText {
+  const nowMs = options.nowMs ?? Date.now();
+  const since = (seconds: number | null) => seconds ? `，${formatPolicyClock(seconds * 1000, nowMs, options.timeZone)} 起` : "";
+  const report = policy.report;
+  const label = (index: number) => policy.lines[index]?.label || `第 ${index} 条`;
+  const upgradeNote = `Agent 升级到 ${ACTIVE_LINE_SNAPSHOT_AGENT_VERSION} 后每次心跳确认。`;
+  const lineTone = (index: number) => policy.preferredIndex !== null && index !== policy.preferredIndex ? "deviated" : "normal";
+  // 轮询、随机、哈希没有「现在走哪条」：每条新连接各走各的，报一条出来只会误导。
+  if (policy.strategy !== "fallback") {
+    return { text: `每条新连接各走各的，共 ${policy.lines.length} 条`, note: null, tone: "normal" };
+  }
+  switch (report.kind) {
+    case "current":
+      return { text: `现在走 ${label(report.index)}${since(report.since)}`, note: null, tone: lineTone(report.index) };
+    case "lastSwitch":
+      return {
+        text: `最近一次切到 ${label(report.index)}${since(report.since)}`,
+        note: `这台 Agent 只在切换时报告：之后改过主备设置或重启过，就已经回到主出站了。${upgradeNote}`,
+        tone: lineTone(report.index),
+      };
+    case "unlisted":
+      return { text: `Agent 报的 ${report.target} 不在出站清单里`, note: "多半是刚改过配置，Agent 还没跟上。", tone: "warn" };
+    case "pending":
+      return policy.subject === "group"
+        ? { text: "还没选出入口", note: null, tone: "muted" }
+        : { text: "等 Agent 报告现在走哪条", note: null, tone: "muted" };
+    case "noSwitch":
+      return { text: "没有切换记录", note: upgradeNote, tone: "muted" };
+    case "offline":
+      return { text: "机器离线，不知道现在走哪条", note: null, tone: "muted" };
+    case "unsupported":
+      return { text: `Agent 早于 ${ROUTE_POLICY_AGENT_VERSION}，不报告现在走哪条`, note: null, tone: "muted" };
+    case "resolved": {
+      /*
+        转发组的成员有自己的健康：解析指着的那个要是不健康（一个健康的都没有时，解析保持原样），
+        不能因为「它就是首选」就标绿。
+      */
+      const health = policy.lines[report.index]?.health;
+      return {
+        text: `现在解析到 ${label(report.index)}`,
+        // 不写成「21:30 起」：手动同步、面板重启后都会原样重写一遍，这个时刻只能说明「最近写过」。
+        note: report.writtenAt ? `最近一次写入解析：${formatPolicyClock(report.writtenAt * 1000, nowMs, options.timeZone)}` : null,
+        tone: health === "down" ? "warn" : health === "unknown" ? "muted" : health === "standby" ? "deviated" : lineTone(report.index),
+      };
+    }
+    case "suggested":
+      // 不染色：DDNS 没开多半是有意的（自己改解析），不是出事。
+      return { text: `建议入口是 ${label(report.index)}`, note: "系统 DDNS 没开：面板只挑入口，不改解析。", tone: "muted" };
+    case "noDomain":
+      return { text: "只看成员健康，不切换", note: "没配 DDNS 域名。", tone: "muted" };
+    case "groupDisabled":
+      return { text: "转发组停用了：不检测、不切换", note: null, tone: "muted" };
+  }
+}
+
+/** 钉住期限的几个常用选项（秒）。编辑框和策略面板共用，别各写一份。 */
+export const PIN_DURATION_OPTIONS: Array<{ label: string; seconds: number | null }> = [
+  { label: "30 分钟", seconds: 1800 },
+  { label: "2 小时", seconds: 7200 },
+  { label: "12 小时", seconds: 43200 },
+  { label: "24 小时", seconds: 86400 },
+  { label: "一直", seconds: null },
+];
+
+/** 钉住期限（Unix 秒）；null 是一直钉着。 */
+export function pinUntilSeconds(durationSeconds: number | null, nowMs = Date.now()): number | null {
+  if (durationSeconds === null) return null;
+  return Math.floor(nowMs / 1000) + Math.max(60, Math.floor(durationSeconds));
+}

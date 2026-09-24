@@ -2,7 +2,11 @@ import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
-const badgeVariants = cva("inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2", {
+/*
+  whitespace-nowrap：徽标是一个词，不折行。支付页订单表里「待支付」被列宽挤成「待支 / 付」两行，
+  一个药丸形里竖着两行字，读起来像坏了。宁可让那一列宽一点（shadcn 上游后来也加了这一条）。
+*/
+const badgeVariants = cva("inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2", {
   variants: {
     variant: {
       default: "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",

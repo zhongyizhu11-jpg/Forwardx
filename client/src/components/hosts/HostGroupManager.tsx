@@ -1,4 +1,6 @@
 import DataSectionLoading from "@/components/DataSectionLoading";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
 import HostStatusLabel from "@/components/HostStatusLabel";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useOptimisticSortableOrder, useSortableReorder } from "@/components/SortableDragHandle";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -17,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { FolderKanban, Loader2, Pencil, Plus, Power, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import EmptyState from "@/components/EmptyState";
 
 export type HostGroupView = {
   id: number;
@@ -338,30 +341,23 @@ export default function HostGroupManager({
 
   const pending = createMutation.isPending || updateMutation.isPending;
   const groupActionButtons = (group: HostGroupView) => (
-    <div className="flex justify-end gap-1">
-      <Button variant="ghost" size="icon" className="h-8 w-8" title="编辑分组" onClick={() => openEdit(group)}>
-        <Pencil className="h-3.5 w-3.5" />
-      </Button>
-      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" title="删除分组" onClick={() => confirmDelete(group)}>
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
-    </div>
+    <EntityActions
+      primary={[{ key: "edit", label: "编辑", ariaLabel: `编辑分组 ${group.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => openEdit(group) }]}
+      menu={[{ key: "delete", label: "删除", ariaLabel: `删除分组 ${group.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => confirmDelete(group) }]}
+      menuLabel={`分组 ${group.name} 的更多操作`}
+    />
   );
 
+  /* 原来是一张虚线描边的卡片，图标再套一个主色方块 —— 和别处的空状态三个样子。 */
   const renderEmptyState = (className = "") => (
-    <Card className={`border-dashed border-border/55 bg-card/45 backdrop-blur-md ${className}`}>
-      <CardContent className="flex min-h-[240px] flex-col items-center justify-center px-5 py-12 text-center">
-        <span className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <FolderKanban className="h-5 w-5" />
-        </span>
-        <p className="mt-3 text-sm font-semibold">{isTextFiltered && sortedGroups.length > 0 ? "未找到匹配分组" : "暂无自定义分组"}</p>
-        <p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">
-          {isTextFiltered && sortedGroups.length > 0
-            ? "调整筛选内容或清空搜索"
-            : "未创建分组时，主机管理默认展示全部主机；需要按业务、地区或用途筛选时再添加分组。"}
-        </p>
-      </CardContent>
-    </Card>
+    <EmptyState
+      className={cn("min-h-[240px]", className)}
+      icon={<FolderKanban />}
+      title={isTextFiltered && sortedGroups.length > 0 ? "未找到匹配分组" : "暂无自定义分组"}
+      description={isTextFiltered && sortedGroups.length > 0
+        ? "调整筛选内容或清空搜索"
+        : "未创建分组时，主机管理默认展示全部主机；需要按业务、地区或用途筛选时再添加分组。"}
+    />
   );
 
   const renderGroupCard = (group: HostGroupView, options: { dragHandle?: any; sortableClassName?: string } = {}) => {
@@ -389,9 +385,7 @@ export default function HostGroupManager({
 
           <HostGroupHostPreview hostIds={hostIds} hostsById={hostsById} />
 
-          <div className="action-card-footer flex justify-end border-t border-border/40 pt-2">
-            {groupActionButtons(group)}
-          </div>
+          <CardActions>{groupActionButtons(group)}</CardActions>
         </CardContent>
       </Card>
     );

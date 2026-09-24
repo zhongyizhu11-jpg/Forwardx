@@ -48,3 +48,17 @@ export const CHART_SEMANTIC_COLORS = {
   path: "var(--fx-network-path)",
   delivery: "var(--fx-delivery)",
 } as const;
+
+/**
+ * 流量走势的两条线：入站 / 出站。
+ *
+ * 入站走路径青 ——「流动的数据」本来就是路径色的语义；出站走中性。
+ *
+ * 上一版是入站「正常」绿、出站「降级」琥珀，而且写死成 #10b981 / #f59e0b：出站
+ * 流量不是一个警告，一张流量图上一半的线是琥珀色，看着像有一半出了问题。进出
+ * 不是状态，只有一条线需要颜色来和另一条分开。
+ */
+export const CHART_TRAFFIC_COLORS = {
+  in: CHART_SEMANTIC_COLORS.path,
+  out: "var(--fx-text-muted)",
+} as const;

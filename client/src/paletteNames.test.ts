@@ -26,8 +26,15 @@ import test from "node:test";
  * 纯装饰（按卡片刷不同颜色、按类型刷不同颜色）不该有颜色，走中性。
  */
 
-const PALETTE = "emerald|amber|rose|sky|violet|lime|teal|cyan|indigo|fuchsia|orange|green|red|blue|yellow|purple|pink";
-const PATTERN = new RegExp(`\\b(?:${PALETTE})-(?:50|[1-9]00)(?:/\\d+)?\\b`);
+/*
+ * slate / gray / zinc / stone 也算：它们是**带色偏的灰**（slate 偏蓝、stone 偏暖），手册的规矩是
+ * 中性色一律 R=G=B —— 上一轮「发闷」的病根就是一屏偏蓝的灰。要纯灰用 neutral，或者直接用令牌。
+ * 色阶也补上 950：原来只认 50 / 100…900，Setup 页一个 text-emerald-950 和网络测试终端的
+ * bg-slate-950 就这样漏过去了。两样一起加进来时，按这条测试自己的算法数，代码里还有 10 行：
+ * 暗色下没打开的开关带蓝、几处加载文字、支付状态、v2rayN 的图标底、终端底色、Setup 那一处。
+ */
+const PALETTE = "emerald|amber|rose|sky|violet|lime|teal|cyan|indigo|fuchsia|orange|green|red|blue|yellow|purple|pink|slate|gray|zinc|stone";
+const PATTERN = new RegExp(`\\b(?:${PALETTE})-(?:50|[1-9]00|950)(?:/\\d+)?\\b`);
 
 /*
  * 注释里写得出这些名字 —— 好几段注释正是在解释「不要用 emerald-500」。
@@ -47,6 +54,30 @@ function walk(dir: string, out: string[] = []) {
   }
   return out;
 }
+
+/*
+ * 图表不许写死十六进制颜色。
+ *
+ * 上面那条只认调色板**类名**，挡不住 SVG 属性里的色值：首页流量图的
+ * stroke="#10b981" / "#f59e0b" 就是从这个缝里漏过去的 —— 类名清干净了，
+ * 图还是 emerald 和 amber，深色模式下也不跟着变。
+ */
+const HEX_COLOR = /#[0-9a-f]{3}(?:[0-9a-f]{3})?(?:[0-9a-f]{2})?\b/i;
+
+test("图表里不写死十六进制颜色", () => {
+  const root = path.resolve(import.meta.dirname);
+  const offenders: string[] = [];
+  for (const dir of ["components/charts", "features/dashboard"]) {
+    for (const file of walk(path.join(root, dir))) {
+      const lines = stripComments(fs.readFileSync(file, "utf8")).split("\n");
+      lines.forEach((line, index) => {
+        // url(#gradientId) 是引用，不是颜色。
+        if (HEX_COLOR.test(line.replace(/url\(#[^)]*\)/g, ""))) offenders.push(`${path.relative(root, file)}:${index + 1}`);
+      });
+    }
+  }
+  assert.deepEqual(offenders, [], `图表颜色走 lib/chartPalette（var(--fx-*)）：\n  ${offenders.join("\n  ")}`);
+});
 
 test("界面里不出现调色板名字，颜色一律走语义令牌", () => {
   const root = path.resolve(import.meta.dirname);

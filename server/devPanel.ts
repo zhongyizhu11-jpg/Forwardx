@@ -1209,24 +1209,28 @@ async function seedTunnelsAndGroups(adminId: number, hostIds: number[]): Promise
     protocol: "tcp",
     targetIp: "10.70.0.44",
     targetPort: 443,
+    // 配了域名、首选成员不健康、解析在第二个成员上：故障转移策略面板「没走首选」那一句靠它看得见。
+    domain: "api.dev.forwardx.local",
+    recordType: "A",
     chinaHealthCheckEnabled: true,
     chinaHealthCheckTarget: "www.qq.com:80",
     lastStatus: "healthy",
-    lastMessage: "JP node currently active",
+    lastMessage: "SG node currently active",
+    lastDdnsValue: "198.51.100.16",
     isEnabled: true,
     sortOrder: 1,
     createdAt: nowDate(),
     updatedAt: nowDate(),
   });
   const apiFailoverMembers = await addForwardGroupMembers(apiFailoverGroupId, [
-    { hostId: hostIds[1], connectHost: "fd00:10:10::20", latency: 39, priority: 1 },
+    { hostId: hostIds[1], connectHost: "fd00:10:10::20", latency: null, status: "unhealthy", chinaStatus: "unhealthy", priority: 1 },
     { hostId: hostIds[2], connectHost: "10.10.3.10", latency: 47, priority: 2 },
   ]);
   await executeRaw(
     `UPDATE ${quoteDbIdentifier("forward_groups")}
         SET ${quoteDbIdentifier("activeMemberId")} = ?
       WHERE ${quoteDbIdentifier("id")} = ?`,
-    [apiFailoverMembers[0], apiFailoverGroupId],
+    [apiFailoverMembers[1], apiFailoverGroupId],
   );
   await addGroupLatency(apiFailoverGroupId, 47);
 
@@ -1350,8 +1354,12 @@ async function seedRules(hostIds: number[], resources: DevResources, usersSeed: 
     { userId: usersSeed.adminId, hostId: hostIds[0], name: "Dev multi-entry/multi-exit tunnel", forwardType: "gost", protocol: "both", sourcePort: 24443, targetIp: "10.30.0.44", targetPort: 443, tunnelId: resources.tunnels.multiEntryMultiExitTunnelId, tunnelExitPort: 24444, sortOrder: 0, isRunning: true, proxyProtocolSend: true, proxyProtocolExitReceive: true },
     { userId: usersSeed.adminId, hostId: hostIds[0], name: "Primary TLS tunnel rule", forwardType: "gost", protocol: "tcp", sourcePort: 24080, targetIp: "10.30.0.80", targetPort: 80, tunnelId: resources.tunnels.primaryTunnelId, tunnelExitPort: 24081, sortOrder: 1, isRunning: true },
     { userId: usersSeed.adminId, hostId: hostIds[2], name: "SG WSS tunnel standby", forwardType: "gost", protocol: "tcp", sourcePort: 25080, targetIp: "10.90.0.80", targetPort: 80, tunnelId: resources.tunnels.sgUsWssTunnelId, tunnelExitPort: 25081, sortOrder: 2, isRunning: false, disabledByTunnel: true },
-    { userId: usersSeed.adminId, hostId: hostIds[0], name: "Relay TCP tunnel rule", forwardType: "gost", protocol: "both", sourcePort: 25180, targetIp: "10.91.0.80", targetPort: 8080, tunnelId: resources.tunnels.relayTcpTunnelId, tunnelExitPort: 25181, sortOrder: 3, isRunning: true, failoverEnabled: true, failoverTargets: JSON.stringify([{ targetIp: "10.91.0.81", targetPort: 8080 }]),
+    { userId: usersSeed.adminId, hostId: hostIds[0], name: "Relay TCP tunnel rule", forwardType: "gost", protocol: "tcp", sourcePort: 25180, targetIp: "10.91.0.80", targetPort: 8080, tunnelId: resources.tunnels.relayTcpTunnelId, tunnelExitPort: 25181, sortOrder: 3, isRunning: true, failoverEnabled: true, failoverTargets: JSON.stringify([{ targetIp: "10.91.0.81", targetPort: 8080 }, { targetIp: "10.91.0.82", targetPort: 8080 }]),
       // 演示「主线挂了、已经切到备线」这个状态；另一条不给上报，演示「Agent 还没报过」。
+      // 带一张时段表，主备策略面板里才有「按什么选」的几行可看。协议必须是 TCP：主备只支持
+      // TCP，原来写的 TCP+UDP 是一个界面上存不出来的状态，随便保存一次就会被服务端把主备整个关掉。
+      failoverSchedule: JSON.stringify({ timezone: "Asia/Shanghai", windows: [{ days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1 }] }),
+      failoverMinHoldSeconds: 600,
       failoverActiveTarget: "10.91.0.81:8080", failoverActiveAt: new Date() },
     { userId: usersSeed.adminId, hostId: hostIds[0], name: "Dev group template", forwardType: "nginx_stream", protocol: "both", sourcePort: 15566, targetIp: "10.20.0.88", targetPort: 25565, forwardGroupId: resources.groups.failoverGroupId, isForwardGroupTemplate: true, telegramErrorNotifyEnabled: true, sortOrder: 0, isRunning: false },
     { userId: usersSeed.adminId, hostId: hostIds[1], name: "API failover template", forwardType: "nginx_stream", protocol: "tcp", sourcePort: 16443, targetIp: "10.70.0.44", targetPort: 443, forwardGroupId: resources.groups.apiFailoverGroupId, isForwardGroupTemplate: true, telegramErrorNotifyEnabled: true, sortOrder: 1, isRunning: false, proxyProtocolSend: true },
@@ -1394,6 +1402,20 @@ async function seedRules(hostIds: number[], resources: DevResources, usersSeed: 
   for (const groupId of [resources.groups.chainGroupId, resources.groups.apiChainGroupId, resources.groups.longChainGroupId]) {
     await syncForwardGroupRules(groupId, { preserveRuntime: true, validatePorts: false });
   }
+  /*
+    转发组的子规则按所在机器定运行状态：在线机器上的在跑，掉线那台上的没在跑。
+
+    不补这一步，本地每个转发组都是「一条子规则都没在跑」—— 和组自己报的 healthy
+    自相矛盾，首页也会把每个转发组记成一条没在跑的转发。真实面板上子规则的运行
+    状态由 Agent 上报，这里只是替它报一次。
+  */
+  const q = quoteDbIdentifier;
+  await executeRaw(
+    `UPDATE ${q("forward_rules")} SET ${q("isRunning")} = ?`
+      + ` WHERE ${q("forwardGroupRuleId")} IS NOT NULL AND ${q("isEnabled")} = ?`
+      + ` AND ${q("hostId")} IN (SELECT ${q("id")} FROM ${q("hosts")} WHERE ${q("isOnline")} = ?)`,
+    [true, true, true],
+  );
 
   for (const [index, ruleId] of allRuleIds.entries()) {
     const rule = rules[index];
@@ -1425,6 +1447,18 @@ async function seedRules(hostIds: number[], resources: DevResources, usersSeed: 
       updatedAt: nowDate(),
     });
   }
+
+  /*
+    管理员账户的累计流量（首页「累计」那一格读的就是它）。真实面板上由流量上报
+    一路累加；这里按他名下规则的累计量合一份，否则本地首页永远写着「累计 0 B」，
+    而同一屏上近 24H 有几十 GB。三个租户的那一份在 seedUserState 里单独给。
+  */
+  await executeRaw(
+    `INSERT INTO ${q("user_traffic_counters")} (${q("userId")}, ${q("bytesIn")}, ${q("bytesOut")}, ${q("connections")})`
+      + ` SELECT ${q("userId")}, SUM(${q("bytesIn")}), SUM(${q("bytesOut")}), SUM(${q("connections")})`
+      + ` FROM ${q("forward_rule_traffic_counters")} WHERE ${q("userId")} = ? GROUP BY ${q("userId")}`,
+    [usersSeed.adminId],
+  );
 
   return {
     allRuleIds,
@@ -1608,6 +1642,24 @@ async function seedCatalog(adminId: number, resources: DevResources, hostIds: nu
     createdAt: nowDate(),
     updatedAt: nowDate(),
   });
+
+  /*
+    公开的按量计费资源：下面 seedUserState 里那两个都要单独授权，商店「按量计费」那一页在
+    开发面板里于是永远是空的，卡片长什么样只能靠猜。这里补两个公开的：一个隧道带说明、按倍率，
+    一个转发组不带说明、走默认明细 —— 两种卡片各一张。资源不能和那两个重复（唯一键）。
+  */
+  for (const config of [
+    { resourceType: "tunnel", resourceId: resources.tunnels.sgUsWssTunnelId, requiresPermission: false, pricePerGbMilliCents: 50000, multiplier: 150, description: "SG → US 专线，晚高峰也稳。\n按实际计费流量扣余额，不用买套餐。" },
+    { resourceType: "forward_group", resourceId: resources.groups.entryGroupId, requiresPermission: false, pricePerGbMilliCents: 20000, multiplier: 100, description: null },
+  ]) {
+    await insertAndGetId("traffic_billing_configs", {
+      ...config,
+      enabled: true,
+      pricePerGbCents: Math.round(config.pricePerGbMilliCents / 1000),
+      createdAt: nowDate(),
+      updatedAt: nowDate(),
+    });
+  }
 
   return {
     starterPlanId,

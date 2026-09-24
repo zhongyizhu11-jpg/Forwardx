@@ -1,6 +1,13 @@
-import { describeFailoverActiveLine, type FailoverActiveLine } from "@shared/failoverActiveLine";
-import { parseFailoverTargets } from "@shared/failoverTargets";
-import { normalizeFailoverStrategy, type FailoverStrategy } from "@/lib/ruleTransfer";
+import {
+  describeGroupRoutePolicy,
+  describeRoutePolicy,
+  describeRoutePolicyReport,
+  type GroupRoutePolicyOptions,
+  type RoutePolicy,
+  type RoutePolicyGroup,
+  type RoutePolicyHost,
+  type RoutePolicyReportText,
+} from "@shared/routePolicy";
 
 /**
  * 规则行上那一小块主备状态该说什么。
@@ -8,9 +15,21 @@ import { normalizeFailoverStrategy, type FailoverStrategy } from "@/lib/ruleTran
  * 原来列表上只有一个「主备 2」的计数徽标 —— 它回答的是「配了几条」，而人想
  * 知道的是「现在走的是哪条」。配了主备和没配主备在列表上长得几乎一样，等于
  * 这个功能配完就看不见了。
+ *
+ * 判断全在 shared/routePolicy：走哪条、这份报告能信到什么程度、走的是不是按规矩
+ * 该走的那条。这里只管压成徽标上的几个字和一个颜色。颜色不按「是不是在备用上」定 ——
+ * 晚上按时段表走备用 1 是排好的，不是出事；没走首选才值得看一眼。
  */
 
-export type FailoverLineTone = "idle" | "backup" | "warn" | "unreported";
+export type FailoverLineTone = RoutePolicyReportText["tone"];
+
+/** 徽标的颜色。规则卡、转发组卡片共用一份：同一种状态不能在两张卡上是两个颜色。 */
+export const FAILOVER_TONE_CLASS: Record<FailoverLineTone, string> = {
+  normal: "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]",
+  deviated: "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]",
+  warn: "border-destructive/40 text-destructive",
+  muted: "border-border text-muted-foreground",
+};
 
 export type FailoverLineDisplay = {
   /** 徽标上的短文案。 */
@@ -18,12 +37,10 @@ export type FailoverLineDisplay = {
   /** 鼠标悬停/读屏用的完整说明。 */
   title: string;
   tone: FailoverLineTone;
-  backupCount: number;
-  strategy: FailoverStrategy;
-  active: FailoverActiveLine | null;
+  policy: RoutePolicy;
 };
 
-const strategyText: Record<FailoverStrategy, string> = {
+const strategyText: Record<RoutePolicy["strategy"], string> = {
   fallback: "主备",
   round_robin: "轮询",
   random: "随机",
@@ -31,49 +48,47 @@ const strategyText: Record<FailoverStrategy, string> = {
 };
 
 export function describeFailoverLineDisplay(
-  rule: {
-    failoverEnabled?: unknown;
-    failoverStrategy?: unknown;
-    failoverTargets?: unknown;
-    targetIp?: unknown;
-    targetPort?: unknown;
-    failoverActiveTarget?: unknown;
-    failoverActiveAt?: unknown;
-  },
-  nowSeconds?: number,
+  rule: Parameters<typeof describeRoutePolicy>[0],
+  host?: RoutePolicyHost,
+  nowMs?: number,
 ): FailoverLineDisplay | null {
-  if (!rule?.failoverEnabled) return null;
-
-  const strategy = normalizeFailoverStrategy(rule?.failoverStrategy);
-  const backupCount = parseFailoverTargets(rule?.failoverTargets)
-    .filter((target) => target.targetIp && target.targetPort > 0).length;
-  const active = describeFailoverActiveLine(rule as any, nowSeconds);
-  const label = strategyText[strategy] || "主备";
-
-  // 还没有任何上报：多半是 Agent 版本不够，主备的新能力在它上面是收下了不执行。
-  if (!active) {
-    return {
-      text: `${label} ${backupCount}`,
-      title: `已配 ${backupCount} 条备用出站。Agent 还没报过当前走哪条 —— 需要 Agent 2.2.196 及以上。`,
-      tone: "unreported",
-      backupCount, strategy, active: null,
-    };
-  }
-
-  if (active.unknown) {
-    return {
-      text: `${label} · ${active.target}`,
-      title: `Agent 报的当前出站 ${active.target} 不在这条规则的出站清单里，多半是刚改过配置、Agent 还没跟上。`,
-      tone: "warn",
-      backupCount, strategy, active,
-    };
-  }
-
-  const staleNote = active.stale ? "（心跳超过 10 分钟没再确认，可能已经不是现在的样子）" : "";
+  const policy = describeRoutePolicy(rule, { host, nowMs });
+  if (!policy) return null;
+  const report = describeRoutePolicyReport(policy, { nowMs });
+  const label = strategyText[policy.strategy];
+  const activeIndex = policy.report.kind === "current" || policy.report.kind === "lastSwitch" ? policy.report.index : null;
   return {
-    text: `${label} · ${active.label}`,
-    title: `当前走${active.label}（${active.target}），共 ${backupCount} 条备用出站。${staleNote}`,
-    tone: active.stale ? "warn" : active.onBackup ? "backup" : "idle",
-    backupCount, strategy, active,
+    text: activeIndex !== null ? `${label} · ${policy.lines[activeIndex].label}` : `${label} ${policy.lines.length - 1}`,
+    // 每一句自己带句号，只有第一句（「现在走 备用 1，21:30 起」）是短语，补一个。
+    title: `${report.text}。${report.note || ""}${policy.divergence || ""}`,
+    tone: report.tone,
+    policy,
+  };
+}
+
+/**
+ * 转发组卡片上那一小块：域名现在解析到哪个成员。
+ *
+ * 原来卡片上只有成员胶囊，绿色的意思是「这个成员能用」，不是「解析指向它」—— 三个都是
+ * 绿的时候，看不出域名到底指着谁，只能去 DNS 服务商后台查。组停用了不给：卡片上已经写着停用。
+ */
+export function describeGroupPolicyDisplay(group: RoutePolicyGroup, options: GroupRoutePolicyOptions = {}): FailoverLineDisplay | null {
+  const policy = describeGroupRoutePolicy(group, options);
+  if (!policy || policy.report.kind === "groupDisabled") return null;
+  const report = describeRoutePolicyReport(policy, options);
+  const kind = policy.report;
+  const text = kind.kind === "resolved"
+    ? `解析 · ${policy.lines[kind.index].label}`
+    : kind.kind === "suggested"
+      ? `建议 · ${policy.lines[kind.index].label}`
+      : kind.kind === "noDomain"
+        ? "不切换"
+        : "未选出入口";
+  return {
+    text,
+    // 转发组的警告（比如「眼下没有健康的成员」）也要进悬停说明：徽标上只有几个字。
+    title: `${report.text}。${report.note || ""}${policy.divergence || ""}${policy.warnings.join("")}`,
+    tone: report.tone,
+    policy,
   };
 }

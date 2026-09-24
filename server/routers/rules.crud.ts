@@ -12,6 +12,8 @@ import {
   serializeFailoverSchedule,
   validateFailoverSchedule,
 } from "@shared/failoverSchedule";
+import { readFailoverPin } from "@shared/failoverPin";
+import { timestampMillis } from "@shared/timestamp";
 import { dbBool } from "../repositories/repositoryUtils";
 import { z } from "zod";
 import { planProxyNodeBinding } from "@shared/proxyNodeAutoBind";
@@ -137,6 +139,8 @@ async function requireRuleTelegramNotifyReady(enabled?: boolean) {
   }
 }
 
+const FAILOVER_INPUT_KEYS = Object.keys(failoverInputShape);
+
 type FailoverInput = {
   failoverEnabled?: boolean;
   failoverStrategy?: z.infer<typeof failoverStrategySchema>;
@@ -184,15 +188,6 @@ function normalizeFailoverScheduleInput(input: FailoverInput, backupCount: numbe
   return serializeFailoverSchedule(schedule);
 }
 
-/**
- * 人工钉住某一条出站。
- *
- * 钉住的是「排到最前」，不是「只许走它」—— 钉住的那条挂了仍然按优先级往下找。运维
- * 想要的是「现在走 B」，不是「B 死了也守着 B」，后者等于用一个应急开关制造一次故障。
- *
- * 指向不存在的出站一律当成没钉：宁可交回自动，也不能让一条规则因为一个坏值走不通。
- * 期限已经过去的也一样 —— 存一个从一开始就过期的钉子没有任何意义。
- */
 /** 库里存的是 Date（或秒），入参统一用 Unix 秒。 */
 function epochSecondsOf(value: unknown): number | null {
   if (value == null) return null;
@@ -201,14 +196,64 @@ function epochSecondsOf(value: unknown): number | null {
   return Number.isFinite(seconds) ? seconds : null;
 }
 
+/**
+ * 人工钉住某一条出站。
+ *
+ * 钉住的是「排到最前」，不是「只许走它」—— 钉住的那条挂了仍然按优先级往下找。运维
+ * 想要的是「现在走 B」，不是「B 死了也守着 B」，后者等于用一个应急开关制造一次故障。
+ *
+ * 指向不存在的出站一律当成没钉：宁可交回自动，也不能让一条规则因为一个坏值走不通。
+ * 期限已经过去的也一样 —— 存一个从一开始就过期的钉子没有任何意义。
+ *
+ * 只有主备（fallback）才存：轮询、随机、哈希本来就没有「首选是谁」，Agent 也不看
+ * 这一项。存着的话面板上写着「强制走 备用 1」，机器上什么都没发生。
+ */
 function normalizeFailoverPinInput(input: FailoverInput, backupCount: number, enabled: boolean) {
-  const index = Number(input.failoverPinnedIndex);
-  if (!enabled || !Number.isInteger(index) || index < 0 || index > backupCount) {
-    return { failoverPinnedIndex: null, failoverPinnedUntil: null };
-  }
-  const until = Math.floor(Number(input.failoverPinnedUntil || 0));
-  const valid = Number.isInteger(until) && until > Math.floor(Date.now() / 1000);
-  return { failoverPinnedIndex: index, failoverPinnedUntil: valid ? new Date(until * 1000) : null };
+  /*
+    读法交给 shared/failoverPin。上一版在这里 Number(input.failoverPinnedIndex)：
+    前端传 null 表示「自动」，Number(null) 是 0 —— 每一条从界面新建的主备规则都被
+    存成「钉在主出站、一直钉着」。另一处：已经过去的期限被当成「没填期限」，
+    过期的钉子一保存就复活成永久的。
+  */
+  const pin = enabled && (input.failoverStrategy || "fallback") === "fallback"
+    ? readFailoverPin(
+      { failoverPinnedIndex: input.failoverPinnedIndex, failoverPinnedUntil: input.failoverPinnedUntil },
+      { lineCount: backupCount + 1 },
+    )
+    : null;
+  if (!pin) return { failoverPinnedIndex: null, failoverPinnedUntil: null };
+  return { failoverPinnedIndex: pin.index, failoverPinnedUntil: pin.untilMs ? new Date(pin.untilMs) : null };
+}
+
+/**
+ * 编辑时，主备里哪些字段该沿用库里的值、哪些该换成这次传上来的。
+ *
+ * 「没传」（undefined）是沿用，「传了 null」是清空 —— 上一版一律写成
+ * `input.x ?? rule.x`，而 `??` 把 null 也当成没传：在编辑框里把「强制走」改回
+ * 「自动」、删光时段表、清空主出站探测目标，保存之后三样都原样留着。其中钉子最要命：
+ * 它压过时段表和自动择优，解不开就等于这两样永远不生效。
+ *
+ * 钉子的序号和期限是一对：传了其中一个，两个都以这次为准（期限传 null 就是一直钉着）。
+ */
+function mergeFailoverClearableFields(input: FailoverInput, rule: any) {
+  const pinProvided = input.failoverPinnedIndex !== undefined || input.failoverPinnedUntil !== undefined;
+  return {
+    failoverProbeTarget: input.failoverProbeTarget !== undefined ? input.failoverProbeTarget : rule?.failoverProbeTarget,
+    failoverSchedule: input.failoverSchedule !== undefined ? input.failoverSchedule : parseFailoverSchedule(rule?.failoverSchedule),
+    failoverPinnedIndex: pinProvided ? input.failoverPinnedIndex ?? null : rule?.failoverPinnedIndex,
+    failoverPinnedUntil: pinProvided ? input.failoverPinnedUntil ?? null : epochSecondsOf(rule?.failoverPinnedUntil),
+  };
+}
+
+/**
+ * 这次编辑有没有碰主备 —— 碰了就要整份重新归一化。
+ *
+ * 上一版只看策略、出站、切换/恢复时间和「恢复后切回」这几个字段。只改时段表或只改
+ * 钉子的一次保存不会触发归一化，原样的入参（时段表是个对象、期限是个秒数）就直接
+ * 顺着 `...input` 写进了库。
+ */
+function failoverFieldsProvided(input: FailoverInput) {
+  return FAILOVER_INPUT_KEYS.some((key) => (input as any)[key] !== undefined);
 }
 
 export function normalizeFailoverInput(input: FailoverInput, protocol?: string | null) {
@@ -487,6 +532,20 @@ async function forwardGroupTunnelMembersSupportMainBackup(group: any) {
   return true;
 }
 
+/**
+ * 这次要写的值和库里的一样吗。
+ *
+ * 钉住的期限是 Date，要写的和库里读出来的各是各的对象，`!==` 永远说「变了」——
+ * 按时刻比。其余字段照旧严格相等。
+ */
+function sameStoredValue(next: unknown, current: unknown) {
+  if (next instanceof Date || current instanceof Date) {
+    if (next == null || current == null) return next == null && current == null;
+    return timestampMillis(next) === timestampMillis(current);
+  }
+  return next === current;
+}
+
 function isFailoverHotUpdate(input: Record<string, unknown>, rule: any, nextHostId: number, nextTunnelId: number | null) {
   const changedFields = [
     "sourcePort",
@@ -507,10 +566,12 @@ function isFailoverHotUpdate(input: Record<string, unknown>, rule: any, nextHost
     "failoverSchedule",
     "failoverMinHoldSeconds",
     "failoverPinnedIndex",
+    "failoverPinnedUntil",
+    "failoverPreferFastest",
     "failoverSeconds",
     "recoverSeconds",
     "autoFailback",
-  ].filter((field) => input[field] !== undefined && input[field] !== rule?.[field]);
+  ].filter((field) => input[field] !== undefined && !sameStoredValue(input[field], rule?.[field]));
   if (changedFields.length === 0) return false;
   if (!dbBool(rule?.isEnabled) || !dbBool(rule?.isRunning) || !dbBool(rule?.failoverEnabled)) return false;
   if (input.failoverEnabled === false) return false;
@@ -528,6 +589,8 @@ function isFailoverHotUpdate(input: Record<string, unknown>, rule: any, nextHost
     "failoverSchedule",
     "failoverMinHoldSeconds",
     "failoverPinnedIndex",
+    "failoverPinnedUntil",
+    "failoverPreferFastest",
     "failoverSeconds",
     "recoverSeconds",
     "autoFailback",
@@ -1917,24 +1980,19 @@ export const crudRulesRouter = router({
             tunnelId: null,
           });
         }
+        const clearable = mergeFailoverClearableFields(input, rule);
         const data: any = {
           ...input,
-          ...(groupChanged || isForwardChain || isPortGroup || !nextMainBackupEnabled ||
-            input.failoverEnabled !== undefined ||
-            input.failoverStrategy !== undefined ||
-            input.failoverTargets !== undefined ||
-            input.failoverSeconds !== undefined ||
-            input.recoverSeconds !== undefined ||
-            input.autoFailback !== undefined
+          ...(groupChanged || isForwardChain || isPortGroup || !nextMainBackupEnabled || failoverFieldsProvided(input)
             ? normalizeFailoverInput({
                 failoverEnabled: nextMainBackupEnabled,
                 failoverStrategy: groupChanged ? "fallback" : input.failoverStrategy ?? (rule as any).failoverStrategy ?? "fallback",
                 failoverTargets: nextMainBackupEnabled && !groupChanged ? (input.failoverTargets ?? parseFailoverTargets((rule as any).failoverTargets)) : [],
-                failoverProbeTarget: nextMainBackupEnabled && !groupChanged ? (input.failoverProbeTarget ?? (rule as any).failoverProbeTarget) : null,
-                failoverSchedule: nextMainBackupEnabled && !groupChanged ? (input.failoverSchedule ?? parseFailoverSchedule((rule as any).failoverSchedule)) : null,
+                failoverProbeTarget: nextMainBackupEnabled && !groupChanged ? clearable.failoverProbeTarget : null,
+                failoverSchedule: nextMainBackupEnabled && !groupChanged ? clearable.failoverSchedule : null,
                 failoverMinHoldSeconds: nextMainBackupEnabled && !groupChanged ? (input.failoverMinHoldSeconds ?? Number((rule as any).failoverMinHoldSeconds || 0)) : 0,
-                failoverPinnedIndex: nextMainBackupEnabled && !groupChanged ? (input.failoverPinnedIndex ?? (rule as any).failoverPinnedIndex) : null,
-                failoverPinnedUntil: nextMainBackupEnabled && !groupChanged ? (input.failoverPinnedUntil ?? epochSecondsOf((rule as any).failoverPinnedUntil)) : null,
+                failoverPinnedIndex: nextMainBackupEnabled && !groupChanged ? clearable.failoverPinnedIndex : null,
+                failoverPinnedUntil: nextMainBackupEnabled && !groupChanged ? clearable.failoverPinnedUntil : null,
                 failoverPreferFastest: nextMainBackupEnabled && !groupChanged ? (input.failoverPreferFastest ?? !!(rule as any).failoverPreferFastest) : false,
                 failoverSeconds: groupChanged ? 60 : input.failoverSeconds ?? (rule as any).failoverSeconds,
                 recoverSeconds: groupChanged ? 120 : input.recoverSeconds ?? (rule as any).recoverSeconds,
@@ -2223,24 +2281,20 @@ export const crudRulesRouter = router({
       (data as any).hostId = nextHostIdForRule;
       if (input.targetIp !== undefined) (data as any).targetIp = normalizeRuleTargetIp(input.targetIp, { tunnelId: nextTunnelIdForRule });
       if (
-        input.failoverEnabled !== undefined ||
-        input.failoverStrategy !== undefined ||
-        input.failoverTargets !== undefined ||
-        input.failoverSeconds !== undefined ||
-        input.recoverSeconds !== undefined ||
-        input.autoFailback !== undefined ||
+        failoverFieldsProvided(input) ||
         routeChanged ||
         nextMainBackupEnabled !== requestedMainBackupEnabled
       ) {
+        const clearable = mergeFailoverClearableFields(input, rule);
         Object.assign(data as any, normalizeFailoverInput({
           failoverEnabled: nextMainBackupEnabled,
           failoverStrategy: routeChanged ? "fallback" : input.failoverStrategy ?? (rule as any).failoverStrategy ?? "fallback",
           failoverTargets: nextMainBackupEnabled && !routeChanged ? (input.failoverTargets ?? parseFailoverTargets((rule as any).failoverTargets)) : [],
-          failoverProbeTarget: nextMainBackupEnabled && !routeChanged ? (input.failoverProbeTarget ?? (rule as any).failoverProbeTarget) : null,
-          failoverSchedule: nextMainBackupEnabled && !routeChanged ? (input.failoverSchedule ?? parseFailoverSchedule((rule as any).failoverSchedule)) : null,
+          failoverProbeTarget: nextMainBackupEnabled && !routeChanged ? clearable.failoverProbeTarget : null,
+          failoverSchedule: nextMainBackupEnabled && !routeChanged ? clearable.failoverSchedule : null,
           failoverMinHoldSeconds: nextMainBackupEnabled && !routeChanged ? (input.failoverMinHoldSeconds ?? Number((rule as any).failoverMinHoldSeconds || 0)) : 0,
-          failoverPinnedIndex: nextMainBackupEnabled && !routeChanged ? (input.failoverPinnedIndex ?? (rule as any).failoverPinnedIndex) : null,
-          failoverPinnedUntil: nextMainBackupEnabled && !routeChanged ? (input.failoverPinnedUntil ?? epochSecondsOf((rule as any).failoverPinnedUntil)) : null,
+          failoverPinnedIndex: nextMainBackupEnabled && !routeChanged ? clearable.failoverPinnedIndex : null,
+          failoverPinnedUntil: nextMainBackupEnabled && !routeChanged ? clearable.failoverPinnedUntil : null,
           failoverPreferFastest: nextMainBackupEnabled && !routeChanged ? (input.failoverPreferFastest ?? !!(rule as any).failoverPreferFastest) : false,
           failoverSeconds: routeChanged ? 60 : input.failoverSeconds ?? (rule as any).failoverSeconds,
           recoverSeconds: routeChanged ? 120 : input.recoverSeconds ?? (rule as any).recoverSeconds,
@@ -2442,13 +2496,25 @@ export const crudRulesRouter = router({
         "failoverEnabled",
         "failoverStrategy",
         "failoverTargets",
+        /*
+          下面这几样上一版不在这张单子里：只改它们的一次保存不推给 Agent。Agent 连着
+          事件流时整轮对账是五分钟一次，配置变更全靠这一推 —— 于是「强制走 备用 1」
+          点下去，最长五分钟后机器才照做，而这正是应急时用的按钮。它们都是能热更新的
+          （见 isFailoverHotUpdate），推过去不会重启转发。
+        */
+        "failoverProbeTarget",
+        "failoverSchedule",
+        "failoverMinHoldSeconds",
+        "failoverPinnedIndex",
+        "failoverPinnedUntil",
+        "failoverPreferFastest",
         "failoverSeconds",
         "recoverSeconds",
         "autoFailback",
       ];
       const keyFieldChanged = watchedFields.some((f) => {
         const v = data[f];
-        return v !== undefined && v !== (rule as any)[f];
+        return v !== undefined && !sameStoredValue(v, (rule as any)[f]);
       });
       const failoverHotUpdate = keyFieldChanged
         && isFailoverHotUpdate(data as any, rule as any, nextHostIdForRule, nextTunnelIdForRule);

@@ -9,13 +9,10 @@ import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
 import {
   Activity,
-  ActivitySquare,
   ArrowLeftCircle,
   ArrowDownToLine,
-  ArrowRightLeft,
   ArrowUpFromLine,
   CalendarDays,
-  CircleCheck,
   Clock,
   Cpu,
   HardDrive,
@@ -25,7 +22,6 @@ import {
   Loader2,
   MemoryStick,
   Monitor,
-  MonitorCheck,
   Rows3,
   Server,
   X,
@@ -51,6 +47,10 @@ import {
 import { applyLatencyPeakCut, getLatencyYAxisTicks, normalizeLatencyProbeCounts } from "@/lib/latencyChart";
 import { cn } from "@/lib/utils";
 import NotFound from "@/pages/NotFound";
+import EmptyState from "@/components/EmptyState";
+import { EntityCard } from "@/components/entity/EntityCard";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
+import { StatusDot } from "@/components/network/StatusDot";
 
 type HostMonitorViewMode = "card" | "compact-card" | "table";
 
@@ -140,7 +140,7 @@ function formatChartTime(value: string | Date | number) {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function calculateMonitorSummary(hosts: any[], metricsByHostId: Map<number, any>, trafficByHostId: Map<number, any>) {
+export function calculateMonitorSummary(hosts: any[], metricsByHostId: Map<number, any>, trafficByHostId: Map<number, any>) {
   let currentTrafficIn = 0;
   let currentTrafficOut = 0;
   let totalTrafficIn = 0;
@@ -149,8 +149,15 @@ function calculateMonitorSummary(hosts: any[], metricsByHostId: Map<number, any>
     const hostId = Number(host.id);
     const metric = metricsByHostId.get(hostId);
     const traffic = trafficByHostId.get(hostId);
-    currentTrafficIn += Math.max(0, Number(metric?.networkSpeedIn) || 0);
-    currentTrafficOut += Math.max(0, Number(metric?.networkSpeedOut) || 0);
+    /*
+      瞬时速率只算在线的：离线机器的速率是掉线前最后两次采样算出来的，冻在那儿不动。
+      原来一起加进「当前瞬时流量」—— 4 台全离线，页头照样写着 12.49 MB/s。
+      累计流量是累计量，掉线不影响它，照常加。
+    */
+    if (host.isOnline) {
+      currentTrafficIn += Math.max(0, Number(metric?.networkSpeedIn) || 0);
+      currentTrafficOut += Math.max(0, Number(metric?.networkSpeedOut) || 0);
+    }
     totalTrafficIn += Math.max(0, Number(traffic?.bytesIn) || 0);
     totalTrafficOut += Math.max(0, Number(traffic?.bytesOut) || 0);
   }
@@ -170,115 +177,6 @@ function normalizeMonitorPathFromLocation(location: string) {
     .split("#")[0]
     .replace(/^\/+|\/+$/g, "")
     .toLowerCase() || "dev";
-}
-
-function HostMonitorStatCard({
-  title,
-  value,
-  subtitle,
-  icon: Icon,
-  leadingIcon: LeadingIcon,
-  leadingTone = "bg-[var(--fx-healthy)]",
-  tone = "bg-gradient-to-br from-chart-2/10 to-transparent",
-  iconTone = "bg-chart-2/10 text-chart-2",
-}: {
-  title: string;
-  value: string;
-  subtitle: string;
-  icon: LucideIcon;
-  leadingIcon?: LucideIcon;
-  leadingTone?: string;
-  tone?: string;
-  iconTone?: string;
-}) {
-  return (
-    <Card className="group relative h-full overflow-hidden border-border bg-card">
-      <CardContent className="relative flex h-full min-h-[108px] flex-col justify-center p-4">
-        <div className={`pointer-events-none absolute right-4 top-3.5 hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${iconTone}`}>
-          <Icon className="h-5 w-5" />
-        </div>
-        <p className="pr-12 text-xs font-medium text-muted-foreground">{title}</p>
-        <div className="mt-1 flex min-w-0 items-center gap-2.5 pr-12">
-          {LeadingIcon && (
-            <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg shadow-sm ${leadingTone}`}>
-              <LeadingIcon className="h-4 w-4 text-white" />
-            </div>
-          )}
-          <div className="min-w-0">
-            <span className="block truncate text-2xl font-bold leading-none tabular-nums" title={value}>{value}</span>
-            <p className="mt-2 truncate text-xs text-muted-foreground" title={subtitle}>{subtitle}</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function HostMonitorTrafficDirectionStat({
-  label,
-  value,
-  icon: Icon,
-  tone,
-}: {
-  label: string;
-  value: string;
-  icon: LucideIcon;
-  tone: string;
-}) {
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center gap-2.5">
-        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg shadow-sm ${tone}`}>
-          <Icon className="h-4 w-4 text-white" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs leading-4 text-muted-foreground">{label}</p>
-          <p className="mt-0.5 truncate text-lg font-semibold leading-tight tabular-nums" title={value}>{value}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function HostMonitorTrafficStatCard({
-  title,
-  inValue,
-  outValue,
-  icon: Icon,
-  tone = "bg-gradient-to-br from-chart-1/10 to-transparent",
-  iconTone = "bg-chart-1/10 text-chart-1",
-}: {
-  title: string;
-  inValue: string;
-  outValue: string;
-  icon: LucideIcon;
-  tone?: string;
-  iconTone?: string;
-}) {
-  return (
-    <Card className="group relative h-full overflow-hidden border-border bg-card">
-      <CardContent className="relative flex h-full min-h-[108px] flex-col justify-center p-4">
-        <div className={`pointer-events-none absolute right-4 top-3.5 hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-sm sm:flex ${iconTone}`}>
-          <Icon className="h-5 w-5" />
-        </div>
-        <p className="mb-2.5 pr-12 text-xs font-medium text-muted-foreground">{title}</p>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(128px,1fr))] gap-3 pr-0 sm:pr-9">
-          <HostMonitorTrafficDirectionStat
-            label="入向"
-            value={inValue}
-            icon={ArrowDownToLine}
-            tone="bg-[var(--fx-healthy)]"
-          />
-          <HostMonitorTrafficDirectionStat
-            label="出向"
-            value={outValue}
-            icon={ArrowUpFromLine}
-            tone="bg-[var(--fx-warn)]"
-          />
-        </div>
-      </CardContent>
-    </Card>
-  );
 }
 
 function PublicHostCard({
@@ -308,18 +206,25 @@ function PublicHostCard({
       ? Math.max(totalIn, totalOut)
       : totalIn + totalOut;
   const trafficPercent = trafficLimit > 0 ? Math.round((usedTraffic / trafficLimit) * 100) : 0;
+  /*
+    离线主机的 CPU / 内存 / 磁盘不显示数：一台离线的机器 CPU 不是 18%，是不知道（主机管理页
+    2.3.368 就这么改了，这一页原来没跟上 —— 离线的卡上照样写着 18%、42%）。流量是累计量，
+    掉线不影响它，照常显示。
+  */
   const metricItems = [
-    { key: "cpu", label: "CPU", icon: Cpu, value: cpuUsage, progress: cpuUsage },
-    { key: "memory", label: "内存", icon: MemoryStick, value: memoryUsage, progress: memoryUsage },
-    { key: "disk", label: "磁盘", icon: HardDrive, value: diskUsage, progress: diskUsage },
+    { key: "cpu", label: "CPU", icon: Cpu, value: isOnline ? cpuUsage : undefined, progress: isOnline ? cpuUsage : 0 },
+    { key: "memory", label: "内存", icon: MemoryStick, value: isOnline ? memoryUsage : undefined, progress: isOnline ? memoryUsage : 0 },
+    { key: "disk", label: "磁盘", icon: HardDrive, value: isOnline ? diskUsage : undefined, progress: isOnline ? diskUsage : 0 },
     { key: "traffic", label: "流量", icon: Activity, value: trafficLimit > 0 ? trafficPercent : null, progress: trafficLimit > 0 ? trafficPercent : 0 },
   ];
-  const cardMinHeightClass = compact ? "min-h-[220px]" : "min-h-[300px]";
-  const cardPaddingClass = compact ? "p-3" : "p-4";
-  const sectionPaddingClass = compact ? "p-2.5" : "p-3";
 
+  /*
+    原来一张卡里套四层小框（名字一框、四根进度条一框、入站出站各一框、累计和到期各一框），
+    外面还有悬停上浮加投影。现在是一块白：名字那一行、四根进度条、下面一张两列的小表。
+  */
   return (
-    <Card
+    <EntityCard
+      interactive={!!onSelect}
       role={onSelect ? "button" : undefined}
       tabIndex={onSelect ? 0 : undefined}
       onClick={() => onSelect?.(host)}
@@ -330,85 +235,54 @@ function PublicHostCard({
           onSelect(host);
         }
       }}
-      className={`${cardMinHeightClass} border-border bg-card transition-[border-color,background-color,box-shadow,transform] ${onSelect ? "cursor-pointer hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-lg hover:shadow-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" : ""} ${isOnline ? "hover:border-border/70" : "bg-muted/35 text-muted-foreground"}`}
+      className={cn(compact ? "gap-2 p-3" : "gap-3 p-[var(--fx-card-padding)]", onSelect && "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}
     >
-      <CardContent className={`${compact ? "space-y-2" : "space-y-3"} ${cardPaddingClass}`}>
-        <div className={`rounded-md border border-border/40 bg-background/35 ${sectionPaddingClass}`}>
-          <div className="flex min-w-0 items-center gap-2">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${isOnline ? "bg-chart-2 shadow-sm shadow-chart-2/50" : "bg-destructive shadow-sm shadow-destructive/50"}`} />
-            <span className="min-w-0 truncate text-sm font-semibold" title={host.name}>{host.name || "-"}</span>
-            <span className="shrink-0 rounded border border-border/50 bg-background/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">
-              {host.agentVersion ? `v${host.agentVersion}` : "未上报"}
-            </span>
-            <Badge variant="outline" className={`ml-auto shrink-0 text-[10px] ${isOnline ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]" : "border-destructive/30 text-destructive"}`}>
-              {isOnline ? "在线" : "离线"}
-            </Badge>
-          </div>
-          <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-xs">
-            <span className="shrink-0 text-muted-foreground">国家/地区：</span>
-            <HostRegionBadge host={host} compact />
-          </div>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <StatusDot health={isOnline ? "healthy" : "down"} label={isOnline ? "在线" : "离线"} />
+          <span className="min-w-0 truncate text-primary-type font-medium text-foreground" title={host.name}>{host.name || "-"}</span>
+          <span className="shrink-0 font-mono text-meta text-muted-foreground">{host.agentVersion ? `v${host.agentVersion}` : "未上报"}</span>
+          <span className={cn("ml-auto shrink-0 text-meta font-medium", isOnline ? "text-[var(--fx-healthy-text)]" : "text-[var(--fx-down-text)]")}>
+            {isOnline ? "在线" : "离线"}
+          </span>
         </div>
+        <div className="flex min-w-0 items-center gap-1.5 pl-4 text-meta text-muted-foreground">
+          <HostRegionBadge host={host} compact />
+        </div>
+      </div>
 
-        <div className={`rounded-md border border-border/40 bg-muted/20 ${sectionPaddingClass}`}>
-          <div className={compact ? "space-y-1.5" : "space-y-2"}>
-            {metricItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <div key={item.key} className="grid grid-cols-[18px_minmax(0,1fr)_52px] items-center gap-2 text-xs">
-                  <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-                  <Progress value={item.progress} className={metricUsageProgressClass(item.progress, isOnline)} />
-                  <span className="text-right font-medium tabular-nums">{item.value == null ? "∞" : formatPercent(item.value)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      <div className={compact ? "space-y-1.5" : "space-y-2"}>
+        {metricItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div key={item.key} className="grid grid-cols-[18px_minmax(0,1fr)_52px] items-center gap-2 text-meta">
+              <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-label={item.label} />
+              <Progress value={item.progress} className={metricUsageProgressClass(item.progress, isOnline)} />
+              <span className="text-right font-medium tabular-nums">
+                {item.value === undefined ? "—" : item.value == null ? "∞" : formatPercent(item.value)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
 
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 text-muted-foreground"><ArrowDownToLine className="h-3 w-3" /> 入站</span>
-              <span className="font-medium tabular-nums">{formatNetworkSpeed(metric?.networkSpeedIn)}</span>
-            </div>
-          </div>
-          <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 text-muted-foreground"><ArrowUpFromLine className="h-3 w-3" /> 出站</span>
-              <span className="font-medium tabular-nums">{formatNetworkSpeed(metric?.networkSpeedOut)}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2">
-            <div className="space-y-1">
-              <span className="flex items-center gap-1.5 text-muted-foreground"><ArrowRightLeft className="h-3 w-3" /> 累计</span>
-              <div className="truncate font-medium tabular-nums" title={`入 ${formatBytes(totalIn)} / 出 ${formatBytes(totalOut)}`}>
-                入 {formatBytes(totalIn)}
-              </div>
-              <div className="truncate font-medium tabular-nums">
-                出 {formatBytes(totalOut)}
-              </div>
-            </div>
-          </div>
-          <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2">
-            <div className="space-y-1">
-              <span className="flex items-center gap-1.5 text-muted-foreground"><CalendarDays className="h-3 w-3" /> 到期</span>
-              <div className="truncate font-medium tabular-nums" title={formatMonitorDate(host.stoppedAt)}>
-                {formatMonitorDate(host.stoppedAt)}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 text-xs">
-          <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="text-muted-foreground">运行时间</span>
-          <span className="ml-auto font-medium tabular-nums">{metric?.uptime == null ? "-" : formatUptime(metric.uptime)}</span>
-        </div>
-      </CardContent>
-    </Card>
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-[var(--fx-stroke-weak)] pt-2 text-meta">
+        <dt className="text-muted-foreground" title={isOnline ? "当前瞬时流量" : "最后一次上报时的瞬时流量 —— 机器已离线，这不是现在的速率"}>
+          {isOnline ? "当前" : "最后一次"}
+        </dt>
+        <dd className="truncate text-right tabular-nums text-foreground">
+          入 {formatNetworkSpeed(metric?.networkSpeedIn)} · 出 {formatNetworkSpeed(metric?.networkSpeedOut)}
+        </dd>
+        <dt className="text-muted-foreground">累计</dt>
+        <dd className="truncate text-right tabular-nums text-foreground" title={`入 ${formatBytes(totalIn)} / 出 ${formatBytes(totalOut)}`}>
+          入 {formatBytes(totalIn)} · 出 {formatBytes(totalOut)}
+        </dd>
+        <dt className="text-muted-foreground">到期</dt>
+        <dd className="truncate text-right tabular-nums text-foreground" title={formatMonitorDate(host.stoppedAt)}>{formatMonitorDate(host.stoppedAt)}</dd>
+        <dt className="text-muted-foreground">{isOnline ? "运行时间" : "离线前运行"}</dt>
+        <dd className="truncate text-right tabular-nums text-foreground">{metric?.uptime == null ? "-" : formatUptime(metric.uptime)}</dd>
+      </dl>
+    </EntityCard>
   );
 }
 
@@ -504,6 +378,7 @@ function PublicHostTable({
               const metric = metricsByHostId.get(Number(host.id));
               const traffic = trafficByHostId.get(Number(host.id));
               const isOnline = !!host.isOnline;
+              // 离线主机的 CPU / RAM / Disk 不给数（不是 0%，是不知道）；速率照留，悬停说明是掉线前最后一次的。
               const memoryDetail = formatMetricSizeDetail(metric?.memoryUsed, host.memoryTotal);
               const diskDetail = formatMetricSizeDetail(metric?.diskUsed, metric?.diskTotal);
               return (
@@ -533,13 +408,13 @@ function PublicHostTable({
                     </div>
                   </TableCell>
                   <TableCell className="px-3 py-3">
-                    <PublicHostListResourceMetric icon={Cpu} label="CPU" value={metric?.cpuUsage} isOnline={isOnline} />
+                    <PublicHostListResourceMetric icon={Cpu} label="CPU" value={isOnline ? metric?.cpuUsage : undefined} isOnline={isOnline} />
                   </TableCell>
                   <TableCell className="px-3 py-3">
-                    <PublicHostListResourceMetric icon={MemoryStick} label="RAM" value={metric?.memoryUsage} detail={memoryDetail} isOnline={isOnline} />
+                    <PublicHostListResourceMetric icon={MemoryStick} label="RAM" value={isOnline ? metric?.memoryUsage : undefined} detail={isOnline ? memoryDetail : undefined} isOnline={isOnline} />
                   </TableCell>
                   <TableCell className="px-3 py-3">
-                    <PublicHostListResourceMetric icon={HardDrive} label="Disk" value={metric?.diskUsage} detail={diskDetail} isOnline={isOnline} />
+                    <PublicHostListResourceMetric icon={HardDrive} label="Disk" value={isOnline ? metric?.diskUsage : undefined} detail={isOnline ? diskDetail : undefined} isOnline={isOnline} />
                   </TableCell>
                   <TableCell className="px-3 py-3">
                     <PublicHostListFlowPair
@@ -553,8 +428,8 @@ function PublicHostTable({
                     <PublicHostListFlowPair
                       inValue={formatOptionalBytesPerSecond(metric?.networkSpeedIn)}
                       outValue={formatOptionalBytesPerSecond(metric?.networkSpeedOut)}
-                      inTitle="实时入向"
-                      outTitle="实时出向"
+                      inTitle={isOnline ? "实时入向" : "最后一次上报时的入向速率 —— 机器已离线，这不是现在的速率"}
+                      outTitle={isOnline ? "实时出向" : "最后一次上报时的出向速率 —— 机器已离线，这不是现在的速率"}
                     />
                   </TableCell>
                   <TableCell className="px-3 py-3">
@@ -993,28 +868,44 @@ export default function HostMonitor() {
           />
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              <HostMonitorStatCard
-                title="在线状态"
-                value={`${onlineCount} / ${totalCount}`}
-                subtitle={totalCount - onlineCount > 0 ? `离线 ${Math.max(0, totalCount - onlineCount)} 台` : "全部在线"}
-                icon={MonitorCheck}
-                leadingIcon={CircleCheck}
-              />
-              <HostMonitorTrafficStatCard
-                title="当前瞬时流量"
-                inValue={formatNetworkSpeed(summary?.currentTrafficIn)}
-                outValue={formatNetworkSpeed(summary?.currentTrafficOut)}
-                icon={ActivitySquare}
-              />
-              <HostMonitorTrafficStatCard
-                title="累计流量"
-                inValue={formatBytes(summary?.totalTrafficIn || 0)}
-                outValue={formatBytes(summary?.totalTrafficOut || 0)}
-                icon={ArrowRightLeft}
-                iconTone="bg-chart-4/10 text-chart-4"
-              />
-            </div>
+            {/*
+              原来是三张统计卡，各带一个彩色图标方块 —— 「在线状态 0 / 4」旁边是一个绿色的对勾，
+              4 台全离线也是绿的。颜色只说状态：一台都不在线是红，部分在线是琥珀，全在线才是绿。
+            */}
+            <SummaryStrip
+              ariaLabel="主机监控概览"
+              items={[
+                {
+                  key: "online",
+                  label: "在线",
+                  value: `${onlineCount} / ${totalCount}`,
+                  hint: totalCount - onlineCount > 0 ? `离线 ${Math.max(0, totalCount - onlineCount)} 台` : "全部在线",
+                  tone: totalCount === 0 ? undefined : onlineCount === 0 ? "down" : onlineCount < totalCount ? "warn" : "healthy",
+                },
+                {
+                  key: "speed",
+                  label: "当前瞬时流量",
+                  value: `入 ${formatNetworkSpeed(summary?.currentTrafficIn)}`,
+                  /*
+                    「只算在线的 N 台」在手机上放不下（三格一行，一格不到 100px），截断成「只算…」
+                    反而让人疑惑；手机上只留出向，旁边那格已经写着离线几台。整句放进 title。
+                  */
+                  hint: (
+                    <>
+                      出 {formatNetworkSpeed(summary?.currentTrafficOut)}
+                      {totalCount - onlineCount > 0 ? <span className="hidden sm:inline"> · 只算在线的 {onlineCount} 台</span> : null}
+                    </>
+                  ),
+                  title: totalCount - onlineCount > 0 ? `离线的 ${totalCount - onlineCount} 台不算：它们的速率是掉线前最后一次的，不是现在的` : undefined,
+                },
+                {
+                  key: "total",
+                  label: "累计流量",
+                  value: `入 ${formatBytes(summary?.totalTrafficIn || 0)}`,
+                  hint: `出 ${formatBytes(summary?.totalTrafficOut || 0)}`,
+                },
+              ]}
+            />
 
             <div className="flex min-h-9 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 gap-2 overflow-x-auto pb-1 sm:pb-0">
@@ -1080,13 +971,7 @@ export default function HostMonitor() {
               </div>
               )
             ) : (
-              <Card className="border-border bg-card">
-                <CardContent className="flex min-h-[240px] flex-col items-center justify-center p-8 text-center text-muted-foreground">
-                  <Server className="mb-3 h-10 w-10 opacity-50" />
-                  <p className="font-medium text-foreground">暂无主机</p>
-                  <p className="mt-1 text-sm">后台添加主机后会在这里展示。</p>
-                </CardContent>
-              </Card>
+              <EmptyState className="min-h-[240px]" icon={<Server />} title="暂无主机" description="后台添加主机后会在这里展示。" />
             )}
           </>
         )}

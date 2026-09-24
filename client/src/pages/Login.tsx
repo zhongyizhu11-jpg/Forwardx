@@ -173,9 +173,9 @@ function ImageCaptchaField(props: {
               draggable={false}
             />
           ) : props.loading ? (
-            <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           ) : (
-            <span className="text-sm text-slate-500">验证码暂不可用</span>
+            <span className="text-sm text-muted-foreground">验证码暂不可用</span>
           )}
         </div>
         <button

@@ -892,6 +892,27 @@ export async function insertAndGetId(tableName: string, values: Record<string, a
   throw new DatabaseNotConfiguredError();
 }
 
+/**
+ * 原生 SQL 查出来的时间列 → Date。
+ *
+ * 时间列在三种数据库里都存成「秒」，走 ORM 时由 epoch 列类型的 fromDriver 换成 Date；
+ * queryRaw 绕过了它，拿到的是原始值：SQLite / MySQL 是数字秒，PostgreSQL 的 int 可能是字符串。
+ * 前端拿数字秒直接 new Date() 会当成毫秒 —— 诊断对话框里「上次诊断」就显示成了 1970 年 1 月。
+ * 大于 1e10 的按毫秒认（已经是毫秒的值原样用）。
+ */
+export function rawEpochToDate(value: unknown): Date | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const n = Number(value);
+  if (Number.isFinite(n)) {
+    // 数字形态的只按秒 / 毫秒认；0 和负数当「没有」—— 不能落到下面去解析字符串，
+    // V8 会把 new Date("0") 解析成 2000 年 1 月 1 日。
+    return n > 0 ? new Date(n > 10_000_000_000 ? n : n * 1000) : null;
+  }
+  const parsed = new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export function nowDate() {
   return new Date();
 }

@@ -1,5 +1,6 @@
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DashboardLayout from "@/components/DashboardLayout";
+import EmptyState from "@/components/EmptyState";
 import { MILLI_CENTS_PER_CENT, pricePerGbMilliCentsOf } from "@shared/trafficBillingPrice";
 import { formatQuotaBytes } from "@shared/formatBytes";
 import { formatMoneyCents as money, formatMoneyMilliCents as moneyFromMilliCents } from "@shared/formatMoney";
@@ -13,6 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import DataSectionError from "@/components/DataSectionError";
+import { EntityCard } from "@/components/entity/EntityCard";
+import { segmentedControlClassName, segmentedOptionClassName } from "@/components/ui/segmented";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { planResourceText } from "@/lib/planDisplay";
 import { trpc } from "@/lib/trpc";
@@ -25,7 +28,7 @@ import {
   type PlanPricingOption,
   planMonthlyEquivalentCents,
 } from "@shared/planPricing";
-import { CheckCircle2, Coins, CreditCard, Lock, Package, RefreshCw, Route, Server, ShoppingBag, TicketPercent, WalletCards } from "lucide-react";
+import { Check, CheckCircle2, Coins, CreditCard, Lock, Package, RefreshCw, Route, Server, ShoppingBag, TicketPercent, WalletCards } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
@@ -98,106 +101,79 @@ function StorePlanCard({
   const [selectedDays, setSelectedDays] = useState<number>(() => defaultPricingOption(options)?.durationDays ?? 30);
   const active = findPricingOption(options, selectedDays) || defaultPricingOption(options) || options[0];
 
+  /*
+    V1 这张卡是五层：顶上一条渐变装饰线、一个图标方块、「周期 / 端口」两个小框（套在一个
+    灰框里，第一格还浮起来一层）、一个装权益的框、最底下价格。周期就写在价格后面
+    （「/ 一个月」），端口就是权益第一条「连续端口 20 个」—— 那两个小框把同样的话又说了
+    一遍，而买的人最先找的价格压在最底下。
+
+    现在是一块白：名字 → 价格（一眼先看到）→ 多档时的周期切换（切了价格就在它上面变）
+    → 权益清单 → 购买。
+  */
   return (
-    <div className="flex min-h-[29rem] flex-col overflow-hidden rounded-lg border border-border/40 bg-card/60 shadow-sm backdrop-blur-md transition-colors hover:border-primary/35">
-      <div className="h-1.5 bg-gradient-to-r from-primary/45 via-primary/20 to-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)]" />
+    <EntityCard className="h-full p-[var(--fx-card-padding)]">
+      <h3 className="line-clamp-1 text-primary-type font-semibold text-foreground">{plan.name}</h3>
+      {/* div 不用 p：手机上 `.workspace-main p` 会在名字和说明之间再撑出 12px。 */}
+      <div className="mt-1 line-clamp-3 text-secondary-type text-muted-foreground">{description}</div>
 
-      <div className="flex flex-1 flex-col gap-4 p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-md border border-primary/15 bg-primary/10 text-primary">
-              <Package className="h-5 w-5" />
-            </div>
-            <h3 className="line-clamp-1 text-base font-semibold text-foreground">{plan.name}</h3>
-            <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">
-              {description}
-            </p>
-          </div>
-          <Badge variant="outline" className="shrink-0 border-primary/25 bg-primary/5 text-primary">
-            {durationLabel(active?.durationDays)}
-          </Badge>
-        </div>
-
-        {/*
-          多档时才出现这一排。只有一档的套餐（存量全是这样）看起来跟以前一模一样 ——
-          一个按钮的切换器是纯噪音。
-        */}
-        {options.length > 1 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {options.map((option) => {
-              const isActive = option.durationDays === active?.durationDays;
-              return (
-                <button
-                  key={option.durationDays}
-                  type="button"
-                  onClick={() => setSelectedDays(option.durationDays)}
-                  className={`relative rounded-md border px-2.5 py-1.5 text-xs transition-colors ${
-                    isActive
-                      ? "border-primary bg-primary/10 font-medium text-primary"
-                      : "border-border/60 text-muted-foreground hover:border-primary/40"
-                  }`}
-                >
-                  {durationLabel(option.durationDays)}
-                  {option.discountPercent > 0 ? (
-                    <span className="ml-1 rounded-sm bg-[var(--fx-healthy-soft)] px-1 text-[10px] font-medium text-[var(--fx-healthy-text)]">
-                      省 {option.discountPercent}%
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-
-        <div className="grid grid-cols-2 gap-2 rounded-md border border-border/50 bg-muted/25 p-1">
-          <div className="rounded-[6px] bg-background/80 px-3 py-2 shadow-sm">
-            <div className="text-[11px] font-medium text-muted-foreground">周期</div>
-            <div className="mt-1 truncate text-sm font-semibold text-foreground">{durationLabel(active?.durationDays)}</div>
-          </div>
-          <div className="rounded-[6px] px-3 py-2">
-            <div className="text-[11px] font-medium text-muted-foreground">端口</div>
-            <div className="mt-1 truncate text-sm font-semibold text-foreground">{plan.portCount || 0} 个</div>
-          </div>
-        </div>
-
-        <div className="flex-1 rounded-md border border-border/40 bg-background/35 p-4">
-          <p className="text-sm font-semibold text-foreground">套餐权益</p>
-          <ul className="mt-3 space-y-2.5">
-            {benefits.map((item) => (
-              <li key={item} className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 text-xs leading-5 text-muted-foreground">
-                <span className="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <CheckCircle2 className="h-3 w-3" />
-                </span>
-                <span className="break-words">{item}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="flex flex-col gap-3 border-t border-border/40 pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="break-words text-2xl font-semibold tracking-tight text-foreground">
-              {money(active?.priceCents ?? plan.priceCents, plan.currency)}
-            </div>
-            <div className="mt-0.5 text-[11px] font-medium text-muted-foreground">
-              / {durationLabel(active?.durationDays)}
-              {/* 长周期总价更大，换算成每月多少钱才好跟月付比。 */}
-              {options.length > 1 && active && active.durationDays >= 60
-                ? ` · 约 ${money(planMonthlyEquivalentCents(active), plan.currency)} / 月`
-                : ""}
-            </div>
-          </div>
-          <Button
-            className="h-9 shrink-0 px-4"
-            onClick={() => active && onBuy(active)}
-            disabled={purchasing || !active}
-          >
-            <ShoppingBag className="mr-2 h-4 w-4" />
-            购买套餐
-          </Button>
-        </div>
+      <div className="mt-4 flex flex-wrap items-baseline gap-x-1.5">
+        <span className="break-words text-metric font-semibold tabular-nums text-foreground">
+          {money(active?.priceCents ?? plan.priceCents, plan.currency)}
+        </span>
+        <span className="text-meta text-muted-foreground">
+          / {durationLabel(active?.durationDays)}
+          {/* 长周期总价更大，换算成每月多少钱才好跟月付比。 */}
+          {options.length > 1 && active && active.durationDays >= 60
+            ? ` · 约 ${money(planMonthlyEquivalentCents(active), plan.currency)} / 月`
+            : ""}
+        </span>
       </div>
-    </div>
+
+      {/*
+        多档时才出现这一排。只有一档的套餐（存量全是这样）看起来跟以前一模一样 ——
+        一个按钮的切换器是纯噪音。
+      */}
+      {options.length > 1 ? (
+        <div className={`${segmentedControlClassName} mt-3 flex flex-wrap gap-1`} role="group" aria-label="购买周期">
+          {options.map((option) => {
+            const isActive = option.durationDays === active?.durationDays;
+            return (
+              <button
+                key={option.durationDays}
+                type="button"
+                aria-pressed={isActive}
+                onClick={() => setSelectedDays(option.durationDays)}
+                className={segmentedOptionClassName(isActive, false, "h-8 flex-1 px-2.5 text-xs")}
+              >
+                {durationLabel(option.durationDays)}
+                {option.discountPercent > 0 ? (
+                  <span className="text-[var(--fx-healthy-text)]">省 {option.discountPercent}%</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <ul className="mt-4 flex-1 space-y-2" aria-label="套餐权益">
+        {benefits.map((item) => (
+          <li key={item} className="flex items-start gap-2 text-secondary-type text-foreground">
+            {/* 勾是「包含」，不是状态 —— 不染健康绿。 */}
+            <Check className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="min-w-0 break-words">{item}</span>
+          </li>
+        ))}
+      </ul>
+
+      <Button
+        className="mt-5 w-full"
+        onClick={() => active && onBuy(active)}
+        disabled={purchasing || !active}
+      >
+        <ShoppingBag className="mr-2 h-4 w-4" />
+        购买套餐
+      </Button>
+    </EntityCard>
   );
 }
 
@@ -430,12 +406,12 @@ export default function Store() {
                       onRetry={() => { void refetchPlans(); }}
                     />
                   ) : (
-                    <Card className="col-span-full">
-                      <CardHeader>
-                        <CardTitle>暂无可购买套餐</CardTitle>
-                        <CardDescription>管理员还没有把套餐放上商店，需要的话可以联系他分配。</CardDescription>
-                      </CardHeader>
-                    </Card>
+                    <EmptyState
+                      className="col-span-full"
+                      icon={<Package />}
+                      title="暂无可购买套餐"
+                      description="管理员还没有把套餐放上商店，需要的话可以联系他分配。"
+                    />
                   ))}
                 </AutoAnimateContainer>
               )}
@@ -447,40 +423,44 @@ export default function Store() {
               ) : (
                 <AutoAnimateContainer className="standard-card-grid gap-4">
                   {(trafficBillingStore?.configs || []).map((config: any) => (
-                    <Card key={`${config.resourceType}-${config.resourceId}`} className="flex flex-col">
-                      <CardHeader>
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <CardTitle className="flex items-center gap-2">
-                              {config.resourceType === "host" ? <Server className="h-5 w-5" /> : <Route className="h-5 w-5" />}
-                              {config.resourceName}
-                            </CardTitle>
-                            <CardDescription className="mt-2">余额可用时可直接在转发规则中使用。</CardDescription>
-                          </div>
-                          <Badge variant="outline">{config.resourceKind || (config.resourceType === "host" ? "整台主机" : config.resourceType === "tunnel" ? "隧道转发" : "转发资源")}</Badge>
+                    /*
+                      和套餐卡同一种画法：名字 → 单价 → 明细。原来底下还套着一个灰框写「该资源无需
+                      购买套餐；账户有余额即可使用」—— 和明细最后一行「按实际计费流量从余额扣费」
+                      是同一件事，并成一句。
+                    */
+                    <EntityCard key={`${config.resourceType}-${config.resourceId}`} className="h-full p-[var(--fx-card-padding)]">
+                      <div className="flex items-start justify-between gap-3">
+                        <h3 className="flex min-w-0 items-center gap-2 text-primary-type font-semibold text-foreground">
+                          {config.resourceType === "host" ? <Server className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : <Route className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
+                          <span className="truncate">{config.resourceName}</span>
+                        </h3>
+                        <Badge variant="outline">{config.resourceKind || (config.resourceType === "host" ? "整台主机" : config.resourceType === "tunnel" ? "隧道转发" : "转发资源")}</Badge>
+                      </div>
+                      <div className="mt-1 text-secondary-type text-muted-foreground">余额可用时可直接在转发规则中使用。</div>
+                      <div className="mt-4 flex flex-wrap items-baseline gap-x-1.5">
+                        <span className="text-metric font-semibold tabular-nums text-foreground">{moneyFromMilliCents(effectiveBillingPriceMilliCents(config))}</span>
+                        <span className="text-meta text-muted-foreground">/ 计费 GB</span>
+                      </div>
+                      {billingDescription(config) ? (
+                        <div className="mt-3 whitespace-pre-line break-words text-secondary-type text-muted-foreground">
+                          {billingDescription(config)}
                         </div>
-                      </CardHeader>
-                      <CardContent className="flex-1 space-y-4">
-                        <div className="text-3xl font-semibold">{moneyFromMilliCents(effectiveBillingPriceMilliCents(config))}<span className="ml-1 text-sm font-normal text-muted-foreground">/ 计费 GB</span></div>
-                        {billingDescription(config) ? (
-                          <div className="whitespace-pre-line break-words text-sm leading-7 text-muted-foreground">
-                            {billingDescription(config)}
+                      ) : (
+                        <>
+                          <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-secondary-type">
+                            <dt className="text-muted-foreground">基础单价</dt>
+                            <dd className="tabular-nums text-foreground">{moneyFromMilliCents(pricePerGbMilliCentsOf(config))} / GB</dd>
+                            <dt className="text-muted-foreground">倍率</dt>
+                            <dd className="tabular-nums text-foreground">{config.multiplierText || formatTrafficMultiplier(config.multiplier || 100)}</dd>
+                            <dt className="text-muted-foreground">资源编号</dt>
+                            <dd className="font-mono text-foreground">#{config.resourceId}</dd>
+                          </dl>
+                          <div className="mt-3 text-meta text-muted-foreground">
+                            创建规则时选择该资源，按实际计费流量从余额扣费；不用买套餐，账户有余额就能用。
                           </div>
-                        ) : (
-                          <>
-                            <div className="grid gap-2 text-sm text-muted-foreground">
-                              <div>基础单价：{moneyFromMilliCents(pricePerGbMilliCentsOf(config))} / GB</div>
-                              <div>倍率：{config.multiplierText || formatTrafficMultiplier(config.multiplier || 100)}</div>
-                              <div>资源编号：#{config.resourceId}</div>
-                              <div>创建规则时选择该资源，按实际计费流量从余额扣费。</div>
-                            </div>
-                            <div className="rounded-lg border border-border/60 bg-muted/20 p-3 text-sm text-muted-foreground">
-                              该资源无需购买套餐；账户有余额即可使用。
-                            </div>
-                          </>
-                        )}
-                      </CardContent>
-                    </Card>
+                        </>
+                      )}
+                    </EntityCard>
                   ))}
                   {(trafficBillingStore?.configs || []).length === 0 && trafficBillingError && (
                     <DataSectionError
@@ -492,12 +472,12 @@ export default function Store() {
                     />
                   )}
                   {(trafficBillingStore?.configs || []).length === 0 && !trafficBillingError && (
-                    <Card className="col-span-full">
-                      <CardHeader>
-                        <CardTitle>暂无公开按量计费资源</CardTitle>
-                        <CardDescription>管理员公开资源后会在这里展示倍率和单价。</CardDescription>
-                      </CardHeader>
-                    </Card>
+                    <EmptyState
+                      className="col-span-full"
+                      icon={<Coins />}
+                      title="暂无公开按量计费资源"
+                      description="管理员公开资源后会在这里展示倍率和单价。"
+                    />
                   )}
                 </AutoAnimateContainer>
               )}

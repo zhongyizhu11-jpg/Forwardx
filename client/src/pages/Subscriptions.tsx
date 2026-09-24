@@ -1,5 +1,7 @@
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DashboardLayout from "@/components/DashboardLayout";
+import EmptyState from "@/components/EmptyState";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import { quotaSourceLabel, subscriptionSourceLabel, subscriptionStatusLabel } from "@shared/ledgerLabels";
 import { formatQuotaBytes } from "@shared/formatBytes";
 import { formatMoneyCents as money } from "@shared/formatMoney";
@@ -290,23 +292,22 @@ export default function Subscriptions() {
             </Badge>
           </>} />
 
+        {/*
+          额度这一条原来是页面上两根横线夹着的一行字，和别的页头那条摘要（一块白、细线分栏）
+          不是一种画法。说的是同一类事 —— 几个数并排 —— 就用同一条。
+        */}
         {!isLoading && quota.hasQuota && (
-          <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-y border-border/50 py-3 sm:flex sm:flex-wrap sm:items-center sm:gap-x-8">
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground">当前总额度</p>
-              <p className="mt-0.5 truncate text-sm font-semibold tabular-nums">
-                {quota.unlimited ? "不限" : formatQuotaBytes(effectiveTrafficLimit)}
-              </p>
-            </div>
-            {quota.sources.map((source) => (
-              <div key={source.kind} className="min-w-0">
-                <p className="text-xs text-muted-foreground">{quotaSourceLabel(source.kind)}</p>
-                <p className="mt-0.5 truncate text-sm font-medium tabular-nums">
-                  {source.unlimited ? "不限" : formatQuotaBytes(source.bytes)}
-                </p>
-              </div>
-            ))}
-          </div>
+          <SummaryStrip
+            ariaLabel="流量额度"
+            items={[
+              { key: "total", label: "当前总额度", value: quota.unlimited ? "不限" : formatQuotaBytes(effectiveTrafficLimit) },
+              ...quota.sources.map((source) => ({
+                key: source.kind,
+                label: quotaSourceLabel(source.kind),
+                value: source.unlimited ? "不限" : formatQuotaBytes(source.bytes),
+              })),
+            ]}
+          />
         )}
 
         {/*
@@ -379,10 +380,11 @@ export default function Subscriptions() {
         )}
 
         {!isLoading && !subscriptionsError && visibleSubscriptions.length === 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Package className="h-5 w-5" /> 暂无可显示订阅</CardTitle>
-              <CardDescription>
+          <EmptyState
+            icon={<Package />}
+            title="暂无可显示订阅"
+            description={(
+              <>
                 {cancelledCount > 0
                   ? "已取消记录当前处于隐藏状态。"
                   /*
@@ -394,16 +396,14 @@ export default function Subscriptions() {
                     : storeStatus?.enabled
                       ? "当前账户还没有套餐记录，可以去商店自助下单。"
                       : "当前账户还没有套餐记录。商店暂未开放，请联系管理员为你分配套餐。"}
-              </CardDescription>
-            </CardHeader>
-            {storeStatus?.enabled && (
-              <CardFooter>
-                <Button onClick={() => setLocation("/store")}>
-                  <ShoppingBag className="mr-2 h-4 w-4" /> 去商店下单
-                </Button>
-              </CardFooter>
+              </>
             )}
-          </Card>
+            actions={storeStatus?.enabled ? (
+              <Button onClick={() => setLocation("/store")}>
+                <ShoppingBag className="mr-2 h-4 w-4" /> 去商店下单
+              </Button>
+            ) : undefined}
+          />
         )}
 
         <div className="grid gap-4 lg:grid-cols-2">

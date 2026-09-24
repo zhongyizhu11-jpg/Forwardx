@@ -88,7 +88,8 @@ queryClient.getMutationCache().subscribe(event => {
 const criticalQueryPaths = new Set([
   "auth.me",
   "setup.status",
-  "dashboard.stats",
+  // 首页最上面那一块（状态 + 需要关注）读的是它；dashboard.stats 首页已经不再调用。
+  "dashboard.health",
   "dashboard.trafficTotals",
   "dashboard.trafficSeries",
   "dashboard.trafficBreakdown",

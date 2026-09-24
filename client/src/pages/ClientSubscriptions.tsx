@@ -8,7 +8,7 @@ import { proxyNodeMetaText, type ProxyNodeRowSpec } from "@/components/proxy/Pro
 import { ProxyNodeShareDialog } from "@/components/proxy/ProxyNodeShareDialog";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import DataSectionError from "@/components/DataSectionError";
-import StatCard from "@/components/StatCard";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -78,7 +78,6 @@ import {
   Atom,
   AudioLines,
   Cat,
-  CheckCircle2,
   ChevronDown,
   Copy,
   Eye,
@@ -92,7 +91,6 @@ import {
   Plus,
   QrCode,
   Rocket,
-  Server,
   Share2,
   Shield,
   Boxes,
@@ -129,7 +127,7 @@ const CLIENT_ICONS: Record<string, { icon: LucideIcon; className: string }> = {
   surfboard: { icon: Ship, className: "bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]" },
   nekobox: { icon: Boxes, className: "bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]" },
   nekoray: { icon: Blocks, className: "bg-[var(--fx-delivery-soft)] text-[var(--fx-delivery)]" },
-  v2rayn: { icon: Binary, className: "bg-slate-500/10 text-slate-600 dark:text-slate-400" },
+  v2rayn: { icon: Binary, className: "bg-[var(--fx-l3-control-fill)] text-muted-foreground" },
 };
 
 function clientIcon(target: ProxyClientTarget) {
@@ -916,7 +914,6 @@ export default function ClientSubscriptionsPage() {
         <div className="space-y-6">
           <WorkspaceHeader title={<>订阅管理</>} description={<>你有哪些线路，以及怎么把它们带进客户端。</>} />
           <Card className="relative overflow-hidden border-border bg-card">
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
             <CardContent className="py-10 text-center">
               {/*
                 原来只说「没有权限，联系管理员」—— 那等于把人挡在门外还不说门后是什么。
@@ -960,57 +957,42 @@ export default function ClientSubscriptionsPage() {
         {/*
           顶上这一排概览。
           原来一进来就是两张大卡片，得逐个展开才知道「我现在到底有几条线路、有没有
-          东西要处理」。这几个数就是这一页的全部问题，摆在最前面，和仪表盘同一种卡片。
+          东西要处理」。这几个数就是这一页的全部问题，摆在最前面 —— 一条摘要，和主机页
+          同一种画法，不是四张各带图标的卡片。
         */}
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-          <StatCard
-            title="客户端线路"
-            value={preview?.nodes.length ?? 0}
-            subtitle={`中转 ${relayPreviewNodes.length} · 直连 ${directPreviewNodes.length}`}
-            icon={Zap}
-            loading={previewQuery.isLoading}
-            cacheKey="subscriptions.stats.nodes"
-            fallbackValue={0}
-            index={0}
-            /*
-              「客户端线路」和「待处理」讲的是同一件事的两面 —— 订阅里有什么、还差什么。
-              所以两张卡都通向「订阅内容」那个弹窗：想看细节的人不必再去找那个按钮。
-            */
-            onClick={(preview?.nodes.length ?? 0) > 0 ? () => setPreviewOpen(true) : undefined}
-          />
-          <StatCard
-            title="落地节点"
-            value={nodeCount}
-            subtitle={healthSummary.subtitle}
-            icon={Server}
-            loading={nodesQuery.isLoading}
-            cacheKey="subscriptions.stats.landing"
-            fallbackValue={0}
-            index={1}
-          />
-          <StatCard
-            title="订阅链接"
-            value={tokens.length}
-            subtitle={tokens.length > 0 ? "导入客户端用的地址" : "还没建"}
-            icon={Link2}
-            loading={tokensQuery.isLoading}
-            cacheKey="subscriptions.stats.tokens"
-            fallbackValue={0}
-            index={2}
-          />
-          <StatCard
-            title="待处理"
-            value={pendingCount}
-            subtitle={pendingSubtitle}
-            icon={pendingCount > 0 ? AlertTriangle : CheckCircle2}
-            loading={previewQuery.isLoading}
-            cacheKey="subscriptions.stats.pending"
-            fallbackValue={0}
-            index={3}
-            // 写着「你有 N 件事要处理」的卡片，本来就该是点进去处理的入口。
-            onClick={pendingCount > 0 ? () => setPreviewOpen(true) : undefined}
-          />
-        </div>
+        <SummaryStrip
+          ariaLabel="订阅概况"
+          items={[
+            {
+              key: "nodes",
+              label: "客户端线路",
+              value: preview?.nodes.length ?? 0,
+              hint: `中转 ${relayPreviewNodes.length} · 直连 ${directPreviewNodes.length}`,
+              loading: previewQuery.isLoading,
+              cacheKey: "subscriptions.stats.nodes",
+              fallbackValue: 0,
+              /*
+                「客户端线路」和「待处理」讲的是同一件事的两面 —— 订阅里有什么、还差什么。
+                所以两个数都通向「订阅内容」那个弹窗：想看细节的人不必再去找那个按钮。
+              */
+              onClick: (preview?.nodes.length ?? 0) > 0 ? () => setPreviewOpen(true) : undefined,
+            },
+            { key: "landing", label: "落地节点", value: nodeCount, hint: healthSummary.subtitle, loading: nodesQuery.isLoading, cacheKey: "subscriptions.stats.landing", fallbackValue: 0 },
+            { key: "tokens", label: "订阅链接", value: tokens.length, hint: tokens.length > 0 ? "导入客户端用的地址" : "还没建", loading: tokensQuery.isLoading, cacheKey: "subscriptions.stats.tokens", fallbackValue: 0 },
+            {
+              key: "pending",
+              label: "待处理",
+              value: pendingCount,
+              hint: pendingSubtitle,
+              tone: pendingCount > 0 ? "warn" : undefined,
+              loading: previewQuery.isLoading,
+              cacheKey: "subscriptions.stats.pending",
+              fallbackValue: 0,
+              // 写着「你有 N 件事要处理」的数，本来就该是点进去处理的入口。
+              onClick: pendingCount > 0 ? () => setPreviewOpen(true) : undefined,
+            },
+          ]}
+        />
 
         {/*
           订阅链接排在最前面。
@@ -1019,9 +1001,11 @@ export default function ClientSubscriptionsPage() {
           压在五张卡片的最后，每次都要滚到底。第一次来的人也不吃亏：这时它是空的，
           空状态里就写着「先在下面加节点，再回来建链接」，等于把顺序讲了一遍。
         */}
-        {/* 玻璃卡 + 顶部一道高光，和仪表盘那几张同一种做法。 */}
+        {/*
+          原来顶上还有一道渐变高光，写着「和仪表盘那几张同一种做法」—— 仪表盘在 Dashboard 2.0
+          已经把它去掉了（手册：颜色只说状态，装饰性的主色渐变不说任何事）。
+        */}
         <Card className="relative overflow-hidden border-border bg-card">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
           {/*
             手机上原来三层内边距叠着吃宽度：外层 main 12px + 卡片 24px + 每行自己的
             12px，414 的屏幕先去掉 72。内容被挤成一条，看着就不饱满。卡片这一层在手机上

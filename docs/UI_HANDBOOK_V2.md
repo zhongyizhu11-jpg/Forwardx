@@ -426,15 +426,21 @@ V1 首页告诉用户**我有什么**（一堆数字卡片）。V2 首页要告�
   延迟 82ms · 较平均值 +41%        >
 ```
 
-没有问题时：
-
-```
-✓ 一切正常
-当前没有需要处理的问题
-```
+没有问题时，「需要关注」**整块不出现** —— 顶上那一行已经写了「✓ 运行正常」，
+再来一块「一切正常」是同一句话说两遍。（这一节最初画的是一块写着「一切正常」的
+区域，落地时改掉了。）
 
 筛选依据是 `describeNetworkHealth(...).needsAttention` —— 注意 `unknown` 也算
-需要关注，它是一个待查的问题，不是一切正常。
+需要关注，它是一个待查的问题，不是一切正常。落地后的几条约定：
+
+- 顶上的数和列表出自同一次调用（`dashboard.health`），逐类对应：列表里有几处红的，
+  顶上就写几处异常。
+- 顶上按「最该先看到哪个」退档：有异常说「N 处异常」；没有异常但有降级说「N 处
+  降级」—— 不能在列表里挂着琥珀色的同时写「运行正常」。
+- 「还没接入」的主机（unknown）进列表但不计入异常：一步没做完，不是出了事。
+- 按设计停着的不算异常：转发组的模板规则看子规则；主人被计费暂停的规则在管理员
+  那边不算，在租户自己那边合成一行「转发已暂停」。
+- 同一档状态里按「从根上往下」排：主机 → 隧道 → 转发组 → 转发。
 
 ### 列表和详情各管各的
 
@@ -462,7 +468,43 @@ EmptyState · LoadingState · ErrorState · OfflineState
 ```
 
 已落地：`StatusDot`、`HealthBadge`、`NetworkNode`、`NetworkEdge`、`NetworkPath`、
-`PathPreview`。其余按 Phase 推进。
+`PathPreview`；iOS 那一套 `GroupedList`（`ListSection` / `ListRow`）、导航栏、
+标签栏；首页的 `AttentionSection` / `TrafficSurface` / `AccountSection`
+（`client/src/features/dashboard/`）；主备策略的 `RoutePolicyPanel` /
+`RoutePolicySheet` / `FailoverPolicyFields` / `PolicyBlocks`（`client/src/features/rules/`，
+判断在 `shared/routePolicy.ts`），转发组的 `GroupFailoverPolicyFields`
+（`client/src/features/links/`，同一份模型、同一块面板）；页头的 `SummaryStrip`、
+手机上的流水行 `LedgerRow`、卡片底部的 `CardActions`（`EntityActions` 两个带字 + ···）、
+设置页的 `SettingList` / `SettingRow`、诊断的 `DiagnoseDialog`、三种状态块 `EmptyState` /
+`DataSectionLoading` / `DataSectionError`。其余按 Phase 推进。
+
+**诊断一路叫诊断。** 卡片按钮、对话框标题、底部按钮、测的时候那几个字，都用「诊断」这一个词；
+标题下一句写「测的是什么」，路径下一行写「上次诊断 几点 · 通 / 超时 / 没通」—— 看不出几点
+测的结果，就不是结果。
+
+**三种状态各一个样子**：没有（EmptyState）、加载中（DataSectionLoading）、没读到
+（DataSectionError）。都是一块 surface、不描边；搜着东西没搜到时说「未找到匹配…」，不说「暂无…」。
+
+**设置行**（`SettingRow`）：名字 + 说明在左，控件在右，行间一根细线（和分组列表同一条
+`.fx-list-row`），不画框。控件是**一个**开关或复选框时 `asLabel`，整行都能点；这一项
+自己的参数（阈值、天数）作为 children 跟在同一格里、在 label 外面。二选一、三选一用分段
+控件，下面只摆选中那一种的字段 —— 不要把几种都画成并排的大卡片再标「当前使用」。
+
+**卡片里的数**：一两个值写成设置行的行尾（「已开启 5 / 6」）；几个数并排才用摘要条。
+不要一个数一个小框。
+
+**宽屏两栏看容器，不看窗口。** 设置页宽屏是左边分区、右边内容；右栏里的分栏一律按
+右栏自己的宽度切（`@container` + `@[42rem]:` / `@[58rem]:`），不写 `lg:` / `xl:` ——
+侧栏收起、展开时同一个窗口宽度下右栏能差出 200px。
+
+**条件行**（Policy 的画法）：一层一行，从上往下就是优先级。此刻起作用的那一行左边
+一根 3px 的 `--fx-path` 竖条、字重加粗、右侧一个 `EntityTag tone="path"` 写「此刻」；
+「本该轮到它、被上面那层压着」的那一行不高亮，但用 `--fx-warn-text` 写一句被谁压着；
+其余的照常画。**不整行染色** —— 白块里再染一块面，就是又多了一层。
+
+**规矩写在后半句的说明要能折行。** `ListRow` 的说明只给一行、放不下就截成「…」：
+「在用的成员不健康满 60 秒就换下一个健康的；Agent 已判定失败的不等」在手机上被截掉的
+恰好是规矩那半句。这种整句话用策略面板里 `SentenceRow` 那种写法（标题一行、说明照常折行）。
 
 ---
 
@@ -495,13 +537,19 @@ Tailwind 工具类是 `(0,1,0)`；一条 `[data-slot="x"]` 也是 `(0,1,0)`，�
 |---|---|---|
 | 1 | Foundations：令牌、字体、间距、圆角、颜色、表面、状态体系 | ✅ |
 | 2 | Visual Language：Node / Path / Edge / Flow / Health | ✅ |
-| 3 | 核心三页：总览 → 主机 → 链路 | |
-| 4 | 操作系统：Drawer、Bottom Sheet、ActionMenu、创建流程、诊断流程 | |
-| 5 | 转发系统：规则、链、组，以及 Route Policy 抽象 | |
-| 6 | Subscription + Settings 迁移 | |
-| 7 | Polish：Skeleton / Loading / Empty / Error / 转场 / 深色 / 响应式 | |
+| 3 | 核心三页：总览 → 主机 → 链路 | ✅ |
+| 4 | 操作系统：Drawer、Bottom Sheet、ActionMenu、创建流程、诊断流程 | ✅ 诊断：规则、隧道、转发链共用 `DiagnoseDialog` |
+| 5 | 转发系统：规则、链、组，以及 Route Policy 抽象 | ✅ |
+| 6 | Subscription + Settings 迁移 | ✅ 设置页宽屏两栏 + 设置行；商店、套餐、个人资料、订阅 |
+| 7 | Polish：Skeleton / Loading / Empty / Error / 转场 / 深色 / 响应式 | 部分：Loading / Empty / Error 统一；深色、393 / 1024 / 1280 逐页走查；骨架屏只在首页流量那一块 |
 
-最后再做一次全站视觉审计。
+按 PR 拆的推进表（和这张表是同一件事的另一种切法）在
+`FORWARDX_PRODUCT_UI_CN.md` 第八节。
+
+最后再做一次全站视觉审计。—— 2.3.370 发布前做过一次：19 个页面 × 393 / 1280 × 浅色 / 深色，
+没有横向溢出。还是旧画法的只剩两处，都已换掉：公开监控页（整页）和转发组卡片底部的两个
+小框。没动的是对话框里面：创建 / 编辑转发、转发组的表单里还有不少带边框的开关小框，
+和 `FORWARDX_PRODUCT_UI_CN.md` 第九节（已知债务）里那段手机密度一起留到下一轮。
 
 **最重要的一点：不要以「每个页面怎样变漂亮」为设计单位。**
 先把 ForwardX 定义成 `Node → Path → Flow → Delivery`，然后让用户在整个系统里

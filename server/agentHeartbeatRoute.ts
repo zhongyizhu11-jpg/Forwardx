@@ -1,6 +1,8 @@
 import { Router, Request, Response } from "express";
 import { parseFailoverEndpoint, parseFailoverTargets } from "../shared/failoverTargets";
 import { parseFailoverSchedule } from "../shared/failoverSchedule";
+import { readFailoverPin } from "../shared/failoverPin";
+import { ingestFailoverLineReports } from "./failoverLineReports";
 import * as db from "./db";
 import { AGENT_VERSION } from "./_core/systemRouter";
 import { clearHostTcpingRequest, hasHostTcpingRequest, isHostMetricsWatching, pushAgentDesiredState } from "./agentEvents";
@@ -1397,6 +1399,19 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     logHostId = Number((host as any).id || 0);
     logHostName = String((host as any).name || "").trim();
     updateAgentPluginInventory(logHostId, req.body?.pluginVersions, req.body?.pluginSyncSignatures);
+    /*
+      主备线路的切换事件和「现在走哪条」的快照，在这里收 —— 下面有三处早退（对账合并、
+      忙碌心跳、稳定快路径），Agent 那边这一批事件已经清掉了，谁都没看的话就永远丢了。
+      见 failoverLineReports。
+    */
+    await ingestFailoverLineReports({
+      hostId: logHostId,
+      events: req.body?.failoverEvents,
+      snapshot: req.body?.failoverActive,
+      loadHostRules: () => db.getForwardRuleFailoverLinesForAgent(logHostId) as Promise<any[]>,
+    }).catch((error) => {
+      appendPanelLog("warn", `[Failover] host=${logHostId} 线路上报处理失败: ${String((error as any)?.message || error)}`);
+    });
 
     const compactMetrics = Array.isArray(req.body?.m) ? req.body.m : [];
     const busyHeartbeat = req.body?.busy === true || String(req.body?.busy || "").toLowerCase() === "true";
@@ -1811,71 +1826,6 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       latestConfigRevision(),
     ]);
     const rules = await gateForwardRulesForRuntime(rawRules as any[]);
-    /*
-      主备切换：Agent 自己切完，面板才知道。
-
-      规则级的主备是**数据面**的 —— Agent 每 5 秒探一次、自己在出站之间切，毫秒级，
-      不经过面板。好处是快且面板挂了也照常工作；代价是切换这件事原来只留在机器本地的
-      日志里，面板一无所知。而主备恰恰是「平时看不出来、出事才知道有没有用」的东西：
-      切了没人知道，没切更没人知道。
-
-      所以 Agent 把切换和健康翻转攒着随心跳带回来，这里落进面板日志 —— 一条转发
-      什么时候从哪条线切到哪条、为什么切、当时那条线多少延迟，终于查得到了。
-
-      规则归属必须验：Agent 只能报自己机器上的规则，否则一台被攻陷的机器能往任意
-      规则上写日志。
-    */
-    const failoverEvents = Array.isArray(req.body?.failoverEvents) ? req.body.failoverEvents.slice(0, 128) : [];
-    if (failoverEvents.length > 0) {
-      const hostRuleIds = new Set(
-        (rawRules as any[]).map((rule: any) => Number(rule?.id || 0)).filter((id: number) => id > 0),
-      );
-      // 一次心跳里同一条规则可能连切几次，只有最后一次才是「现在」。
-      const switchedRuleLines = new Map<number, { target: string; at: number }>();
-      for (const rawEvent of failoverEvents) {
-        const ruleId = Math.max(0, Math.floor(Number(rawEvent?.ruleId || 0)));
-        if (!ruleId || !hostRuleIds.has(ruleId)) continue;
-        const kind = normalizeAgentText(rawEvent?.kind, 16);
-        if (kind !== "switch" && kind !== "unhealthy" && kind !== "recovered") continue;
-        const toTarget = normalizeAgentText(rawEvent?.toTarget, 256);
-        if (!toTarget) continue;
-        const fromTarget = normalizeAgentText(rawEvent?.fromTarget, 256);
-        const reason = normalizeAgentText(rawEvent?.reason, 256);
-        const latencyMs = Math.max(0, Math.floor(Number(rawEvent?.latencyMs || 0)));
-        const transition = kind === "switch"
-          ? `${fromTarget || "(无)"} -> ${toTarget}`
-          : toTarget;
-        appendPanelLog(
-          kind === "recovered" ? "info" : "warn",
-          `[Failover] host=${host.id} rule=${ruleId} ${kind} ${transition}`
-            + `${reason ? ` reason=${reason}` : ""}${latencyMs > 0 ? ` latencyMs=${latencyMs}` : ""}`,
-        );
-        /*
-          只有 switch 改变「现在走哪条」。unhealthy / recovered 说的是某一条
-          出站的健康翻转 —— 一条备线恢复了不等于流量就回到它身上（最短驻留、
-          人工钉住都可能压着不切），拿它去写当前线路会显示成一个没有发生过的
-          切换。
-
-          写进库而不是只写日志：切换是数据面毫秒级完成的，不经面板，所以面板
-          原先只能事后去日志里翻。规则列表上要显示「这条现在走主线还是备线」，
-          就得有一个按规则存的地方。
-        */
-        if (kind === "switch") {
-          switchedRuleLines.set(ruleId, {
-            target: toTarget,
-            at: Math.max(0, Math.floor(Number(rawEvent?.occurredAt || 0))) || Math.floor(Date.now() / 1000),
-          });
-        }
-      }
-      for (const [ruleId, line] of switchedRuleLines) {
-        try {
-          await db.updateForwardRuleFailoverActiveLine(ruleId, line.target, line.at);
-        } catch (error) {
-          // 一条规则写不进去不该让整个心跳失败 —— 心跳还带着流量和运行状态。
-          appendPanelLog("warn", `[Failover] host=${host.id} rule=${ruleId} 当前线路写入失败: ${String((error as any)?.message || error)}`);
-        }
-      }
-    }
     const actions: any[] = [];
     const dnsWatches = new Map<string, AgentDnsWatch>();
     const responseIssuedAt = Date.now();
@@ -2692,26 +2642,20 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       if (rule.protocol !== "tcp") return undefined;
       const backupTargets = parseFailoverTargets(rule.failoverTargets);
       if (backupTargets.length === 0) return undefined;
-      const pinnedFailoverIndex = (source: any) => {
-        const index = Math.floor(Number(source?.failoverPinnedIndex));
-        if (!Number.isInteger(index) || index < 0 || index > backupTargets.length) return null;
-        const until = source?.failoverPinnedUntil ? new Date(source.failoverPinnedUntil).getTime() : 0;
-        // 已经过期的钉子不下发：留着的话 Agent 每次重算都要再判一次，而面板这边
-        // 早就该当它不存在了。
-        if (until > 0 && until <= Date.now()) return null;
-        return index;
-      };
-      const pinnedFailoverUntil = (source: any) => {
-        if (pinnedFailoverIndex(source) === null) return 0;
-        const until = source?.failoverPinnedUntil ? new Date(source.failoverPinnedUntil).getTime() : 0;
-        return until > 0 ? until : 0;
-      };
+      /*
+        钉子怎么读交给 shared/failoverPin：这一列没钉时是 null，而上一版在这里先
+        Number() 再判断 —— Number(null) 是 0，于是每一条没钉过的规则都被下发成
+        「钉在主出站、一直钉着」，时段表和自动择优在机器上从来没生效过。
+        已经过期的钉子也不下发：面板这边早就该当它不存在了。
+      */
+      const failoverPin = (source: any) => readFailoverPin(source, { lineCount: backupTargets.length + 1 });
       const mainProbeFields = (source: any) => {
         const parsed = parseFailoverEndpoint(source?.failoverProbeTarget);
         if (!parsed || "error" in parsed) return {};
         return { probeIp: parsed.host, probePort: parsed.port };
       };
       const failoverProxyEnabled = proxyProtocolEnabled(rule, options?.proxyDirection || "send");
+      const pin = failoverPin(rule);
       return {
         enabled: true,
         listenPort: Number(options?.listenPort || rule.sourcePort || 0),
@@ -2737,8 +2681,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         // 没钉住时传 null 而不是省略字段，也不是 -1：Agent 那边这个字段是指针，
         // null 明确表示「交回自动」。省略的话老规格里的旧值会留着，取消钉住这个
         // 动作会静默失效。
-        pinnedIndex: pinnedFailoverIndex(rule),
-        pinnedUntil: pinnedFailoverUntil(rule),
+        pinnedIndex: pin ? pin.index : null,
+        pinnedUntil: pin?.untilMs ?? 0,
         preferFastest: !!rule.failoverPreferFastest,
         // The local failover process is another hop and must preserve the header
         // generated by either the entry side or the tunnel exit bridge.

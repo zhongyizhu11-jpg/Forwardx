@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   describeNetworkHealth,
   fromLegacyTone,
+  networkHealthPriority,
   resolveNetworkHealth,
   rollUpNetworkHealth,
+  type NetworkHealth,
 } from "./networkHealth";
 
 test("没上报过是 unknown，不是 healthy", () => {
@@ -54,6 +56,22 @@ test("汇总一个空集合是 unknown，不是 healthy", () => {
 
 test("unknown 混在里面时压过 standby 和 healthy", () => {
   assert.equal(rollUpNetworkHealth(["healthy", "standby", "unknown"]), "unknown");
+});
+
+test("排序用的优先级和汇总是同一个顺序", () => {
+  // 首页「需要关注」按这个排；两处各写一份顺序的话，列表第一行和汇总的颜色迟早对不上。
+  const all: NetworkHealth[] = ["healthy", "degraded", "down", "standby", "switching", "unknown"];
+  for (const a of all) {
+    for (const b of all) {
+      const first = networkHealthPriority(a) <= networkHealthPriority(b) ? a : b;
+      assert.equal(rollUpNetworkHealth([a, b]), first, `${a} / ${b}`);
+    }
+  }
+  assert.equal(
+    networkHealthPriority("nonsense" as never),
+    networkHealthPriority("unknown"),
+    "认不出来的按 unknown 排，不能因为认不出来就沉到最底下",
+  );
 });
 
 test("每个状态都带着自己的线型和是否需要处理", () => {

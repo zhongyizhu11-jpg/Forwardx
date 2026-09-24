@@ -3,8 +3,9 @@ import WorkspaceHeader from "@/components/WorkspaceHeader";
 import DataSectionError, { DataTableErrorRow } from "@/components/DataSectionError";
 import MobileInfoRow from "@/components/MobileInfoRow";
 import DashboardLayout from "@/components/DashboardLayout";
-import AnimatedStatValue from "@/components/AnimatedStatValue";
+import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import DataSectionLoading from "@/components/DataSectionLoading";
+import { SettingList, SettingRow } from "@/components/SettingRow";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -218,46 +219,8 @@ function statusBadge(status: string) {
     ? "border-[var(--fx-healthy-soft)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]"
     : status === "pending"
       ? "border-[var(--fx-warn-soft)] bg-[var(--fx-warn-soft)] text-[var(--fx-warn-text)]"
-      : "border-slate-200 bg-slate-50 text-slate-600";
+      : "border-border bg-muted text-muted-foreground";
   return <Badge variant="outline" className={tone}>{text[status] || status}</Badge>;
-}
-
-function PaymentStatCard({
-  label,
-  value,
-  icon: Icon,
-  tone = "text-primary",
-  loading = false,
-  cacheKey,
-  fallbackValue,
-}: {
-  label: string;
-  value: string | number;
-  icon: React.ElementType;
-  tone?: string;
-  loading?: boolean;
-  cacheKey: string;
-  fallbackValue?: string | number;
-}) {
-  return (
-    <Card className="group relative overflow-hidden border-border bg-card transition-all duration-300 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-lg hover:shadow-primary/5">
-      <div className={`absolute inset-0 opacity-[0.04] transition-opacity group-hover:opacity-[0.08] ${tone}`} />
-      <CardContent className="relative flex min-h-[82px] items-center justify-between gap-4 p-4 sm:p-5">
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          <AnimatedStatValue
-            as="p"
-            value={value}
-            loading={loading}
-            cacheKey={cacheKey}
-            fallbackValue={fallbackValue}
-            className="mt-1.5 truncate text-2xl font-bold leading-none tracking-tight tabular-nums"
-          />
-        </div>
-        <Icon className={`h-5 w-5 shrink-0 ${tone}`} />
-      </CardContent>
-    </Card>
-  );
 }
 
 /*
@@ -287,16 +250,21 @@ function CallbackItem({ label, value }: { label: string; value: string }) {
     if (await copyTextToClipboard(value)) toast.success("已复制");
     else toast.error("复制失败，请手动复制");
   };
+  /*
+    原来是一个描边小框，地址截断成一行 —— 这串地址要一字不差地贴进支付平台后台，
+    截掉的恰好是最后那段「/webhook/easypay」，看不出贴的对不对。改成一行设置：
+    地址完整折行显示，右边一个复制。
+  */
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border bg-background/70 px-3 py-2">
-      <div className="mb-1 text-xs text-muted-foreground">{label}</div>
-      <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 truncate text-xs">{value}</code>
-        <Button type="button" variant="ghost" size="icon" aria-label={`复制${label}`} className="h-7 w-7" onClick={copy}>
+    <SettingRow
+      label={label}
+      description={<code className="block break-all font-mono text-meta text-foreground">{value}</code>}
+      control={(
+        <Button type="button" variant="ghost" size="icon" aria-label={`复制${label}`} className="h-8 w-8" onClick={copy}>
           <Copy className="h-3.5 w-3.5" />
         </Button>
-      </div>
-    </div>
+      )}
+    />
   );
 }
 
@@ -485,44 +453,17 @@ export default function Payments() {
           </Button>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-4">
-          <PaymentStatCard
-            label="支付状态"
-            value={form.enabled ? "已启用" : "未启用"}
-            icon={ShieldCheck}
-            tone={form.enabled ? "text-[var(--fx-healthy-text)]" : "text-muted-foreground"}
-            loading={isLoading}
-            cacheKey="payments.enabled"
-            fallbackValue="未启用"
-          />
-          <PaymentStatCard
-            label="已支付金额"
-            value={formatMoney(stats?.paidAmountCents)}
-            icon={WalletCards}
-            tone="text-primary"
-            loading={statsLoading}
-            cacheKey="payments.paidAmount"
-            fallbackValue={formatMoney(0)}
-          />
-          <PaymentStatCard
-            label="已支付订单"
-            value={stats?.paidOrders || 0}
-            icon={CheckCircle2}
-            tone="text-[var(--fx-healthy-text)]"
-            loading={statsLoading}
-            cacheKey="payments.paidOrders"
-            fallbackValue={0}
-          />
-          <PaymentStatCard
-            label="待支付订单"
-            value={stats?.pendingOrders || 0}
-            icon={RefreshCw}
-            tone="text-[var(--fx-warn-text)]"
-            loading={statsLoading}
-            cacheKey="payments.pendingOrders"
-            fallbackValue={0}
-          />
-        </div>
+        {/* 颜色只说状态：支付开着是绿；订单数是数，不是状态，待支付也只是还没付。 */}
+        <SummaryStrip
+          ariaLabel="支付概况"
+          loading={statsLoading}
+          items={[
+            { key: "enabled", label: "支付状态", value: form.enabled ? "已启用" : "未启用", tone: form.enabled ? "healthy" : undefined, loading: isLoading, cacheKey: "payments.enabled", fallbackValue: "未启用" },
+            { key: "paid", label: "已支付金额", value: formatMoney(stats?.paidAmountCents), cacheKey: "payments.paidAmount", fallbackValue: formatMoney(0) },
+            { key: "paidOrders", label: "已支付订单", value: stats?.paidOrders || 0, cacheKey: "payments.paidOrders", fallbackValue: 0 },
+            { key: "pending", label: "待支付订单", value: stats?.pendingOrders || 0, cacheKey: "payments.pendingOrders", fallbackValue: 0 },
+          ]}
+        />
 
         <Alert className="border-primary/15 bg-primary/5 text-foreground">
           <ShieldCheck className="h-4 w-4" />
@@ -545,13 +486,14 @@ export default function Payments() {
                 <CardDescription>用于商店套餐购买。</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
-                <div className="flex items-center justify-between rounded-lg border bg-background/70 px-4 py-3">
-                  <div>
-                    <div className="font-medium">启用支付功能</div>
-                    <div className="text-sm text-muted-foreground">关闭后无法下单</div>
-                  </div>
-                  <Checkbox aria-label="启用支付功能" checked={form.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, enabled }))} />
-                </div>
+                <SettingList className="md:col-span-2">
+                  <SettingRow
+                    asLabel
+                    label="启用支付功能"
+                    description="关闭后无法下单"
+                    control={<Checkbox aria-label="启用支付功能" checked={form.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, enabled }))} />}
+                  />
+                </SettingList>
                 <Field label="商品名称">
                   <Input value={form.productName} onChange={(e) => setForm((prev) => ({ ...prev, productName: e.target.value }))} />
                 </Field>
@@ -596,13 +538,14 @@ export default function Payments() {
                 <CardDescription>兼容易支付接口。</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
-                <div className="flex items-center justify-between rounded-lg border bg-background/70 px-4 py-3 md:col-span-2">
-                  <div>
-                    <div className="font-medium">启用易支付</div>
-                    <div className="text-sm text-muted-foreground">支付宝、微信通道</div>
-                  </div>
-                  <Checkbox aria-label="启用易支付" checked={form.easypay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, enabled } }))} />
-                </div>
+                <SettingList className="md:col-span-2">
+                  <SettingRow
+                    asLabel
+                    label="启用易支付"
+                    description="支付宝、微信通道"
+                    control={<Checkbox aria-label="启用易支付" checked={form.easypay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, enabled } }))} />}
+                  />
+                </SettingList>
                 <Field label="接口地址">
                   <Input placeholder="https://pay.example.com" value={form.easypay.apiBase} onChange={(e) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, apiBase: e.target.value } }))} />
                 </Field>
@@ -627,10 +570,10 @@ export default function Payments() {
                 <Field label="微信通道 CID" hint="可选">
                   <Input value={form.easypay.cidWxpay} onChange={(e) => setForm((prev) => ({ ...prev, easypay: { ...prev.easypay, cidWxpay: e.target.value } }))} />
                 </Field>
-                <div className="grid gap-3 md:col-span-2 md:grid-cols-2">
+                <SettingList className="md:col-span-2">
                   <CallbackItem label="异步通知地址" value={`${panelUrl}/api/payment/webhook/easypay`} />
                   <CallbackItem label="同步返回地址" value={`${panelUrl}/api/payment/return/easypay`} />
-                </div>
+                </SettingList>
               </CardContent>
             </Card>
           </TabsContent>
@@ -642,13 +585,14 @@ export default function Payments() {
                 <CardDescription>支付宝官方接口。</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
-                <div className="flex items-center justify-between rounded-lg border bg-background/70 px-4 py-3 md:col-span-2">
-                  <div>
-                    <div className="font-medium">启用支付宝官方</div>
-                    <div className="text-sm text-muted-foreground">需在基础设置中选择</div>
-                  </div>
-                  <Checkbox aria-label="启用支付宝官方" checked={form.alipay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, alipay: { ...prev.alipay, enabled } }))} />
-                </div>
+                <SettingList className="md:col-span-2">
+                  <SettingRow
+                    asLabel
+                    label="启用支付宝官方"
+                    description="需在基础设置中选择"
+                    control={<Checkbox aria-label="启用支付宝官方" checked={form.alipay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, alipay: { ...prev.alipay, enabled } }))} />}
+                  />
+                </SettingList>
                 <Field label="AppID">
                   <Input value={form.alipay.appId} onChange={(e) => setForm((prev) => ({ ...prev, alipay: { ...prev.alipay, appId: e.target.value } }))} />
                 </Field>
@@ -672,10 +616,10 @@ export default function Payments() {
                 <Field label="支付宝公钥" hint={config?.alipay?.hasPublicKey ? "已保存公钥，留空表示不修改" : "尚未保存公钥"}>
                   <Textarea className="min-h-32 font-mono text-xs" value={form.alipay.publicKey} onChange={(e) => setForm((prev) => ({ ...prev, alipay: { ...prev.alipay, publicKey: e.target.value } }))} />
                 </Field>
-                <div className="grid gap-3 md:col-span-2 md:grid-cols-2">
+                <SettingList className="md:col-span-2">
                   <CallbackItem label="异步通知地址" value={`${panelUrl}/api/payment/webhook/alipay`} />
                   <CallbackItem label="同步返回地址" value={`${panelUrl}/api/payment/return/alipay`} />
-                </div>
+                </SettingList>
               </CardContent>
             </Card>
           </TabsContent>
@@ -687,13 +631,14 @@ export default function Payments() {
                 <CardDescription>微信支付 APIv3。</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
-                <div className="flex items-center justify-between rounded-lg border bg-background/70 px-4 py-3 md:col-span-2">
-                  <div>
-                    <div className="font-medium">启用微信官方</div>
-                    <div className="text-sm text-muted-foreground">需在基础设置中选择</div>
-                  </div>
-                  <Checkbox aria-label="启用微信官方" checked={form.wxpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, enabled } }))} />
-                </div>
+                <SettingList className="md:col-span-2">
+                  <SettingRow
+                    asLabel
+                    label="启用微信官方"
+                    description="需在基础设置中选择"
+                    control={<Checkbox aria-label="启用微信官方" checked={form.wxpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, enabled } }))} />}
+                  />
+                </SettingList>
                 <Field label="AppID">
                   <Input value={form.wxpay.appId} onChange={(e) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, appId: e.target.value } }))} />
                 </Field>
@@ -731,10 +676,10 @@ export default function Payments() {
                 <Field label="微信支付公钥" hint={config?.wxpay?.hasPublicKey ? "已保存公钥，留空表示不修改" : "尚未保存公钥"}>
                   <Textarea className="min-h-32 font-mono text-xs" value={form.wxpay.publicKey} onChange={(e) => setForm((prev) => ({ ...prev, wxpay: { ...prev.wxpay, publicKey: e.target.value } }))} />
                 </Field>
-                <div className="grid gap-3 md:col-span-2 md:grid-cols-2">
+                <SettingList className="md:col-span-2">
                   <CallbackItem label="异步通知地址" value={`${panelUrl}/api/payment/webhook/wxpay`} />
                   <CallbackItem label="同步返回地址" value={`${panelUrl}/api/payment/return/wxpay`} />
-                </div>
+                </SettingList>
               </CardContent>
             </Card>
           </TabsContent>
@@ -746,13 +691,14 @@ export default function Payments() {
                 <CardDescription>Stripe Checkout。</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
-                <div className="flex items-center justify-between rounded-lg border bg-background/70 px-4 py-3 md:col-span-2">
-                  <div>
-                    <div className="font-medium">启用 Stripe</div>
-                    <div className="text-sm text-muted-foreground">银行卡和钱包支付</div>
-                  </div>
-                  <Checkbox aria-label="启用 Stripe" checked={form.stripe.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, enabled } }))} />
-                </div>
+                <SettingList className="md:col-span-2">
+                  <SettingRow
+                    asLabel
+                    label="启用 Stripe"
+                    description="银行卡和钱包支付"
+                    control={<Checkbox aria-label="启用 Stripe" checked={form.stripe.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, enabled } }))} />}
+                  />
+                </SettingList>
                 <Field label="Secret Key" hint={config?.stripe?.hasSecretKey ? "已保存密钥，留空表示不修改" : "尚未保存密钥"}>
                   <PasswordInput placeholder="sk_live_..." value={form.stripe.secretKey} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, secretKey: e.target.value } }))} />
                 </Field>
@@ -765,9 +711,9 @@ export default function Payments() {
                 <Field label="币种">
                   <Input value={form.stripe.currency} onChange={(e) => setForm((prev) => ({ ...prev, stripe: { ...prev.stripe, currency: e.target.value.toLowerCase() } }))} />
                 </Field>
-                <div className="md:col-span-2">
+                <SettingList className="md:col-span-2">
                   <CallbackItem label="Stripe Webhook 地址" value={`${panelUrl}/api/payment/webhook/stripe`} />
-                </div>
+                </SettingList>
               </CardContent>
             </Card>
           </TabsContent>
@@ -779,13 +725,14 @@ export default function Payments() {
                 <CardDescription>GM Pay / Epusdt 托管收银台。</CardDescription>
               </CardHeader>
               <CardContent className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-2">
-                <div className="flex items-center justify-between rounded-lg border bg-background/70 px-4 py-3 md:col-span-2">
-                  <div>
-                    <div className="font-medium">启用 USDT 支付</div>
-                    <div className="text-sm text-muted-foreground">通过独立部署的 GM Pay 网关收款</div>
-                  </div>
-                  <Checkbox aria-label="启用 USDT 支付" checked={form.gmpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, enabled } }))} />
-                </div>
+                <SettingList className="md:col-span-2">
+                  <SettingRow
+                    asLabel
+                    label="启用 USDT 支付"
+                    description="通过独立部署的 GM Pay 网关收款"
+                    control={<Checkbox aria-label="启用 USDT 支付" checked={form.gmpay.enabled} onCheckedChange={(enabled) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, enabled } }))} />}
+                  />
+                </SettingList>
                 <Field label="网关地址">
                   <Input placeholder="https://pay.example.com" value={form.gmpay.apiBase} onChange={(e) => setForm((prev) => ({ ...prev, gmpay: { ...prev.gmpay, apiBase: e.target.value } }))} />
                 </Field>
@@ -809,35 +756,35 @@ export default function Payments() {
                     </SelectContent>
                   </Select>
                 </Field>
-                <div className="flex min-h-10 flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/70 px-4 py-3 md:col-span-2">
-                  <div className="flex min-w-0 items-center gap-2 text-sm">
-                    {testGmPayGateway.data ? (
-                      <>
+                {/* 网关检测和下面两个回调地址是同一组「接好了没有」，一起写成行。 */}
+                <SettingList className="md:col-span-2">
+                  <SettingRow
+                    label="网关检测"
+                    description={testGmPayGateway.data ? (
+                      <span className="flex min-w-0 flex-wrap items-center gap-2">
                         <Badge variant="outline" className={testGmPayGateway.data.supportsUsdt ? "border-[var(--fx-healthy-soft)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]" : "border-destructive/30 bg-destructive/5 text-destructive"}>
                           {testGmPayGateway.data.supportsUsdt ? "USDT 可用" : "USDT 不可用"}
                         </Badge>
-                        <span className="truncate text-muted-foreground">
+                        <span className="min-w-0 truncate">
                           {testGmPayGateway.data.networkLabel}{testGmPayGateway.data.version ? ` · ${testGmPayGateway.data.version}` : ""}
                         </span>
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground">尚未检测网关</span>
+                      </span>
+                    ) : "尚未检测网关"}
+                    control={(
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => testGmPayGateway.mutate({ apiBase: form.gmpay.apiBase, network: form.gmpay.network })}
+                        disabled={!form.gmpay.apiBase.trim() || testGmPayGateway.isPending}
+                      >
+                        <RefreshCw className={`mr-2 h-4 w-4 ${testGmPayGateway.isPending ? "animate-spin" : ""}`} />
+                        检测网关
+                      </Button>
                     )}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => testGmPayGateway.mutate({ apiBase: form.gmpay.apiBase, network: form.gmpay.network })}
-                    disabled={!form.gmpay.apiBase.trim() || testGmPayGateway.isPending}
-                  >
-                    <RefreshCw className={`mr-2 h-4 w-4 ${testGmPayGateway.isPending ? "animate-spin" : ""}`} />
-                    检测网关
-                  </Button>
-                </div>
-                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 md:col-span-2 md:grid-cols-2">
+                  />
                   <CallbackItem label="异步通知地址" value={`${panelUrl}/api/payment/webhook/gmpay`} />
                   <CallbackItem label="同步返回地址" value={`${panelUrl}/api/payment/return/gmpay`} />
-                </div>
+                </SettingList>
               </CardContent>
             </Card>
           </TabsContent>

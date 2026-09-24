@@ -34,14 +34,18 @@ export default function DataSectionError({
   return (
     <div
       role="status" aria-live="polite"
+      /*
+        一块浅红底，不描边。红是「故障」的状态色，这里就是在说一件出了故障的事；边框是把
+        同一句话再说一遍（手册：底色差和描边说的是同一件事，只留一个）。
+      */
       className={cn(
-        "flex w-full flex-col items-center justify-center gap-2 rounded-lg border border-destructive/25 bg-destructive/[0.04] px-4 py-6 text-center",
+        "flex w-full flex-col items-center justify-center gap-2 rounded-[var(--fx-radius-surface)] bg-[var(--fx-down-soft)] px-4 py-6 text-center",
         minHeight,
         className,
       )}
     >
-      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-        <AlertTriangle className="h-4 w-4 text-destructive" />
+      <div className="flex items-center gap-2 text-secondary-type font-medium text-foreground">
+        <AlertTriangle className="h-4 w-4 text-[var(--fx-down-text)]" aria-hidden="true" />
         <span>{label}加载失败</span>
       </div>
       <p className="max-w-md text-xs text-muted-foreground">

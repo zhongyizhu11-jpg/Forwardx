@@ -27,6 +27,7 @@ import { seedDevPanelData } from "./devPanel";
 import { repairPortForwardRuleHostReferences } from "./portForwardRuleHosts";
 import { backfillTunnelExitGroupReferences } from "./repositories/tunnelRepository";
 import { repairForwardGroupRuleIntegrity } from "./forwardGroupRuleIntegrity";
+import { invalidateAgentStableHeartbeatPlan } from "./agentHeartbeatGate";
 
 export { getDb, refreshDatabasePoolSettings, withDatabaseTransaction } from "./dbRuntime";
 export * from "./repositories/userRepository";
@@ -339,6 +340,49 @@ export async function clearLegacyTunnelRuleLatencyHistoryOnce() {
   return deleted;
 }
 
+// 2.3.365–2.3.369 read an empty failoverPinnedIndex as 0 (Number(null) is 0,
+// and 0 is the main outbound): new failover rules were stored with index 0 and
+// no deadline, and the edit dialog pre-filled "pin the main outbound forever"
+// for every rule, so saving any of them wrote it back. That pin only differs
+// from "automatic" when the rule has a schedule or prefers the fastest line —
+// exactly the two layers it silenced. A deliberate choice cannot be told apart
+// from the artifact, so clear every (0, no deadline) pin once; pins with a
+// deadline or on a backup line were chosen by someone and stay.
+export async function clearFailoverPinZeroArtifactsOnce() {
+  const marker = "failover-pin-zero-artifact-v1";
+  if (await getSetting(marker)) return 0;
+  const q = quoteIdentifier;
+  const result = await executeRaw(
+    `UPDATE ${q("forward_rules")}
+        SET ${q("failoverPinnedIndex")} = NULL,
+            ${q("failoverPinnedUntil")} = NULL
+      WHERE ${q("failoverPinnedIndex")} = 0
+        AND ${q("failoverPinnedUntil")} IS NULL`,
+  );
+  const cleared = rawAffectedRows(result);
+  await setSetting(marker, String(Math.floor(Date.now() / 1000)));
+  if (cleared > 0) invalidateAgentStableHeartbeatPlan();
+  return cleared;
+}
+
+// 2.3.366–2.3.369 stored the Agent's millisecond switch time as seconds. MySQL
+// and PostgreSQL rejected those writes (the epoch column is a 32-bit integer),
+// so only SQLite holds such rows — dated tens of thousands of years ahead.
+// Anything past year ~5000 can only be that bug; divide it back once.
+export async function repairFailoverActiveTimeUnitOnce() {
+  const marker = "failover-active-at-unit-v1";
+  if (await getSetting(marker)) return 0;
+  const q = quoteIdentifier;
+  const result = await executeRaw(
+    `UPDATE ${q("forward_rules")}
+        SET ${q("failoverActiveAt")} = ${q("failoverActiveAt")} / 1000
+      WHERE ${q("failoverActiveAt")} > 100000000000`,
+  );
+  const repaired = rawAffectedRows(result);
+  await setSetting(marker, String(Math.floor(Date.now() / 1000)));
+  return repaired;
+}
+
 export async function initDatabase() {
   const initializationStartedAt = Date.now();
   const runInitializationStep = async <T>(name: string, work: () => Promise<T> | T) => {
@@ -375,6 +419,16 @@ export async function initDatabase() {
       if (count > 0) console.log(`[Database] Cleared legacy tunnel rule latency samples count=${count}`);
     }).catch((error) => {
       console.warn("[Database] Legacy tunnel rule latency cleanup skipped:", error instanceof Error ? error.message : String(error));
+    }));
+    await runInitializationStep("clear-failover-pin-artifacts", () => clearFailoverPinZeroArtifactsOnce().then((count) => {
+      if (count > 0) console.log(`[Database] Returned failover rules pinned to the main outbound by the empty-pin bug to automatic count=${count}`);
+    }).catch((error) => {
+      console.warn("[Database] Failover pin artifact cleanup skipped:", error instanceof Error ? error.message : String(error));
+    }));
+    await runInitializationStep("repair-failover-active-time", () => repairFailoverActiveTimeUnitOnce().then((count) => {
+      if (count > 0) console.log(`[Database] Repaired failover active-line times stored in milliseconds count=${count}`);
+    }).catch((error) => {
+      console.warn("[Database] Failover active-line time repair skipped:", error instanceof Error ? error.message : String(error));
     }));
     await runInitializationStep("repair-rule-hosts", () => repairPortForwardRuleHostReferencesOnce().then((repairs) => {
       if (repairs.length > 0) console.log(`[Database] Repaired stale port-forward rule hosts count=${repairs.length}`);

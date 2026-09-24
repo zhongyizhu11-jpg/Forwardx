@@ -40,8 +40,30 @@ export function useQueryFailureSignal() {
       setFailureCount(count);
     };
     recount();
-    const unsubscribe = cache.subscribe(recount);
-    return unsubscribe;
+    /*
+      挪到微任务里数，不在通知里当场数。
+
+      查询缓存的通知是同步发的：别的组件渲染时第一次挂上一个查询（useQuery 在渲染里
+      建观察者、往缓存里加查询），这里就在「别人渲染到一半」时 setState —— 订阅管理页、
+      网络测试页一打开，控制台就报「Cannot update a component while rendering a different
+      component」。挪到微任务里，渲染那一段同步代码跑完才数；同一轮里的几十个通知也只
+      数一次（原来打开一页，这里要把整个缓存来回数几十遍）。
+    */
+    let scheduled = false;
+    let active = true;
+    const schedule = () => {
+      if (scheduled) return;
+      scheduled = true;
+      queueMicrotask(() => {
+        scheduled = false;
+        if (active) recount();
+      });
+    };
+    const unsubscribe = cache.subscribe(schedule);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [queryClient]);
 
   // 失败要「持续一段时间」才提示，所以得有个心跳把时间推过那道门槛。

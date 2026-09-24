@@ -75,12 +75,28 @@ test("分组只有一块白面，行自己不是面，而且这块面不描边",
   assert.ok(!classLists.some((list) => list.includes("border")));
 });
 
-test("选中的行靠字重标出来，不靠底色", () => {
+test("选中的行：字重 + 和应用侧栏同一个选中灰，读屏也知道是哪一项", () => {
+  /*
+    原来只靠字重。放到设置页宽屏的左栏里一量：旁边就是应用自己的侧栏，那边选中项是
+    一块灰底，这边只是字粗一点 —— 同一件事两种说法，而且只靠字重在一列六个字里不好找。
+  */
   const selected = renderToStaticMarkup(<ListRow label="系统配置" onSelect={noop} selected />);
   assert.match(selected, /font-semibold/);
+  assert.match(selected, /bg-\[var\(--fx-hover\)\]/);
+  assert.match(selected, /aria-current="true"/);
 
   const normal = renderToStaticMarkup(<ListRow label="系统配置" onSelect={noop} />);
   assert.doesNotMatch(normal, /font-semibold/);
+  assert.doesNotMatch(normal, /aria-current/);
+  // 没选中的行只有悬停时才有这层灰
+  assert.doesNotMatch(normal.replace(/hover:bg-\[var\(--fx-hover\)\]/g, ""), /bg-\[var\(--fx-hover\)\]/);
+});
+
+test("当侧栏导航用时不画箭头；默认还是画", () => {
+  const rail = renderToStaticMarkup(<ListRow label="系统配置" onSelect={noop} chevron={false} />);
+  assert.doesNotMatch(rail, /lucide-chevron-right/);
+  const index = renderToStaticMarkup(<ListRow label="系统配置" onSelect={noop} />);
+  assert.match(index, /lucide-chevron-right/);
 });
 
 test("组与组之间的间距比组内行距大一档", () => {

@@ -17,6 +17,7 @@ import SectionTransition from "@/components/SectionTransition";
 import { loadReactGlobe, prefetchReactGlobe } from "@/lib/reactGlobeLoader";
 import { escapeTooltipHtml, hostGeoCoordinate } from "@/lib/hostGeo";
 import DashboardLayout from "@/components/DashboardLayout";
+import { DiagnoseDialog } from "@/components/DiagnoseDialog";
 import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { LatencyRating } from "@/components/LatencyRating";
@@ -146,6 +147,8 @@ import {
 } from "recharts";
 import MultiHopEditor from "@/components/MultiHopEditor";
 import { ForwardGroupsContent } from "@/pages/ForwardGroups";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
 
 const ReactGlobe = lazy(loadReactGlobe) as typeof import("react-globe.gl").default;
 
@@ -1432,7 +1435,7 @@ function TunnelSelfTestDialog({
       manualTestRef.current = false;
       manualTestBaselineAtRef.current = "";
       manualTestResultObservedRef.current = false;
-      toast.error(e.message || "测试失败");
+      toast.error(e.message || "诊断没发出去");
     },
   });
 
@@ -1690,7 +1693,7 @@ function TunnelSelfTestDialog({
               const latency = typeof detail?.latencyMs === "number" && Number.isFinite(detail.latencyMs)
                 ? `${detail.latencyMs}ms`
                 : pending
-                  ? "探测中"
+                  ? "诊断中"
                   : detail
                     ? "失败"
                     : latestLatency !== null
@@ -1831,7 +1834,7 @@ function TunnelSelfTestDialog({
       if (lastFailureToastKey.current !== key) {
         lastFailureToastKey.current = key;
         manualTestRef.current = false;
-        toast.error("隧道链路自测失败", {
+        toast.error("诊断没通过", {
           description: message,
           duration: 12000,
         });
@@ -1846,50 +1849,40 @@ function TunnelSelfTestDialog({
   const probeDialogSizeClass = plannedSegmentCount >= 3 ? "sm:max-w-4xl" : plannedSegmentCount >= 2 ? "sm:max-w-3xl" : "sm:max-w-xl";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`${probeDialogSizeClass} min-w-0`}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            延迟探测
-          </DialogTitle>
-          <DialogDescription>{tunnelName}</DialogDescription>
-        </DialogHeader>
-
-        <LinkTestProbeView
-          parsed={parsedMessage}
-          fallbackLatencyMs={latencyMs}
-          isSuccess={displaySuccess}
-          isTesting={displayTesting}
-          sourceLabel={linkTestNodeData.sourceLabel}
-          targetLabel={linkTestNodeData.targetLabel}
-          nodeMeta={linkTestNodeData.nodeMeta}
-          nodeTooltips={linkTestNodeData.nodeTooltips}
-          plannedSegments={linkTestNodeData.plannedSegments}
-        />
-
-        <DialogFooter className="gap-2">
-          <Button
-            onClick={() => {
-              lastFailureToastKey.current = "";
-              manualTestRef.current = true;
-              manualTestBaselineAtRef.current = lastTestAt || "";
-              manualTestResultObservedRef.current = false;
-              setStartedLastTestAt(lastTestAt || "__none__");
-              setSawServerTesting(false);
-              setPostMutationQueryBaseline(null);
-              setOptimisticTesting(true);
-              testMutation.mutate({ id: tunnelId });
-            }}
-            disabled={displayTesting}
-            className="w-full min-w-0 gap-2 sm:w-auto sm:min-w-[112px]"
-          >
-            {displayTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
-            {displayTesting ? "探测中..." : "链路测试"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <DiagnoseDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      subjectName={tunnelName}
+      scope="从入口测到出口"
+      sizeClassName={probeDialogSizeClass}
+      testing={displayTesting}
+      lastRunAt={lastTestAt || null}
+      outcome={displaySuccess ? "success" : status === "timeout" ? "timeout" : isFailed ? "failed" : null}
+      failureReason={parsedMessage.message}
+      onRun={() => {
+        lastFailureToastKey.current = "";
+        manualTestRef.current = true;
+        manualTestBaselineAtRef.current = lastTestAt || "";
+        manualTestResultObservedRef.current = false;
+        setStartedLastTestAt(lastTestAt || "__none__");
+        setSawServerTesting(false);
+        setPostMutationQueryBaseline(null);
+        setOptimisticTesting(true);
+        testMutation.mutate({ id: tunnelId });
+      }}
+    >
+      <LinkTestProbeView
+        parsed={parsedMessage}
+        fallbackLatencyMs={latencyMs}
+        isSuccess={displaySuccess}
+        isTesting={displayTesting}
+        sourceLabel={linkTestNodeData.sourceLabel}
+        targetLabel={linkTestNodeData.targetLabel}
+        nodeMeta={linkTestNodeData.nodeMeta}
+        nodeTooltips={linkTestNodeData.nodeTooltips}
+        plannedSegments={linkTestNodeData.plannedSegments}
+      />
+    </DiagnoseDialog>
   );
 }
 
@@ -3693,6 +3686,38 @@ function TunnelsContent() {
     }
   };
   const selectedCreateDisabled = selectedCreateType === "tunnel" ? !canCreateTunnel : !canCreateChain;
+  /*
+    隧道卡、表格行上的操作。原来是四个图标（延迟、测试、编辑、删除）常驻 —— 十条隧道就是四十个
+    图标，而且得记住听诊器是「测试」、波形是「延迟」。常用的两个带字放外面，其余收进 ···，
+    删除永远在菜单最后、红色、隔一条线（顺序由 partitionEntityActions 保证）。
+    协议被停用的隧道只剩删除。
+  */
+  const renderTunnelActions = (tunnel: any, supported: boolean) => (
+    <EntityActions
+      primary={supported ? [
+        {
+          key: "test",
+          label: "诊断",
+          ariaLabel: `诊断隧道 ${tunnel.name}：测试入口到出口的延迟`,
+          icon: <Stethoscope className="h-3.5 w-3.5" />,
+          onSelect: () => setTestTunnel({ id: tunnel.id, name: tunnel.name }),
+        },
+        { key: "edit", label: "编辑", ariaLabel: `编辑隧道 ${tunnel.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => openEdit(tunnel) },
+      ] : []}
+      menu={[
+        ...(supported ? [{
+          key: "latency",
+          label: "延迟记录",
+          ariaLabel: `查看隧道 ${tunnel.name} 的延迟`,
+          icon: <Activity className="h-3.5 w-3.5" />,
+          onSelect: () => setLatencyTunnel({ id: tunnel.id, name: tunnel.name }),
+        }] : []),
+        { key: "delete", label: "删除", ariaLabel: `删除隧道 ${tunnel.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => setDeleteTunnel(tunnel) },
+      ]}
+      menuLabel={`隧道 ${tunnel.name} 的更多操作`}
+    />
+  );
+
   const renderUnsupportedHint = (children: ReactNode) => (
     <TooltipProvider>
       <Tooltip>
@@ -3924,31 +3949,7 @@ function TunnelsContent() {
                       {renderTunnelLatencyBreakdown(tunnel, true)}
                     </div>
 
-                    <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
-                      {supported && (
-                        <>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" aria-label={`查看隧道 ${tunnel.name} 的延迟`} onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
-                            <Activity className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" aria-label={`测试隧道 ${tunnel.name} 的延迟`} onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
-                            <Stethoscope className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                        </>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        title={!supported ? unsupportedProtocolTitle : undefined}
-                        aria-label={`删除隧道 ${tunnel.name}`}
-                        onClick={() => setDeleteTunnel(tunnel)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                    <CardActions>{renderTunnelActions(tunnel, supported)}</CardActions>
                     </CardContent>
                   </Card>
                 )}
@@ -4022,31 +4023,7 @@ function TunnelsContent() {
                       {renderTunnelLatencyBreakdown(tunnel, true)}
                     </div>
 
-                    <div className="action-card-footer flex justify-end gap-1 border-t border-border/40 pt-2">
-                      {supported && (
-                        <>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="查看延迟" aria-label={`查看隧道 ${tunnel.name} 的延迟`} onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}>
-                            <Activity className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="测试延迟" aria-label={`测试隧道 ${tunnel.name} 的延迟`} onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}>
-                            <Stethoscope className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                        </>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        title={!supported ? unsupportedProtocolTitle : undefined}
-                        aria-label={`删除隧道 ${tunnel.name}`}
-                        onClick={() => setDeleteTunnel(tunnel)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                    <CardActions>{renderTunnelActions(tunnel, supported)}</CardActions>
                     </CardContent>
                   </Card>
                 )}
@@ -4133,45 +4110,7 @@ function TunnelsContent() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {supported && (
-                            <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title="查看入口到出口延迟"
-                                aria-label={`查看隧道 ${tunnel.name} 的延迟`}
-                                onClick={() => setLatencyTunnel({ id: tunnel.id, name: tunnel.name })}
-                              >
-                                <Activity className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title="测试入口到出口延迟"
-                                aria-label={`测试隧道 ${tunnel.name} 的延迟`}
-                                onClick={() => setTestTunnel({ id: tunnel.id, name: tunnel.name })}
-                              >
-                                <Stethoscope className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`编辑隧道 ${tunnel.name}`} onClick={() => openEdit(tunnel)}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                            </>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                            title={!supported ? unsupportedProtocolTitle : undefined}
-                            aria-label={`删除隧道 ${tunnel.name}`}
-                            onClick={() => setDeleteTunnel(tunnel)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
+                        <div className="flex items-center justify-end">{renderTunnelActions(tunnel, supported)}</div>
                       </TableCell>
                     </TableRow>
                     )}
@@ -4202,7 +4141,15 @@ function TunnelsContent() {
                 minHeight="min-h-[260px]"
               />
             ) : (
-            <EmptyState icon={<Network className="h-8 w-8 opacity-40" />} title={<>暂无隧道</>} description={<>选择两台 Agent 创建第一条隧道</>} />
+            /*
+              搜着东西没搜到时不能说「暂无隧道 · 创建第一条隧道」—— 那是在说一条都没有，而他明明
+              有，只是这个词对不上。主机页一直是分开说的，这里补上。
+            */
+            normalizedLinkSearchQuery ? (
+              <EmptyState icon={<Network />} title="未找到匹配隧道" description="调整搜索内容或清空搜索" />
+            ) : (
+              <EmptyState icon={<Network />} title="暂无隧道" description="选择两台 Agent 创建第一条隧道" />
+            )
             )}
           </CardContent>
         </Card>

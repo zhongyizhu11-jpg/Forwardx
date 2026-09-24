@@ -3,6 +3,7 @@ import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
+import EmptyState from "@/components/EmptyState";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -181,12 +182,7 @@ export default function Announcements() {
               );
             })}
             {announcements.length === 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>暂无公告</CardTitle>
-                  <CardDescription>当前没有可查看的公告。</CardDescription>
-                </CardHeader>
-              </Card>
+              <EmptyState icon={<Megaphone />} title="暂无公告" description="当前没有可查看的公告。" />
             )}
           </div>
         )}

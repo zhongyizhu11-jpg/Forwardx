@@ -16,7 +16,8 @@ import {
 import { pushAgentRefresh } from "../agentEvents";
 import { appendPanelLog } from "../_core/panelLogger";
 import { getDdnsSettings, updateDdnsRecordValues } from "../ddns";
-import { afterDatabaseCommit, afterDatabaseTransactionSettled, executeRaw, getDb, insertAndGetId, isDatabaseTransactionActive, nowDate, queryRaw, withDatabaseTransaction } from "../dbRuntime";
+import { afterDatabaseCommit, afterDatabaseTransactionSettled, executeRaw, getDb, insertAndGetId, isDatabaseTransactionActive, nowDate, queryRaw, rawEpochToDate, withDatabaseTransaction } from "../dbRuntime";
+import { withForwardTestDates } from "./forwardTestRepository";
 import { boolValue, countAll, inList, quoteIdentifier } from "../dbCompat";
 import { pageResult, pageWindowForTotal, type PageRequest } from "../../shared/pagination";
 import {
@@ -335,14 +336,8 @@ export function normalizeChinaHealthTarget(raw: unknown, method?: unknown) {
   if (!needsPort) return { host, port: 0, text: textHost, method: probeMethod };
   return { host, port, text: `${textHost}:${port}`, method: probeMethod };
 }
-function toDate(value: unknown): Date | null {
-  if (!value) return null;
-  if (value instanceof Date) return value;
-  const n = Number(value);
-  if (Number.isFinite(n) && n > 0) return new Date(n > 10_000_000_000 ? n : n * 1000);
-  const parsed = new Date(String(value));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
+/** 同 dbRuntime 的 rawEpochToDate（原来这里单独抄了一份，负数会落到字符串解析）。 */
+const toDate = rawEpochToDate;
 
 function forwardGroupFailoverDelayMs(group: any) {
   const seconds = Number(group?.failoverSeconds || 60);
@@ -1204,13 +1199,13 @@ export async function getLatestForwardGroupTest(groupId: number, options: { incl
       `SELECT * FROM ${table} WHERE ${filterSql} AND ${quoteIdentifier("status")} IN ('pending', 'running') ORDER BY ${updatedCol} DESC, ${createdCol} DESC, ${idCol} DESC LIMIT 1`,
       filterArgs,
     );
-    if (pendingRows[0]) return withForwardChainTargetLabel(pendingRows[0], template);
+    if (pendingRows[0]) return withForwardTestDates(await withForwardChainTargetLabel(pendingRows[0], template));
   }
   const rows = await queryRaw<any>(
     `SELECT * FROM ${table} WHERE ${filterSql} AND ${quoteIdentifier("status")} IN ('success', 'failed', 'timeout') ORDER BY ${updatedCol} DESC, CASE WHEN ${messageCol} LIKE '%forward-chain-hop-summary%' THEN 0 ELSE 1 END, ${createdCol} DESC, ${idCol} DESC LIMIT 1`,
     filterArgs,
   );
-  return withForwardChainTargetLabel(rows[0], template);
+  return withForwardTestDates(await withForwardChainTargetLabel(rows[0], template));
 }
 
 export async function getForwardGroupPrimaryTemplateRule(groupId: number) {

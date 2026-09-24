@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.196"
+var Version = "2.2.197"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -298,6 +298,54 @@ func failoverProxyEventsSnapshot() []failoverProxyEvent {
 	drained := failoverEventQueue
 	failoverEventQueue = nil
 	return drained
+}
+
+/*
+每台主备代理此刻走的是哪条出站，每次心跳原样报一遍。
+
+切换事件只在「换了」的那一刻报一次，而代理还会不报事件就回到第 0 条：换规格时
+（面板上改了主备设置）、Agent 重启之后。只靠事件的话，面板会一直写着最后一次报上
+来的那条 —— 机器早就回到主出站了，面板还说「走 备用 1」。赶上心跳请求失败，那一批
+事件也就永远丢了。所以把「现在」本身报上去，面板拿它当准，事件只当记录。
+
+只报主备（fallback）：轮询、随机、哈希本来就没有「现在走哪条」。
+*/
+type failoverActiveReport struct {
+	RuleID     int    `json:"ruleId"`
+	SourcePort int    `json:"sourcePort"`
+	Target     string `json:"target"`
+	// 从什么时候开始走这条（Unix 毫秒）。
+	Since int64 `json:"since"`
+}
+
+func failoverActiveSnapshot() []failoverActiveReport {
+	// 先把代理拷出来再逐个加读锁，不在持有 failoverMu 的时候去拿代理自己的锁。
+	failoverMu.Lock()
+	proxies := make([]*failoverProxy, 0, len(failoverProxies))
+	for _, proxy := range failoverProxies {
+		proxies = append(proxies, proxy)
+	}
+	failoverMu.Unlock()
+	reports := make([]failoverActiveReport, 0, len(proxies))
+	for _, proxy := range proxies {
+		proxy.mu.RLock()
+		if proxy.spec.Strategy == "fallback" && proxy.activeIndex >= 0 && proxy.activeIndex < len(proxy.spec.Targets) && !proxy.activeSince.IsZero() {
+			reports = append(reports, failoverActiveReport{
+				RuleID:     proxy.ruleID,
+				SourcePort: proxy.sourcePort,
+				Target:     failoverTargetLabel(proxy.spec.Targets[proxy.activeIndex]),
+				Since:      proxy.activeSince.UnixMilli(),
+			})
+		}
+		proxy.mu.RUnlock()
+	}
+	sort.Slice(reports, func(i, j int) bool {
+		if reports[i].RuleID != reports[j].RuleID {
+			return reports[i].RuleID < reports[j].RuleID
+		}
+		return reports[i].SourcePort < reports[j].SourcePort
+	})
+	return reports
 }
 
 func failoverTargetLabel(target failoverTarget) string {
@@ -3867,6 +3915,7 @@ func heartbeat(cfg Config, forceReconcile ...bool) (heartbeatResult, error) {
 	payload["agentLastAppliedHash"] = appliedHash
 	payload["fxpEndpointEvents"] = fxpEndpointEventsSnapshot()
 	payload["failoverEvents"] = failoverProxyEventsSnapshot()
+	payload["failoverActive"] = failoverActiveSnapshot()
 	if compactEnabled {
 		payload["m"] = []any{
 			cpuUsageValue,
@@ -4088,6 +4137,7 @@ func heartbeatKeepalive(cfg Config) (heartbeatResult, error) {
 		"agentLastAppliedHash":      appliedHash,
 		"fxpEndpointEvents":         fxpEndpointEventsSnapshot(),
 		"failoverEvents":            failoverProxyEventsSnapshot(),
+		"failoverActive":            failoverActiveSnapshot(),
 	}
 	payload["mimicEnvironment"] = mimicEnvironment(false)
 	if compactAgentReports.Load() {
@@ -11779,6 +11829,10 @@ type failoverProxy struct {
 	rng            *mathrand.Rand
 	// 上一次切换的时刻，最短驻留时间从这儿算。
 	lastSwitchAt time.Time
+	// 现在这条是从什么时候开始走的。和 lastSwitchAt 不同，起代理、换规格（活跃
+	// 线路会被重置回第 0 条）也要重新计时 —— 这两种情况不算「切换」，不该拿去
+	// 卡最短驻留，但面板要知道「从什么时候起走的这条」。
+	activeSince time.Time
 	// 自动择优的候选，以及它从什么时候开始一直是候选。
 	fastestCandidate int
 	fastestSince     time.Time
@@ -11898,6 +11952,7 @@ func startFailoverProxyLocked(ruleID int, sourcePort int, spec failoverSpec, act
 		} else {
 			existing.spec = spec
 			existing.activeIndex = 0
+			existing.activeSince = time.Now()
 			existing.roundRobinNext = 0
 			existing.targetHealth = make([]bool, len(spec.Targets))
 			for i := range existing.targetHealth {
@@ -11942,6 +11997,7 @@ func startFailoverProxyLocked(ruleID int, sourcePort int, spec failoverSpec, act
 		}(),
 		failureSince:   make([]time.Time, len(spec.Targets)),
 		recoveredSince: make([]time.Time, len(spec.Targets)),
+		activeSince:    time.Now(),
 		rng:            mathrand.New(mathrand.NewSource(time.Now().UnixNano() + int64(ruleID*100000+sourcePort))),
 		ln:             ln,
 		done:           make(chan struct{}),
@@ -12098,6 +12154,7 @@ func (p *failoverProxy) setActiveLocked(index int, reason string) {
 	old := p.activeIndex
 	p.activeIndex = index
 	p.lastSwitchAt = time.Now()
+	p.activeSince = p.lastSwitchAt
 	next := p.spec.Targets[index]
 	logf("failover switch rule=%d source=%d %d->%d target=%s:%d reason=%s", p.ruleID, p.sourcePort, old, index, next.TargetIP, next.TargetPort, reason)
 	from := ""

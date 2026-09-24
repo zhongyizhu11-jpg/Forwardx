@@ -1,4 +1,6 @@
 import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
+import { EntityActions } from "@/components/entity/EntityActions";
+import { CardActions } from "@/components/entity/EntityCard";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getStoredAgentTokenViewMode, storeAgentTokenViewMode, type AgentTokenViewMode } from "@/lib/agentTokenViewMode";
 import { usePageVisible } from "@/hooks/usePageVisible";
@@ -47,6 +49,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { isTokenHostOnline } from "@/lib/agentTokenStatus";
 import { buildAgentScriptCommand, type AgentScriptAction } from "@shared/agentInstallCommand";
+import EmptyState from "@/components/EmptyState";
 
 type AgentTokenManagerProps = {
   createSignal?: number;
@@ -126,14 +129,19 @@ function TokenStatusBadge({ tokenItem }: { tokenItem: any }) {
   }
 
   const isOnline = isTokenHostOnline(host);
+  /*
+    原来「在线」用的是图表色 chart-2，圆点还带 animate-pulse —— 而 workspace.css 里有一条
+    `.action-card [class*="animate-pulse"] { animation: none }` 专门把它按住：一边加动画、一边
+    用猜类名的规则关掉。状态色走令牌，不闪（手册：闪动只留给「正在发生」的事）。
+  */
   return isOnline ? (
-    <Badge className="shrink-0 gap-1.5 border-chart-2/25 bg-chart-2/10 text-chart-2 text-[10px]">
-      <span className="h-2 w-2 rounded-full bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" />
+    <Badge className="shrink-0 gap-1.5 border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)] text-[10px]">
+      <span className="h-2 w-2 rounded-full bg-[var(--fx-healthy)]" aria-hidden="true" />
       在线
     </Badge>
   ) : (
-    <Badge className="shrink-0 gap-1.5 border-destructive/25 bg-destructive/10 text-destructive text-[10px]">
-      <span className="h-2 w-2 rounded-full bg-destructive shadow-sm shadow-destructive/50" />
+    <Badge className="shrink-0 gap-1.5 border-[color-mix(in_srgb,var(--fx-down)_25%,transparent)] bg-[var(--fx-down-soft)] text-[var(--fx-down-text)] text-[10px]">
+      <span className="h-2 w-2 rounded-full bg-[var(--fx-down)]" aria-hidden="true" />
       离线
     </Badge>
   );
@@ -176,41 +184,25 @@ function TokenActionButtons({
   onEdit: (tokenItem: any) => void;
   onDelete: (tokenItem: any) => void;
 }) {
+  // 原来是三个只有悬停提示、没有读屏名字的图标；拿安装命令是这里最常做的事，带字放外面。
+  const loading = loadingScriptTokenId === tokenItem.id;
+  const name = tokenItem.remark || tokenItem.name || `Token #${tokenItem.id}`;
   return (
-    <div className="flex items-center justify-end gap-1">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="查看安装命令"
-        disabled={loadingScriptTokenId === tokenItem.id}
-        onClick={() => onOpenScript(tokenItem.id)}
-      >
-        {loadingScriptTokenId === tokenItem.id ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Terminal className="h-3.5 w-3.5" />
-        )}
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="编辑备注"
-        onClick={() => onEdit(tokenItem)}
-      >
-        <Pencil className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8 text-destructive hover:text-destructive"
-        title="删除 Token"
-        onClick={() => onDelete(tokenItem)}
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
-    </div>
+    <EntityActions
+      primary={[
+        {
+          key: "script",
+          label: "安装命令",
+          ariaLabel: `查看 ${name} 的安装命令`,
+          icon: loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Terminal className="h-3.5 w-3.5" />,
+          disabled: loading,
+          onSelect: () => onOpenScript(tokenItem.id),
+        },
+        { key: "edit", label: "编辑", ariaLabel: `编辑 ${name} 的备注`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => onEdit(tokenItem) },
+      ]}
+      menu={[{ key: "delete", label: "删除", ariaLabel: `删除 ${name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => onDelete(tokenItem) }]}
+      menuLabel={`${name} 的更多操作`}
+    />
   );
 }
 
@@ -271,7 +263,7 @@ function AgentTokenCard({
           <TokenHostInfo tokenItem={tokenItem} compact />
         </div>
 
-        <div className="action-card-footer flex justify-end border-t border-border/40 pt-2">
+        <CardActions>
           <TokenActionButtons
             tokenItem={tokenItem}
             loadingScriptTokenId={loadingScriptTokenId}
@@ -279,7 +271,7 @@ function AgentTokenCard({
             onEdit={onEdit}
             onDelete={onDelete}
           />
-        </div>
+        </CardActions>
       </CardContent>
     </Card>
   );
@@ -781,25 +773,17 @@ export default function AgentTokenManager({
               )}
             </>
           ) : (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <div className="h-16 w-16 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
-                <Key className="h-8 w-8 opacity-40" />
-              </div>
-              <p className="text-lg font-medium">{isTextFiltered && tokenItems.length > 0 ? "未找到匹配 Token" : "暂无 Token"}</p>
-              <p className="text-sm mt-1 text-muted-foreground">
-                {isTextFiltered && tokenItems.length > 0 ? "调整筛选内容或清空搜索" : "添加主机后会生成 Agent 安装命令"}
-              </p>
-              {showCreateButton && (
-                <Button
-                  onClick={openCreateDialog}
-                  variant="outline"
-                  className="mt-4 gap-2"
-                >
+            <EmptyState
+              icon={<Key />}
+              title={isTextFiltered && tokenItems.length > 0 ? "未找到匹配 Token" : "暂无 Token"}
+              description={isTextFiltered && tokenItems.length > 0 ? "调整筛选内容或清空搜索" : "添加主机后会生成 Agent 安装命令"}
+              actions={showCreateButton ? (
+                <Button onClick={openCreateDialog} variant="outline" className="gap-2">
                   <Plus className="h-4 w-4" />
                   添加主机
                 </Button>
-              )}
-            </div>
+              ) : undefined}
+            />
           )}
         </CardContent>
       </Card>
