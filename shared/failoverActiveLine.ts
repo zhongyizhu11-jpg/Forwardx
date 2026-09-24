@@ -7,16 +7,16 @@ import { timestampMillis } from "./timestamp";
  * 规则级主备是数据面做的：Agent 自己探、自己切，毫秒级，不经面板。代价是
  * 面板原先完全看不到结果 —— 配了主备，列表上和没配长得一模一样，只能事后
  * 去日志里翻 `[Failover]`。这份判定把心跳带回来的 `failoverActiveTarget`
- * 对回规则自己的出站清单，换成一个能直接显示的序号和称呼。
+ * 对回规则自己的线路清单，换成一个能直接显示的序号和称呼。
  *
  * 前后端共用一份：列表、详情、通知如果各写各的，同一条规则会出现「面板说走
  * 主线、Telegram 说走备线」。
  */
 
 export type FailoverActiveLine = {
-  /** 0 = 主出站，1.. = 第几条备用出站；-1 = 报上来的地址不在清单里。 */
+  /** 0 = 主线路，1.. = 第几条备用线路；-1 = 报上来的地址不在清单里。 */
   index: number;
-  /** 「主出站」「备用 1」，或认不出来时的原始地址。 */
+  /** 「主线路」「备用 1」，或认不出来时的原始地址。 */
   label: string;
   /** 正在走备线。用来决定要不要把这一条显示成需要注意的状态。 */
   onBackup: boolean;
@@ -37,18 +37,18 @@ export type FailoverActiveLine = {
 };
 
 /**
- * 出站的称呼：「主出站」「备用 1」。
+ * 出站的称呼：「主线路」「备用 1」。
  *
- * 和编辑框里配置时的叫法一致。原来这里叫「主线路 / 备线 1」、时段表的复述叫「备用出站 1」、
+ * 和编辑框里配置时的叫法一致。原来这里叫「主线路 / 备线 1」、时段表的复述叫「备用线路 1」、
  * 编辑框叫「备用 1」—— 同一条线三个名字，用户得自己对上号。
  */
 export function failoverLineLabel(index: number, target: string) {
-  if (index === 0) return "主出站";
+  if (index === 0) return "主线路";
   if (index > 0) return `备用 ${index}`;
   return target || "未知出站";
 }
 
-/** 出站清单：主出站永远排第 0 位，后面接 failoverTargets 的顺序。 */
+/** 线路清单：主线路永远排第 0 位，后面接 failoverTargets 的顺序。 */
 export function failoverLineEndpoints(rule: {
   targetIp?: unknown;
   targetPort?: unknown;

@@ -48,6 +48,7 @@ export default defineConfig({
         items: [
           { text: "隧道链路", link: "/guide/tunnels" },
           { text: "端口转发链", link: "/guide/port-chains" },
+          { text: "主备线路", link: "/guide/failover" },
           { text: "转发组和入口出口组", link: "/guide/groups" },
           { text: "DDNS 和故障转移", link: "/guide/ddns" },
           { text: "PROXY Protocol", link: "/guide/proxy-protocol" },

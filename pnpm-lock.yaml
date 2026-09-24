@@ -8,6 +8,12 @@ patchedDependencies:
   avataaars@2.0.0:
     hash: 785fa8a0d68180f215b5eeb746f09c147a12bcb9896ae28626c7df0555fb0197
     path: patches/avataaars@2.0.0.patch
+  globe.gl@2.46.1:
+    hash: 9d5c7e48bbf11ac3907511a35cd6c02ba82db860345092d22c4505fc988cc016
+    path: patches/globe.gl@2.46.1.patch
+  three-globe@2.45.2:
+    hash: 03ec7b651599cee71712965ab5a1effb0e958fb59e5815108d970d2cb96edc60
+    path: patches/three-globe@2.45.2.patch
 
 importers:
 
@@ -7705,13 +7711,13 @@ snapshots:
       minipass: 7.1.3
       path-scurry: 2.0.2
 
-  globe.gl@2.46.1:
+  globe.gl@2.46.1(patch_hash=9d5c7e48bbf11ac3907511a35cd6c02ba82db860345092d22c4505fc988cc016):
     dependencies:
       '@tweenjs/tween.js': 25.0.0
       accessor-fn: 1.5.3
       kapsule: 1.16.3
       three: 0.184.0
-      three-globe: 2.45.2(three@0.184.0)
+      three-globe: 2.45.2(patch_hash=03ec7b651599cee71712965ab5a1effb0e958fb59e5815108d970d2cb96edc60)(three@0.184.0)
       three-render-objects: 1.42.0(three@0.184.0)
 
   gopd@1.2.0: {}
@@ -8347,7 +8353,7 @@ snapshots:
 
   react-globe.gl@2.38.0(react@19.2.5):
     dependencies:
-      globe.gl: 2.46.1
+      globe.gl: 2.46.1(patch_hash=9d5c7e48bbf11ac3907511a35cd6c02ba82db860345092d22c4505fc988cc016)
       prop-types: 15.8.1
       react: 19.2.5
       react-kapsule: 2.5.7(react@19.2.5)
@@ -8754,7 +8760,7 @@ snapshots:
       earcut: 3.0.2
       three: 0.184.0
 
-  three-globe@2.45.2(three@0.184.0):
+  three-globe@2.45.2(patch_hash=03ec7b651599cee71712965ab5a1effb0e958fb59e5815108d970d2cb96edc60)(three@0.184.0):
     dependencies:
       '@tweenjs/tween.js': 25.0.0
       accessor-fn: 1.5.3

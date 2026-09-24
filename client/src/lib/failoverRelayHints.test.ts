@@ -4,14 +4,14 @@ import { describeFailoverLines, failoverLineHintText, type RelayCandidate } from
 import { formatFailoverEndpoint, parseFailoverTargetLine } from "@shared/failoverTargets";
 
 /**
- * 备用出站那几行，面板得认得出它们指向哪儿。
+ * 备用线路那几行，面板得认得出它们指向哪儿。
  *
  * 手填 `地址:端口` 时有三件事完全看不见，而任何一件出错都要等真出事那天才暴露：
  *
  *   · 这条出站到底是哪台中转的哪条规则（两个月后自己都不记得）；
  *   · 它的健康检查有没有盲区（用户态中转时探测只到中转本身，中转的上游断了
  *     不会切，流量继续往死路里送）；
- *   · 它和主出站是不是通向同一个落地（主备的前提就是这个，指错了等于切过去
+ *   · 它和主线路是不是通向同一个落地（主备的前提就是这个，指错了等于切过去
  *     换了个服务）。
  *
  * 判断放在纯函数里就是为了能测 —— 这三条正是最该测的。
@@ -75,13 +75,13 @@ test("内核转发的中转不报盲区 —— 它的探测本来就是端到端
   assert.equal(hints[0].probeBlindSpot, false);
 });
 
-test("备用出站通向别的落地要报出来", () => {
+test("备用线路通向别的落地要报出来", () => {
   const hints = describe("203.0.113.3:20003", "198.51.100.7:443");
   assert.equal(hints[0].sameDestination, false);
   assert.match(failoverLineHintText(hints[0]), /不是同一个落地/);
 });
 
-test("主出站自己是中转时，比的是它通向的落地，不是它的地址", () => {
+test("主线路自己是中转时，比的是它通向的落地，不是它的地址", () => {
   /*
     这正是用户要的形状：主走中转 A、备走中转 B，两条都到同一个落地。
     按字面地址比的话，203.0.113.1:20001 和 203.0.113.2:20002 当然不相等 ——

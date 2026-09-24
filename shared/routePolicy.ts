@@ -43,9 +43,9 @@ export const ACTIVE_LINE_SNAPSHOT_AGENT_VERSION = "2.2.197";
 export type RoutePolicyStrategy = "fallback" | "round_robin" | "random" | "ip_hash";
 
 export type RoutePolicyLine = {
-  /** 0 是主出站，1.. 是第几条备用出站 */
+  /** 0 是主线路，1.. 是第几条备用线路 */
   index: number;
-  /** 「主出站」「备用 1」 */
+  /** 「主线路」「备用 1」 */
   label: string;
   endpoint: string;
   /** 按规矩此刻排在最前的那条。由自动择优决定时谁都不是 —— 面板不知道 Agent 测出来谁快。 */
@@ -96,13 +96,13 @@ export type RoutePolicyGuard = {
 export type RoutePolicyReport =
   /** 新版 Agent 每次心跳确认的「现在」 */
   | { kind: "current"; index: number; since: number | null }
-  /** 2.2.196 只报切换事件：这是最近一次切换，之后换过规格或重启过的话已经回到主出站 */
+  /** 2.2.196 只报切换事件：这是最近一次切换，之后换过规格或重启过的话已经回到主线路 */
   | { kind: "lastSwitch"; index: number; since: number | null }
-  /** 报上来的地址不在出站清单里 —— 多半刚改过配置 */
+  /** 报上来的地址不在线路清单里 —— 多半刚改过配置 */
   | { kind: "unlisted"; target: string }
   /** 新版 Agent，还没报上来（刚起来、刚改过） */
   | { kind: "pending" }
-  /** 2.2.196，没有切换记录 —— 不能当成「一直走主出站」：这一版之前面板会丢事件 */
+  /** 2.2.196，没有切换记录 —— 不能当成「一直走主线路」：这一版之前面板会丢事件 */
   | { kind: "noSwitch" }
   | { kind: "offline" }
   /** Agent 早于 2.2.196：不报告，也不执行时段表、人工指定、自动择优 */
@@ -702,11 +702,11 @@ export function describeRoutePolicyReport(policy: RoutePolicy, options: { nowMs?
     case "lastSwitch":
       return {
         text: `最近一次切到 ${label(report.index)}${since(report.since)}`,
-        note: `这台 Agent 只在切换时报告：之后改过主备设置或重启过，就已经回到主出站了。${upgradeNote}`,
+        note: `这台 Agent 只在切换时报告：之后改过主备设置或重启过，就已经回到主线路了。${upgradeNote}`,
         tone: lineTone(report.index),
       };
     case "unlisted":
-      return { text: `Agent 报的 ${report.target} 不在出站清单里`, note: "多半是刚改过配置，Agent 还没跟上。", tone: "warn" };
+      return { text: `Agent 报的 ${report.target} 不在线路清单里`, note: "多半是刚改过配置，Agent 还没跟上。", tone: "warn" };
     case "pending":
       return policy.subject === "group"
         ? { text: "还没选出入口", note: null, tone: "muted" }

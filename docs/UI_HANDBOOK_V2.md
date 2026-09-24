@@ -222,6 +222,11 @@ Tailwind 里写 `text-display` / `text-metric` / `text-section` /
 
 （后缀 `-type` 是为了避开 Tailwind 已有的 `text-primary` 前景色工具类。）
 
+这六档在 `client/src/lib/utils.ts` 里注册给了 tailwind-merge。没注册时它们会被当成文字
+颜色：`cn("text-meta", "text-muted-foreground")` 会把 `text-meta` 删掉，字号悄悄退回继承
+值 —— 2.3.372 之前就是这样，有 10 处写了字号却没生效。新加一档字号时两边一起改，
+`utils.test.ts` 会对着 `index.css` 的 `@theme` 核对。
+
 ### 数字的写法
 
 不要：

@@ -8,7 +8,7 @@ import test from "node:test";
 /**
  * 健康探测目标要真的走到 Agent 手里。
  *
- * 这一条盯的是整条链路：面板存的 `failoverProbeTarget` 和备用出站里的
+ * 这一条盯的是整条链路：面板存的 `failoverProbeTarget` 和备用线路里的
  * `probeIp/probePort`，经过心跳下发之后，必须原样出现在 Agent 的主备规格里。
  *
  * 为什么值得单独测：这条路要穿过 rules.crud 的入参、库表、心跳里那段 actionFailover，
@@ -54,7 +54,7 @@ function dispatchFailoverSpec(): {
 
     /*
       一条开着主备的 gost 规则：
-        主出站  198.51.100.7:443   探测 198.51.100.7:9443
+        主线路  198.51.100.7:443   探测 198.51.100.7:9443
         备用    198.51.100.8:443   探测 198.51.100.8:9443
         备用    198.51.100.9:443   没填探测目标（应当退回探它自己）
     */
@@ -116,16 +116,16 @@ function dispatchFailoverSpec(): {
 
 const spec = dispatchFailoverSpec();
 
-test("主出站的探测目标下发到 Agent", () => {
+test("主线路的探测目标下发到 Agent", () => {
   const main = spec.targets[0];
   assert.deepEqual(
     { targetIp: main.targetIp, targetPort: main.targetPort, probeIp: main.probeIp, probePort: main.probePort },
     { targetIp: "198.51.100.7", targetPort: 443, probeIp: "198.51.100.7", probePort: 9443 },
-    "主出站的探测目标没走到 Agent —— 面板上配好了，机器上还在探出站地址本身",
+    "主线路的探测目标没走到 Agent —— 面板上配好了，机器上还在探出站地址本身",
   );
 });
 
-test("备用出站各自的探测目标下发到 Agent", () => {
+test("备用线路各自的探测目标下发到 Agent", () => {
   assert.deepEqual(
     spec.targets.slice(1).map((target: DispatchedTarget) => ({
       targetIp: target.targetIp, probeIp: target.probeIp ?? null, probePort: target.probePort ?? null,
@@ -135,12 +135,12 @@ test("备用出站各自的探测目标下发到 Agent", () => {
       // 没填探测目标的那条不该被塞上别人的 —— 它探的是自己，也就是老行为。
       { targetIp: "198.51.100.9", probeIp: null, probePort: null },
     ],
-    "备用出站的探测目标没走到 Agent",
+    "备用线路的探测目标没走到 Agent",
   );
 });
 
-test("出站清单本身没被探测目标搅乱", () => {
-  // 主出站排第一、备用按顺序跟在后面，是 fallback 策略的语义依据。
+test("线路清单本身没被探测目标搅乱", () => {
+  // 主线路排第一、备用按顺序跟在后面，是 fallback 策略的语义依据。
   assert.deepEqual(
     spec.targets.map((target: DispatchedTarget) => `${target.targetIp}:${target.targetPort}`),
     ["198.51.100.7:443", "198.51.100.8:443", "198.51.100.9:443"],

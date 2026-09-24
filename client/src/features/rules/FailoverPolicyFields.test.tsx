@@ -14,7 +14,8 @@ const hints = [
   { line: 2, address: "198.51.100.9:443", relay: null, hasProbe: false, probeBlindSpot: false, sameDestination: null },
 ];
 
-function render(patch: Partial<FailoverPolicyValue> = {}) {
+/** 「按什么选」那几层在「高级设置」里；这些测试看的是它们，默认展开。看折叠行为的测试传 "auto"（和编辑框一样自己判断）。 */
+function render(patch: Partial<FailoverPolicyValue> = {}, advanced: boolean | "auto" = true) {
   const value: FailoverPolicyValue = {
     failoverStrategy: "fallback",
     failoverTargetsText: "198.51.100.8:443\n198.51.100.9:443",
@@ -47,8 +48,9 @@ function render(patch: Partial<FailoverPolicyValue> = {}) {
       policy={policy}
       lineHints={hints}
       relayCandidates={[]}
-      strategyLabel="轮询模式 - 依次轮换"
+      mainAddress="198.51.100.7:443"
       scheduleTimeZone={TZ}
+      defaultAdvancedOpen={advanced === "auto" ? undefined : advanced}
       nowMs={NOW}
       timeZone={TZ}
     />,
@@ -96,9 +98,43 @@ test("「一直」这一块选中时，说清楚压住的是时段表和自动�
   assert.doesNotMatch(html, /自动切换都不会/);
 });
 
-test("轮询没有人工指定、时段表、最短驻留、恢复后切回；配过的时段表提示保存后会清空", () => {
+test("轮流没有人工指定、时段表、最短驻留、恢复后切回；配过的时段表提示保存后会清空", () => {
   const html = render({ failoverStrategy: "round_robin", failoverSchedule: schedule });
   assert.doesNotMatch(html, /policy-pin|policy-schedule|最短驻留|恢复后切回/);
   assert.match(html, /每条新连接/);
   assert.match(html, /时段表不适用，保存后会清空/);
 });
+
+test("勾上主备先看到的是线路和一句话：主线路是上面填的目标，备用一行一条，其余都折在「高级设置」里", () => {
+  const html = render({}, "auto");
+  assert.match(html, /主线路/);
+  assert.match(html, /198\.51\.100\.7:443/, "主线路就是规则自己的目标，得写出来");
+  assert.match(html, /value="198\.51\.100\.8:443"/, "备用线路一行一个输入框，不是一个要照语法写的大文本框");
+  assert.match(html, /value="198\.51\.100\.9:443"/);
+  assert.doesNotMatch(html, /<textarea/);
+  assert.match(html, /添加备用线路/);
+  assert.match(html, /平时都走主线路/, "一句话说清楚会怎么走");
+  assert.match(html, /aria-expanded="false"[^>]*>[^]*?高级设置/);
+  assert.match(html, /都是默认值，一般不用动/);
+  assert.doesNotMatch(html, /policy-pin|policy-schedule|挂了就切/, "新手用不上的东西默认折起来");
+});
+
+test("改过高级项的规则，打开编辑框时「高级设置」直接展开，折叠条上也列着改了什么", () => {
+  const html = render({ failoverSchedule: schedule }, "auto");
+  assert.match(html, /aria-expanded="true"/);
+  assert.match(html, /data-testid="policy-schedule"/);
+  assert.match(html, /时段表 1 段/);
+});
+
+test("还没有备用线路时也给一格输入框，不描述一个不存在的切换", () => {
+  const html = render({ failoverTargetsText: "" }, "auto");
+  assert.match(html, /placeholder="地址:端口，如 10\.0\.0\.2:443"/);
+  assert.match(html, /还没有备用线路/);
+});
+
+test("地址写错当场说，不等点保存", () => {
+  const html = render({ failoverTargetsText: "10.0.0.2" }, "auto");
+  assert.match(html, /aria-invalid="true"/);
+  assert.match(html, /请按 地址:端口 格式填写/);
+});
+

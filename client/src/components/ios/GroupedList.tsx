@@ -117,9 +117,14 @@ export function ListRow({
         </span>
       ) : null}
       <span className="flex min-w-0 flex-1 flex-col text-left">
+        {/*
+          行的名字走 primary 档（手机 15 / 桌面 17，iOS 列表正文就是 17pt）。这里原来写的是
+          secondary，却一直显示成 15/16px —— cn() 把自定义字号当成颜色删掉了，字号退回继承值
+          （见 lib/utils.ts）。修好 cn 之后照原样会缩到 13/15px；按手册「名字、地址 → primary」改过来。
+        */}
         <span
           className={cn(
-            "truncate text-secondary-type",
+            "truncate text-primary-type",
             selected ? "font-semibold text-foreground" : "text-foreground",
           )}
         >

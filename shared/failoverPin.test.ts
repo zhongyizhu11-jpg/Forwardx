@@ -8,10 +8,10 @@ import { readFailoverPin } from "./failoverPin";
 const NOW = Date.UTC(2026, 8, 22, 12, 0, 0);
 const HOUR = 3_600_000;
 
-test("没钉就是没钉：null 不能被读成「钉在主出站」", () => {
+test("没钉就是没钉：null 不能被读成「钉在主线路」", () => {
   /*
-    Number(null) 是 0，而 0 是主出站。上一版三处读法都先 Number() 再判断，于是
-    没钉过的规则被当成「钉在主出站、一直钉着」下发给 Agent —— 时段表和自动择优
+    Number(null) 是 0，而 0 是主线路。上一版三处读法都先 Number() 再判断，于是
+    没钉过的规则被当成「钉在主线路、一直钉着」下发给 Agent —— 时段表和自动择优
     全部静默失效。
   */
   assert.equal(readFailoverPin({ failoverPinnedIndex: null, failoverPinnedUntil: null }, { nowMs: NOW }), null);
@@ -21,8 +21,8 @@ test("没钉就是没钉：null 不能被读成「钉在主出站」", () => {
   assert.equal(readFailoverPin(null, { nowMs: NOW }), null);
 });
 
-test("真的钉在主出站时照认", () => {
-  // 修的是「null 被当成 0」，不是「0 不能用」—— 主出站本来就可以被钉住。
+test("真的钉在主线路时照认", () => {
+  // 修的是「null 被当成 0」，不是「0 不能用」—— 主线路本来就可以被钉住。
   assert.deepEqual(readFailoverPin({ failoverPinnedIndex: 0, failoverPinnedUntil: null }, { nowMs: NOW }), { index: 0, untilMs: null });
 });
 
@@ -92,7 +92,7 @@ test("钉子只许经 readFailoverPin 读：别处再自己 Number() 一下就�
     offenders,
     [],
     "这些地方自己把 failoverPinnedIndex 转成了数字。没钉时这一列是 null，Number(null) 是 0，\n"
-      + "0 是主出站 —— 改用 shared/failoverPin 的 readFailoverPin：\n  "
+      + "0 是主线路 —— 改用 shared/failoverPin 的 readFailoverPin：\n  "
       + offenders.join("\n  "),
   );
 });

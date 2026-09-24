@@ -87,7 +87,7 @@ test("时段表的文字描述要让人看懂跨没跨午夜", () => {
   );
   assert.equal(
     describeFailoverScheduleWindow({ days: [], from: "02:00", to: "06:00", targetIndex: 0 }),
-    "每天 02:00-06:00 → 主出站",
+    "每天 02:00-06:00 → 主线路",
   );
   assert.equal(
     describeFailoverScheduleWindow({ days: [0, 6], from: "20:00", to: "23:00", targetIndex: 1 }),
@@ -120,8 +120,8 @@ test("时段表指向不存在的出站要报错", () => {
     timezone: "Asia/Shanghai",
     windows: [{ days: [], from: "18:00", to: "23:00", targetIndex }],
   });
-  assert.match(String(validateFailoverSchedule(make(5), { strategy: "fallback", backupCount: 2 })), /只配了 2 条备用出站/);
-  // 边界：正好指向最后一条是合法的，主出站（0）也是。
+  assert.match(String(validateFailoverSchedule(make(5), { strategy: "fallback", backupCount: 2 })), /只配了 2 条备用线路/);
+  // 边界：正好指向最后一条是合法的，主线路（0）也是。
   assert.equal(validateFailoverSchedule(make(2), { strategy: "fallback", backupCount: 2 }), null);
   assert.equal(validateFailoverSchedule(make(0), { strategy: "fallback", backupCount: 2 }), null);
 });

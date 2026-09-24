@@ -29,7 +29,7 @@ export type FailoverScheduleWindow = {
   from: string;
   /** "HH:MM"。小于等于 from 表示跨午夜。 */
   to: string;
-  /** 这个时段首选第几条出站；0 是主出站。 */
+  /** 这个时段首选第几条出站；0 是主线路。 */
   targetIndex: number;
 };
 
@@ -165,7 +165,7 @@ export function describeFailoverScheduleDays(days: number[]): string {
 
 export function describeFailoverScheduleWindow(window: FailoverScheduleWindow, targetLabel?: string): string {
   const crossesMidnight = (parseScheduleMinutes(window.to) ?? 0) <= (parseScheduleMinutes(window.from) ?? 0);
-  const target = targetLabel || (window.targetIndex === 0 ? "主出站" : `备用 ${window.targetIndex}`);
+  const target = targetLabel || (window.targetIndex === 0 ? "主线路" : `备用 ${window.targetIndex}`);
   return `${describeFailoverScheduleDays(window.days)} ${window.from}-${window.to}${crossesMidnight ? "（次日）" : ""} → ${target}`;
 }
 
@@ -184,12 +184,12 @@ export function validateFailoverSchedule(
 ): string | null {
   if (!schedule || schedule.windows.length === 0) return null;
   if ((context.strategy || "fallback") !== "fallback") {
-    return "时段表只在主备模式下生效，请先把出站策略改成主备";
+    return "时段表只在主备模式下生效，请先把分配方式改成主备";
   }
-  // 出站清单是「主出站 + 备用出站」，所以最大序号就是备用出站的条数。
+  // 线路清单是「主线路 + 备用线路」，所以最大序号就是备用线路的条数。
   for (const window of schedule.windows) {
     if (window.targetIndex > context.backupCount) {
-      return `时段表指向了第 ${window.targetIndex} 条出站，但一共只配了 ${context.backupCount} 条备用出站`;
+      return `时段表指向了第 ${window.targetIndex} 条出站，但一共只配了 ${context.backupCount} 条备用线路`;
     }
   }
   return null;
@@ -198,7 +198,7 @@ export function validateFailoverSchedule(
 /**
  * 这次保存该带上什么样的时段表。
  *
- * 界面上可以先配好时段表、再把出站策略改成轮询 —— 这时候时段表不适用了。如果照样
+ * 界面上可以先配好时段表、再把分配方式改成轮询 —— 这时候时段表不适用了。如果照样
  * 把它发上去，服务端会拒绝整次保存，用户看到的是「改个策略而已，怎么报了个时段表
  * 的错」。所以在这儿就归零。
  *

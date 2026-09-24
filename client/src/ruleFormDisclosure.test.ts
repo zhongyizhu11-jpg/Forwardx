@@ -11,7 +11,7 @@ import { FailoverPolicyFields, type FailoverPolicyValue } from "./features/rules
  * 「更多设置」折起来的东西，必须是真的可以不看的。
  *
  * 创建转发原来把要填的和可以不管的并排放在同一片方格里：源端口、目标地址、目标端口
- * 旁边就是规则名称、转发工具、异常提醒、出站策略 —— 后四项都有能用的默认值，不动
+ * 旁边就是规则名称、转发工具、异常提醒、主备线路 —— 后四项都有能用的默认值，不动
  * 也能把转发建出来，可它们长得和必填项一模一样。于是每个新手都要当一次选择题：
  * 「转发工具这三个我该选哪个」，而正确答案通常是「别动」。
  *
@@ -35,9 +35,25 @@ function collapsedSection(source: string): string {
   const section = source.slice(start, end);
   // 锚点校验：抓空了的话下面的断言会全部空转。
   assert.ok(section.includes("转发工具"), "折叠块里没抓到「转发工具」，范围大概不对");
-  assert.ok(section.includes("出站策略"), "折叠块里没抓到「出站策略」，范围大概不对");
+  assert.ok(section.includes("异常TG提醒"), "折叠块里没抓到「异常TG提醒」，范围大概不对");
   return section;
 }
+
+test("主备线路不折进「更多设置」—— 它是用户会专门来找的功能", () => {
+  /*
+    它原来就在折叠块里，折叠条上还不写它：用户问「主备线路怎么用」，第一步就是
+    找不到入口。放在外面、一行一个勾，不勾的时候也只占一行。
+  */
+  const source = fs.readFileSync(rulesPagePath, "utf8");
+  const section = collapsedSection(source);
+  assert.equal(section.includes("<FailoverPolicyFields"), false, "主备的编辑块又被折进「更多设置」了");
+  assert.equal(section.includes('data-testid="failover-section"'), false);
+  const dialogStart = source.indexOf("<DialogTitle>{editingId ?");
+  const foldAt = source.indexOf("更多设置</span>");
+  const failoverAt = source.indexOf('data-testid="failover-section"');
+  assert.ok(dialogStart > 0 && failoverAt > dialogStart, "编辑框里找不到主备那一块");
+  assert.ok(failoverAt < foldAt, "主备那一块应该在「更多设置」折叠条的前面");
+});
 
 test("折起来的都是可以不管的 —— 里面不许有必填项", () => {
   const section = collapsedSection(fs.readFileSync(rulesPagePath, "utf8"));
@@ -94,7 +110,7 @@ test("缺口指向折叠里的控件时会自动展开", () => {
   assert.match(source, /isAdvancedSectionBlocker\(submitBlocker\)/);
 });
 
-test("时段表编辑器跟着出站策略走，发出去的那一份也归零", () => {
+test("时段表编辑器跟着主备线路走，发出去的那一份也归零", () => {
   /*
     时段表只在主备模式下生效。界面上可以先配好它、再把策略改成轮询 —— 这时候如果
     照样把它发上去，服务端会拒绝整次保存，用户看到的是「改个策略而已，怎么报了个
@@ -126,8 +142,9 @@ test("时段表编辑器跟着出站策略走，发出去的那一份也归零",
     policy: null,
     lineHints: [],
     relayCandidates: [],
-    strategyLabel: "轮询模式 - 依次轮换",
+    mainAddress: "10.0.0.1:80",
     scheduleTimeZone: "Asia/Shanghai",
+    defaultAdvancedOpen: true,
   }));
   assert.match(render("fallback"), /添加时段/, "主备模式下应当能配时段表");
   assert.doesNotMatch(render("round_robin"), /添加时段|第 1 个时段/, "时段表编辑器不再只在主备模式下渲染了");

@@ -5,11 +5,11 @@ import { timestampMillis } from "./timestamp";
  *
  * 原来有三份各自的读法 —— 心跳下发一份、保存时归一化一份、编辑框加载一份 —— 三份
  * 都是先 `Number(failoverPinnedIndex)` 再判断是不是整数。而这一列没钉的时候是
- * null，**`Number(null)` 是 0，0 是一个合法的出站序号（主出站）**。于是：
+ * null，**`Number(null)` 是 0，0 是一个合法的出站序号（主线路）**。于是：
  *
- *   · 没钉过的规则，心跳下发给 Agent 的是「钉在主出站、一直钉着」；
+ *   · 没钉过的规则，心跳下发给 Agent 的是「钉在主线路、一直钉着」；
  *   · 新建主备规则时前端传 null（意思是「自动」），库里存成 0；
- *   · 编辑框打开任何一条主备规则，都显示「强制走 主出站 · 一直钉着」。
+ *   · 编辑框打开任何一条主备规则，都显示「强制走 主线路 · 一直钉着」。
  *
  * 钉住压过时段表和自动择优，所以这三处加起来的结果是：时段表和自动择优从上线起
  * 就没有在任何一台机器上生效过，而面板上时段表明明白白写着「工作日 18:00 → 备用 1」。
@@ -24,7 +24,7 @@ import { timestampMillis } from "./timestamp";
  */
 
 export type FailoverPin = {
-  /** 钉在第几条出站：0 是主出站，1.. 是第几条备用出站 */
+  /** 钉在第几条出站：0 是主线路，1.. 是第几条备用线路 */
   index: number;
   /** 钉到什么时候（毫秒）；null 表示一直钉着 */
   untilMs: number | null;
@@ -38,7 +38,7 @@ export function readFailoverPin(
   source: { failoverPinnedIndex?: unknown; failoverPinnedUntil?: unknown } | null | undefined,
   options: {
     nowMs?: number;
-    /** 出站总条数（主出站 + 备用出站）。给了就把越界的当成没钉 */
+    /** 出站总条数（主线路 + 备用线路）。给了就把越界的当成没钉 */
     lineCount?: number;
   } = {},
 ): FailoverPin | null {

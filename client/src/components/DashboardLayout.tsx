@@ -69,7 +69,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IosTabBar } from "@/components/ios/TabBar";
 import { MobileNavContext, type MobileNavEntry } from "@/components/ios/navigationContext";
 import { MORE_TAB_PATH, pickTabBarItems } from "@/components/ios/tabBar";
-import QRCode from "qrcode";
 import { useLocation } from "wouter";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -93,6 +92,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { normalizeSidebarMenuSettings, type SidebarMenuKey } from "@shared/sidebarMenu";
 import { buildPanelInstallerCommand } from "@shared/githubAccelerator";
 import { WorkspaceCommand, type WorkspaceDestination } from "@/components/WorkspaceNavigation";
+import { docsUrl } from "@/lib/docsLinks";
 
 const TWO_FACTOR_SETUP_SECONDS = 5 * 60;
 const SITE_LOGO_CACHE_KEY = "forwardx.siteLogoDataUrl";
@@ -889,15 +889,17 @@ function DashboardLayoutContent({
       return;
     }
     let cancelled = false;
-    QRCode.toDataURL(twoFactorSetup.otpauthUrl, {
-      errorCorrectionLevel: "M",
-      margin: 1,
-      scale: 8,
-      color: {
-        dark: "#0f172aff",
-        light: "#ffffffff",
-      },
-    })
+    // 二维码库只在开双重验证时才用得上，不跟布局一起进入口包
+    import("qrcode")
+      .then(({ default: QRCode }) => QRCode.toDataURL(twoFactorSetup.otpauthUrl, {
+        errorCorrectionLevel: "M",
+        margin: 1,
+        scale: 8,
+        color: {
+          dark: "#0f172aff",
+          light: "#ffffffff",
+        },
+      }))
       .then((url) => {
         if (!cancelled) setTwoFactorQrCode(url);
       })
@@ -1681,7 +1683,7 @@ function DashboardLayoutContent({
             </a>
             <span className="text-muted-foreground/45">|</span>
             <a
-              href="https://zhongyizhu11-jpg.github.io/Forwardx/"
+              href={docsUrl()}
               target="_blank"
               rel="noopener noreferrer"
               className="transition-colors hover:text-foreground"

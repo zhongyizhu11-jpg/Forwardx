@@ -35,10 +35,12 @@ export function SlidingTabsList<T extends string>({
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
-    const measure = () => setEdges({
-      left: element.scrollLeft > 2,
-      right: element.scrollLeft + element.clientWidth < element.scrollWidth - 2,
-    });
+    // 滚动时每个 scroll 事件都会进来；两端状态没变就别换新对象，免得整条分类条跟着重渲染
+    const measure = () => {
+      const left = element.scrollLeft > 2;
+      const right = element.scrollLeft + element.clientWidth < element.scrollWidth - 2;
+      setEdges((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
+    };
     const observer = new ResizeObserver(() => { revealActiveTab(element); measure(); });
     observer.observe(element);
     if (element.firstElementChild) observer.observe(element.firstElementChild);

@@ -143,7 +143,7 @@ import { observePresenceCapableHostActivity, registerPresenceCapableHost } from 
 import { recordAuthenticatedAgentActivity } from "./agentActivity";
 
 // DNS 解析缓存：ruleId → 主目标上次解析到的 IPv4 地址。
-// 备用出站策略里的域名由 Agent 的 TCP 拨号和健康检查动态解析。
+// 备用线路策略里的域名由 Agent 的 TCP 拨号和健康检查动态解析。
 const AGENT_DNS_RESOLVE_TTL_MS = 5 * 60 * 1000;
 const resolvedIpCache = new Map<number, { raw: string; ip: string }>();
 const resolvedIpCheckedAt = new Map<number, number>();
@@ -2645,7 +2645,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       /*
         钉子怎么读交给 shared/failoverPin：这一列没钉时是 null，而上一版在这里先
         Number() 再判断 —— Number(null) 是 0，于是每一条没钉过的规则都被下发成
-        「钉在主出站、一直钉着」，时段表和自动择优在机器上从来没生效过。
+        「钉在主线路、一直钉着」，时段表和自动择优在机器上从来没生效过。
         已经过期的钉子也不下发：面板这边早就该当它不存在了。
       */
       const failoverPin = (source: any) => readFailoverPin(source, { lineCount: backupTargets.length + 1 });
@@ -2665,7 +2665,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           ? String(rule.failoverStrategy)
           : "fallback",
         targets: [
-          // 主出站的探测目标单独存一列（备用出站的存在各自那一项里），
+          // 主线路的探测目标单独存一列（备用线路的存在各自那一项里），
           // 见 shared/failoverTargets 里为什么需要它。
           { targetIp: processTarget(rule), targetPort: Number(rule.targetPort), ...mainProbeFields(rule) },
           ...backupTargets,

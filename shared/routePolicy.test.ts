@@ -38,11 +38,11 @@ test("没开主备就没有策略", () => {
   assert.equal(describeRoutePolicy(rule({ failoverEnabled: false }), { host: current, nowMs: IN_WINDOW }), null);
 });
 
-test("什么都没配：出站顺序在决定，首选主出站", () => {
+test("什么都没配：出站顺序在决定，首选主线路", () => {
   const policy = policyAt(IN_WINDOW);
   assert.deepEqual(states(policy), ["order:deciding"]);
   assert.equal(policy.conditions[0].when, "按顺序");
-  assert.equal(policy.conditions[0].then, "主出站 → 备用 1 → 备用 2");
+  assert.equal(policy.conditions[0].then, "主线路 → 备用 1 → 备用 2");
   assert.equal(policy.preferredIndex, 0);
   assert.deepEqual(policy.lines.map((line) => line.preferred), [true, false, false]);
 });
@@ -126,10 +126,10 @@ test("现在走哪条：新版 Agent 叫「现在」，2.2.196 只能叫「最�
   assert.equal(old.report.kind, "lastSwitch");
   const text = describeRoutePolicyReport(old, { nowMs: IN_WINDOW, timeZone: TZ });
   assert.equal(text.text, "最近一次切到 备用 1，18:00 起");
-  assert.match(String(text.note), /回到主出站/, "得说清楚这份记录可能已经过时");
+  assert.match(String(text.note), /回到主线路/, "得说清楚这份记录可能已经过时");
 });
 
-test("没有记录时不替它说「走主出站」", () => {
+test("没有记录时不替它说「走主线路」", () => {
   /*
     2.2.196 的记录只来自切换事件，而这一版之前面板会在心跳早退时丢事件 —— 没有记录
     不等于没切过。新版 Agent 没报上来，是还没来得及报。
@@ -157,7 +157,7 @@ test("颜色看的是「走的是不是首选」，不是「是不是在备用�
   const planned = policyAt(IN_WINDOW, { ...onBackup, failoverSchedule: JSON.stringify(schedule) });
   assert.equal(describeRoutePolicyReport(planned).tone, "normal");
   assert.equal(planned.divergence, null);
-  // 白天首选主出站，却在备用 1 上：值得看一眼。
+  // 白天首选主线路，却在备用 1 上：值得看一眼。
   const unplanned = policyAt(OUT_OF_WINDOW, { ...onBackup, failoverSchedule: JSON.stringify(schedule) });
   assert.equal(describeRoutePolicyReport(unplanned).tone, "deviated");
   // 自动择优在决定时没有首选，走哪条都不算偏。
@@ -167,11 +167,11 @@ test("颜色看的是「走的是不是首选」，不是「是不是在备用�
 test("没走首选时只说确实可能的原因，不下结论", () => {
   const onBackup = { failoverActiveTarget: "198.51.100.8:443", failoverActiveAt: new Date(OUT_OF_WINDOW) };
   const auto = policyAt(OUT_OF_WINDOW, onBackup);
-  assert.equal(auto.divergence, "首选是 主出站，没走它：它可能正挂着、刚恢复还在观察（2 分钟）。");
+  assert.equal(auto.divergence, "首选是 主线路，没走它：它可能正挂着、刚恢复还在观察（2 分钟）。");
   const held = policyAt(OUT_OF_WINDOW, { ...onBackup, failoverMinHoldSeconds: 600 });
   assert.match(String(held.divergence), /最短驻留（10 分钟）/);
   const noFailback = policyAt(OUT_OF_WINDOW, { ...onBackup, autoFailback: false });
-  assert.equal(noFailback.divergence, "首选是 主出站，但「恢复后切回」关着：备用 1 不出问题就不会换过去。");
+  assert.equal(noFailback.divergence, "首选是 主线路，但「恢复后切回」关着：备用 1 不出问题就不会换过去。");
 });
 
 test("切换条件：挂了就切、切不切回、最短驻留", () => {
