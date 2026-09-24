@@ -15,13 +15,27 @@
 .workspace-layout [data-sidebar="group-label"] { opacity: 1; color: var(--fx-muted); letter-spacing: .06em; }
 .workspace-layout [data-mobile-header] { background: var(--fx-surface); border-color: var(--fx-stroke); box-shadow: 0 1px 4px rgb(24 37 54 / 4%); }
 .workspace-tabs { isolation: isolate; border-radius: 12px; background: var(--fx-subtle); border: 1px solid var(--fx-stroke); padding: 4px; }
-.workspace-tabs-viewport { overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+/*
+  overflow-y: hidden 要写明：只写 overflow-x: auto 时，浏览器把 overflow-y 也算成 auto，
+  里面任何东西竖着多出 1px（比如为了扩大命中区撑出去的 ::after），这条就能竖着滚 ——
+  手指左右划的时候整条跟着上下晃。
+*/
+.workspace-tabs-viewport { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
 .workspace-tabs-viewport::-webkit-scrollbar { display: none; }
 .workspace-tabs .workspace-tabs-list { display: flex; width: max-content; min-width: 100%; height: auto; justify-content: flex-start; gap: 8px; padding: 0; border: 0; border-radius: var(--fx-radius); background: transparent; }
 .workspace-tabs .workspace-tab { position: relative; flex: 1 0 auto; gap: 8px; min-height: 40px; border: 1px solid transparent; border-radius: var(--fx-radius); padding: 8px 12px; color: var(--fx-muted); background: transparent; box-shadow: none; --tw-ring-shadow: 0 0 #0000; font-size: 13px; font-weight: 500; transition: color 150ms, background-color 150ms, box-shadow 150ms; }
 .workspace-tabs .workspace-tab[data-state="active"] { color: var(--fx-text); background: var(--fx-raised); border-color: var(--fx-stroke); box-shadow: var(--fx-shadow); font-weight: 600; }
 .workspace-tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding-inline: 4px; border-radius: 6px; background: var(--fx-stroke); color: var(--fx-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .workspace-tab[data-state="active"] .workspace-tab-count { background: var(--fx-brand-soft); color: var(--fx-brand); }
+/*
+  一行可以左右滑的选择条（主机分组那一排）。和分类条同一个道理：overflow-y 写明 hidden，
+  只左右滑、不上下晃；滚动条藏起来。宽屏上放得下，照旧折行、不滚。
+*/
+.fx-chip-scroller { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
+.fx-chip-scroller::-webkit-scrollbar { display: none; }
+@media (min-width: 640px) { .fx-chip-scroller { flex-wrap: wrap; gap: 8px; overflow: visible; } }
+/* 触屏上全局给按钮 44px，这一排按 34px 画（分类条同高）；在滚动条里不能用 ::after 撑，会让它竖着也能滚 */
+@media (pointer: coarse) { .fx-chip-scroller > button { min-height: 34px; } }
 .workspace-tab-scroll { position: absolute; top: 4px; bottom: 4px; z-index: 1; width: 32px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); background: var(--fx-raised); color: var(--fx-text); box-shadow: var(--fx-shadow-raised); }
 .workspace-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .workspace-filter-search { min-width: 0; flex: 1 1 240px; }
@@ -80,11 +94,8 @@
     说完了，图标在这里是装饰。去掉之后每项从约 80px 收到 55px，五项装得进
     一屏，右边那个箭头自然就不出现了。
   */
-  .workspace-tabs { padding: 3px; border-radius: 9px; }
-  .workspace-tabs .workspace-tabs-list { gap: 4px; }
-  .workspace-tabs .workspace-tab { gap: 5px; padding: 6px 9px; font-size: 12.5px; border-radius: var(--fx-radius); }
   .workspace-tabs .workspace-tab > svg { display: none; }
-  .workspace-tab-count { min-width: 17px; height: 17px; font-size: 10.5px; border-radius: 5px; }
+  /* 分类条的尺寸统一写在下面「分类条：黑白分段控件」那一节 —— 这里原来还有一份，两份互相盖。 */
 
 
   /*
@@ -108,7 +119,7 @@
     之前用 1.75 是照文档站的正文排版抄的，但面板是一屏要放下十几条记录的
     列表，不是一篇文章：1.75 等于每一行凭空多 4px，十二条规则就是 48px。
   */
-  .workspace-main { font-size: 16px; line-height: 1.5; }
+  .workspace-main { font-size: 15px; line-height: 1.5; }  /* 16 → 15：见 design-tokens.css 移动端那一段 */
   /*
     这里原来还有一条 `.workspace-main p { margin-block: 12px; }`：照文档站的正文排版抄来的，
     给手机上**每一个** <p> 加上下各 12px。面板里的 <p> 大多不是段落，是「标签 / 数值」这种
@@ -148,11 +159,11 @@
   .workspace-main [data-slot="card-header"] { padding: 12px 12px 0; }
   .workspace-main [data-slot="card-content"] { padding: 12px; }
   .workspace-main [data-slot="card-footer"] { padding: 0 12px 12px; }
-  .workspace-main [data-slot="card-title"] { font-size: 16px; font-weight: 600; line-height: 1.5; }
+  .workspace-main [data-slot="card-title"] { font-size: 15px; font-weight: 600; line-height: 1.5; }
 
   /* 标题分级。 */
-  .workspace-main h1 { font-size: 26px; line-height: 1.4; font-weight: 600; letter-spacing: -.02em; }
-  .workspace-main h2 { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.01em; }
+  .workspace-main h1 { font-size: 22px; line-height: 1.35; font-weight: 600; letter-spacing: -.02em; }
+  .workspace-main h2 { font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -.01em; }
 
   /* 对话框里同样：纯白、细线、正文行高。 */
   .dialog-panel { line-height: 1.5; }
@@ -172,6 +183,24 @@
   */
 
   /*
+    页面竖向节奏。各页外层普遍是 space-y-6（24px），在 393px 宽的屏幕上，
+    四五个区块之间光空档就是一屏的六分之一。
+
+    原来这里写的是 `> * + * { margin-top: 14px }` —— 那是 Tailwind v3 的写法。v4 的
+    space-y-* 给的是 margin-block-end，而上下相邻的外边距会合并、取大的那个：
+    24px 的下边距遇上 14px 的上边距，结果还是 24px。这三条从来没起过作用，实测规则页
+    摘要条和分类条之间、筛选和第一组规则之间都是 24px。改成直接压 margin-block-end。
+
+    必须排在下面卡片内容那几条前面：特指度一样时后写的赢，卡片里的 space-y-* 要由
+    卡片那几条说了算（组内 6px），不能被这里的 8 / 10px 盖掉。
+  */
+  /* 导航栏自己是 sticky、左右负边距贴边，下面紧接着就是内容 —— 它不算一个区块，不给间距 */
+  .workspace-main .space-y-6 > :not(:last-child):not(.fx-navbar) { margin-block-end: 14px; }
+  .workspace-main .space-y-5 > :not(:last-child) { margin-block-end: 12px; }
+  .workspace-main .space-y-4 > :not(:last-child) { margin-block-end: 10px; }
+  .workspace-main .space-y-3 > :not(:last-child) { margin-block-end: 8px; }
+
+  /*
     一、组内紧、组间松。卡片自己有边框，组间靠网格 gap。
 
     先把 Tailwind 的 space-y-* 清零再给值。v4 的 space-y-* 编译成
@@ -185,10 +214,16 @@
   .workspace-main [data-slot="card-content"] > * + * { margin-top: 6px; }
   .workspace-main .action-card-content > * + * { margin-top: 6px; }
 
-  /* 二、一行里只有一个主角：名字重而深，其余轻而淡 */
-  .workspace-main [data-slot="card"] .text-sm.font-medium,
+  /*
+    二、一行里只有一个主角：名字重而深，其余轻而淡
+
+    :not([data-slot="label"])：表单标签（Label 组件）自己也带 text-sm font-medium，
+    原来一起被提成 15px / 600 —— 个人资料里「当前密码」「新密码」看上去像区块标题，
+    和对话框里 13px 的标签不是一个样子。标签归下面标签那一条管。
+  */
+  .workspace-main [data-slot="card"] .text-sm.font-medium:not([data-slot="label"]),
   .workspace-main [data-slot="card-title"] {
-    font-size: 16px; font-weight: 600; line-height: 1.4; color: var(--fx-text);
+    font-size: 15px; font-weight: 600; line-height: 1.4; color: var(--fx-text);
     letter-spacing: -.01em;
   }
   /* 名字底下那行归属（主机/隧道）是注脚，不是第二个标题 */
@@ -244,12 +279,8 @@
   */
 
   /*
-    页面竖向节奏。各页外层普遍是 space-y-6（24px），在 393px 宽的屏幕上，
-    四五个区块之间光空档就是一屏的六分之一。
+    页面竖向节奏：挪到上面「组内紧、组间松」之前了（得排在卡片那几条前面，见那里的注释）。
   */
-  .workspace-main > .route-content-enter > div > .space-y-6 > * + * { margin-top: 14px; }
-  .workspace-main .space-y-4 > * + * { margin-top: 10px; }
-  .workspace-main .space-y-3 > * + * { margin-top: 8px; }
 
 
   /*
@@ -258,7 +289,7 @@
   */
   .dialog-panel { gap: 12px; }  /* 圆角和内边距归下面的 iOS sheet 管 */
   [data-slot="dialog-title"] { font-size: 16px; }
-  [data-slot="dialog-description"] { font-size: 12.5px; }
+  [data-slot="dialog-description"] { font-size: 12px; }
   [data-slot="dialog-footer"] { padding-top: 10px; }
 
   /*
@@ -267,15 +298,10 @@
     字段之间留够就行。
   */
   /*
-    「选择一条线路 + 它是什么类型」这一组。sm 以下栅格塌成单列，于是那个
-    只读的类型徽标（iptables / gost / ForwardX）独占一整行，而且
-    `h-9 justify-center` 让它和上面的下拉框长得一模一样 —— 看上去是个能点的
-    控件，点下去什么也不会发生。
-
-    它是「你选中的那条线路是什么类型」这类元数据，不是一个字段。收到左边
-    贴着走，宽度按内容，高度降到标签那一档。
+    这里原来有一条 `.route-picker-row > [data-slot="badge"]`：把线路类型徽标在手机上压小。
+    徽标现在直接画在「使用转发组」那一行的行尾（隧道的已经删掉 —— 下拉框里写着），
+    这一行的栅格也没了。
   */
-  .route-picker-row > [data-slot="badge"] { justify-self: start; height: 22px; padding-inline: 7px; font-size: 11px; }
 
   [data-slot="form-field"] { gap: 6px; }
   /*
@@ -324,15 +350,21 @@
     压到只剩「搜索端口、I」。用栅格代替 flex：第一行筛选和新建（都是动作），
     第二行搜索占满。栅格的行是真的行，不用靠 flex-basis 去凑。
   */
+  /*
+    后来：筛选和新建在手机上只留图标（见 FilterToolbar），三样东西一行放得下了 ——
+    「筛选 | 搜索 | 新建」一行 34px，原来两行 76px。展开的筛选条件单独占第二行。
+  */
   .workspace-filter {
     display: grid;
-    grid-template-columns: auto 1fr;
-    grid-template-areas: "filter action" "search search";
-    gap: 8px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    /* 筛选条件那一行不写进模板：写进去就算收起来也有一道 8px 的空行，用隐式行只在展开时出现 */
+    grid-template-areas: "filter search action";
+    column-gap: 6px;
+    row-gap: 8px;
   }
-  .workspace-filter > [data-slot="button"] { grid-area: filter; justify-self: start; }
-  .workspace-filter-options { grid-area: filter; }
-  .workspace-filter-action { grid-area: action; justify-self: end; }
+  .workspace-filter > [data-slot="button"] { grid-area: filter; min-width: 34px; padding-inline: 9px; }
+  .workspace-filter-options { grid-column: 1 / -1; }
+  .workspace-filter-action { grid-area: action; }
   .workspace-filter-search { grid-area: search; min-width: 0; }
   .workspace-filter-action [data-slot="button"] { white-space: nowrap; }
 
@@ -343,9 +375,8 @@
     地址行的复制按钮用同一个办法：视觉收窄，命中区用 ::after 只往**纵向**
     撑回 44（横向不撑，免得盖住旁边那个）。
 
-    分类条 48 → 36，筛选/新建 44 → 34，搜索 38 → 34。三处加起来省 34px。
+    筛选/新建 44 → 34，搜索 38 → 34。分类条的高度见下面「分类条」那一节。
   */
-  .workspace-tabs .workspace-tab { padding: 4px 10px; font-size: 13px; }
 
   .workspace-filter > [data-slot="button"],
   .workspace-filter-action [data-slot="button"],
@@ -410,8 +441,11 @@
   [data-slot="dialog-content"], .dialog-panel { line-height: 1.5; }
   .workspace-main p, .dialog-panel p { line-height: 1.5; }
 
-  /* 标签跟着回到 14px：12.5px 是我上一轮压过头的。 */
-  [data-slot="label"], [data-slot="form-field"] > label { font-size: 14px; }
+  /*
+    标签 13px。上上轮压到 12.5px 又退回 14px，这次按真机反馈（「对话框字体全部缩小」）
+    落在 13：比输入框里的字（15px）小一档，一眼分得出哪个是标签、哪个是填的内容。
+  */
+  [data-slot="label"], [data-slot="form-field"] > label { font-size: 13px; }
 
   /*
     表单控件：视觉高度 44 → 38，但命中区用 ::after 撑回 44 —— 和列表卡底部
@@ -442,17 +476,29 @@
     不需要靠投影去暗示层次。
   */
   .workspace-tabs { padding: 3px; border-radius: var(--fx-radius-control); border: 0; background: var(--fx-l1-surface); }
-  .workspace-tabs .workspace-tab { border: 0; border-radius: var(--fx-radius); font-size: 13px; font-weight: 500; min-height: 30px; padding: 5px 10px; }
+  .workspace-tabs .workspace-tabs-list { gap: 2px; }
+  /*
+    34px 高、14px 字。真机反馈「分类条有点小」：原来 30px / 13px，拇指按上去得瞄一下。
+    触屏上不再用 ::after 往上下撑命中区（它让横向滚动的分类条竖着也能滚，见触屏那一节）。
+
+    计数不再是一颗胶囊，是跟在名字后面的一个淡色数字。胶囊自己 17px 宽、再加 5px 间距，
+    规则页「全部 / 端口转发 / 隧道转发 / 转发链 / 转发组」五项在 393px 上因此多出 74px、
+    要左右滑，左边还压着一个滚动箭头。换成数字之后五项一屏放得下。
+  */
+  .workspace-tabs .workspace-tab { border: 0; border-radius: var(--fx-radius); gap: 3px; font-size: 14px; font-weight: 500; min-height: 34px; padding: 0 7px; }
   .workspace-tabs .workspace-tab[data-state="active"] {
     background: var(--fx-text); color: var(--fx-text-inverse); font-weight: 600;
     box-shadow: none;
   }
-  /* 反白之后计数徽标也得跟着反过来，否则黑底上一块深色看不见 */
-  .workspace-tabs .workspace-tab[data-state="active"] .workspace-tab-count {
-    background: color-mix(in srgb, var(--fx-text-inverse) 26%, transparent);
-    color: var(--fx-text-inverse);
+  .workspace-tab-count {
+    min-width: 0; height: auto; padding: 0; border-radius: 0;
+    background: transparent; color: var(--fx-text-muted); font-size: 12px; font-weight: 500;
   }
-  .workspace-tab-count { background: var(--fx-stroke-weak); color: var(--fx-text); border-radius: 9px; }
+  /* 反白之后数字也跟着反过来，否则黑底上一个深灰数字看不见 */
+  .workspace-tabs .workspace-tab[data-state="active"] .workspace-tab-count {
+    background: transparent;
+    color: color-mix(in srgb, var(--fx-text-inverse) 72%, transparent);
+  }
 
   /*
     列表 → iOS 分组内嵌表格（inset grouped）。
@@ -495,12 +541,31 @@
   .workspace-filter-search { flex-basis: 0; }
   .workspace-filter-options { flex-basis: 100%; padding: 12px; background: var(--fx-subtle); border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); }
   .workspace-filter-options > button { flex: 1 1 120px; max-width: none; }
-  .workspace-main [data-slot="card-header"] { padding: 16px; }
-  .workspace-main [data-slot="card-content"] { padding-inline: 16px; padding-bottom: 16px; }
-  .workspace-main [data-slot="card-title"] { font-size: 18px; }
+  /*
+    这里原来还有三条：卡片头 / 卡片内容内边距 16px、卡片标题 18px。它们写在 767px 那一段
+    后面，于是在所有手机宽度上把那一段的 12px / 15px 又改了回去 —— 规则卡量出来内边距是
+    「上 12、左右下 16」，标题比正文大两号。删掉，卡片密度只由 767px 那一段决定。
+  */
 }
 @media (pointer: coarse) {
-  .workspace-tab-scroll { width: 44px; }
+  /*
+    触屏上不放左右箭头。原来是一个 44px 宽、带投影的白块浮在分类条最左 / 最右，
+    正好压住第一项（真机截图里「端口转发」只剩「转发」两个字）—— 而手指本来就能直接划。
+    改成边缘渐隐：哪一边还有东西，哪一边就淡出去，说明「还能往这边划」，不挡字。
+  */
+  .workspace-tab-scroll { display: none; }
+  .workspace-tabs[data-more-right] .workspace-tabs-viewport {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+  .workspace-tabs[data-more-left] .workspace-tabs-viewport {
+    -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+  }
+  .workspace-tabs[data-more-left][data-more-right] .workspace-tabs-viewport {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  }
   /*
     44 是**命中区**的下限，不是视觉高度的下限。这里原来直接把视觉高度顶到
     44px，分类条因此占 48px、输入框占 44px —— 在 393px 的屏幕上，光这两样
@@ -509,16 +574,21 @@
     改成视觉收窄 + ::after 只往纵向撑回 44：手指按到的面积一点没少，占的版面
     小了。横向不撑，免得盖住旁边那一项（分类条的项之间只隔 4px）。
 
-    字号 16px 保留：iOS Safari 聚焦字号小于 16px 的输入框会把整页放大。
+    分类条这里原来也用 ::after 往上下各撑 7px —— 但分类条是一个横向滚动容器，撑出去的
+    那 7px 让它**竖着也能滚**：手指左右划的时候整条跟着上下晃（真机反馈「滑的时候左右
+    上下活动很不方便」）。分类条改成实际高度 34px（见下面分类条那一节），不再撑。
   */
-  .workspace-tabs .workspace-tab { position: relative; min-height: 30px; }
-  .workspace-tabs .workspace-tab::after { content: ""; position: absolute; inset: -7px 0; }
   /*
+    输入框字号 15px。原来钉在 16px，理由是「iOS Safari 聚焦字号小于 16px 的输入框会把
+    整页放大」—— 但 index.html 的 viewport 里写着 maximum-scale=1，有它 iOS 不会在
+    聚焦时放大（双指缩放照样能用）。workspaceCss.test.ts 守着这两处一起改：
+    viewport 里哪天去掉 maximum-scale=1，这里就得回到 16px。
+
     选择器带 [class] 是为了把特指度提到 (0,2,0)：搜索框那类控件上挂着
     Tailwind 的 text-xs，裸的 [data-slot="input"] 只有 (0,1,0)，会输给它，
-    实测字号掉到 12px —— 正好踩中 iOS Safari 的放大阈值。
+    实测字号掉到 12px。
   */
-  [data-slot="input"][class], [data-slot="select-trigger"][class] { position: relative; min-height: 34px; font-size: 16px; }
+  [data-slot="input"][class], [data-slot="select-trigger"][class] { position: relative; min-height: 34px; font-size: 15px; }
   [data-slot="input"]::after, [data-slot="select-trigger"]::after { content: ""; position: absolute; inset: -5px 0; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -666,7 +736,7 @@
 }
 @media (pointer: coarse) {
   [data-sidebar="menu-button"], [role="menuitem"], [role="option"] { min-height: 44px; }
-  [data-slot="textarea"] { font-size: 16px; }
+  [data-slot="textarea"] { font-size: 15px; }  /* 和输入框同一档；为什么能低于 16px 见上面输入框那条 */
 }
 
 .stat-card-icon.hidden { display: none; }
@@ -688,15 +758,48 @@
   ═══════════════════════════════════════════════════════════
 */
 @media (pointer: coarse) {
-  .fx-entity-footer [data-slot="button"] {
+  /*
+    规则、隧道、转发组卡片底部那一行（CardActions，.fx-card-actions）原来没算进来：
+    「诊断 / 编辑 / ···」照样被顶到 44px，加上细线和上边距，规则卡光底栏就 49px。
+  */
+  .fx-entity-footer [data-slot="button"],
+  .fx-card-actions [data-slot="button"] {
     position: relative;
     min-height: 30px;
     height: 30px;
   }
-  .fx-entity-footer [data-slot="button"]::after {
+  .fx-entity-footer [data-slot="button"]::after,
+  .fx-card-actions [data-slot="button"]::after {
     content: "";
     position: absolute;
     inset: -7px 0;
+  }
+
+  /*
+    行内的小按钮：「使用隧道」那一行行尾的「＋ 新建隧道」、迷你表单底下的「取消 / 创建并使用」。
+    全局那条 44px 会把一个跟在标签后面的小按钮顶成一整行高 —— 实测「＋ 新建隧道」连同间距独占 52px。
+    同一个办法：视觉 28px，命中区 ::after 纵向撑回 44。
+  */
+  .fx-compact-touch[data-slot="button"] {
+    position: relative;
+    min-height: 28px;
+  }
+  .fx-compact-touch[data-slot="button"]::after {
+    content: "";
+    position: absolute;
+    inset: -8px 0;
+  }
+
+  /* 规则页「端口转发 6 · 使用已保存端口转发」那一行分组标题：同样视觉 32px、命中区撑回 44 */
+  .fx-rule-group-header {
+    position: relative;
+    min-height: 32px;
+    padding-block: 4px;
+  }
+  .fx-rule-group-header::after {
+    content: "";
+    position: absolute;
+    inset: -6px 0;
   }
 }
 
@@ -955,10 +1058,14 @@
   }
   .fx-navbar-collapsed .fx-navbar-large { max-height: 0; opacity: 0; padding-bottom: 0; }
 
+  /*
+    30 → 26px。iOS 的大标题是 34pt，但那是给一屏只有一张列表的 App 用的；这里大标题
+    下面还跟着状态行、摘要条、分类条，每省 4px 都是列表往上挪。
+  */
   .fx-navbar-large-title {
     margin: 0;
-    font-size: 30px;
-    line-height: 36px;
+    font-size: 26px;
+    line-height: 32px;
     font-weight: 700;
     letter-spacing: -0.02em;
     color: var(--fx-text);
@@ -969,6 +1076,14 @@
     line-height: 1.4;
     color: var(--fx-text-muted);
   }
+  /*
+    大标题和它那一行状态（「15 / 16 已启用」「0 / 4 在线 · 1 台发现新版本」）放在同一行。
+    状态原来独占一行：一排 30px 高的胶囊压在大标题下面，规则页顶上光标题块就 113px。
+    放得下就并排；状态多、标题长放不下时 flex-wrap 自己折到第二行，和原来一样。
+  */
+  .fx-navbar-large { display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 4px; }
+  .fx-navbar-large .fx-navbar-subtitle { margin: 0; }
+  .fx-navbar-subtitle [data-slot="badge"] { min-height: 26px; padding-block: 2px; font-size: 12px; }
   .fx-navbar-below { padding-bottom: 8px; }
 }
 

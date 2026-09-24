@@ -252,10 +252,13 @@ PR 3 的拆分只迈了第一步：`features/links/` 里目前是路径和状态
   （`[class*="rounded-"][class*="border"]`、`[class*="animate-pulse"]`）清零，
   `.workspace-main p { margin-block: 12px }` 删掉，工作区卡片「不描边、不投影」从手机段
   挪到最外层（桌面上原来有框）；`workspaceCss.test.ts` 守着这三条。**还没动的**是手机段里
-  按 Tailwind 类名改密度的那一批：`.space-y-4 > * + *`、`.space-y-3 > * + *`、页面级
-  `.space-y-6`、卡片内容子元素一律 6px、卡片里 `.text-sm.font-medium` 改 16px。它们是
-  有意的手机密度，删掉会整站变松；要换成 `fx-page` / `fx-section` / `fx-entity-body`
-  这类明确的类名，得一页一页迁，下一轮做。
+  按 Tailwind 类名改密度的那一批：`.space-y-*`、卡片内容子元素一律 6px、卡片里
+  `.text-sm.font-medium` 改 15px。它们是有意的手机密度，删掉会整站变松；要换成
+  `fx-page` / `fx-section` / `fx-entity-body` 这类明确的类名，得一页一页迁，下一轮做。
+  2.3.370 之后那一轮顺手修了其中两处实打实的错：`.space-y-* > * + * { margin-top }` 是照
+  Tailwind v3 写的，v4 给的是 margin-block-end、上下外边距合并取大值，所以这三条**从来没起
+  过作用**（改成压 margin-block-end）；一段 639px 的规则把卡片内边距和标题又改回 16px / 18px，
+  盖掉了 767px 那一段（删掉）。
 - **对话框里的开关小框**：列表卡片上的「一个值一个框」已经清完（2.3.370 走查时最后两处是
   公开监控页和转发组卡片底部），但创建 / 编辑转发、转发组的表单里还有不少带边框的开关
   小框（「接收 PROXY」「发送 PROXY」这类一个复选框一个框）。设置页已经换成设置行，

@@ -55,7 +55,12 @@ export function SlidingTabsList<T extends string>({
     if (element) element.scrollBy({ left: direction * element.clientWidth * 0.7, behavior: "instant" });
   };
   return (
-    <div className={cn("workspace-tabs relative min-w-0", className)}>
+    <div
+      className={cn("workspace-tabs relative min-w-0", className)}
+      // 触屏上不画箭头，靠这两个属性把还有内容的那一边淡出去（workspace.css）
+      data-more-left={edges.left ? "" : undefined}
+      data-more-right={edges.right ? "" : undefined}
+    >
       <div ref={viewport} className="workspace-tabs-viewport">
         <TabsList aria-label={ariaLabel} className={cn("workspace-tabs-list", listClassName)}>
           {items.map((item) => {

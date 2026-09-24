@@ -54,3 +54,42 @@ test("工作区卡片不描边、不投影 —— 写在媒体查询外面，桌
   assert.match(body, /border:\s*0/);
   assert.match(body, /box-shadow:\s*none/);
 });
+
+/*
+  2.3.370 之后真机反馈的那一轮（「分类条滑的时候上下晃」「字体全部缩小」）留下的几条底线。
+*/
+
+test("横向滚动的分类条不许竖着也能滚", () => {
+  /*
+    只写 overflow-x: auto 时 overflow-y 也被算成 auto；分类项再用 ::after 往上下各撑 7px，
+    这条就能竖着滚 7px —— 手指左右划的时候整条跟着上下晃。
+  */
+  const viewport = code.match(/\.workspace-tabs-viewport\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.match(viewport, /overflow-y:\s*hidden/);
+  assert.doesNotMatch(code, /\.workspace-tab::after/, "分类项不再往外撑命中区");
+  // 反向对照：这个选择器确实还在用（不是整条规则被删了才通过）
+  assert.match(viewport, /overflow-x:\s*auto/);
+});
+
+test("不再用 v3 的 `> * + * { margin-top }` 去压 space-y-*", () => {
+  /*
+    Tailwind v4 的 space-y-* 给的是 margin-block-end，上下相邻的外边距合并取大值：
+    写 margin-top 去「压小」等于没写 —— 手机上页面区块之间一直是 24px。
+  */
+  assert.deepEqual(code.match(/\.space-y-\d+\s*>\s*\*\s*\+\s*\*/g) ?? [], []);
+  assert.match(code, /\.space-y-6 > :not\(:last-child\)(:not\(\.fx-navbar\))? \{ margin-block-end:/);
+});
+
+test("输入框字号低于 16px 的前提：viewport 里有 maximum-scale=1", () => {
+  /*
+    iOS 聚焦字号小于 16px 的输入框时会把整页放大，除非 viewport 写了 maximum-scale=1。
+    手机上输入框现在是 15px —— 哪天有人把 maximum-scale 从 index.html 里拿掉，这里会报出来，
+    提醒把输入框改回 16px。
+  */
+  const html = fs.readFileSync(path.resolve(import.meta.dirname, "../../../index.html"), "utf8");
+  const sizes = [...code.matchAll(/\[data-slot="input"\]\[class\][^{]*\{[^}]*font-size:\s*(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+  assert.ok(sizes.length > 0, "找得到输入框的字号规则");
+  if (sizes.some((size) => size < 16)) {
+    assert.match(html, /name="viewport"[\s\S]*?maximum-scale=1/);
+  }
+});
