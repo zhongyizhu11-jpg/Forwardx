@@ -13,7 +13,7 @@
     表面    L0 页面 / L1 Surface / L2 分组 / L3 交互元素
     字号    6 档：32 / 24 / 20 / 17 / 15 / 13
     间距    4px 栅格：4 8 12 16 20 24 32 40 48
-    圆角    5 档：控件 10 / 卡片 12 / 表面 16 / 对话框 20 / 胶囊 999
+    圆角    5 档：控件 8 / 卡片 10 / 表面 14 / 对话框 18 / 胶囊 999
     高度    4 级：平面 / 卡片 / 下拉 / 对话框
     颜色    中性 + 四个状态色 + 路径青 + 交付紫，每个都有语义，没有装饰色
 
@@ -54,14 +54,15 @@
      中性色一律**纯中性**（R=G=B）：上一版那些灰全是偏蓝的（#55555f 的蓝比红
      多 10），一屏冷调的灰读起来就是发闷。这一条上一版做对了，保留。
      ═══════════════════════════════════════════════════════ */
-  --fx-l0-page: #f1f1f1;       /* 页面底：让白卡浮起来的那一点灰 */
+  --fx-l0-page: #f3f3f3;       /* 页面底：让白卡浮起来的那一点灰 */
   --fx-l1-surface: #ffffff;    /* 卡片：纯白，不描边 */
-  --fx-l2-group: #f1f1f1;      /* 卡片内部还要再分一格时，用和页面同一个灰 */
+  --fx-l2-group: #f3f3f3;      /* 卡片内部还要再分一格时，用和页面同一个灰 */
   --fx-l3-control: #ffffff;
-  --fx-l3-control-fill: #f1f1f4;
+  --fx-l3-control-fill: #ededed; /* 分段控件的槽：坐在白卡上要比卡深一档才成形。纯中性 */
 
   /* 悬停/按下的瞬时反馈。比页面底再深一档才看得出来 */
-  --fx-hover: #e8e8e8;
+  --fx-hover: #e9e9e9;
+  --fx-pressed: #dedede;
 
   /*
     线三档，纯中性。
@@ -70,9 +71,9 @@
     和**描边控件**（输入框、标记）。所以比上一版轻回去一档 —— 那一版把线加重
     是因为它当时要独自承担「这是一块区域」，现在不用了。
   */
-  --fx-stroke-weak: #e5e5e5;
-  --fx-stroke-base: #d9d9d9;
-  --fx-stroke-strong: #a3a3a3;
+  --fx-stroke-weak: #ebebeb;
+  --fx-stroke-base: #dcdcdc;
+  --fx-stroke-strong: #a8a8a8;
 
   /* ═══════════════════════════════════════════════════════
      二、文字
@@ -80,9 +81,14 @@
      三档而已：主文字、次要文字、弱化文字。
      「弱化」是给单位、时间戳这类看一眼就够的东西，不是给正文降权用的。
      ═══════════════════════════════════════════════════════ */
-  --fx-text: #000000;          /* 纯黑，白底 21:1 */
-  --fx-text-secondary: #404040; /* 白底 10.4:1 */
-  --fx-text-muted: #6b6b6b;    /* 白底 5.3:1，过 AA */
+  /*
+    主文字是**近黑**而不是纯黑。纯黑压在纯白上是 21:1 —— 屏幕上最刺的一对，
+    大段读起来发毛边；#0a0a0a 肉眼看仍是黑，边缘却稳得多。这是精致感最便宜的
+    一处来源，Apple / Linear 的正文都不用 #000。
+  */
+  --fx-text: #0a0a0a;          /* 白底 19.8:1 */
+  --fx-text-secondary: #4a4a4a; /* 白底 8.9:1 */
+  --fx-text-muted: #707070;    /* 白底 4.9:1，过 AA */
   --fx-text-inverse: #ffffff;
 
   /* ═══════════════════════════════════════════════════════
@@ -232,10 +238,14 @@
      所有东西都圆会失去层级，所有东西都是同一个圆角同样会。
      半径必须跟着尺寸走：小控件小圆角，大面板大圆角。
      ═══════════════════════════════════════════════════════ */
-  --fx-radius-control: 10px;   /* 按钮、输入框、Chip、Segment */
-  --fx-radius-card: 12px;      /* 列表卡、小面板 */
-  --fx-radius-surface: 16px;   /* 主 Surface、大容器 */
-  --fx-radius-modal: 20px;     /* 对话框、Bottom Sheet */
+  /*
+    这一版整体收紧一档（10/12/16/20 → 8/10/14/18）。圆角越大越「玩具」，越小越
+    「工具」；控制台要的是后者。层级仍然按尺寸走：控件 8、卡片 10、大面 14、弹窗 18。
+  */
+  --fx-radius-control: 8px;    /* 按钮、输入框、Chip、Segment */
+  --fx-radius-card: 10px;      /* 列表卡、小面板 */
+  --fx-radius-surface: 14px;   /* 主 Surface、大容器 */
+  --fx-radius-modal: 18px;     /* 对话框、Bottom Sheet */
   --fx-radius-pill: 999px;     /* 徽标、状态胶囊 */
 
   /* ═══════════════════════════════════════════════════════
@@ -244,10 +254,18 @@
      高级感不靠 shadow。普通卡片就是平的，只有真正浮在页面之上的东西才投影。
      用户看到投影就知道「这是盖在上面的」，不用解释。
      ═══════════════════════════════════════════════════════ */
+  /*
+    投影一律纯中性（不带蓝），而且是「短而软」：一层贴着元素的 1px 影子给轮廓，
+    一层大而淡的影子给距离。大而黑的影子是 2015 年的 Material，不是精致。
+  */
   --fx-elevation-flat: none;
-  --fx-elevation-card: 0 1px 2px rgb(16 16 26 / 4%);
-  --fx-elevation-popover: 0 4px 16px rgb(16 16 26 / 10%), 0 1px 3px rgb(16 16 26 / 6%);
-  --fx-elevation-modal: 0 16px 48px rgb(16 16 26 / 18%), 0 2px 8px rgb(16 16 26 / 8%);
+  --fx-elevation-card: 0 1px 2px rgb(0 0 0 / 4%), 0 1px 1px rgb(0 0 0 / 2%);
+  --fx-elevation-control: 0 1px 2px rgb(0 0 0 / 5%);
+  --fx-elevation-popover: 0 12px 32px -8px rgb(0 0 0 / 14%), 0 2px 6px rgb(0 0 0 / 6%), 0 0 0 1px rgb(0 0 0 / 4%);
+  --fx-elevation-modal: 0 32px 80px -24px rgb(0 0 0 / 28%), 0 8px 24px -8px rgb(0 0 0 / 12%), 0 0 0 1px rgb(0 0 0 / 5%);
+
+  /* 焦点环：一圈路径青的软光，不用 offset 白边 —— 白边在灰页面上像被抠出来 */
+  --fx-focus-ring: 0 0 0 3px color-mix(in srgb, var(--fx-path) 24%, transparent);
 
   /* ═══════════════════════════════════════════════════════
      八、字体
@@ -258,8 +276,14 @@
      IP、端口、版本号、流量这类值走 mono —— 等宽不只是好看，数字对齐之后
      一列值扫下去能直接比大小。这也是基础设施类产品的气质来源。
      ═══════════════════════════════════════════════════════ */
-  --fx-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Inter", "Segoe UI", "Microsoft YaHei", sans-serif;
-  --fx-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  /*
+    Inter Variable 随面板一起打包（@fontsource-variable/inter，按 unicode-range 分包，
+    浏览器只下拉丁那一份 ~100 kB），所以 Windows / Linux / Android 上不再退到
+    Segoe UI 或 Liberation Sans —— 「同一套字在哪都一样」本身就是质感。
+    中文仍交给系统（苹方 / 微软雅黑），Inter 只管拉丁和数字。
+  */
+  --fx-font: "Inter Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+  --fx-font-mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace;
 
   /* ═══════════════════════════════════════════════════════
      九、层叠次序
@@ -323,22 +347,27 @@
     浅色下是「灰底 + 白卡」，深色下就是「黑底 + 深灰卡」—— 让卡片浮起来的
     永远是那一点差，不是描边。
   */
-  --fx-l0-page: #000000;
-  --fx-l1-surface: #1a1a1a;
-  --fx-l2-group: #000000;      /* 卡内再分一格时退回页面色，和浅色同一个逻辑 */
-  --fx-l3-control: #1a1a1a;
-  --fx-l3-control-fill: #262626;
+  /*
+    页面是近黑 #0a0a0a 而不是 #000：OLED 上纯黑会把卡片边缘拖出一圈「油渍」，
+    而且 #000 底上任何灰都显脏。卡片 #171717 —— 和底差 5 个灰阶，刚好浮起来。
+  */
+  --fx-l0-page: #0a0a0a;
+  --fx-l1-surface: #171717;
+  --fx-l2-group: #0a0a0a;      /* 卡内再分一格时退回页面色，和浅色同一个逻辑 */
+  --fx-l3-control: #171717;
+  --fx-l3-control-fill: #222222;
 
-  --fx-hover: #2b2b2b;
+  --fx-hover: #262626;
+  --fx-pressed: #303030;
 
-  --fx-stroke-weak: #262626;
-  --fx-stroke-base: #3d3d3d;
-  --fx-stroke-strong: #595959;
+  --fx-stroke-weak: #242424;
+  --fx-stroke-base: #353535;
+  --fx-stroke-strong: #575757;
 
-  --fx-text: #ffffff;
-  --fx-text-secondary: #bfbfbf;
-  --fx-text-muted: #8c8c8c;
-  --fx-text-inverse: #000000;
+  --fx-text: #f5f5f5;
+  --fx-text-secondary: #b0b0b0;
+  --fx-text-muted: #858585;
+  --fx-text-inverse: #0a0a0a;
 
   /* 状态色在暗底上要提亮，否则饱和度一样但看着发闷 */
   --fx-healthy: #3ec27a;
@@ -370,9 +399,11 @@
   --fx-chart-9: #ab9bc4;
 
   /* 暗色下投影几乎看不见，靠加深来做高度 */
-  --fx-elevation-card: 0 1px 2px rgb(0 0 0 / 30%);
-  --fx-elevation-popover: 0 4px 16px rgb(0 0 0 / 50%), 0 1px 3px rgb(0 0 0 / 40%);
-  --fx-elevation-modal: 0 16px 48px rgb(0 0 0 / 64%), 0 2px 8px rgb(0 0 0 / 44%);
+  --fx-elevation-card: 0 1px 2px rgb(0 0 0 / 40%);
+  --fx-elevation-control: 0 1px 2px rgb(0 0 0 / 40%);
+  --fx-elevation-popover: 0 12px 32px -8px rgb(0 0 0 / 60%), 0 2px 6px rgb(0 0 0 / 40%), 0 0 0 1px rgb(255 255 255 / 8%);
+  --fx-elevation-modal: 0 32px 80px -24px rgb(0 0 0 / 80%), 0 8px 24px -8px rgb(0 0 0 / 50%), 0 0 0 1px rgb(255 255 255 / 8%);
+  --fx-focus-ring: 0 0 0 3px color-mix(in srgb, var(--fx-path) 32%, transparent);
 
   --fx-beam: #edf0f3;
   --fx-beam-glow: rgb(237 240 243 / 70%);

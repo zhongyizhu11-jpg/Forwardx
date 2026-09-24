@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Inter Variable 随面板自带（按 unicode-range 分包，浏览器只下用到的那份），见 design-tokens.css 字体一节 */
+@import "@fontsource-variable/inter";
 @import "../../shared/design-tokens.css";
 @import "./styles/workspace.css";
 
@@ -103,35 +105,35 @@
 /* ===== Light theme (default) ===== */
 :root {
   /*
-    圆角基准 12px，Tailwind 的四档正好落在 V2 的刻度上：
+    圆角基准 10px，Tailwind 的四档落在令牌的刻度上：
 
-      rounded-sm  8px   极小控件
-      rounded-md  10px  按钮、输入框、Chip   = --fx-radius-control
-      rounded-lg  12px  列表卡、小面板       = --fx-radius-card
-      rounded-xl  16px  主 Surface、大容器   = --fx-radius-surface
+      rounded-sm  6px   极小控件、分段控件里的选项
+      rounded-md  8px   按钮、输入框、Chip   = --fx-radius-control
+      rounded-lg  10px  列表卡、小面板       = --fx-radius-card
+      rounded-xl  14px  主 Surface、大容器   = --fx-radius-surface
 
-    对话框的 20px 不在这四档里，用 --fx-radius-modal 显式写。
+    对话框的 18px 不在这四档里，用 --fx-radius-modal 显式写。
 
-    上一版把基准压到 0.5rem，让四档变成 4/6/8/12 —— 那是「所有控件一个 6px」，
-    结果是没有层级。V2 的判断是：半径要跟着尺寸走，小控件小圆角，大面板大圆角。
+    半径要跟着尺寸走：小控件小圆角，大面板大圆角。这一版整体比上一版收紧一档
+    （见 design-tokens.css 圆角一节）—— 圆角越大越「玩具」，控制台要的是「工具」。
   */
-  --radius: 0.75rem;
+  --radius: 0.625rem;
   --background: var(--fx-canvas);
   --foreground: var(--fx-text);
   --card: var(--fx-surface);
   --card-foreground: var(--fx-text);
   --popover: var(--fx-raised);
   --popover-foreground: var(--fx-text);
-  --primary: oklch(0.18 0.012 260);
-  --primary-foreground: oklch(0.98 0 0);
+  --primary: var(--fx-text);
+  --primary-foreground: var(--fx-text-inverse);
   --secondary: var(--fx-hover);
   --secondary-foreground: var(--fx-text);
   --muted: var(--fx-hover);
   --muted-foreground: var(--fx-muted);
   --accent: var(--fx-hover);
   --accent-foreground: var(--fx-text);
-  --destructive: oklch(0.55 0.22 25);
-  --destructive-foreground: oklch(0.98 0 0);
+  --destructive: var(--fx-down);
+  --destructive-foreground: #ffffff;
   --border: var(--fx-stroke);
   --input: var(--fx-stroke);
   --ring: var(--fx-brand);
@@ -142,8 +144,8 @@
   --chart-5: oklch(0.55 0.22 25);
   --sidebar: var(--fx-surface);
   --sidebar-foreground: var(--fx-muted);
-  --sidebar-primary: oklch(0.18 0.012 260);
-  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-primary: var(--fx-text);
+  --sidebar-primary-foreground: var(--fx-text-inverse);
   --sidebar-accent: var(--fx-brand-soft);
   --sidebar-accent-foreground: var(--fx-brand);
   --sidebar-border: var(--fx-stroke);
@@ -161,16 +163,16 @@
   --card-foreground: var(--fx-text);
   --popover: var(--fx-raised);
   --popover-foreground: var(--fx-text);
-  --primary: oklch(0.92 0.004 260);
-  --primary-foreground: oklch(0.14 0.01 260);
+  --primary: var(--fx-text);
+  --primary-foreground: var(--fx-text-inverse);
   --secondary: var(--fx-hover);
   --secondary-foreground: var(--fx-text);
   --muted: var(--fx-hover);
   --muted-foreground: var(--fx-muted);
   --accent: var(--fx-hover);
   --accent-foreground: var(--fx-text);
-  --destructive: oklch(0.65 0.2 25);
-  --destructive-foreground: oklch(0.98 0 0);
+  --destructive: var(--fx-down);
+  --destructive-foreground: #ffffff;
   --border: var(--fx-stroke);
   --input: var(--fx-stroke);
   --ring: var(--fx-brand);
@@ -181,8 +183,8 @@
   --chart-5: oklch(0.65 0.2 25);
   --sidebar: var(--fx-surface);
   --sidebar-foreground: var(--fx-muted);
-  --sidebar-primary: oklch(0.92 0.004 260);
-  --sidebar-primary-foreground: oklch(0.14 0.01 260);
+  --sidebar-primary: var(--fx-text);
+  --sidebar-primary-foreground: var(--fx-text-inverse);
   --sidebar-accent: var(--fx-brand-soft);
   --sidebar-accent-foreground: var(--fx-brand);
   --sidebar-border: var(--fx-stroke);
@@ -328,6 +330,24 @@
     position: relative;
     background: var(--background);
     min-height: 100vh;
+    /*
+      Inter 的几个可选字形：cv02/03/04 是开口的 4 / 6 / 9，cv11 是单层 a ——
+      数字在密集列表里更好认，正文更接近 SF。字距不动，靠字号和字重分层级。
+    */
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* 标题略收字距：大字号下默认字距偏松，收一点才像一个词而不是一串字 */
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
+  }
+
+  /* 数字默认等宽：一列值扫下去能直接比大小 */
+  [data-slot="table"], .tabular-nums, code, kbd {
+    font-variant-numeric: tabular-nums;
   }
 
   body::before {
@@ -849,14 +869,14 @@
   .glass-panel {
     @apply border text-card-foreground;
     background: var(--fx-surface);
-    border-color: var(--fx-stroke);
-    box-shadow: var(--fx-shadow);
+    border-color: var(--fx-stroke-weak);
+    box-shadow: var(--fx-elevation-card);
   }
 
   @keyframes dialog-overlay-in {
     from {
       opacity: 0;
-      background-color: rgb(15 23 42 / 0);
+      background-color: rgb(0 0 0 / 0);
     }
     to {
       opacity: 1;
@@ -871,7 +891,7 @@
     }
     to {
       opacity: 0;
-      background-color: rgb(15 23 42 / 0);
+      background-color: rgb(0 0 0 / 0);
     }
   }
 
@@ -920,14 +940,25 @@
   }
 
   .dialog-overlay {
-    --dialog-overlay-tint: rgb(15 23 42 / 0.56);
-    background-color: rgb(15 23 42 / 0);
+    --dialog-overlay-tint: rgb(0 0 0 / 0.4);
+    background-color: rgb(0 0 0 / 0);
     pointer-events: auto;
     will-change: opacity;
   }
 
+  /*
+    桌面上遮罩带一点模糊：底下的页面退成一片色，弹窗自然浮出来，遮罩就不用压得那么黑。
+    手机不做 —— 全屏 backdrop-filter 在滚动时掉帧。
+  */
+  @media (min-width: 768px) {
+    .dialog-overlay {
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+  }
+
   .dark .dialog-overlay {
-    --dialog-overlay-tint: rgb(0 0 0 / 0.72);
+    --dialog-overlay-tint: rgb(0 0 0 / 0.64);
   }
 
   .dialog-overlay::before,
@@ -939,14 +970,14 @@
 
   .dialog-overlay::before {
     inset: 0;
-    background: linear-gradient(180deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0.02));
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.06), rgb(255 255 255 / 0.02));
     opacity: 0;
     transform: translate3d(0, 6px, 0);
   }
 
   .dialog-overlay::after {
     inset: 0;
-    background: rgb(2 6 23 / 0.1);
+    background: rgb(0 0 0 / 0.06);
     opacity: 0;
   }
 
@@ -983,8 +1014,8 @@
   .dialog-panel {
     color: var(--popover-foreground);
     background: var(--fx-raised);
-    border: 1px solid var(--fx-stroke);
-    box-shadow: var(--fx-shadow-raised), 0 24px 72px rgb(0 0 0 / 16%);
+    border: 1px solid var(--fx-stroke-weak);
+    box-shadow: var(--fx-elevation-modal);
     isolation: isolate;
     opacity: 0;
     transform: translateY(0);
@@ -1000,7 +1031,8 @@
   }
 
   .dark .dialog-panel {
-    box-shadow: var(--fx-shadow-raised), 0 24px 72px rgb(0 0 0 / 32%);
+    border-color: var(--fx-stroke-base);
+    box-shadow: var(--fx-elevation-modal);
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1039,8 +1071,8 @@
 
   .auth-card-surface {
     background: var(--fx-surface);
-    border-color: var(--fx-stroke);
-    box-shadow: var(--fx-shadow-raised);
+    border-color: var(--fx-stroke-weak);
+    box-shadow: var(--fx-elevation-popover);
   }
 
 
@@ -1086,23 +1118,25 @@
 
   .action-menu-content {
     background: var(--fx-raised);
-    border-color: var(--fx-stroke);
-    box-shadow: var(--fx-shadow-raised);
+    border-color: var(--fx-stroke-weak);
+    box-shadow: var(--fx-elevation-popover);
   }
 
   .dark .action-menu-content {
     background: var(--fx-raised);
-    border-color: var(--fx-stroke);
-    box-shadow: var(--fx-shadow-raised);
+    border-color: var(--fx-stroke-base);
+    box-shadow: var(--fx-elevation-popover);
   }
 
+  /*
+    菜单项高亮是一层浅灰，不是整行反黑。反黑是「选中态」的画法（分段控件在用），
+    菜单里的高亮只是「鼠标在这」—— 两件事用同一种最重的画法，菜单一划过去像在闪。
+  */
   .action-menu-item {
-    color: var(--popover-foreground);
-    color: color-mix(in oklch, var(--popover-foreground) 84%, var(--muted-foreground) 16%);
+    color: var(--fx-text);
     transition:
-      color 180ms ease-out,
-      background-color 180ms ease-out,
-      box-shadow 180ms ease-out;
+      color 120ms ease-out,
+      background-color 120ms ease-out;
   }
 
   .action-menu-item > svg {
@@ -1119,14 +1153,13 @@
   }
 
   .action-menu-item[data-highlighted] {
-    color: var(--primary-foreground);
-    background-color: var(--primary);
-    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--primary-foreground) 18%, transparent);
+    color: var(--fx-text);
+    background-color: var(--fx-hover);
   }
 
   .action-menu-item-destructive[data-highlighted] {
-    color: var(--destructive-foreground);
-    background-color: var(--destructive);
+    color: var(--fx-down-text);
+    background-color: var(--fx-down-soft);
   }
 
   @media (prefers-reduced-motion: reduce) {

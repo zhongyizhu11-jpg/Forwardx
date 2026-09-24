@@ -3,20 +3,25 @@ import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
-const buttonVariants = cva("inline-flex items-center justify-center whitespace-nowrap rounded-md text-[14px] font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50", {
+/*
+  四种按钮只有一种「重」：主按钮反黑。描边和幽灵按钮是白底 / 无底，悬停一层浅灰。
+  焦点环、按下态、投影由 workspace.css 按 data-slot / data-variant 统一给，
+  这里只定形状、颜色和尺寸。
+*/
+const buttonVariants = cva("inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-[13.5px] font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50", {
   variants: {
     variant: {
-      default: "bg-primary text-primary-foreground hover:bg-primary/90",
+      default: "bg-primary text-primary-foreground hover:bg-primary/88",
       destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-      outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
-      secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-      ghost: "hover:bg-accent hover:text-accent-foreground",
+      outline: "border border-[var(--fx-stroke-base)] bg-[var(--fx-l1-surface)] text-foreground hover:bg-[var(--fx-hover)]",
+      secondary: "bg-[var(--fx-l3-control-fill)] text-foreground hover:bg-[var(--fx-hover)]",
+      ghost: "hover:bg-[var(--fx-hover)] hover:text-foreground",
       link: "text-primary underline-offset-4 hover:underline",
     },
     size: {
-      default: "h-9 px-4 py-2",
+      default: "h-9 px-3.5 py-2",
       sm: "h-8 rounded-md px-3 text-[13px]",
-      lg: "h-10 rounded-md px-6 text-[15px]",
+      lg: "h-10 rounded-md px-5 text-[14px]",
       icon: "h-9 w-9",
     },
   },

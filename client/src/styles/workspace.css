@@ -2,19 +2,33 @@
 .workspace-layout { min-width: 0; font-family: var(--fx-font); }
 .workspace-main { width: 100%; max-width: 1440px; margin-inline: auto; min-width: 0; }
 .workspace-main .route-content-enter > div { min-width: 0; }
-.workspace-main h1 { font-size: 24px; line-height: 1.33; font-weight: 600; letter-spacing: -.035em; }
+.workspace-main h1 { font-size: 24px; line-height: 1.33; font-weight: 600; letter-spacing: -.025em; }
 .workspace-main h2 { letter-spacing: -.02em; }
 .workspace-header h2 { font-size: 20px; line-height: 28px; font-weight: 600; }
 .workspace-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .workspace-header-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; color: var(--fx-muted); font-size: 13px; }
 .workspace-header-meta > [data-slot="badge"] { border: 0; padding: 0; background: transparent; font-weight: 500; }
 .workspace-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
-.workspace-header-actions > button { box-shadow: var(--fx-shadow); }
 .workspace-header-actions [data-icon-button] { box-shadow: none; }
-.workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-hover); color: var(--fx-text); font-weight: 600; box-shadow: none; }
-.workspace-layout [data-sidebar="group-label"] { opacity: 1; color: var(--fx-muted); letter-spacing: .06em; }
-.workspace-layout [data-mobile-header] { background: var(--fx-surface); border-color: var(--fx-stroke); box-shadow: 0 1px 4px rgb(24 37 54 / 4%); }
-.workspace-tabs { isolation: isolate; border-radius: 12px; background: var(--fx-subtle); border: 1px solid var(--fx-stroke); padding: 4px; }
+/*
+  侧栏导航：侧栏和页面同一块浅灰、不描边，选中项是一枚**白色药丸 + 1px 软影**——
+  和页面上的白卡是同一种「浮起来」的语言。深色下白卡浮不起来，退回一层浅灰。
+  字重不加粗：药丸已经说了「你在这」，再加粗是说两遍。
+*/
+.workspace-layout [data-sidebar="menu-button"] { color: var(--fx-text-secondary); font-size: 13.5px; font-weight: 500; min-height: 34px; padding-inline: 10px; }
+.workspace-layout [data-sidebar="menu-button"] > svg { color: var(--fx-text-muted); }
+.workspace-layout [data-sidebar="menu-button"]:hover { color: var(--fx-text); background: color-mix(in srgb, var(--fx-text) 5%, transparent); }
+.workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-l1-surface); color: var(--fx-text); font-weight: 500; box-shadow: var(--fx-elevation-control); }
+.workspace-layout [data-sidebar="menu-button"][data-active="true"] > svg { color: var(--fx-text); }
+.dark .workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-hover); box-shadow: none; }
+.workspace-layout [data-sidebar="group-label"] { opacity: 1; color: var(--fx-text-muted); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.workspace-layout [data-mobile-header] { background: var(--fx-surface); border-color: var(--fx-stroke-weak); box-shadow: 0 1px 4px rgb(0 0 0 / 4%); }
+/*
+  分类条是一枚分段控件：一条比页面深一档的槽、不描边，选中项是白块加 1px 软影。
+  上一版是「灰底槽 + 描边 + 白块描边投影」—— 槽和页面一个灰，全靠那圈边框成形，
+  看着像一个空输入框。
+*/
+.workspace-tabs { isolation: isolate; border-radius: var(--fx-radius-control); background: var(--fx-l3-control-fill); border: 0; padding: 3px; }
 /*
   overflow-y: hidden 要写明：只写 overflow-x: auto 时，浏览器把 overflow-y 也算成 auto，
   里面任何东西竖着多出 1px（比如为了扩大命中区撑出去的 ::after），这条就能竖着滚 ——
@@ -22,11 +36,15 @@
 */
 .workspace-tabs-viewport { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
 .workspace-tabs-viewport::-webkit-scrollbar { display: none; }
-.workspace-tabs .workspace-tabs-list { display: flex; width: max-content; min-width: 100%; height: auto; justify-content: flex-start; gap: 8px; padding: 0; border: 0; border-radius: var(--fx-radius); background: transparent; }
-.workspace-tabs .workspace-tab { position: relative; flex: 1 0 auto; gap: 8px; min-height: 40px; border: 1px solid transparent; border-radius: var(--fx-radius); padding: 8px 12px; color: var(--fx-muted); background: transparent; box-shadow: none; --tw-ring-shadow: 0 0 #0000; font-size: 13px; font-weight: 500; transition: color 150ms, background-color 150ms, box-shadow 150ms; }
-.workspace-tabs .workspace-tab[data-state="active"] { color: var(--fx-text); background: var(--fx-raised); border-color: var(--fx-stroke); box-shadow: var(--fx-shadow); font-weight: 600; }
-.workspace-tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding-inline: 4px; border-radius: 6px; background: var(--fx-stroke); color: var(--fx-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.workspace-tab[data-state="active"] .workspace-tab-count { background: var(--fx-brand-soft); color: var(--fx-brand); }
+.workspace-tabs .workspace-tabs-list { display: flex; width: max-content; min-width: 100%; height: auto; justify-content: flex-start; gap: 2px; padding: 0; border: 0; border-radius: var(--fx-radius); background: transparent; }
+.workspace-tabs .workspace-tab { position: relative; flex: 1 0 auto; gap: 6px; min-height: 32px; border: 0; border-radius: calc(var(--fx-radius-control) - 2px); padding: 6px 12px; color: var(--fx-text-secondary); background: transparent; box-shadow: none; --tw-ring-shadow: 0 0 #0000; font-size: 13px; font-weight: 500; transition: color 150ms, background-color 150ms, box-shadow 150ms; }
+.workspace-tabs .workspace-tab > svg { color: var(--fx-text-muted); }
+.workspace-tabs .workspace-tab[data-state="active"] { color: var(--fx-text); background: var(--fx-l1-surface); box-shadow: var(--fx-elevation-control); font-weight: 600; }
+.workspace-tabs .workspace-tab[data-state="active"] > svg { color: var(--fx-text); }
+.dark .workspace-tabs .workspace-tab[data-state="active"] { background: var(--fx-hover); box-shadow: none; }
+/* 计数是名字后面一个淡色的数，不是一枚胶囊 —— 胶囊会和旁边的状态徽标抢眼 */
+.workspace-tab-count { display: inline-flex; align-items: center; color: var(--fx-text-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.workspace-tab[data-state="active"] .workspace-tab-count { color: var(--fx-text-muted); }
 /*
   一行可以左右滑的选择条（主机分组那一排）。和分类条同一个道理：overflow-y 写明 hidden，
   只左右滑、不上下晃；滚动条藏起来。宽屏上放得下，照旧折行、不滚。
@@ -36,14 +54,14 @@
 @media (min-width: 640px) { .fx-chip-scroller { flex-wrap: wrap; gap: 8px; overflow: visible; } }
 /* 触屏上全局给按钮 44px，这一排按 34px 画（分类条同高）；在滚动条里不能用 ::after 撑，会让它竖着也能滚 */
 @media (pointer: coarse) { .fx-chip-scroller > button { min-height: 34px; } }
-.workspace-tab-scroll { position: absolute; top: 4px; bottom: 4px; z-index: 1; width: 32px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); background: var(--fx-raised); color: var(--fx-text); box-shadow: var(--fx-shadow-raised); }
+.workspace-tab-scroll { position: absolute; top: 3px; bottom: 3px; z-index: 1; width: 32px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: calc(var(--fx-radius-control) - 2px); background: var(--fx-raised); color: var(--fx-text); box-shadow: var(--fx-elevation-popover); }
 .workspace-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .workspace-filter-search { min-width: 0; flex: 1 1 240px; }
 .workspace-filter-search > div { width: 100%; }
-.workspace-filter-search input { height: 40px; font-size: 14px; background: var(--fx-surface); }
+.workspace-filter-search input { height: 36px; font-size: 14px; background: var(--fx-surface); }
 .workspace-filter-options { flex-wrap: wrap; align-items: center; gap: 8px; }
 .workspace-filter-options > button { width: auto; max-width: 240px; min-width: 120px; }
-.connection-path { list-style: none; margin: 0; padding: 12px; border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); background: var(--fx-subtle); }
+.connection-path { list-style: none; margin: 0; padding: 12px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius); background: transparent; }
 .connection-step { display: flex; gap: 12px; min-width: 0; }
 .connection-step + .connection-step { padding-top: 12px; }
 .connection-rail { position: relative; width: 12px; flex: 0 0 12px; display: flex; justify-content: center; }
@@ -54,20 +72,32 @@
 .connection-value { margin-top: 4px; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; color: var(--fx-text); }
 .workspace-main .action-card-content { padding: 16px; }
 [data-slot="card-title"] { line-height: 1.4; }
-[data-slot="table-header"] { background: var(--fx-subtle); }
+/* 表头不铺灰：一条细线加 12px 灰字就够说明「这是表头」，铺一块灰是又多一层面 */
+[data-slot="table-header"] { background: transparent; }
+[data-slot="table-head"] { font-size: 12px; font-weight: 500; color: var(--fx-text-muted); }
 [data-slot="table"] { font-variant-numeric: tabular-nums; }
 [data-slot="card"] { min-width: 0; }
-[data-slot="button"][data-variant="default"] { box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%), 0 2px 4px rgb(24 37 54 / 12%); }
-[data-slot="button"] { transition: background-color 150ms, color 150ms, box-shadow 150ms; }
-[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] { box-shadow: inset 0 1px 2px rgb(24 37 54 / 3%); }
-[data-slot="button"]:focus-visible, .workspace-tab:focus-visible, .workspace-tab-scroll:focus-visible { outline: 2px solid var(--fx-brand); outline-offset: 3px; }
-.workspace-skip-link { position: fixed; top: 8px; left: 8px; z-index: var(--fx-z-toast); transform: translateY(-160%); border-radius: 8px; background: var(--fx-surface); padding: 12px 16px; box-shadow: var(--fx-shadow-raised); }
-.workspace-skip-link:focus { transform: none; }
-.workspace-nav-search { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 8px 10px; border: 1px solid var(--fx-stroke); border-radius: 6px; background: var(--fx-subtle); color: var(--fx-muted); font-size: 12px; text-align: left; }
-.workspace-nav-search kbd { margin-left: auto; font-family: inherit; font-size: 10px; }
+/*
+  按钮：主按钮和描边按钮各带一层 1px 的软影（把它从面上托起半毫米），幽灵按钮没有。
+  按下时不缩放、不下沉 —— 只把底色再压深一档（--fx-pressed），反馈清楚又不晃。
+*/
+[data-slot="button"][data-variant="default"], [data-slot="button"][data-variant="outline"], [data-slot="button"][data-variant="destructive"] { box-shadow: var(--fx-elevation-control); }
+[data-slot="button"] { transition: background-color 120ms, color 120ms, box-shadow 120ms, border-color 120ms; }
+[data-slot="button"][data-variant="outline"]:active, [data-slot="button"][data-variant="ghost"]:active, [data-slot="button"][data-variant="secondary"]:active { background: var(--fx-pressed); }
+[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] { box-shadow: none; transition: border-color 120ms, box-shadow 120ms; }
+[data-slot="input"]:hover:not(:focus-visible), [data-slot="textarea"]:hover:not(:focus-visible), [data-slot="select-trigger"]:hover:not(:focus) { border-color: var(--fx-stroke-strong); }
+/* 焦点是一圈路径青的软光，不是 2px 实线加白边：白边在灰页面上像被抠出来 */
+[data-slot="button"]:focus-visible, .workspace-tab:focus-visible, .workspace-tab-scroll:focus-visible { outline: 0; box-shadow: var(--fx-focus-ring); }
+[data-slot="input"]:focus-visible, [data-slot="textarea"]:focus-visible, [data-slot="select-trigger"]:focus { outline: 0; border-color: var(--fx-path); box-shadow: var(--fx-focus-ring); }
+/* 没聚焦时整个不显示：它藏在视口上方，但投影会从侧栏左上角漏出来一截 */
+.workspace-skip-link { position: fixed; top: 8px; left: 8px; z-index: var(--fx-z-toast); transform: translateY(-160%); opacity: 0; border-radius: 8px; background: var(--fx-surface); padding: 12px 16px; box-shadow: var(--fx-elevation-popover); }
+.workspace-skip-link:focus { transform: none; opacity: 1; }
+.workspace-nav-search { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 6px 10px; border: 0; border-radius: var(--fx-radius-control); background: var(--fx-l1-surface); color: var(--fx-text-muted); font-size: 12.5px; text-align: left; box-shadow: var(--fx-elevation-control); transition: color 120ms, box-shadow 120ms; }
+.dark .workspace-nav-search { background: var(--fx-l3-control-fill); box-shadow: none; }
+.workspace-nav-search kbd { margin-left: auto; font-family: inherit; font-size: 10.5px; color: var(--fx-text-muted); }
 .workspace-nav-search.is-collapsed { justify-content: center; padding-inline: 0; }
-.workspace-nav-search:hover { border-color: var(--fx-control-stroke); color: var(--fx-text); }
-.workspace-nav-search:focus-visible { outline: 2px solid var(--fx-brand); outline-offset: 2px; }
+.workspace-nav-search:hover { color: var(--fx-text); }
+.workspace-nav-search:focus-visible { outline: 0; box-shadow: var(--fx-focus-ring); }
 .dialog-panel.workspace-command { display: flex; flex-direction: column; gap: 0; padding: 0; max-width: 560px; height: min(560px, 85dvh); max-height: 85dvh; border-radius: 16px; }
 .workspace-command-input { display: flex; flex-shrink: 0; align-items: center; gap: 12px; min-height: 64px; padding: 16px 56px 16px 20px; border-bottom: 1px solid var(--fx-stroke); color: var(--fx-muted); }
 .workspace-command-input input { min-width: 0; flex: 1; height: 32px; background: transparent; color: var(--fx-text); font-size: 16px; outline: none; }
@@ -526,12 +556,12 @@
   [data-slot="select-trigger"][class]:focus,
   [data-slot="textarea"][class]:focus-visible {
     background: var(--fx-l1-surface);
-    border-color: var(--fx-text);
+    border-color: var(--fx-path);
   }
 }
 @media (pointer: coarse) { .workspace-nav-search, .public-journey-switch button { min-height: 44px; } }
 @media (hover: hover) {
-  .workspace-tab:hover:not([data-state="active"]) { color: var(--fx-text); background: var(--fx-stroke); }
+  .workspace-tab:hover:not([data-state="active"]) { color: var(--fx-text); background: color-mix(in srgb, var(--fx-text) 5%, transparent); }
 }
 @media (max-width: 639px) {
   .workspace-header { gap: 12px; }
@@ -539,7 +569,7 @@
   .workspace-header h1 { font-size: 22px; }
   .workspace-header-meta { font-size: 12px; }
   .workspace-filter-search { flex-basis: 0; }
-  .workspace-filter-options { flex-basis: 100%; padding: 12px; background: var(--fx-subtle); border: 1px solid var(--fx-stroke); border-radius: var(--fx-radius); }
+  .workspace-filter-options { flex-basis: 100%; padding: 12px; background: var(--fx-l1-surface); border: 0; border-radius: var(--fx-radius-card); }
   .workspace-filter-options > button { flex: 1 1 120px; max-width: none; }
   /*
     这里原来还有三条：卡片头 / 卡片内容内边距 16px、卡片标题 18px。它们写在 767px 那一段
@@ -617,17 +647,19 @@
   box-shadow: none;
   backdrop-filter: none;
 }
-.workspace-layout [data-sidebar="sidebar"] { background: var(--fx-surface); }
-[data-sidebar="menu-button"] { min-height: 38px; }
-[data-sidebar="menu-button"][data-active="true"] { background: var(--fx-hover); color: var(--fx-text); font-weight: 600; }
-/* 复选框也走控件描边：一个 20px 的空方框全靠边框才看得见，用 --fx-stroke 太淡。
-   选中时边框由 checked:border-primary 接管，所以这里只管没选中的状态。 */
-[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"], [data-slot="checkbox"]:not(:checked) { background-color: var(--fx-surface); border-color: var(--fx-control-stroke); }
-[data-slot="input"]:focus-visible, [data-slot="textarea"]:focus-visible, [data-slot="select-trigger"]:focus { border-color: var(--fx-brand); }
+/* 侧栏不铺白：它和页面是同一块底，选中项的白药丸才浮得起来（见上面导航那一节） */
+.workspace-layout [data-sidebar="sidebar"] { background: transparent; }
+[data-sidebar="menu-button"] { min-height: 34px; }
+/*
+  输入框描边用基础线色，不用最深那档：一屏十个输入框，深灰描边会比里面的字还抢眼。
+  复选框例外 —— 一个 20px 的空方框全靠边框才看得见，用最深档；选中时由 checked:border-primary 接管。
+*/
+[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] { background-color: var(--fx-surface); border-color: var(--fx-stroke-base); }
+[data-slot="checkbox"]:not(:checked) { background-color: var(--fx-surface); border-color: var(--fx-control-stroke); }
 [data-slot="textarea"] { line-height: 1.6; }
 [data-slot="dialog-header"] { min-width: 0; }
 [data-slot="dialog-header"] p { line-height: 1.6; }
-[data-slot="table"] th { color: var(--fx-muted); font-weight: 600; }
+[data-slot="table"] th { color: var(--fx-text-muted); font-weight: 500; }
 [data-slot="table"] tbody tr:last-child { border-bottom: 0; }
 /*
   空状态原来是 200px 最小高度 + 32px 内边距 + 一个带边框的大图标方块 —— 一整张
@@ -704,7 +736,7 @@
 .auth-route-enter-left { border-right: 1px solid var(--fx-stroke); background: var(--fx-subtle); }
 .auth-home-link { position: absolute; top: 16px; left: 16px; z-index: var(--fx-z-popover); display: inline-flex; align-items: center; min-height: 44px; padding-inline: 8px; font-size: 13px; color: var(--fx-muted); }
 .auth-home-link:hover { color: var(--fx-text); }
-.auth-home-link:focus-visible { outline: 2px solid var(--fx-brand); outline-offset: 2px; border-radius: 6px; }
+.auth-home-link:focus-visible { outline: 0; box-shadow: var(--fx-focus-ring); border-radius: 6px; }
 .auth-intro-title { margin-top: 40px; font-size: clamp(32px, 3.5vw, 48px); line-height: 1.35; font-weight: 600; letter-spacing: -.045em; }
 .auth-intro-title span { color: var(--fx-muted); }
 .auth-route-enter-left .backdrop-blur { backdrop-filter: none; background: var(--fx-surface); }

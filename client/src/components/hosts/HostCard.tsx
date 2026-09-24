@@ -421,8 +421,8 @@ export default function HostCard({
     </div>
   );
   const renderTrafficSplitBox = () => (
-    <div className={`rounded-md border px-2.5 py-2 ${trafficPanelClass}`}>
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] divide-x divide-border/40">
+    <div className={`border-t border-[var(--fx-stroke-weak)] pt-2 ${trafficPanelClass}`}>
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] divide-x divide-[var(--fx-stroke-weak)]">
         {renderTrafficColumn({ label: currentTrafficLabel, inValue: currentTrafficInLabel, outValue: currentTrafficOutLabel, title: currentTrafficTitle, className: "pr-2" })}
         {renderTrafficColumn({ label: "累计", inValue: systemTrafficInLabel, outValue: systemTrafficOutLabel, title: systemTrafficTitle, className: "pl-2" })}
       </div>
@@ -444,14 +444,15 @@ export default function HostCard({
     : isOnline
       ? "h-1.5 bg-muted [&>div]:bg-muted-foreground/30"
       : "h-1.5 bg-muted [&>div]:bg-muted-foreground/20";
-  const infoPanelClass = isOnline
-    ? "border-border/40 bg-background/30"
-    : "border-muted-foreground/20 bg-muted/25";
-  const trafficPanelClass = isOnline
-    ? "border-border/40 bg-muted/20"
-    : "border-muted-foreground/20 bg-muted/25";
+  /*
+    卡里不再套框。原来「主机信息」「流量」各是一个描边的浅灰盒子 —— 一张卡里三层框，
+    框本身不带信息，只是在重复画边界（手册第一节）。现在信息区直接坐在卡上，
+    流量区靠一条细线和上面分开。离线只把字退到 muted，不再整块涂灰。
+  */
+  const infoPanelClass = isOnline ? "" : "text-muted-foreground";
+  const trafficPanelClass = isOnline ? "" : "text-muted-foreground";
   const cardMinHeightClass = compact ? "min-h-[260px]" : "min-h-[420px]";
-  const compactMetricPanelClass = `rounded-md border px-2.5 py-2 ${trafficPanelClass}`;
+  const compactMetricPanelClass = `border-t border-[var(--fx-stroke-weak)] pt-2 ${trafficPanelClass}`;
   const compactMetricItemClass = "grid min-w-0 grid-cols-[18px_minmax(0,1fr)_42px] items-center gap-2 rounded px-1 py-0.5 transition-colors hover:bg-background/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
   const compactMetricItems = [
     {
@@ -554,11 +555,7 @@ export default function HostCard({
   }, [host.id, metrics]);
 
   return (
-    <Card className={`${cardMinHeightClass} select-guard host-card-shell ${dragHandle ? "group/sortable" : ""} ${sortableClassName || ""} backdrop-blur-md transition-[min-height,border-color,background-color,box-shadow,opacity] duration-200 ease-out ${
-      isOnline
-        ? "border-border/40 bg-card/60 hover:border-border/60"
-        : "border-muted-foreground/20 bg-muted/35 shadow-none hover:border-muted-foreground/30"
-    }`}>
+    <Card className={`${cardMinHeightClass} select-guard host-card-shell ${dragHandle ? "group/sortable" : ""} ${sortableClassName || ""} bg-card transition-[min-height,background-color,box-shadow,opacity] duration-200 ease-out`}>
       <CardHeader className={compact ? "px-3.5 pb-2 pt-3.5" : "pb-2"}>
         {compact ? (
           <div className="flex min-w-0 items-center justify-between gap-2">
@@ -603,16 +600,16 @@ export default function HostCard({
       <CardContent className={`host-card-mode-content ${compact ? "host-card-mode-content-compact space-y-2 px-3.5 pb-3.5" : "host-card-mode-content-standard space-y-3"} ${isOnline ? "" : "text-muted-foreground"}`}>
         {compact ? (
           <div className="space-y-2">
-            <div className={`min-w-0 rounded-md border px-2.5 py-1.5 ${infoPanelClass}`}>
+            <div className={`min-w-0 px-0.5 py-1 ${infoPanelClass}`}>
               <div className="flex min-w-0 items-center gap-2">
                 <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${isOnline ? "bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" : "bg-destructive shadow-sm shadow-destructive/50"}`}
+                  className={`h-2 w-2 shrink-0 rounded-full ${isOnline ? "bg-[var(--fx-healthy)] shadow-[0_0_0_3px_var(--fx-healthy-soft)]" : "bg-[var(--fx-down)] shadow-[0_0_0_3px_var(--fx-down-soft)]"}`}
                   title={isOnline ? "在线" : "离线"}
                 />
                 <span className="selectable min-w-0 truncate text-sm font-semibold leading-5" title={hostName}>{hostName}</span>
                 <span
-                  className={`shrink-0 rounded border bg-background/40 px-1.5 py-0.5 font-mono text-[10px] font-normal leading-none text-muted-foreground ${
-                    isOnline ? "border-border/50" : "border-muted-foreground/20 bg-muted/20"
+                  className={`shrink-0 rounded-[5px] border px-1.5 py-0.5 font-mono text-[10.5px] font-normal leading-none text-muted-foreground ${
+                    isOnline ? "border-[var(--fx-stroke-base)]" : "border-[var(--fx-stroke-weak)]"
                   }`}
                 >
                   {host.agentVersion ? `v${host.agentVersion}` : "未上报"}
@@ -635,16 +632,16 @@ export default function HostCard({
           </div>
         ) : (
           <div className={compact ? "space-y-1.5" : "space-y-2"}>
-            <div className={`min-w-0 rounded-md border px-2.5 ${compact ? "py-1.5" : "py-2"} ${infoPanelClass}`}>
+            <div className={`min-w-0 px-0.5 ${compact ? "py-1" : "py-1.5"} ${infoPanelClass}`}>
               <div className="flex min-w-0 items-center gap-2">
                 <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${isOnline ? "bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" : "bg-destructive shadow-sm shadow-destructive/50"}`}
+                  className={`h-2 w-2 shrink-0 rounded-full ${isOnline ? "bg-[var(--fx-healthy)] shadow-[0_0_0_3px_var(--fx-healthy-soft)]" : "bg-[var(--fx-down)] shadow-[0_0_0_3px_var(--fx-down-soft)]"}`}
                   title={isOnline ? "在线" : "离线"}
                 />
                 <span className="selectable min-w-0 truncate text-sm font-semibold leading-5" title={hostName}>{hostName}</span>
                 <span
-                  className={`shrink-0 rounded border bg-background/40 px-1.5 py-0.5 font-mono text-[10px] font-normal leading-none text-muted-foreground ${
-                    isOnline ? "border-border/50" : "border-muted-foreground/20 bg-muted/20"
+                  className={`shrink-0 rounded-[5px] border px-1.5 py-0.5 font-mono text-[10.5px] font-normal leading-none text-muted-foreground ${
+                    isOnline ? "border-[var(--fx-stroke-base)]" : "border-[var(--fx-stroke-weak)]"
                   }`}
                 >
                   {host.agentVersion ? `v${host.agentVersion}` : "未上报"}

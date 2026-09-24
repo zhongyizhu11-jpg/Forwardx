@@ -134,7 +134,7 @@ const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive
           gap。为钉一个按钮把所有弹窗的间距改一遍不划算。
           滚上去之后还有 ESC、点遮罩、底部的取消三条路可以关。
         */}
-        <DialogPrimitive.Close data-fx-dialog-close="" className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-70 ring-offset-background transition-colors hover:bg-destructive/10 hover:text-destructive hover:opacity-100 focus:bg-destructive/10 focus:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive/40 focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
+        <DialogPrimitive.Close data-fx-dialog-close="" className="absolute right-3.5 top-3.5 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-[var(--fx-hover)] hover:text-foreground focus:outline-none focus-visible:shadow-[var(--fx-focus-ring)] disabled:pointer-events-none">
           <X className="h-4 w-4" />
           <span className="sr-only">关闭</span>
         </DialogPrimitive.Close>
@@ -163,17 +163,17 @@ const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivEleme
     竖排本来是为了窄屏放得下长按钮文案，但这里的文案是「创建」「取消」两个字，
     并排绰绰有余；真放不下时 flex-wrap 会自己折回去。
   */
-  <div data-slot="dialog-footer" className={cn("flex shrink-0 flex-row flex-wrap items-center justify-end gap-2 border-t pt-3", className)} {...props} />
+  <div data-slot="dialog-footer" className={cn("flex shrink-0 flex-row flex-wrap items-center justify-end gap-2 border-t border-[var(--fx-stroke-weak)] pt-4", className)} {...props} />
 )
 DialogFooter.displayName = "DialogFooter"
 
 const DialogTitle = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Title>, React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>>(({ className, ...props }, ref) => (
-  <DialogPrimitive.Title data-slot="dialog-title" ref={ref} className={cn("text-lg font-semibold leading-none tracking-tight", className)} {...props} />
+  <DialogPrimitive.Title data-slot="dialog-title" ref={ref} className={cn("text-[17px] font-semibold leading-snug tracking-tight", className)} {...props} />
 ))
 DialogTitle.displayName = DialogPrimitive.Title.displayName
 
 const DialogDescription = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Description>, React.ComponentPropsWithoutRef<typeof DialogPrimitive.Description>>(({ className, ...props }, ref) => (
-  <DialogPrimitive.Description data-slot="dialog-description" ref={ref} className={cn("text-sm text-muted-foreground", className)} {...props} />
+  <DialogPrimitive.Description data-slot="dialog-description" ref={ref} className={cn("text-[13px] leading-relaxed text-muted-foreground", className)} {...props} />
 ))
 DialogDescription.displayName = DialogPrimitive.Description.displayName
 

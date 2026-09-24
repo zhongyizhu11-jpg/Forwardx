@@ -1349,7 +1349,12 @@ function DashboardLayoutContent({
 
   return (
     <>
-      <Sidebar collapsible="icon" className="border-r border-sidebar-border/60 bg-sidebar/75 backdrop-blur-2xl">
+      {/*
+        侧栏和页面同一块浅灰、不描边：整个外壳是一块底，白卡和选中项一起浮在上面。
+        原来是「半透明白 + 毛玻璃 + 右侧一条线」—— 一条线把页面切成两个房间，
+        而侧栏和内容本来就是同一个工作空间。
+      */}
+      <Sidebar collapsible="icon" className="border-r-0 bg-transparent">
         <SidebarHeader className="h-16 justify-center mobile-sidebar-header">
           <div className={cn("flex w-full items-center gap-3 transition-all", isDesktopCollapsed ? "justify-center px-0" : "px-2")}>
             {!isDesktopCollapsed ? (
@@ -1541,7 +1546,7 @@ function DashboardLayoutContent({
           <DropdownMenu open={accountMenuOpen} onOpenChange={setAccountMenuOpen} modal={false}>
             <DropdownMenuTrigger asChild>
               <button
-                className="flex items-center gap-2 rounded-lg border border-border/40 bg-background/35 px-2 py-2.5 text-left transition-colors hover:bg-accent/50 w-full group-data-[collapsible=icon]:h-10 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:px-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--fx-text)_5%,transparent)] group-data-[collapsible=icon]:h-10 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 focus:outline-none focus-visible:shadow-[var(--fx-focus-ring)]"
                 title={accountDisplayName}
               >
                 <UserAvatar user={user as any} className={cn("shrink-0", isDesktopCollapsed ? "h-8 w-8" : "h-9 w-9")} />

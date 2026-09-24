@@ -906,7 +906,7 @@ export default function Login() {
               setPanelUrlDraft(mobileAuth.getPanelUrl());
               setShowPanelSettings(true);
             }}
-            className="flex h-9 w-9 items-center justify-center rounded-lg bg-background/80 text-foreground shadow-sm ring-1 ring-border/60 transition-colors hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-9 w-9 items-center justify-center rounded-md bg-[var(--fx-l1-surface)] text-foreground shadow-[var(--fx-elevation-control)] transition-colors hover:bg-[var(--fx-hover)] focus:outline-none focus-visible:shadow-[var(--fx-focus-ring)]"
             aria-label="设置面板地址"
             title="设置面板地址"
           >
@@ -915,7 +915,7 @@ export default function Login() {
         )}
         <button
           onClick={toggleTheme}
-          className="flex h-9 w-9 items-center justify-center rounded-lg bg-background/80 text-foreground shadow-sm ring-1 ring-border/60 transition-colors hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-9 w-9 items-center justify-center rounded-md bg-[var(--fx-l1-surface)] text-foreground shadow-[var(--fx-elevation-control)] transition-colors hover:bg-[var(--fx-hover)] focus:outline-none focus-visible:shadow-[var(--fx-focus-ring)]"
           aria-label="切换主题"
           title={resolvedTheme === "dark" ? "切换到白天模式" : "切换到黑夜模式"}
         >
@@ -948,7 +948,7 @@ export default function Login() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.32, delay: 0.12 + index * 0.06, ease: [0.22, 1, 0.36, 1] }}
                     >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-background/45 text-primary shadow-sm ring-1 ring-border/50 backdrop-blur">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[var(--fx-l1-surface)] text-foreground shadow-[var(--fx-elevation-card)]">
                         <Icon className="h-5 w-5" />
                       </div>
                       <div className="min-w-0">
@@ -964,8 +964,8 @@ export default function Login() {
         </section>
 
         <main className="auth-route-enter-panel flex min-h-screen items-center justify-center px-4 py-20 sm:px-6 lg:px-10">
-          <Card disableEnterAnimation className="auth-card-surface w-full max-w-[420px] px-5 py-6 sm:px-7">
-            <CardHeader className="px-0 pb-7 text-left">
+          <Card disableEnterAnimation className="auth-card-surface w-full max-w-[400px] rounded-[var(--fx-radius-surface)] px-6 py-7 sm:px-8 sm:py-8">
+            <CardHeader className="px-0 pb-6 text-left">
               <div className="mb-5 flex items-center gap-3 lg:hidden">
                 <img
                   src={logoSrc}
@@ -974,7 +974,7 @@ export default function Login() {
                 />
                 <span className="text-lg font-semibold tracking-tight">{siteTitle}</span>
               </div>
-              <h1 className="text-2xl font-semibold tracking-tight">
+              <h1 className="text-[22px] font-semibold tracking-tight">
                 {mode === "login" ? "欢迎回来" : "创建账号"}
               </h1>
               <CardDescription className="mt-1 text-sm text-muted-foreground">

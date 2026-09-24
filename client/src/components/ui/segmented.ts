@@ -1,13 +1,17 @@
 import { cn } from "@/lib/utils";
 
-export const segmentedControlClassName = "rounded-md border border-border/60 bg-muted/25 p-1 shadow-inner shadow-black/5";
+/*
+  分段控件：一条比面深一档的槽、不描边，选中项是白块加 1px 软影（深色下退回浅灰块）。
+  槽和选项都不画线 —— 形状由「槽深一档、选项浅一档」这一次明暗差给出。
+*/
+export const segmentedControlClassName = "rounded-md bg-[var(--fx-l3-control-fill)] p-[3px]";
 
 export function segmentedOptionClassName(active: boolean, disabled = false, className?: string) {
   return cn(
-    "group flex h-9 min-w-0 items-center justify-center gap-2 rounded-sm border px-3 text-center text-sm font-medium ring-1 ring-transparent transition-all",
+    "group flex h-8 min-w-0 items-center justify-center gap-2 rounded-[6px] px-3 text-center text-[13px] font-medium transition-all focus-visible:outline-none focus-visible:shadow-[var(--fx-focus-ring)]",
     active
-      ? "border-border bg-card text-foreground shadow-sm ring-transparent"
-      : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground",
+      ? "bg-[var(--fx-l1-surface)] text-foreground shadow-[var(--fx-elevation-control)] dark:bg-[var(--fx-hover)] dark:shadow-none"
+      : "text-muted-foreground hover:text-foreground",
     disabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground",
     className,
   );
