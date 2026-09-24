@@ -1122,7 +1122,7 @@ function HostGroupFilterBar({
     分组是选择，不是状态，所以走黑白，和分段控件的选中项同一套。
   */
   const chipClass = (active: boolean) => [
-    "inline-flex h-9 shrink-0 items-center gap-2 rounded-[var(--fx-radius-control)] px-3 text-sm transition-colors",
+    "inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-[var(--fx-radius-control)] px-3 text-sm transition-colors sm:h-9 sm:gap-2",
     active
       ? "bg-[var(--fx-text)] font-semibold text-[var(--fx-text-inverse)]"
       : "border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] text-muted-foreground hover:text-foreground",
@@ -1130,9 +1130,14 @@ function HostGroupFilterBar({
   const countForGroup = (group: HostGroupView) => Number(groupCounts[Number(group.id)] || 0);
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-border/40 bg-card/50 p-2 backdrop-blur-md">
+    /*
+      手机上一行、只左右滑（和分类条同一套：见 workspace.css 的 .fx-chip-scroller）。原来是
+      折行的 44px 大块，外面再套一个描边框 —— 四个分组占两行、113px，比一张主机卡还高一半。
+      图标在手机上也去掉：分组名已经说明了它是什么。
+    */
+    <div className="fx-chip-scroller min-w-0 items-center">
       <button type="button" className={chipClass(selectedGroupId === "all")} onClick={() => onSelectGroup("all")}>
-        <Server className="h-3.5 w-3.5" />
+        <Server className="h-3.5 w-3.5 max-sm:hidden" />
         <span>全部</span>
         <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === "all" ? "bg-white/20 text-[var(--fx-text-inverse)]" : "text-muted-foreground")}>{totalHosts}</span>
       </button>
@@ -1144,7 +1149,7 @@ function HostGroupFilterBar({
           onClick={() => onSelectGroup(Number(group.id))}
           title={group.name}
         >
-          <FolderKanban className="h-3.5 w-3.5" />
+          <FolderKanban className="h-3.5 w-3.5 max-sm:hidden" />
           <span className="max-w-[160px] truncate">{group.name}</span>
           <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === Number(group.id) ? "bg-white/20 text-[var(--fx-text-inverse)]" : "text-muted-foreground")}>{countForGroup(group)}</span>
         </button>

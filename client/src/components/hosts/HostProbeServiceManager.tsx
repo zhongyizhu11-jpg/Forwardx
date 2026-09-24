@@ -182,20 +182,22 @@ function ServiceCard({
 }) {
   const target = serviceTarget(service);
   const scope = scopeText(service, hostsById);
+  const interval = Number(service.intervalSeconds) || 30;
+  /*
+    原来名字下面一个图标方块，底下三个灰框（目标、运行时间、主机范围）各装一个值 ——
+    和 Token 卡、转发组卡片原来一样的「一个值一个框」。现在是名字那一行 + 细线下两行小表。
+    「运行时间 30S」说错了：这个数是多久探测一次（服务端作为 serviceProbeIntervals 下发给
+    Agent），不是运行了多久。改叫「每 30 秒」，和探测方式写在名字下面。
+  */
   return (
     <Card className={cn("action-card group/sortable border-border/40 bg-card/60 backdrop-blur-md", sortableClassName)}>
-      <CardContent className="action-card-content space-y-4 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                <Activity className="h-4 w-4" />
-              </span>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium" title={service.name}>{service.name}</p>
-                <Badge variant="outline" className="mt-1 px-1.5 py-0 text-[10px] uppercase">{service.method}</Badge>
-              </div>
-            </div>
+      <CardContent className="action-card-content space-y-2 p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium" title={service.name}>{service.name}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {String(service.method || "").toUpperCase()} · 每 {interval} 秒
+            </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {dragHandle}
@@ -203,21 +205,12 @@ function ServiceCard({
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="min-w-0 rounded-md bg-muted/25 p-3">
-            <p className="mb-1 text-xs text-muted-foreground">目标</p>
-            <p className="truncate font-mono text-xs" title={target}>{target}</p>
-          </div>
-          <div className="min-w-0 rounded-md bg-muted/25 p-3">
-            <p className="mb-1 text-xs text-muted-foreground">运行时间</p>
-            <p className="text-sm tabular-nums">{service.intervalSeconds || 30}S</p>
-          </div>
-        </div>
-
-        <div className="min-w-0 rounded-md bg-muted/25 p-3">
-          <p className="mb-1 text-xs text-muted-foreground">主机范围</p>
-          <p className="truncate text-sm" title={scope}>{scope}</p>
-        </div>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-[var(--fx-stroke-weak)] pt-2 text-meta">
+          <dt className="text-muted-foreground">目标</dt>
+          <dd className="min-w-0 truncate text-right font-mono text-foreground" title={target}>{target}</dd>
+          <dt className="text-muted-foreground">主机</dt>
+          <dd className="min-w-0 truncate text-right text-foreground" title={scope}>{scope}</dd>
+        </dl>
 
         <CardActions>
           <ServiceActionButtons service={service} onEdit={onEdit} onDelete={onDelete} />
@@ -441,12 +434,13 @@ export default function HostProbeServiceManager({
       </div>
       )}
 
-      <Card className="border-border/40 bg-card/60 backdrop-blur-md">
-        <CardContent className="p-0">
+      {/*
+        列表不套大白卡：服务卡自己就是白块（和 Token 那一页同一处改法）。原来白卡里 12px、网格
+        12px、卡片再 12px，手机上内容离屏幕边 48px。表格视图单独包一块白底。
+      */}
+      <div>
           {isLoading ? (
-            <div className="p-4">
-              <DataSectionLoading label="正在加载服务" />
-            </div>
+            <DataSectionLoading label="正在加载服务" />
           ) : displayedServiceItems.length === 0 ? (
             <EmptyState
               className="min-h-[220px]"
@@ -456,7 +450,7 @@ export default function HostProbeServiceManager({
             />
           ) : viewMode === "card" ? (
             <SortableReorderContext sortable={serviceSortable} ids={displayedServiceItems.map((service) => Number(service.id))} strategy="rect">
-              <div key="host-probe-service-card-view" className="standard-card-grid card-mode-transition gap-4 p-3">
+              <div key="host-probe-service-card-view" className="standard-card-grid card-mode-transition gap-3">
                 {displayedServiceItems.map((service) => (
                   <SortableItem key={service.id} id={Number(service.id)} disabled={serviceSortable.disabled}>
                     {({ itemProps, handleProps, isDragging, isDropTarget }) => (
@@ -479,7 +473,7 @@ export default function HostProbeServiceManager({
           ) : (
             <div key="host-probe-service-table-view" className="card-mode-transition">
             <SortableReorderContext sortable={serviceSortable} ids={displayedServiceItems.map((service) => Number(service.id))} strategy="vertical" restrictToList>
-              <div className="grid grid-cols-1 gap-4 p-3 sm:hidden">
+              <div className="grid grid-cols-1 gap-3 sm:hidden">
                 {displayedServiceItems.map((service) => (
                   <SortableItem key={service.id} id={Number(service.id)} disabled={serviceSortable.disabled}>
                     {({ itemProps, handleProps, isDragging, isDropTarget }) => (
@@ -499,7 +493,8 @@ export default function HostProbeServiceManager({
                 ))}
               </div>
             </SortableReorderContext>
-            <div className="overflow-x-auto">
+            {/* hidden sm:block：原来没写，手机上表格视图会把卡片和一张宽表格同时画出来 */}
+            <div className="hidden overflow-x-auto rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)] sm:block">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -507,7 +502,7 @@ export default function HostProbeServiceManager({
                     <TableHead>服务</TableHead>
                     <TableHead>目标</TableHead>
                     <TableHead>主机范围</TableHead>
-                    <TableHead>运行时间</TableHead>
+                    <TableHead>探测间隔</TableHead>
                     <TableHead className="w-[120px]">状态</TableHead>
                     <TableHead className="text-right">操作</TableHead>
                   </TableRow>
@@ -539,7 +534,7 @@ export default function HostProbeServiceManager({
                       </TableCell>
                       <TableCell className="font-mono text-xs">{serviceTarget(service)}</TableCell>
                       <TableCell className="max-w-[360px] truncate text-sm" title={scopeText(service, hostsById)}>{scopeText(service, hostsById)}</TableCell>
-                      <TableCell className="text-sm tabular-nums">{service.intervalSeconds || 30}S</TableCell>
+                      <TableCell className="text-sm tabular-nums">每 {service.intervalSeconds || 30} 秒</TableCell>
                       <TableCell>
                         <ServiceEnabledSwitch service={service} onToggle={toggleServiceEnabled} />
                       </TableCell>
@@ -556,8 +551,7 @@ export default function HostProbeServiceManager({
             </div>
             </div>
           )}
-        </CardContent>
-      </Card>
+      </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="flex max-h-[88vh] flex-col overflow-hidden sm:max-w-2xl">
@@ -576,7 +570,7 @@ export default function HostProbeServiceManager({
             </div>
             <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
               <FormField className="space-y-1.5"><Label>选择主机</Label><Select value={form.hostScope} onValueChange={(value) => setForm({ ...form, hostScope: value as ServiceForm["hostScope"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">所有主机</SelectItem><SelectItem value="exclude">排除主机</SelectItem><SelectItem value="specific">特定主机</SelectItem></SelectContent></Select></FormField>
-              <FormField className="space-y-1.5"><Label>服务运行时间</Label><Input type="number" min={5} value={form.intervalSeconds} onChange={(e) => setForm({ ...form, intervalSeconds: Math.max(5, Number(e.target.value) || 5) })} /></FormField>
+              <FormField className="space-y-1.5"><Label>探测间隔（秒）</Label><Input type="number" min={5} value={form.intervalSeconds} onChange={(e) => setForm({ ...form, intervalSeconds: Math.max(5, Number(e.target.value) || 5) })} /></FormField>
             </div>
             {form.hostScope !== "all" && (
               <FormField className="space-y-3 rounded-md border border-border/50 p-3">

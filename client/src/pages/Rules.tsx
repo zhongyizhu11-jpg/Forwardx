@@ -219,7 +219,6 @@ import { getTunnelExitNames, getTunnelHopIds, getTunnelRouteText, tunnelHopHostN
 import { NetworkPath } from "@/components/network/NetworkPath";
 import {
   buildRuleFlow,
-  buildRuleFormPreview,
   decideRuleFlowLayout,
   ruleVisualStateToHealth,
 } from "@/features/rules/ruleFlow";
@@ -2061,16 +2060,32 @@ function RulesContent() {
   const [inlineLinkOpen, setInlineLinkOpen] = useState(false);
 
   /**
-   * 选择器底下那一格：要么是「＋ 新建…」按钮，要么是展开的迷你表单。
+   * 「＋ 新建…」分成两半：按钮放在「使用隧道」那一行的右边，展开的迷你表单放在选择器底下。
    *
-   * 四种走法共用这一个，不按 routeMode 各写一遍 —— 「哪种转发要哪种线路」
+   * 按钮原来自己占一行，而且触屏上被全局规则顶到 44px 高 —— 手机上一个「＋ 新建隧道」
+   * 连同间距就吃掉 52px。放进标签行之后不占高度；它本来就是「这一栏的另一种填法」，和标签站在一起
+   * 正合适。
+   *
+   * 四种走法共用这一套，不按 routeMode 各写一遍 —— 「哪种转发要哪种线路」
    * 已经在 inlineLinkDraft 里写成了一张表。
    */
-  const renderInlineLinkSlot = (routeMode: string) => {
+  const inlineLinkBlockedForTenant = (kind: NonNullable<ReturnType<typeof linkKindForRouteMode>>) =>
+    linkKindRequiresAdmin(kind) && user?.role !== "admin";
+  const renderInlineLinkTrigger = (routeMode: string) => {
+    const kind = linkKindForRouteMode(routeMode);
+    if (!kind || inlineLinkBlockedForTenant(kind) || inlineLinkOpen) return null;
+    return (
+      <Button type="button" variant="ghost" size="sm" className="fx-compact-touch h-7 gap-1 px-2 text-meta font-medium" onClick={() => setInlineLinkOpen(true)}>
+        <Plus className="h-3.5 w-3.5" />
+        {describeLinkKind(kind).label}
+      </Button>
+    );
+  };
+  const renderInlineLinkBody = (routeMode: string) => {
     const kind = linkKindForRouteMode(routeMode);
     if (!kind) return null;
 
-    if (linkKindRequiresAdmin(kind) && user?.role !== "admin") {
+    if (inlineLinkBlockedForTenant(kind)) {
       /*
         租户建不了转发组（服务端是 adminProcedure）。给他一个点下去必然 403 的
         按钮比不给更糟 —— 所以只在真的没线路可选时说一句该找谁。
@@ -2102,12 +2117,7 @@ function RulesContent() {
       );
     }
 
-    return (
-      <Button type="button" variant="outline" size="sm" className="gap-1" onClick={() => setInlineLinkOpen(true)}>
-        <Plus className="h-3.5 w-3.5" />
-        {describeLinkKind(kind).label}
-      </Button>
-    );
+    return null;
   };
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingOriginalProtocol, setEditingOriginalProtocol] = useState<RuleProtocol | null>(null);
@@ -2901,7 +2911,6 @@ function RulesContent() {
     (hosts || []).forEach((host: any) => map.set(Number(host.id), host));
     return map;
   }, [hosts]);
-  const selectedTunnelDisplay = useMemo(() => getTunnelDisplay(selectedTunnel, nginxTunnelEnabled), [selectedTunnel, nginxTunnelEnabled]);
   const userById = useMemo(() => {
     const map = new Map<number, any>();
     (users || []).forEach((item: any) => map.set(Number(item.id), item));
@@ -5886,39 +5895,6 @@ function RulesContent() {
     };
   };
 
-  /**
-   * 创建 / 编辑对话框里那条实时预览。
-   *
-   * 数据全部取自**表单当前的值**而不是已保存的规则：它要回答的是
-   * 「我现在填的这些会建出什么」。
-   */
-  const createPreview = useMemo(() => {
-    const category = form.routeMode === "tunnel"
-      ? "tunnel"
-      : isForwardGroupBackedRouteModeValue(form.routeMode, form.forwardGroupId)
-        ? (getRuleForwardGroupKind({ forwardGroupId: form.forwardGroupId }, forwardGroupById) || "group")
-        : "local";
-    const hops = form.routeMode === "tunnel"
-      ? (selectedTunnel
-        ? getTunnelHopIds(selectedTunnel)
-          .map((hostId: number) => String(tunnelHopHostName(selectedTunnel, hostId, hosts) || "").trim())
-          .filter(Boolean)
-        : [])
-      : (selectedForwardGroup ? [String(selectedForwardGroup.name || "").trim()].filter(Boolean) : []);
-    const targetIp = String(form.targetIp || "").trim();
-    const targetPort = Number(form.targetPort || 0);
-    return buildRuleFormPreview({
-      category,
-      entry: Number(form.sourcePort || 0) > 0 ? `:${form.sourcePort}` : "",
-      target: targetIp && targetPort > 0 ? `${targetIp}:${targetPort}` : "",
-      hops,
-      via: FORWARD_TYPE_LABELS[form.forwardType as ForwardType] || undefined,
-    });
-  }, [
-    form.routeMode, form.forwardGroupId, form.sourcePort, form.targetIp, form.targetPort,
-    form.forwardType, selectedTunnel, selectedForwardGroup, forwardGroupById, hosts,
-  ]);
-
   /** 这条规则的紧凑卡是否已经画了 Flow —— 画了的话线路徽标就不要再写一遍路径。 */
   const ruleDrawsFlow = (rule: any) =>
     decideRuleFlowLayout(getRuleCategory(rule, forwardGroupById)) === "flow";
@@ -6584,7 +6560,7 @@ function RulesContent() {
       <button
         type="button"
         aria-expanded={!collapsed}
-        className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="fx-rule-group-header flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={() => toggleRuleGroupCollapsed(group.type)}
       >
         <ChevronRight className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${collapsed ? "" : "rotate-90"}`} />
@@ -6943,20 +6919,25 @@ function RulesContent() {
                 它要和页面标题、搜索、主题切换抢位置。筛选这一行本来就是
                 「对这个列表做事」的地方，新建和它并排才是同一类东西。
               */
+              /*
+                手机上只留「＋」（和 iOS 列表右上角那个加号一个意思）：三样东西要挤一行，
+                字留在 aria-label 里给读屏。md 以上照旧写「新建规则」。
+              */
               rulePermissionLoading ? null : canAdd ? (
                 <Button
                   onClick={() => openCreate()}
-                  className="gap-2"
+                  className="gap-2 max-md:w-[34px] max-md:px-0"
                   disabled={!canCreateRule}
-                  title={!canCreateRule ? "暂无可用转发资源" : undefined}
+                  aria-label="新建规则"
+                  title={!canCreateRule ? "暂无可用转发资源" : "新建规则"}
                 >
                   <Plus className="h-4 w-4" />
-                  新建规则
+                  <span className="max-md:sr-only">新建规则</span>
                 </Button>
               ) : (
-                <Button disabled className="gap-2" title="需要管理员授权后才能新建规则">
+                <Button disabled className="gap-2 max-md:w-[34px] max-md:px-0" aria-label="新建规则" title="需要管理员授权后才能新建规则">
                   <Plus className="h-4 w-4" />
-                  新建规则
+                  <span className="max-md:sr-only">新建规则</span>
                 </Button>
               )
             }
@@ -7354,11 +7335,18 @@ function RulesContent() {
               transitionKey={`rule-route-${form.routeMode}-${isForwardGroupRouteMode ? "resource" : "direct"}`}
               className="space-y-3"
             >
+              {/*
+                线路这一块不再套框。原来是「描边 + 灰底」的一个框，里面再放迷你表单的灰块 ——
+                白色面板里一个灰框套一个灰块。它和下面的端口、目标本来就是同一张表单。
+              */}
               {form.routeMode === "tunnel" && (
-                <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
-                  <div className="route-picker-row grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                    <FormField className="space-y-2">
-                      <Label>使用隧道</Label>
+                <div className="space-y-2">
+                    <FormField className="space-y-1.5">
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <Label>使用隧道</Label>
+                        {/* 隧道的类型（GOST / ForwardX）下拉框里已经写着，不再另起一个徽标重复一遍 */}
+                        {renderInlineLinkTrigger("tunnel")}
+                      </div>
                       <Select
                         value={form.tunnelId ? String(form.tunnelId) : undefined}
                         disabled={availableTunnels.length === 0}
@@ -7382,12 +7370,7 @@ function RulesContent() {
                         </SelectContent>
                       </Select>
                     </FormField>
-                    <Badge variant="outline" className="h-9 justify-center gap-1.5 px-3 text-muted-foreground">
-                      <Network className="h-3.5 w-3.5" />
-                      {selectedTunnelDisplay.shortLabel}
-                    </Badge>
-                  </div>
-                  {renderInlineLinkSlot("tunnel")}
+                  {renderInlineLinkBody("tunnel")}
                   {selectedTunnel && (
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       {renderTunnelRoute(selectedTunnel, true)}
@@ -7398,10 +7381,22 @@ function RulesContent() {
               )}
 
               {isForwardGroupRouteMode && (
-                <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
-                  <div className="route-picker-row grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                    <FormField className="space-y-2">
-                      <Label>{form.routeMode === "local" ? (isLegacyLocalRuleEdit ? "迁移到新版端口转发" : "使用端口转发") : form.routeMode === "chain" ? "使用转发链" : "使用转发组"}</Label>
+                <div className="space-y-2">
+                    <FormField className="space-y-1.5">
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <Label className="min-w-0 truncate">{form.routeMode === "local" ? (isLegacyLocalRuleEdit ? "迁移到新版端口转发" : "使用端口转发") : form.routeMode === "chain" ? "使用转发链" : "使用转发组"}</Label>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {/*
+                            转发工具（gost / realm / iptables）下拉框里没有写，所以留着，但只是标签行尾一个
+                            小标记 —— 原来是和下拉框一样高的一块，手机上独占一行，看上去像能点的控件。
+                          */}
+                          <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[11px] font-normal text-muted-foreground">
+                            {form.routeMode === "local" ? <ArrowRightLeft className="h-3 w-3" /> : form.routeMode === "chain" ? <GitBranch className="h-3 w-3" /> : <Layers3 className="h-3 w-3" />}
+                            {isLegacyLocalRuleEdit && !selectedForwardGroup ? "待选择" : FORWARD_TYPE_LABELS[effectiveRouteForwardType] || effectiveRouteForwardType}
+                          </Badge>
+                          {renderInlineLinkTrigger(form.routeMode)}
+                        </div>
+                      </div>
                       <Select
                         value={form.forwardGroupId ? String(form.forwardGroupId) : undefined}
                         disabled={(form.routeMode === "local" ? availablePortForwardGroups : form.routeMode === "chain" ? availableForwardChainGroups : availableFailoverForwardGroups).length === 0}
@@ -7428,17 +7423,12 @@ function RulesContent() {
                         </SelectContent>
                       </Select>
                     </FormField>
-                    <Badge variant="outline" className="h-9 justify-center gap-1.5 px-3 text-muted-foreground">
-                      {form.routeMode === "local" ? <ArrowRightLeft className="h-3.5 w-3.5" /> : form.routeMode === "chain" ? <GitBranch className="h-3.5 w-3.5" /> : <Layers3 className="h-3.5 w-3.5" />}
-                      {isLegacyLocalRuleEdit && !selectedForwardGroup ? "待选择" : FORWARD_TYPE_LABELS[effectiveRouteForwardType] || effectiveRouteForwardType}
-                    </Badge>
-                  </div>
                   {isLegacyLocalRuleEdit && form.routeMode === "local" && (
                     <p className="text-xs text-[var(--fx-warn-text)]">
                       旧版端口转发规则需要选择新版端口转发，保存后会保留当前目标地址和端口配置。
                     </p>
                   )}
-                  {renderInlineLinkSlot(form.routeMode)}
+                  {renderInlineLinkBody(form.routeMode)}
                   {selectedForwardGroup && (
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       {(selectedForwardGroup.members || []).slice(0, 4).map((member: any, index: number) => (
@@ -7453,9 +7443,8 @@ function RulesContent() {
               )}
 
               {form.routeMode === "local" && !isForwardGroupRouteMode && (
-                <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2.5">
-                  <div className="route-picker-row grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                    <FormField className="space-y-2">
+                <div className="space-y-2">
+                    <FormField className="space-y-1.5">
                       <Label>使用按量计费资源</Label>
                       <Select
                         value={form.hostId ? String(form.hostId) : undefined}
@@ -7483,11 +7472,6 @@ function RulesContent() {
                         </SelectContent>
                       </Select>
                     </FormField>
-                    <Badge variant="outline" className="h-9 justify-center gap-1.5 px-3 text-muted-foreground">
-                      <ArrowRightLeft className="h-3.5 w-3.5" />
-                      按量计费
-                    </Badge>
-                  </div>
                   {availableTrafficBillingHosts.length === 0 && (
                     <p className="text-xs text-[var(--fx-warn-text)]">暂无可用按量计费资源，请确认资源授权和余额。</p>
                   )}
@@ -7506,9 +7490,13 @@ function RulesContent() {
               原来「规则名称」排在第二，但它既不是这条转发「走哪儿」也不是「去哪儿」，
               是最后才需要想的东西；端口和目标才是。现在它也不再必填 —— 留空由服务端
               按目标地址生成，占位符里直接显示会生成成什么，不用猜。
+
+              手机上「目标端口」和「协议」并排：两个都是几个字的短值，各占一整行时右边
+              大半行是空的。源端口和目标地址照旧占满一行 —— 地址会很长，源端口旁边还有
+              随机按钮。
             */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-3 sm:gap-3">
+              <div className="col-span-2 space-y-1.5 sm:col-span-1">
               <div className="flex items-center justify-between gap-2">
               <Label className="flex items-baseline gap-1.5">
               源端口
@@ -7556,7 +7544,7 @@ function RulesContent() {
               type="button"
               variant="outline"
               size="icon"
-              className="h-10 w-10 shrink-0"
+              className="fx-compact-touch h-[34px] w-10 shrink-0 md:h-10"
               onClick={handleRandomPort}
               title="随机分配端口"
               disabled={isForwardGroupRouteMode ? !form.forwardGroupId : !form.hostId}
@@ -7565,7 +7553,7 @@ function RulesContent() {
               </Button>
               </div>
               </div>
-              <FormField className="space-y-2">
+              <FormField className="col-span-2 space-y-1.5 sm:col-span-1">
               <Label>目标地址 <span className="text-destructive">*</span></Label>
               <Input
               placeholder="例如: 10.0.0.1 或 example.com"
@@ -7573,7 +7561,7 @@ function RulesContent() {
               onChange={(e) => setForm({ ...form, targetIp: e.target.value })}
               />
               </FormField>
-              <FormField className="space-y-2">
+              <FormField className="space-y-1.5">
               <Label>目标端口 <span className="text-destructive">*</span></Label>
               <Input
               type="number"
@@ -7585,7 +7573,7 @@ function RulesContent() {
               onChange={(e) => setForm({ ...form, targetPort: parseInt(e.target.value) || 0 })}
               />
               </FormField>
-              <FormField className="space-y-2">
+              <FormField className="space-y-1.5">
               <Label>协议</Label>
               <Select
               value={form.protocol}
@@ -7754,23 +7742,12 @@ function RulesContent() {
             </div>
           </div>
           {/*
-            提交前的实时预览 —— 放在按钮上方而不是做成 wizard 的最后一步。
-
-            管理员经常要快速建一条，强制分步会把三秒的事拉成四屏；放在按钮上方
-            则是白给的：填到哪儿就看到哪儿，不用多点一次。
-
-            没填的那一节画成灰点虚线并写「待填写」，不替用户补上 —— 预览的职责
-            是「你现在配出来的是这个」，不是「你大概想配这个」。
+            这里原来有一块「流量将经过」的竖排预览（入口 → 线路上每一台 → 目标），钉在按钮上方。
+            在手机上它有 208px 高，比整个表单可见区域的一半还多，而且它说的事上面都已经写了：
+            选中的线路下面那一行就是「HK entry 01 → JP exit 02 :24001」，缺什么由按钮旁边那句
+            「还缺目标地址」说。用户在真机上看过之后要求去掉。
           */}
-          <div className="shrink-0 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] px-3 py-2">
-            <p className="mb-1.5 text-meta text-muted-foreground">流量将经过</p>
-            <NetworkPath
-              nodes={createPreview.nodes}
-              edges={createPreview.edges}
-              orientation="vertical"
-            />
-          </div>
-          <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-background/95 pt-3 sm:items-center sm:justify-between">
+          <DialogFooter className="shrink-0 gap-2 border-t border-border/60 pt-3 sm:items-center sm:justify-between">
             {/*
               按钮点不了就在旁边说一句缺什么。手册：到达边界要 disabled 对应控件，
               而不是点了没反应 —— 但光 disabled 还不够，得说得出为什么。

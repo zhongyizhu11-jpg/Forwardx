@@ -392,29 +392,35 @@
   这类事故从结构上不会发生。
 
   另外这不是等比缩小。桌面是 Control Plane，一屏同时要看列表、详情和拓扑；
-  手机是 Operations，看状态、看异常、开关、诊断。所以压的是间距和大标题，
-  正文那几档基本不动 —— 手机上把正文压小只会让人凑近看。
+  手机是 Operations，看状态、看异常、开关、诊断。
+
+  上一版这里写的是「压间距和大标题，正文基本不动 —— 正文压小只会让人凑近看」。
+  真机上看过之后结论反过来了：2.3.370 在 iPhone 上一屏只放得下两张规则卡，
+  「创建转发」对话框要滑一屏半，用户的原话是「字体全部缩小，尽量一页看全」。
+  面板手机端看的是短地址、端口、数字，不是长段落 —— 这类内容 15px 读起来不吃力，
+  换来的是每一屏多一张卡。所以正文、次要、区块标题各降一档（16/14/17 → 15/13/16），
+  注脚 12px 不再降：再小就真要凑近看了。
   ═══════════════════════════════════════════════════════════
 */
 @media (max-width: 767px) {
   :root {
-    --fx-size-display: 28px;
-    --fx-size-metric: 22px;
-    --fx-size-section: 17px;
-    --fx-size-primary: 16px;
-    --fx-size-secondary: 14px;
+    --fx-size-display: 24px;
+    --fx-size-metric: 20px;
+    --fx-size-section: 16px;
+    --fx-size-primary: 15px;
+    --fx-size-secondary: 13px;
     --fx-size-meta: 12px;
 
-    --fx-line-display: 32px;
-    --fx-line-metric: 26px;
-    --fx-line-section: 24px;
-    --fx-line-primary: 22px;
-    --fx-line-secondary: 20px;
+    --fx-line-display: 28px;
+    --fx-line-metric: 24px;
+    --fx-line-section: 22px;
+    --fx-line-primary: 20px;
+    --fx-line-secondary: 18px;
     --fx-line-meta: 16px;
 
     --fx-gutter: var(--fx-space-3);
     --fx-card-padding: var(--fx-space-3);
     --fx-card-gap: var(--fx-space-2);
-    --fx-section-gap: var(--fx-space-5);
+    --fx-section-gap: var(--fx-space-4);
   }
 }

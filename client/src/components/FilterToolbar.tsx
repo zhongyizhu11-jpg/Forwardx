@@ -20,10 +20,16 @@ export default function FilterToolbar({ search, children, activeCount = 0, actio
     <div className="workspace-filter">
       <div className="workspace-filter-search">{search}</div>
       {children && <>
+        {/*
+          手机上只留图标（有筛选条件时带个数字）：「筛选」「新建规则」两个带字的按钮加上搜索框，
+          393px 上一行放不下，原来只好让搜索框单独占第二行 —— 这一块 76px。只留图标之后
+          三样并排一行 34px；按钮的名字还在 aria-label 里，读屏照样念得出来。
+        */}
         <Button type="button" variant={open || activeCount > 0 ? "secondary" : "outline"}
-          className="gap-2 sm:hidden" aria-expanded={open} aria-controls={id}
+          className="gap-1 sm:hidden" aria-expanded={open} aria-controls={id}
+          aria-label={activeCount > 0 ? `筛选（已设 ${activeCount} 项）` : "筛选"} title="筛选"
           onClick={() => setOpen(!open)}>
-          <SlidersHorizontal className="h-4 w-4" />筛选{activeCount > 0 && <span className="tabular-nums">{activeCount}</span>}
+          <SlidersHorizontal className="h-4 w-4" />{activeCount > 0 && <span className="tabular-nums">{activeCount}</span>}
         </Button>
         <div id={id} className={cn("workspace-filter-options", open ? "flex" : "hidden sm:flex")}>
           {children}

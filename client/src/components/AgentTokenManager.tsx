@@ -206,6 +206,22 @@ function TokenActionButtons({
   );
 }
 
+/** 「2026-09-24 12:30」：原来是 toLocaleString()，英文系统上「9/24/2026, 12:30:00 PM」在卡片里截成「9/24/20…」。 */
+function formatTokenCreatedAt(value: unknown) {
+  const date = new Date(value as any);
+  if (Number.isNaN(date.getTime())) return "-";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/**
+ * 一张 Token 卡。
+ *
+ * 原来是四层：一个钥匙图标方块、Token 串一个描边小框、「对应主机」一个灰框，整张卡又套在
+ * 一张大白卡里 —— 手机上卡片内容离屏幕边 48px、名字前还有钥匙图标（字从 96px 才开始），一张卡 263px 高。
+ * 现在和转发组卡片、套餐卡同一种画法：名字那一行，下面一条细线，细线下两行小表。
+ * 钥匙图标去掉：这一页全是 Token，图标不再区分任何东西。
+ */
 function AgentTokenCard({
   tokenItem,
   loadingScriptTokenId,
@@ -224,29 +240,21 @@ function AgentTokenCard({
   sortableClassName?: string;
 }) {
   const description = typeof tokenItem.description === "string" ? tokenItem.description.trim() : "";
-  const createdAtText = new Date(tokenItem.createdAt).toLocaleString();
+  const createdAtText = formatTokenCreatedAt(tokenItem.createdAt);
+  const host = tokenItem.host;
+  const hostAddress = host ? tokenHostAddress(host) : "";
 
   return (
     <Card className={cn("action-card group/sortable border-border bg-card", sortableClassName)}>
-      <CardContent className="action-card-content space-y-4 p-4">
-        <div className="flex items-start justify-between gap-3">
+      <CardContent className="action-card-content space-y-2 p-4">
+        <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                <Key className="h-4 w-4" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium" title={description || "Agent Token"}>
-                  {description || "Agent Token"}
-                </p>
-                <p
-                  className="truncate text-xs text-muted-foreground"
-                  title={`创建时间：${createdAtText}`}
-                >
-                  创建时间 · {createdAtText}
-                </p>
-              </div>
-            </div>
+            <p className="truncate text-sm font-medium" title={description || "Agent Token"}>
+              {description || "Agent Token"}
+            </p>
+            <p className="truncate text-xs text-muted-foreground" title={`创建时间：${new Date(tokenItem.createdAt).toLocaleString()}`}>
+              创建于 {createdAtText}
+            </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {dragHandle}
@@ -254,14 +262,21 @@ function AgentTokenCard({
           </div>
         </div>
 
-        <code className="block break-all rounded-md border border-border/40 bg-background/60 px-3 py-2 font-mono text-xs">
-          {tokenItem.token}
-        </code>
-
-        <div className="rounded-md bg-muted/25 p-3">
-          <p className="mb-2 text-xs text-muted-foreground">对应主机</p>
-          <TokenHostInfo tokenItem={tokenItem} compact />
-        </div>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-[var(--fx-stroke-weak)] pt-2 text-meta">
+          <dt className="text-muted-foreground">Token</dt>
+          <dd className="min-w-0 truncate text-right font-mono text-foreground" title={tokenItem.token}>{tokenItem.token}</dd>
+          <dt className="text-muted-foreground">主机</dt>
+          <dd className="min-w-0 truncate text-right" title={host ? [host.name, hostAddress].filter(Boolean).join(" · ") : undefined}>
+            {host ? (
+              <>
+                <span className="text-foreground">{host.name}</span>
+                {hostAddress ? <span className="font-mono text-muted-foreground"> · {hostAddress}</span> : null}
+              </>
+            ) : (
+              <span className="text-muted-foreground">{tokenItem.isUsed ? "关联主机不存在" : "—"}</span>
+            )}
+          </dd>
+        </dl>
 
         <CardActions>
           <TokenActionButtons
@@ -611,8 +626,17 @@ export default function AgentTokenManager({
       {!dialogOnly && (
       <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {/*
+          「通讯已加密」原来是说明下面单独一个整宽的绿色提示框（手机上 44px 高、上下再各隔 16px），
+          而它只是一句不会变的说明。并进这一行的行尾，颜色还是「正常」绿。
+        */}
         <p className="text-sm text-muted-foreground">
-          生成 Agent 安装命令；上线后自动绑定到面板。
+          生成 Agent 安装命令；上线后自动绑定到面板。{" "}
+          {/* 用空格不用左外边距：窄屏上折到第二行时，左外边距会让它缩进一截 */}
+          <span className="inline-flex items-center gap-1 whitespace-nowrap text-[var(--fx-healthy-text)]">
+            <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+            通讯已加密
+          </span>
         </p>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           {!hideViewModeToggle && <div className="hidden items-center overflow-hidden rounded-md border border-border/40 sm:flex">
@@ -644,22 +668,19 @@ export default function AgentTokenManager({
         </div>
       </div>
 
-      <Alert className="border-[color-mix(in_srgb,var(--fx-healthy)_25%,transparent)] bg-[var(--fx-healthy-soft)] text-[var(--fx-healthy-text)]">
-        <ShieldCheck className="h-4 w-4" />
-        <AlertTitle>通讯已加密</AlertTitle>
-      </Alert>
-
-      <Card className="border-border bg-card">
-        <CardContent className="p-0">
+      {/*
+        列表不再套一张大白卡。原来是「白卡里一格 12px、网格再 12px、每张 Token 卡又 12px」，
+        手机上 Token 卡离屏幕边 48px；而卡片自己就是白块，灰页面上直接排就行 —— 和主机、规则
+        一样。表格视图才需要一块白底托住（下面单独包）。
+      */}
+      <div>
           {isLoading ? (
-            <div className="p-4">
-              <DataSectionLoading label="正在加载 Agent Token" />
-            </div>
+            <DataSectionLoading label="正在加载 Agent Token" />
           ) : displayedTokenItems.length > 0 ? (
             <>
               {viewMode === "card" ? (
                 <SortableReorderContext sortable={tokenSortable} ids={displayedTokenItems.map((tokenItem: any) => Number(tokenItem.id))} strategy="rect">
-                  <div key="agent-token-card-view" className="standard-card-grid card-mode-transition gap-4 p-3">
+                  <div key="agent-token-card-view" className="standard-card-grid card-mode-transition gap-3">
                     {displayedTokenItems.map((tokenItem: any) => (
                       <SortableItem key={tokenItem.id} id={Number(tokenItem.id)} disabled={tokenSortable.disabled}>
                         {({ itemProps, handleProps, isDragging, isDropTarget }) => (
@@ -682,7 +703,7 @@ export default function AgentTokenManager({
               ) : (
               <div key="agent-token-table-view" className="card-mode-transition">
               <SortableReorderContext sortable={tokenSortable} ids={displayedTokenItems.map((tokenItem: any) => Number(tokenItem.id))} strategy="vertical" restrictToList>
-                <div className="grid grid-cols-1 gap-4 p-3 sm:hidden">
+                <div className="grid grid-cols-1 gap-3 sm:hidden">
                   {displayedTokenItems.map((tokenItem: any) => (
                     <SortableItem key={tokenItem.id} id={Number(tokenItem.id)} disabled={tokenSortable.disabled}>
                       {({ itemProps, handleProps, isDragging, isDropTarget }) => (
@@ -702,7 +723,7 @@ export default function AgentTokenManager({
                   ))}
                 </div>
               </SortableReorderContext>
-              <div className="hidden overflow-x-auto sm:block">
+              <div className="hidden overflow-x-auto rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)] sm:block">
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
@@ -785,8 +806,7 @@ export default function AgentTokenManager({
               ) : undefined}
             />
           )}
-        </CardContent>
-      </Card>
+      </div>
       </>
       )}
 

@@ -117,7 +117,7 @@ export function InlineLinkCreator({
   return (
     <div
       data-fx-inline-link={kind}
-      className="flex min-w-0 flex-col gap-3 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] p-3"
+      className="flex min-w-0 flex-col gap-2.5 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] p-3"
     >
       <div className="min-w-0">
         <p className="text-secondary-type font-medium text-foreground">
@@ -140,6 +140,11 @@ export function InlineLinkCreator({
         />
       </div>
 
+      {/*
+        机器不止一台时两台一行：「入口机」「出口机」各占一整行时，下拉框里只写着「选择一台机器」
+        或一个短名字，右边大半行是空的。手机上这一块因此从 4 行收到 3 行。
+      */}
+      <div className={draft.hostIds.length > 1 ? "grid min-w-0 grid-cols-2 gap-2" : "grid min-w-0 grid-cols-1"}>
       {draft.hostIds.map((hostId, index) => (
         <div key={index} className="flex min-w-0 flex-col gap-1.5">
           <Label>{hostSlotLabel(kind, index)}</Label>
@@ -170,13 +175,14 @@ export function InlineLinkCreator({
           </Select>
         </div>
       ))}
+      </div>
 
       {canAddSlot ? (
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="self-start gap-1"
+          className="fx-compact-touch self-start gap-1"
           onClick={() =>
             setDraft({ ...draft, hostIds: [...draft.hostIds, null] })
           }
@@ -200,6 +206,7 @@ export function InlineLinkCreator({
           type="button"
           variant="ghost"
           size="sm"
+          className="fx-compact-touch"
           onClick={onCancel}
           disabled={pending}
         >
@@ -210,7 +217,7 @@ export function InlineLinkCreator({
           size="sm"
           onClick={submit}
           disabled={!!problem || pending}
-          className="gap-1"
+          className="fx-compact-touch gap-1"
         >
           {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
           创建并使用
