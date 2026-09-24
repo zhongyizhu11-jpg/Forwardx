@@ -36,7 +36,7 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(({ className, style, en
       ref={ref}
       data-slot="card"
       className={cn(
-        "glass-panel rounded-lg transition-[border-color,box-shadow,transform] duration-300",
+        "glass-panel rounded-xl transition-[border-color,box-shadow,transform] duration-300",
         animateEnter && "stagger-card",
         className,
       )}
@@ -58,7 +58,7 @@ const CardTitle = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivE
 CardTitle.displayName = "CardTitle"
 
 const CardDescription = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
-  <div data-slot="card-description" ref={ref} className={cn("text-[12.5px] text-muted-foreground sm:text-[13px]", className)} {...props} />
+  <div data-slot="card-description" ref={ref} className={cn("text-[12.5px] leading-relaxed text-muted-foreground sm:text-[13px]", className)} {...props} />
 ))
 CardDescription.displayName = "CardDescription"
 

@@ -294,11 +294,14 @@ IP、端口、版本号、流量走 `--fx-font-mono`。等宽不只是好看 —
 
 | 令牌 | 值 | Tailwind | 用在哪 |
 |---|---|---|---|
-| `--fx-radius-control` | 10px | `rounded-md` | 按钮、输入框、Chip、Segment |
-| `--fx-radius-card` | 12px | `rounded-lg` | 列表卡、小面板 |
-| `--fx-radius-surface` | 16px | `rounded-xl` | 主 Surface、大容器 |
-| `--fx-radius-modal` | 20px | 显式写令牌 | 对话框、Bottom Sheet |
+| `--fx-radius-control` | 8px | `rounded-md` | 按钮、输入框、Chip、Segment |
+| `--fx-radius-card` | 10px | `rounded-lg` | 列表卡、小面板 |
+| `--fx-radius-surface` | 14px | `rounded-xl` | 主 Surface、大容器 |
+| `--fx-radius-modal` | 18px | 显式写令牌 | 对话框、Bottom Sheet |
 | `--fx-radius-pill` | 999px | `rounded-full` | 徽标、状态胶囊 |
+
+（2026-09 的精致化一轮把四档各收紧一档：圆角越大越「玩具」，控制台要的是「工具」。
+分段控件里的选项再小一档，写 `rounded-[6px]` 或 `calc(var(--fx-radius-control) - 2px)`。）
 
 不要出现 `rounded-[13px]`、`rounded-[7px]` 这种当场拍的值。
 
@@ -310,10 +313,15 @@ IP、端口、版本号、流量走 `--fx-font-mono`。等宽不只是好看 —
 
 | 令牌 | Tailwind | 用在哪 |
 |---|---|---|
-| `--fx-elevation-flat` | — | 普通卡片：只有边框 |
-| `--fx-elevation-card` | `shadow-card` | 需要一点点浮起的卡片 |
+| `--fx-elevation-flat` | — | 普通卡片：靠底色差成形，不描边不投影 |
+| `--fx-elevation-control` | 显式写令牌 | 主按钮、描边按钮、分段控件的选中块、侧栏选中项：1px 的软影，把它从面上托起半毫米 |
+| `--fx-elevation-card` | `shadow-card` | 需要一点点浮起的卡片（可点的 Entity 悬停） |
 | `--fx-elevation-popover` | `shadow-popover` | 下拉、气泡、菜单 |
 | `--fx-elevation-modal` | `shadow-modal` | 对话框、Bottom Sheet |
+
+投影一律纯中性、「短而软」：贴着元素的 1px 给轮廓，大而淡的一层给距离。
+焦点用 `--fx-focus-ring`（一圈路径青 24% 的软光），不用 `outline` 实线加白边。
+详细的取值依据见 `UI_PREMIUM_POLISH.md`。
 
 用户看到投影就知道「这是盖在上面的」，不用解释。
 
