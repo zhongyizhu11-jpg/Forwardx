@@ -47,7 +47,7 @@ test("钉着的时候，被压住的时段表那一行明说「被上面那条�
   const html = render({ failoverPinnedIndex: 0, failoverPinnedUntil: new Date(NOW + 3_600_000) });
   assert.match(html, /data-state="overridden"/);
   assert.match(html, /被上面那条压着/);
-  assert.match(html, /强制走 主出站/);
+  assert.match(html, /强制走 主线路/);
   assert.match(html, /交回自动/);
 });
 

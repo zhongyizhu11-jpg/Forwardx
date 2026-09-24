@@ -92,6 +92,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { normalizeSidebarMenuSettings, type SidebarMenuKey } from "@shared/sidebarMenu";
 import { buildPanelInstallerCommand } from "@shared/githubAccelerator";
 import { WorkspaceCommand, type WorkspaceDestination } from "@/components/WorkspaceNavigation";
+import { docsUrl } from "@/lib/docsLinks";
 
 const TWO_FACTOR_SETUP_SECONDS = 5 * 60;
 const SITE_LOGO_CACHE_KEY = "forwardx.siteLogoDataUrl";
@@ -1682,7 +1683,7 @@ function DashboardLayoutContent({
             </a>
             <span className="text-muted-foreground/45">|</span>
             <a
-              href="https://zhongyizhu11-jpg.github.io/Forwardx/"
+              href={docsUrl()}
               target="_blank"
               rel="noopener noreferrer"
               className="transition-colors hover:text-foreground"

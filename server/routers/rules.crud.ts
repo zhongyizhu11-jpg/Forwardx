@@ -91,7 +91,7 @@ const failoverInputShape = {
   failoverEnabled: z.boolean().optional(),
   failoverStrategy: failoverStrategySchema.optional(),
   failoverTargets: z.array(failoverTargetSchema).max(MAX_FAILOVER_TARGETS).optional(),
-  /** 主出站的探测目标（`地址:端口`），留空就探出站地址本身。 */
+  /** 主线路的探测目标（`地址:端口`），留空就探出站地址本身。 */
   failoverProbeTarget: z.string().max(300).nullable().optional(),
   /** 时段表：某几个时段里优先走哪一条出站。 */
   failoverSchedule: z.object({
@@ -156,15 +156,15 @@ type FailoverInput = {
   autoFailback?: boolean;
 };
 
-/** 主出站的探测目标：`地址:端口`，留空存 null。填错必须报错，不能默默当成没填。 */
+/** 主线路的探测目标：`地址:端口`，留空存 null。填错必须报错，不能默默当成没填。 */
 function normalizeMainProbeTarget(raw: unknown): string | null {
   const text = String(raw ?? "").trim();
   if (!text) return null;
   const parsed = parseFailoverEndpoint(text);
   if (!parsed) return null;
-  if ("error" in parsed) throw new Error(`主出站探测目标：${parsed.error}`);
+  if ("error" in parsed) throw new Error(`主线路探测目标：${parsed.error}`);
   const checked = strictProbeTargetSchema.safeParse({ probeIp: parsed.host, probePort: parsed.port });
-  if (!checked.success) throw new Error("主出站探测目标的地址或端口格式不正确");
+  if (!checked.success) throw new Error("主线路探测目标的地址或端口格式不正确");
   return formatFailoverEndpoint(checked.data.probeIp, checked.data.probePort);
 }
 
@@ -212,7 +212,7 @@ function normalizeFailoverPinInput(input: FailoverInput, backupCount: number, en
   /*
     读法交给 shared/failoverPin。上一版在这里 Number(input.failoverPinnedIndex)：
     前端传 null 表示「自动」，Number(null) 是 0 —— 每一条从界面新建的主备规则都被
-    存成「钉在主出站、一直钉着」。另一处：已经过去的期限被当成「没填期限」，
+    存成「钉在主线路、一直钉着」。另一处：已经过去的期限被当成「没填期限」，
     过期的钉子一保存就复活成永久的。
   */
   const pin = enabled && (input.failoverStrategy || "fallback") === "fallback"
@@ -230,7 +230,7 @@ function normalizeFailoverPinInput(input: FailoverInput, backupCount: number, en
  *
  * 「没传」（undefined）是沿用，「传了 null」是清空 —— 上一版一律写成
  * `input.x ?? rule.x`，而 `??` 把 null 也当成没传：在编辑框里把「强制走」改回
- * 「自动」、删光时段表、清空主出站探测目标，保存之后三样都原样留着。其中钉子最要命：
+ * 「自动」、删光时段表、清空主线路探测目标，保存之后三样都原样留着。其中钉子最要命：
  * 它压过时段表和自动择优，解不开就等于这两样永远不生效。
  *
  * 钉子的序号和期限是一对：传了其中一个，两个都以这次为准（期限传 null 就是一直钉着）。
@@ -268,17 +268,17 @@ export function normalizeFailoverInput(input: FailoverInput, protocol?: string |
       const targetPort = Number(target.targetPort || 0);
       if (!targetIp && !targetPort) continue;
       if (!targetIp || !targetPort) {
-        throw new Error("备用出站需要同时填写地址和端口，完全空白的行可以保留");
+        throw new Error("备用线路需要同时填写地址和端口，完全空白的行可以保留");
       }
       const parsed = strictFailoverTargetSchema.safeParse({ targetIp, targetPort });
-      if (!parsed.success) throw new Error("备用出站地址或端口格式不正确");
+      if (!parsed.success) throw new Error("备用线路地址或端口格式不正确");
       const probeIp = String(target.probeIp || "").trim();
       const probePort = Number(target.probePort || 0);
       if (probeIp || probePort) {
         const probe = strictProbeTargetSchema.safeParse({ probeIp, probePort });
         // 填错的探测地址一定要报出来。默默丢掉的话这条出站会退回探自己，而用户
         // 以为已经在探端到端了 —— 正是他想修的那个盲区，又悄悄回来了。
-        if (!probe.success) throw new Error("备用出站的探测地址或端口格式不正确");
+        if (!probe.success) throw new Error("备用线路的探测地址或端口格式不正确");
         targets.push({ ...parsed.data, probeIp: probe.data.probeIp, probePort: probe.data.probePort });
       } else {
         targets.push(parsed.data);
@@ -287,7 +287,7 @@ export function normalizeFailoverInput(input: FailoverInput, protocol?: string |
     }
   }
   if (enabled && targets.length === 0) {
-    throw new Error("开启主备模式后至少需要配置一个备用出站");
+    throw new Error("开启主备模式后至少需要配置一个备用线路");
   }
   return {
     failoverEnabled: enabled,
@@ -610,17 +610,17 @@ export function requireMainBackupAllowed(options: {
 }) {
   if (!options.enabled) return;
   if (options.protocol && options.protocol !== "tcp") {
-    throw new Error("出站策略当前仅支持 TCP 协议");
+    throw new Error("主备线路当前仅支持 TCP 协议");
   }
   if (options.forwardType !== "gost") {
-    throw new Error("出站策略仅支持 GOST 端口转发和 GOST 隧道");
+    throw new Error("主备线路仅支持 GOST 端口转发和 GOST 隧道");
   }
   const isTunnelRoute = !!options.isTunnelRoute || Number(options.tunnelId || 0) > 0;
   if (isTunnelRoute && options.tunnelMode !== undefined && !isMainBackupGostTunnelMode(options.tunnelMode)) {
-    throw new Error("出站策略仅支持 GOST 隧道");
+    throw new Error("主备线路仅支持 GOST 隧道");
   }
   if (!options.isAdmin && !isTunnelRoute && !options.isPortForwardGroup) {
-    throw new Error("普通用户的普通端口转发不支持出站策略，请使用 GOST 隧道转发或联系管理员");
+    throw new Error("普通用户的普通端口转发不支持主备线路，请使用 GOST 隧道转发或联系管理员");
   }
 }
 

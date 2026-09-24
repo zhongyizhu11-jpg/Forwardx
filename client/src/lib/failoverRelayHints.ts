@@ -1,7 +1,7 @@
 /**
- * 备用出站那几行文本，究竟指向哪儿。
+ * 备用线路那几行文本，究竟指向哪儿。
  *
- * 主备的备用出站是一个多行文本框，每行一个 `地址:端口`。面板里其实认得这些地址 ——
+ * 主备的备用线路是一个多行文本框，每行一个 `地址:端口`。面板里其实认得这些地址 ——
  * 它们多半就是某台中转上的一条转发规则。认出来之后能当场说清三件手填时永远看不见
  * 的事：
  *
@@ -10,7 +10,7 @@
  *      TCP 握手是和最终落地完成的，端到端；用 gost/realm/socat/nginx 时，中转在
  *      用户态就把连接收下了 —— 连得上只证明中转活着，它到落地那段断了照样探不出来，
  *      主备不会切，流量继续往死路里送。这种时候得另配一个探测目标。
- *   3. **它和主出站是不是通向同一个落地**。主备的前提就是「两条路通到同一个地方」，
+ *   3. **它和主线路是不是通向同一个落地**。主备的前提就是「两条路通到同一个地方」，
  *      指错了的话切过去等于换了个服务，而这件事只有真出事那天才会暴露。
  *
  * 判断放在纯函数里：界面渲染不了的东西测不了，而这三条恰恰是最该测的。
@@ -40,7 +40,7 @@ export type FailoverLineHint = {
   hasProbe: boolean;
   /** 用户态中转又没配探测目标 —— 这条出站的健康检查有盲区。 */
   probeBlindSpot: boolean;
-  /** 和主出站通向同一个落地；认不出中转时无从判断，为 null。 */
+  /** 和主线路通向同一个落地；认不出中转时无从判断，为 null。 */
   sameDestination: boolean | null;
 };
 
@@ -53,9 +53,9 @@ function destinationOf(candidate: RelayCandidate): string {
 }
 
 /**
- * 主出站最终通向哪儿。
+ * 主线路最终通向哪儿。
  *
- * 主出站自己也可能是一台中转 —— 用户要的正是「主走中转 A、备走中转 C，两条都到同一个
+ * 主线路自己也可能是一台中转 —— 用户要的正是「主走中转 A、备走中转 C，两条都到同一个
  * 落地」。所以先看它认不认得出是某条中转，认得出就比中转指向的落地，认不出才按字面
  * 地址比。只穿一层：多层链路上的最终落地得顺着链子走，那是后面线路组的事。
  */
@@ -65,10 +65,10 @@ function resolveDestination(address: string, byAddress: Map<string, RelayCandida
 }
 
 export function describeFailoverLines(input: {
-  /** 备用出站输入框的原文。 */
+  /** 备用线路输入框的原文。 */
   text: string;
   candidates: RelayCandidate[];
-  /** 主出站的地址与端口。 */
+  /** 主线路的地址与端口。 */
   mainAddress: string;
   parseLine: (line: string) => { targetIp: string; targetPort: number; probeIp?: string; probePort?: number } | { error: string } | null;
   formatEndpoint: (host: unknown, port: unknown) => string;
@@ -111,7 +111,7 @@ export function failoverLineHintText(hint: FailoverLineHint): string {
     parts.push(`${hint.relay?.forwardType} 是用户态转发，探测只能确认中转在线，建议补一个探测目标`);
   }
   if (hint.sameDestination === false) {
-    parts.push(`通向 ${hint.relay?.targetIp}:${hint.relay?.targetPort}，和主出站不是同一个落地`);
+    parts.push(`通向 ${hint.relay?.targetIp}:${hint.relay?.targetPort}，和主线路不是同一个落地`);
   }
   return parts.join(" · ");
 }

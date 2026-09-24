@@ -114,6 +114,7 @@ import { useMemo, useRef, useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { BRAND_LOGO_MAX_BYTES } from "@shared/avatar";
+import { DOCS_BASE_URL } from "@/lib/docsLinks";
 import {
   BUILTIN_WALLPAPERS,
   DEFAULT_PERSONALIZATION_BACKGROUND,
@@ -215,7 +216,7 @@ function toLocalAiProviderConfig(provider: AiProvider, source?: AiProviderServer
 }
 type DdnsProvider = "disabled" | "cloudflare" | "webhook" | "huaweicloud" | "aliyun" | "tencentcloud";
 const ddnsProviders: DdnsProvider[] = ["disabled", "cloudflare", "webhook", "huaweicloud", "aliyun", "tencentcloud"];
-const docsBaseUrl = "https://zhongyizhu11-jpg.github.io/Forwardx";
+const docsBaseUrl = DOCS_BASE_URL;
 const ddnsProviderGuideAnchors: Record<DdnsProvider, string> = {
   disabled: "quick-setup",
   cloudflare: "cloudflare",

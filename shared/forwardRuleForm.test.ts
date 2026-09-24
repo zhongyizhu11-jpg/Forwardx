@@ -83,7 +83,7 @@ test("端口越界时按钮就该灰着，而不是点了才弹提示", () => {
 });
 
 test("缺口按填表顺序只报第一个", () => {
-  // 一次列三条缺失反而没人读；顺序是线路 → 源端口 → 目标 → 出站策略。
+  // 一次列三条缺失反而没人读；顺序是线路 → 源端口 → 目标 → 主备线路。
   assert.equal(forwardRuleFormBlocker({ ...base, forwardGroupId: null }, context()), "还没选端口转发");
   assert.equal(forwardRuleFormBlocker({ ...base, routeMode: "chain", forwardGroupId: null }, context()), "还没选转发链");
   assert.equal(forwardRuleFormBlocker({ ...base, routeMode: "tunnel", tunnelId: null }, context()), "还没选隧道");
@@ -107,10 +107,10 @@ test("自己挑主机那条路要选线路，用转发组那条路不要", () =>
   );
 });
 
-test("出站策略只支持 TCP", () => {
+test("主备线路只支持 TCP", () => {
   assert.equal(
     forwardRuleFormBlocker({ ...base, failoverEnabled: true, protocol: "udp" }, context()),
-    "出站策略只支持 TCP",
+    "主备线路只支持 TCP",
   );
   assert.equal(forwardRuleFormBlocker({ ...base, failoverEnabled: true, protocol: "tcp" }, context()), null);
 });
@@ -149,5 +149,10 @@ test("「更多设置」里的缺口名单，每一条都真的产得出来", ()
     assert.equal(isAdvancedSectionBlocker(entry), true);
   }
   assert.equal(isAdvancedSectionBlocker("还缺目标地址"), false, "主区的缺口不该触发展开");
+  assert.equal(
+    isAdvancedSectionBlocker("主备线路只支持 TCP"),
+    false,
+    "主备和协议都搬到了折叠块外面：这句缺口指向的控件看得见，不该再替用户展开「更多设置」",
+  );
   assert.equal(isAdvancedSectionBlocker(null), false);
 });

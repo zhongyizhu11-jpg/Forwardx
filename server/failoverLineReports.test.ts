@@ -13,7 +13,7 @@ import test from "node:test";
  *     直接返回，Agent 那边这一批事件已经清掉了 —— 切换就这么丢了。
  *   · Agent 报的时刻是毫秒，面板当成秒存：sqlite 里是五万多年以后，MySQL / PostgreSQL
  *     的 32 位 epoch 列直接写不进去。
- *   · 只有事件没有快照：换规格、Agent 重启后代理不报事件就回到主出站，面板一直写着
+ *   · 只有事件没有快照：换规格、Agent 重启后代理不报事件就回到主线路，面板一直写着
  *     最后一次报上来的那条。
  *
  * 快路径是真实存在的分支，这里把计划缓存的 match 换掉，让每次心跳都走它 —— 不然这一组
@@ -133,7 +133,7 @@ function run(): Outcome {
     await beat({ forceReconcile: true, failoverActive: snapshot });
     after.sameSnapshot = await lines();
 
-    // 快照变了（换规格之后回到主出站，重新计时）：照写。
+    // 快照变了（换规格之后回到主线路，重新计时）：照写。
     await beat({ forceReconcile: true, failoverActive: [{ ruleId: 1, sourcePort: 20001, target: "198.51.100.7:443", since: nowMs - 1_000 }] });
     after.changedSnapshot = await lines();
 
@@ -217,7 +217,7 @@ test("Agent 报的毫秒存成秒 —— 不是五万多年以后，也不会撑
 });
 
 test("快照和事件一起来时，以快照为准", () => {
-  // 事件说一分钟前切到了备用 2，快照说五秒前起走的是主出站 —— 后者才是现在。
+  // 事件说一分钟前切到了备用 2，快照说五秒前起走的是主线路 —— 后者才是现在。
   assert.deepEqual(outcome.after.snapshot[1], { target: "198.51.100.7:443", at: outcome.now - 5 });
 });
 

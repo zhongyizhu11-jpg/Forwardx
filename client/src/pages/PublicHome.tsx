@@ -5,6 +5,7 @@ import { createHomepageDocument } from "@/lib/homepageHtml";
 import { trpc } from "@/lib/trpc";
 import { ArrowRight, ArrowUpRight, BookOpen, ChevronDown, Gauge, Moon, Network, Route, Server, ShieldCheck, Sun } from "lucide-react";
 import { Link } from "wouter";
+import { docsUrl } from "@/lib/docsLinks";
 
 const features = [
   { title: "资源，一处掌握", text: "集中查看主机、线路与规则。先看到状态，再处理需要关注的问题。", icon: Server, detail: "主机 / 链路 / 规则" },
@@ -12,7 +13,7 @@ const features = [
   { title: "权限，各有边界", text: "管理员分配资源和套餐；用户在自己的工作空间内使用与管理。", icon: ShieldCheck, detail: "用户 / 资源 / 套餐" },
   { title: "用量，心中有数", text: "查看累计用量与近 24 小时趋势，掌握流量和套餐的使用情况。", icon: Gauge, detail: "流量 / 连接 / 有效期" },
 ];
-const docsUrl = "https://zhongyizhu11-jpg.github.io/Forwardx/";
+const docsHomeUrl = docsUrl();
 const journeys = {
   user: [
     ["登录工作空间", "使用已开通的账号登录，查看分配给你的资源和套餐。"],
@@ -55,7 +56,7 @@ export function PublicHomeView({ siteTitle, logoSrc, version, repoUrl, registrat
           </Link>
           <nav aria-label="首页导航" className="flex shrink-0 items-center gap-2">
             <a href="#getting-started" className="public-nav-link hidden sm:inline-flex">如何开始</a>
-            <a href={docsUrl} className="public-nav-link hidden sm:inline-flex">使用文档<ArrowUpRight size={14} aria-hidden="true" /></a>
+            <a href={docsHomeUrl} className="public-nav-link hidden sm:inline-flex">使用文档<ArrowUpRight size={14} aria-hidden="true" /></a>
             <Button variant="ghost" size="icon" onClick={onToggleTheme} aria-label={dark ? "切换浅色模式" : "切换深色模式"}>
               {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
@@ -109,7 +110,7 @@ export function PublicHomeView({ siteTitle, logoSrc, version, repoUrl, registrat
           <ol className="public-journey" aria-live="polite">{journeys[journey].map(([title, text], index) => <li key={title}>
             <span>0{index + 1}</span><h3>{title}</h3><p>{text}</p>
           </li>)}</ol>
-          <a href={docsUrl} className="public-nav-link mt-5"><BookOpen size={16} aria-hidden="true" />查看完整操作指南<ArrowUpRight size={14} aria-hidden="true" /></a>
+          <a href={docsHomeUrl} className="public-nav-link mt-5"><BookOpen size={16} aria-hidden="true" />查看完整操作指南<ArrowUpRight size={14} aria-hidden="true" /></a>
         </section>
         <section className="public-home-container public-section public-faq" aria-labelledby="home-faq">
           <div><p className="public-section-index">03 / 使用之前</p><h2 id="home-faq">先把疑问说清楚。</h2></div>
@@ -125,7 +126,7 @@ export function PublicHomeView({ siteTitle, logoSrc, version, repoUrl, registrat
           <span>{siteTitle} · {version ? `v${version}` : "Powered by ForwardX"}</span>
           <div className="flex items-center gap-4">
             {repoUrl && <a href={repoUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center hover:text-foreground">GitHub</a>}
-            <a href={docsUrl} className="inline-flex min-h-11 items-center hover:text-foreground">使用文档</a>
+            <a href={docsHomeUrl} className="inline-flex min-h-11 items-center hover:text-foreground">使用文档</a>
           </div>
         </div>
       </footer>

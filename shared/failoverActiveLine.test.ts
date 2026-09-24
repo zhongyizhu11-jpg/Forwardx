@@ -11,7 +11,7 @@ const rule = (patch: Record<string, unknown> = {}) => ({
 });
 const NOW = 1_700_000_000;
 
-test("出站清单：主出站排第 0 位，备用出站按原顺序接在后面", () => {
+test("线路清单：主线路排第 0 位，备用线路按原顺序接在后面", () => {
   assert.deepEqual(failoverLineEndpoints(rule()), ["10.0.0.1:5201", "10.0.0.2:5201", "10.0.0.3:5201"]);
 });
 
@@ -28,14 +28,14 @@ test("从没上报过就是没有结论，不能替它填「走主线」", () =>
   assert.equal(describeFailoverActiveLine(rule({ failoverActiveTarget: "   " })), null);
 });
 
-test("走主出站判成主出站，不算在备线上", () => {
+test("走主线路判成主线路，不算在备线上", () => {
   const line = describeFailoverActiveLine(rule({ failoverActiveTarget: "10.0.0.1:5201", failoverActiveAt: NOW }));
   assert.equal(line?.index, 0);
-  assert.equal(line?.label, "主出站");
+  assert.equal(line?.label, "主线路");
   assert.equal(line?.onBackup, false);
 });
 
-test("走第二条备用出站判成备用 2", () => {
+test("走第二条备用线路判成备用 2", () => {
   const line = describeFailoverActiveLine(rule({ failoverActiveTarget: "10.0.0.3:5201", failoverActiveAt: NOW }));
   assert.equal(line?.index, 2);
   assert.equal(line?.label, "备用 2");
@@ -73,7 +73,7 @@ test("从什么时候起：接口给的是 Date，秒和毫秒也都认", () => 
 });
 
 test("序号称呼", () => {
-  assert.equal(failoverLineLabel(0, "x"), "主出站");
+  assert.equal(failoverLineLabel(0, "x"), "主线路");
   assert.equal(failoverLineLabel(1, "x"), "备用 1");
   assert.equal(failoverLineLabel(-1, "10.0.0.9:1"), "10.0.0.9:1");
 });

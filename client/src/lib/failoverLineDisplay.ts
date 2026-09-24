@@ -40,11 +40,12 @@ export type FailoverLineDisplay = {
   policy: RoutePolicy;
 };
 
+// 和编辑框里「怎么分配线路」的选项同一套叫法（features/rules/failoverPlainText）。
 const strategyText: Record<RoutePolicy["strategy"], string> = {
   fallback: "主备",
-  round_robin: "轮询",
+  round_robin: "轮流",
   random: "随机",
-  ip_hash: "IP哈希",
+  ip_hash: "按访客",
 };
 
 export function describeFailoverLineDisplay(

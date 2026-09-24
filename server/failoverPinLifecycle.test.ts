@@ -9,9 +9,9 @@ import test from "node:test";
  * 人工钉住这一层，每一个出口都得把「没钉」当成没钉。
  *
  * 2.3.365 到 2.3.369，这一层有三处各自的读法（心跳下发、保存归一化、编辑框加载），
- * 三处都先 `Number()` 再判断，而 `Number(null)` 是 0、0 是主出站。编辑时的合并又一律
+ * 三处都先 `Number()` 再判断，而 `Number(null)` 是 0、0 是主线路。编辑时的合并又一律
  * 写成 `input.x ?? rule.x`，把「传了 null（清空）」当成「没传（沿用）」。加起来：
- * 没钉过的规则下发成「钉在主出站、一直钉着」，钉住压过时段表和自动择优 —— 这两样
+ * 没钉过的规则下发成「钉在主线路、一直钉着」，钉住压过时段表和自动择优 —— 这两样
  * 在机器上从没生效过，面板上看不出任何异常。
  *
  * shared/failoverPin.test.ts 钉的是读法本身；这一组钉的是**每一个出口都用上了它**：
@@ -61,7 +61,7 @@ function runLifecycle(): Outcome {
       ["入口机", "203.0.113.1", "203.0.113.1", "slave", "tok1", now],
     );
 
-    // 每条都是 gost + TCP + 两条备用出站，一共三条线：序号 0 主出站，1、2 备用。
+    // 每条都是 gost + TCP + 两条备用线路，一共三条线：序号 0 主线路，1、2 备用。
     const backups = JSON.stringify([
       { targetIp: "198.51.100.8", targetPort: 443 },
       { targetIp: "198.51.100.9", targetPort: 443 },
@@ -77,8 +77,8 @@ function runLifecycle(): Outcome {
     );
 
     // —— 下发 ——
-    await rule(1, null, null);            // 从没钉过，带着时段表：这就是被读成「钉在主出站」的那一条
-    await rule(2, 0, null);               // 真的钉在主出站、一直钉着
+    await rule(1, null, null);            // 从没钉过，带着时段表：这就是被读成「钉在主线路」的那一条
+    await rule(2, 0, null);               // 真的钉在主线路、一直钉着
     await rule(3, 1, now - 60);           // 钉过，早就过期
     await rule(4, 1, now + 3600);         // 钉着，一小时后交回
     await rule(5, 5, null);               // 指向不存在的出站
@@ -254,7 +254,7 @@ function runLifecycle(): Outcome {
 
 const outcome = runLifecycle();
 
-test("没钉过的规则，下发给 Agent 的是「交回自动」，不是「钉在主出站」", () => {
+test("没钉过的规则，下发给 Agent 的是「交回自动」，不是「钉在主线路」", () => {
   const spec = outcome.dispatched[1];
   assert.ok(spec, "这条主备规则没有下发 —— 测试前提没成立");
   assert.equal(
@@ -264,8 +264,8 @@ test("没钉过的规则，下发给 Agent 的是「交回自动」，不是「�
   );
 });
 
-test("真钉在主出站的照样下发 —— 修的是「null 当 0」，不是「0 不能用」", () => {
-  // 反向对照：要是修成「0 一律不下发」，上面那条也会绿，而真钉住的主出站会被静默丢掉。
+test("真钉在主线路的照样下发 —— 修的是「null 当 0」，不是「0 不能用」", () => {
+  // 反向对照：要是修成「0 一律不下发」，上面那条也会绿，而真钉住的主线路会被静默丢掉。
   assert.equal(outcome.dispatched[2]?.pinnedIndex, 0);
   assert.equal(outcome.dispatched[2]?.pinnedUntil, 0, "没期限在 Agent 协议里写 0，意思是一直钉着");
 });
@@ -289,7 +289,7 @@ test("编辑框改回「自动」、删光时段表、清空探测目标，保�
   assert.equal(cleared.index, null, "钉子还在 —— 它压过时段表和自动择优，解不开等于这两样永远不生效");
   assert.equal(cleared.until, null);
   assert.equal(cleared.schedule, null, "时段表删不掉");
-  assert.equal(cleared.probe, null, "主出站的探测目标清不掉");
+  assert.equal(cleared.probe, null, "主线路的探测目标清不掉");
 });
 
 test("早就过期的钉子，改一下别的主备设置不会复活成永久的", () => {
@@ -311,7 +311,7 @@ test("只改钉子的一次保存也走归一化：期限按秒传进来，存�
   // 整份重新归一化时，没传的那些照库里的来：主备还开着，两条备用、时段表、探测目标都还在。
   // 「强制走」点一下把整套主备配置冲掉的话，比不能强制走糟得多。
   assert.equal(outcome.updated.pinOnly.enabled, true, "只改钉子，主备被关掉了");
-  assert.equal(outcome.updated.pinOnly.targets, 2, "只改钉子，备用出站没了");
+  assert.equal(outcome.updated.pinOnly.targets, 2, "只改钉子，备用线路没了");
   assert.notEqual(outcome.updated.pinOnly.schedule, null, "只改钉子，时段表没了");
   assert.equal(outcome.updated.pinOnly.probe, "198.51.100.7:9443", "只改钉子，探测目标没了");
 });
@@ -342,15 +342,15 @@ test("原样再存一遍不算改动 —— 期限按时刻比，不按对象比
 
 test("新建时选「自动」，存进去的就是没钉", () => {
   assert.equal(outcome.created.error, null, "测试前提：规则建出来了");
-  assert.equal(outcome.created.index, null, "新建的主备规则被存成了钉在主出站");
+  assert.equal(outcome.created.index, null, "新建的主备规则被存成了钉在主线路");
   assert.equal(outcome.created.until, null);
 });
 
-test("一次性修正：只清「钉在主出站、没期限」这一种，只清一次", () => {
+test("一次性修正：只清「钉在主线路、没期限」这一种，只清一次", () => {
   const { first, second, rules } = outcome.backfill;
   /*
-    2 号是上面「真钉在主出站」的那条，21 号是 bug 存成的样子 —— 库里一模一样，修正
-    分不出来，两条都清。这是有意的取舍：没有时段表、没开自动择优的规则，「钉在主出站、
+    2 号是上面「真钉在主线路」的那条，21 号是 bug 存成的样子 —— 库里一模一样，修正
+    分不出来，两条都清。这是有意的取舍：没有时段表、没开自动择优的规则，「钉在主线路、
     一直钉着」和「自动」在 Agent 上走的路完全一样；有这两样的规则，清掉才是面板上
     写着的那个行为。
   */
@@ -361,5 +361,5 @@ test("一次性修正：只清「钉在主出站、没期限」这一种，只�
   assert.deepEqual(rules[23], { index: 1, until: null }, "钉在备用上的一定是人选的，不能动");
   assert.deepEqual(rules[24], { index: null, until: null });
   assert.equal(second, 0);
-  assert.deepEqual(rules[25], { index: 0, until: null }, "修正做过之后亲手钉的主出站，不能被第二次启动清掉");
+  assert.deepEqual(rules[25], { index: 0, until: null }, "修正做过之后亲手钉的主线路，不能被第二次启动清掉");
 });

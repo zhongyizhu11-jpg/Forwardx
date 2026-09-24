@@ -172,9 +172,9 @@ export const rulesRouter = router({
       return withRuleResourceAccess(rule, ctx.user);
     }),
   /**
-   * 能当「备用出站」用的中转。
+   * 能当「备用线路」用的中转。
    *
-   * 主备的备用出站原来是个多行文本框，得自己手填 `地址:端口` —— 而面板里明明就有
+   * 主备的备用线路原来是个多行文本框，得自己手填 `地址:端口` —— 而面板里明明就有
    * 这些中转：它们是一条条指向落地的转发规则。手填的代价不只是麻烦：
    *
    *   · 填错了不会有任何提示，要等真出事那天才发现备用线路根本连不上；
@@ -183,7 +183,7 @@ export const rulesRouter = router({
    *     手填的地址让面板没法把这件事告诉用户。
    *
    * 所以这里把候选列出来，连带每条的转发方式、它自己指向哪个落地一起给界面。
-   * 界面据此可以当场说清楚：这条出站通到哪儿、和主出站是不是同一个落地、
+   * 界面据此可以当场说清楚：这条出站通到哪儿、和主线路是不是同一个落地、
    * 要不要另配探测目标。
    */
   relayCandidates: protectedProcedure
@@ -217,7 +217,7 @@ export const rulesRouter = router({
       for (const rule of rules as any[]) {
         const id = Number(rule?.id || 0);
         if (!id || id === excluded) continue;
-        // 备用出站是 TCP 的（主备本身只支持 TCP），关掉的规则不该出现在候选里 ——
+        // 备用线路是 TCP 的（主备本身只支持 TCP），关掉的规则不该出现在候选里 ——
         // 选了等于配了一条一定连不上的备用线路。
         if (!isForwardRuleProtocolTcpEnabled(rule?.protocol)) continue;
         if (rule?.isEnabled === false) continue;

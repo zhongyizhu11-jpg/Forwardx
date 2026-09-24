@@ -126,6 +126,8 @@ import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
 import { EntityActions } from "@/components/entity/EntityActions";
 import { CardActions } from "@/components/entity/EntityCard";
 import { FailoverPolicyFields } from "@/features/rules/FailoverPolicyFields";
+import { docsUrl } from "@/lib/docsLinks";
+import { ROUTE_MODE_HINTS } from "@/features/rules/routeModeHints";
 import { describeRoutePolicy, pinUntilSeconds } from "@shared/routePolicy";
 import { failoverLineLabel } from "@shared/failoverActiveLine";
 import {
@@ -133,6 +135,7 @@ import {
   isAdvancedSectionBlocker,
   isForwardRuleSourcePortRequired,
   isValidForwardPort,
+  isValidTargetHost,
   type ForwardRuleFormContext,
 } from "@shared/forwardRuleForm";
 /*
@@ -299,20 +302,12 @@ type RuleFormData = {
 
 type ProxyProtocolVersion = 1 | 2;
 
-type FailoverMode = "disabled" | FailoverStrategy;
-
-const failoverModeOptions: Array<{ value: FailoverMode; label: string }> = [
-  { value: "disabled", label: "不使用" },
-  { value: "fallback", label: "主备模式 - 自上而下" },
-  { value: "round_robin", label: "轮询模式 - 依次轮换" },
-  { value: "random", label: "随机模式 - 随机选择" },
-  { value: "ip_hash", label: "哈希模式 - IP哈希" },
-];
+// 和编辑框里「怎么分配线路」的选项同一套叫法（features/rules/failoverPlainText）。
 const failoverStrategyLabels: Record<FailoverStrategy, string> = {
   fallback: "主备",
-  round_robin: "轮询",
+  round_robin: "轮流",
   random: "随机",
-  ip_hash: "IP哈希",
+  ip_hash: "按访客",
 };
 const defaultForm: RuleFormData = {
   hostId: null,
@@ -1885,10 +1880,6 @@ function routeModeOptionClass(active: boolean, disabled = false) {
   return segmentedOptionClassName(active, disabled, "gap-1.5 px-3");
 }
 
-function isValidTargetHost(value: string) {
-  return /^[a-zA-Z0-9]([a-zA-Z0-9\-_.]*[a-zA-Z0-9])?$|^[a-fA-F0-9:.]+$/.test(value.trim());
-}
-
 function normalizeRuleProtocol(value: unknown): RuleProtocol {
   return value === "tcp" || value === "udp" || value === "both" ? value : "both";
 }
@@ -1990,7 +1981,7 @@ function downloadRuleTransferFiles(
 function normalizeFailoverTargetsForSubmit(text: string) {
   const targets: FailoverTarget[] = [];
   const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  if (lines.length > 10) return { error: "备用出站最多支持 10 个" };
+  if (lines.length > 10) return { error: "备用线路最多支持 10 个" };
   for (let index = 0; index < lines.length; index += 1) {
     const parsed = parseFailoverTargetLine(lines[index]);
     if (!parsed) continue;
@@ -2205,7 +2196,7 @@ function RulesContent() {
   /*
     「更多设置」默认收起。
 
-    这四项（规则名称、转发工具、异常提醒、出站策略）都有能用的默认值 —— 不管它们
+    这四项（规则名称、转发工具、异常提醒、主备线路）都有能用的默认值 —— 不管它们
     也能把一条转发建出来。和真正要填的两项并排放着，等于让每个新手都当一次选择题：
     「转发工具这三个我该选哪个？」而正确答案通常是「别动」。
 
@@ -2749,7 +2740,7 @@ function RulesContent() {
       /*
         钉子怎么读交给 shared/failoverPin。上一版这里是 Number.isInteger(Number(...))，
         而没钉的规则这一列是 null —— Number(null) 是 0，于是打开任何一条主备规则，
-        编辑框都显示「强制走 主出站 · 一直钉着」，保存一次就真的钉死了。
+        编辑框都显示「强制走 主线路 · 一直钉着」，保存一次就真的钉死了。
         已经过期的钉子也按没钉处理，不再显示一个早就交回的期限。
       */
       failoverPin: (() => {
@@ -3143,11 +3134,10 @@ function RulesContent() {
     const trimmedName = form.name.trim();
     if (trimmedName) parts.push(trimmedName);
     if (form.telegramErrorNotifyEnabled) parts.push("异常提醒");
-    if (form.failoverEnabled) parts.push(`出站${failoverStrategyLabels[form.failoverStrategy]}`);
     return parts;
-  }, [effectiveRouteForwardType, form.name, form.telegramErrorNotifyEnabled, form.failoverEnabled, form.failoverStrategy]);
+  }, [effectiveRouteForwardType, form.name, form.telegramErrorNotifyEnabled]);
   /*
-    备用出站的候选中转。只在出站策略真的开着时才拉 —— 绝大多数规则用不到主备，
+    备用线路的候选中转。只在主备线路真的开着时才拉 —— 绝大多数规则用不到主备，
     没必要为它们多打一次库。
   */
   const relayCandidatesQuery = trpc.rules.relayCandidates.useQuery(
@@ -3254,27 +3244,34 @@ function RulesContent() {
       || mainBackupPortForwardSupported
       || canAutoSwitchMainBackupToGost
     );
-  const mainBackupDisabledText = selectedForwardGroupIsChain
-    ? "转发链不支持出站策略。"
-    : mainBackupUsesTunnelRoute && !mainBackupIsTunnelRoute
-    ? "当前隧道或转发工具不支持出站策略。"
-    : mainBackupForwardType !== "gost" && !canAutoSwitchMainBackupToGost
-    ? "仅支持 GOST 的隧道或转发工具可以使用出站策略。"
-    : user?.role !== "admin" && !mainBackupUsesTunnelRoute && !selectedForwardGroupIsPort
-    ? "普通用户的普通端口转发不支持出站策略，请使用已保存的 GOST 端口转发或 GOST 隧道。"
-    : form.protocol !== "tcp"
-    ? "出站策略仅支持 TCP 协议。"
-    : "";
   /*
-    主备这一块**永远渲染**，用不了就显示成禁用并写明原因。
+    主备用不了的时候：说人话的原因，能一键改好的给一个按钮。
 
-    原来是 `showMainBackupConfig = canUseMainBackup` —— 条件不满足时整块不渲染，
-    而不满足的情况包括默认的 iptables 端口转发和「协议不是纯 TCP」。于是打开
-    创建转发看到的是「主备这个功能不存在」，而不是「这条规则用不了，因为 X」。
-    mainBackupDisabledText 明明算出来了，却只在提交失败时弹一下 —— 等于把唯一
-    的解释藏在一次失败之后。
+    主备这一块**永远渲染**，用不了就显示成禁用并写明原因。原来是条件不满足时整块
+    不渲染（包括默认的 iptables 端口转发），于是打开创建转发看到的是「主备这个功能
+    不存在」，而不是「这条规则用不了，因为 X」。后来改成显示原因，但原因写的是
+    「仅支持 GOST 的隧道或转发工具可以使用出站策略」—— 新手读完还是不知道该点哪儿。
+    现在原因只说他听得懂的，出路直接做成按钮。
+
+    普通用户的判断放在「转发工具不是 GOST」前面：同一条规则两句都成立时，前一句
+    才给得出他自己能走的路（改用隧道转发），后一句只会让他去找一个改不了的选项。
   */
-  const showMainBackupConfig = true;
+  const mainBackupBlock: { reason: string; fix?: { label: string; run: () => void } } | null = canUseMainBackup
+    ? null
+    : selectedForwardGroupIsChain
+    ? {
+      reason: "转发链不支持主备线路。想要线路出问题自动换，可以用「转发组」。",
+      fix: canUseFailoverGroup && !routeModeLocked ? { label: "改用转发组", run: () => setRouteMode("group") } : undefined,
+    }
+    : mainBackupUsesTunnelRoute && !mainBackupIsTunnelRoute
+    ? { reason: "这条隧道不是 GOST 隧道，用不了主备线路。换一条 GOST 隧道就可以。" }
+    : user?.role !== "admin" && !mainBackupUsesTunnelRoute && !selectedForwardGroupIsPort
+    ? {
+      reason: "普通端口转发用不了主备线路（切换线路要靠 GOST）。改用隧道转发就可以。",
+      fix: canUseGost && !routeModeLocked ? { label: "改用隧道转发", run: () => setRouteMode("tunnel") } : undefined,
+    }
+    : { reason: "主备线路要用 GOST 转发，这条规则现在的转发方式不支持。" };
+  const mainBackupDisabledText = mainBackupBlock?.reason || "";
   const kernelForwardWarning = useMemo(() => buildKernelForwardWarning({
     rule: form,
     host: selectedHost,
@@ -3800,15 +3797,15 @@ function RulesContent() {
     const failoverTargets = failoverSubmit.targets || [];
     if (form.failoverEnabled) {
       if (!canUseMainBackup) {
-        toast.error(mainBackupDisabledText || "当前规则类型不支持出站策略");
+        toast.error(mainBackupDisabledText || "当前规则类型不支持主备线路");
         return;
       }
       if (form.protocol !== "tcp") {
-        toast.error("出站策略当前仅支持 TCP 协议");
+        toast.error("主备线路当前仅支持 TCP 协议");
         return;
       }
       if (failoverTargets.length === 0) {
-        toast.error("启用出站策略后至少需要填写一个备用出站");
+        toast.error("启用主备线路后至少需要填写一个备用线路");
         return;
       }
       if (!Number.isInteger(form.failoverSeconds) || form.failoverSeconds < 10 || form.failoverSeconds > 3600) {
@@ -7352,6 +7349,12 @@ function RulesContent() {
                 minItemWidthRem={5.75}
               />
             </Tabs>
+            {/* 选中的走法一句话说清楚适合什么（features/rules/routeModeHints）。编辑时走法定了，不再说。 */}
+            {!editingId && (
+              <p className="-mt-1 text-meta leading-5 text-muted-foreground" data-testid="route-mode-hint">
+                {ROUTE_MODE_HINTS[form.routeMode]}
+              </p>
+            )}
 
             <RuleRouteTransition
               transitionKey={`rule-route-${form.routeMode}-${isForwardGroupRouteMode ? "resource" : "direct"}`}
@@ -7624,6 +7627,87 @@ function RulesContent() {
               </div>
             )}
             {/*
+              主备线路放在外面，不折进「更多设置」。
+
+              它原来在「更多设置」里，而「更多设置」默认收起、折叠条上也不写它 —— 用户专门来找
+              「主备怎么用」，第一步就找不到。它的开关也从一个下拉框（不使用 / 主备模式 - 自上而下 /
+              轮询模式 - 依次轮换 / 随机模式 - 随机选择 / 哈希模式 - IP哈希）改成一个勾：绝大多数人
+              要的就是「主线路挂了自动换备用」，分配方式挪进了里面的「高级设置」。
+
+              勾是复选框不是开关：要点「保存」才生效（见 switchVsCheckbox.test）。
+            */}
+            <section className="rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] px-3 py-2.5" data-testid="failover-section">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <Checkbox
+                  id="rule-failover-enabled"
+                  checked={form.failoverEnabled}
+                  disabled={!canUseMainBackup}
+                  onCheckedChange={(checked) => {
+                    const nextEnabled = checked === true && canUseMainBackup;
+                    setForm({
+                      ...form,
+                      forwardType: nextEnabled && canAutoSwitchMainBackupToGost ? "gost" : form.forwardType,
+                      failoverEnabled: nextEnabled,
+                      protocol: nextEnabled ? "tcp" : form.protocol,
+                    });
+                  }}
+                  className="mt-0.5"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <Label htmlFor="rule-failover-enabled" className="text-sm font-medium">主备线路</Label>
+                    <a
+                      href={docsUrl("/guide/failover")}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-meta text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                    >
+                      怎么用？
+                    </a>
+                  </div>
+                  <p className="text-meta leading-5 text-muted-foreground">
+                    主线路出问题时，自动换到备用线路
+                    {canAutoSwitchMainBackupToGost && !form.failoverEnabled ? "（勾上后转发工具会换成 GOST，切换要靠它）" : ""}
+                  </p>
+                  {/*
+                    用不了的时候把原因和出路摆出来：原因只说用户听得懂的，能一键改好的直接给按钮。
+                    放在标题这一栏里，和「主备线路」四个字左对齐。
+                  */}
+                  {mainBackupBlock && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <p className="text-meta leading-5 text-[var(--fx-warn-text)]">{mainBackupBlock.reason}</p>
+                      {mainBackupBlock.fix && (
+                        <Button type="button" variant="outline" size="sm" className="fx-compact-touch h-7 text-meta" onClick={mainBackupBlock.fix.run}>
+                          {mainBackupBlock.fix.label}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                  {form.failoverEnabled && form.protocol !== "tcp" && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <p className="text-meta leading-5 text-[var(--fx-warn-text)]">主备线路只支持 TCP，协议要改回 TCP 才能保存。</p>
+                      <Button type="button" variant="outline" size="sm" className="fx-compact-touch h-7 text-meta" onClick={() => setForm({ ...form, protocol: "tcp" })}>
+                        改回 TCP
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {form.failoverEnabled && (
+                <div className="mt-3 border-t border-[var(--fx-stroke-weak)] pt-3">
+                  <FailoverPolicyFields
+                    value={form}
+                    onChange={(patch) => setForm({ ...form, ...patch })}
+                    policy={formRoutePolicy}
+                    lineHints={failoverLineHints}
+                    relayCandidates={(relayCandidatesQuery.data || []) as RelayCandidate[]}
+                    mainAddress={formatFailoverEndpoint(form.targetIp, form.targetPort)}
+                    scheduleTimeZone={BILLING_TIME_ZONE}
+                  />
+                </div>
+              )}
+            </section>
+            {/*
               要填的和可以不管的，不该并排放在同一片方格里。
 
               上面是「这条转发走哪儿、去哪儿」—— 真正要填的东西；这里面四项都有
@@ -7701,64 +7785,6 @@ function RulesContent() {
             onCheckedChange={(checked) => setForm({ ...form, telegramErrorNotifyEnabled: checked })}
             />
             </FormField>
-            {showMainBackupConfig && (
-            /* L2 分组：灰底、不描边。原来是一个描边的框，里面又套两层描边的框。 */
-            <div className="space-y-3 rounded-[var(--fx-radius-card)] bg-[var(--fx-l2-group)] p-3">
-              <FormField className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  {/* 面板以前叫它「出站策略」，而这件事本身叫主备线路 —— 两个名字指一件事，
-                      找不到它的人多半就是在找「主备」。 */}
-                  <Label className="text-sm">主备线路</Label>
-                  <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-                    一条主线、若干备线，可按时段错峰
-                  </p>
-                </div>
-                <Select
-                  value={form.failoverEnabled ? form.failoverStrategy : "disabled"}
-                  onValueChange={(value: FailoverMode) => {
-                    const nextEnabled = !selectedForwardGroupIsChain && value !== "disabled";
-                    setForm({
-                      ...form,
-                      forwardType: nextEnabled && canAutoSwitchMainBackupToGost ? "gost" : form.forwardType,
-                      failoverEnabled: nextEnabled,
-                      failoverStrategy: value === "disabled" ? form.failoverStrategy : value,
-                      protocol: nextEnabled ? "tcp" : form.protocol,
-                    });
-                  }}
-                  disabled={!canUseMainBackup}
-                >
-                  <SelectTrigger className="h-9 w-full sm:w-[220px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {failoverModeOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </FormField>
-              {/*
-                用不了的时候把原因摆出来。这句话本来就算好了，却只在提交失败时弹一下 ——
-                而这一块以前干脆整个不渲染，等于让人对着一个不存在的功能找原因。
-              */}
-              {!canUseMainBackup && mainBackupDisabledText && (
-                <p className="text-[11px] leading-4 text-[var(--fx-warn-text)]">
-                  {mainBackupDisabledText}
-                </p>
-              )}
-              {form.failoverEnabled && (
-                <FailoverPolicyFields
-                  value={form}
-                  onChange={(patch) => setForm({ ...form, ...patch })}
-                  policy={formRoutePolicy}
-                  lineHints={failoverLineHints}
-                  relayCandidates={(relayCandidatesQuery.data || []) as RelayCandidate[]}
-                  strategyLabel={failoverModeOptions.find((option) => option.value === form.failoverStrategy)?.label || "当前策略"}
-                  scheduleTimeZone={BILLING_TIME_ZONE}
-                />
-              )}
-            </div>
-            )}
               </div>
               )}
             </div>

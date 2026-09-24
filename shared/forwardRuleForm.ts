@@ -47,6 +47,11 @@ export function isValidForwardPort(port: unknown, allowZero = false): boolean {
   return Number.isInteger(value) && value >= (allowZero ? 0 : 1) && value <= 65535;
 }
 
+/** 目标地址：域名或 IPv4/IPv6。规则的目标、主备的备用线路都用这一份。 */
+export function isValidTargetHost(value: string): boolean {
+  return /^[a-zA-Z0-9]([a-zA-Z0-9\-_.]*[a-zA-Z0-9])?$|^[a-fA-F0-9:.]+$/.test(value.trim());
+}
+
 /**
  * 新建时源端口可以留空（0 = 面板随机分配），编辑时不行。
  *
@@ -60,7 +65,7 @@ export function isForwardRuleSourcePortRequired(context: Pick<ForwardRuleFormCon
 /**
  * 还差什么才能提交；null 表示可以。
  *
- * 顺序按填表的顺序来（线路 → 源端口 → 目标 → 出站策略），只报第一个缺口：
+ * 顺序按填表的顺序来（线路 → 源端口 → 目标 → 主备线路），只报第一个缺口：
  * 一次列三条缺失反而没人读。
  */
 export function forwardRuleFormBlocker(
@@ -87,7 +92,7 @@ export function forwardRuleFormBlocker(
   if (!form.targetIp) return "还缺目标地址";
   if (!form.targetPort) return "还缺目标端口";
   if (!isValidForwardPort(form.targetPort)) return "目标端口必须在 1-65535 之间";
-  if (form.failoverEnabled && form.protocol !== "tcp") return "出站策略只支持 TCP";
+  if (form.failoverEnabled && form.protocol !== "tcp") return "主备线路只支持 TCP";
   return null;
 }
 
@@ -101,7 +106,9 @@ export function forwardRuleFormBlocker(
  * 能被产生出来：改了文案而忘了改这里，名单会静默失效，而失效的表现正是上面那句
  * 「看得见提示、找不到控件」。
  */
-export const ADVANCED_SECTION_BLOCKERS = ["出站策略只支持 TCP"] as const;
+// 现在是空的：唯一的一条「主备线路只支持 TCP」指向的协议和主备都已经在折叠块外面了。
+// 机制留着 —— 下一个折进去、又能卡住提交的控件，缺口文案要加在这里。
+export const ADVANCED_SECTION_BLOCKERS: readonly string[] = [];
 
 export function isAdvancedSectionBlocker(blocker: string | null | undefined): boolean {
   return !!blocker && (ADVANCED_SECTION_BLOCKERS as readonly string[]).includes(blocker);
