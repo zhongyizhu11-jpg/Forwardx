@@ -195,8 +195,7 @@
   .workspace-main [data-slot="card-description"],
   .workspace-main .text-xs { font-size: 12px; }
   .workspace-main [data-slot="table-head"],
-  .workspace-main [data-slot="table-cell"] { padding: 8px 16px; font-size: 14px; }
-  .workspace-main [data-slot="table-head"] { font-weight: 600; background: var(--fx-subtle); }
+  .workspace-main [data-slot="table-cell"] { padding: 8px 12px; font-size: 14px; }
 
   /*
     卡片：纯白、大圆角、**不描边**、不投影。
@@ -687,8 +686,25 @@
 [data-slot="textarea"] { line-height: 1.6; }
 [data-slot="dialog-header"] { min-width: 0; }
 [data-slot="dialog-header"] p { line-height: 1.6; }
+/*
+  数据表照参考站（Vexo 模型广场的表格视图）：
+
+  - 一张 16px 圆角、一圈弱线、无阴影的卡包住整张表，卡没有内边距，表在卡里横向滚动；
+  - 表头一行 40px，14px / 500 的灰字，透明底，底边一条弱线；
+  - 行 60px，行与行之间 1px 弱线，没有斑马纹，悬停是很淡的一层灰；
+  - 表里的标签（协议、工具、状态）是**彩色文字**，不是彩底的 chip —— 一排行里十几个小色块
+    比十几个彩色词吵得多；realm / gost / socat 的分类色留着，只是去掉底和边；
+  - 地址那种 code 也不再套小框，等宽字体本身就把它和正文分开了。
+*/
 [data-slot="table"] th { color: var(--fx-text-muted); font-weight: 500; }
 [data-slot="table"] tbody tr:last-child { border-bottom: 0; }
+[data-slot="table-head"] { height: 40px; background: transparent; }
+[data-slot="table"] tbody > tr { height: 60px; }
+.workspace-main [data-slot="card"]:has(> [data-slot="card-content"] > * > [data-slot="table"]),
+.workspace-main [data-slot="card"]:has(> [data-slot="card-content"] > [data-slot="table"]) { border-radius: var(--fx-radius-control); overflow: hidden; }
+[data-slot="table"] [data-slot="badge"] { border-color: transparent; background: transparent; padding-left: 0; padding-right: 0; font-size: 13px; font-weight: 500; }
+[data-slot="table"] [data-slot="badge"][data-variant="secondary"] { color: var(--fx-text-muted); }
+[data-slot="table"] code { border: 0; background: transparent; padding: 0; }
 /*
   空状态原来是 200px 最小高度 + 32px 内边距 + 一个带边框的大图标方块 —— 一整张
   屏幕的三分之一，只为了说一句「暂无出口组」。它是「这里现在没东西」，不是这一页

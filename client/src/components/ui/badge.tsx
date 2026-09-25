@@ -31,7 +31,7 @@ const badgeVariants = cva("inline-flex shrink-0 items-center whitespace-nowrap r
 export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof badgeVariants> {}
 
 function Badge({ className, variant, ...props }: BadgeProps) {
-  return <div data-slot="badge" className={cn(badgeVariants({ variant }), className)} {...props} />
+  return <div data-slot="badge" data-variant={variant ?? "default"} className={cn(badgeVariants({ variant }), className)} {...props} />
 }
 
 export { Badge, badgeVariants }
