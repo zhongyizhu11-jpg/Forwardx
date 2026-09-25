@@ -31,18 +31,25 @@ export const routeChunks: Record<string, () => Promise<unknown>> = {
   "/plugins": () => import("@/pages/Plugins"),
 };
 
-const prefetched = new Set<string>();
+/*
+  每一页记住**同一个** promise，而不是只记「取过了」：手指按下 / 悬停时开始取，
+  包还没到用户就点了，navigateAfterPrefetch 要等的是那一次还在路上的下载 ——
+  如果这里回一个已经 resolve 的空 promise，它会立刻换页，Suspense 照样先转一圈。
+*/
+const pendingChunks = new Map<string, Promise<unknown>>();
 
-/** 把某一页的代码先拉下来。重复调用没有代价：浏览器的模块缓存只下一次。 */
+/** 把某一页的代码先拉下来。重复调用拿到的是同一个 promise：在路上就等它，到了就立刻 resolve。 */
 export function prefetchRoute(path: string): Promise<unknown> | undefined {
   const loader = routeChunks[path];
   if (!loader) return undefined;
-  if (prefetched.has(path)) return Promise.resolve();
-  prefetched.add(path);
-  return loader().catch(() => {
-    // 网络抖一下没取到：下次点击时 lazy() 会自己再试，这里不用记错。
-    prefetched.delete(path);
+  const existing = pendingChunks.get(path);
+  if (existing) return existing;
+  const pending = loader().catch(() => {
+    // 网络抖一下没取到：忘掉这一次，下次预取重新下；点击时 lazy() 也会自己再试。
+    pendingChunks.delete(path);
   });
+  pendingChunks.set(path, pending);
+  return pending;
 }
 
 /**

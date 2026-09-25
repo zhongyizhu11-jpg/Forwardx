@@ -1200,11 +1200,17 @@ function DashboardLayoutContent({
     在等这几个包 —— 提前取好之后，点过去是同步换页。首屏的数据请求先走，这个
     排在浏览器空闲之后。
   */
-  const prefetchTargets = useMemo(
-    () => Array.from(new Set([...tabBarPlan.tabs.map((tab) => tab.path), "/rules", "/hosts", "/tunnels"])),
-    [tabBarPlan.tabs],
-  );
-  useEffect(() => prefetchRoutesWhenIdle(prefetchTargets), [prefetchTargets]);
+  /*
+    只取这个角色走得进去的页：租户的导航里没有「链路管理」（App.tsx 用 AdminRoute 守着），
+    就不替他下那一页的包。拼成一个字符串当依赖 —— 标签栏每次渲染都会重算出一个新数组，
+    拿数组当依赖的话每渲染一次就取消、重排一次空闲回调，数据一轮询预取就永远排不上。
+  */
+  const prefetchKey = useMemo(() => {
+    const reachable = new Set(commandItems.map((item) => item.path));
+    const extras = ["/rules", "/hosts", "/tunnels"].filter((path) => reachable.has(path));
+    return Array.from(new Set([...tabBarPlan.tabs.map((tab) => tab.path), ...extras])).join("\n");
+  }, [commandItems, tabBarPlan.tabs]);
+  useEffect(() => prefetchRoutesWhenIdle(prefetchKey.split("\n").filter(Boolean)), [prefetchKey]);
 
   const closeMobileNavigation = () => {
     if (isMobile) {
