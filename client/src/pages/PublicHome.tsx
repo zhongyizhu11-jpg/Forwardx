@@ -13,12 +13,11 @@ import { docsUrl } from "@/lib/docsLinks";
   （这里是一条规则的示意：路径 + 近 24 小时用量）；下面依次是数字带、2+1 / 1+2 的功能格、
   三步上手、常见问题、收尾号召、页脚。颜色全部走令牌（样式在 workspace.css 首页那一节）。
 */
-type Tone = "accent" | "healthy" | "delivery" | "warn";
-const features: { title: string; text: string; icon: LucideIcon; detail: string; tone: Tone; wide?: boolean }[] = [
-  { title: "资源，一处掌握", text: "集中查看主机、线路与规则。先看到状态，再处理需要关注的问题。", icon: Server, detail: "主机 / 链路 / 规则", tone: "accent", wide: true },
-  { title: "路径，一目了然", text: "从入口到出口，清楚呈现每一跳。支持端口转发、隧道与转发链。", icon: Network, detail: "入口 → 中继 → 出口", tone: "healthy" },
-  { title: "权限，各有边界", text: "管理员分配资源和套餐；用户在自己的工作空间内使用与管理。", icon: ShieldCheck, detail: "用户 / 资源 / 套餐", tone: "delivery" },
-  { title: "用量，心中有数", text: "查看累计用量与近 24 小时趋势，掌握流量和套餐的使用情况。", icon: Gauge, detail: "流量 / 连接 / 有效期", tone: "warn", wide: true },
+const features: { title: string; text: string; icon: LucideIcon; detail: string; wide?: boolean }[] = [
+  { title: "资源，一处掌握", text: "集中查看主机、线路与规则。先看到状态，再处理需要关注的问题。", icon: Server, detail: "主机 / 链路 / 规则", wide: true },
+  { title: "路径，一目了然", text: "从入口到出口，清楚呈现每一跳。支持端口转发、隧道与转发链。", icon: Network, detail: "入口 → 中继 → 出口" },
+  { title: "权限，各有边界", text: "管理员分配资源和套餐；用户在自己的工作空间内使用与管理。", icon: ShieldCheck, detail: "用户 / 资源 / 套餐" },
+  { title: "用量，心中有数", text: "查看累计用量与近 24 小时趋势，掌握流量和套餐的使用情况。", icon: Gauge, detail: "流量 / 连接 / 有效期", wide: true },
 ];
 const stats = [
   { value: "3", label: "种路径形态", hint: "端口转发 · 隧道 · 转发链" },
@@ -155,9 +154,9 @@ export function PublicHomeView({ siteTitle, logoSrc, version, repoUrl, registrat
               <p>从配置到日常使用，每一步都有清楚的去处。</p>
             </div>
             <div className="public-bento">
-              {features.map(({ title, text, icon: Icon, detail, tone, wide }, index) => <article key={title} className={wide ? "public-bento-card is-wide" : "public-bento-card"}>
+              {features.map(({ title, text, icon: Icon, detail, wide }, index) => <article key={title} className={wide ? "public-bento-card is-wide" : "public-bento-card"}>
                 <div className="public-bento-top">
-                  <span className="public-bento-icon" data-tone={tone}><Icon size={20} strokeWidth={1.75} aria-hidden="true" /></span>
+                  <span className="public-bento-icon"><Icon size={20} strokeWidth={1.75} aria-hidden="true" /></span>
                   <span className="public-bento-num">0{index + 1}</span>
                 </div>
                 <h3>{title}</h3><p>{text}</p><small>{detail}</small>

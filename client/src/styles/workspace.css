@@ -694,7 +694,8 @@
 .public-home-shell { font-family: var(--fx-font); background: var(--fx-l0-page); color: var(--fx-text); }
 .public-home-container { width: 100%; max-width: 1152px; margin-inline: auto; padding-inline: 24px; }
 .public-eyebrow { margin: 0 0 12px; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--fx-text-muted); }
-.public-gradient-text { background-image: linear-gradient(90deg, var(--fx-accent-strong), var(--fx-cat-indigo) 55%, var(--fx-delivery)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+/* 渐变只在天蓝一档里走：深蓝到浅蓝。原来一路拐到靛紫和洋红，是薰衣草那版留下的。 */
+.public-gradient-text { background-image: linear-gradient(90deg, var(--fx-accent), var(--fx-accent-strong)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
 /* 导航：吸顶、毛玻璃、底下一条细线 */
 .public-home-nav { position: sticky; top: 0; z-index: var(--fx-z-sticky); border-bottom: 1px solid var(--fx-stroke-weak); background: color-mix(in srgb, var(--fx-l0-page) 82%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
@@ -794,11 +795,7 @@
 .public-bento-card:hover { border-color: var(--fx-stroke-base); box-shadow: var(--fx-elevation-card); }
 .public-bento-card.is-wide { grid-column: span 2; }
 .public-bento-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.public-bento-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; }
-.public-bento-icon[data-tone="accent"] { background: var(--fx-accent-soft); color: var(--fx-accent); }
-.public-bento-icon[data-tone="healthy"] { background: var(--fx-healthy-soft); color: var(--fx-healthy-text); }
-.public-bento-icon[data-tone="delivery"] { background: var(--fx-delivery-soft); color: var(--fx-delivery-text); }
-.public-bento-icon[data-tone="warn"] { background: var(--fx-warn-soft); color: var(--fx-warn-text); }
+.public-bento-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--fx-accent-soft); color: var(--fx-accent); }
 .public-bento-num { font-family: var(--fx-font-mono); font-size: 11px; color: var(--fx-text-muted); }
 .public-bento-card h3, .public-journey h3 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
 .public-bento-card p, .public-journey p { max-width: 420px; margin: 8px 0 0; font-size: 14px; line-height: 1.7; color: var(--fx-text-secondary); }
@@ -856,7 +853,9 @@
   .public-hero-inner { gap: 36px; padding-block: 44px 40px; }
   .public-hero-title { font-size: clamp(32px, 9vw, 40px); }
   .public-hero-lead { font-size: 15.5px; }
+  /* 手机上主按钮独占一行，两枚次要按钮并排 —— 三条通栏按钮叠在一起像一列表单。 */
   .public-home-shell .public-cta { flex: 1 1 100%; }
+  .public-hero-actions:not(.is-center) .public-cta[data-variant="outline"] { flex: 1 1 calc(50% - 5px); }
   .public-section { padding-block: 44px; }
   .public-section-heading { margin-bottom: 24px; }
   .public-stats-grid { padding-block: 28px; }
@@ -874,6 +873,9 @@
 .auth-mode-panel { min-height: 0; }
 .auth-card-surface [data-slot="input"], .auth-card-surface [data-slot="button"]:not([data-icon-button]) { border-radius: var(--fx-radius-pill); }
 .auth-card-surface [data-slot="input"] { padding-inline: 16px; }
+/* 「或」要盖住那条分割线，底色得跟它所在的面一致：平时是页面底，设了壁纸才是卡片底。原来写死 bg-card，深色下是一块浅灰方块。 */
+.auth-divider-label { background: var(--fx-canvas); }
+html[data-personalization-background="image"] .auth-divider-label, html[data-personalization-background="video"] .auth-divider-label { background: var(--fx-surface); }
 .setup-shell { min-height: 100svh; background: var(--fx-canvas); }
 .setup-progress { border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-surface); padding: 16px; box-shadow: none; }
 /* 首页状态区：和全站卡片同一套 —— 白底、一圈弱线、不投影。 */
