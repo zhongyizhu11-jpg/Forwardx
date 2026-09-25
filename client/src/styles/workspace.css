@@ -1,12 +1,62 @@
 /* Layout and interaction surfaces. Colors come from shared/design-tokens.css. */
-.workspace-layout { min-width: 0; font-family: var(--fx-font); }
+.workspace-layout { min-width: 0; flex-direction: column; font-family: var(--fx-font); }
+/*
+  ── 外壳：顶栏 + （侧栏 | 内容） ──────────────────────────────────
+
+  照参考站（New API / Vexo）：一条 48px 的顶栏横贯整个宽度，侧栏从它下面开始。
+  顶栏是 sticky 的、和页面同一张白纸，滚起来才浮出下面那条细线。
+*/
+.workspace-appbar { position: sticky; top: 0; z-index: var(--fx-z-sticky); flex-shrink: 0; height: calc(var(--fx-header-height) + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); background: var(--fx-glass); backdrop-filter: var(--fx-glass-blur); -webkit-backdrop-filter: var(--fx-glass-blur); border-bottom: 1px solid var(--fx-stroke-weak); }
+/*
+  毛玻璃（照 iOS 的材质）：固定不动的外壳和浮在内容上面的弹层用 —— 顶栏、底部标签栏、
+  分段控件、对话框、抽屉、弹出菜单。内容从它们底下滑过时透出一点颜色，这是「下面还有」的
+  信号。**滚动的内容本身不做模糊**：backdrop-filter 在手机上每帧都要重算它盖住的那块，
+  盖在一整页列表上就是卡顿的来源；小块、固定的面才划算。不支持 backdrop-filter 的浏览器
+  退回实底。
+*/
+.fx-glass { background: var(--fx-glass); backdrop-filter: var(--fx-glass-blur); -webkit-backdrop-filter: var(--fx-glass-blur); }
+[role="dialog"][data-state="open"].fx-glass-surface,
+[role="menu"].fx-glass-surface, [role="listbox"].fx-glass-surface, .fx-glass-surface { background: var(--fx-glass-strong); backdrop-filter: var(--fx-glass-blur); -webkit-backdrop-filter: var(--fx-glass-blur); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .workspace-appbar, .fx-tabbar, .fx-glass { background: var(--fx-l1-surface); }
+  .fx-glass-surface { background: var(--fx-l2-elevated, var(--fx-l1-surface)); }
+}
+.workspace-appbar-inner { display: flex; align-items: center; gap: 6px; height: var(--fx-header-height); padding-inline: 8px 10px; }
+.workspace-appbar-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; color: var(--fx-text-secondary); transition: background-color 120ms, color 120ms; }
+.workspace-appbar-icon:hover { background: var(--fx-hover); color: var(--fx-text); }
+.workspace-appbar-icon:focus-visible, .workspace-appbar-brand:focus-visible, .workspace-appbar-search:focus-visible, .workspace-appbar-account:focus-visible { outline: 0; box-shadow: var(--fx-focus-ring); }
+.workspace-appbar-brand { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 32px; padding: 0 6px; border-radius: 10px; }
+.workspace-appbar-brand img, .workspace-appbar-brand > div { width: 24px; height: 24px; }
+.workspace-appbar-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--fx-text); white-space: nowrap; }
+/* 版本号是一枚小胶囊，参考站品牌旁边就挂着它 */
+.workspace-appbar-version { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: var(--fx-radius-pill); background: var(--fx-l3-control-fill); color: var(--fx-text-muted); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.workspace-appbar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+/* 搜索：一枚描弱线的胶囊，参考站顶栏的 Search 就是这个形状 */
+.workspace-appbar-search { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-pill); background: var(--fx-l1-surface); color: var(--fx-text-muted); font-size: 13px; transition: color 120ms, border-color 120ms; }
+.workspace-appbar-search:hover { color: var(--fx-text); border-color: var(--fx-stroke-base); }
+.workspace-appbar-kbd { font-family: inherit; font-size: 11px; color: var(--fx-text-muted); }
+.workspace-appbar-account { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 999px; }
+@media (max-width: 639px) {
+  .workspace-appbar-search { width: 32px; padding: 0; justify-content: center; }
+  .workspace-appbar-search-label, .workspace-appbar-kbd { display: none; }
+  .workspace-appbar-version { display: none; }
+}
+.workspace-body { display: flex; flex: 1 1 auto; min-height: 0; width: 100%; }
+/* 桌面侧栏从顶栏下面开始；占位那一列也别再按整屏高度算，否则页面会多出一条顶栏的高度 */
+.workspace-sidebar { top: calc(var(--fx-header-height) + env(safe-area-inset-top, 0px)); bottom: 0; height: auto; background: var(--fx-sidebar); border-right: 1px solid var(--fx-stroke-weak); }
+.workspace-body > .peer > .relative.h-svh { height: auto; }
+.workspace-inset { min-height: calc(100svh - var(--fx-header-height)); }
 .workspace-main { width: 100%; max-width: 1440px; margin-inline: auto; min-width: 0; }
 .workspace-main .route-content-enter > div { min-width: 0; }
-.workspace-main h1 { font-size: 24px; line-height: 1.33; font-weight: 600; letter-spacing: -.025em; }
+/*
+  页面标题照参考站压紧：一行 20px 的粗标题，主操作在同一行右侧；说明和状态是下面一行
+  13px 的灰字。上一版是 24px 标题 + 一整行说明，光标题块就 70px。
+*/
+.workspace-main h1 { font-size: 20px; line-height: 28px; font-weight: 700; letter-spacing: -.02em; }
 .workspace-main h2 { letter-spacing: -.02em; }
-.workspace-header h2 { font-size: 20px; line-height: 28px; font-weight: 600; }
-.workspace-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.workspace-header-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; color: var(--fx-muted); font-size: 13px; }
+.workspace-header h2 { font-size: 18px; line-height: 26px; font-weight: 600; }
+.workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.workspace-header-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 2px; color: var(--fx-muted); font-size: 13px; }
 .workspace-header-meta > [data-slot="badge"] { border: 0; padding: 0; background: transparent; font-weight: 500; }
 .workspace-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
 .workspace-header-actions [data-icon-button] { box-shadow: none; }
@@ -14,11 +64,11 @@
   侧栏导航：侧栏是一列白纸，靠右侧一条细线和页面分开（参考站同款）。选中项是一块
   淡天蓝底 + 天蓝字 —— 「你在这里」和「这里能点」是同一个颜色在说话；不投影、不加粗。
 */
-.workspace-layout [data-sidebar="menu-button"] { color: var(--fx-text-secondary); font-size: 13.5px; font-weight: 500; min-height: 34px; padding-inline: 10px; }
+.workspace-layout [data-sidebar="menu-button"] { color: var(--fx-text-secondary); font-size: 14px; font-weight: 500; min-height: 32px; padding-inline: 8px; border-radius: 10px; }
 .workspace-layout [data-sidebar="menu-button"] > svg { color: var(--fx-text-muted); }
 .workspace-layout [data-sidebar="menu-button"]:hover { color: var(--fx-text); background: var(--fx-hover); }
-.workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-accent-soft); color: var(--fx-accent); font-weight: 500; box-shadow: none; }
-.workspace-layout [data-sidebar="menu-button"][data-active="true"] > svg { color: var(--fx-accent); }
+.workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-primary-gradient); color: var(--fx-primary-text); font-weight: 600; box-shadow: none; }
+.workspace-layout [data-sidebar="menu-button"][data-active="true"] > svg { color: var(--fx-primary-text); }
 .workspace-layout [data-sidebar="group-label"] { opacity: 1; color: var(--fx-text-muted); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
 .workspace-layout [data-mobile-header] { background: var(--fx-surface); border-color: var(--fx-stroke-weak); box-shadow: 0 1px 4px rgb(0 0 0 / 4%); }
 /*
@@ -26,7 +76,7 @@
   上一版是「灰底槽 + 描边 + 白块描边投影」—— 槽和页面一个灰，全靠那圈边框成形，
   看着像一个空输入框。
 */
-.workspace-tabs { isolation: isolate; border-radius: var(--fx-radius-control); background: var(--fx-l3-control-fill); border: 0; padding: 3px; }
+.workspace-tabs { isolation: isolate; border-radius: calc(var(--fx-radius-control) - 2px); background: var(--fx-l3-control-fill); border: 0; padding: 3px; }
 /*
   overflow-y: hidden 要写明：只写 overflow-x: auto 时，浏览器把 overflow-y 也算成 auto，
   里面任何东西竖着多出 1px（比如为了扩大命中区撑出去的 ::after），这条就能竖着滚 ——
@@ -35,14 +85,14 @@
 .workspace-tabs-viewport { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
 .workspace-tabs-viewport::-webkit-scrollbar { display: none; }
 .workspace-tabs .workspace-tabs-list { display: flex; width: max-content; min-width: 100%; height: auto; justify-content: flex-start; gap: 2px; padding: 0; border: 0; border-radius: var(--fx-radius); background: transparent; }
-.workspace-tabs .workspace-tab { position: relative; flex: 1 0 auto; gap: 6px; min-height: 32px; border: 0; border-radius: calc(var(--fx-radius-control) - 2px); padding: 6px 12px; color: var(--fx-text-secondary); background: transparent; box-shadow: none; --tw-ring-shadow: 0 0 #0000; font-size: 13px; font-weight: 500; transition: color 150ms, background-color 150ms, box-shadow 150ms; }
+.workspace-tabs .workspace-tab { position: relative; flex: 1 0 auto; gap: 6px; min-height: 28px; border: 0; border-radius: calc(var(--fx-radius-control) - 4px); padding: 4px 12px; color: var(--fx-text-secondary); background: transparent; box-shadow: none; --tw-ring-shadow: 0 0 #0000; font-size: 13px; font-weight: 500; transition: color 150ms, background-color 150ms, box-shadow 150ms; }
 .workspace-tabs .workspace-tab > svg { color: var(--fx-text-muted); }
-.workspace-tabs .workspace-tab[data-state="active"] { color: var(--fx-text); background: var(--fx-l1-surface); box-shadow: var(--fx-elevation-control); font-weight: 600; }
-.workspace-tabs .workspace-tab[data-state="active"] > svg { color: var(--fx-text); }
-.dark .workspace-tabs .workspace-tab[data-state="active"] { background: var(--fx-hover); box-shadow: none; }
+.workspace-tabs .workspace-tab[data-state="active"] { color: var(--fx-primary-text); background: var(--fx-primary-gradient); box-shadow: none; font-weight: 600; }
+.workspace-tabs .workspace-tab[data-state="active"] > svg { color: var(--fx-primary-text); }
+.dark .workspace-tabs .workspace-tab[data-state="active"] { background: var(--fx-primary-gradient); box-shadow: none; }
 /* 计数是名字后面一个淡色的数，不是一枚胶囊 —— 胶囊会和旁边的状态徽标抢眼 */
 .workspace-tab-count { display: inline-flex; align-items: center; color: var(--fx-text-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.workspace-tab[data-state="active"] .workspace-tab-count { color: var(--fx-text-muted); }
+.workspace-tab[data-state="active"] .workspace-tab-count { color: color-mix(in srgb, var(--fx-primary-text) 85%, transparent); }
 /*
   一行可以左右滑的选择条（主机分组那一排）。和分类条同一个道理：overflow-y 写明 hidden，
   只左右滑、不上下晃；滚动条藏起来。宽屏上放得下，照旧折行、不滚。
@@ -79,7 +129,8 @@
   按钮：主按钮和描边按钮各带一层 1px 的软影（把它从面上托起半毫米），幽灵按钮没有。
   按下时不缩放、不下沉 —— 只把底色再压深一档（--fx-pressed），反馈清楚又不晃。
 */
-[data-slot="button"][data-variant="default"], [data-slot="button"][data-variant="outline"], [data-slot="button"][data-variant="destructive"] { box-shadow: var(--fx-elevation-control); }
+[data-slot="button"][data-variant="outline"], [data-slot="button"][data-variant="destructive"] { box-shadow: var(--fx-elevation-control); }
+[data-slot="button"][data-variant="default"] { box-shadow: var(--fx-primary-shadow); }
 [data-slot="button"] { transition: background-color 120ms, color 120ms, box-shadow 120ms, border-color 120ms; }
 [data-slot="button"][data-variant="outline"]:active, [data-slot="button"][data-variant="ghost"]:active, [data-slot="button"][data-variant="secondary"]:active { background: var(--fx-pressed); }
 [data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] { box-shadow: none; transition: border-color 120ms, box-shadow 120ms; }
@@ -90,12 +141,6 @@
 /* 没聚焦时整个不显示：它藏在视口上方，但投影会从侧栏左上角漏出来一截 */
 .workspace-skip-link { position: fixed; top: 8px; left: 8px; z-index: var(--fx-z-toast); transform: translateY(-160%); opacity: 0; border-radius: 8px; background: var(--fx-surface); padding: 12px 16px; box-shadow: var(--fx-elevation-popover); }
 .workspace-skip-link:focus { transform: none; opacity: 1; }
-/* 查找框：一枚描弱线的白胶囊，参考站顶栏的搜索就是这个形状 */
-.workspace-nav-search { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 6px 12px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-pill); background: var(--fx-l1-surface); color: var(--fx-text-muted); font-size: 12.5px; text-align: left; box-shadow: none; transition: color 120ms, border-color 120ms, box-shadow 120ms; }
-.workspace-nav-search kbd { margin-left: auto; font-family: inherit; font-size: 10.5px; color: var(--fx-text-muted); }
-.workspace-nav-search.is-collapsed { justify-content: center; padding-inline: 0; }
-.workspace-nav-search:hover { color: var(--fx-text); border-color: var(--fx-stroke-base); }
-.workspace-nav-search:focus-visible { outline: 0; box-shadow: var(--fx-focus-ring); }
 .dialog-panel.workspace-command { display: flex; flex-direction: column; gap: 0; padding: 0; max-width: 560px; height: min(560px, 85dvh); max-height: 85dvh; border-radius: 16px; }
 .workspace-command-input { display: flex; flex-shrink: 0; align-items: center; gap: 12px; min-height: 64px; padding: 16px 56px 16px 20px; border-bottom: 1px solid var(--fx-stroke); color: var(--fx-muted); }
 .workspace-command-input input { min-width: 0; flex: 1; height: 32px; background: transparent; color: var(--fx-text); font-size: 16px; outline: none; }
@@ -165,8 +210,7 @@
   .workspace-main [data-slot="card-description"],
   .workspace-main .text-xs { font-size: 12px; }
   .workspace-main [data-slot="table-head"],
-  .workspace-main [data-slot="table-cell"] { padding: 8px 16px; font-size: 14px; }
-  .workspace-main [data-slot="table-head"] { font-weight: 600; background: var(--fx-subtle); }
+  .workspace-main [data-slot="table-cell"] { padding: 8px 12px; font-size: 14px; }
 
   /*
     卡片：纯白、大圆角、**不描边**、不投影。
@@ -189,9 +233,9 @@
   .workspace-main [data-slot="card-footer"] { padding: 0 12px 12px; }
   .workspace-main [data-slot="card-title"] { font-size: 15px; font-weight: 600; line-height: 1.5; }
 
-  /* 标题分级。 */
-  .workspace-main h1 { font-size: 22px; line-height: 1.35; font-weight: 600; letter-spacing: -.02em; }
-  .workspace-main h2 { font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -.01em; }
+  /* 标题分级。页面标题照参考站是一行 18px 的粗字，主操作在同一行右侧。 */
+  .workspace-main h1 { font-size: 18px; line-height: 24px; font-weight: 700; letter-spacing: -.02em; }
+  .workspace-main h2 { font-size: 16px; line-height: 22px; font-weight: 600; letter-spacing: -.01em; }
 
   /* 对话框里同样：纯白、细线、正文行高。 */
   .dialog-panel { line-height: 1.5; }
@@ -333,15 +377,14 @@
 
   [data-slot="form-field"] { gap: 6px; }
   /*
-    顶栏那一行已经写着页面名字，所以 H1 在手机上只留给读屏 —— 文档大纲、
-    「跳到主要内容」和 aria 关系都还指得到它，屏幕上不再重复一遍。
-    整个标题块（H1 + 主操作）原来吃掉 150px。
+    手机上的页面标题：一行 18px 粗字 + 右侧主操作，下面一行 12px 的状态。
+    顶栏上写的是品牌不是页面名（参考站同款），所以页面名回到页面里；整块 44px 左右，
+    比上一版的大标题导航栏（26px 标题 + 状态 + 44px 顶栏）省一半。
   */
-  .workspace-header-title { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .workspace-header { gap: 0; margin-bottom: 4px; }
-  .workspace-header:not(:has(.workspace-header-meta)) { display: none; }
-  .workspace-header-actions { display: none; }
+  .workspace-header { gap: 8px; margin-bottom: 2px; }
   .workspace-header-meta { margin-top: 0; font-size: 12px; }
+  /* 主操作只留图标按钮和一个主按钮：文字按钮在这个宽度上会把标题挤成两行 */
+  .workspace-header-actions { gap: 4px; }
   /* 顶栏里的主操作：图标按钮维持可点面积，文字按钮收成一行小字。 */
   /*
     顶栏里的主操作不能换行。「1 台发现新版本」这类长文案一折行就把顶栏顶到
@@ -514,8 +557,9 @@
     要左右滑，左边还压着一个滚动箭头。换成数字之后五项一屏放得下。
   */
   .workspace-tabs .workspace-tab { border: 0; border-radius: var(--fx-radius); gap: 3px; font-size: 14px; font-weight: 500; min-height: 34px; padding: 0 7px; }
+  /* 选中项：天蓝渐变 + 白字（全站主色控件同一道渐变，见令牌 --fx-primary-gradient） */
   .workspace-tabs .workspace-tab[data-state="active"] {
-    background: var(--fx-accent-fill); color: var(--fx-accent-fill-foreground); font-weight: 600;
+    background: var(--fx-primary-gradient); color: var(--fx-primary-text); font-weight: 600;
     box-shadow: none;
   }
   .workspace-tab-count {
@@ -525,7 +569,7 @@
   /* 选中块反色之后数字也跟着反过来，否则青底上一个深灰数字看不见 */
   .workspace-tabs .workspace-tab[data-state="active"] .workspace-tab-count {
     background: transparent;
-    color: color-mix(in srgb, var(--fx-accent-fill-foreground) 78%, transparent);
+    color: color-mix(in srgb, var(--fx-primary-text) 85%, transparent);
   }
 
   /*
@@ -557,7 +601,7 @@
     border-color: var(--fx-path);
   }
 }
-@media (pointer: coarse) { .workspace-nav-search, .public-journey-switch button { min-height: 44px; } }
+@media (pointer: coarse) { .public-journey-switch button { min-height: 44px; } }
 @media (hover: hover) {
   .workspace-tab:hover:not([data-state="active"]) { color: var(--fx-text); background: color-mix(in srgb, var(--fx-text) 5%, transparent); }
 }
@@ -625,7 +669,7 @@
 }
 
 /* Solid built-in content surfaces; portals use the same tokens outside the layout. */
-.workspace-header-actions > [data-slot="button"] { width: auto; }
+.workspace-header-actions > [data-slot="button"]:not([data-icon-button]) { width: auto; }
 .workspace-header-actions > [data-slot="badge"] { align-self: center; }
 .workspace-layout [data-slot="card"], .public-home-shell [data-slot="card"] { background: var(--fx-surface); border-color: var(--fx-stroke-weak); box-shadow: none; backdrop-filter: none; }
 /*
@@ -658,8 +702,25 @@
 [data-slot="textarea"] { line-height: 1.6; }
 [data-slot="dialog-header"] { min-width: 0; }
 [data-slot="dialog-header"] p { line-height: 1.6; }
+/*
+  数据表照参考站（Vexo 模型广场的表格视图）：
+
+  - 一张 16px 圆角、一圈弱线、无阴影的卡包住整张表，卡没有内边距，表在卡里横向滚动；
+  - 表头一行 40px，14px / 500 的灰字，透明底，底边一条弱线；
+  - 行 60px，行与行之间 1px 弱线，没有斑马纹，悬停是很淡的一层灰；
+  - 表里的标签（协议、工具、状态）是**彩色文字**，不是彩底的 chip —— 一排行里十几个小色块
+    比十几个彩色词吵得多；realm / gost / socat 的分类色留着，只是去掉底和边；
+  - 地址那种 code 也不再套小框，等宽字体本身就把它和正文分开了。
+*/
 [data-slot="table"] th { color: var(--fx-text-muted); font-weight: 500; }
 [data-slot="table"] tbody tr:last-child { border-bottom: 0; }
+[data-slot="table-head"] { height: 40px; background: transparent; }
+[data-slot="table"] tbody > tr { height: 60px; }
+.workspace-main [data-slot="card"]:has(> [data-slot="card-content"] > * > [data-slot="table"]),
+.workspace-main [data-slot="card"]:has(> [data-slot="card-content"] > [data-slot="table"]) { border-radius: var(--fx-radius-control); overflow: hidden; }
+[data-slot="table"] [data-slot="badge"] { border-color: transparent; background: transparent; padding-left: 0; padding-right: 0; font-size: 13px; font-weight: 500; }
+[data-slot="table"] [data-slot="badge"][data-variant="secondary"] { color: var(--fx-text-muted); }
+[data-slot="table"] code { border: 0; background: transparent; padding: 0; }
 /*
   空状态原来是 200px 最小高度 + 32px 内边距 + 一个带边框的大图标方块 —— 一整张
   屏幕的三分之一，只为了说一句「暂无出口组」。它是「这里现在没东西」，不是这一页
@@ -804,7 +865,7 @@
 /* 三步上手 */
 .public-journey-switch { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-pill); background: var(--fx-l1-surface); }
 .public-journey-switch button { min-height: 34px; padding: 6px 16px; border-radius: var(--fx-radius-pill); font-size: 13px; font-weight: 500; color: var(--fx-text-secondary); transition: color 120ms, background-color 120ms; }
-.public-journey-switch button[aria-pressed="true"] { background: var(--fx-accent-fill); color: var(--fx-accent-fill-foreground); }
+.public-journey-switch button[aria-pressed="true"] { background: var(--fx-primary-gradient); color: var(--fx-primary-text); box-shadow: none; }
 .public-journey { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 0; padding: 0; list-style: none; }
 .public-journey li { min-width: 0; padding: 24px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface); }
 .public-journey-icon { position: relative; display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 20px; border: 1px solid var(--fx-stroke-weak); border-radius: 16px; background: var(--fx-l2-group); color: var(--fx-text); }
@@ -880,6 +941,15 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
 .setup-progress { border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-surface); padding: 16px; box-shadow: none; }
 /* 首页状态区：和全站卡片同一套 —— 白底、一圈弱线、不投影。 */
 .system-health { border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface); box-shadow: none; }
+/* 结论那一块的底：三团很淡的图表色渐变（参考站首页右侧那块面板同款） */
+.system-health-verdict { background: linear-gradient(135deg, color-mix(in srgb, var(--fx-chart-2) 12%, var(--fx-l1-surface)) 0%, color-mix(in srgb, var(--fx-chart-5) 8%, var(--fx-l1-surface)) 48%, color-mix(in srgb, var(--fx-chart-1) 9%, var(--fx-l1-surface)) 100%); }
+/*
+  统计块里的大数：等宽字体、24px（参考站 StatCard 的 text-2xl），手机上 16px。
+  等宽不只是好看 —— 一排数上下对齐之后能直接比大小。
+*/
+.fx-summary-value { font-size: var(--fx-size-metric); line-height: var(--fx-line-metric); }
+/* 手机上格子只有 90px 宽，等宽字体的「↓ 12.49 MB/s」放不下：换回正文字体（等宽数字），15px。 */
+@media (max-width: 767px) { .fx-summary-value { font-family: var(--fx-font); font-size: 14px; line-height: 22px; letter-spacing: -0.01em; } }
 @media (max-width: 639px) {
   .workspace-header { flex-wrap: wrap; }
   .workspace-header > div:first-child { flex: 1 1 130px; }
@@ -1066,9 +1136,9 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
       标签栏是少数应该半透明的东西：内容从它底下滑过去时透出来的那点颜色
       就是「下面还有，能继续滚」。这是信息，不是装饰。
     */
-    background: color-mix(in srgb, var(--fx-l1-surface) 82%, transparent);
-    backdrop-filter: saturate(180%) blur(20px);
-    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    background: var(--fx-glass);
+    backdrop-filter: var(--fx-glass-blur);
+    -webkit-backdrop-filter: var(--fx-glass-blur);
   }
 
   .fx-tabbar-item {
@@ -1107,7 +1177,7 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
   .workspace-has-tabbar { --forwardx-mobile-bottom-inset: calc(0.75rem + 49px); }
 
   /* 有页面自己的导航栏时，顶部不再预留常驻顶栏的高度 */
-  .workspace-has-iosnav { --forwardx-mobile-top-inset: 0px; }
+  .workspace-has-iosnav { --forwardx-mobile-top-inset: 12px; }
 
   /* ── 大标题导航栏 ───────────────────────────────────── */
   .fx-navbar {
@@ -1257,7 +1327,7 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
   transition: background-color 180ms ease;
   -webkit-tap-highlight-color: transparent;
 }
-.fx-ios-switch[aria-checked="true"] { background: var(--fx-accent-fill); }
+.fx-ios-switch[aria-checked="true"] { background: var(--fx-primary-gradient); }
 .fx-ios-switch-knob {
   position: absolute;
   top: 2px;
@@ -1366,3 +1436,24 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
   }
   .fx-action-sheet [data-fx-dialog-close] { display: none; }
 }
+
+/* 分段控件的槽也是毛玻璃：小块、放在页面顶上，模糊代价小。写在最后，压过上面桌面和手机两处的实底。 */
+.workspace-tabs { background: color-mix(in srgb, var(--fx-l3-control-fill) 72%, transparent); backdrop-filter: saturate(160%) blur(12px); -webkit-backdrop-filter: saturate(160%) blur(12px); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .workspace-tabs { background: var(--fx-l3-control-fill); } }
+
+/*
+  弹层也是毛玻璃：对话框（含手机上的底部 sheet）、下拉菜单、选择框的列表。只改 background-color，
+  手机 sheet 顶上那道用 background-image 画的把手不受影响。
+*/
+.dialog-panel, .action-menu-content, [role="menu"], [role="listbox"] { background-color: var(--fx-glass-strong); backdrop-filter: var(--fx-glass-blur); -webkit-backdrop-filter: var(--fx-glass-blur); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dialog-panel, .action-menu-content, [role="menu"], [role="listbox"] { background-color: var(--fx-raised); }
+}
+
+/*
+  主色控件全部同一道渐变（--fx-primary-gradient）：按钮和分段项在各自的规则里，这里补上
+  开关的开和复选的勾 —— 它们的组件类写的是 bg-primary 实色，渐变靠 background-image 盖上去。
+  进度条和默认徽标不在这里：它们的调用方会传状态色，渐变写在组件里（底色 + 白色高光），见 ui/progress.tsx、ui/badge.tsx。
+*/
+[data-slot="switch"][data-state="checked"] { background-image: var(--fx-primary-gradient); }
+[data-slot="checkbox"]:checked { background-image: var(--fx-primary-gradient); border-color: transparent; }

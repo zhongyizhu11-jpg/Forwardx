@@ -115,33 +115,40 @@ export function PersistentPagination<T>({
   if (pagination.totalItems <= pagination.pageSize) return null;
   const pages = getPageWindow(pagination.currentPage, pagination.totalPages);
 
+  /*
+    照参考站（Vexo 模型广场）表格下方的分页：左边一句灰字，右边一排 32px 高、控件圆角、
+    一圈弱线的白底小按钮，当前页是天蓝实底白字。不再给整条分页套一个描边框 —— 它坐在
+    表格卡下面，再框一次就是「线画了两次」。
+  */
+  const pageButton = "h-8 min-w-8 rounded-[var(--fx-radius-control)] px-2.5 text-[13px]";
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border/40 bg-card/60 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 px-1 text-sm sm:flex-row sm:items-center sm:justify-between">
       <div className="text-xs text-muted-foreground">
         第 {pagination.currentPage} / {pagination.totalPages} 页，显示 {pagination.startItem}-{pagination.endItem}，共 {pagination.totalItems} {itemName}
       </div>
-      <div className="flex items-center justify-between gap-1 sm:justify-end">
+      <div className="flex items-center justify-between gap-1.5 sm:justify-end">
         <Button
           variant="outline"
           size="sm"
-          className="h-8 gap-1"
+          className={`${pageButton} gap-1`}
           disabled={pagination.currentPage <= 1}
           onClick={pagination.previousPage}
         >
           <ChevronLeft className="h-4 w-4" />
           上一页
         </Button>
-        <div className="hidden items-center gap-1 sm:flex">
+        <div className="hidden items-center gap-1.5 sm:flex">
           {pages.map((page, index) => {
             const previous = pages[index - 1];
             const hasGap = previous && page - previous > 1;
             return (
-              <div key={page} className="flex items-center gap-1">
+              <div key={page} className="flex items-center gap-1.5">
                 {hasGap && <span className="px-1 text-xs text-muted-foreground">...</span>}
                 <Button
-                  variant={page === pagination.currentPage ? "secondary" : "ghost"}
+                  variant={page === pagination.currentPage ? "default" : "outline"}
                   size="sm"
-                  className="h-8 min-w-8 px-2"
+                  className={pageButton}
+                  aria-current={page === pagination.currentPage ? "page" : undefined}
                   onClick={() => pagination.setPage(page)}
                 >
                   {page}
@@ -153,7 +160,7 @@ export function PersistentPagination<T>({
         <Button
           variant="outline"
           size="sm"
-          className="h-8 gap-1"
+          className={`${pageButton} gap-1`}
           disabled={pagination.currentPage >= pagination.totalPages}
           onClick={pagination.nextPage}
         >

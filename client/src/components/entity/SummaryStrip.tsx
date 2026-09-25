@@ -1,20 +1,21 @@
 import type { ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import { ChevronRight } from "lucide-react";
 
 import AnimatedStatValue from "@/components/AnimatedStatValue";
+import { IconBadge, type IconBadgeTone } from "@/components/ui/icon-badge";
 import { cn } from "@/lib/utils";
 
 /**
- * 页面顶部的摘要条：几个数并排在一个面上，中间一根细线分栏。
+ * 页面顶部的统计块：几个数并排，一个数一小格。
  *
- * 取代原来那一排「数字卡片」（StatCard，以及用户、支付、状态页各自抄的一份）。那种卡片
- * 一张只说一个数，却各带一个图标方块、一个最小高度和一层投影：用户管理页在 393px 上
- * 四张卡竖着排了 900 多像素，还没看到第一个用户，一屏已经没了。这几个数回答的是同一个
- * 问题的几个侧面，本来就该在一个面上 —— 主机页那条摘要就是这么画的（Surface A：一个面，
- * 内部靠线分栏，不各画各的框）。
+ * 照参考站（New API / Vexo）首页的 summary cards 画：外面一张白卡，里面一排小格，每格
+ * 是「图标底座 + 标签」一行、下面一个等宽字体的大数、再下面一行小灰字。格与格之间靠
+ * 各自的一圈细线分开，不再是上一版那种「一个面、中间几根竖线」的摘要条 —— 那种看着
+ * 像表头，这种看着像仪表。
  *
- * 分隔线靠 gap-px 露出底下的描边色画出来：两列、三列、四列、手机上折成两行，都不用
- * 单独算哪一格该有哪条边。
+ * 图标底座只在传了 `icon` 的格上画：颜色按格的顺序从图表色板取（天蓝 / 青 / 淡靛 …），
+ * 传了 `tone` 的格用状态色 —— 数字本身不正常时，底座和数字一起变色。
  */
 export type SummaryItem = {
   key: string;
@@ -26,6 +27,8 @@ export type SummaryItem = {
   title?: string;
   /** 需要用颜色说话时才传（状态色）。大部分数不需要颜色。 */
   tone?: "healthy" | "warn" | "down" | "path";
+  /** 标签前面的图标。不传就没有底座，标签顶格。 */
+  icon?: LucideIcon;
   /**
    * 这个数本身就是一件要去处理的事（「待处理 33」）时，点它直接过去 —— 让人看完这个数
    * 再自己去别处找，是把走完的一半路又还给他。
@@ -41,6 +44,16 @@ export type SummaryItem = {
   mirrorCacheKeys?: string[];
   fallbackValue?: string | number;
 };
+
+const SERIES_TONES: IconBadgeTone[] = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"];
+
+function badgeTone(item: SummaryItem, index: number): IconBadgeTone {
+  if (item.tone === "healthy") return "healthy";
+  if (item.tone === "warn") return "warn";
+  if (item.tone === "down") return "down";
+  if (item.tone === "path") return "accent";
+  return SERIES_TONES[index % SERIES_TONES.length];
+}
 
 export function SummaryStrip({
   items,
@@ -62,16 +75,18 @@ export function SummaryStrip({
       role="group"
       aria-label={ariaLabel}
       className={cn(
-        "grid gap-px overflow-hidden rounded-[var(--fx-radius-surface)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-stroke-weak)]",
+        "fx-summary grid gap-2 rounded-[var(--fx-radius-surface)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] p-2 sm:gap-3 sm:p-3",
         grid,
         className,
       )}
       data-testid="summary-strip"
     >
-      {items.map((item) => {
+      {items.map((item, index) => {
+        const Icon = item.icon;
         const body = (
           <>
-            <span className="flex min-w-0 items-center gap-0.5 text-meta text-muted-foreground">
+            <span className="flex min-w-0 items-center gap-1.5 text-meta font-medium text-muted-foreground sm:gap-2">
+              {Icon ? <IconBadge tone={badgeTone(item, index)}><Icon /></IconBadge> : null}
               <span className="truncate">{item.label}</span>
               {item.onClick ? <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
             </span>
@@ -84,13 +99,13 @@ export function SummaryStrip({
                 fallbackCacheKeys={item.fallbackCacheKeys}
                 mirrorCacheKeys={item.mirrorCacheKeys}
                 fallbackValue={item.fallbackValue}
-                className="block truncate text-primary-type font-semibold tabular-nums"
+                className="fx-summary-value block truncate font-mono font-semibold tabular-nums tracking-tight"
               />
             </span>
             {item.hint ? <span className="block truncate text-meta text-muted-foreground">{item.hint}</span> : null}
           </>
         );
-        const cell = "flex min-w-0 flex-col gap-0.5 bg-[var(--fx-l1-surface)] px-3 py-2.5 text-left";
+        const cell = "fx-summary-cell flex min-w-0 flex-col gap-1 rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] px-2 py-2 text-left sm:gap-1.5 sm:p-3";
         return item.onClick ? (
           <button
             key={item.key}

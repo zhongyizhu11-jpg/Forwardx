@@ -9,7 +9,12 @@ import { cn } from "@/lib/utils"
 const badgeVariants = cva("inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11.5px] font-medium leading-4 transition-colors focus:outline-none", {
   variants: {
     variant: {
-      default: "border-transparent bg-primary text-primary-foreground",
+      /*
+        默认徽标：主色渐变的终点色 + 一层白色高光，和主按钮是同一道天蓝渐变。不直接铺
+        --fx-primary-gradient：调用方常用 className 把它染成状态色（`bg-[var(--fx-healthy-soft)]` 之类），
+        tailwind-merge 会把这里的底色换掉，但换不掉一张渐变图，图会把状态色盖住；高光是半透明的，盖不住。
+      */
+      default: "border-transparent bg-[var(--fx-primary-fill)] bg-[image:var(--fx-primary-sheen)] text-[var(--fx-primary-text)]",
       /*
         secondary 是**静态**徽标（TCP / UDP / 计数），不是悬停态。
 
@@ -31,7 +36,7 @@ const badgeVariants = cva("inline-flex shrink-0 items-center whitespace-nowrap r
 export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof badgeVariants> {}
 
 function Badge({ className, variant, ...props }: BadgeProps) {
-  return <div data-slot="badge" className={cn(badgeVariants({ variant }), className)} {...props} />
+  return <div data-slot="badge" data-variant={variant ?? "default"} className={cn(badgeVariants({ variant }), className)} {...props} />
 }
 
 export { Badge, badgeVariants }

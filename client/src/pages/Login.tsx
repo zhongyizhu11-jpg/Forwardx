@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Sun, Moon, RefreshCw, UserPlus, LogIn, Send, Settings as SettingsIcon } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, m } from "motion/react";
 import { toast } from "sonner";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Link, useLocation } from "wouter";
@@ -943,7 +943,7 @@ export default function Login() {
             </CardHeader>
             <CardContent className="px-0">
           <AnimatePresence mode="wait" initial={false}>
-          <motion.div
+          <m.div
             key={mode}
             className="auth-mode-panel"
             initial={{ opacity: 0 }}
@@ -1241,7 +1241,7 @@ export default function Login() {
               </p>
             </form>
           )}
-          </motion.div>
+          </m.div>
           </AnimatePresence>
             </CardContent>
           </Card>

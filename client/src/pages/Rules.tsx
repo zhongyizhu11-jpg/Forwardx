@@ -205,7 +205,7 @@ import {
   type HostEntryAddress,
 } from "@shared/hostEntryAddress";
 import { Fragment, lazy, memo, Suspense, useState, useMemo, useEffect, useCallback, useRef, type ReactNode } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { useLocation, useSearch } from "wouter";
 import { countryFeatureHasCode, normalizeCountryCode, type CountryFeatureLike } from "@/lib/countryFeatures";
@@ -6019,15 +6019,16 @@ function RulesContent() {
 
   const renderTableTransferEntry = (rule: any) => {
     const { entryAddresses, entryTitle } = getRuleTransferDisplay(rule);
+    // 表里的地址是等宽的裸文字（参考站的模型名那一列），不再套小框；能复制的悬停时才显出底。
     return (
-      <div className="flex min-w-0 items-center gap-1 overflow-hidden font-mono text-[11px] leading-5">
+      <div className="flex min-w-0 items-center gap-1 overflow-hidden font-mono text-[12px] leading-5">
         {entryAddresses.map((entry) => (
           <button
             key={`${entry.label}:${entry.value}`}
             type="button"
             onClick={() => entry.copyable && copyEntryAddress(rule, entry.value)}
             disabled={!entry.copyable}
-            className="group inline-flex min-w-0 max-w-full shrink items-center gap-1 rounded border border-border/40 bg-muted/30 px-1.5 py-0.5 text-left transition-colors enabled:hover:bg-muted/70 disabled:cursor-default disabled:text-muted-foreground"
+            className="group inline-flex min-w-0 max-w-full shrink items-center gap-1 rounded-[6px] px-1 py-0.5 -mx-1 text-left transition-colors enabled:hover:bg-[var(--fx-l2-group)] disabled:cursor-default disabled:text-muted-foreground"
             title={entry.copyable ? `${entryTitle}${entryAddresses.length > 1 ? ` (${entry.label})` : ""}` : entry.text}
           >
             {entryAddresses.length > 1 && <span className="shrink-0 text-[10px] text-muted-foreground">{entry.label}</span>}
@@ -6042,8 +6043,8 @@ function RulesContent() {
   const renderTableTransferExit = (rule: any) => {
     const { targetAddress, failoverCount, failoverEnabled, failoverStrategy } = getRuleTransferDisplay(rule);
     return (
-      <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] leading-5">
-        <code className="min-w-0 truncate rounded border border-border/40 bg-muted/30 px-1.5 py-0.5" title={targetAddress}>
+      <div className="flex min-w-0 items-center gap-1.5 font-mono text-[12px] leading-5">
+        <code className="min-w-0 truncate" title={targetAddress}>
           {targetAddress}
         </code>
         {failoverEnabled && (

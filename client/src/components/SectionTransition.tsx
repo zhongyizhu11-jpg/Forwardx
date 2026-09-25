@@ -1,4 +1,4 @@
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import type { ReactNode } from "react";
 
 /**
@@ -21,7 +21,7 @@ export function SectionTransition({
 
   return (
     <AnimatePresence mode="wait">
-      <motion.div
+      <m.div
         key={transitionKey}
         className={className}
         initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.995 }}
@@ -30,7 +30,7 @@ export function SectionTransition({
         transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
       >
         {children}
-      </motion.div>
+      </m.div>
     </AnimatePresence>
   );
 }

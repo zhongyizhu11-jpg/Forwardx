@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import compression from "compression";
 import cookieParser from "cookie-parser";
 import { createServer as createHttpServer } from "http";
 import { createServer as createHttpsServer } from "https";
@@ -46,12 +47,49 @@ async function findAvailablePort(startPort = 9810, host?: string): Promise<numbe
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+/*
+  静态资源的两条规则，都是冲着手机上的「卡顿」来的：
+
+  一、`/assets/` 下的文件名带内容哈希（Vite 打出来的 index-Cq9D8WfP.js 这种），内容一变名字
+     就变，所以可以放心标成 immutable + 一年 —— 第二次打开面板时浏览器一个字节都不用再
+     问服务器。原来 express.static 默认 max-age=0，每次切页每个包都要回源做一次 304 协商，
+     手机上一次往返就是几十到几百毫秒，六七个包串起来就是那个「正在加载页面」。
+  二、index.html 永远 no-cache：它是唯一会指向新哈希的入口，缓存住它等于升级后还在跑旧版。
+*/
 function serveStatic(app: express.Express) {
   const clientDist = path.resolve(serverDir, "../client/dist");
-  app.use(express.static(clientDist));
+  app.use(
+    "/assets",
+    express.static(path.join(clientDist, "assets"), { immutable: true, maxAge: "1y", index: false, fallthrough: true }),
+  );
+  app.use(express.static(clientDist, { index: false }));
   app.get("*", (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache");
     res.sendFile(path.join(clientDist, "index.html"));
   });
+}
+
+/*
+  gzip / brotli 压缩。
+
+  面板直接用 Node 对外服务（Docker 镜像里没有 nginx），而 express.static 本身不压缩：
+  主包 850 kB 的 JS 和 212 kB 的 CSS 原样发到手机上。压过之后是 269 kB + 30 kB —— 首屏
+  少下 760 kB，这是「卡顿」里最大的一块。API 的 JSON 响应（主机列表、规则列表）也一起压。
+
+  SSE 流（Agent 事件）不能压：压缩要攒够一个块才吐，事件会被卡在缓冲里。那条路由自己
+  标了 no-transform，compression 会跳过它；这里再按 Content-Type 兜一次底。
+*/
+function installCompression(app: express.Express) {
+  app.use(
+    compression({
+      threshold: 1024,
+      filter: (req, res) => {
+        const type = res.getHeader("Content-Type");
+        if (typeof type === "string" && type.includes("text/event-stream")) return false;
+        return compression.filter(req, res);
+      },
+    }),
+  );
 }
 
 function installMobileCors(app: express.Express) {
@@ -126,6 +164,7 @@ async function startServer() {
     ? createHttpsServer(panelSsl.options, app)
     : createHttpServer(app);
   installSecurityHeaders(app);
+  installCompression(app);
 
   // Payment webhooks need the original request body for signature verification.
   app.use(paymentCallbackRouter);

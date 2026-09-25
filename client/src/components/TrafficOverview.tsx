@@ -1,3 +1,4 @@
+import { Activity, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import { formatBytes } from "@shared/formatBytes";
@@ -14,9 +15,9 @@ export default function TrafficOverview({ total, daily, totalLoading, dailyLoadi
   total: Totals; daily: Totals; totalLoading: boolean; dailyLoading: boolean; scope: string; lastScope: string;
 }) {
   const metrics = [
-    { key: "bytesIn", label: "入向流量", format: formatBytes },
-    { key: "bytesOut", label: "出向流量", format: formatBytes },
-    { key: "connections", label: "连接次数", format: (n: number) => n.toLocaleString() },
+    { key: "bytesIn", label: "入向流量", icon: ArrowDownToLine, format: formatBytes },
+    { key: "bytesOut", label: "出向流量", icon: ArrowUpFromLine, format: formatBytes },
+    { key: "connections", label: "连接次数", icon: Activity, format: (n: number) => n.toLocaleString() },
   ] as const;
   const keys = (kind: "total" | "daily", key: string) => ({
     cacheKey: `rules.traffic.${scope}.${kind}.${key}`,
@@ -27,8 +28,9 @@ export default function TrafficOverview({ total, daily, totalLoading, dailyLoadi
     <SummaryStrip
       ariaLabel="累计转发流量与近 24 小时流量汇总"
       loading={totalLoading}
-      items={metrics.map(({ key, label, format }) => ({
+      items={metrics.map(({ key, label, icon, format }) => ({
         key,
+        icon,
         label: <>{label}<span className="sr-only">（累计）</span></>,
         value: format(total[key]),
         fallbackValue: format(0),

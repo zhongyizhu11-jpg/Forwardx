@@ -92,6 +92,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { normalizeSidebarMenuSettings, type SidebarMenuKey } from "@shared/sidebarMenu";
 import { buildPanelInstallerCommand } from "@shared/githubAccelerator";
 import { WorkspaceCommand, type WorkspaceDestination } from "@/components/WorkspaceNavigation";
+import { navigateAfterPrefetch, prefetchRoute, prefetchRoutesWhenIdle } from "@/pages/routeChunks";
 import { docsUrl } from "@/lib/docsLinks";
 
 const TWO_FACTOR_SETUP_SECONDS = 5 * 60;
@@ -1194,6 +1195,23 @@ function DashboardLayoutContent({
     more: { path: MORE_TAB_PATH, label: "更多", icon: Ellipsis },
   });
 
+  /*
+    空闲时把标签栏 / 侧栏上最常去的几页先拉下来。手机上换页的那一下转圈，就是
+    在等这几个包 —— 提前取好之后，点过去是同步换页。首屏的数据请求先走，这个
+    排在浏览器空闲之后。
+  */
+  /*
+    只取这个角色走得进去的页：租户的导航里没有「链路管理」（App.tsx 用 AdminRoute 守着），
+    就不替他下那一页的包。拼成一个字符串当依赖 —— 标签栏每次渲染都会重算出一个新数组，
+    拿数组当依赖的话每渲染一次就取消、重排一次空闲回调，数据一轮询预取就永远排不上。
+  */
+  const prefetchKey = useMemo(() => {
+    const reachable = new Set(commandItems.map((item) => item.path));
+    const extras = ["/rules", "/hosts", "/tunnels"].filter((path) => reachable.has(path));
+    return Array.from(new Set([...tabBarPlan.tabs.map((tab) => tab.path), ...extras])).join("\n");
+  }, [commandItems, tabBarPlan.tabs]);
+  useEffect(() => prefetchRoutesWhenIdle(prefetchKey.split("\n").filter(Boolean)), [prefetchKey]);
+
   const closeMobileNavigation = () => {
     if (isMobile) {
       setAccountMenuOpen(false);
@@ -1203,7 +1221,8 @@ function DashboardLayoutContent({
   const navigateFromSidebar = (path: string) => {
     closeMobileNavigation();
     if (path === currentPath) return;
-    setLocation(path);
+    // 先把那一页的代码取到手再换页（最多等 250ms），换页时就不用先转一圈
+    navigateAfterPrefetch(path, () => setLocation(path));
   };
   const navigateToDestination = (item: WorkspaceDestination) => {
     if (item.externalUrl) {
@@ -1271,8 +1290,9 @@ function DashboardLayoutContent({
         <SidebarMenuButton
           isActive={isActive}
           onClick={handleClick}
+          onPointerEnter={() => { if (!item.externalUrl) void prefetchRoute(item.path); }}
           tooltip={item.label}
-          className={cn("h-10 transition-[width,height,padding,background-color,color,box-shadow] font-normal mobile-sidebar-menu-button", isDesktopCollapsed && "justify-center", mobileAuth.isNative && "text-[13px]")}
+          className={cn("h-8 transition-[width,height,padding,background-color,color,box-shadow] font-normal mobile-sidebar-menu-button", isDesktopCollapsed && "justify-center", mobileAuth.isNative && "text-[13px]")}
         >
           {item.iconSrc ? (
             <img
@@ -1350,64 +1370,135 @@ function DashboardLayoutContent({
   return (
     <>
       {/*
-        侧栏和页面同一块浅灰、不描边：整个外壳是一块底，白卡和选中项一起浮在上面。
-        原来是「半透明白 + 毛玻璃 + 右侧一条线」—— 一条线把页面切成两个房间，
-        而侧栏和内容本来就是同一个工作空间。
+        ── 顶栏 ──────────────────────────────────────────────────
+
+        照参考站（New API / Vexo）的外壳：一条 48px 的顶栏横贯整个宽度，品牌在左，
+        搜索、主题、账户在右；侧栏从顶栏下面开始，只放导航。上一版把品牌、主题开关、
+        折叠键塞在侧栏头上、账户塞在侧栏脚下 —— 侧栏一列要干四件事，而参考站的侧栏
+        只干一件：导航。
+
+        手机上顶栏也在（品牌 + 搜索 + 账户），导航仍交给底部标签栏。
       */}
-      <Sidebar collapsible="icon" className="border-r-0 bg-transparent">
-        <SidebarHeader className="h-16 justify-center mobile-sidebar-header">
-          <div className={cn("flex w-full items-center gap-3 transition-all", isDesktopCollapsed ? "justify-center px-0" : "px-2")}>
-            {!isDesktopCollapsed ? (
-              <div className="flex items-center justify-between flex-1 min-w-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  {logoMark}
-                  <span className="font-bold tracking-tight truncate text-base">
-                    {siteTitle}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={toggleTheme}
-                    className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
-                    aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"}
-                    title={resolvedTheme === "dark" ? "切换到白天模式" : "切换到黑夜模式"}
-                  >
-                    {resolvedTheme === "dark" ? (
-                      <Sun className="h-4 w-4 text-muted-foreground" />
-                    ) : (
-                      <Moon className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </button>
-                  <button
-                    onClick={toggleSidebar}
-                    className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
-                    aria-label="收起导航"
-                  >
-                    <PanelLeft className="h-4 w-4 text-muted-foreground" />
-                  </button>
+      <header className="workspace-appbar">
+        <div className="workspace-appbar-inner">
+          {!isMobile ? (
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              className="workspace-appbar-icon"
+              aria-label={isDesktopCollapsed ? "展开导航" : "收起导航"}
+            >
+              <PanelLeft className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+          <button type="button" className="workspace-appbar-brand" onClick={() => navigateFromSidebar("/")} title={siteTitle}>
+            {logoMark}
+            <span className="workspace-appbar-title">{siteTitle}</span>
+            {publicInfo?.version ? <span className="workspace-appbar-version">v{String(publicInfo.version).replace(/^v/i, "")}</span> : null}
+          </button>
+          <div className="workspace-appbar-actions">
+            <button
+              type="button"
+              className="workspace-appbar-search"
+              onClick={() => { closeMobileNavigation(); setCommandOpen(true); }}
+              aria-label="查找功能"
+              title="查找功能（Ctrl / ⌘ K）"
+            >
+              <Search className="h-4 w-4" aria-hidden="true" />
+              <span className="workspace-appbar-search-label">搜索</span>
+              <kbd className="workspace-appbar-kbd">⌘K</kbd>
+            </button>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="workspace-appbar-icon"
+              aria-label={resolvedTheme === "dark" ? "切换浅色主题" : "切换深色主题"}
+              title={resolvedTheme === "dark" ? "切换到白天模式" : "切换到黑夜模式"}
+            >
+              {resolvedTheme === "dark" ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
+            </button>
+          <DropdownMenu open={accountMenuOpen} onOpenChange={setAccountMenuOpen} modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="workspace-appbar-account"
+                title={accountDisplayName}
+                aria-label={`账户：${accountDisplayName}`}
+              >
+                <UserAvatar user={user as any} className="h-7 w-7 shrink-0" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <div className="px-2 py-1.5">
+                <div className="flex items-start gap-2">
+                  <UserAvatar user={user as any} className="h-8 w-8 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{accountDisplayName}</p>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">{isAdmin ? "管理员" : "普通用户"} · {accountUsername}</p>
+                  </div>
                 </div>
               </div>
-            ) : (
-              <button
-                onClick={toggleSidebar}
-                className="collapsed-sidebar-logo-button flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label="展开导航"
-                title={siteTitle}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => navigateFromAccountMenu("/profile")}
+                className="cursor-pointer"
               >
-                {logoMark}
-              </button>
-            )}
+                <UserRound />
+                <span>个人资料</span>
+              </DropdownMenuItem>
+              {!mobileAuth.isNative && isAdmin && (
+                <DropdownMenuItem
+                  onClick={openPanelUpdateFromAccountMenu}
+                  className="cursor-pointer"
+                >
+                  <Download />
+                  <span>软件更新</span>
+                </DropdownMenuItem>
+              )}
+              {mobileAuth.isNative && (
+                <DropdownMenuItem
+                  onClick={handleMobileUpdateCheck}
+                  disabled={checkingMobileUpdate}
+                  className="cursor-pointer"
+                >
+                  {checkingMobileUpdate ? (
+                    <RefreshCw className="forwardx-icon-spin" />
+                  ) : (
+                    <Download />
+                  )}
+                  <span>{checkingMobileUpdate ? "检查中..." : "软件更新"}</span>
+                </DropdownMenuItem>
+              )}
+              {isAdmin && (
+                <DropdownMenuItem
+                  onClick={() => navigateFromAccountMenu("/settings")}
+                  className="cursor-pointer"
+                >
+                  <Settings />
+                  <span>系统设置</span>
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={handleLogout}
+                variant="destructive"
+              >
+                <LogOut />
+                <span>退出登录</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           </div>
-        </SidebarHeader>
+        </div>
+      </header>
 
+      <div className="workspace-body">
+      {/*
+        侧栏是一列白纸，靠右侧一条细线和页面分开（参考站同款）。它从顶栏下面开始，
+        只放导航：品牌、搜索、主题、账户都在顶栏上。
+      */}
+      <Sidebar collapsible="icon" className="workspace-sidebar">
         <SidebarContent className="gap-1 pb-2 mobile-sidebar-content">
-          <div className={cn("px-4 pb-2", isDesktopCollapsed && "px-2")}>
-            <button type="button" className={cn("workspace-nav-search", isDesktopCollapsed && "is-collapsed")}
-              onClick={() => { closeMobileNavigation(); setCommandOpen(true); }} aria-label="查找功能" title="查找功能（Ctrl / ⌘ K）">
-              <Search size={16} aria-hidden="true" />
-              {!isDesktopCollapsed && <><span>查找功能</span><kbd>⌘ / Ctrl K</kbd></>}
-            </button>
-          </div>
           {primaryMenuItems.length > 0 && (
             <SidebarGroup className={cn("pb-2 mobile-sidebar-group", mobileAuth.isNative && "pb-1.5")}>
               <SidebarGroupLabel className="text-xs text-muted-foreground uppercase tracking-wider">
@@ -1441,27 +1532,6 @@ function DashboardLayoutContent({
             </SidebarGroup>
           )}
 
-          {/* Theme toggle for collapsed sidebar */}
-          {isDesktopCollapsed && (
-            <SidebarGroup>
-              <SidebarMenu className="items-center px-0">
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={toggleTheme}
-                    tooltip={resolvedTheme === "dark" ? "切换到白天模式" : "切换到黑夜模式"}
-                    className="h-10 justify-center"
-                  >
-                    {resolvedTheme === "dark" ? (
-                      <Sun className="sidebar-nav-icon h-[18px] w-[18px]" />
-                    ) : (
-                      <Moon className="sidebar-nav-icon h-[18px] w-[18px]" />
-                    )}
-                    <span className="sr-only">{resolvedTheme === "dark" ? "白天模式" : "黑夜模式"}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroup>
-          )}
         </SidebarContent>
 
         <SidebarFooter className={cn("mobile-sidebar-footer", isDesktopCollapsed ? "items-center p-1.5" : "p-3")}>
@@ -1543,85 +1613,10 @@ function DashboardLayoutContent({
               </div>
             </button>
           )}
-          <DropdownMenu open={accountMenuOpen} onOpenChange={setAccountMenuOpen} modal={false}>
-            <DropdownMenuTrigger asChild>
-              <button
-                className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--fx-text)_5%,transparent)] group-data-[collapsible=icon]:h-10 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 focus:outline-none focus-visible:shadow-[var(--fx-focus-ring)]"
-                title={accountDisplayName}
-              >
-                <UserAvatar user={user as any} className={cn("shrink-0", isDesktopCollapsed ? "h-8 w-8" : "h-9 w-9")} />
-                <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-                  <p className="truncate text-sm font-medium leading-5">{accountDisplayName}</p>
-                  <p className="mt-1 truncate text-xs leading-4 text-muted-foreground">
-                    {isAdmin ? "管理员" : "用户"} · {telegramStatus?.bound ? "TG 已绑定" : "TG 未绑定"}
-                  </p>
-                </div>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <div className="px-2 py-1.5">
-                <div className="flex items-start gap-2">
-                  <UserAvatar user={user as any} className="h-8 w-8 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{accountDisplayName}</p>
-                    <p className="mt-1 truncate text-xs text-muted-foreground">{isAdmin ? "管理员" : "普通用户"} · {accountUsername}</p>
-                  </div>
-                </div>
-              </div>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => navigateFromAccountMenu("/profile")}
-                className="cursor-pointer"
-              >
-                <UserRound />
-                <span>个人资料</span>
-              </DropdownMenuItem>
-              {!mobileAuth.isNative && isAdmin && (
-                <DropdownMenuItem
-                  onClick={openPanelUpdateFromAccountMenu}
-                  className="cursor-pointer"
-                >
-                  <Download />
-                  <span>软件更新</span>
-                </DropdownMenuItem>
-              )}
-              {mobileAuth.isNative && (
-                <DropdownMenuItem
-                  onClick={handleMobileUpdateCheck}
-                  disabled={checkingMobileUpdate}
-                  className="cursor-pointer"
-                >
-                  {checkingMobileUpdate ? (
-                    <RefreshCw className="forwardx-icon-spin" />
-                  ) : (
-                    <Download />
-                  )}
-                  <span>{checkingMobileUpdate ? "检查中..." : "软件更新"}</span>
-                </DropdownMenuItem>
-              )}
-              {isAdmin && (
-                <DropdownMenuItem
-                  onClick={() => navigateFromAccountMenu("/settings")}
-                  className="cursor-pointer"
-                >
-                  <Settings />
-                  <span>系统设置</span>
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={handleLogout}
-                variant="destructive"
-              >
-                <LogOut />
-                <span>退出登录</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </SidebarFooter>
       </Sidebar>
 
-      <SidebarInset className="workspace-with-mobile-nav">
+      <SidebarInset className="workspace-inset workspace-with-mobile-nav">
         <a className="workspace-skip-link" href="#workspace-content">跳到主要内容</a>
         {/*
           手机端不再有这条常驻顶栏。
@@ -1633,7 +1628,7 @@ function DashboardLayoutContent({
 
           页面名由各页的 WorkspaceHeader 用 IosNavigationBar 画，见那个组件。
         */}
-        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className={cn("workspace-main flex-1 px-3 pb-4 pt-3 sm:p-6 lg:p-8", isMobile && tabBarPlan.tabs.length ? "workspace-has-tabbar" : null, isMobile ? "workspace-has-iosnav" : null)}>
+        <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className={cn("workspace-main flex-1 px-3 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-5 lg:px-8", isMobile && tabBarPlan.tabs.length ? "workspace-has-tabbar" : null, isMobile ? "workspace-has-iosnav" : null)}>
           {/*
             兜底的「没读到」提示。
             各个列表自己会画失败态，但一页上挂着十几个查询，不可能每个都单独接一遍；
@@ -1714,6 +1709,7 @@ function DashboardLayoutContent({
           <IosTabBar plan={tabBarPlan} currentPath={currentPath} onNavigate={(path) => navigateFromSidebar(path)} />
         ) : null}
       </SidebarInset>
+      </div>
 
       <WorkspaceCommand open={commandOpen} onOpenChange={setCommandOpen} items={commandItems} currentPath={currentPath} onNavigate={navigateToDestination} />
 
