@@ -102,21 +102,24 @@
      ═══════════════════════════════════════════════════════ */
 
   /*
-    ── 强调色：青 ──
+    ── 强调色：紫 ──
 
     整套界面只有**一个**强调色，而且它只回答一个问题：「这里能点 / 你在这里」。
     主按钮、开关的开、选中的导航项和分类、复选框的勾、链接、焦点环 —— 全是它。
     内容本身（文字、卡片、表头）永远是中性的，所以一屏扫过去，有颜色的地方就是
     能操作的地方。这是 iOS 的蓝、Stripe 的紫在做的同一件事。
 
-    三档：`accent` 是字和图标（白底 5.4:1，过 AA）；`accent-strong` 是线、点、进度、
-    图表（亮一档，不用当小字）；`accent-fill` 是主按钮和选中块的底，配 `-fill-foreground`。
-    深色下把字提亮、把底压回中间那一档，否则白字压在亮青上看不清。
+    取值照一枚薰衣草色的标签来：淡底 #e5dff5、字 #8868c8。字那一档压深到白底 5.3:1
+    过 AA；底用同一个色相的实色，配白字 5.4:1。
+
+    三档：`accent` 是字和图标；`accent-strong` 是线、点、进度、图表（亮一档，不用当小字）；
+    `accent-fill` 是主按钮和选中块的底，配 `-fill-foreground`；`accent-soft` 就是那块淡薰衣草。
+    深色下把字提亮，底保持同一个实色 —— 白字压在它上面在黑底里一样看得清。
   */
-  --fx-accent: #0e7490;
-  --fx-accent-strong: #0891b2;
-  --fx-accent-soft: rgb(8 145 178 / 12%);
-  --fx-accent-fill: #0e7490;
+  --fx-accent: #6550b9;
+  --fx-accent-strong: #6e56cf;
+  --fx-accent-soft: rgb(110 86 207 / 18%);
+  --fx-accent-fill: #6e56cf;
   --fx-accent-fill-foreground: #ffffff;
 
   /*
@@ -152,28 +155,28 @@
   --fx-standby: #737373;
   --fx-standby-soft: rgb(115 115 115 / 10%);
 
-  /* 路径青：网络关系、正在流动的数据。就是强调色 —— ForwardX 的识别色 */
+  /* 路径色：网络关系、正在流动的数据。就是强调色 —— ForwardX 的识别色 */
   --fx-path: var(--fx-accent);
   --fx-path-soft: var(--fx-accent-soft);
   --fx-path-text: var(--fx-accent);
   --fx-path-line: var(--fx-accent-strong);     /* 连线本身，比文字亮一档，不和节点抢 */
 
-  /* 交付紫：只给订阅 / 客户交付这一类功能 */
-  --fx-delivery: #7c3aed;
-  --fx-delivery-soft: rgb(124 58 237 / 12%);
-  --fx-delivery-text: #6d28d9;
+  /* 交付：只给订阅 / 客户交付这一类功能。强调色是蓝紫，这里往品红偏，两者不会认混 */
+  --fx-delivery: #a21caf;
+  --fx-delivery-soft: rgb(162 28 175 / 12%);
+  --fx-delivery-text: #86198f;
 
   /*
     ── 分类色：四个 ──
 
     给「它是哪一种」而不是「它好不好」的标记用：转发工具（iptables / realm / gost / socat）、
-    图表里第 6 位以后的分片。刻意避开状态色的三个色相（绿 / 琥珀 / 红），否则一枚
-    「socat」的红标签看着像出错了。全部白底 ≥ 4.5:1，可以直接当小字。
+    图表里第 6 位以后的分片。刻意避开状态色的三个色相（绿 / 琥珀 / 红）和强调色的紫，
+    否则一枚「socat」的红标签看着像出错了。全部白底 ≥ 4.5:1，可以直接当小字。
   */
   --fx-cat-blue: #2563eb;
   --fx-cat-blue-soft: rgb(37 99 235 / 12%);
-  --fx-cat-violet: #7c3aed;
-  --fx-cat-violet-soft: rgb(124 58 237 / 12%);
+  --fx-cat-teal: #0e7490;
+  --fx-cat-teal-soft: rgb(8 145 178 / 12%);
   --fx-cat-orange: #c2410c;
   --fx-cat-orange-soft: rgb(234 88 12 / 12%);
   --fx-cat-pink: #db2777;
@@ -384,11 +387,11 @@
     改一个忘一个是迟早的事。
   */
   --fx-beam: var(--fx-accent);
-  --fx-beam-glow: rgb(14 116 144 / 50%);
-  /* 登录页的流动背景：一团青、一团紫、再一团淡青，都很淡 —— 是一层薄薄的色，不是海报 */
-  --fx-mesh-1: rgb(8 145 178 / 22%);
-  --fx-mesh-2: rgb(124 58 237 / 13%);
-  --fx-mesh-3: rgb(8 145 178 / 11%);
+  --fx-beam-glow: rgb(110 86 207 / 50%);
+  /* 登录页的流动背景：一团紫、一团青、再一团淡紫，都很淡 —— 是一层薄薄的色，不是海报 */
+  --fx-mesh-1: rgb(110 86 207 / 22%);
+  --fx-mesh-2: rgb(8 145 178 / 12%);
+  --fx-mesh-3: rgb(110 86 207 / 11%);
 }
 
 .dark {
@@ -424,12 +427,12 @@
   --fx-text-muted: #858585;
   --fx-text-inverse: #0a0a0a;
 
-  /* 强调色：字提亮到 cyan-400，底压回 cyan-500 配近黑的字（白字压亮青只有 2.5:1） */
-  --fx-accent: #22d3ee;
-  --fx-accent-strong: #06b6d4;
-  --fx-accent-soft: rgb(34 211 238 / 14%);
-  --fx-accent-fill: #06b6d4;
-  --fx-accent-fill-foreground: #0a0a0a;
+  /* 强调色：字提亮成淡紫，底还是同一个实色紫、配白字 */
+  --fx-accent: #baa7ff;
+  --fx-accent-strong: #7d66d9;
+  --fx-accent-soft: rgb(110 86 207 / 24%);
+  --fx-accent-fill: #6e56cf;
+  --fx-accent-fill-foreground: #ffffff;
 
   /* 状态色在暗底上要提亮，否则饱和度一样但看着发闷；`-text` 再亮一档给小字 */
   --fx-healthy: #4ade80;
@@ -448,14 +451,14 @@
   --fx-standby: #8c8c8c;
   --fx-standby-soft: rgb(140 140 140 / 14%);
 
-  --fx-delivery: #a78bfa;
-  --fx-delivery-soft: rgb(167 139 250 / 16%);
-  --fx-delivery-text: #c4b5fd;
+  --fx-delivery: #e879f9;
+  --fx-delivery-soft: rgb(232 121 249 / 16%);
+  --fx-delivery-text: #f0abfc;
 
   --fx-cat-blue: #60a5fa;
   --fx-cat-blue-soft: rgb(96 165 250 / 16%);
-  --fx-cat-violet: #a78bfa;
-  --fx-cat-violet-soft: rgb(167 139 250 / 16%);
+  --fx-cat-teal: #22d3ee;
+  --fx-cat-teal-soft: rgb(34 211 238 / 16%);
   --fx-cat-orange: #fb923c;
   --fx-cat-orange-soft: rgb(251 146 60 / 16%);
   --fx-cat-pink: #f472b6;
@@ -475,10 +478,10 @@
   --fx-focus-ring: 0 0 0 3px color-mix(in srgb, var(--fx-path) 32%, transparent);
 
   --fx-beam: var(--fx-accent);
-  --fx-beam-glow: rgb(34 211 238 / 55%);
-  --fx-mesh-1: rgb(34 211 238 / 16%);
-  --fx-mesh-2: rgb(167 139 250 / 14%);
-  --fx-mesh-3: rgb(34 211 238 / 8%);
+  --fx-beam-glow: rgb(186 167 255 / 55%);
+  --fx-mesh-1: rgb(110 86 207 / 20%);
+  --fx-mesh-2: rgb(34 211 238 / 10%);
+  --fx-mesh-3: rgb(110 86 207 / 10%);
 }
 
 /*

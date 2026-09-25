@@ -6058,13 +6058,13 @@ function RulesContent() {
   /*
     转发工具的标签回答的是「它是哪一种」，不是「它好不好」，所以走分类色，不碰状态色：
     原来 socat 是红、gost 是琥珀 —— 一枚红标签在一列灰字里看着像出错了。
-    内核转发（iptables / nftables）用强调色，和「路径」同一个青；其余三个各一个分类色。
+    内核转发（iptables / nftables）用强调色，和「路径」同一个色；其余三个各一个分类色。
   */
   const forwardToolBadgeClass = (forwardType: unknown) => {
     const type = String(forwardType || "");
     if (type === "iptables" || type === "nftables") return "border-[color-mix(in_srgb,var(--fx-accent)_30%,transparent)] bg-[var(--fx-accent-soft)] text-[var(--fx-accent)]";
     if (type === "socat") return "border-[color-mix(in_srgb,var(--fx-cat-orange)_30%,transparent)] bg-[var(--fx-cat-orange-soft)] text-[var(--fx-cat-orange)]";
-    if (type === "gost") return "border-[color-mix(in_srgb,var(--fx-cat-violet)_30%,transparent)] bg-[var(--fx-cat-violet-soft)] text-[var(--fx-cat-violet)]";
+    if (type === "gost") return "border-[color-mix(in_srgb,var(--fx-cat-teal)_30%,transparent)] bg-[var(--fx-cat-teal-soft)] text-[var(--fx-cat-teal)]";
     return "border-[color-mix(in_srgb,var(--fx-cat-blue)_30%,transparent)] bg-[var(--fx-cat-blue-soft)] text-[var(--fx-cat-blue)]";
   };
 
@@ -6215,7 +6215,7 @@ function RulesContent() {
             : rule.forwardType === "socat"
             ? "border-[color-mix(in_srgb,var(--fx-cat-orange)_30%,transparent)] text-[var(--fx-cat-orange)]"
             : rule.forwardType === "gost"
-            ? "border-[color-mix(in_srgb,var(--fx-cat-violet)_30%,transparent)] text-[var(--fx-cat-violet)]"
+            ? "border-[color-mix(in_srgb,var(--fx-cat-teal)_30%,transparent)] text-[var(--fx-cat-teal)]"
             : "border-[color-mix(in_srgb,var(--fx-cat-blue)_30%,transparent)] text-[var(--fx-cat-blue)]"
         }`}
       >
