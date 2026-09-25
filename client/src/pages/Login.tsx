@@ -1032,7 +1032,7 @@ export default function Login() {
                 <div className="auth-telegram-slot space-y-3">
                   <div className="relative flex items-center justify-center">
                     <div className="absolute inset-x-0 top-1/2 h-px bg-border" />
-                    <span className="relative bg-card px-3 text-xs text-muted-foreground">或</span>
+                    <span className="auth-divider-label relative px-3 text-xs text-muted-foreground">或</span>
                   </div>
                   <div className="min-h-[132px] rounded-lg border border-border/50 bg-muted/20 p-3 transition-colors">
                     <div className="mb-3 flex items-center justify-center gap-2 text-sm font-medium">
