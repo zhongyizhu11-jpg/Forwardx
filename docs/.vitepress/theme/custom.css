@@ -5,7 +5,7 @@
   --vp-font-family-base: var(--fx-font);
   --vp-font-family-mono: var(--fx-font-mono);
   --vp-c-brand-1: var(--fx-brand);
-  --vp-c-brand-2: #125f55;
+  --vp-c-brand-2: var(--fx-accent-strong);
   --vp-c-brand-3: var(--fx-brand);
   --vp-c-brand-soft: var(--fx-brand-soft);
   --vp-c-bg: var(--fx-surface);
@@ -20,31 +20,31 @@
   --vp-home-hero-name-background: none;
   --vp-home-hero-image-background-image: none;
   --vp-home-hero-image-filter: none;
-  --vp-button-brand-bg: var(--fx-text);
-  --vp-button-brand-hover-bg: #353c46;
+  --vp-button-brand-bg: var(--fx-accent-fill);
+  --vp-button-brand-hover-bg: var(--fx-accent-strong);
   --vp-button-brand-text: #fff;
   --vp-button-brand-hover-text: #fff;
 }
 .dark {
-  --vp-c-brand-2: #91e5d2;
+  --vp-c-brand-2: var(--fx-accent);
   --vp-c-brand-3: var(--fx-brand);
-  --vp-button-brand-bg: var(--fx-text);
-  --vp-button-brand-hover-bg: #d4dae1;
-  --vp-button-brand-text: #101720;
-  --vp-button-brand-hover-text: #101720;
+  --vp-button-brand-bg: var(--fx-accent-fill);
+  --vp-button-brand-hover-bg: var(--fx-accent-strong);
+  --vp-button-brand-text: #fff;
+  --vp-button-brand-hover-text: #fff;
 }
 html, body { background: var(--vp-c-bg); }
 .VPNavBar:not(.home.top), .VPLocalNav { background: var(--fx-surface); border-bottom: 1px solid var(--fx-stroke); }
 .VPSidebar { background: var(--fx-canvas); border-right: 1px solid var(--fx-stroke); }
 .VPSidebarItem.level-1 > .item { min-height: 36px; border-radius: 8px; padding-inline: 8px; }
-.VPSidebarItem.is-active > .item { background: var(--fx-subtle); }
-.VPSidebarItem.is-active > .item .text { color: var(--fx-text); font-weight: 600; }
+.VPSidebarItem.is-active > .item { background: var(--fx-accent-soft); }
+.VPSidebarItem.is-active > .item .text { color: var(--fx-accent); font-weight: 500; }
 .VPHomeHero .name, .VPHomeHero .text { letter-spacing: -.035em; }
 .VPHomeHero .tagline { color: var(--fx-muted); line-height: 1.6; }
 .VPHomeHero .image-bg { display: none; }
-.VPButton { border-radius: 8px !important; }
-.VPButton.brand { box-shadow: var(--fx-shadow); }
-.VPFeature { border: 1px solid var(--fx-stroke); border-radius: 12px; background: var(--fx-surface); box-shadow: var(--fx-shadow); }
+.VPButton { border-radius: var(--fx-radius-control) !important; }
+.VPButton.brand { box-shadow: none; }
+.VPFeature { border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-surface); box-shadow: none; }
 .VPFeature .icon { color: var(--fx-muted); background: var(--fx-subtle); }
 .VPFeature .details { color: var(--fx-muted); }
 .vp-doc { line-height: 1.8; }
@@ -56,7 +56,7 @@ html, body { background: var(--vp-c-bg); }
 .vp-doc .custom-block.tip { border-left-color: var(--fx-brand); background: var(--fx-brand-soft); }
 .vp-doc th { background: var(--fx-subtle); }
 .vp-doc td, .vp-doc th { border-color: var(--fx-stroke); }
-.VPDocFooter .pager-link { border-radius: 12px; background: var(--fx-surface); box-shadow: var(--fx-shadow); }
+.VPDocFooter .pager-link { border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-card); background: var(--fx-surface); box-shadow: none; }
 .VPLocalSearchBox .shell { border: 1px solid var(--fx-stroke); border-radius: 16px; box-shadow: var(--fx-shadow-raised); }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--fx-brand); outline-offset: 3px; }
 @media (pointer: coarse) {

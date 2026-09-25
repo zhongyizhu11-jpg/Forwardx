@@ -14,7 +14,7 @@ const action = (key: string, label: string, extra: Partial<EntityAction> = {}): 
   ...extra,
 });
 
-test("Entity 卡片是唯一一层面，而且这层面不描边", () => {
+test("Entity 卡片是唯一一层面，而且这层面只描一圈弱线", () => {
   const html = renderToStaticMarkup(
     <EntityCard>
       <EntityHeader health="healthy" title="DW TW" subtitle="Taiwan · 78.105.182.83" />
@@ -28,12 +28,14 @@ test("Entity 卡片是唯一一层面，而且这层面不描边", () => {
   // 整张卡就一块白面，圆角只出现一次
   assert.equal(html.match(/rounded-\[var\(--fx-radius-surface\)\]/g)?.length, 1);
   /*
-    卡片本身不描边：质感来自「白卡 + 页面浅灰底」的底色差，再加一圈边框就是
-    把同一件事说了两遍。卡里更不允许出现四面围合的框 —— 那是上一版三层嵌套
-    圆角矩形的来源。分隔用的 border-t / border-y 不算围合，放行。
+    页面和卡片都是白纸，卡片靠一圈 1px 的弱线成形 —— 而且线只画这一次：
+    卡里不允许再出现四面围合的框，那是上一版三层嵌套圆角矩形的来源。
+    分隔用的 border-t / border-y 不算围合，放行。
   */
   const classLists = [...html.matchAll(/class="([^"]*)"/g)].map((m) => m[1].split(/\s+/));
-  assert.ok(!classLists.some((list) => list.includes("border")));
+  const framed = classLists.filter((list) => list.includes("border"));
+  assert.equal(framed.length, 1, "只有卡片本身这一圈线");
+  assert.ok(framed[0].includes("border-[var(--fx-stroke-weak)]"), "线用最弱那一档");
 });
 
 test("卡头一行里只有一个主角：名字是 primary，归属是 meta", () => {

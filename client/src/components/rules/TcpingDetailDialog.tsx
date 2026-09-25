@@ -59,7 +59,7 @@ function TcpingTooltipContent({ active, payload, label }: any) {
         <p className="text-sm font-semibold text-destructive">超时</p>
       ) : latency > 0 ? (
         <p className="text-sm font-semibold tabular-nums">
-          <span className={latency < 50 ? "text-[var(--fx-healthy-text)]" : latency < 100 ? "text-chart-3" : latency < 200 ? "text-[var(--fx-warn-text)]" : "text-destructive"}>
+          <span className={latency < 50 ? "text-[var(--fx-healthy-text)]" : latency < 100 ? "text-[var(--fx-accent)]" : latency < 200 ? "text-[var(--fx-warn-text)]" : "text-destructive"}>
             {latency}ms
           </span>
         </p>

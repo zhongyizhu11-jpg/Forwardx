@@ -4581,7 +4581,7 @@ function RulesContent() {
   */
   const trafficMultiplierBadgeClass = (value: unknown) =>
     normalizeTrafficMultiplier(value) > TRAFFIC_MULTIPLIER_DEFAULT
-      ? "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] text-[var(--fx-warn)]"
+      ? "border-[color-mix(in_srgb,var(--fx-warn)_40%,transparent)] text-[var(--fx-warn-text)]"
       : "border-[var(--fx-stroke-base)] text-muted-foreground";
   const renderTrafficMultiplierBadge = (value: unknown) => (
     <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] font-medium leading-none ${trafficMultiplierBadgeClass(value)}`}>
@@ -4598,7 +4598,7 @@ function RulesContent() {
     trafficBillingTunnelIds.has(Number(tunnel?.id)) ? "按量计费资源" : "",
   ].filter(Boolean).join(" / ");
   const renderTunnelModeBadge = (tunnel: any) => (
-    <span className="shrink-0 rounded border border-chart-4/30 bg-chart-4/10 px-1.5 py-0.5 text-[11px] font-medium leading-none text-chart-4">
+    <span className="shrink-0 rounded border border-[color-mix(in_srgb,var(--fx-accent)_30%,transparent)] bg-[var(--fx-accent-soft)] px-1.5 py-0.5 text-[11px] font-medium leading-none text-[var(--fx-accent)]">
       {getTunnelSelectModeLabel(tunnel)}
     </span>
   );
@@ -6055,12 +6055,17 @@ function RulesContent() {
     );
   };
 
+  /*
+    转发工具的标签回答的是「它是哪一种」，不是「它好不好」，所以走分类色，不碰状态色：
+    原来 socat 是红、gost 是琥珀 —— 一枚红标签在一列灰字里看着像出错了。
+    内核转发（iptables / nftables）用强调色，和「路径」同一个色；其余三个各一个分类色。
+  */
   const forwardToolBadgeClass = (forwardType: unknown) => {
     const type = String(forwardType || "");
-    if (type === "iptables" || type === "nftables") return "border-primary/25 bg-primary/5 text-primary";
-    if (type === "socat") return "border-chart-5/25 bg-chart-5/5 text-chart-5";
-    if (type === "gost") return "border-chart-4/25 bg-chart-4/5 text-chart-4";
-    return "border-chart-3/25 bg-chart-3/5 text-chart-3";
+    if (type === "iptables" || type === "nftables") return "border-[color-mix(in_srgb,var(--fx-accent)_30%,transparent)] bg-[var(--fx-accent-soft)] text-[var(--fx-accent)]";
+    if (type === "socat") return "border-[color-mix(in_srgb,var(--fx-cat-orange)_30%,transparent)] bg-[var(--fx-cat-orange-soft)] text-[var(--fx-cat-orange)]";
+    if (type === "gost") return "border-[color-mix(in_srgb,var(--fx-cat-teal)_30%,transparent)] bg-[var(--fx-cat-teal-soft)] text-[var(--fx-cat-teal)]";
+    return "border-[color-mix(in_srgb,var(--fx-cat-indigo)_30%,transparent)] bg-[var(--fx-cat-indigo-soft)] text-[var(--fx-cat-indigo)]";
   };
 
   const renderForwardToolBadge = (rule: any, group?: any | null) => {
@@ -6206,12 +6211,12 @@ function RulesContent() {
           rule.forwardGroupId
             ? "border-[color-mix(in_srgb,var(--fx-healthy)_30%,transparent)] text-[var(--fx-healthy-text)]"
             : rule.forwardType === "iptables" || rule.forwardType === "nftables"
-            ? "border-primary/30 text-primary"
+            ? "border-[color-mix(in_srgb,var(--fx-accent)_30%,transparent)] text-[var(--fx-accent)]"
             : rule.forwardType === "socat"
-            ? "border-chart-5/30 text-chart-5"
+            ? "border-[color-mix(in_srgb,var(--fx-cat-orange)_30%,transparent)] text-[var(--fx-cat-orange)]"
             : rule.forwardType === "gost"
-            ? "border-chart-4/30 text-chart-4"
-            : "border-chart-3/30 text-chart-3"
+            ? "border-[color-mix(in_srgb,var(--fx-cat-teal)_30%,transparent)] text-[var(--fx-cat-teal)]"
+            : "border-[color-mix(in_srgb,var(--fx-cat-indigo)_30%,transparent)] text-[var(--fx-cat-indigo)]"
         }`}
       >
         {rule.forwardGroupId ? (
@@ -6298,7 +6303,8 @@ function RulesContent() {
       return <span className="text-xs text-muted-foreground">—</span>;
     }
     const Icon = direction === "in" ? ArrowDownToLine : ArrowUpFromLine;
-    const color = direction === "in" ? "text-chart-2" : "text-chart-4";
+    // 入站走强调色、出站走次要字色（--fx-flow-*），和总览页的走势图同一对颜色：进出不是状态
+    const color = direction === "in" ? "text-[var(--fx-flow-in)]" : "text-[var(--fx-flow-out)]";
     return (
       <span className={`flex items-center gap-1 whitespace-nowrap text-xs tabular-nums ${color}`}>
         <Icon className="h-3 w-3 shrink-0" /> {formatBytes(value)}

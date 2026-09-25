@@ -62,7 +62,7 @@ export function SummaryStrip({
       role="group"
       aria-label={ariaLabel}
       className={cn(
-        "grid gap-px overflow-hidden rounded-[var(--fx-radius-surface)] bg-[var(--fx-stroke-weak)]",
+        "grid gap-px overflow-hidden rounded-[var(--fx-radius-surface)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-stroke-weak)]",
         grid,
         className,
       )}

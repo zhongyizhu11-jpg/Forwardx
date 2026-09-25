@@ -20,7 +20,7 @@ const Switch = React.forwardRef<React.ComponentRef<typeof SwitchPrimitives.Root>
   const fieldId = useFormFieldId();
   return (
   <SwitchPrimitives.Root data-slot="switch" id={fieldId} className={cn("peer relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-0 p-0.5 focus-visible:outline-none focus-visible:shadow-[var(--fx-focus-ring)] disabled:cursor-not-allowed disabled:opacity-60 data-[state=unchecked]:bg-[var(--fx-stroke-base)] data-[state=checked]:bg-primary dark:data-[state=unchecked]:bg-[var(--fx-stroke-strong)]", instant ? "" : "transition-colors", className)} {...props} ref={ref}>
-    <SwitchPrimitives.Thumb className={cn("pointer-events-none block h-5 w-5 rounded-full bg-white shadow-[0_1px_2px_rgb(0_0_0/0.24),0_0_0_0.5px_rgb(0_0_0/0.06)] ring-0 data-[state=checked]:translate-x-5 data-[state=checked]:bg-primary-foreground data-[state=unchecked]:translate-x-0", instant ? "" : "transition-transform")} />
+    <SwitchPrimitives.Thumb className={cn("pointer-events-none block h-5 w-5 rounded-full bg-white shadow-[0_1px_2px_rgb(0_0_0/0.24),0_0_0_0.5px_rgb(0_0_0/0.06)] ring-0 data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0", instant ? "" : "transition-transform")} />
   </SwitchPrimitives.Root>
   );
 })

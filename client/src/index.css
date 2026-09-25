@@ -36,6 +36,10 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  --color-chart-9: var(--chart-9);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -105,51 +109,59 @@
 /* ===== Light theme (default) ===== */
 :root {
   /*
-    圆角基准 10px，Tailwind 的四档落在令牌的刻度上：
+    圆角基准 14px，Tailwind 的四档落在令牌的刻度上：
 
-      rounded-sm  6px   极小控件、分段控件里的选项
-      rounded-md  8px   按钮、输入框、Chip   = --fx-radius-control
-      rounded-lg  10px  列表卡、小面板       = --fx-radius-card
-      rounded-xl  14px  主 Surface、大容器   = --fx-radius-surface
+      rounded-sm  10px  极小控件、分段控件里的选项
+      rounded-md  12px  按钮、输入框、Chip   = --fx-radius-control
+      rounded-lg  14px  列表卡、小面板       = --fx-radius-card
+      rounded-xl  18px  主 Surface、大容器   = --fx-radius-surface
 
-    对话框的 18px 不在这四档里，用 --fx-radius-modal 显式写。
+    对话框的 22px 不在这四档里，用 --fx-radius-modal 显式写。
 
-    半径要跟着尺寸走：小控件小圆角，大面板大圆角。这一版整体比上一版收紧一档
-    （见 design-tokens.css 圆角一节）—— 圆角越大越「玩具」，控制台要的是「工具」。
+    半径要跟着尺寸走：小控件小圆角，大面板大圆角。这一版整体比上一版放大一档
+    （见 design-tokens.css 圆角一节）—— 照参考站来，圆一点是「清爽」的一半来源。
   */
-  --radius: 0.625rem;
+  --radius: 0.875rem;
   --background: var(--fx-canvas);
   --foreground: var(--fx-text);
   --card: var(--fx-surface);
   --card-foreground: var(--fx-text);
   --popover: var(--fx-raised);
   --popover-foreground: var(--fx-text);
-  --primary: var(--fx-text);
-  --primary-foreground: var(--fx-text-inverse);
+  --primary: var(--fx-accent-fill);
+  --primary-foreground: var(--fx-accent-fill-foreground);
   --secondary: var(--fx-hover);
   --secondary-foreground: var(--fx-text);
   --muted: var(--fx-hover);
   --muted-foreground: var(--fx-muted);
   --accent: var(--fx-hover);
   --accent-foreground: var(--fx-text);
-  --destructive: var(--fx-down);
+  --destructive: var(--fx-down-fill);
   --destructive-foreground: #ffffff;
   --border: var(--fx-stroke);
   --input: var(--fx-stroke);
-  --ring: var(--fx-brand);
-  --chart-1: oklch(0.56 0.12 170);
-  --chart-2: oklch(0.6 0.18 165);
-  --chart-3: oklch(0.6 0.16 300);
-  --chart-4: oklch(0.65 0.16 80);
-  --chart-5: oklch(0.55 0.22 25);
-  --sidebar: var(--fx-surface);
+  --ring: var(--fx-accent);
+  /*
+    text-chart-N / bg-chart-N 直接指向令牌里的图表色：前五位就是强调色和四个状态色
+    （图表里的绿必须是列表里的绿），6–9 是分类色。别再当调色板挑「看着像」的用。
+  */
+  --chart-1: var(--fx-chart-1);
+  --chart-2: var(--fx-chart-2);
+  --chart-3: var(--fx-chart-3);
+  --chart-4: var(--fx-chart-4);
+  --chart-5: var(--fx-chart-5);
+  --chart-6: var(--fx-chart-6);
+  --chart-7: var(--fx-chart-7);
+  --chart-8: var(--fx-chart-8);
+  --chart-9: var(--fx-chart-9);
+  --sidebar: var(--fx-sidebar);
   --sidebar-foreground: var(--fx-muted);
-  --sidebar-primary: var(--fx-text);
-  --sidebar-primary-foreground: var(--fx-text-inverse);
-  --sidebar-accent: var(--fx-brand-soft);
-  --sidebar-accent-foreground: var(--fx-brand);
-  --sidebar-border: var(--fx-stroke);
-  --sidebar-ring: var(--fx-brand);
+  --sidebar-primary: var(--fx-accent-fill);
+  --sidebar-primary-foreground: var(--fx-accent-fill-foreground);
+  --sidebar-accent: var(--fx-accent-soft);
+  --sidebar-accent-foreground: var(--fx-accent);
+  --sidebar-border: var(--fx-stroke-weak);
+  --sidebar-ring: var(--fx-accent);
   --forwardx-safe-area-top: env(safe-area-inset-top, 0px);
   --forwardx-safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --forwardx-mobile-header-offset: calc(3.5rem + var(--forwardx-safe-area-top));
@@ -163,32 +175,36 @@
   --card-foreground: var(--fx-text);
   --popover: var(--fx-raised);
   --popover-foreground: var(--fx-text);
-  --primary: var(--fx-text);
-  --primary-foreground: var(--fx-text-inverse);
+  --primary: var(--fx-accent-fill);
+  --primary-foreground: var(--fx-accent-fill-foreground);
   --secondary: var(--fx-hover);
   --secondary-foreground: var(--fx-text);
   --muted: var(--fx-hover);
   --muted-foreground: var(--fx-muted);
   --accent: var(--fx-hover);
   --accent-foreground: var(--fx-text);
-  --destructive: var(--fx-down);
+  --destructive: var(--fx-down-fill);
   --destructive-foreground: #ffffff;
   --border: var(--fx-stroke);
   --input: var(--fx-stroke);
-  --ring: var(--fx-brand);
-  --chart-1: oklch(0.72 0.14 165);
-  --chart-2: oklch(0.75 0.2 155);
-  --chart-3: oklch(0.7 0.15 300);
-  --chart-4: oklch(0.72 0.18 45);
-  --chart-5: oklch(0.65 0.2 25);
-  --sidebar: var(--fx-surface);
+  --ring: var(--fx-accent);
+  --chart-1: var(--fx-chart-1);
+  --chart-2: var(--fx-chart-2);
+  --chart-3: var(--fx-chart-3);
+  --chart-4: var(--fx-chart-4);
+  --chart-5: var(--fx-chart-5);
+  --chart-6: var(--fx-chart-6);
+  --chart-7: var(--fx-chart-7);
+  --chart-8: var(--fx-chart-8);
+  --chart-9: var(--fx-chart-9);
+  --sidebar: var(--fx-sidebar);
   --sidebar-foreground: var(--fx-muted);
-  --sidebar-primary: var(--fx-text);
-  --sidebar-primary-foreground: var(--fx-text-inverse);
-  --sidebar-accent: var(--fx-brand-soft);
-  --sidebar-accent-foreground: var(--fx-brand);
-  --sidebar-border: var(--fx-stroke);
-  --sidebar-ring: var(--fx-brand);
+  --sidebar-primary: var(--fx-accent-fill);
+  --sidebar-primary-foreground: var(--fx-accent-fill-foreground);
+  --sidebar-accent: var(--fx-accent-soft);
+  --sidebar-accent-foreground: var(--fx-accent);
+  --sidebar-border: var(--fx-stroke-weak);
+  --sidebar-ring: var(--fx-accent);
 }
 
 @layer base {
@@ -870,7 +886,7 @@
     @apply border text-card-foreground;
     background: var(--fx-surface);
     border-color: var(--fx-stroke-weak);
-    box-shadow: var(--fx-elevation-card);
+    box-shadow: none;
   }
 
   @keyframes dialog-overlay-in {
@@ -1069,7 +1085,17 @@
     background: color-mix(in srgb, var(--background) 70%, transparent);
   }
 
+  /*
+    登录表单不再是一张卡：参考站的 Sign in 就是白纸上一列窄表单。只有设了壁纸 / 视频
+    背景时才把卡片画回来 —— 半透明的壁纸上没有卡，输入框和字会糊在图里。
+  */
   .auth-card-surface {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+  html[data-personalization-background="image"] .auth-card-surface,
+  html[data-personalization-background="video"] .auth-card-surface {
     background: var(--fx-surface);
     border-color: var(--fx-stroke-weak);
     box-shadow: var(--fx-elevation-popover);
