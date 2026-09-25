@@ -31,11 +31,13 @@ import { cn } from "@/lib/utils";
  */
 
 export function ListSection({
+  id,
   header,
   footer,
   className,
   children,
 }: {
+  id?: string;
   /** 组上面那行小标题。iOS 上是大写小字灰色 */
   header?: ReactNode;
   /** 组下面那段说明。放规则解释，不放警告 —— 警告要自己显眼 */
@@ -44,7 +46,7 @@ export function ListSection({
   children: ReactNode;
 }) {
   return (
-    <section className={cn("flex min-w-0 flex-col", className)}>
+    <section id={id} className={cn("flex min-w-0 flex-col scroll-mt-16", className)}>
       {header ? (
         /*
           这里必须是 h2（文档大纲、读屏跳转都靠它），但 workspace.css 里

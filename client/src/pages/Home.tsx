@@ -211,6 +211,9 @@ function DashboardContent() {
         loading={healthLoading}
         isAdmin={isAdmin}
         onRetry={() => { void refetchHealth(); }}
+        onOpenAttention={() => {
+          document.getElementById("dashboard-attention")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }}
       />
       <QuickStartSection health={health as SystemHealth | undefined} isAdmin={isAdmin} onOpen={setLocation} />
       <AttentionSection

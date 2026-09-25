@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 /*
@@ -10,7 +10,43 @@ import { cn } from "@/lib/utils";
   其中的大头。头像只是角落里 28px 的一个圆，晚半拍
   出现完全可以接受：先放一个同尺寸的灰圆占位，不挤布局。
 */
-const Avataaars = lazy(() => import("avataaars"));
+let avataaarsModule: Promise<typeof import("avataaars")> | null = null;
+let avataaarsLoaded = false;
+function loadAvataaars() {
+  if (!avataaarsModule) {
+    avataaarsModule = import("avataaars").then((module) => {
+      avataaarsLoaded = true;
+      return module;
+    });
+  }
+  return avataaarsModule;
+}
+const Avataaars = lazy(loadAvataaars);
+
+/*
+  再晚半拍：等浏览器空闲了才去取头像库。
+
+  拆包之后它虽然不在入口包里，但 lazy() 在头像一渲染就发请求 —— 而头像在顶栏上，
+  和首页的数据请求、路由页面包同时开跑。手机上这 445 kB（gzip 125 kB）会和真正
+  要看的东西抢带宽。放到 requestIdleCallback 之后：先画页面，闲下来再换头像。
+  已经取过的（切页、重渲染）直接就绪，不再闪占位。
+*/
+function useAvataaarsReady() {
+  const [ready, setReady] = useState(avataaarsLoaded);
+  useEffect(() => {
+    if (avataaarsLoaded) { setReady(true); return; }
+    let cancelled = false;
+    const start = () => { void loadAvataaars().then(() => { if (!cancelled) setReady(true); }); };
+    const idle = (window as any).requestIdleCallback as undefined | ((cb: () => void, opts?: { timeout: number }) => number);
+    const handle = idle ? idle(start, { timeout: 3000 }) : window.setTimeout(start, 1200);
+    return () => {
+      cancelled = true;
+      if (idle) (window as any).cancelIdleCallback?.(handle);
+      else window.clearTimeout(handle);
+    };
+  }, []);
+  return ready;
+}
 
 type GeneratedAvatarProps = {
   seed: string;
@@ -88,8 +124,11 @@ function propsFromSeed(seed: string) {
 }
 
 export function GeneratedAvatar({ seed, className }: GeneratedAvatarProps) {
+  const ready = useAvataaarsReady();
+  const placeholder = <span aria-hidden className={cn("block h-full w-full rounded-full bg-muted", className)} />;
+  if (!ready) return placeholder;
   return (
-    <Suspense fallback={<span aria-hidden className={cn("block h-full w-full rounded-full bg-muted", className)} />}>
+    <Suspense fallback={placeholder}>
       <Avataaars
         {...propsFromSeed(seed)}
         className={cn("h-full w-full", className)}

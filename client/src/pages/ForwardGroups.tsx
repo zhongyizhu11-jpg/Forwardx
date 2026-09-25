@@ -91,7 +91,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import {
   Area,

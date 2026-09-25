@@ -1,4 +1,4 @@
-import { MotionConfig } from "motion/react";
+import { LazyMotion, MotionConfig } from "motion/react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfirmDialogProvider } from "@/components/ui/confirm-dialog";
@@ -10,12 +10,15 @@ import NotFound from "@/pages/NotFound";
 import { Redirect, Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import RouteFallback from "./components/RouteFallback";
+import { routeChunks } from "@/pages/routeChunks";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import PersonalizationLayer from "./components/PersonalizationLayer";
 import Live2DWidgetHost from "./components/plugins/Live2DWidgetHost";
 import Setup from "./pages/Setup";
 import HomePage from "@/pages/Home";
 import LoginPage from "@/pages/Login";
+
+const loadMotionFeatures = () => import("@/motionFeatures").then((mod) => mod.default);
 
 /*
   除了登录页和落地页，其余页面按路由拆包。
@@ -26,31 +29,34 @@ import LoginPage from "@/pages/Login";
 
   Login 和 Home 刻意留同步 —— 它们是所有人的入口，拆了会在最常见的那两屏
   上多一次往返、闪一下 fallback，省下来的字节反而不划算。
+
+  import() 表达式登记在 pages/routeChunks.ts：外壳在空闲时按同一张表预取，
+  标签栏点过去时代码已经在缓存里。
 */
-const AnnouncementsPage = lazy(() => import("@/pages/Announcements"));
-const BillingPage = lazy(() => import("@/pages/Billing"));
+const AnnouncementsPage = lazy(routeChunks["/announcements"] as () => Promise<{ default: ComponentType<any> }>);
+const BillingPage = lazy(routeChunks["/billing"] as () => Promise<{ default: ComponentType<any> }>);
 const CustomSidebarPage = lazy(() => import("@/pages/CustomSidebarPage"));
 const EmailSettingsPage = lazy(() => import("@/pages/EmailSettingsRoute"));
-const ForwardGroupsPage = lazy(() => import("@/pages/ForwardGroupsRoute"));
+const ForwardGroupsPage = lazy(routeChunks["/forward-groups"] as () => Promise<{ default: ComponentType<any> }>);
 const HomepagePreviewPage = lazy(() => import("@/pages/HomepagePreview"));
 const HostMonitorPage = lazy(() => import("@/pages/HostMonitor"));
-const HostsPage = lazy(() => import("@/pages/Hosts"));
-const MorePage = lazy(() => import("@/pages/More"));
-const LookingGlassPage = lazy(() => import("@/pages/LookingGlass"));
-const PaymentsPage = lazy(() => import("@/pages/Payments"));
-const PlansPage = lazy(() => import("@/pages/Plans"));
-const PluginsPage = lazy(() => import("@/pages/Plugins"));
-const ProfilePage = lazy(() => import("@/pages/Profile"));
-const RulesPage = lazy(() => import("@/pages/Rules"));
-const SettingsPage = lazy(() => import("@/pages/Settings"));
-const StorePage = lazy(() => import("@/pages/Store"));
-const SubscriptionsPage = lazy(() => import("@/pages/Subscriptions"));
-const ClientSubscriptionsPage = lazy(() => import("@/pages/ClientSubscriptions"));
-const ProxyInboundsPage = lazy(() => import("@/pages/ProxyInbounds"));
-const TrafficBillingPage = lazy(() => import("@/pages/TrafficBilling"));
-const TunnelsPage = lazy(() => import("@/pages/Tunnels"));
-const UsersPage = lazy(() => import("@/pages/Users"));
-const WalletPage = lazy(() => import("@/pages/Wallet"));
+const HostsPage = lazy(routeChunks["/hosts"] as () => Promise<{ default: ComponentType<any> }>);
+const MorePage = lazy(routeChunks["/more"] as () => Promise<{ default: ComponentType<any> }>);
+const LookingGlassPage = lazy(routeChunks["/looking-glass"] as () => Promise<{ default: ComponentType<any> }>);
+const PaymentsPage = lazy(routeChunks["/payments"] as () => Promise<{ default: ComponentType<any> }>);
+const PlansPage = lazy(routeChunks["/plans"] as () => Promise<{ default: ComponentType<any> }>);
+const PluginsPage = lazy(routeChunks["/plugins"] as () => Promise<{ default: ComponentType<any> }>);
+const ProfilePage = lazy(routeChunks["/profile"] as () => Promise<{ default: ComponentType<any> }>);
+const RulesPage = lazy(routeChunks["/rules"] as () => Promise<{ default: ComponentType<any> }>);
+const SettingsPage = lazy(routeChunks["/settings"] as () => Promise<{ default: ComponentType<any> }>);
+const StorePage = lazy(routeChunks["/store"] as () => Promise<{ default: ComponentType<any> }>);
+const SubscriptionsPage = lazy(routeChunks["/subscriptions"] as () => Promise<{ default: ComponentType<any> }>);
+const ClientSubscriptionsPage = lazy(routeChunks["/client-subscriptions"] as () => Promise<{ default: ComponentType<any> }>);
+const ProxyInboundsPage = lazy(routeChunks["/proxy-inbounds"] as () => Promise<{ default: ComponentType<any> }>);
+const TrafficBillingPage = lazy(routeChunks["/traffic-billing"] as () => Promise<{ default: ComponentType<any> }>);
+const TunnelsPage = lazy(routeChunks["/tunnels"] as () => Promise<{ default: ComponentType<any> }>);
+const UsersPage = lazy(routeChunks["/users"] as () => Promise<{ default: ComponentType<any> }>);
+const WalletPage = lazy(routeChunks["/wallet"] as () => Promise<{ default: ComponentType<any> }>);
 
 type RoutableComponent = ComponentType<any>;
 
@@ -211,6 +217,13 @@ function SetupGate() {
 
 function App() {
   return (
+    /*
+      动画库按需加载：入口包里只有 LazyMotion + m.*（几 KB）；淡入淡出的实现
+      （domAnimation）走动态 import，首屏画完再到。原来用 motion.* 会把整套
+      framer-motion（压缩前 458 kB 源码）打进入口包，而全站只有两处淡入淡出在用它。
+      strict 模式下再写 motion.* 会直接报错，防止又长回去。
+    */
+    <LazyMotion features={loadMotionFeatures} strict>
     <MotionConfig reducedMotion="user">
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
@@ -225,6 +238,7 @@ function App() {
       </ThemeProvider>
     </ErrorBoundary>
     </MotionConfig>
+    </LazyMotion>
   );
 }
 

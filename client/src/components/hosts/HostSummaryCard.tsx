@@ -1,4 +1,4 @@
-import { Activity, Coins, Download, Gauge, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { Activity, Coins, Cpu, Download, Gauge, HardDrive, MemoryStick, Pencil, RotateCcw, Trash2, type LucideIcon } from "lucide-react";
 
 import { formatBytes } from "@shared/formatBytes";
 import { EntityActions, type EntityAction } from "@/components/entity/EntityActions";
@@ -178,21 +178,35 @@ function Stat({ label, value, muted = false }: { label: string; value: string; m
 }
 
 /**
- * 资源一行三个数，**不画条**。
+ * 资源一行三个小方块，**不画条**。
  *
- * 条留给详情页。列表要回答的是「有没有哪台快满了」，一个数字就够；三条各占
- * 一行的进度条要 72px，而同样的信息横着排只要 16px。
+ * 条留给详情页。列表要回答的是「有没有哪台快满了」，一个数字就够。
+ * 方块的样子照 kfchost 套餐卡里的规格格：比卡深一点的灰底、小圆角、左边一枚图标，
+ * 右边上标签下数值 —— 三个数各自有一块地，扫一眼就分得开，比一行「CPU 12% 内存 40%」
+ * 省认读。
  *
  * 拿不到数据写「—」不写 0% —— 一台离线的机器 CPU 不是 0%，是不知道。
  */
+function SpecBlock({ icon: Icon, label, value, muted }: { icon: LucideIcon; label: string; value: string; muted: boolean }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1.5 rounded-[8px] bg-[var(--fx-l2-group)] px-2 py-1">
+      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span className="flex min-w-0 flex-col leading-tight">
+        <span className="text-[11px] text-muted-foreground">{label}</span>
+        <span className={`truncate text-meta font-semibold tabular-nums ${muted ? "text-muted-foreground" : "text-foreground"}`}>{value}</span>
+      </span>
+    </span>
+  );
+}
+
 function ResourceRow({ vitals }: { vitals: HostVitals }) {
   const pct = (value: number | null) => (value === null ? "—" : `${Math.round(value)}%`);
   const unknown = vitals.cpuPercent === null;
   return (
-    <div className="grid min-w-0 grid-cols-3 gap-2">
-      <Stat label="CPU" value={pct(vitals.cpuPercent)} muted={unknown} />
-      <Stat label="内存" value={pct(vitals.memoryPercent)} muted={unknown} />
-      <Stat label="磁盘" value={pct(vitals.diskPercent)} muted={unknown} />
+    <div className="grid min-w-0 grid-cols-3 gap-1.5">
+      <SpecBlock icon={Cpu} label="CPU" value={pct(vitals.cpuPercent)} muted={unknown} />
+      <SpecBlock icon={MemoryStick} label="内存" value={pct(vitals.memoryPercent)} muted={unknown} />
+      <SpecBlock icon={HardDrive} label="磁盘" value={pct(vitals.diskPercent)} muted={unknown} />
     </div>
   );
 }

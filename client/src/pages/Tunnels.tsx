@@ -135,7 +135,7 @@ import {
   EXIT_GROUP_STRATEGY_LABELS,
   normalizeExitGroupStrategy,
 } from "@shared/exitStrategy";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useReducedMotion } from "motion/react";
 import {
   CartesianGrid,
   Line,

@@ -49,7 +49,7 @@ export function AttentionSection({
   const shown = sorted.slice(0, ATTENTION_VISIBLE_ROWS);
 
   return (
-    <ListSection header="需要关注" footer={summarizeHiddenAttention(attention.totals, shown)}>
+    <ListSection id="dashboard-attention" header="需要关注" footer={summarizeHiddenAttention(attention.totals, shown)}>
       {shown.map((row) => {
         const { title, detail } = describeAttentionRow(row, now);
         const href = attentionHref(row, { isAdmin });

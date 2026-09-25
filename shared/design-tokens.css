@@ -180,8 +180,12 @@
     入站走强调色（流动的数据），出站走次要字色：进出不是状态，只有一条需要颜色来
     和另一条分开。规则卡、走势图、摘要条都从这两个令牌取，不各挑各的。
   */
-  --fx-flow-in: var(--fx-accent);
-  --fx-flow-out: var(--fx-text-secondary);
+  /*
+    2026-09 第二轮照参考站（New API / Vexo）改：它的走势图两条线是图表色板的前两位 ——
+    天蓝和青，出站不再是灰。灰线在白纸上像一条参考线，读不出它也是数据。
+  */
+  --fx-flow-in: var(--fx-chart-1);
+  --fx-flow-out: var(--fx-chart-2);
 
   /*
     ── 网络语义别名 ──
@@ -214,11 +218,18 @@
     数据在两个地方是两种颜色。后面几位是纯粹的分类色，只在「第 5 个以后的
     分片」这种没有语义的场合用。
   */
-  --fx-chart-1: var(--fx-path);
-  --fx-chart-2: var(--fx-healthy);
-  --fx-chart-3: var(--fx-warn);
-  --fx-chart-4: var(--fx-down);
-  --fx-chart-5: var(--fx-delivery);
+  /*
+    2026-09 第二轮：前五位换成参考站（New API / Vexo）的图表色板 —— 天蓝 / 青 / 淡靛 /
+    粉 / 绿，全是明亮的分类色，走势图和统计块的图标底色也从这里取。要表达「健康 / 警告 /
+    故障」的图表仍然走 chartPalette.ts 里的 CHART_SEMANTIC_COLORS（绑定状态色），
+    这组只给「第几个系列」这种没有语义的场合。
+      参考站取值：oklch(0.72 0.18 250) / (0.65 0.15 200) / (0.7 0.12 280) / (0.68 0.19 325) / (0.68 0.16 155)
+  */
+  --fx-chart-1: #35a9ff;
+  --fx-chart-2: #00a9b3;
+  --fx-chart-3: #9095e8;
+  --fx-chart-4: #d068d8;
+  --fx-chart-5: #20b46b;
   --fx-chart-6: var(--fx-cat-indigo);
   --fx-chart-7: #ea580c;
   --fx-chart-8: #65a30d;
@@ -292,10 +303,15 @@
     16px 圆角压在 32px 高上、卡片 22px，比上一版圆得多 —— 「清爽」有一半来自这里。
     层级仍然按尺寸走：控件 12、卡片 14、大面 18、弹窗 22。
   */
-  --fx-radius-control: 12px;   /* 按钮、输入框、Chip、Segment */
-  --fx-radius-card: 14px;      /* 列表卡、小面板 */
-  --fx-radius-surface: 18px;   /* 主 Surface、大容器 */
-  --fx-radius-modal: 22px;     /* 对话框、Bottom Sheet */
+  /*
+    2026-09 第二轮再放一档，直接对齐参考站的刻度：它的 --radius 是 1rem，按钮 / 输入框
+    rounded-lg = 16px，卡片 rounded-xl = 22px，首页那几块面板 rounded-2xl = 29px。
+    上一版 12 / 14 / 18 / 22 是「往那个方向走了一步」，这次就是那个数。
+  */
+  --fx-radius-control: 16px;   /* 按钮、输入框、Chip、Segment（参考站 rounded-lg） */
+  --fx-radius-card: 18px;      /* 列表卡、统计块里的小格 */
+  --fx-radius-surface: 22px;   /* 主 Surface、大容器（参考站 rounded-xl 卡片） */
+  --fx-radius-modal: 28px;     /* 对话框、Bottom Sheet（参考站 rounded-2xl） */
   --fx-radius-pill: 999px;     /* 徽标、状态胶囊 */
 
   /* ═══════════════════════════════════════════════════════
@@ -327,12 +343,18 @@
      一列值扫下去能直接比大小。这也是基础设施类产品的气质来源。
      ═══════════════════════════════════════════════════════ */
   /*
-    Inter Variable 随面板一起打包（@fontsource-variable/inter，按 unicode-range 分包，
-    浏览器只下拉丁那一份 ~100 kB），所以 Windows / Linux / Android 上不再退到
-    Segoe UI 或 Liberation Sans —— 「同一套字在哪都一样」本身就是质感。
-    中文仍交给系统（苹方 / 微软雅黑），Inter 只管拉丁和数字。
+    拉丁字体随面板一起打包（@fontsource-variable，按 unicode-range 分包，浏览器只下
+    拉丁那一份 ~100 kB），所以 Windows / Linux / Android 上不再退到 Segoe UI 或
+    Liberation Sans —— 「同一套字在哪都一样」本身就是质感。
+    中文仍交给系统（苹方 / 微软雅黑），拉丁字体只管拉丁和数字。
   */
-  --fx-font: "Inter Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+  /*
+    2026-09 第二轮：拉丁字换成 Public Sans（参考站 New API / Vexo 的正文字体，同样是
+    @fontsource-variable 打包、按 unicode-range 分包）。它比 Inter 略宽、字腔更开，数字
+    和大小写的对比更明显 —— 参考站那种「一张干净表格」的观感有一半来自这个字。
+    中文仍交给系统（苹方 / 微软雅黑）。
+  */
+  --fx-font: "Public Sans Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
   --fx-font-mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace;
 
   /* ═══════════════════════════════════════════════════════
@@ -355,6 +377,16 @@
   --fx-z-in-overlay-base: 50;     /* 对话框、下拉、菜单、气泡：同一层，谁后挂谁在上 */
   --fx-z-in-overlay-popover: 70;  /* 日期面板：要盖住对话框 */
   --fx-z-in-overlay-toast: 200;   /* 提示永远最上 */
+
+  /* ═══════════════════════════════════════════════════════
+     九点五、外壳尺寸
+
+     照参考站（New API / Vexo）的工作区外壳：一条 48px 的顶栏横贯整个宽度（品牌、
+     搜索、主题、账户都在这一条上），侧栏从顶栏下面开始、13rem 宽、只放导航。
+     手机上顶栏仍在（品牌 + 搜索 + 账户），导航交给底部标签栏。
+     ═══════════════════════════════════════════════════════ */
+  --fx-header-height: 48px;
+  --fx-sidebar-width: 13.5rem;
 
   /* ═══════════════════════════════════════════════════════
      十、V1 兼容别名
@@ -418,7 +450,7 @@
   --fx-accent: #66b6ff;
   --fx-accent-strong: #3ea4ec;
   --fx-accent-soft: rgb(62 164 236 / 22%);
-  --fx-accent-fill: #0b74d1;
+  --fx-accent-fill: #0e72bc;   /* 参考站深色主按钮 oklch(0.54 0.142 248.5)：炭灰上不刺 */
   --fx-accent-fill-foreground: #ffffff;
 
   /* 状态色在暗底上要提亮，否则饱和度一样但看着发闷；`-text` 再亮一档给小字 */
@@ -452,6 +484,11 @@
   --fx-cat-pink-soft: rgb(244 114 182 / 16%);
 
   /* 纯分类色在暗底上要提亮；带语义的那几位跟着状态色走，不用在这里重写 */
+  --fx-chart-1: #66b6ff;
+  --fx-chart-2: #00c9d1;
+  --fx-chart-3: #a9a5ff;
+  --fx-chart-4: #e088e5;
+  --fx-chart-5: #5ccb89;
   --fx-chart-6: var(--fx-cat-indigo);
   --fx-chart-7: var(--fx-cat-orange);
   --fx-chart-8: #a3e635;

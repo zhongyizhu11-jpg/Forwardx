@@ -102,6 +102,7 @@ import {
   MapPinned,
   Download,
   Gauge,
+  Database,
   AlertTriangle,
   Filter,
   Loader2,
@@ -2384,6 +2385,7 @@ function HostsContent() {
             {
               key: "online",
               label: "在线",
+              icon: Server,
               value: `${effectiveHostSummary?.onlineHosts ?? onlineCount} / ${effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length}`,
               hint: (() => {
                 if (!effectiveHostSummary) return "暂无统计";
@@ -2396,12 +2398,14 @@ function HostsContent() {
             {
               key: "rate",
               label: "瞬时",
+              icon: Gauge,
               value: `↓ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficIn)}`,
               hint: `↑ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficOut)}`,
             },
             {
               key: "total",
               label: "累计",
+              icon: Database,
               value: `↓ ${formatBytes(effectiveHostSummary?.totalTrafficIn)}`,
               hint: `↑ ${formatBytes(effectiveHostSummary?.totalTrafficOut)}`,
             },

@@ -11,7 +11,7 @@ import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from "./dialog"
 
 const SIDEBAR_COOKIE_NAME = "sidebar:state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
-const SIDEBAR_WIDTH = "16rem"
+const SIDEBAR_WIDTH = "var(--fx-sidebar-width, 16rem)"
 const SIDEBAR_WIDTH_MOBILE = "var(--forwardx-mobile-sidebar-width, min(16.5rem, calc(100vw - 3.5rem)))"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"

@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-/* Inter Variable 随面板自带（按 unicode-range 分包，浏览器只下用到的那份），见 design-tokens.css 字体一节 */
-@import "@fontsource-variable/inter";
+/* Public Sans Variable 随面板自带（按 unicode-range 分包，浏览器只下用到的那份），见 design-tokens.css 字体一节 */
+@import "@fontsource-variable/public-sans";
 @import "../../shared/design-tokens.css";
 @import "./styles/workspace.css";
 
@@ -109,19 +109,19 @@
 /* ===== Light theme (default) ===== */
 :root {
   /*
-    圆角基准 14px，Tailwind 的四档落在令牌的刻度上：
+    圆角基准 18px，Tailwind 的四档落在令牌的刻度上：
 
-      rounded-sm  10px  极小控件、分段控件里的选项
-      rounded-md  12px  按钮、输入框、Chip   = --fx-radius-control
-      rounded-lg  14px  列表卡、小面板       = --fx-radius-card
-      rounded-xl  18px  主 Surface、大容器   = --fx-radius-surface
+      rounded-sm  14px  极小控件、分段控件里的选项
+      rounded-md  16px  按钮、输入框、Chip   = --fx-radius-control
+      rounded-lg  18px  列表卡、小面板       = --fx-radius-card
+      rounded-xl  22px  主 Surface、大容器   = --fx-radius-surface
 
-    对话框的 22px 不在这四档里，用 --fx-radius-modal 显式写。
+    对话框的 28px 不在这四档里，用 --fx-radius-modal 显式写。
 
     半径要跟着尺寸走：小控件小圆角，大面板大圆角。这一版整体比上一版放大一档
     （见 design-tokens.css 圆角一节）—— 照参考站来，圆一点是「清爽」的一半来源。
   */
-  --radius: 0.875rem;
+  --radius: 1.125rem;
   --background: var(--fx-canvas);
   --foreground: var(--fx-text);
   --card: var(--fx-surface);
@@ -347,10 +347,9 @@
     background: var(--background);
     min-height: 100vh;
     /*
-      Inter 的几个可选字形：cv02/03/04 是开口的 4 / 6 / 9，cv11 是单层 a ——
-      数字在密集列表里更好认，正文更接近 SF。字距不动，靠字号和字重分层级。
+      Public Sans 的数字本来就是开口的、a 是双层的，不用再开 Inter 那几个可选字形
+      （cv02–cv11 在这套字体里没有定义）。字距不动，靠字号和字重分层级。
     */
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;

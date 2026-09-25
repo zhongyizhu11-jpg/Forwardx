@@ -45,9 +45,9 @@ V2 规定四层，**只有 L1 是一块面**：
 | 层 | 是什么 | 怎么画 |
 |---|---|---|
 | **L0** 页面背景 | 整页的底 | 白纸 `--fx-l0-page`，**不放内容** |
-| **L1** Surface | 真正需要成为一个模块的区域 | **纯白 + 18px 圆角 + 一圈 1px 弱线**，不投影 |
+| **L1** Surface | 真正需要成为一个模块的区域 | **纯白 + 22px 圆角 + 一圈 1px 弱线**，不投影 |
 | **L2** Content Group | Surface 内部的分组 | 间距和 Divider 优先；确实要再分一格时用 `--fx-l2-group`（比白纸深一点点的灰），不描边 |
-| **L3** Interactive Element | 按钮、输入框、Segment、Chip、Switch | 白底，12px 圆角，描边：输入框用基础线，贴着页面的用弱线 |
+| **L3** Interactive Element | 按钮、输入框、Segment、Chip、Switch | 白底，16px 圆角，描边：输入框用基础线，贴着页面的用弱线 |
 
 **分层靠的是一圈 1px 的弱线，而且这条线只画一次。**
 
@@ -284,14 +284,16 @@ IP、端口、版本号、流量走 `--fx-font-mono`。等宽不只是好看 —
 
 | 令牌 | 值 | Tailwind | 用在哪 |
 |---|---|---|---|
-| `--fx-radius-control` | 12px | `rounded-md` | 按钮、输入框、Chip、Segment |
-| `--fx-radius-card` | 14px | `rounded-lg` | 列表卡、小面板 |
-| `--fx-radius-surface` | 18px | `rounded-xl` | 主 Surface、大容器 |
-| `--fx-radius-modal` | 22px | 显式写令牌 | 对话框、Bottom Sheet |
+| `--fx-radius-control` | 16px | `rounded-md` | 按钮、输入框、Chip、Segment |
+| `--fx-radius-card` | 18px | `rounded-lg` | 列表卡、小面板、统计块里的小格 |
+| `--fx-radius-surface` | 22px | `rounded-xl` | 主 Surface、大容器 |
+| `--fx-radius-modal` | 28px | 显式写令牌 | 对话框、Bottom Sheet |
 | `--fx-radius-pill` | 999px | `rounded-full` | 徽标、状态胶囊 |
 
-（2026-09 照参考站把四档各放大一档：它的按钮是 16px 圆角压在 32px 高上，「清爽」有一半来自这里。
-分段控件里的选项再小一档，写 `calc(var(--fx-radius-control) - 2px)`。）
+（2026-09 照参考站分两次放大：第一次 12 / 14 / 18 / 22，第二次对着 Vexo 量出来的实际值
+（`rounded-lg` 16、`rounded-xl` 22.4、`rounded-2xl` 28.8）再放到 16 / 18 / 22 / 28。它的按钮是 16px
+圆角压在 32px 高上，「清爽」有一半来自这里。分段控件里的选项再小一档，写
+`calc(var(--fx-radius-control) - 4px)`。）
 
 不要出现 `rounded-[13px]`、`rounded-[7px]` 这种当场拍的值。
 

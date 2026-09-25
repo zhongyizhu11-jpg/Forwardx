@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import { activeTabPath, type TabBarPlan } from "./tabBar";
+import { prefetchRoute } from "@/pages/routeChunks";
 
 /**
  * iOS 底部标签栏。
@@ -52,6 +53,7 @@ export function IosTabBar({
             */
             aria-current={selected ? "page" : undefined}
             onClick={() => onNavigate(tab.path)}
+            onPointerDown={() => { void prefetchRoute(tab.path); }}
             className={cn(
               "fx-tabbar-item",
               selected && "fx-tabbar-item-active",
