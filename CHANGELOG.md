@@ -2,6 +2,13 @@
 
 ## [未发布]
 
+## [2.3.374] - 2026-09-25
+
+### 发布摘要
+
+- **色调与布局照 New API / Vexo 来**：整体换成白纸 + 1px 弱线 + 天蓝强调 + 炭灰深色，圆角四档各放大一档；首页照参考站的版式重排（吸顶毛玻璃导航、左文右「终端卡」首屏、数字带、2+1 / 1+2 功能格、三步上手、收尾号召、页脚），登录页改成居中的一列胶囊表单。工作区的信息架构不动。取值依据见 [docs/UI_PREMIUM_POLISH.md](https://github.com/zhongyizhu11-jpg/Forwardx/blob/main/docs/UI_PREMIUM_POLISH.md) 第 7、8 节。
+- 面板与 APK Release `2.3.374`，Android APP `2.3.99`，Agent `2.2.197`，ForwardX FXP runtime `2.2.119`。**只改了面板前端和文档站主题**：服务端、Agent、FXP、Android 源码都没有变化，已装 `2.2.197` 的 Agent 不用升级，没有数据库变化，没有新依赖。个性化配置里的「面板默认」预设跟着令牌变成天蓝，想要上一版的紫选新增的「薰衣草」。
+
 ### 色调与布局：照 New API / Vexo 来
 
 参考 vexoapi.com（New API 前端）和它的文档站重排整体色调和两个公开页面，取值依据见 [docs/UI_PREMIUM_POLISH.md](docs/UI_PREMIUM_POLISH.md) 第 8 节。
