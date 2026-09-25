@@ -57,10 +57,10 @@ export function ListSection({
         <h2 className="fx-list-section-header">{header}</h2>
       ) : null}
       {/*
-        不描边、纯白、大圆角 —— 分组块靠和页面浅灰底的差浮起来，这是 iOS
-        分组列表全部质感的来源。加一圈边框会让它退回「网页表格」。
+        白底、大圆角、一圈弱线 —— 页面是白纸，分组块靠这条 1px 的弱线成形，
+        和工作区里的卡片同一种线。行自己不是面，行与行之间只有分隔线。
       */}
-      <div className="overflow-hidden rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)]">
+      <div className="overflow-hidden rounded-[var(--fx-radius-surface)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)]">
         {children}
       </div>
       {footer ? (

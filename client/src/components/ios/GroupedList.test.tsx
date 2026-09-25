@@ -58,11 +58,10 @@ test("分组的小标题和脚注都渲染出来", () => {
   assert.match(html, /绕过 TUN/);
 });
 
-test("分组只有一块白面，行自己不是面，而且这块面不描边", () => {
+test("分组只有一块白面，行自己不是面，而且只有这块面描一圈弱线", () => {
   /*
     「不是所有信息都需要一个圆角矩形」—— 组是那块面，行不是。
-    面也不描边：iOS 分组列表的质感全部来自「白块 + 页面浅灰底」的底色差，
-    补一圈边框只会把它拉回网页表格。
+    页面是白纸，面靠一圈 1px 的弱线成形；行与行之间只有分隔线，行自己不描框。
   */
   const html = renderToStaticMarkup(
     <ListSection>
@@ -72,7 +71,9 @@ test("分组只有一块白面，行自己不是面，而且这块面不描边",
   );
   assert.equal(html.match(/rounded-\[var\(--fx-radius-surface\)\]/g)?.length, 1);
   const classLists = [...html.matchAll(/class="([^"]*)"/g)].map((m) => m[1].split(/\s+/));
-  assert.ok(!classLists.some((list) => list.includes("border")));
+  const framed = classLists.filter((list) => list.includes("border"));
+  assert.equal(framed.length, 1, "只有分组这一块面描线");
+  assert.ok(framed[0].includes("border-[var(--fx-stroke-weak)]"), "线用最弱那一档");
 });
 
 test("选中的行：字重 + 和应用侧栏同一个选中灰，读屏也知道是哪一项", () => {

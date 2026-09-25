@@ -494,7 +494,7 @@ export default function HostProbeServiceManager({
               </div>
             </SortableReorderContext>
             {/* hidden sm:block：原来没写，手机上表格视图会把卡片和一张宽表格同时画出来 */}
-            <div className="hidden overflow-x-auto rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)] sm:block">
+            <div className="hidden overflow-x-auto rounded-[var(--fx-radius-surface)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] sm:block">
               <Table>
                 <TableHeader>
                   <TableRow>

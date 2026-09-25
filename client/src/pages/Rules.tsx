@@ -6065,7 +6065,7 @@ function RulesContent() {
     if (type === "iptables" || type === "nftables") return "border-[color-mix(in_srgb,var(--fx-accent)_30%,transparent)] bg-[var(--fx-accent-soft)] text-[var(--fx-accent)]";
     if (type === "socat") return "border-[color-mix(in_srgb,var(--fx-cat-orange)_30%,transparent)] bg-[var(--fx-cat-orange-soft)] text-[var(--fx-cat-orange)]";
     if (type === "gost") return "border-[color-mix(in_srgb,var(--fx-cat-teal)_30%,transparent)] bg-[var(--fx-cat-teal-soft)] text-[var(--fx-cat-teal)]";
-    return "border-[color-mix(in_srgb,var(--fx-cat-blue)_30%,transparent)] bg-[var(--fx-cat-blue-soft)] text-[var(--fx-cat-blue)]";
+    return "border-[color-mix(in_srgb,var(--fx-cat-indigo)_30%,transparent)] bg-[var(--fx-cat-indigo-soft)] text-[var(--fx-cat-indigo)]";
   };
 
   const renderForwardToolBadge = (rule: any, group?: any | null) => {
@@ -6216,7 +6216,7 @@ function RulesContent() {
             ? "border-[color-mix(in_srgb,var(--fx-cat-orange)_30%,transparent)] text-[var(--fx-cat-orange)]"
             : rule.forwardType === "gost"
             ? "border-[color-mix(in_srgb,var(--fx-cat-teal)_30%,transparent)] text-[var(--fx-cat-teal)]"
-            : "border-[color-mix(in_srgb,var(--fx-cat-blue)_30%,transparent)] text-[var(--fx-cat-blue)]"
+            : "border-[color-mix(in_srgb,var(--fx-cat-indigo)_30%,transparent)] text-[var(--fx-cat-indigo)]"
         }`}
       >
         {rule.forwardGroupId ? (

@@ -45,7 +45,7 @@ test("空状态：标题 + 说明 + 操作；图标不再套描边小方块", ()
   assert.doesNotMatch(iconRule, /border/, "图标那一格不描边");
   const blockRule = css.match(/\.empty-state\s*\{([^}]*)\}/)?.[1] ?? "";
   assert.match(blockRule, /background:\s*var\(--fx-l1-surface\)/, "空状态自己是一块 surface");
-  assert.doesNotMatch(blockRule, /border:/);
+  assert.match(blockRule, /border:\s*1px solid var\(--fx-stroke-weak\)/, "白纸上靠一圈弱线成形，和卡片同一种线");
 });
 
 test("全站不再用整张带标题的卡片、虚线框当空状态", () => {

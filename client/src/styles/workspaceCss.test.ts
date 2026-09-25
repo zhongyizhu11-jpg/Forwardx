@@ -47,11 +47,11 @@ function topLevelRules(source: string) {
   return rules;
 }
 
-test("工作区卡片不描边、不投影 —— 写在媒体查询外面，桌面也成立", () => {
+test("工作区卡片一圈弱线、不投影 —— 写在媒体查询外面，桌面也成立", () => {
   const rules = topLevelRules(code).filter((item) => item.selector === '.workspace-main [data-slot="card"]');
   assert.ok(rules.length > 0, "最外层有一条 .workspace-main [data-slot=\"card\"] 规则");
   const body = rules.map((item) => item.body).join(";");
-  assert.match(body, /border:\s*0/);
+  assert.match(body, /border:\s*1px solid var\(--fx-stroke-weak\)/, "白纸上的卡片靠一圈弱线成形");
   assert.match(body, /box-shadow:\s*none/);
 });
 

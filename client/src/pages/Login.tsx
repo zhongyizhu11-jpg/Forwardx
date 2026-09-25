@@ -3,10 +3,9 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Input } from "@/components/ui/input";
-import { MeshBackdrop } from "@/components/ui/mesh-backdrop";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Sun, Moon, RefreshCw, UserPlus, LogIn, Send, Settings as SettingsIcon, Server, ShieldCheck, Zap } from "lucide-react";
+import { Loader2, Sun, Moon, RefreshCw, UserPlus, LogIn, Send, Settings as SettingsIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -271,12 +270,6 @@ const LOGIN_NOTICE_TOAST_KEY = "forwardx.loginNotice";
 const DISPLAY_NAME_MAX_LENGTH = 24;
 const TELEGRAM_WEBAPP_INIT_WAIT_MS = 6000;
 const TELEGRAM_WEBAPP_INIT_POLL_MS = 250;
-const authHighlights = [
-  { title: "多主机管理", text: "集中查看主机、规则和链路状态", icon: Server },
-  { title: "权限控制", text: "按用户分配转发资源和使用额度", icon: ShieldCheck },
-  { title: "故障转移", text: "按健康状态切换入口和出口", icon: Zap },
-];
-
 function getWelcomeName(user: any) {
   return String(user?.name || user?.username || "用户").trim() || "用户";
 }
@@ -893,12 +886,15 @@ export default function Login() {
   return (
     <div className="mobile-login-screen auth-shell relative min-h-screen overflow-hidden">
       {/*
-        原来这里是 .auth-grid-overlay —— 它在 CSS 里是 display:none，也就是说这个
-        div 从头到尾什么都没画，是次改版留下的死元素。换成手册第七节的流动渐变背景：
-        登录页正是手册点名的用法之一（登录页 / Hero / 空状态）。
+        参考站的登录页是一张白纸上一列窄表单：左上角一枚品牌链接回首页，没有背景装饰、
+        没有左侧介绍栏、没有卡片。原来的流动渐变背景和左栏都去掉了（壁纸背景的例外见 index.css）。
       */}
-      <MeshBackdrop />
-      {!mobileAuth.isNative && <Link href="/" className="auth-home-link">← 返回首页</Link>}
+      {!mobileAuth.isNative && (
+        <Link href="/" className="auth-home-link" aria-label="返回首页">
+          <img src={logoSrc} alt="" />
+          <span>{siteTitle}</span>
+        </Link>
+      )}
       <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
         {mobileAuth.isNative && (
           <button
@@ -927,54 +923,18 @@ export default function Login() {
         </button>
       </div>
 
-      <div className="auth-route-enter relative z-10 grid min-h-screen lg:grid-cols-[minmax(0,1.05fr)_minmax(460px,.95fr)]">
-        <section className="auth-route-enter-left relative hidden lg:flex">
-          <div className="relative flex min-h-screen w-full items-center px-10 py-14 xl:px-16">
-            <div className="max-w-xl">
-              <div className="flex items-center gap-3">
-                <img src={logoSrc} alt={siteTitle} className="h-11 w-11 object-contain" />
-                <span className="text-2xl font-bold tracking-tight text-foreground">{siteTitle}</span>
-              </div>
-              <h2 className="auth-intro-title">每一条连接，<br /><span>都有清晰的去处。</span></h2>
-              <p className="mt-4 max-w-lg text-base leading-7 text-muted-foreground">在同一个工作空间，管理主机、线路与流量。</p>
-              <div className="mt-10 space-y-6">
-                {authHighlights.map((item, index) => {
-                  const Icon = item.icon;
-                  return (
-                    <motion.div
-                      key={item.title}
-                      className="flex gap-4"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.32, delay: 0.12 + index * 0.06, ease: [0.22, 1, 0.36, 1] }}
-                    >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[var(--fx-l1-surface)] text-foreground shadow-[var(--fx-elevation-card)]">
-                        <Icon className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <h2 className="text-sm font-semibold text-foreground">{item.title}</h2>
-                          <p className="mt-1 text-sm leading-6 text-muted-foreground">{item.text}</p>
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </section>
+      <div className="auth-route-enter relative z-10 grid min-h-screen">
 
         <main className="auth-route-enter-panel flex min-h-screen items-center justify-center px-4 py-20 sm:px-6 lg:px-10">
-          <Card disableEnterAnimation className="auth-card-surface w-full max-w-[400px] rounded-[var(--fx-radius-surface)] px-6 py-7 sm:px-8 sm:py-8">
+          <Card disableEnterAnimation className="auth-card-surface w-full max-w-[416px] rounded-[var(--fx-radius-surface)] px-6 py-7 sm:px-8 sm:py-8">
             <CardHeader className="px-0 pb-6 text-left">
-              <div className="mb-5 flex items-center gap-3 lg:hidden">
-                <img
-                  src={logoSrc}
-                  alt={siteTitle}
-                  className="h-10 w-10 object-contain"
-                />
-                <span className="text-lg font-semibold tracking-tight">{siteTitle}</span>
-              </div>
-              <h1 className="text-[22px] font-semibold tracking-tight">
+              {mobileAuth.isNative && (
+                <div className="mb-5 flex items-center gap-3">
+                  <img src={logoSrc} alt={siteTitle} className="h-10 w-10 object-contain" />
+                  <span className="text-lg font-semibold tracking-tight">{siteTitle}</span>
+                </div>
+              )}
+              <h1 className="text-2xl font-bold tracking-tight">
                 {mode === "login" ? "欢迎回来" : "创建账号"}
               </h1>
               <CardDescription className="mt-1 text-sm text-muted-foreground">

@@ -1263,7 +1263,7 @@ export default function Plans() {
                         ))}
                       </AutoAnimateContainer>
                     ) : (
-                      <div key="plan-table-view" className="overflow-x-auto rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)]">
+                      <div key="plan-table-view" className="overflow-x-auto rounded-[var(--fx-radius-surface)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)]">
                         <Table>
                           <TableHeader>
                             <TableRow>

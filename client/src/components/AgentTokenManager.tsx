@@ -723,7 +723,7 @@ export default function AgentTokenManager({
                   ))}
                 </div>
               </SortableReorderContext>
-              <div className="hidden overflow-x-auto rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)] sm:block">
+              <div className="hidden overflow-x-auto rounded-[var(--fx-radius-surface)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] sm:block">
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">

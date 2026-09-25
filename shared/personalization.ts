@@ -13,8 +13,8 @@ export type BuiltinWallpaperId = typeof BUILTIN_WALLPAPERS[number]["id"];
   状态色（健康 / 警告 / 故障）不跟着换 —— 它们说的是「它现在好不好」，换了预设也不该变。
 
   `ink` 是每个面板出厂就写进设置表的那个 id（dbSchema 的默认值），所以它就是「面板默认」：
-  不往 <html> 上写任何变量，让 shared/design-tokens.css 里的紫色强调和浅深色两套值直接生效。
-  想要以前那种黑白的选 `mono`。其余预设只给出 primary / ring 这几个值，
+  不往 <html> 上写任何变量，让 shared/design-tokens.css 里的天蓝强调和浅深色两套值直接生效。
+  想要以前那种黑白的选 `mono`，想要上一版的薰衣草紫选 `lavender`。其余预设只给出 primary / ring 这几个值，
   强调色的三档由 applyPersonalizationTheme 从它们推出来（见 client/src/lib/personalizationTheme.ts）。
   `accent` 是可选的：给那些主色太浅、直接当小字过不了 4.5:1 的预设（樱粉、暖阳）。
 */
@@ -22,8 +22,8 @@ export const PERSONALIZATION_THEME_PRESETS = [
   {
     id: "ink",
     name: "面板默认",
-    description: "跟随面板自带的配色：薰衣草紫强调、干净的状态色，浅深色各一套。",
-    swatches: ["#6e56cf", "#e5dff5", "#0a0a0a"],
+    description: "跟随面板自带的配色：天蓝强调、白底细线卡片、炭灰深色，浅深色各一套。",
+    swatches: ["#0b74d1", "#e6f2fc", "#1e1e1e"],
     followsTokens: true,
     light: {
       primary: "var(--fx-accent-fill)",
@@ -80,6 +80,38 @@ export const PERSONALIZATION_THEME_PRESETS = [
       sidebarPrimary: "var(--fx-text)",
       sidebarPrimaryForeground: "var(--fx-text-inverse)",
       sidebarRing: "var(--fx-text-secondary)",
+    },
+  },
+  {
+    id: "lavender",
+    name: "薰衣草",
+    description: "上一版的淡紫强调：字 #6550b9、实色 #6e56cf、淡底 #e5dff5。",
+    swatches: ["#6e56cf", "#e5dff5", "#6550b9"],
+    light: {
+      primary: "#6e56cf",
+      primaryForeground: "#ffffff",
+      ring: "#7d66d9",
+      accent: "#6550b9",
+      chart1: "#6e56cf",
+      chart2: "var(--fx-chart-6)",
+      chart3: "var(--fx-chart-7)",
+      chart4: "var(--fx-chart-8)",
+      sidebarPrimary: "#6e56cf",
+      sidebarPrimaryForeground: "#ffffff",
+      sidebarRing: "#7d66d9",
+    },
+    dark: {
+      primary: "#6e56cf",
+      primaryForeground: "#ffffff",
+      ring: "#7d66d9",
+      accent: "#baa7ff",
+      chart1: "#baa7ff",
+      chart2: "var(--fx-chart-6)",
+      chart3: "var(--fx-chart-7)",
+      chart4: "var(--fx-chart-8)",
+      sidebarPrimary: "#6e56cf",
+      sidebarPrimaryForeground: "#ffffff",
+      sidebarRing: "#7d66d9",
     },
   },
   {

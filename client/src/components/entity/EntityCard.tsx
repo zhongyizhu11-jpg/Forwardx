@@ -39,14 +39,14 @@ export function EntityCard({
       data-fx-entity="card"
       className={cn(
         /*
-          不描边。卡片靠「白 + 页面的浅灰底」浮起来 —— 底色差和描边都是在说
-          「这是一块独立的区域」，两个一起用就是说了两遍，而重复的那一遍读
-          起来就是「重」。iOS 的分组卡片从来不描边。
+          一圈弱线、不投影。页面和卡片都是白纸，卡片靠这一条 1px 的弱线成形
+          （参考站 ring-foreground/10 那一档）。线只画这一次：卡里不再套框，
+          分隔用 border-t，不用四面围合的框。
 
-          圆角走 surface 档（16px）而不是 card 档：没有边框之后，圆角是唯一
-          还在勾勒轮廓的东西，小圆角会让白块看起来像没切干净的纸。
+          圆角走 surface 档而不是 card 档：一条细线勾出来的轮廓，小圆角会让
+          白块看起来像没切干净的纸。
         */
-        "fx-entity-card flex min-w-0 flex-col rounded-[var(--fx-radius-surface)] bg-[var(--fx-l1-surface)]",
+        "fx-entity-card flex min-w-0 flex-col rounded-[var(--fx-radius-surface)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)]",
         interactive && "cursor-pointer transition-shadow hover:shadow-[var(--fx-elevation-card)]",
         className,
       )}

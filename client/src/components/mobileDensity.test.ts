@@ -52,6 +52,6 @@ test("Token、服务两个列表不再套一张大白卡（手机上内容离屏
     const source = read(file);
     assert.doesNotMatch(source, /<CardContent className="p-0">/, `${file} 的列表外面没有 p-0 的大卡`);
     // 表格视图单独一块白底
-    assert.match(source, /hidden overflow-x-auto rounded-\[var\(--fx-radius-surface\)\] bg-\[var\(--fx-l1-surface\)\] sm:block/);
+    assert.match(source, /hidden overflow-x-auto rounded-\[var\(--fx-radius-surface\)\] border border-\[var\(--fx-stroke-weak\)\] bg-\[var\(--fx-l1-surface\)\] sm:block/);
   }
 });
