@@ -1124,7 +1124,7 @@ function HostGroupFilterBar({
   const chipClass = (active: boolean) => [
     "inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-[var(--fx-radius-control)] px-3 text-sm transition-colors sm:h-9 sm:gap-2",
     active
-      ? "border border-[var(--fx-primary-stroke)] bg-[var(--fx-primary-fill)] font-semibold text-[var(--fx-primary-text)]"
+      ? "border border-[var(--fx-primary-stroke)] bg-[var(--fx-primary-fill)] bg-[image:var(--fx-primary-gradient)] font-semibold text-[var(--fx-primary-text)]"
       : "border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] text-muted-foreground hover:text-foreground",
   ].join(" ");
   const countForGroup = (group: HostGroupView) => Number(groupCounts[Number(group.id)] || 0);
@@ -1139,7 +1139,7 @@ function HostGroupFilterBar({
       <button type="button" className={chipClass(selectedGroupId === "all")} onClick={() => onSelectGroup("all")}>
         <Server className="h-3.5 w-3.5 max-sm:hidden" />
         <span>全部</span>
-        <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === "all" ? "bg-[var(--fx-primary-fill)] text-[var(--fx-primary-text)]" : "text-muted-foreground")}>{totalHosts}</span>
+        <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === "all" ? "bg-white/25 text-[var(--fx-primary-text)]" : "text-muted-foreground")}>{totalHosts}</span>
       </button>
       {enabledGroups.map((group) => (
         <button
@@ -1151,7 +1151,7 @@ function HostGroupFilterBar({
         >
           <FolderKanban className="h-3.5 w-3.5 max-sm:hidden" />
           <span className="max-w-[160px] truncate">{group.name}</span>
-          <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === Number(group.id) ? "bg-[var(--fx-primary-fill)] text-[var(--fx-primary-text)]" : "text-muted-foreground")}>{countForGroup(group)}</span>
+          <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === Number(group.id) ? "bg-white/25 text-[var(--fx-primary-text)]" : "text-muted-foreground")}>{countForGroup(group)}</span>
         </button>
       ))}
     </div>

@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
 const buttonVariants = cva("inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-[13.5px] font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50", {
   variants: {
     variant: {
-      default: "border border-[var(--fx-primary-stroke)] bg-[var(--fx-primary-fill)] text-[var(--fx-primary-text)] hover:bg-[var(--fx-primary-fill-hover)]",
+      default: "border border-[var(--fx-primary-stroke)] bg-[var(--fx-primary-fill)] bg-[image:var(--fx-primary-gradient)] font-semibold text-[var(--fx-primary-text)] hover:bg-[image:var(--fx-primary-gradient-hover)]",
       destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
       outline: "border border-[var(--fx-stroke-base)] bg-[var(--fx-l1-surface)] text-foreground hover:bg-[var(--fx-hover)]",
       secondary: "bg-[var(--fx-l3-control-fill)] text-foreground hover:bg-[var(--fx-hover)]",

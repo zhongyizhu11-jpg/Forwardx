@@ -67,8 +67,8 @@
 .workspace-layout [data-sidebar="menu-button"] { color: var(--fx-text-secondary); font-size: 14px; font-weight: 500; min-height: 32px; padding-inline: 8px; border-radius: 10px; }
 .workspace-layout [data-sidebar="menu-button"] > svg { color: var(--fx-text-muted); }
 .workspace-layout [data-sidebar="menu-button"]:hover { color: var(--fx-text); background: var(--fx-hover); }
-.workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-accent-soft); color: var(--fx-accent); font-weight: 500; box-shadow: none; }
-.workspace-layout [data-sidebar="menu-button"][data-active="true"] > svg { color: var(--fx-accent); }
+.workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-primary-gradient); color: var(--fx-primary-text); font-weight: 600; box-shadow: none; }
+.workspace-layout [data-sidebar="menu-button"][data-active="true"] > svg { color: var(--fx-primary-text); }
 .workspace-layout [data-sidebar="group-label"] { opacity: 1; color: var(--fx-text-muted); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
 .workspace-layout [data-mobile-header] { background: var(--fx-surface); border-color: var(--fx-stroke-weak); box-shadow: 0 1px 4px rgb(0 0 0 / 4%); }
 /*
@@ -87,12 +87,12 @@
 .workspace-tabs .workspace-tabs-list { display: flex; width: max-content; min-width: 100%; height: auto; justify-content: flex-start; gap: 2px; padding: 0; border: 0; border-radius: var(--fx-radius); background: transparent; }
 .workspace-tabs .workspace-tab { position: relative; flex: 1 0 auto; gap: 6px; min-height: 28px; border: 0; border-radius: calc(var(--fx-radius-control) - 4px); padding: 4px 12px; color: var(--fx-text-secondary); background: transparent; box-shadow: none; --tw-ring-shadow: 0 0 #0000; font-size: 13px; font-weight: 500; transition: color 150ms, background-color 150ms, box-shadow 150ms; }
 .workspace-tabs .workspace-tab > svg { color: var(--fx-text-muted); }
-.workspace-tabs .workspace-tab[data-state="active"] { color: var(--fx-text); background: var(--fx-l1-surface); box-shadow: var(--fx-elevation-control); font-weight: 600; }
-.workspace-tabs .workspace-tab[data-state="active"] > svg { color: var(--fx-text); }
-.dark .workspace-tabs .workspace-tab[data-state="active"] { background: var(--fx-hover); box-shadow: none; }
+.workspace-tabs .workspace-tab[data-state="active"] { color: var(--fx-primary-text); background: var(--fx-primary-gradient); box-shadow: none; font-weight: 600; }
+.workspace-tabs .workspace-tab[data-state="active"] > svg { color: var(--fx-primary-text); }
+.dark .workspace-tabs .workspace-tab[data-state="active"] { background: var(--fx-primary-gradient); box-shadow: none; }
 /* 计数是名字后面一个淡色的数，不是一枚胶囊 —— 胶囊会和旁边的状态徽标抢眼 */
 .workspace-tab-count { display: inline-flex; align-items: center; color: var(--fx-text-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.workspace-tab[data-state="active"] .workspace-tab-count { color: var(--fx-text-muted); }
+.workspace-tab[data-state="active"] .workspace-tab-count { color: color-mix(in srgb, var(--fx-primary-text) 85%, transparent); }
 /*
   一行可以左右滑的选择条（主机分组那一排）。和分类条同一个道理：overflow-y 写明 hidden，
   只左右滑、不上下晃；滚动条藏起来。宽屏上放得下，照旧折行、不滚。
@@ -129,7 +129,8 @@
   按钮：主按钮和描边按钮各带一层 1px 的软影（把它从面上托起半毫米），幽灵按钮没有。
   按下时不缩放、不下沉 —— 只把底色再压深一档（--fx-pressed），反馈清楚又不晃。
 */
-[data-slot="button"][data-variant="default"], [data-slot="button"][data-variant="outline"], [data-slot="button"][data-variant="destructive"] { box-shadow: var(--fx-elevation-control); }
+[data-slot="button"][data-variant="outline"], [data-slot="button"][data-variant="destructive"] { box-shadow: var(--fx-elevation-control); }
+[data-slot="button"][data-variant="default"] { box-shadow: var(--fx-primary-shadow); }
 [data-slot="button"] { transition: background-color 120ms, color 120ms, box-shadow 120ms, border-color 120ms; }
 [data-slot="button"][data-variant="outline"]:active, [data-slot="button"][data-variant="ghost"]:active, [data-slot="button"][data-variant="secondary"]:active { background: var(--fx-pressed); }
 [data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] { box-shadow: none; transition: border-color 120ms, box-shadow 120ms; }
@@ -556,10 +557,10 @@
     要左右滑，左边还压着一个滚动箭头。换成数字之后五项一屏放得下。
   */
   .workspace-tabs .workspace-tab { border: 0; border-radius: var(--fx-radius); gap: 3px; font-size: 14px; font-weight: 500; min-height: 34px; padding: 0 7px; }
-  /* 选中项：天蓝淡底 + 天蓝字（iOS tinted），不再是实心蓝底白字 —— 真机反馈那块太重 */
+  /* 选中项：天蓝渐变 + 白字（全站主色控件同一道渐变，见令牌 --fx-primary-gradient） */
   .workspace-tabs .workspace-tab[data-state="active"] {
-    background: var(--fx-primary-fill); color: var(--fx-primary-text); font-weight: 600;
-    box-shadow: inset 0 0 0 1px var(--fx-primary-stroke);
+    background: var(--fx-primary-gradient); color: var(--fx-primary-text); font-weight: 600;
+    box-shadow: none;
   }
   .workspace-tab-count {
     min-width: 0; height: auto; padding: 0; border-radius: 0;
@@ -568,7 +569,7 @@
   /* 选中块反色之后数字也跟着反过来，否则青底上一个深灰数字看不见 */
   .workspace-tabs .workspace-tab[data-state="active"] .workspace-tab-count {
     background: transparent;
-    color: color-mix(in srgb, var(--fx-primary-text) 78%, transparent);
+    color: color-mix(in srgb, var(--fx-primary-text) 85%, transparent);
   }
 
   /*
@@ -867,7 +868,7 @@
 /* 三步上手 */
 .public-journey-switch { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-pill); background: var(--fx-l1-surface); }
 .public-journey-switch button { min-height: 34px; padding: 6px 16px; border-radius: var(--fx-radius-pill); font-size: 13px; font-weight: 500; color: var(--fx-text-secondary); transition: color 120ms, background-color 120ms; }
-.public-journey-switch button[aria-pressed="true"] { background: var(--fx-primary-fill); color: var(--fx-primary-text); box-shadow: inset 0 0 0 1px var(--fx-primary-stroke); }
+.public-journey-switch button[aria-pressed="true"] { background: var(--fx-primary-gradient); color: var(--fx-primary-text); box-shadow: none; }
 .public-journey { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 0; padding: 0; list-style: none; }
 .public-journey li { min-width: 0; padding: 24px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface); }
 .public-journey-icon { position: relative; display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 20px; border: 1px solid var(--fx-stroke-weak); border-radius: 16px; background: var(--fx-l2-group); color: var(--fx-text); }
@@ -1324,7 +1325,7 @@
   transition: background-color 180ms ease;
   -webkit-tap-highlight-color: transparent;
 }
-.fx-ios-switch[aria-checked="true"] { background: var(--fx-accent-fill); }
+.fx-ios-switch[aria-checked="true"] { background: var(--fx-primary-gradient); }
 .fx-ios-switch-knob {
   position: absolute;
   top: 2px;
@@ -1446,3 +1447,11 @@
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dialog-panel, .action-menu-content, [role="menu"], [role="listbox"] { background-color: var(--fx-raised); }
 }
+
+/*
+  主色控件全部同一道渐变（--fx-primary-gradient）：按钮和分段项在各自的规则里，这里补上
+  开关的开和复选的勾 —— 它们的组件类写的是 bg-primary 实色，渐变靠 background-image 盖上去。
+  进度条和默认徽标不在这里：它们的调用方会传状态色，渐变写在组件里（底色 + 白色高光），见 ui/progress.tsx、ui/badge.tsx。
+*/
+[data-slot="switch"][data-state="checked"] { background-image: var(--fx-primary-gradient); }
+[data-slot="checkbox"]:checked { background-image: var(--fx-primary-gradient); border-color: transparent; }
