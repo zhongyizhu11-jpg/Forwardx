@@ -18,9 +18,10 @@
 .workspace-layout [data-sidebar="menu-button"] { color: var(--fx-text-secondary); font-size: 13.5px; font-weight: 500; min-height: 34px; padding-inline: 10px; }
 .workspace-layout [data-sidebar="menu-button"] > svg { color: var(--fx-text-muted); }
 .workspace-layout [data-sidebar="menu-button"]:hover { color: var(--fx-text); background: color-mix(in srgb, var(--fx-text) 5%, transparent); }
-.workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-l1-surface); color: var(--fx-text); font-weight: 500; box-shadow: var(--fx-elevation-control); }
-.workspace-layout [data-sidebar="menu-button"][data-active="true"] > svg { color: var(--fx-text); }
-.dark .workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-hover); box-shadow: none; }
+/* 选中项的字和图标是强调色：「你在这里」和「这里能点」是同一个颜色在说话 */
+.workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-l1-surface); color: var(--fx-accent); font-weight: 500; box-shadow: var(--fx-elevation-control); }
+.workspace-layout [data-sidebar="menu-button"][data-active="true"] > svg { color: var(--fx-accent); }
+.dark .workspace-layout [data-sidebar="menu-button"][data-active="true"] { background: var(--fx-accent-soft); box-shadow: none; }
 .workspace-layout [data-sidebar="group-label"] { opacity: 1; color: var(--fx-text-muted); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
 .workspace-layout [data-mobile-header] { background: var(--fx-surface); border-color: var(--fx-stroke-weak); box-shadow: 0 1px 4px rgb(0 0 0 / 4%); }
 /*
@@ -517,17 +518,17 @@
   */
   .workspace-tabs .workspace-tab { border: 0; border-radius: var(--fx-radius); gap: 3px; font-size: 14px; font-weight: 500; min-height: 34px; padding: 0 7px; }
   .workspace-tabs .workspace-tab[data-state="active"] {
-    background: var(--fx-text); color: var(--fx-text-inverse); font-weight: 600;
+    background: var(--fx-accent-fill); color: var(--fx-accent-fill-foreground); font-weight: 600;
     box-shadow: none;
   }
   .workspace-tab-count {
     min-width: 0; height: auto; padding: 0; border-radius: 0;
     background: transparent; color: var(--fx-text-muted); font-size: 12px; font-weight: 500;
   }
-  /* 反白之后数字也跟着反过来，否则黑底上一个深灰数字看不见 */
+  /* 选中块反色之后数字也跟着反过来，否则青底上一个深灰数字看不见 */
   .workspace-tabs .workspace-tab[data-state="active"] .workspace-tab-count {
     background: transparent;
-    color: color-mix(in srgb, var(--fx-text-inverse) 72%, transparent);
+    color: color-mix(in srgb, var(--fx-accent-fill-foreground) 78%, transparent);
   }
 
   /*
@@ -738,7 +739,7 @@
 .auth-home-link:hover { color: var(--fx-text); }
 .auth-home-link:focus-visible { outline: 0; box-shadow: var(--fx-focus-ring); border-radius: 6px; }
 .auth-intro-title { margin-top: 40px; font-size: clamp(32px, 3.5vw, 48px); line-height: 1.35; font-weight: 600; letter-spacing: -.045em; }
-.auth-intro-title span { color: var(--fx-muted); }
+.auth-intro-title span { color: var(--fx-accent); }
 .auth-route-enter-left .backdrop-blur { backdrop-filter: none; background: var(--fx-surface); }
 .auth-mode-panel { min-height: 0; }
 .setup-shell { min-height: 100svh; background: var(--fx-canvas); }
@@ -969,7 +970,7 @@
     -webkit-tap-highlight-color: transparent;
   }
   /* 选中态走黑白，不引入第三种颜色去和状态语义色抢注意力 */
-  .fx-tabbar-item-active { color: var(--fx-text); }
+  .fx-tabbar-item-active { color: var(--fx-accent); }
   .fx-tabbar-label {
     max-width: 100%;
     overflow: hidden;
@@ -1141,7 +1142,7 @@
   transition: background-color 180ms ease;
   -webkit-tap-highlight-color: transparent;
 }
-.fx-ios-switch[aria-checked="true"] { background: var(--fx-text); }
+.fx-ios-switch[aria-checked="true"] { background: var(--fx-accent-fill); }
 .fx-ios-switch-knob {
   position: absolute;
   top: 2px;

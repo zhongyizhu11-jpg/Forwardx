@@ -125,7 +125,7 @@ export function ListRow({
         <span
           className={cn(
             "truncate text-primary-type",
-            selected ? "font-semibold text-foreground" : "text-foreground",
+            selected ? "font-semibold text-[var(--fx-accent)]" : "text-foreground",
           )}
         >
           {label}

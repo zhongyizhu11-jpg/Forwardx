@@ -15,7 +15,7 @@
     间距    4px 栅格：4 8 12 16 20 24 32 40 48
     圆角    5 档：控件 8 / 卡片 10 / 表面 14 / 对话框 18 / 胶囊 999
     高度    4 级：平面 / 卡片 / 下拉 / 对话框
-    颜色    中性 + 四个状态色 + 路径青 + 交付紫，每个都有语义，没有装饰色
+    颜色    中性 + 一个强调色 + 四个状态色 + 交付紫 + 四个分类色，每个都有语义，没有装饰色
 
   移动端的密度差异写在文件末尾的媒体查询里，做法是**改令牌的值**，不是再写
   一遍选择器去盖。上一版移动端密度靠 370 行覆盖规则实现，同一个选择器写两遍
@@ -101,20 +101,47 @@
      ForwardX 的品牌识别来自路径青（网络关系），不是到处刷一层品牌色。
      ═══════════════════════════════════════════════════════ */
 
+  /*
+    ── 强调色：青 ──
+
+    整套界面只有**一个**强调色，而且它只回答一个问题：「这里能点 / 你在这里」。
+    主按钮、开关的开、选中的导航项和分类、复选框的勾、链接、焦点环 —— 全是它。
+    内容本身（文字、卡片、表头）永远是中性的，所以一屏扫过去，有颜色的地方就是
+    能操作的地方。这是 iOS 的蓝、Stripe 的紫在做的同一件事。
+
+    三档：`accent` 是字和图标（白底 5.4:1，过 AA）；`accent-strong` 是线、点、进度、
+    图表（亮一档，不用当小字）；`accent-fill` 是主按钮和选中块的底，配 `-fill-foreground`。
+    深色下把字提亮、把底压回中间那一档，否则白字压在亮青上看不清。
+  */
+  --fx-accent: #0e7490;
+  --fx-accent-strong: #0891b2;
+  --fx-accent-soft: rgb(8 145 178 / 12%);
+  --fx-accent-fill: #0e7490;
+  --fx-accent-fill-foreground: #ffffff;
+
+  /*
+    ── 状态色 ──
+
+    每档两个字色：不带后缀的是点、条、边框（要够亮才认得出），`-text` 是小字
+    （白底 ≥ 4.5:1）。上一版三个状态色都偏暗偏灰（绿发黑、琥珀发褐、红发砖），
+    一列点扫下去区分度不够；这一版是干净的绿 / 琥珀 / 红，`-soft` 是它们 10～14% 的淡底。
+  */
+
   /* 健康：在线、正常、成功 */
-  --fx-healthy: #1a8c4a;
-  --fx-healthy-soft: rgb(26 140 74 / 12%);
-  --fx-healthy-text: #14743d;
+  --fx-healthy: #16a34a;
+  --fx-healthy-soft: rgb(22 163 74 / 12%);
+  --fx-healthy-text: #15803d;
 
   /* 警告：降级、切换中、即将到期、超阈值 */
-  --fx-warn: #b26a00;
-  --fx-warn-soft: rgb(178 106 0 / 12%);
-  --fx-warn-text: #8f5500;
+  --fx-warn: #d97706;
+  --fx-warn-soft: rgb(217 119 6 / 14%);
+  --fx-warn-text: #b45309;
 
-  /* 故障：离线、错误、破坏性操作 */
-  --fx-down: #c8362f;
-  --fx-down-soft: rgb(200 54 47 / 12%);
-  --fx-down-text: #a62b25;
+  /* 故障：离线、错误、破坏性操作。`-fill` 是破坏性按钮的底，配白字 4.8:1 */
+  --fx-down: #dc2626;
+  --fx-down-soft: rgb(220 38 38 / 10%);
+  --fx-down-text: #b91c1c;
+  --fx-down-fill: #dc2626;
 
   /*
     待命：备线、已停用、未上报 —— 是中性的「没在跑」，不是坏。
@@ -125,14 +152,41 @@
   --fx-standby: #737373;
   --fx-standby-soft: rgb(115 115 115 / 10%);
 
-  /* 路径青：网络关系、选中态、正在流动的数据。ForwardX 的识别色 */
-  --fx-path: #0b7285;
-  --fx-path-soft: rgb(11 114 133 / 12%);
-  --fx-path-line: #2b8fa3;     /* 连线本身，比文字浅一档，不和节点抢 */
+  /* 路径青：网络关系、正在流动的数据。就是强调色 —— ForwardX 的识别色 */
+  --fx-path: var(--fx-accent);
+  --fx-path-soft: var(--fx-accent-soft);
+  --fx-path-text: var(--fx-accent);
+  --fx-path-line: var(--fx-accent-strong);     /* 连线本身，比文字亮一档，不和节点抢 */
 
   /* 交付紫：只给订阅 / 客户交付这一类功能 */
-  --fx-delivery: #6b4bb8;
-  --fx-delivery-soft: rgb(107 75 184 / 12%);
+  --fx-delivery: #7c3aed;
+  --fx-delivery-soft: rgb(124 58 237 / 12%);
+  --fx-delivery-text: #6d28d9;
+
+  /*
+    ── 分类色：四个 ──
+
+    给「它是哪一种」而不是「它好不好」的标记用：转发工具（iptables / realm / gost / socat）、
+    图表里第 6 位以后的分片。刻意避开状态色的三个色相（绿 / 琥珀 / 红），否则一枚
+    「socat」的红标签看着像出错了。全部白底 ≥ 4.5:1，可以直接当小字。
+  */
+  --fx-cat-blue: #2563eb;
+  --fx-cat-blue-soft: rgb(37 99 235 / 12%);
+  --fx-cat-violet: #7c3aed;
+  --fx-cat-violet-soft: rgb(124 58 237 / 12%);
+  --fx-cat-orange: #c2410c;
+  --fx-cat-orange-soft: rgb(234 88 12 / 12%);
+  --fx-cat-pink: #db2777;
+  --fx-cat-pink-soft: rgb(219 39 119 / 12%);
+
+  /*
+    ── 流量方向 ──
+
+    入站走强调色（流动的数据），出站走次要字色：进出不是状态，只有一条需要颜色来
+    和另一条分开。规则卡、走势图、摘要条都从这两个令牌取，不各挑各的。
+  */
+  --fx-flow-in: var(--fx-accent);
+  --fx-flow-out: var(--fx-text-secondary);
 
   /*
     ── 网络语义别名 ──
@@ -170,10 +224,10 @@
   --fx-chart-3: var(--fx-warn);
   --fx-chart-4: var(--fx-down);
   --fx-chart-5: var(--fx-delivery);
-  --fx-chart-6: #3f7fb8;
-  --fx-chart-7: #a8632f;
-  --fx-chart-8: #4d7a3a;
-  --fx-chart-9: #7a6a8f;
+  --fx-chart-6: var(--fx-cat-blue);
+  --fx-chart-7: #ea580c;
+  --fx-chart-8: #65a30d;
+  --fx-chart-9: var(--fx-cat-pink);
   --fx-chart-10: var(--fx-standby);
 
   /* ═══════════════════════════════════════════════════════
@@ -329,11 +383,12 @@
     手册点名的两个效果用的颜色。浅深色两套值必须成对出现 —— 写死在组件里
     改一个忘一个是迟早的事。
   */
-  --fx-beam: #20242b;
-  --fx-beam-glow: rgb(32 36 43 / 55%);
-  --fx-mesh-1: rgb(203 208 214 / 78%);
-  --fx-mesh-2: rgb(186 193 201 / 62%);
-  --fx-mesh-3: rgb(216 220 225 / 70%);
+  --fx-beam: var(--fx-accent);
+  --fx-beam-glow: rgb(14 116 144 / 50%);
+  /* 登录页的流动背景：一团青、一团紫、再一团淡青，都很淡 —— 是一层薄薄的色，不是海报 */
+  --fx-mesh-1: rgb(8 145 178 / 22%);
+  --fx-mesh-2: rgb(124 58 237 / 13%);
+  --fx-mesh-3: rgb(8 145 178 / 11%);
 }
 
 .dark {
@@ -369,34 +424,48 @@
   --fx-text-muted: #858585;
   --fx-text-inverse: #0a0a0a;
 
-  /* 状态色在暗底上要提亮，否则饱和度一样但看着发闷 */
-  --fx-healthy: #3ec27a;
-  --fx-healthy-soft: rgb(62 194 122 / 16%);
-  --fx-healthy-text: #5fd493;
+  /* 强调色：字提亮到 cyan-400，底压回 cyan-500 配近黑的字（白字压亮青只有 2.5:1） */
+  --fx-accent: #22d3ee;
+  --fx-accent-strong: #06b6d4;
+  --fx-accent-soft: rgb(34 211 238 / 14%);
+  --fx-accent-fill: #06b6d4;
+  --fx-accent-fill-foreground: #0a0a0a;
 
-  --fx-warn: #e0a341;
-  --fx-warn-soft: rgb(224 163 65 / 16%);
-  --fx-warn-text: #edb95f;
+  /* 状态色在暗底上要提亮，否则饱和度一样但看着发闷；`-text` 再亮一档给小字 */
+  --fx-healthy: #4ade80;
+  --fx-healthy-soft: rgb(74 222 128 / 16%);
+  --fx-healthy-text: #86efac;
 
-  --fx-down: #f0655c;
-  --fx-down-soft: rgb(240 101 92 / 16%);
-  --fx-down-text: #f78a83;
+  --fx-warn: #fbbf24;
+  --fx-warn-soft: rgb(251 191 36 / 16%);
+  --fx-warn-text: #fcd34d;
+
+  --fx-down: #f87171;
+  --fx-down-soft: rgb(248 113 113 / 16%);
+  --fx-down-text: #fca5a5;
+  --fx-down-fill: #dc2626;
 
   --fx-standby: #8c8c8c;
   --fx-standby-soft: rgb(140 140 140 / 14%);
 
-  --fx-path: #3fb6cc;
-  --fx-path-soft: rgb(63 182 204 / 16%);
-  --fx-path-line: #2f8d9f;
+  --fx-delivery: #a78bfa;
+  --fx-delivery-soft: rgb(167 139 250 / 16%);
+  --fx-delivery-text: #c4b5fd;
 
-  --fx-delivery: #a68ae8;
-  --fx-delivery-soft: rgb(166 138 232 / 16%);
+  --fx-cat-blue: #60a5fa;
+  --fx-cat-blue-soft: rgb(96 165 250 / 16%);
+  --fx-cat-violet: #a78bfa;
+  --fx-cat-violet-soft: rgb(167 139 250 / 16%);
+  --fx-cat-orange: #fb923c;
+  --fx-cat-orange-soft: rgb(251 146 60 / 16%);
+  --fx-cat-pink: #f472b6;
+  --fx-cat-pink-soft: rgb(244 114 182 / 16%);
 
   /* 纯分类色在暗底上要提亮；带语义的那几位跟着状态色走，不用在这里重写 */
-  --fx-chart-6: #6ba6dc;
-  --fx-chart-7: #d9905c;
-  --fx-chart-8: #85b86e;
-  --fx-chart-9: #ab9bc4;
+  --fx-chart-6: var(--fx-cat-blue);
+  --fx-chart-7: var(--fx-cat-orange);
+  --fx-chart-8: #a3e635;
+  --fx-chart-9: var(--fx-cat-pink);
 
   /* 暗色下投影几乎看不见，靠加深来做高度 */
   --fx-elevation-card: 0 1px 2px rgb(0 0 0 / 40%);
@@ -405,11 +474,11 @@
   --fx-elevation-modal: 0 32px 80px -24px rgb(0 0 0 / 80%), 0 8px 24px -8px rgb(0 0 0 / 50%), 0 0 0 1px rgb(255 255 255 / 8%);
   --fx-focus-ring: 0 0 0 3px color-mix(in srgb, var(--fx-path) 32%, transparent);
 
-  --fx-beam: #edf0f3;
-  --fx-beam-glow: rgb(237 240 243 / 70%);
-  --fx-mesh-1: rgb(66 76 88 / 62%);
-  --fx-mesh-2: rgb(52 61 72 / 58%);
-  --fx-mesh-3: rgb(78 89 102 / 46%);
+  --fx-beam: var(--fx-accent);
+  --fx-beam-glow: rgb(34 211 238 / 55%);
+  --fx-mesh-1: rgb(34 211 238 / 16%);
+  --fx-mesh-2: rgb(167 139 250 / 14%);
+  --fx-mesh-3: rgb(34 211 238 / 8%);
 }
 
 /*

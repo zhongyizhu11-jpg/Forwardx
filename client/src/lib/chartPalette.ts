@@ -59,6 +59,6 @@ export const CHART_SEMANTIC_COLORS = {
  * 不是状态，只有一条线需要颜色来和另一条分开。
  */
 export const CHART_TRAFFIC_COLORS = {
-  in: CHART_SEMANTIC_COLORS.path,
-  out: "var(--fx-text-muted)",
+  in: "var(--fx-flow-in)",
+  out: "var(--fx-flow-out)",
 } as const;

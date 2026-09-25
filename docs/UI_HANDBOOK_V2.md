@@ -334,17 +334,26 @@ IP、端口、版本号、流量走 `--fx-font-mono`。等宽不只是好看 —
 | 语义 | 令牌 | Tailwind | 说什么 |
 |---|---|---|---|
 | 中性 | `--fx-text` / `-secondary` / `-muted` | `text-foreground` 等 | 内容本身 |
-| 健康 | `--fx-healthy` | `text-healthy` `bg-healthy-soft` | 在线、正常、成功 |
-| 警告 | `--fx-warn` | `text-warn` `bg-warn-soft` | 降级、切换中、即将到期 |
-| 故障 | `--fx-down` | `text-down` `bg-down-soft` | 离线、错误、破坏性操作 |
+| **强调** | `--fx-accent` / `-strong` / `-soft` / `-fill` | `bg-primary` `text-[var(--fx-accent)]` | **这里能点 / 你在这里**：主按钮、开关的开、选中的导航项和分类、复选框、链接、焦点环 |
+| 健康 | `--fx-healthy` / `-text` | `text-healthy` `bg-healthy-soft` | 在线、正常、成功 |
+| 警告 | `--fx-warn` / `-text` | `text-warn` `bg-warn-soft` | 降级、切换中、即将到期 |
+| 故障 | `--fx-down` / `-text` / `-fill` | `text-down` `bg-down-soft` | 离线、错误、破坏性操作 |
 | 待命 | `--fx-standby` | `text-standby` | 备线、停用、未上报 |
-| 路径 | `--fx-path` | `text-path` `border-path` | 网络关系、选中、流动的数据 |
-| 交付 | `--fx-delivery` | `text-delivery` | **只给**订阅 / 客户交付 |
+| 路径 | `--fx-path`（= 强调色） | `text-path` `border-path` | 网络关系、流动的数据 |
+| 交付 | `--fx-delivery` / `-text` | `text-delivery` | **只给**订阅 / 客户交付 |
+| 分类 | `--fx-cat-blue` / `-violet` / `-orange` / `-pink` | `text-[var(--fx-cat-blue)]` | 「它是哪一种」：转发工具标签、图表第 6 位以后 |
+| 流量方向 | `--fx-flow-in` / `--fx-flow-out` | — | 入站 = 强调色，出站 = 次要字色；规则卡和走势图同一对 |
 
 不写 `emerald-500`、`amber-400` 这类调色板颜色。类名里出现 `healthy` 才是在说事，
 出现 `green-500` 只是在说好看。
 
-**ForwardX 的品牌识别来自路径青（网络关系），不是到处刷一层品牌色。**
+状态色每档两个字色：不带后缀的是点、条、边框（要够亮才认得出），`-text` 是小字
+（白底 ≥ 4.5:1）。写小字一律用 `-text`。
+
+**强调色只有一个，而且只回答一个问题：「这里能点 / 你在这里」。** 内容本身永远是中性的，
+所以一屏扫过去，有颜色的地方就是能操作的地方；状态色说「它现在好不好」，分类色说
+「它是哪一种」，三组各管各的，互不借用 —— 一枚「socat」标签不能是红的，那看着像出错了。
+ForwardX 的识别色是路径青，它就是这个强调色。
 
 ---
 
