@@ -6,7 +6,21 @@
   照参考站（New API / Vexo）：一条 48px 的顶栏横贯整个宽度，侧栏从它下面开始。
   顶栏是 sticky 的、和页面同一张白纸，滚起来才浮出下面那条细线。
 */
-.workspace-appbar { position: sticky; top: 0; z-index: var(--fx-z-sticky); flex-shrink: 0; height: calc(var(--fx-header-height) + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); background: color-mix(in srgb, var(--fx-l0-page) 88%, transparent); backdrop-filter: saturate(180%) blur(16px); -webkit-backdrop-filter: saturate(180%) blur(16px); border-bottom: 1px solid var(--fx-stroke-weak); }
+.workspace-appbar { position: sticky; top: 0; z-index: var(--fx-z-sticky); flex-shrink: 0; height: calc(var(--fx-header-height) + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); background: var(--fx-glass); backdrop-filter: var(--fx-glass-blur); -webkit-backdrop-filter: var(--fx-glass-blur); border-bottom: 1px solid var(--fx-stroke-weak); }
+/*
+  毛玻璃（照 iOS 的材质）：固定不动的外壳和浮在内容上面的弹层用 —— 顶栏、底部标签栏、
+  分段控件、对话框、抽屉、弹出菜单。内容从它们底下滑过时透出一点颜色，这是「下面还有」的
+  信号。**滚动的内容本身不做模糊**：backdrop-filter 在手机上每帧都要重算它盖住的那块，
+  盖在一整页列表上就是卡顿的来源；小块、固定的面才划算。不支持 backdrop-filter 的浏览器
+  退回实底。
+*/
+.fx-glass { background: var(--fx-glass); backdrop-filter: var(--fx-glass-blur); -webkit-backdrop-filter: var(--fx-glass-blur); }
+[role="dialog"][data-state="open"].fx-glass-surface,
+[role="menu"].fx-glass-surface, [role="listbox"].fx-glass-surface, .fx-glass-surface { background: var(--fx-glass-strong); backdrop-filter: var(--fx-glass-blur); -webkit-backdrop-filter: var(--fx-glass-blur); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .workspace-appbar, .fx-tabbar, .fx-glass { background: var(--fx-l1-surface); }
+  .fx-glass-surface { background: var(--fx-l2-elevated, var(--fx-l1-surface)); }
+}
 .workspace-appbar-inner { display: flex; align-items: center; gap: 6px; height: var(--fx-header-height); padding-inline: 8px 10px; }
 .workspace-appbar-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; color: var(--fx-text-secondary); transition: background-color 120ms, color 120ms; }
 .workspace-appbar-icon:hover { background: var(--fx-hover); color: var(--fx-text); }
@@ -542,9 +556,10 @@
     要左右滑，左边还压着一个滚动箭头。换成数字之后五项一屏放得下。
   */
   .workspace-tabs .workspace-tab { border: 0; border-radius: var(--fx-radius); gap: 3px; font-size: 14px; font-weight: 500; min-height: 34px; padding: 0 7px; }
+  /* 选中项：天蓝淡底 + 天蓝字（iOS tinted），不再是实心蓝底白字 —— 真机反馈那块太重 */
   .workspace-tabs .workspace-tab[data-state="active"] {
-    background: var(--fx-accent-fill); color: var(--fx-accent-fill-foreground); font-weight: 600;
-    box-shadow: none;
+    background: var(--fx-primary-fill); color: var(--fx-primary-text); font-weight: 600;
+    box-shadow: inset 0 0 0 1px var(--fx-primary-stroke);
   }
   .workspace-tab-count {
     min-width: 0; height: auto; padding: 0; border-radius: 0;
@@ -553,7 +568,7 @@
   /* 选中块反色之后数字也跟着反过来，否则青底上一个深灰数字看不见 */
   .workspace-tabs .workspace-tab[data-state="active"] .workspace-tab-count {
     background: transparent;
-    color: color-mix(in srgb, var(--fx-accent-fill-foreground) 78%, transparent);
+    color: color-mix(in srgb, var(--fx-primary-text) 78%, transparent);
   }
 
   /*
@@ -852,7 +867,7 @@
 /* 三步上手 */
 .public-journey-switch { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-pill); background: var(--fx-l1-surface); }
 .public-journey-switch button { min-height: 34px; padding: 6px 16px; border-radius: var(--fx-radius-pill); font-size: 13px; font-weight: 500; color: var(--fx-text-secondary); transition: color 120ms, background-color 120ms; }
-.public-journey-switch button[aria-pressed="true"] { background: var(--fx-accent-fill); color: var(--fx-accent-fill-foreground); }
+.public-journey-switch button[aria-pressed="true"] { background: var(--fx-primary-fill); color: var(--fx-primary-text); box-shadow: inset 0 0 0 1px var(--fx-primary-stroke); }
 .public-journey { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 0; padding: 0; list-style: none; }
 .public-journey li { min-width: 0; padding: 24px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface); }
 .public-journey-icon { position: relative; display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 20px; border: 1px solid var(--fx-stroke-weak); border-radius: 16px; background: var(--fx-l2-group); color: var(--fx-text); }
@@ -1118,9 +1133,9 @@
       标签栏是少数应该半透明的东西：内容从它底下滑过去时透出来的那点颜色
       就是「下面还有，能继续滚」。这是信息，不是装饰。
     */
-    background: color-mix(in srgb, var(--fx-l1-surface) 82%, transparent);
-    backdrop-filter: saturate(180%) blur(20px);
-    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    background: var(--fx-glass);
+    backdrop-filter: var(--fx-glass-blur);
+    -webkit-backdrop-filter: var(--fx-glass-blur);
   }
 
   .fx-tabbar-item {
@@ -1417,4 +1432,17 @@
     max-height: 92svh;
   }
   .fx-action-sheet [data-fx-dialog-close] { display: none; }
+}
+
+/* 分段控件的槽也是毛玻璃：小块、放在页面顶上，模糊代价小。写在最后，压过上面桌面和手机两处的实底。 */
+.workspace-tabs { background: color-mix(in srgb, var(--fx-l3-control-fill) 72%, transparent); backdrop-filter: saturate(160%) blur(12px); -webkit-backdrop-filter: saturate(160%) blur(12px); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .workspace-tabs { background: var(--fx-l3-control-fill); } }
+
+/*
+  弹层也是毛玻璃：对话框（含手机上的底部 sheet）、下拉菜单、选择框的列表。只改 background-color，
+  手机 sheet 顶上那道用 background-image 画的把手不受影响。
+*/
+.dialog-panel, .action-menu-content, [role="menu"], [role="listbox"] { background-color: var(--fx-glass-strong); backdrop-filter: var(--fx-glass-blur); -webkit-backdrop-filter: var(--fx-glass-blur); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dialog-panel, .action-menu-content, [role="menu"], [role="listbox"] { background-color: var(--fx-raised); }
 }

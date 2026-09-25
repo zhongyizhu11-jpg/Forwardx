@@ -112,6 +112,20 @@
   --fx-accent-soft: rgb(62 164 236 / 14%);
   --fx-accent-fill: #0b74d1;
   --fx-accent-fill-foreground: #ffffff;
+  /*
+    主按钮、选中的分段项、选中的分类 chip：**不再是一块实心的蓝底白字**。真机反馈那三块
+    "画圈的按钮颜色不喜欢" —— 饱和的皇家蓝实底在一屏白纸上太重。改成 iOS 的 tinted 做法：
+    天蓝兑 16% 的淡底、天蓝的字、一圈天蓝兑 28% 的线。开关 / 复选 / 进度条这类「状态」控件
+    还是用上面的 --fx-accent-fill，那里实底是对的（滑块要有对比）。
+  */
+  --fx-primary-fill: rgb(62 164 236 / 16%);
+  --fx-primary-fill-hover: rgb(62 164 236 / 24%);
+  --fx-primary-text: #0b6ec6;
+  --fx-primary-stroke: rgb(62 164 236 / 28%);
+  /* 毛玻璃：顶栏、底部标签栏、分段控件、弹层用。底色半透明 + 背后模糊，见 workspace.css 的 .fx-glass */
+  --fx-glass: rgb(255 255 255 / 66%);
+  --fx-glass-strong: rgb(255 255 255 / 78%);
+  --fx-glass-blur: saturate(180%) blur(20px);
 
   /*
     ── 状态色 ──
@@ -452,6 +466,13 @@
   --fx-accent-soft: rgb(62 164 236 / 22%);
   --fx-accent-fill: #0e72bc;   /* 参考站深色主按钮 oklch(0.54 0.142 248.5)：炭灰上不刺 */
   --fx-accent-fill-foreground: #ffffff;
+  --fx-primary-fill: rgb(102 182 255 / 18%);
+  --fx-primary-fill-hover: rgb(102 182 255 / 26%);
+  --fx-primary-text: #8ec8ff;
+  --fx-primary-stroke: rgb(102 182 255 / 30%);
+  --fx-glass: rgb(38 38 38 / 66%);
+  --fx-glass-strong: rgb(42 42 42 / 78%);
+  --fx-glass-blur: saturate(160%) blur(20px);
 
   /* 状态色在暗底上要提亮，否则饱和度一样但看着发闷；`-text` 再亮一档给小字 */
   --fx-healthy: #4ade80;
