@@ -7,12 +7,12 @@ import {
   EntityCard,
   EntityFooter,
   EntityHeader,
-  EntityTag,
 } from "@/components/entity/EntityCard";
 import { HealthBadge } from "@/components/network/StatusDot";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
-import { isAgentUpgradeTimedOut } from "./hostDisplay";
+import { formatCpuPercent, isAgentUpgradeTimedOut } from "./hostDisplay";
 import { hostAddressText, hostRegionText } from "./hostDisplay";
+import { HostIdentityTags, HostOsAvatar, hostOsOf } from "./HostOsBadge";
 import { deriveHostVitals, type HostVitals } from "./useHostVitals";
 
 /**
@@ -26,8 +26,9 @@ import { deriveHostVitals, type HostVitals } from "./useHostVitals";
  *
  * 这张卡只留支撑「要不要点进去」这个决定所需的东西：
  *
- *   ● 名字          状态点 + 名字 + Agent 版本
- *     地区 · IP      一行注脚
+ *   [图标] 名字      发行版图标（右下角挂状态点）+ 名字
+ *          Debian 12 · Agent v2.2.196   系统和版本号两枚标识
+ *          地区 · IP  一行注脚
  *   CPU/RAM/Disk    三条细占用条
  *   ↓ / ↑ 速率      两个数
  *   已运行 12d 5h   一行
@@ -204,7 +205,7 @@ function ResourceRow({ vitals }: { vitals: HostVitals }) {
   const unknown = vitals.cpuPercent === null;
   return (
     <div className="grid min-w-0 grid-cols-3 gap-1.5">
-      <SpecBlock icon={Cpu} label="CPU" value={pct(vitals.cpuPercent)} muted={unknown} />
+      <SpecBlock icon={Cpu} label="CPU" value={formatCpuPercent(vitals.cpuPercent, vitals.isOnline)} muted={unknown} />
       <SpecBlock icon={MemoryStick} label="内存" value={pct(vitals.memoryPercent)} muted={unknown} />
       <SpecBlock icon={HardDrive} label="磁盘" value={pct(vitals.diskPercent)} muted={unknown} />
     </div>
@@ -229,6 +230,7 @@ export default function HostSummaryCard(props: HostSummaryCardProps) {
   const vitals = deriveHostVitals(host, metrics, traffic);
 
   const name = String(host?.name || "-").trim() || "-";
+  const os = hostOsOf(host);
   const region = hostRegionText(host);
   const address = hostAddressText(host);
   const subtitle = [region, address].filter(Boolean).join(" · ");
@@ -263,12 +265,16 @@ export default function HostSummaryCard(props: HostSummaryCardProps) {
       }}
     >
       <EntityHeader
+        className="gap-3"
         health={vitals.health}
+        leading={<HostOsAvatar os={os} health={vitals.health} />}
         title={name}
+        /*
+          系统和 Agent 版本单独一行，不挤在名字右边：名字才是这张卡的主角，
+          两枚标识放名字旁边，长一点的名字就被截成「Tokyo-II…」。
+        */
+        meta={os.label || host?.agentVersion ? <HostIdentityTags os={os} agentVersion={host?.agentVersion} /> : null}
         subtitle={subtitle}
-        badges={
-          host?.agentVersion ? <EntityTag>v{String(host.agentVersion)}</EntityTag> : null
-        }
         trailing={
           /*
             离线才挂状态徽标。在线时那一列绿色徽标每行都有，说的全是同一件事，

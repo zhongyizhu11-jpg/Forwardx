@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/table";
 import {
   formatBytes,
+  formatCpuPercent,
   formatUptime,
   HostRegionBadge,
   metricUsageProgressClass,
@@ -259,7 +260,7 @@ function PublicHostCard({
               <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-label={item.label} />
               <Progress value={item.progress} className={metricUsageProgressClass(item.progress, isOnline)} />
               <span className="text-right font-medium tabular-nums">
-                {item.value === undefined ? "—" : item.value == null ? "∞" : formatPercent(item.value)}
+                {item.value === undefined ? "—" : item.value == null ? "∞" : item.key === "cpu" ? formatCpuPercent(item.value, isOnline) : formatPercent(item.value)}
               </span>
             </div>
           );
@@ -292,12 +293,15 @@ function PublicHostListResourceMetric({
   value,
   detail,
   isOnline,
+  formatValue = formatUsagePercent,
 }: {
   icon: LucideIcon;
   label: string;
   value: unknown;
   detail?: string;
   isOnline: boolean;
+  /** CPU 用它把在线时的 0 写成「<1%」（Agent 按整数上报，0 其实是不到 0.5%） */
+  formatValue?: (value: unknown) => string;
 }) {
   const percent = clampPercent(value);
   const progressValue = percent ?? 0;
@@ -309,7 +313,7 @@ function PublicHostListResourceMetric({
       <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <Icon className="h-3.5 w-3.5 shrink-0" />
         <span className="font-medium">{label}</span>
-        <span className="ml-auto font-semibold tabular-nums text-foreground">{formatUsagePercent(value)}</span>
+        <span className="ml-auto font-semibold tabular-nums text-foreground">{formatValue(value)}</span>
       </div>
       <Progress value={progressValue} className={progressClass} />
       {detail && (
@@ -408,7 +412,13 @@ function PublicHostTable({
                     </div>
                   </TableCell>
                   <TableCell className="px-3 py-3">
-                    <PublicHostListResourceMetric icon={Cpu} label="CPU" value={isOnline ? metric?.cpuUsage : undefined} isOnline={isOnline} />
+                    <PublicHostListResourceMetric
+                      icon={Cpu}
+                      label="CPU"
+                      value={isOnline ? metric?.cpuUsage : undefined}
+                      isOnline={isOnline}
+                      formatValue={(value) => (clampPercent(value) === null ? "--" : formatCpuPercent(value, isOnline))}
+                    />
                   </TableCell>
                   <TableCell className="px-3 py-3">
                     <PublicHostListResourceMetric icon={MemoryStick} label="RAM" value={isOnline ? metric?.memoryUsage : undefined} detail={isOnline ? memoryDetail : undefined} isOnline={isOnline} />

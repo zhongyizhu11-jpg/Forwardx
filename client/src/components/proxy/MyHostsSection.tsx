@@ -6,7 +6,7 @@ import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatBytes, formatUptime } from "@/components/hosts/hostDisplay";
+import { formatBytes, formatCpuPercent, formatUptime } from "@/components/hosts/hostDisplay";
 import { ProxyNodeRow, proxyNodeMetaText } from "@/components/proxy/ProxyNodeRow";
 import { clipboardNeedsManualCopy, copyTextFromElement } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
@@ -94,7 +94,7 @@ export default function MyHostsSection() {
     // 还没上报过就什么都不说 —— 拿一排 0 冒充「机器很闲」比空着更糟。
     if (!metric) return null;
     const parts = [
-      metric.cpuUsage == null ? "" : `CPU ${Math.round(Number(metric.cpuUsage))}%`,
+      metric.cpuUsage == null ? "" : `CPU ${formatCpuPercent(metric.cpuUsage, !!host.isOnline)}`,
       metric.memoryUsage == null ? "" : `内存 ${Math.round(Number(metric.memoryUsage))}%`,
       metric.diskUsed == null || metric.diskTotal == null
         ? ""

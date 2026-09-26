@@ -295,7 +295,7 @@ async function seedHosts(adminId: number) {
       ipv4: "192.0.2.21",
       entryIp: "hk-entry.dev.forwardx.local",
       tunnelEntryIp: "10.10.1.10",
-      osInfo: "Ubuntu 24.04 LTS",
+      osInfo: "Ubuntu 24.04.1 LTS",
       cpuInfo: "Intel Xeon Gold 6148",
       memoryTotal: 8 * 1024 ** 3,
       agentVersion: AGENT_VERSION,
@@ -329,7 +329,7 @@ async function seedHosts(adminId: number) {
       ipv6: "2001:db8:10::41d",
       entryIp: "jp-exit.dev.forwardx.local",
       tunnelEntryIp: "fd00:10:10::20",
-      osInfo: "Debian 12",
+      osInfo: "Debian GNU/Linux 12 (bookworm)",
       cpuInfo: "AMD EPYC 7763",
       memoryTotal: 16 * 1024 ** 3,
       agentVersion: AGENT_VERSION,
@@ -364,7 +364,7 @@ async function seedHosts(adminId: number) {
       ipv4: "198.51.100.16",
       entryIp: "sg-relay.dev.forwardx.local",
       tunnelEntryIp: "10.10.3.10",
-      osInfo: "AlmaLinux 9",
+      osInfo: "AlmaLinux 9.4 (Seafoam Ocelot)",
       cpuInfo: "Ampere Altra",
       memoryTotal: 12 * 1024 ** 3,
       agentVersion: AGENT_VERSION,
@@ -399,7 +399,7 @@ async function seedHosts(adminId: number) {
       ip: "203.0.113.18",
       ipv4: "203.0.113.18",
       entryIp: "us-backup.dev.forwardx.local",
-      osInfo: "Rocky Linux 9",
+      osInfo: "Rocky Linux 9.3 (Blue Onyx)",
       cpuInfo: "Intel Xeon E5",
       memoryTotal: 6 * 1024 ** 3,
       agentVersion: "2.2.124",
@@ -468,7 +468,8 @@ async function seedHostMetrics(hostIds: number[]) {
   const metricRows = [
     { cpuUsage: 18, memoryUsage: 42, memoryUsed: 3.4 * 1024 ** 3, swapUsage: 6, swapUsed: 180 * 1024 ** 2, swapTotal: 3 * 1024 ** 3, diskUsage: 36, diskUsed: 72 * 1024 ** 3, diskTotal: 200 * 1024 ** 3, uptime: 16 * 86400 + 5 * 3600, inSpeed: 8.42 * 1024 ** 2, outSpeed: 11.6 * 1024 ** 2 },
     { cpuUsage: 72, memoryUsage: 68, memoryUsed: 10.8 * 1024 ** 3, swapUsage: 18, swapUsed: 720 * 1024 ** 2, swapTotal: 4 * 1024 ** 3, diskUsage: 51, diskUsed: 122 * 1024 ** 3, diskTotal: 240 * 1024 ** 3, uptime: 42 * 86400 + 11 * 3600, inSpeed: 3.18 * 1024 ** 2, outSpeed: 24.9 * 1024 ** 2 },
-    { cpuUsage: 34, memoryUsage: 56, memoryUsed: 6.8 * 1024 ** 3, swapUsage: 3, swapUsed: 96 * 1024 ** 2, swapTotal: 2 * 1024 ** 3, diskUsage: 29, diskUsed: 58 * 1024 ** 3, diskTotal: 200 * 1024 ** 3, uptime: 5 * 86400 + 4 * 3600, inSpeed: 912 * 1024, outSpeed: 1.74 * 1024 ** 2 },
+    // 空闲的中转机：Agent 按整数上报，不到 0.5% 就是 0，面板要写成「<1%」
+    { cpuUsage: 0, memoryUsage: 56, memoryUsed: 6.8 * 1024 ** 3, swapUsage: 3, swapUsed: 96 * 1024 ** 2, swapTotal: 2 * 1024 ** 3, diskUsage: 29, diskUsed: 58 * 1024 ** 3, diskTotal: 200 * 1024 ** 3, uptime: 5 * 86400 + 4 * 3600, inSpeed: 912 * 1024, outSpeed: 1.74 * 1024 ** 2 },
     { cpuUsage: 0, memoryUsage: 0, memoryUsed: 0, swapUsage: 0, swapUsed: 0, swapTotal: 2 * 1024 ** 3, diskUsage: 47, diskUsed: 94 * 1024 ** 3, diskTotal: 200 * 1024 ** 3, uptime: 0, inSpeed: 0, outSpeed: 0 },
   ];
   const counters = [
