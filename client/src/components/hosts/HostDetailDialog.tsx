@@ -4,10 +4,11 @@ import { formatBytes } from "@shared/formatBytes";
 import { HOST_TRAFFIC_MEASURE_MODE_LABELS, normalizeHostTrafficMeasureMode } from "@shared/hostTrafficQuota";
 import { EntityActions } from "@/components/entity/EntityActions";
 import { Metric, MetricGroup, ResourceMeter } from "@/components/entity/Metric";
-import { HealthBadge, StatusDot } from "@/components/network/StatusDot";
+import { HealthBadge } from "@/components/network/StatusDot";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { hostAddressText, hostRegionText } from "./hostDisplay";
+import { formatCpuPercent, hostAddressText, hostRegionText } from "./hostDisplay";
+import { HostOsAvatar, HostOsGlyph, hostOsOf } from "./HostOsBadge";
 import { buildHostActions, type HostSummaryCardProps } from "./HostSummaryCard";
 import { useHostVitals } from "./useHostVitals";
 
@@ -19,7 +20,7 @@ import { useHostVitals } from "./useHostVitals";
  *
  * 分段按「问的是什么」来，不是按数据来源：
  *
- *   概览    它是谁、在哪、什么版本、跑了多久
+ *   概览    它是谁、在哪、什么系统、什么版本、跑了多久
  *   资源    CPU / 内存 / 磁盘，带绝对值不只是百分比
  *   流量    瞬时速率、系统累计、计费口径的用量与配额
  *
@@ -67,6 +68,7 @@ export default function HostDetailDialog(props: HostDetailDialogProps) {
   if (!host) return null;
 
   const name = String(host.name || "-").trim() || "-";
+  const os = hostOsOf(host);
   const measureMode = normalizeHostTrafficMeasureMode(host.trafficMeasureMode);
 
   const confirmDelete = async () => {
@@ -93,27 +95,43 @@ export default function HostDetailDialog(props: HostDetailDialogProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex min-w-0 items-center gap-2">
-            <StatusDot health={vitals.health} size="large" />
-            <span className="min-w-0 truncate">{name}</span>
-          </DialogTitle>
-          <DialogDescription className="flex flex-wrap items-center gap-2">
-            <HealthBadge health={vitals.health} />
-            {/*
-              上报时间只在离线时给。在线时它每隔几秒变一次，是噪音；
-              离线时它才是那个关键问题的答案 —— 「它是什么时候没的」。
-            */}
-            {!vitals.isOnline && vitals.lastReportedText ? (
-              <span className="text-meta text-muted-foreground">最后上报 {vitals.lastReportedText}</span>
-            ) : null}
-          </DialogDescription>
+          {/* 发行版图标顶替名字左边的状态点，和列表卡一样；状态点挂在图标右下角 */}
+          <div className="flex min-w-0 items-center gap-3">
+            <HostOsAvatar os={os} health={vitals.health} size="lg" />
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <DialogTitle className="min-w-0 truncate">{name}</DialogTitle>
+              <DialogDescription className="flex flex-wrap items-center gap-2">
+                <HealthBadge health={vitals.health} />
+                {/*
+                  上报时间只在离线时给。在线时它每隔几秒变一次，是噪音；
+                  离线时它才是那个关键问题的答案 —— 「它是什么时候没的」。
+                */}
+                {!vitals.isOnline && vitals.lastReportedText ? (
+                  <span className="text-meta text-muted-foreground">最后上报 {vitals.lastReportedText}</span>
+                ) : null}
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
         <div className="flex min-w-0 flex-col gap-4">
           <Section title="概览">
+            <Row
+              label="系统"
+              value={
+                os.full ? (
+                  <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 align-middle" title={os.full}>
+                    <HostOsGlyph os={os} className="h-3.5 w-3.5" />
+                    <span className="min-w-0 truncate">{os.full}</span>
+                  </span>
+                ) : (
+                  "未上报"
+                )
+              }
+            />
+            <Row label="Agent" value={host.agentVersion ? `v${host.agentVersion}` : "—"} />
             <Row label="地址" value={hostAddressText(host) || "—"} />
             <Row label="地区" value={hostRegionText(host) || "—"} />
-            <Row label="Agent" value={host.agentVersion ? `v${host.agentVersion}` : "—"} />
             <Row label={vitals.uptimeLabel} value={vitals.uptimeText} />
           </Section>
 
@@ -122,7 +140,7 @@ export default function HostDetailDialog(props: HostDetailDialogProps) {
               百分比配绝对值。只给 25% 说不清是 2GB 里的 25% 还是 128GB 里的
               25%，而这两件事该做的处理完全不同。
             */}
-            <ResourceMeter label="CPU" percent={vitals.cpuPercent} />
+            <ResourceMeter label="CPU" percent={vitals.cpuPercent} valueText={formatCpuPercent(vitals.cpuPercent, vitals.isOnline)} />
             <ResourceMeter label="内存" percent={vitals.memoryPercent} />
             <Row label="" value={sizePair(vitals.memoryUsed, vitals.memoryTotal)} />
             <ResourceMeter label="磁盘" percent={vitals.diskPercent} />

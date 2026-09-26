@@ -28,7 +28,6 @@ import {
   Monitor,
   MoreHorizontal,
   Pencil,
-  Server,
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, type ReactNode } from "react";
@@ -39,8 +38,11 @@ import {
   hostTrafficUsedBytes,
   normalizeHostTrafficMeasureMode,
 } from "@shared/hostTrafficQuota";
+import { parseHostOs } from "@shared/hostOs";
+import { HostOsGlyph } from "./HostOsBadge";
 import {
   formatBytes,
+  formatCpuPercent,
   formatUptime,
   HostRegionBadge,
   hostPrimaryAddressText,
@@ -432,6 +434,8 @@ export default function HostCard({
   const remainingTimeLabel = formatRemainingTime(host.purchasedAt, host.stoppedAt);
   const hostName = String(host.name || "-").trim() || "-";
   const osInfoText = compactHostOsInfo(host.osInfo);
+  const hostOs = parseHostOs(host.osInfo);
+  const cpuUsageLabel = formatCpuPercent(latestMetric?.cpuUsage ?? 0, isOnline);
   const remainingTimeClass = remainingTimeLabel === "已到期"
     ? "border-destructive/30 bg-destructive/10 text-destructive"
     : remainingTimeLabel === "不足1天"
@@ -460,9 +464,9 @@ export default function HostCard({
       label: "CPU",
       icon: Cpu,
       value: cpuUsage,
-      valueLabel: `${cpuUsage}%`,
+      valueLabel: cpuUsageLabel,
       progressClass: metricUsageProgressClass(cpuUsage, isOnline),
-      tooltip: host.cpuInfo ? `CPU 使用率 ${cpuUsage}%\n${host.cpuInfo}` : `CPU 使用率 ${cpuUsage}%`,
+      tooltip: host.cpuInfo ? `CPU 使用率 ${cpuUsageLabel}\n${host.cpuInfo}` : `CPU 使用率 ${cpuUsageLabel}`,
     },
     {
       key: "memory",
@@ -667,7 +671,7 @@ export default function HostCard({
                 <span className={isOnline ? "" : "font-medium text-destructive"}>{isOnline ? "在线" : "离线"}</span>
               </div>
               {!compact && <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-                <Server className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <HostOsGlyph os={hostOs} className="h-3.5 w-3.5" />
                 <span className="min-w-0 truncate" title={host.osInfo || ""}>{osInfoText}</span>
               </div>}
             </div>
@@ -715,7 +719,7 @@ export default function HostCard({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground flex items-center gap-1"><Cpu className="h-3 w-3" /> CPU</span>
-                <span className="font-medium tabular-nums">{latestMetric.cpuUsage ?? 0}%</span>
+                <span className="font-medium tabular-nums">{cpuUsageLabel}</span>
               </div>
               <p className="truncate text-[11px] text-muted-foreground" title={host.cpuInfo || ""}>
                 {host.cpuInfo || "未上报 CPU 型号"}

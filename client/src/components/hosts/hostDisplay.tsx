@@ -43,6 +43,22 @@ export function metricUsageProgressClass(value: unknown, isOnline: boolean) {
   return "h-1.5 bg-muted [&>div]:bg-[var(--fx-healthy)]";
 }
 
+/**
+ * CPU 占用的文字。
+ *
+ * Agent 拿两次上报之间 /proc/stat 的差算平均占用，再四舍五入成整数上报，数据库也按整数存。
+ * 空闲的转发机常年只有零点几个百分点，四舍五入就是 0 —— 在线的机器写「0%」读起来像
+ * 「没在统计」，其实是「不到 0.5%」，所以写成「<1%」。离线或拿不到数据写「—」。
+ */
+export function formatCpuPercent(value: unknown, online = true): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  const rounded = Math.round(Math.min(100, Math.max(0, number)));
+  if (online && rounded < 1) return "<1%";
+  return `${rounded}%`;
+}
+
 export function formatUptime(seconds: number | null | undefined): string {
   if (!seconds) return "-";
   const d = Math.floor(seconds / 86400);
