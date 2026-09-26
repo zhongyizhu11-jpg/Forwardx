@@ -226,6 +226,70 @@ test("essential migration skips rebuildable history while SQLite direct migratio
   }
 });
 
+test("快照不带设置表里的运行时缓存：导出时去掉，导入时也不收", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-runtime-cache-migration-"));
+  const script = String.raw`
+    import assert from "node:assert/strict";
+    import path from "node:path";
+    import { pathToFileURL } from "node:url";
+    const moduleUrl = (file) => pathToFileURL(path.join(process.cwd(), file)).href;
+    const runtime = await import(moduleUrl("server/dbRuntime.ts"));
+    const schema = await import(moduleUrl("server/dbSchema.ts"));
+    const settings = await import(moduleUrl("server/repositories/settingsRepository.ts"));
+    const migration = await import(moduleUrl("server/migration.ts"));
+    // 出口报的端口按这个面板的主机、规则 ID 记（server/tunnelExitPorts），换个面板就对不上。
+    const cacheKey = settings.RUNTIME_CACHE_SETTING_PREFIX + "tunnelExitPorts:1";
+    const cacheValue = JSON.stringify([{ ruleId: 1, kind: "scheduler", port: 41002, entryHostIds: [2] }]);
+    try {
+      await runtime.connectDatabase({ type: "sqlite", sqlite: { path: process.env.FORWARDX_SOURCE_DB } });
+      await schema.ensureDatabaseSchema();
+      await settings.setSetting(cacheKey, cacheValue);
+      await settings.setSetting("trafficBillingEnabled", "true");
+      const exported = await migration.exportMigrationSnapshot("https://old.example.com", { dataScope: "full" });
+      const exportedKeys = exported.tables.system_settings.map((row) => String(row.key));
+      assert.ok(exportedKeys.includes("trafficBillingEnabled"));
+      assert.deepEqual(exportedKeys.filter((key) => key.startsWith(settings.RUNTIME_CACHE_SETTING_PREFIX)), []);
+      await runtime.closeDatabase();
+
+      await runtime.connectDatabase({ type: "sqlite", sqlite: { path: process.env.FORWARDX_TARGET_DB } });
+      await schema.ensureDatabaseSchema();
+      // 别处来的快照里带着也不收。
+      const result = await migration.importMigrationSnapshot({
+        version: 1,
+        exportedAt: Date.now(),
+        tables: {
+          system_settings: [
+            { key: "trafficBillingEnabled", value: "true" },
+            { key: cacheKey, value: cacheValue },
+          ],
+        },
+      });
+      assert.equal(result.success, true);
+      const keys = (await runtime.queryRaw("SELECT key FROM system_settings")).map((row) => String(row.key));
+      assert.ok(keys.includes("trafficBillingEnabled"));
+      assert.deepEqual(keys.filter((key) => key.startsWith(settings.RUNTIME_CACHE_SETTING_PREFIX)), []);
+    } finally {
+      await runtime.closeDatabase();
+    }
+  `;
+  try {
+    const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        DATABASE_TYPE: "sqlite",
+        FORWARDX_SOURCE_DB: path.join(directory, "source.db"),
+        FORWARDX_TARGET_DB: path.join(directory, "target.db"),
+      },
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("structured restore batches 3,000 rules, isolates invalid rows, and preserves cumulative traffic", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-structured-migration-"));
   const databasePath = path.join(directory, "target.db");
