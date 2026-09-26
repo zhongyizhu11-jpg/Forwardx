@@ -36,6 +36,7 @@ export const MIGRATION_TABLES = [
   "forward_groups",
   "forward_group_members",
   "forward_group_events",
+  "forward_rule_route_events",
   "proxy_nodes",
   "proxy_inbounds",
   "proxy_inbound_users",
@@ -273,6 +274,12 @@ const tables: TableDef[] = [
       c("failoverStrategy", "varchar", { length: 32, notNull: true, default: "fallback" }),
       c("failoverSeconds", "int", { notNull: true, default: 60 }), c("recoverSeconds", "int", { notNull: true, default: 120 }),
       c("autoFailback", "bool", { notNull: true, default: true }),
+      c("routeMode", "varchar", { length: 24 }), c("routePaths", "text"),
+      c("routeSwitchMode", "varchar", { length: 16, notNull: true, default: "smooth" }),
+      c("routeFailureThreshold", "int", { notNull: true, default: 3 }),
+      c("routeScoreMargin", "int", { notNull: true, default: 10 }), c("routeScoreHoldSeconds", "int", { notNull: true, default: 180 }),
+      c("routePrewarmSeconds", "int", { notNull: true, default: 300 }),
+      c("routeParentRuleId", "int"), c("routePathKey", "varchar", { length: 32 }), c("routeHopIndex", "int"),
       c("disabledByTunnel", "bool", { notNull: true, default: false }), c("disabledByGroup", "bool", { notNull: true, default: false }),
       c("disabledByUser", "bool", { notNull: true, default: false }),
       c("isRunning", "bool", { notNull: true, default: false }), c("pendingDelete", "bool", { notNull: true, default: false }),
@@ -281,7 +288,7 @@ const tables: TableDef[] = [
       c("userId", "int", { notNull: true }), c("createdAt", "epoch", { notNull: true, default: "now" }),
       c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],
-    indexes: [["hostId"], ["hostId", "createdAt"], ["hostId", "sourcePort", "pendingDelete", "isEnabled"], ["userId"], ["userId", "sortOrder"], ["userId", "createdAt"], ["userId", "pendingDelete", "createdAt"], ["tunnelId"], ["forwardGroupId"], ["forwardGroupId", "isForwardGroupTemplate", "pendingDelete"], ["forwardGroupRuleId"], ["forwardGroupRuleId", "pendingDelete"], ["forwardGroupMemberId"], ["forwardGroupMemberId", "pendingDelete"], ["proxyNodeId"], ["userId", "proxyNodeId", "pendingDelete"]],
+    indexes: [["hostId"], ["hostId", "createdAt"], ["hostId", "sourcePort", "pendingDelete", "isEnabled"], ["userId"], ["userId", "sortOrder"], ["userId", "createdAt"], ["userId", "pendingDelete", "createdAt"], ["tunnelId"], ["forwardGroupId"], ["forwardGroupId", "isForwardGroupTemplate", "pendingDelete"], ["forwardGroupRuleId"], ["forwardGroupRuleId", "pendingDelete"], ["forwardGroupMemberId"], ["forwardGroupMemberId", "pendingDelete"], ["proxyNodeId"], ["userId", "proxyNodeId", "pendingDelete"], ["routeParentRuleId"], ["routeParentRuleId", "pendingDelete"]],
   },
   {
     // 客户端订阅的节点模板；与计费的 subscription_plans 无关，命名一律用 proxy 前缀。
@@ -452,6 +459,17 @@ const tables: TableDef[] = [
       c("createdAt", "epoch", { notNull: true, default: "now" }),
     ],
     indexes: [["groupId", "createdAt"], ["createdAt", "groupId"], ["memberId"]],
+  },
+  {
+    name: "forward_rule_route_events",
+    columns: [
+      c("id", "id"), c("ruleId", "int", { notNull: true }), c("kind", "varchar", { length: 24, notNull: true }),
+      c("fromKey", "varchar", { length: 32 }), c("toKey", "varchar", { length: 32 }),
+      c("fromLabel", "text"), c("toLabel", "text"), c("reason", "text"),
+      c("score", "int"), c("latencyMs", "int"),
+      c("createdAt", "epoch", { notNull: true, default: "now" }),
+    ],
+    indexes: [["ruleId", "createdAt"], ["createdAt"]],
   },
   {
     name: "tunnels",

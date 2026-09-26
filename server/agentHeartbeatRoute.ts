@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
-import { parseFailoverEndpoint, parseFailoverTargets } from "../shared/failoverTargets";
-import { parseFailoverSchedule } from "../shared/failoverSchedule";
-import { readFailoverPin } from "../shared/failoverPin";
+import { parseFailoverTargets } from "../shared/failoverTargets";
+import { routeAgentStrategy, routeGroupOf, routePathDial } from "../shared/routeGroup";
+import { routeHopDownHints } from "./routeGroupStats";
 import { ingestFailoverLineReports } from "./failoverLineReports";
 import * as db from "./db";
 import { AGENT_VERSION } from "./_core/systemRouter";
@@ -1408,6 +1408,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       hostId: logHostId,
       events: req.body?.failoverEvents,
       snapshot: req.body?.failoverActive,
+      stats: req.body?.failoverStats,
       loadHostRules: () => db.getForwardRuleFailoverLinesForAgent(logHostId) as Promise<any[]>,
     }).catch((error) => {
       appendPanelLog("warn", `[Failover] host=${logHostId} 线路上报处理失败: ${String((error as any)?.message || error)}`);
@@ -2012,7 +2013,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       runtimeBool(rule?.failoverEnabled)
       && rule.forwardType === "gost"
       && normalizeForwardRuleProtocol(rule.protocol) === "tcp"
-      && parseFailoverTargets(rule.failoverTargets).length > 0
+      && (routeGroupOf(rule)?.paths.length || 0) >= 2
     );
     const chainMemberAddress = (member: any, hostLike: any) => {
       const configured = String(member?.connectHost || "").trim();
@@ -2640,50 +2641,65 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         if (owner?.role !== "admin") return undefined;
       }
       if (rule.protocol !== "tcp") return undefined;
-      const backupTargets = parseFailoverTargets(rule.failoverTargets);
-      if (backupTargets.length === 0) return undefined;
       /*
-        钉子怎么读交给 shared/failoverPin：这一列没钉时是 null，而上一版在这里先
-        Number() 再判断 —— Number(null) 是 0，于是每一条没钉过的规则都被下发成
-        「钉在主线路、一直钉着」，时段表和自动择优在机器上从来没生效过。
-        已经过期的钉子也不下发：面板这边早就该当它不存在了。
+        线路组（shared/routeGroup）：一条路径对入口 Agent 来说就是一个要拨的地址（dial）。
+        没有中转的路径拨落地；有中转的拨第一跳上那条中继规则的入口（server/routeGroups.ts
+        解析后写在 routePaths 里）。老规则（routePaths 为空）从 failover* 列推出来，和上一版
+        下发的一模一样。
+
+        解析不出来的路径（中转离线、没端口）**照样占一个下标**，只是标成不可用：Agent 那边
+        健康、样本、连接都按下标记，少发一条会让后面的全部错位。中转跳探测发现中间断了
+        的路径也是这样标（routeHopDownHints）—— 入口 Agent 自己只探得到第一跳。
+
+        钉子、时段表、参数全部从 routePolicyOf 读：它认 routeMode 那几列，也认老列，读法
+        只有一份。没钉住时 pinnedIndex 传 null 而不是省略字段：Agent 那边是指针，null 明确
+        表示「交回自动」。
       */
-      const failoverPin = (source: any) => readFailoverPin(source, { lineCount: backupTargets.length + 1 });
-      const mainProbeFields = (source: any) => {
-        const parsed = parseFailoverEndpoint(source?.failoverProbeTarget);
-        if (!parsed || "error" in parsed) return {};
-        return { probeIp: parsed.host, probePort: parsed.port };
-      };
+      const routeRule = { ...rule, targetIp: processTarget(rule) };
+      const group = routeGroupOf(routeRule);
+      if (!group || group.paths.length < 2) return undefined;
+      const { paths, policy } = group;
+      const hints = routeHopDownHints(Number(rule.id), paths);
+      const targets = paths.map((path) => {
+        const dial = routePathDial(path, routeRule);
+        if (!dial) {
+          return { targetIp: "127.0.0.1", targetPort: 1, weight: path.weight, down: true, downReason: path.issue || "path unresolved" };
+        }
+        const hint = hints.get(path.key);
+        return {
+          targetIp: dial.ip,
+          targetPort: dial.port,
+          // 每条路径可以有自己的探测目标（探落地而不是探中转），见 shared/failoverTargets 里为什么需要它。
+          ...(path.probe ? { probeIp: path.probe.ip, probePort: path.probe.port } : {}),
+          weight: path.weight,
+          ...(hint?.down ? { down: true, downReason: hint.reason } : {}),
+        };
+      });
       const failoverProxyEnabled = proxyProtocolEnabled(rule, options?.proxyDirection || "send");
-      const pin = failoverPin(rule);
+      const pin = policy.pin;
       return {
         enabled: true,
         listenPort: Number(options?.listenPort || rule.sourcePort || 0),
         bindAddress: options?.bindAddress || "127.0.0.1",
         protocol: rule.protocol || "tcp",
-        strategy: ["round_robin", "random", "ip_hash", "fallback"].includes(String(rule.failoverStrategy || ""))
-          ? String(rule.failoverStrategy)
-          : "fallback",
-        targets: [
-          // 主线路的探测目标单独存一列（备用线路的存在各自那一项里），
-          // 见 shared/failoverTargets 里为什么需要它。
-          { targetIp: processTarget(rule), targetPort: Number(rule.targetPort), ...mainProbeFields(rule) },
-          ...backupTargets,
-        ],
-        failoverSeconds: Number(rule.failoverSeconds || 60),
-        recoverSeconds: Number(rule.recoverSeconds || 120),
-        autoFailback: rule.autoFailback !== false,
+        // 权重负载按它的分法（按权重 / 轮流 / 随机 / 按访客），其余模式都是主备（fallback）。
+        strategy: routeAgentStrategy(policy),
+        targets,
+        failoverSeconds: policy.failoverSeconds,
+        recoverSeconds: policy.recoverSeconds,
+        autoFailback: policy.autoFailback,
         // 时段表在 Agent 本地判定：面板挂了、网络断了，晚高峰照样得切。
-        schedule: parseFailoverSchedule(rule.failoverSchedule) || undefined,
-        minHoldSeconds: Math.max(0, Math.floor(Number(rule.failoverMinHoldSeconds || 0))),
-        // 人工钉住：压过时段表，但钉住的那条挂了仍然往下找。
-        //
-        // 没钉住时传 null 而不是省略字段，也不是 -1：Agent 那边这个字段是指针，
-        // null 明确表示「交回自动」。省略的话老规格里的旧值会留着，取消钉住这个
-        // 动作会静默失效。
+        schedule: policy.schedule || undefined,
+        minHoldSeconds: policy.minHoldSeconds,
         pinnedIndex: pin ? pin.index : null,
         pinnedUntil: pin?.untilMs ?? 0,
-        preferFastest: !!rule.failoverPreferFastest,
+        preferFastest: policy.mode === "smart" || policy.mode === "hybrid",
+        // 2.2.198 起的切换保护和计划切换预检；老 Agent 不认这几个字段，照老规矩切。
+        failureThreshold: policy.failureThreshold,
+        scoreMargin: policy.scoreMargin,
+        scoreHoldSeconds: policy.scoreHoldSeconds,
+        prewarmSeconds: policy.prewarmSeconds,
+        switchMode: policy.switchMode,
         // The local failover process is another hop and must preserve the header
         // generated by either the entry side or the tunnel exit bridge.
         proxyProtocolReceive: failoverProxyEnabled,

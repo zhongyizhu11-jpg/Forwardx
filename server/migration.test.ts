@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   buildMigrationRuntimeExpectations,
   pruneMigrationSnapshotForPanelBackup,
+  remapRoutePathHosts,
   type MigrationImportedIds,
   type MigrationSnapshot,
 } from "./migration";
@@ -486,4 +487,26 @@ test("migration approval binds the selected data scope and SQLite transfer reque
     : null;
   assert.equal(takeover?.dataScope, "full");
   assert.equal(takeover?.directSqliteRequested, true);
+});
+
+test("导入快照时线路组路径里的中转按主机 ID 映射走", () => {
+  /*
+    paths[].hops 每一项都是一台中转机的 ID。其余主机引用都过了映射，这一列是 JSON，
+    照抄过来的话这些跳指向导入库里另一台机器：启动时的中继修复会在错误的机器上建中继，
+    或者整条路径找不到主机而失效 —— 用户看到的是「线路组莫名其妙不通了」。
+  */
+  const maps = { hosts: new Map([[1, 101], [2, 102]]) } as any;
+  const paths = [
+    { key: "a", name: "主线路", hops: [1, 2], dest: null, weight: 50, probe: null, dial: null },
+    { key: "b", name: "备用线路", hops: [], dest: { ip: "198.51.100.9", port: 443 }, weight: 50, probe: null, dial: null },
+  ];
+  const remapped = JSON.parse(String(remapRoutePathHosts(JSON.stringify(paths), maps)));
+  assert.deepEqual(remapped.map((path: any) => path.hops), [[101, 102], []]);
+  assert.equal(remapped[1].dest.ip, "198.51.100.9", "落地地址照旧");
+  assert.equal(remapRoutePathHosts(null, maps), null, "没有线路组的规则照旧是 null");
+  assert.throws(
+    () => remapRoutePathHosts(JSON.stringify([{ key: "a", name: "A", hops: [7], dest: null, weight: 50 }]), maps),
+    /依赖数据缺失/,
+    "快照里缺这台中转就报错，不留一个错的主机 ID",
+  );
 });

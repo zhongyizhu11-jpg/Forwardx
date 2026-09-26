@@ -39,7 +39,7 @@ DDNS Failover · Latency Probe · Topology · Traffic · Client Subscription
 | **Path** | 两个节点之间的关系 | 连线 | `PathEdge` / `NetworkPath` |
 | **Flow** | 流量的方向 | 箭头、从上到下 / 从左到右的顺序 | `NetworkPath` |
 | **Group** | 一组节点或一组线路 | 容器（缩进、分支符、浅色带） | `PathBranch` |
-| **Policy** | 决定走哪条的条件 | 条件行 + 当前生效项高亮 | `RoutePolicyPanel` / `FailoverPolicyFields` / `GroupFailoverPolicyFields` |
+| **Policy** | 决定走哪条的条件 | 条件行 + 当前生效项高亮 | `RouteGroupPanel` / `RouteGroupFields` / `GroupFailoverPolicyFields` |
 | **Health** | 现在好不好 | **颜色 + 线型**，不是文字 | `StatusDot` / `HealthBadge` |
 | **Metric** | 数值反馈 | 数字大、标签和单位小 | `Metric` / `PathMetric` |
 
@@ -161,7 +161,9 @@ shared/routePolicy.ts            策略模型：首选 / 实际 / 哪一层在�
 shared/failoverPin.ts            人工钉住怎么读（null 不是 0）
 features/rules/RoutePolicySheet  RoutePolicyPanel · RoutePolicySheet（规则卡、转发组卡片上点开）
 features/rules/PolicyBlocks      PolicyGroup · ConditionBlock（编辑框里「按什么选 / 什么时候切」的画法）
-features/rules/FailoverPolicyFields      规则编辑框里的主备那一块
+features/rules/RouteGroupFields          规则编辑框里的线路组那一块（路径、中转、六种策略模板、高级策略）
+features/rules/RouteGroupSheet           RouteGroupPanel · RouteGroupSheet（当前 / 备用路径、调度计划、最近切换）
+shared/routeGroup.ts             线路组模型：路径、六种模式、模板、校验，全站唯一一份
 features/links/GroupFailoverPolicyFields 转发组编辑框里的故障转移那一块
 ```
 

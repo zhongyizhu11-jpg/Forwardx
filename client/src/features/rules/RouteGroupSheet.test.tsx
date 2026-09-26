@@ -1,0 +1,168 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { newRouteGroupDraft, routeGroupRuleFields, routePolicyOf, type RouteGroup } from "@shared/routeGroup";
+import { describeRoutePolicy } from "@shared/routePolicy";
+import { RouteGroupPanel, type RouteEvent, type RouteStatus, type RouteStatusPath } from "./RouteGroupSheet";
+
+// 2026-09-22（星期二）上海 20:00：在「工作日 18:00–01:00」里。
+const NOW = Date.UTC(2026, 8, 22, 12, 0, 0);
+const TZ = "Asia/Shanghai";
+const noop = () => {};
+
+const draft = newRouteGroupDraft({ timezone: TZ });
+const group: RouteGroup = {
+  paths: [
+    { ...draft.paths[0], hops: [2], dial: { ip: "203.0.113.2", port: 25311 } },
+    { ...draft.paths[1], name: "备用线路", hops: [3, 2], dest: { ip: "10.95.0.11", port: 443 }, dial: { ip: "203.0.113.3", port: 25312 } },
+  ],
+  policy: { ...draft.policy, mode: "hybrid", schedule: { timezone: TZ, windows: [{ days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1 }] } },
+};
+const rule = {
+  failoverEnabled: true,
+  targetIp: "10.95.0.10",
+  targetPort: 443,
+  ...routeGroupRuleFields(group, { targetIp: "10.95.0.10", targetPort: 443 }),
+  failoverActiveTarget: "203.0.113.3:25312",
+  failoverActiveAt: new Date(NOW - 2 * 3_600_000),
+};
+
+function path(index: number, patch: Partial<RouteStatusPath> = {}): RouteStatusPath {
+  const source = group.paths[index];
+  return {
+    key: source.key,
+    index,
+    letter: index === 0 ? "A" : "B",
+    name: source.name,
+    hops: source.hops.map((hostId, hopIndex) => ({
+      hostId,
+      name: hostId === 2 ? "JP relay 02" : "SG relay 03",
+      port: 25310 + hopIndex,
+      running: true,
+      enabled: true,
+      ok: true,
+      latencyMs: 18 + hopIndex * 10,
+      consecutiveFailures: 0,
+      probedAt: NOW - 20_000,
+      nextLabel: hopIndex === source.hops.length - 1 ? "落地" : "JP relay 02",
+    })),
+    dest: source.dest || { ip: "10.95.0.10", port: 443 },
+    dial: source.dial,
+    issue: null,
+    weight: 50,
+    probe: null,
+    score: index === 0 ? 93 : 81,
+    grade: { label: "优", tone: "healthy" },
+    latencyMs: index === 0 ? 42 : 61,
+    lossPct: index === 0 ? 0 : 0.4,
+    jitterMs: 5,
+    availabilityPct: 99.8,
+    healthy: true,
+    down: false,
+    downReason: "",
+    connections: index === 1 ? 12 : 0,
+    samples: 30,
+    active: index === 1,
+    prewarming: false,
+    ...patch,
+  };
+}
+
+function status(patch: Partial<RouteStatus> = {}, paths?: RouteStatusPath[]): RouteStatus {
+  return {
+    ruleId: 1,
+    policy: routePolicyOf(rule, { nowMs: NOW }),
+    paths: paths || [path(0), path(1)],
+    activeIndex: 1,
+    activeSince: NOW - 2 * 3_600_000,
+    prewarmIndex: -1,
+    agentReportedAt: NOW - 10_000,
+    agentStale: false,
+    agentVersion: "2.2.198",
+    agentSupportsScores: true,
+    requiredAgentVersion: "2.2.198",
+    ...patch,
+  };
+}
+
+const events: RouteEvent[] = [
+  { id: 3, kind: "switch", fromKey: group.paths[0].key, toKey: group.paths[1].key, fromLabel: "主线路", toLabel: "备用线路", reason: "schedule", reasonText: "按时段表", score: 81, latencyMs: 61, at: NOW - 2 * 3_600_000 },
+  { id: 2, kind: "precheck_failed", fromKey: null, toKey: group.paths[1].key, fromLabel: null, toLabel: "备用线路", reason: "precheck:relay down: SG relay 03", reasonText: "预检未通过：中转异常：SG relay 03", score: null, latencyMs: null, at: NOW - 26 * 3_600_000 },
+  { id: 1, kind: "prewarm", fromKey: null, toKey: group.paths[1].key, fromLabel: null, toLabel: "备用线路", reason: "schedule", reasonText: "按时段表", score: null, latencyMs: null, at: NOW - 26.1 * 3_600_000 },
+];
+
+function render(options: { status?: RouteStatus | null; events?: RouteEvent[]; canEdit?: boolean; host?: any } = {}) {
+  const policy = describeRoutePolicy(rule, { host: options.host ?? { isOnline: true, agentVersion: "2.2.198" }, nowMs: NOW, timeZone: TZ })!;
+  return renderToStaticMarkup(
+    <RouteGroupPanel
+      policy={policy}
+      status={options.status === undefined ? status() : options.status}
+      events={options.events ?? events}
+      canEdit={options.canEdit ?? true}
+      onPin={noop}
+      onUnpin={noop}
+      nowMs={NOW}
+      timeZone={TZ}
+    />,
+  );
+}
+
+test("四段都在：当前路径、备用路径、调度计划、最近切换；最后是应急人工指定", () => {
+  const html = render();
+  const order = ["当前路径", "备用路径", "调度计划", "最近切换", "应急人工指定"].map((header) => html.indexOf(`>${header}<`));
+  assert.ok(order.every((position) => position > 0), `少了一段：${order.join(",")}`);
+  assert.deepEqual([...order].sort((left, right) => left - right), order, "顺序就是从上往下");
+  assert.match(html, /现在走 备用线路，18:00 起/);
+});
+
+test("当前路径逐跳列出延迟和中继端口，整条路有评分和四个指标", () => {
+  const html = render();
+  assert.match(html, /B 备用线路/);
+  assert.match(html, /第 1 跳 · SG relay 03[^]*?中继 :25310[^]*?18ms/);
+  assert.match(html, /第 2 跳 · JP relay 02[^]*?中继 :25311[^]*?28ms/);
+  assert.match(html, /data-testid="route-score"[^>]*>81 良</);
+  assert.match(html, /data-testid="path-metrics"[^]*?延迟[^]*?61ms[^]*?丢包[^]*?0\.4%[^]*?抖动[^]*?5ms[^]*?可用率[^]*?99\.8%/);
+  assert.match(html, /12 连接/);
+});
+
+test("备用路径带评分、首选标记和用不了的原因", () => {
+  const html = render({ status: status({}, [path(0, { down: true, downReason: "中转异常：JP relay 02 → 落地", healthy: false, score: 0 }), path(1)]) });
+  assert.match(html, /A 主线路/);
+  assert.match(html, /中转异常：JP relay 02 → 落地/);
+  assert.match(html, /用不了的路径会被跳过/);
+  // 20:00 在时段里，首选是按时段表的 B，所以 A 不带「首选」。
+  assert.doesNotMatch(html, />首选</);
+});
+
+test("调度计划：策略模板、此刻起作用的那一行、切换保护、预热、旧连接", () => {
+  const html = render();
+  assert.match(html, /晚高峰优化 · 混合策略/);
+  assert.equal((html.match(/data-state="deciding"/g) || []).length, 1);
+  assert.match(html, /到点前 5 分钟先预热预检，预检不过不切/);
+  assert.match(html, /计划切换预热/);
+  assert.match(html, /旧连接[^]*?平滑切换/);
+  assert.match(html, /探测连续失败 3 次才算异常/);
+});
+
+test("最近切换：时间、从哪条到哪条、原因；计划切换未执行写明继续用原路径", () => {
+  const html = render();
+  assert.equal((html.match(/data-testid="route-event"/g) || []).length, 3);
+  assert.match(html, /切换[^]*?主线路 → 备用线路[^]*?按时段表 · 评分 81 良/);
+  assert.match(html, /计划切换未执行[^]*?预检未通过：中转异常：SG relay 03 · 继续使用原路径/);
+  assert.match(html, /9月21日 18:00/, "不是同一天的带日期");
+  assert.match(render({ events: [] }), /还没有记录/);
+});
+
+test("Agent 太旧时说清楚没有评分；状态没读到时不空着", () => {
+  const old = render({ status: status({ agentSupportsScores: false, agentVersion: "2.2.197" }) });
+  assert.match(old, /早于 2\.2\.198：没有评分、不预热预检、不按权重分/);
+  assert.match(render({ status: null }), /在读线路状态/);
+  const stale = render({ status: status({ agentStale: true, agentReportedAt: NOW - 20 * 60_000 }) });
+  assert.match(stale, /评分是 20 分钟前报的/);
+});
+
+test("不能改的人看不到人工指定", () => {
+  assert.doesNotMatch(render({ canEdit: false }), /应急人工指定|强制走一条/);
+  assert.match(render(), /强制走一条/);
+});

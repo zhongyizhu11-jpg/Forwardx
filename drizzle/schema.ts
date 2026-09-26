@@ -406,6 +406,34 @@ export const forwardRules = table("forward_rules", {
   failoverSeconds: int("failoverSeconds").notNull().default(60),
   recoverSeconds: int("recoverSeconds").notNull().default(120),
   autoFailback: boolean("autoFailback").notNull().default(true),
+  /*
+    线路组（一个入口 + 多条路径 + 一个调度策略）。
+    routePaths 是唯一的真源：一个 JSON 数组，第 0 条是主线路，每条都可以带
+    0～5 个中转主机（hops 存主机 id）和一个落地（为空就是规则本身的目标）。
+    老的 failover* 列由它派生（shared/routeGroup.ts legacyFailoverFields），
+    保存时一起写，这样没升级的 Agent 和旧代码照旧能跑。
+    routeMode 为空表示这条规则还是老式主备，只有 failover* 列。
+  */
+  routeMode: varchar("routeMode", { length: 24 }),
+  routePaths: text("routePaths"),
+  // 切换时对旧连接怎么办：smooth 不动、fast 只在故障切换时断、force 每次都断。
+  routeSwitchMode: varchar("routeSwitchMode", { length: 16 }).notNull().default("smooth"),
+  // 连续失败几次才算这条线坏了（一次失败不切）。
+  routeFailureThreshold: int("routeFailureThreshold").notNull().default(3),
+  // 智能择优：评分高出多少、持续多久才切。
+  routeScoreMargin: int("routeScoreMargin").notNull().default(10),
+  routeScoreHoldSeconds: int("routeScoreHoldSeconds").notNull().default(180),
+  // 计划切换提前多久预热并预检目标线路。
+  routePrewarmSeconds: int("routePrewarmSeconds").notNull().default(300),
+  /*
+    中转跳上自动生成的转发规则用这三列指回它属于哪条线路组规则的哪条路径
+    的第几跳。它们不出现在列表、配额和流量统计里，随父规则一起改和删。
+    故意不复用 forwardGroupRuleId / MemberId：那两列的完整性修复会把没有
+    转发组的行当孤儿回收。
+  */
+  routeParentRuleId: int("routeParentRuleId"),
+  routePathKey: varchar("routePathKey", { length: 32 }),
+  routeHopIndex: int("routeHopIndex"),
   disabledByTunnel: boolean("disabledByTunnel").notNull().default(false),
   disabledByGroup: boolean("disabledByGroup").notNull().default(false),
   disabledByUser: boolean("disabledByUser").notNull().default(false),
@@ -790,6 +818,27 @@ export const forwardGroupEvents = table("forward_group_events", {
 });
 export type ForwardGroupEvent = typeof forwardGroupEvents.$inferSelect;
 export type InsertForwardGroupEvent = typeof forwardGroupEvents.$inferInsert;
+
+/*
+  线路组的切换记录：谁切到谁、为什么、当时的评分。规则卡「最近切换」读它。
+  Agent 上报的事件先经 shared/routeGroup.ts 的 describeRouteReason 翻成人话
+  再入库，所以 reason 存的是 Agent 原话，展示时再翻。定期只留 72 小时。
+*/
+export const forwardRuleRouteEvents = table("forward_rule_route_events", {
+  id: serial("id"),
+  ruleId: int("ruleId").notNull(),
+  kind: varchar("kind", { length: 24 }).notNull(),
+  fromKey: varchar("fromKey", { length: 32 }),
+  toKey: varchar("toKey", { length: 32 }),
+  fromLabel: text("fromLabel"),
+  toLabel: text("toLabel"),
+  reason: text("reason"),
+  score: int("score"),
+  latencyMs: int("latencyMs"),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+});
+export type ForwardRuleRouteEvent = typeof forwardRuleRouteEvents.$inferSelect;
+export type InsertForwardRuleRouteEvent = typeof forwardRuleRouteEvents.$inferInsert;
 
 // ===== gost 隧道配置（两台公网 Agent 组建链路） =====
 export const tunnels = table("tunnels", {

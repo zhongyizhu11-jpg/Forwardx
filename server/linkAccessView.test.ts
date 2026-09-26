@@ -156,12 +156,17 @@ test("runtime gate disables revoked root resources without promoting expanded to
       const allowedGroup = { id: 102, userId: 2, hostId: 1, tunnelId: null, forwardGroupId: 20, isEnabled: true };
       const allowedHost = { id: 103, userId: 2, hostId: 2, tunnelId: null, forwardGroupId: null, isEnabled: true };
       const adminRule = { id: 104, userId: 1, hostId: 1, tunnelId: null, forwardGroupId: null, isEnabled: true };
+      // 线路组在中转机上的中继：主机权限被收回之后不能继续跑，否则流量还从那台机器上过。
+      const revokedRelay = { id: 105, userId: 2, hostId: 1, tunnelId: null, forwardGroupId: null, routeParentRuleId: 101, isEnabled: true };
+      const allowedRelay = { id: 106, userId: 2, hostId: 2, tunnelId: null, forwardGroupId: null, routeParentRuleId: 101, isEnabled: true };
       const gated = await access.gateForwardRulesForRuntime([
         revoked,
         allowedTunnel,
         allowedGroup,
         allowedHost,
         adminRule,
+        revokedRelay,
+        allowedRelay,
       ]);
 
       assert.equal(revoked.isEnabled, true, "the saved rule must not be mutated");
@@ -172,7 +177,10 @@ test("runtime gate disables revoked root resources without promoting expanded to
       assert.strictEqual(gated[2], allowedGroup);
       assert.strictEqual(gated[3], allowedHost);
       assert.strictEqual(gated[4], adminRule);
-      assert.equal(gated.slice(1).some((rule) => rule.resourceAccessDenied), false);
+      assert.equal(gated[5].isEnabled, false, "中转机被收回之后，线路组的中继也要停");
+      assert.equal(gated[5].resourceAccessDenied, true);
+      assert.strictEqual(gated[6], allowedRelay);
+      assert.equal(gated.slice(1, 5).some((rule) => rule.resourceAccessDenied), false);
     } finally {
       await runtime.closeDatabase().catch(() => undefined);
     }

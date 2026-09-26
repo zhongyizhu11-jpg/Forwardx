@@ -1,13 +1,25 @@
-import { describeFailoverActiveLine, failoverLineEndpoints, failoverLineLabel } from "./failoverActiveLine";
-import { readFailoverPin, type FailoverPin } from "./failoverPin";
+import { describeFailoverActiveLine, failoverLineEndpoints } from "./failoverActiveLine";
+import type { FailoverPin } from "./failoverPin";
 import { defaultHealthCheckTarget, normalizeForwardGroupHealthCheckMethod } from "./forwardGroupHealthCheck";
 import {
   describeFailoverScheduleDays,
   failoverScheduleWindowIndexAt,
-  parseFailoverSchedule,
   parseScheduleMinutes,
 } from "./failoverSchedule";
 import type { NetworkHealth } from "./networkHealth";
+import {
+  ROUTE_GROUP_AGENT_VERSION,
+  ROUTE_SWITCH_MODE_INFO,
+  describeRouteIssue,
+  routeAgentStrategy,
+  routePathLabel,
+  routePathsOf,
+  routePolicyOf,
+  routeWeightShares,
+  type RouteGroupRule,
+  type RouteMode,
+  type RouteSpread,
+} from "./routeGroup";
 import { timestampMillis } from "./timestamp";
 import { isAgentVersionAtLeast } from "./version";
 
@@ -40,7 +52,8 @@ export const ROUTE_POLICY_AGENT_VERSION = "2.2.196";
 /** 每次心跳报「现在走哪条」：Agent 2.2.197 起。 */
 export const ACTIVE_LINE_SNAPSHOT_AGENT_VERSION = "2.2.197";
 
-export type RoutePolicyStrategy = "fallback" | "round_robin" | "random" | "ip_hash";
+/** Agent 那边的分配策略名：主备（fallback）或权重负载的四种分法。 */
+export type RoutePolicyStrategy = "fallback" | RouteSpread;
 
 export type RoutePolicyLine = {
   /** 0 是主线路，1.. 是第几条备用线路 */
@@ -87,8 +100,11 @@ export type RoutePolicyCondition = {
 };
 
 export type RoutePolicyGuard = {
-  /** health / switch 只有转发组有：它的健康和切换都是面板做的，得说清楚按什么算、切的是什么。 */
-  key: "failover" | "recover" | "hold" | "health" | "switch";
+  /**
+   * health 只有转发组有：它的健康是面板测的，得说清楚按什么算。switch 两边都有：转发组说的是
+   * 「改哪条解析」，规则说的是「切换时旧连接怎么办」。prewarm 是计划切换的预热预检。
+   */
+  key: "failover" | "recover" | "hold" | "health" | "switch" | "prewarm";
   label: string;
   value: string;
 };
@@ -122,6 +138,8 @@ export type RoutePolicyReport =
 export type RoutePolicy = {
   /** 规则级主备（Agent 切出站），还是转发组（面板切解析）。说法不同的地方靠它分。 */
   subject: "rule" | "group";
+  /** 线路组的调度模式（shared/routeGroup）。转发组只有一种：主备。 */
+  mode: RouteMode;
   strategy: RoutePolicyStrategy;
   lines: RoutePolicyLine[];
   /** 从上往下就是优先级。 */
@@ -139,22 +157,9 @@ export type RoutePolicy = {
   warnings: string[];
 };
 
-export type RoutePolicyRule = {
-  failoverEnabled?: unknown;
+export type RoutePolicyRule = RouteGroupRule & {
   forwardType?: unknown;
   protocol?: unknown;
-  failoverStrategy?: unknown;
-  targetIp?: unknown;
-  targetPort?: unknown;
-  failoverTargets?: unknown;
-  failoverSchedule?: unknown;
-  failoverMinHoldSeconds?: unknown;
-  failoverPinnedIndex?: unknown;
-  failoverPinnedUntil?: unknown;
-  failoverPreferFastest?: unknown;
-  failoverSeconds?: unknown;
-  recoverSeconds?: unknown;
-  autoFailback?: unknown;
   failoverActiveTarget?: unknown;
   failoverActiveAt?: unknown;
 };
@@ -168,12 +173,6 @@ export type RoutePolicyOptions = {
   timeZone?: string;
 };
 
-const STRATEGIES: RoutePolicyStrategy[] = ["fallback", "round_robin", "random", "ip_hash"];
-
-function normalizeStrategy(value: unknown): RoutePolicyStrategy {
-  const text = String(value || "").trim() as RoutePolicyStrategy;
-  return STRATEGIES.includes(text) ? text : "fallback";
-}
 
 function truthy(value: unknown, fallback: boolean) {
   if (value === null || value === undefined) return fallback;
@@ -229,54 +228,58 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
   if (!truthy(rule?.failoverEnabled, false)) return null;
   const nowMs = options.nowMs ?? Date.now();
   const clock = (ms: number) => formatPolicyClock(ms, nowMs, options.timeZone);
-  const strategy = normalizeStrategy(rule.failoverStrategy);
+  const paths = routePathsOf(rule);
   const endpoints = failoverLineEndpoints(rule);
-  const lineCount = endpoints.length;
-  const label = (index: number) => failoverLineLabel(index, endpoints[index] || "");
+  const lineCount = paths.length;
+  const policy = routePolicyOf(rule, { nowMs, pathCount: lineCount });
+  const mode = policy.mode;
+  const strategy: RoutePolicyStrategy = routeAgentStrategy(policy);
+  const label = (index: number) => routePathLabel(paths[index], index);
   const report = describeReport(rule, options.host, lineCount);
   const warnings: string[] = [];
 
-  const failoverSeconds = Math.max(0, Math.floor(Number(rule.failoverSeconds) || 60));
-  const recoverSeconds = Math.max(0, Math.floor(Number(rule.recoverSeconds) || 120));
-  const autoFailback = truthy(rule.autoFailback, true);
-  const minHoldSeconds = Math.max(0, Math.floor(Number(rule.failoverMinHoldSeconds) || 0));
+  const { failoverSeconds, recoverSeconds, autoFailback, minHoldSeconds, failureThreshold } = policy;
 
   const conditions: RoutePolicyCondition[] = [];
   let preferredIndex: number | null = null;
   let deciding: RoutePolicyConditionKind | null = null;
   let pin: FailoverPin | null = null;
 
-  if (strategy !== "fallback") {
+  if (mode === "weighted") {
     /*
-      轮询、随机、哈希没有「首选是谁」：每条新连接各走各的。人工指定、时段表、自动择优
-      在这几种策略下 Agent 都不看，保存时也会被清掉，所以这里只有一行。
+      权重负载没有「首选是谁」：每条新连接各走各的，旧连接不动。人工指定、时段表、评分
+      在这个模式下 Agent 都不看，保存时也会被清掉，所以这里只有一行。
     */
-    const spread: Record<Exclude<RoutePolicyStrategy, "fallback">, string> = {
+    const shares = routeWeightShares(paths);
+    const spread: Record<RouteSpread, string> = {
+      weighted: `按权重分：${paths.map((_, index) => `${label(index)} ${shares[index]}%`).join(" / ")}`,
       round_robin: `轮流走这 ${lineCount} 条`,
       random: `从 ${lineCount} 条里随机挑一条`,
       ip_hash: "按来源 IP 固定分到其中一条",
     };
-    conditions.push({ kind: "spread", key: "spread", when: "每条新连接", then: spread[strategy], targetIndex: null, state: "deciding" });
+    conditions.push({ kind: "spread", key: "spread", when: "每条新连接", then: spread[policy.spread], targetIndex: null, state: "deciding" });
     deciding = "spread";
   } else {
     const supported = report.kind !== "unsupported";
-    pin = readFailoverPin(rule, { nowMs, lineCount });
-    const schedule = parseFailoverSchedule(rule.failoverSchedule);
+    pin = policy.pin;
+    const schedule = policy.schedule;
     const allWindows = schedule?.windows || [];
-    // 指向不存在的出站的时段不算（服务端也存不进去），但序号按配置里的原样给，编辑框才对得上行。
+    // 指向不存在的路径的时段不算（服务端也存不进去），但序号按配置里的原样给，编辑框才对得上行。
     const validWindows = allWindows.map((window, index) => ({ window, index })).filter(({ window }) => window.targetIndex < lineCount);
     const matchedValid = schedule ? failoverScheduleWindowIndexAt({ ...schedule, windows: validWindows.map(({ window }) => window) }, new Date(nowMs)) : null;
     const matchedWindow = matchedValid === null ? null : validWindows[matchedValid].index;
-    const preferFastest = truthy(rule.failoverPreferFastest, false);
+    const bySchedule = mode === "scheduled" || mode === "hybrid";
+    // 智能择优、混合策略都看评分：混合是「时段表定首选，时段外按评分」。
+    const byScore = mode === "smart" || mode === "hybrid";
 
-    // 按 Agent 的次序一层层往下找第一个给出答案的。Agent 太旧时这三层它都不认，只剩出站顺序。
+    // 按 Agent 的次序一层层往下找第一个给出答案的。Agent 太旧时人工指定以外的几层它都不认，只剩顺序。
     if (supported && pin) {
       deciding = "pin";
       preferredIndex = pin.index;
-    } else if (supported && matchedWindow !== null) {
+    } else if (supported && bySchedule && matchedWindow !== null) {
       deciding = "schedule";
       preferredIndex = allWindows[matchedWindow].targetIndex;
-    } else if (supported && preferFastest) {
+    } else if (supported && byScore) {
       deciding = "fastest";
       preferredIndex = null;
     } else {
@@ -288,32 +291,39 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
       conditions.push({
         kind: "pin",
         key: "pin",
-        when: pin.untilMs ? `人工指定，到 ${clock(pin.untilMs)}` : "人工指定，一直",
+        when: mode === "manual"
+          ? (pin.untilMs ? `手动指定，到 ${clock(pin.untilMs)}` : "手动指定")
+          : (pin.untilMs ? `人工指定，到 ${clock(pin.untilMs)}` : "人工指定，一直"),
         then: `强制走 ${label(pin.index)}`,
         targetIndex: pin.index,
         state: deciding === "pin" ? "deciding" : "idle",
       });
     }
-    validWindows.forEach(({ window, index }) => {
-      const crossesMidnight = (parseScheduleMinutes(window.to) ?? 0) <= (parseScheduleMinutes(window.from) ?? 0);
-      const matched = index === matchedWindow;
-      conditions.push({
-        kind: "schedule",
-        key: `schedule-${index}`,
-        when: `${describeFailoverScheduleDays(window.days)} ${window.from}–${window.to}${crossesMidnight ? "（次日）" : ""}`,
-        then: `首选 ${label(window.targetIndex)}`,
-        targetIndex: window.targetIndex,
-        windowIndex: index,
-        state: matched && deciding === "schedule" ? "deciding" : matched && supported ? "overridden" : "idle",
+    if (bySchedule) {
+      validWindows.forEach(({ window, index }) => {
+        const crossesMidnight = (parseScheduleMinutes(window.to) ?? 0) <= (parseScheduleMinutes(window.from) ?? 0);
+        const matched = index === matchedWindow;
+        const precheck = mode === "hybrid" && policy.prewarmSeconds > 0
+          ? `，到点前 ${formatPolicyDuration(policy.prewarmSeconds)}先预热预检，预检不过不切`
+          : "";
+        conditions.push({
+          kind: "schedule",
+          key: `schedule-${index}`,
+          when: `${describeFailoverScheduleDays(window.days)} ${window.from}–${window.to}${crossesMidnight ? "（次日）" : ""}`,
+          then: `首选 ${label(window.targetIndex)}${precheck}`,
+          targetIndex: window.targetIndex,
+          windowIndex: index,
+          state: matched && deciding === "schedule" ? "deciding" : matched && supported ? "overridden" : "idle",
+        });
       });
-    });
-    if (preferFastest) {
+    }
+    if (byScore) {
       conditions.push({
         kind: "fastest",
         key: "fastest",
-        when: "按实测延迟",
-        // 三道门槛写死在 Agent 里（failoverFastestMarginMs / Ratio / HoldSeconds），这里照抄。
-        then: "挑明显更快的那条（快 20ms 且快 20%，连续 3 分钟）",
+        when: "按线路评分",
+        // 延迟那两道门槛写死在 Agent 里（failoverFastestMarginMs / Ratio），这里照抄。
+        then: `挑评分明显更高的那条（高出 ${policy.scoreMargin} 分，或快 20ms 且快 20%），连续 ${formatPolicyDuration(policy.scoreHoldSeconds)}才换`,
         targetIndex: null,
         state: deciding === "fastest" ? "deciding" : supported && (deciding === "pin" || deciding === "schedule") ? "overridden" : "idle",
       });
@@ -322,13 +332,32 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
       kind: "order",
       key: "order",
       when: conditions.length > 0 ? "其余时候" : "按顺序",
-      then: endpoints.map((_, index) => label(index)).join(" → "),
+      then: paths.map((_, index) => label(index)).join(" → "),
       targetIndex: null,
       state: deciding === "order" ? "deciding" : "idle",
     });
-    if (!supported && (pin || validWindows.length > 0 || preferFastest)) {
-      warnings.push(`这台机器的 Agent 早于 ${ROUTE_POLICY_AGENT_VERSION}：人工指定、时段表、自动择优它都不认，只按出站顺序走。`);
+    if (!supported && (pin || validWindows.length > 0 || byScore)) {
+      warnings.push(`这台机器的 Agent 早于 ${ROUTE_POLICY_AGENT_VERSION}：人工指定、时段表、自动择优它都不认，只按路径顺序走。`);
     }
+  }
+
+  /*
+    评分择优、权重、预热预检、连续失败次数、强制切换：Agent 2.2.198 起。更老的 Agent 拿到
+    的仍是一份主备清单，照旧能切，但这些新东西它不认 —— 照实说，别让人以为配了就生效。
+  */
+  const version = String(options.host?.agentVersion || "");
+  if (options.host && version && !isAgentVersionAtLeast(version, ROUTE_GROUP_AGENT_VERSION)) {
+    const uses: string[] = [];
+    if (mode === "smart") uses.push("评分择优");
+    if (mode === "hybrid") uses.push("预热预检");
+    if (mode === "weighted" && policy.spread === "weighted") uses.push("权重");
+    if (policy.switchMode !== "smooth") uses.push("强制断旧连接");
+    if (uses.length > 0) {
+      warnings.push(`这台机器的 Agent 早于 ${ROUTE_GROUP_AGENT_VERSION}：${uses.join("、")}它不认，只按主备顺序切、切换时也不断旧连接。`);
+    }
+  }
+  for (const [index, path] of paths.entries()) {
+    if (path.issue) warnings.push(`「${label(index)}」眼下用不了：${describeRouteIssue(path.issue)}。`);
   }
 
   /*
@@ -338,46 +367,70 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
   const forwardType = String(rule.forwardType ?? "gost");
   const protocol = String(rule.protocol ?? "tcp");
   if (forwardType !== "gost" || protocol !== "tcp") {
-    warnings.push("主备只在 gost 的 TCP 转发上生效。这条规则的转发方式或协议不是，机器上不会走主备；保存一次时主备会被关掉。");
+    warnings.push("线路组只在 gost 的 TCP 转发上生效。这条规则的转发方式或协议不是，机器上不会走线路组；保存一次时它会被关掉。");
   }
 
   const guards: RoutePolicyGuard[] = [
-    { key: "failover", label: "挂了就切", value: `探测连续失败 ${formatPolicyDuration(failoverSeconds)}，或新连接拨不通` },
+    {
+      key: "failover",
+      label: "挂了就切",
+      value: failureThreshold > 1
+        ? `探测连续失败 ${failureThreshold} 次才算异常，异常持续 ${formatPolicyDuration(failoverSeconds)}就切走；新连接拨不通也算一次失败`
+        : `探测连续失败 ${formatPolicyDuration(failoverSeconds)}，或新连接拨不通`,
+    },
   ];
-  if (strategy === "fallback") {
+  if (mode !== "weighted") {
     guards.push(autoFailback
       ? { key: "recover", label: "切回首选", value: `首选那条恢复后稳定 ${formatPolicyDuration(recoverSeconds)}` }
       : { key: "recover", label: "不切回", value: "当前这条不出问题就一直走它" });
     if (minHoldSeconds > 0) {
-      guards.push({ key: "hold", label: "最短驻留", value: `切过去之后至少走 ${formatPolicyDuration(minHoldSeconds)}` });
+      guards.push({ key: "hold", label: "最短驻留", value: `切过去之后至少走 ${formatPolicyDuration(minHoldSeconds)}，线路挂了不受它限制` });
     }
+  } else {
+    guards.push({ key: "recover", label: "恢复后回来", value: `出问题的路径恢复后稳定 ${formatPolicyDuration(recoverSeconds)}，重新参与分配` });
   }
+  if ((mode === "scheduled" || mode === "hybrid") && policy.prewarmSeconds > 0) {
+    guards.push({
+      key: "prewarm",
+      label: "计划切换预热",
+      value: `到点前 ${formatPolicyDuration(policy.prewarmSeconds)}开始探测目标路径${mode === "hybrid" ? "，预检不过就不切，继续走当前这条" : "，到点直接切"}`,
+    });
+  }
+  guards.push({
+    key: "switch",
+    label: "旧连接",
+    value: `${ROUTE_SWITCH_MODE_INFO[policy.switchMode].label}：${ROUTE_SWITCH_MODE_INFO[policy.switchMode].hint.replace("（推荐）", "")}`,
+  });
 
-  const activeIndex = strategy === "fallback" && (report.kind === "current" || report.kind === "lastSwitch") ? report.index : null;
+  const activeIndex = mode !== "weighted" && (report.kind === "current" || report.kind === "lastSwitch") ? report.index : null;
   let divergence: string | null = null;
-  if (strategy === "fallback" && activeIndex !== null && preferredIndex !== null && activeIndex !== preferredIndex) {
+  if (mode !== "weighted" && activeIndex !== null && preferredIndex !== null && activeIndex !== preferredIndex) {
     if (!autoFailback) {
       divergence = `首选是 ${label(preferredIndex)}，但「恢复后切回」关着：${label(activeIndex)} 不出问题就不会换过去。`;
     } else {
       const reasons = ["正挂着", `刚恢复还在观察（${formatPolicyDuration(recoverSeconds)}）`];
       if (minHoldSeconds > 0) reasons.push(`刚切过还在最短驻留（${formatPolicyDuration(minHoldSeconds)}）里`);
+      if (mode === "hybrid") reasons.push("计划切换的预检没过");
       divergence = `首选是 ${label(preferredIndex)}，没走它：它可能${reasons.join("、")}。`;
     }
   }
 
   return {
     subject: "rule",
+    mode,
     strategy,
-    lines: endpoints.map((endpoint, index) => ({
+    lines: paths.map((path, index) => ({
       index,
       label: label(index),
-      endpoint,
-      preferred: strategy === "fallback" && preferredIndex === index,
+      endpoint: endpoints[index] || "",
+      preferred: mode !== "weighted" && preferredIndex === index,
       active: activeIndex === index,
+      note: path.issue ? describeRouteIssue(path.issue) : null,
+      health: path.issue ? "down" : undefined,
     })),
     conditions,
     guards,
-    preferredIndex: strategy === "fallback" ? preferredIndex : null,
+    preferredIndex: mode !== "weighted" ? preferredIndex : null,
     deciding,
     pin,
     report,
@@ -385,7 +438,6 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
     warnings,
   };
 }
-
 /*
   ───────────────────────────── 转发组 ─────────────────────────────
 
@@ -638,6 +690,7 @@ export function describeGroupRoutePolicy(group: RoutePolicyGroup, options: Group
   const missingAddress = GROUP_MISSING_ADDRESS[recordType];
   return {
     subject: "group",
+    mode: "failover",
     strategy: "fallback",
     lines: members.map((member, index) => {
       // 列表接口按组的记录类型给了 ddnsValue：空串就是这台没有这种地址，解析指不过去。
@@ -693,7 +746,7 @@ export function describeRoutePolicyReport(policy: RoutePolicy, options: { nowMs?
   const upgradeNote = `Agent 升级到 ${ACTIVE_LINE_SNAPSHOT_AGENT_VERSION} 后每次心跳确认。`;
   const lineTone = (index: number) => policy.preferredIndex !== null && index !== policy.preferredIndex ? "deviated" : "normal";
   // 轮询、随机、哈希没有「现在走哪条」：每条新连接各走各的，报一条出来只会误导。
-  if (policy.strategy !== "fallback") {
+  if (policy.mode === "weighted") {
     return { text: `每条新连接各走各的，共 ${policy.lines.length} 条`, note: null, tone: "normal" };
   }
   switch (report.kind) {

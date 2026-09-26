@@ -26,6 +26,7 @@ import { assertSafeOutboundUrl } from "./ssrf";
 import { maintainCurrentPostgresqlDatabase } from "./postgresqlMaintenance";
 import { maintainCurrentMysqlDatabase } from "./mysqlMaintenance";
 import { AGENT_VERSION, APP_VERSION } from "../shared/versions";
+import { parseRoutePaths, serializeRoutePaths } from "../shared/routeGroup";
 import { AGENT_PANEL_MIGRATION_VERSION, isAgentVersionAtLeast } from "./agentRouteUtils";
 import { ensureTrafficStatBucketsBackfilled, ensureUserTrafficCountersBackfilled } from "./repositories/metricsRepository";
 import {
@@ -182,7 +183,7 @@ const MIGRATION_RUNTIME_TIMEOUT_MS = Math.max(
     : 15 * 60 * 1000,
 );
 const MIGRATION_RUNTIME_POLL_MS = 2_000;
-const DIRECT_SQLITE_OPTIONAL_SOURCE_TABLES = new Set(["agent_traffic_reports"]);
+const DIRECT_SQLITE_OPTIONAL_SOURCE_TABLES = new Set(["agent_traffic_reports", "forward_rule_route_events"]);
 
 function normalizePanelUrl(url: string) {
   const value = url.trim().replace(/\/+$/, "");
@@ -213,6 +214,7 @@ export const ESSENTIAL_MIGRATION_OMITTED_TABLES = new Set<(typeof MIGRATION_TABL
   "tcping_stats",
   "forward_tests",
   "forward_group_events",
+  "forward_rule_route_events",
   "ip_geo_cache",
   "config_audit_events",
 ]);
@@ -725,6 +727,7 @@ const IMPORT_TABLE_ORDER = [
   "tcping_stats",
   "forward_tests",
   "forward_group_events",
+  "forward_rule_route_events",
   "ip_geo_cache",
   "subscription_plans",
   "subscription_plan_prices",
@@ -769,6 +772,7 @@ const BEST_EFFORT_MIGRATION_TABLES = new Set<MigrationTableName>([
   "tcping_stats",
   "forward_tests",
   "forward_group_events",
+  "forward_rule_route_events",
   "config_audit_events",
   "system_settings",
 ]);
@@ -1100,6 +1104,21 @@ function mapStoredHostIds(maps: ImportMaps, value: unknown) {
   return mapped.length > 0 ? mapped.sort((a, b) => a - b).join(",") : null;
 }
 
+/*
+  线路组的路径里藏着主机 ID：paths[].hops 每一项都是一台中转机。导入快照时其余主机引用
+  都过了 ID 映射，这一列是 JSON，照抄过来的话这些跳会指向导入库里另一台机器 —— 启动时
+  的中继修复会照着它在错误的机器上建中继，或者整条路径找不到主机而失效。所以逐跳映射，
+  缺主机就和其他必需引用一样报错，不静悄悄地留一个错的 ID。
+*/
+export function remapRoutePathHosts(value: unknown, maps: ImportMaps) {
+  const paths = parseRoutePaths(value);
+  if (paths.length === 0) return null;
+  return serializeRoutePaths(paths.map((path) => ({
+    ...path,
+    hops: path.hops.map((hostId) => mapRequiredId(maps, "hosts", hostId)),
+  })));
+}
+
 async function prepareImportRow(table: string, source: Record<string, any>, maps: ImportMaps): Promise<PreparedImportRow | null> {
   const row = { ...source };
   delete row.id;
@@ -1160,10 +1179,13 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
 
     case "forward_rules":
       row.hostId = mapRequiredId(maps, "hosts", source.hostId);
+      row.routePaths = remapRoutePathHosts(source.routePaths, maps);
       row.userId = mapRequiredId(maps, "users", source.userId);
       row.tunnelId = mapOptionalId(maps, "tunnels", source.tunnelId);
       row.forwardGroupId = mapOptionalId(maps, "forward_groups", source.forwardGroupId);
       row.forwardGroupRuleId = null;
+      // 中转跳规则指回父规则，同表自引用，和 forwardGroupRuleId 一样等第二遍再补。
+      row.routeParentRuleId = null;
       row.forwardGroupMemberId = mapOptionalId(maps, "forward_group_members", source.forwardGroupMemberId);
       row.proxyNodeId = mapOptionalId(maps, "proxy_nodes", source.proxyNodeId);
       row.isRunning = false;
@@ -1314,6 +1336,10 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
     case "forward_group_events":
       row.groupId = mapRequiredId(maps, "forward_groups", source.groupId);
       row.memberId = mapOptionalId(maps, "forward_group_members", source.memberId);
+      return { row };
+
+    case "forward_rule_route_events":
+      row.ruleId = mapRequiredId(maps, "forward_rules", source.ruleId);
       return { row };
 
     case "subscription_plan_prices":
@@ -1515,6 +1541,7 @@ async function fixDeferredForwardGroupReferences(snapshot: MigrationSnapshot, ma
   const groupUpdates: Array<{ id: number; value: number }> = [];
   const memberUpdates: Array<{ id: number; value: number }> = [];
   const ruleUpdates: Array<{ id: number; value: number }> = [];
+  const routeParentUpdates: Array<{ id: number; value: number }> = [];
   const errors: string[] = [];
   for (const group of sortedSnapshotRows(snapshot, "forward_groups")) {
     const nextId = mapId(maps, "forward_groups", group.id);
@@ -1544,6 +1571,8 @@ async function fixDeferredForwardGroupReferences(snapshot: MigrationSnapshot, ma
     try {
       const forwardGroupRuleId = mapOptionalId(maps, "forward_rules", rule.forwardGroupRuleId);
       if (forwardGroupRuleId) ruleUpdates.push({ id: nextId, value: forwardGroupRuleId });
+      const routeParentRuleId = mapOptionalId(maps, "forward_rules", rule.routeParentRuleId);
+      if (routeParentRuleId) routeParentUpdates.push({ id: nextId, value: routeParentRuleId });
     } catch (error) {
       errors.push(`forward_rules#${rule.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1553,6 +1582,7 @@ async function fixDeferredForwardGroupReferences(snapshot: MigrationSnapshot, ma
     await updateMappedColumn("forward_groups", "activeMemberId", groupUpdates);
     await updateMappedColumn("forward_group_members", "ruleId", memberUpdates);
     await updateMappedColumn("forward_rules", "forwardGroupRuleId", ruleUpdates);
+    await updateMappedColumn("forward_rules", "routeParentRuleId", routeParentUpdates);
   });
   if (errors.length > 0) throw new Error(`${errors.length} 条延迟关联无法恢复；${errors.slice(0, 3).join("；")}`);
 }

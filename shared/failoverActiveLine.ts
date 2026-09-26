@@ -1,4 +1,5 @@
-import { parseFailoverTargets, formatFailoverEndpoint, type FailoverTarget } from "./failoverTargets";
+import { formatFailoverEndpoint } from "./failoverTargets";
+import { routePathDial, routePathLabel, routePathsOf, type RouteGroupRule } from "./routeGroup";
 import { timestampMillis } from "./timestamp";
 
 /**
@@ -16,8 +17,10 @@ import { timestampMillis } from "./timestamp";
 export type FailoverActiveLine = {
   /** 0 = 主线路，1.. = 第几条备用线路；-1 = 报上来的地址不在清单里。 */
   index: number;
-  /** 「主线路」「备用 1」，或认不出来时的原始地址。 */
+  /** 路径的名字（「主线路」「晚高峰线路」），或认不出来时的原始地址。 */
   label: string;
+  /** 路径的稳定标识（routePaths 里的 key）；认不出来是 null。 */
+  pathKey: string | null;
   /** 正在走备线。用来决定要不要把这一条显示成需要注意的状态。 */
   onBackup: boolean;
   /** 报上来的地址对不上任何一条出站 —— 多半是刚改过配置、Agent 还没跟上。 */
@@ -48,25 +51,21 @@ export function failoverLineLabel(index: number, target: string) {
   return target || "未知出站";
 }
 
-/** 线路清单：主线路永远排第 0 位，后面接 failoverTargets 的顺序。 */
-export function failoverLineEndpoints(rule: {
-  targetIp?: unknown;
-  targetPort?: unknown;
-  failoverTargets?: unknown;
-}): string[] {
-  const main = formatFailoverEndpoint(String(rule?.targetIp || ""), Number(rule?.targetPort || 0));
-  const backups = parseFailoverTargets(rule?.failoverTargets)
-    .filter((target: FailoverTarget) => target.targetIp && target.targetPort > 0)
-    .map((target: FailoverTarget) => formatFailoverEndpoint(target.targetIp, target.targetPort));
-  return [main, ...backups];
+/**
+ * 线路清单：每条路径入口 Agent 实际拨的地址，主线路永远排第 0 位。
+ *
+ * Agent 报上来的是它拨的地址（走中转的路径报的是第一跳中转上那条中继规则的地址），
+ * 所以这里对的也是 dial，不是落地。还没解析出 dial 的路径给空串，对不上任何上报。
+ */
+export function failoverLineEndpoints(rule: RouteGroupRule): string[] {
+  return routePathsOf(rule).map((path) => {
+    const dial = routePathDial(path, rule);
+    return dial ? formatFailoverEndpoint(dial.ip, dial.port) : "";
+  });
 }
 
 export function describeFailoverActiveLine(
-  rule: {
-    failoverEnabled?: unknown;
-    targetIp?: unknown;
-    targetPort?: unknown;
-    failoverTargets?: unknown;
+  rule: RouteGroupRule & {
     failoverActiveTarget?: unknown;
     failoverActiveAt?: unknown;
   },
@@ -77,12 +76,14 @@ export function describeFailoverActiveLine(
   // 旧版、根本不报」显示成「一切正常走主线」，正好骗过最该被发现的那种情况。
   if (!target) return null;
 
+  const paths = routePathsOf(rule);
   const endpoints = failoverLineEndpoints(rule);
-  const index = endpoints.findIndex((endpoint) => endpoint.toLowerCase() === target.toLowerCase());
+  const index = endpoints.findIndex((endpoint) => endpoint && endpoint.toLowerCase() === target.toLowerCase());
   const sinceMs = timestampMillis(rule?.failoverActiveAt);
   return {
     index,
-    label: failoverLineLabel(index, target),
+    label: index >= 0 ? routePathLabel(paths[index], index) : failoverLineLabel(index, target),
+    pathKey: index >= 0 ? paths[index].key : null,
     onBackup: index > 0,
     unknown: index < 0,
     since: sinceMs > 0 ? Math.floor(sinceMs / 1000) : null,

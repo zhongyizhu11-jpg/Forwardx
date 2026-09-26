@@ -27,6 +27,7 @@ import { completeLookingGlassAgentTask, updateLookingGlassAgentTaskProgress, typ
 import { completeIperf3AgentTask } from "./iperf3AgentTasks";
 import { completePluginAgentTask } from "./pluginAgentTasks";
 import { getAgentHostIdentityFromRequest } from "./agentAuth";
+import { ingestRouteHopProbeReports } from "./routeGroups";
 import { applyTrafficMultiplier, normalizeTrafficMultiplier } from "../shared/trafficMultiplier";
 import { normalizeTrafficCounterBytes, normalizeTrafficCounterConnections } from "../shared/trafficCounterBytes";
 import { mapWithConcurrency } from "./asyncPool";
@@ -117,6 +118,8 @@ export function trafficAccountingHostIds(
 }
 
 export function shouldAccountForwardRuleTraffic(rule: any, group: any | null) {
+  // 线路组的中继规则：流量在入口那条规则上已经算过了，中转上每一跳再算一遍就是按跳数翻倍。
+  if (Number(rule?.routeParentRuleId || 0) > 0) return false;
   const groupId = Number(rule?.forwardGroupId || 0);
   const templateId = Number(rule?.forwardGroupRuleId || 0);
   const memberId = Number(rule?.forwardGroupMemberId || 0);
@@ -1500,6 +1503,15 @@ agentRouter.post("/api/agent/tcping", async (req: Request, res: Response) => {
 
     const reportedRuleRows = await db.getForwardRulesByIds(results.map((report) => Number(report.ruleId || 0))) as any[];
     const reportedRuleById = new Map(reportedRuleRows.map((rule: any) => [Number(rule.id), rule]));
+    // 线路组的中转跳：中继规则的探测结果就是「这一跳通不通」，见 server/routeGroups.ts。
+    await ingestRouteHopProbeReports({
+      hostId: Number(host.id),
+      hostName: String((host as any).name || ""),
+      results,
+      rulesById: reportedRuleById,
+    }).catch((error) => {
+      console.warn(`[Agent TCPing] route hop probes host=${host.id}: ${error instanceof Error ? error.message : String(error)}`);
+    });
     const tunnelLatencyById = new Map<number, Promise<any>>();
     const tunnelContextById = new Map<number, Promise<{ tunnel: any } | null>>();
     const getTunnelContext = (tunnelId: number) => {

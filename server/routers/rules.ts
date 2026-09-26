@@ -1,7 +1,7 @@
 import { protectedProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import * as db from "../db";
-import { crudRulesRouter } from "./rules.crud";
+import { crudRulesRouter, routeEntryHostId } from "./rules.crud";
 import { portsRulesRouter } from "./rules.ports";
 import { selfTestRulesRouter } from "./rules.selfTest";
 import { trafficRulesRouter } from "./rules.traffic";
@@ -9,6 +9,31 @@ import { canUseForwardRuleResource, getLinkAccessScope } from "../linkAccessView
 import { isManagedForwardGroupChildRule } from "../forwardRuleVisibility";
 import { formatHostAddressWithPort, getHostEntryAddress } from "@shared/hostEntryAddress";
 import { isForwardRuleProtocolTcpEnabled, isUserspaceForwardType } from "@shared/forwardTypes";
+import { describeFailoverActiveLine } from "@shared/failoverActiveLine";
+import {
+  ROUTE_GROUP_AGENT_VERSION,
+  describeRouteIssue,
+  describeRouteReason,
+  routeEventMillis,
+  routeGroupOf,
+  routePathDestination,
+  routePathDial,
+  routePathLabel,
+  routePathLetter,
+} from "@shared/routeGroup";
+import { routeScoreGrade } from "@shared/routeScore";
+import { isAgentVersionBehind } from "@shared/version";
+import { getRouteStatus, routeHopDownHints } from "../routeGroupStats";
+import { routeRelayRulesByKey } from "../routeGroups";
+import { dbBool } from "../repositories/repositoryUtils";
+
+/** 看一条规则的线路状态：管理员随便看，别人只能看自己的。 */
+async function requireRuleVisible(user: { id: number; role: string }, ruleId: number) {
+  const rule = await db.getForwardRuleById(ruleId) as any;
+  if (!rule || dbBool(rule.pendingDelete)) throw new Error("规则不存在或已删除");
+  if (user.role !== "admin" && Number(rule.userId) !== Number(user.id)) throw new Error("无权查看此规则");
+  return rule;
+}
 
 async function withRuleResourceAccess<T extends any>(value: T, user: { id: number; role: string }): Promise<T> {
   if (user.role === "admin") return value;
@@ -68,6 +93,124 @@ async function getRuleListRepositoryInput(
 }
 
 export const rulesRouter = router({
+  /**
+   * 线路组的「最近切换」：Agent 报的切换 / 异常 / 恢复 / 预热 / 预检没过，和面板这边的
+   * 人工指定，按时间倒序。原因已经翻成人话（describeRouteReason），界面直接显示。
+   */
+  routeEvents: protectedProcedure
+    .input(z.object({ ruleId: z.number().int().positive(), limit: z.number().int().min(1).max(100).optional() }))
+    .query(async ({ input, ctx }) => {
+      await requireRuleVisible(ctx.user, input.ruleId);
+      const rows = await db.getForwardRuleRouteEvents(input.ruleId, input.limit ?? 20) as any[];
+      return rows.map((row) => ({
+        id: Number(row.id),
+        kind: String(row.kind || ""),
+        fromKey: row.fromKey ?? null,
+        toKey: row.toKey ?? null,
+        fromLabel: row.fromLabel ?? null,
+        toLabel: row.toLabel ?? null,
+        reason: row.reason ?? null,
+        reasonText: describeRouteReason(row.reason),
+        score: row.score ?? null,
+        latencyMs: row.latencyMs ?? null,
+        at: routeEventMillis(row.createdAt),
+      }));
+    }),
+  /**
+   * 线路组此刻的样子：每条路径走哪几跳、拨哪个地址、评分几分、哪一跳断了、现在走的是哪条。
+   *
+   * 评分和逐跳探测都是内存里的（routeGroupStats）：入口 Agent 每次心跳带评分，中转机的
+   * Agent 一分钟报一次它那一跳。Agent 没升到 2.2.198 的，评分为空，界面据 agentSupportsScores
+   * 说明「升级 Agent 后才有评分」。
+   */
+  routeStatus: protectedProcedure
+    .input(z.object({ ruleId: z.number().int().positive() }))
+    .query(async ({ input, ctx }) => {
+      const rule = await requireRuleVisible(ctx.user, input.ruleId);
+      const group = routeGroupOf(rule);
+      if (!group) return null;
+      const { paths, policy } = group;
+      const status = getRouteStatus(Number(rule.id));
+      const agent = status.agent || status.staleAgent;
+      const hints = routeHopDownHints(Number(rule.id), paths);
+      const hopIds = Array.from(new Set(paths.flatMap((path) => path.hops)));
+      /*
+        评分和预热跑在调度层那台机器上 —— GOST 隧道规则是隧道的出口机，不是规则的入口机。
+        版本读错机器的话，界面会说「支持评分」而真正跑调度的那台 Agent 还是旧的（或者反过来）。
+      */
+      const routeTunnel = Number((rule as any).tunnelId || 0) > 0
+        ? await (db.getTunnelById(Number((rule as any).tunnelId)) as Promise<any>).catch(() => null)
+        : null;
+      const schedulerHostId = routeEntryHostId(Number(rule.hostId), routeTunnel);
+      const [names, relays, entryHost] = await Promise.all([
+        hopIds.length > 0 ? db.getHostNamesByIds(hopIds) : Promise.resolve(new Map<number, string>()),
+        routeRelayRulesByKey(Number(rule.id)),
+        db.getHostById(schedulerHostId) as Promise<any>,
+      ]);
+      const active = describeFailoverActiveLine(rule);
+      const activeIndex = status.agent && status.agent.activeIndex >= 0 ? status.agent.activeIndex : (active ? active.index : -1);
+      const rows = paths.map((path, index) => {
+        const target = agent?.targets.find((item) => item.index === index) || null;
+        const hint = hints.get(path.key) || null;
+        const hops = path.hops.map((hostId, hopIndex) => {
+          const probe = status.hops.find((item) => item.pathKey === path.key && item.hopIndex === hopIndex) || null;
+          const relay = relays.get(`${path.key}:${hopIndex}`) as any;
+          return {
+            hostId,
+            name: names.get(hostId) || `主机 ${hostId}`,
+            port: relay ? Number(relay.sourcePort) : null,
+            running: relay ? dbBool(relay.isRunning) : null,
+            enabled: relay ? dbBool(relay.isEnabled) : null,
+            ok: probe ? probe.ok : null,
+            latencyMs: probe?.latencyMs ?? null,
+            consecutiveFailures: probe?.consecutiveFailures ?? 0,
+            probedAt: probe?.at ?? null,
+            nextLabel: probe?.nextLabel ?? null,
+          };
+        });
+        const down = !!target?.down || !!hint || !!path.issue;
+        const downReason = path.issue || (hint ? hint.reason : target?.downReason || "");
+        return {
+          key: path.key,
+          index,
+          letter: routePathLetter(index),
+          name: routePathLabel(path, index),
+          hops,
+          dest: routePathDestination(path, rule),
+          dial: routePathDial(path, rule),
+          issue: path.issue,
+          weight: path.weight,
+          probe: path.probe,
+          score: target?.score ?? null,
+          grade: routeScoreGrade(target?.score ?? null),
+          latencyMs: target?.latencyMs ?? null,
+          lossPct: target?.lossPct ?? null,
+          jitterMs: target?.jitterMs ?? null,
+          availabilityPct: target?.availabilityPct ?? null,
+          healthy: target ? target.healthy && !down : null,
+          down,
+          downReason: describeRouteIssue(downReason),
+          connections: target?.connections ?? null,
+          samples: target?.samples ?? 0,
+          active: activeIndex === index,
+          prewarming: !!agent && agent.prewarmIndex === index,
+        };
+      });
+      const agentVersion = String(entryHost?.agentVersion || "").trim();
+      return {
+        ruleId: Number(rule.id),
+        policy,
+        paths: rows,
+        activeIndex,
+        activeSince: status.agent?.activeSince || (active?.since ? active.since * 1000 : null),
+        prewarmIndex: agent?.prewarmIndex ?? -1,
+        agentReportedAt: agent?.reportedAt ?? null,
+        agentStale: !status.agent && !!status.staleAgent,
+        agentVersion: agentVersion || null,
+        agentSupportsScores: !!agentVersion && !isAgentVersionBehind(agentVersion, ROUTE_GROUP_AGENT_VERSION),
+        requiredAgentVersion: ROUTE_GROUP_AGENT_VERSION,
+      };
+    }),
   list: protectedProcedure
     .input(z.object({
       hostId: z.number().optional(),

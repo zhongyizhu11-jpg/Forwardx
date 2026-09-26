@@ -406,6 +406,7 @@ export async function runTcpingCleanup() {
       db.cleanOldTunnelLatencyStats(72),
       db.cleanOldForwardTests(72),
       db.cleanOldForwardGroupEvents(72),
+      db.cleanOldForwardRuleRouteEvents(72),
       db.cleanOldHostProbeServiceStats(72),
       cleanOldAddressGeoCache(),
     ]);

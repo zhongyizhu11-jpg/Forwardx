@@ -88,7 +88,6 @@ import {
   RULE_TRANSFER_MAX_IMPORT_COUNT,
   parseRuleTransferFile,
   normalizeFailoverStrategy,
-  type FailoverStrategy,
   type RuleTransferFile,
   type RuleTransferFileRule,
 } from "@/lib/ruleTransfer";
@@ -104,32 +103,26 @@ import {
   BILLING_TIME_ZONE,
 } from "@shared/billingTime";
 import {
-  failoverSchedulePayload,
-  parseFailoverSchedule,
-  type FailoverSchedule,
-} from "@shared/failoverSchedule";
-import { readFailoverPin } from "@shared/failoverPin";
-import {
-  describeFailoverLines,
-  type RelayCandidate,
-} from "@/lib/failoverRelayHints";
-import {
-  formatFailoverEndpoint,
-  formatFailoverTargetLine,
   parseFailoverEndpoint,
-  parseFailoverTargetLine,
   parseFailoverTargets,
-  type FailoverTarget,
 } from "@shared/failoverTargets";
 import { FAILOVER_TONE_CLASS, describeFailoverLineDisplay } from "@/lib/failoverLineDisplay";
-import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
+import { RouteGroupSheet } from "@/features/rules/RouteGroupSheet";
 import { EntityActions } from "@/components/entity/EntityActions";
 import { CardActions } from "@/components/entity/EntityCard";
-import { FailoverPolicyFields } from "@/features/rules/FailoverPolicyFields";
+import { RouteGroupFields, routeGroupPayload, type RouteHostOption } from "@/features/rules/RouteGroupFields";
 import { docsUrl } from "@/lib/docsLinks";
 import { ROUTE_MODE_HINTS } from "@/features/rules/routeModeHints";
 import { describeRoutePolicy, pinUntilSeconds } from "@shared/routePolicy";
-import { failoverLineLabel } from "@shared/failoverActiveLine";
+import {
+  ROUTE_MODE_SHORT,
+  newRouteGroupDraft,
+  routeGroupOf,
+  routeGroupRuleFields,
+  routePathLetter,
+  validateRouteGroup,
+  type RouteGroup,
+} from "@shared/routeGroup";
 import {
   forwardRuleFormBlocker,
   isAdvancedSectionBlocker,
@@ -287,28 +280,18 @@ type RuleFormData = {
   targetPort: number;
   telegramErrorNotifyEnabled: boolean;
   failoverEnabled: boolean;
-  failoverStrategy: FailoverStrategy;
-  failoverTargetsText: string;
-  failoverProbeTarget: string;
-  failoverSchedule: FailoverSchedule | null;
-  failoverMinHoldSeconds: number;
-  /** 人工钉住：走第几条出站、钉到什么时候（Unix 秒，null = 一直钉着）。 */
-  failoverPin: { index: number; until: number | null } | null;
-  failoverPreferFastest: boolean;
-  failoverSeconds: number;
-  recoverSeconds: number;
-  autoFailback: boolean;
+  /**
+   * 线路组：路径清单 + 调度策略，整份一个字段（shared/routeGroup）。
+   *
+   * 上一版这里是十个 failover* 字段各存各的（备用地址文本、探测目标、时段表、钉子、
+   * 择优、几个秒数……），提交时再拼回去。它们本来就是一件事的十个面 —— 一份 RouteGroup
+   * 存着，编辑器整份改、提交整份发，和服务端、Agent 说的是同一个模型。
+   */
+  routeGroup: RouteGroup | null;
 };
 
 type ProxyProtocolVersion = 1 | 2;
 
-// 和编辑框里「怎么分配线路」的选项同一套叫法（features/rules/failoverPlainText）。
-const failoverStrategyLabels: Record<FailoverStrategy, string> = {
-  fallback: "主备",
-  round_robin: "轮流",
-  random: "随机",
-  ip_hash: "按访客",
-};
 const defaultForm: RuleFormData = {
   hostId: null,
   name: "",
@@ -322,16 +305,7 @@ const defaultForm: RuleFormData = {
   targetPort: 0,
   telegramErrorNotifyEnabled: false,
   failoverEnabled: false,
-  failoverStrategy: "fallback",
-  failoverTargetsText: "",
-  failoverProbeTarget: "",
-  failoverSchedule: null,
-  failoverMinHoldSeconds: 0,
-  failoverPin: null,
-  failoverPreferFastest: false,
-  failoverSeconds: 60,
-  recoverSeconds: 120,
-  autoFailback: true,
+  routeGroup: null,
 };
 
 const gostTunnelModes = new Set(["tls", "wss", "tcp", "mtls", "mwss", "mtcp"]);
@@ -1918,10 +1892,6 @@ function normalizeProxyProtocolVersion(value: unknown): ProxyProtocolVersion {
   return Number(value) === 2 ? 2 : 1;
 }
 
-function formatFailoverTargetsText(raw: unknown) {
-  return parseFailoverTargets(raw).map(formatFailoverTargetLine).join("\n");
-}
-
 function exportRuleForTransfer(rule: any): RuleTransferFileRule {
   return {
     name: String(rule?.name || "导入规则"),
@@ -1976,28 +1946,6 @@ function downloadRuleTransferFiles(
     globalThis.setTimeout(() => URL.revokeObjectURL(url), 0);
   });
   return chunks.length;
-}
-
-function normalizeFailoverTargetsForSubmit(text: string) {
-  const targets: FailoverTarget[] = [];
-  const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  if (lines.length > 10) return { error: "备用线路最多支持 10 个" };
-  for (let index = 0; index < lines.length; index += 1) {
-    const parsed = parseFailoverTargetLine(lines[index]);
-    if (!parsed) continue;
-    if ("error" in parsed) return { error: `第 ${index + 1} 行：${parsed.error}` };
-    if (!isValidTargetHost(parsed.targetIp)) {
-      return { error: `第 ${index + 1} 行：地址格式不正确` };
-    }
-    if (!isValidForwardPort(parsed.targetPort)) {
-      return { error: `第 ${index + 1} 行：端口必须在 1-65535 之间` };
-    }
-    if (parsed.probeIp && (!isValidTargetHost(parsed.probeIp) || !isValidForwardPort(parsed.probePort))) {
-      return { error: `第 ${index + 1} 行：探测地址格式不正确` };
-    }
-    targets.push(parsed);
-  }
-  return { targets };
 }
 
 function RulesContent() {
@@ -2412,7 +2360,7 @@ function RulesContent() {
       // 只说做了什么，不说「已生效」：机器离线时要等它连上才会照做。
       toast.success(variables.failoverPinnedIndex === null || variables.failoverPinnedIndex === undefined
         ? "已交回自动"
-        : `已强制走 ${failoverLineLabel(variables.failoverPinnedIndex, "")}`);
+        : `已强制走路径 ${routePathLetter(variables.failoverPinnedIndex)}`);
     },
     onError: (error) => toast.error(error.message || "操作失败"),
   });
@@ -2534,7 +2482,6 @@ function RulesContent() {
         ? prev.hostId
         : (Number(nextBillingHost?.id || 0) || null),
       failoverEnabled: false,
-      failoverTargetsText: "",
     }));
   };
   const toggleMutation = trpc.rules.toggle.useMutation({
@@ -2603,7 +2550,7 @@ function RulesContent() {
   };
 
   const resetForm = () => {
-    setForm({ ...defaultForm, failoverTargetsText: "" });
+    setForm({ ...defaultForm });
     setEditingId(null);
     setEditingOriginalProtocol(null);
     setLegacyLocalRuleEditId(null);
@@ -2628,7 +2575,6 @@ function RulesContent() {
       if (hasSavedLocalForward) {
         setForm({
           ...defaultForm,
-          failoverTargetsText: "",
           routeMode: "local",
           hostId: null,
           forwardType: firstLocalForwardType,
@@ -2641,7 +2587,6 @@ function RulesContent() {
       if (hasBillingHostLocalForward) {
         setForm({
           ...defaultForm,
-          failoverTargetsText: "",
           routeMode: "local",
           hostId: Number(firstBillingHost.id),
           forwardType: firstDirectForwardType,
@@ -2659,7 +2604,6 @@ function RulesContent() {
       const localUsesSavedForward = routeMode === "local" && hasSavedLocalForward;
       setForm({
         ...defaultForm,
-        failoverTargetsText: "",
         routeMode,
         hostId: routeMode === "tunnel" && firstTunnel
           ? firstTunnel.entryHostId
@@ -2732,25 +2676,8 @@ function RulesContent() {
       targetPort: rule.targetPort,
       telegramErrorNotifyEnabled: !!rule.telegramErrorNotifyEnabled,
       failoverEnabled: !!rule.failoverEnabled,
-      failoverStrategy: normalizeFailoverStrategy(rule.failoverStrategy),
-      failoverTargetsText: formatFailoverTargetsText(rule.failoverTargets),
-      failoverProbeTarget: String(rule.failoverProbeTarget || ""),
-      failoverSchedule: parseFailoverSchedule(rule.failoverSchedule),
-      failoverMinHoldSeconds: Number(rule.failoverMinHoldSeconds || 0),
-      /*
-        钉子怎么读交给 shared/failoverPin。上一版这里是 Number.isInteger(Number(...))，
-        而没钉的规则这一列是 null —— Number(null) 是 0，于是打开任何一条主备规则，
-        编辑框都显示「强制走 主线路 · 一直钉着」，保存一次就真的钉死了。
-        已经过期的钉子也按没钉处理，不再显示一个早就交回的期限。
-      */
-      failoverPin: (() => {
-        const pin = readFailoverPin(rule);
-        return pin ? { index: pin.index, until: pin.untilMs ? Math.floor(pin.untilMs / 1000) : null } : null;
-      })(),
-      failoverPreferFastest: !!rule.failoverPreferFastest,
-      failoverSeconds: Number(rule.failoverSeconds || 60),
-      recoverSeconds: Number(rule.recoverSeconds || 120),
-      autoFailback: rule.autoFailback !== false,
+      // 老主备（2.3.376 之前配的）在这里被读成路径清单：备用各是一条直连的路径。
+      routeGroup: routeGroupOf(rule),
     });
     setEditingId(rule.id);
     setEditingOriginalProtocol(normalizeRuleProtocol(rule.protocol));
@@ -3136,47 +3063,35 @@ function RulesContent() {
     if (form.telegramErrorNotifyEnabled) parts.push("异常提醒");
     return parts;
   }, [effectiveRouteForwardType, form.name, form.telegramErrorNotifyEnabled]);
+  /** 线路组的入口机器：路径里的中转不能是它自己。隧道转发的入口是隧道的出口机（调度在那儿）。 */
+  const routeEntryHostId = useMemo(() => {
+    if (form.routeMode === "tunnel" && form.tunnelId) {
+      const tunnel = (supportedTunnels as any[]).find((item) => Number(item.id) === Number(form.tunnelId));
+      return Number(tunnel?.exitHostId || 0) || null;
+    }
+    return form.hostId ? Number(form.hostId) : null;
+  }, [form.routeMode, form.tunnelId, form.hostId, supportedTunnels]);
+  const routeHostOptions = useMemo<RouteHostOption[]>(() => (
+    (hosts || []).map((host: any) => ({ id: Number(host.id), name: String(host.name || ""), isOnline: !!host.isOnline, agentVersion: host.agentVersion ?? null }))
+  ), [hosts]);
   /*
-    备用线路的候选中转。只在主备线路真的开着时才拉 —— 绝大多数规则用不到主备，
-    没必要为它们多打一次库。
+    转发组（故障转移组）上的规则由模板复制到每台入口机上，中继要按入口机各建一份，这一版先
+    不支持经过中转 —— 编辑器里不给「经过中转」的按钮，提交时也拦。
   */
-  const relayCandidatesQuery = trpc.rules.relayCandidates.useQuery(
-    { excludeRuleId: editingId ?? undefined },
-    { enabled: showDialog && form.failoverEnabled, staleTime: 30_000 },
-  );
-  const failoverLineHints = useMemo(() => describeFailoverLines({
-    text: form.failoverTargetsText,
-    candidates: (relayCandidatesQuery.data || []) as RelayCandidate[],
-    mainAddress: formatFailoverEndpoint(form.targetIp, form.targetPort),
-    parseLine: parseFailoverTargetLine as any,
-    formatEndpoint: formatFailoverEndpoint,
-  }), [form.failoverTargetsText, form.targetIp, form.targetPort, relayCandidatesQuery.data]);
+  const routeHopsAllowed = form.routeMode !== "group";
   /*
-    编辑框里的「此刻」：拿还没保存的表单走和策略面板同一份模型算一遍。转发方式和协议
-    不传 —— 那两样用不了主备时，这一块上面已经有一句专门的说明，不重复。
+    编辑框里的「此刻」：拿还没保存的线路组走和线路面板同一份模型算一遍。转发方式和协议
+    不传 —— 那两样用不了线路组时，这一块上面已经有一句专门的说明，不重复。
   */
   const formRoutePolicy = useMemo(() => {
-    if (!form.failoverEnabled) return null;
+    if (!form.failoverEnabled || !form.routeGroup) return null;
     return describeRoutePolicy({
       failoverEnabled: true,
-      failoverStrategy: form.failoverStrategy,
       targetIp: form.targetIp,
       targetPort: form.targetPort,
-      failoverTargets: JSON.stringify(normalizeFailoverTargetsForSubmit(form.failoverTargetsText).targets || []),
-      failoverSchedule: form.failoverSchedule,
-      failoverPinnedIndex: form.failoverPin?.index ?? null,
-      failoverPinnedUntil: form.failoverPin?.until ?? null,
-      failoverPreferFastest: form.failoverPreferFastest,
-      failoverMinHoldSeconds: form.failoverMinHoldSeconds,
-      failoverSeconds: form.failoverSeconds,
-      recoverSeconds: form.recoverSeconds,
-      autoFailback: form.autoFailback,
-    }, { host: form.hostId ? hostById.get(Number(form.hostId)) : undefined });
-  }, [
-    form.failoverEnabled, form.failoverStrategy, form.targetIp, form.targetPort, form.failoverTargetsText,
-    form.failoverSchedule, form.failoverPin, form.failoverPreferFastest, form.failoverMinHoldSeconds,
-    form.failoverSeconds, form.recoverSeconds, form.autoFailback, form.hostId, hostById,
-  ]);
+      ...routeGroupRuleFields(form.routeGroup, { targetIp: form.targetIp, targetPort: form.targetPort }),
+    }, { host: routeEntryHostId ? hostById.get(routeEntryHostId) : undefined });
+  }, [form.failoverEnabled, form.routeGroup, form.targetIp, form.targetPort, routeEntryHostId, hostById]);
   const advancedBlocked = isAdvancedSectionBlocker(submitBlocker);
   const advancedOpen = showAdvanced || advancedBlocked;
   const routeModeTabItems: SlidingTabItem<RuleRouteMode>[] = [
@@ -3789,52 +3704,42 @@ function RulesContent() {
       toast.error("请先在系统设置中配置并启用 Telegram 机器人，再开启异常TG提醒");
       return;
     }
-    const failoverSubmit = normalizeFailoverTargetsForSubmit(form.failoverTargetsText);
-    if (failoverSubmit.error) {
-      toast.error(failoverSubmit.error);
-      return;
-    }
-    const failoverTargets = failoverSubmit.targets || [];
     if (form.failoverEnabled) {
       if (!canUseMainBackup) {
-        toast.error(mainBackupDisabledText || "当前规则类型不支持主备线路");
+        toast.error(mainBackupDisabledText || "当前规则类型不支持线路组");
         return;
       }
       if (form.protocol !== "tcp") {
-        toast.error("主备线路当前仅支持 TCP 协议");
+        toast.error("线路组当前仅支持 TCP 协议");
         return;
       }
-      if (failoverTargets.length === 0) {
-        toast.error("启用主备线路后至少需要填写一个备用线路");
+      if (!form.routeGroup) {
+        toast.error("线路组还没有路径");
         return;
       }
-      if (!Number.isInteger(form.failoverSeconds) || form.failoverSeconds < 10 || form.failoverSeconds > 3600) {
-        toast.error("切换时间必须在 10-3600 秒之间");
+      // 和服务端落库前跑的是同一份校验，所以「面板收下了、机器上不生效」不会发生在这一层。
+      const routeGroupError = validateRouteGroup(form.routeGroup, {
+        entryHostId: routeEntryHostId,
+        hostIds: new Set(routeHostOptions.map((host) => host.id)),
+        hasRuleTarget: !!form.targetIp.trim() && form.targetPort > 0,
+      });
+      if (routeGroupError) {
+        toast.error(routeGroupError);
         return;
       }
-      if (!Number.isInteger(form.recoverSeconds) || form.recoverSeconds < 10 || form.recoverSeconds > 3600) {
-        toast.error("恢复观察必须在 10-3600 秒之间");
+      if (!routeHopsAllowed && form.routeGroup.paths.some((path) => path.hops.length > 0)) {
+        toast.error("转发组上的规则暂不支持经过中转的路径");
         return;
       }
     }
+    /*
+      整份线路组发上去；时段表、指定按模式归零在 routeGroupPayload 里（换了模式之后界面上那份
+      还留着，改回来就在，但发上去会被服务端拒绝）。没开线路组就发 null：服务端清掉路径、
+      收回中转机上的中继。
+    */
     const failoverPayload = {
       failoverEnabled: canUseMainBackup ? form.failoverEnabled : false,
-      failoverStrategy: form.failoverStrategy,
-      failoverTargets: canUseMainBackup && form.failoverEnabled ? failoverTargets : [],
-      failoverProbeTarget: canUseMainBackup && form.failoverEnabled ? form.failoverProbeTarget.trim() || null : null,
-      failoverSchedule: canUseMainBackup && form.failoverEnabled
-        ? failoverSchedulePayload(form.failoverSchedule, form.failoverStrategy)
-        : null,
-      failoverMinHoldSeconds: canUseMainBackup && form.failoverEnabled ? form.failoverMinHoldSeconds : 0,
-      // 钉子和自动择优一样只对主备有意义：轮询这类没有「首选」，Agent 也不看。
-      failoverPinnedIndex: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback" ? (form.failoverPin?.index ?? null) : null,
-      failoverPinnedUntil: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback" ? (form.failoverPin?.until ?? null) : null,
-      failoverPreferFastest: canUseMainBackup && form.failoverEnabled && form.failoverStrategy === "fallback"
-        ? form.failoverPreferFastest
-        : false,
-      failoverSeconds: form.failoverSeconds || 60,
-      recoverSeconds: form.recoverSeconds || 120,
-      autoFailback: form.autoFailback,
+      routeGroup: canUseMainBackup && form.failoverEnabled && form.routeGroup ? routeGroupPayload(form.routeGroup) : null,
     };
     if (!isForwardGroupRouteMode && portStatus === "used") {
       toast.error("源端口已被占用，请更换端口或使用随机分配");
@@ -5896,15 +5801,15 @@ function RulesContent() {
     const entryTitle = rule.forwardGroupId
       ? `复制${groupRouteLabel}入口: ${entryAddress}`
       : `复制入口地址: ${entryAddress}`;
-    const failoverCount = parseFailoverTargets(rule.failoverTargets).filter((target) => target.targetIp && target.targetPort > 0).length;
+    const routeGroup = routeGroupOf(rule);
     return {
       entryAddresses,
       entryAddress,
       targetAddress,
       entryTitle,
-      failoverCount,
-      failoverEnabled: !!rule.failoverEnabled,
-      failoverStrategy: normalizeFailoverStrategy(rule.failoverStrategy),
+      failoverCount: routeGroup ? routeGroup.paths.length : 0,
+      failoverEnabled: !!routeGroup,
+      routeLabel: routeGroup ? ROUTE_MODE_SHORT[routeGroup.policy.mode] : "",
     };
   };
 
@@ -5944,11 +5849,11 @@ function RulesContent() {
       entryTitle,
       failoverCount,
       failoverEnabled,
-      failoverStrategy,
+      routeLabel,
     } = getRuleTransferDisplay(rule);
     const failoverBadge = failoverEnabled ? (
       <Badge variant="outline" className="h-5 shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1.5 text-[10px] text-[var(--fx-warn-text)]">
-        {failoverStrategyLabels[failoverStrategy]} {failoverCount}
+        {routeLabel} {failoverCount} 条
       </Badge>
     ) : null;
 
@@ -6041,7 +5946,7 @@ function RulesContent() {
   };
 
   const renderTableTransferExit = (rule: any) => {
-    const { targetAddress, failoverCount, failoverEnabled, failoverStrategy } = getRuleTransferDisplay(rule);
+    const { targetAddress, failoverCount, failoverEnabled, routeLabel } = getRuleTransferDisplay(rule);
     return (
       <div className="flex min-w-0 items-center gap-1.5 font-mono text-[12px] leading-5">
         <code className="min-w-0 truncate" title={targetAddress}>
@@ -6049,7 +5954,7 @@ function RulesContent() {
         </code>
         {failoverEnabled && (
           <Badge variant="outline" className="h-5 shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1.5 text-[10px] text-[var(--fx-warn-text)]">
-            {failoverStrategyLabels[failoverStrategy]} {failoverCount}
+            {routeLabel} {failoverCount} 条
           </Badge>
         )}
       </div>
@@ -6167,14 +6072,14 @@ function RulesContent() {
   const renderFailoverLineBadge = (rule: any) => {
     const display = describeFailoverLineDisplay(rule, hostById.get(Number(rule.hostId)));
     if (!display) return null;
-    // 点进去是主备策略：现在走哪条、按什么选、什么时候切、应急强制走。
+    // 点进去是线路组面板：现在走哪条、当前和备用路径、调度计划、最近切换、应急强制走。
     return (
       <button
         type="button"
         className="shrink-0 rounded-[var(--fx-radius-control)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => setPolicyRuleId(Number(rule.id))}
         title={display.title}
-        aria-label={`主备策略：${display.title}`}
+        aria-label={`线路组：${display.title}`}
       >
         <Badge
           variant="outline"
@@ -7655,6 +7560,8 @@ function RulesContent() {
                       ...form,
                       forwardType: nextEnabled && canAutoSwitchMainBackupToGost ? "gost" : form.forwardType,
                       failoverEnabled: nextEnabled,
+                      // 勾上时给一份草稿（主线路 + 一条空备用）；勾掉时留着，再勾回来还在。
+                      routeGroup: nextEnabled ? (form.routeGroup ?? newRouteGroupDraft({ timezone: BILLING_TIME_ZONE })) : form.routeGroup,
                       protocol: nextEnabled ? "tcp" : form.protocol,
                     });
                   }}
@@ -7662,7 +7569,7 @@ function RulesContent() {
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline gap-x-2">
-                    <Label htmlFor="rule-failover-enabled" className="text-sm font-medium">主备线路</Label>
+                    <Label htmlFor="rule-failover-enabled" className="text-sm font-medium">线路组</Label>
                     <a
                       href={docsUrl("/guide/failover")}
                       target="_blank"
@@ -7673,7 +7580,7 @@ function RulesContent() {
                     </a>
                   </div>
                   <p className="text-meta leading-5 text-muted-foreground">
-                    主线路出问题时，自动换到备用线路
+                    一个入口后面挂几条路径（可以经过中转），出问题自动换，也能定时、择优、按权重分流
                     {canAutoSwitchMainBackupToGost && !form.failoverEnabled ? "（勾上后转发工具会换成 GOST，切换要靠它）" : ""}
                   </p>
                   {/*
@@ -7692,7 +7599,7 @@ function RulesContent() {
                   )}
                   {form.failoverEnabled && form.protocol !== "tcp" && (
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <p className="text-meta leading-5 text-[var(--fx-warn-text)]">主备线路只支持 TCP，协议要改回 TCP 才能保存。</p>
+                      <p className="text-meta leading-5 text-[var(--fx-warn-text)]">线路组只支持 TCP，协议要改回 TCP 才能保存。</p>
                       <Button type="button" variant="outline" size="sm" className="fx-compact-touch h-7 text-meta" onClick={() => setForm({ ...form, protocol: "tcp" })}>
                         改回 TCP
                       </Button>
@@ -7700,15 +7607,16 @@ function RulesContent() {
                   )}
                 </div>
               </div>
-              {form.failoverEnabled && (
+              {form.failoverEnabled && form.routeGroup && (
                 <div className="mt-3 border-t border-[var(--fx-stroke-weak)] pt-3">
-                  <FailoverPolicyFields
-                    value={form}
-                    onChange={(patch) => setForm({ ...form, ...patch })}
+                  <RouteGroupFields
+                    value={form.routeGroup}
+                    onChange={(routeGroup) => setForm({ ...form, routeGroup })}
+                    hosts={routeHostOptions}
+                    allowHops={routeHopsAllowed}
+                    entryHostId={routeEntryHostId}
+                    mainAddress={form.targetIp.trim() && form.targetPort > 0 ? `${form.targetIp.trim()}:${form.targetPort}` : ""}
                     policy={formRoutePolicy}
-                    lineHints={failoverLineHints}
-                    relayCandidates={(relayCandidatesQuery.data || []) as RelayCandidate[]}
-                    mainAddress={formatFailoverEndpoint(form.targetIp, form.targetPort)}
                     scheduleTimeZone={BILLING_TIME_ZONE}
                   />
                 </div>
@@ -8670,9 +8578,10 @@ function RulesContent() {
         const policyRule = policyRuleId === null ? null : (rules || []).find((rule: any) => Number(rule.id) === policyRuleId);
         const policy = policyRule ? describeRoutePolicy(policyRule, { host: hostById.get(Number(policyRule.hostId)) }) : null;
         return (
-          <RoutePolicySheet
+          <RouteGroupSheet
             open={policyRuleId !== null}
             onOpenChange={(open) => !open && setPolicyRuleId(null)}
+            ruleId={policyRuleId}
             subjectName={String(policyRule?.name || "")}
             policy={policy}
             canEdit

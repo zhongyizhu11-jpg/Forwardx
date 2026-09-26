@@ -2,6 +2,10 @@ import { appendPanelLog } from "./_core/panelLogger";
 import { normalizeAgentText } from "./agentInputValidation";
 import * as db from "./db";
 import { timestampMillis } from "../shared/timestamp";
+import { failoverLineEndpoints } from "../shared/failoverActiveLine";
+import { normalizeRouteEventKind, routePathLabel, routePathsOf, type RouteEventKind, type RouteGroupRule } from "../shared/routeGroup";
+import { recordRouteAgentStats } from "./routeGroupStats";
+import { notifyRouteSwitch } from "./routeSwitchNotifier";
 
 /*
   主备切换：Agent 自己切完，面板才知道。
@@ -11,12 +15,16 @@ import { timestampMillis } from "../shared/timestamp";
   日志里，面板一无所知。而主备恰恰是「平时看不出来、出事才知道有没有用」的东西：
   切了没人知道，没切更没人知道。
 
-  Agent 随心跳带回来两样东西：
+  Agent 随心跳带回来三样东西：
 
-  · 事件（failoverEvents）：切换和健康翻转，落进面板日志 —— 一条转发什么时候从哪条
-    线切到哪条、为什么切、当时那条线多少延迟，查得到。
+  · 事件（failoverEvents）：切换和健康翻转，落进面板日志和 forward_rule_route_events ——
+    一条转发什么时候从哪条线切到哪条、为什么切、当时那条线多少延迟，查得到；线路组的
+    「最近切换」列表读的就是这张表。2.2.198 起还有预热（prewarm）、预检没过没切
+    （precheck_failed）、人工指定到期（unpinned）。
   · 快照（failoverActive，Agent 2.2.197 起）：每条主备规则此刻走的是哪条、从什么时候
     起。「现在走哪条」以它为准。
+  · 评分（failoverStats，Agent 2.2.198 起）：每条路径的评分、延迟、丢包、抖动、可用率。
+    只留在内存里（routeGroupStats），给界面和下发用。
 
   为什么事件不够：代理还会不报事件就回到主线路 —— 面板改了主备设置（换规格）、
   Agent 重启之后都是。只靠事件，面板会一直写着最后一次报上来的那条。
@@ -31,7 +39,13 @@ import { timestampMillis } from "../shared/timestamp";
 
 /** 快照没变就不再核对。但隔一阵子总要重新核一次：库里的值万一被别的路径改过，不能一直不知道。 */
 const SNAPSHOT_RECHECK_MS = 10 * 60 * 1000;
+/** 评分每次心跳都带，全收就是每几秒查一次规则表；半分钟一份足够画图，有事件时顺带更新。 */
+const STATS_RECORD_INTERVAL_MS = 30 * 1000;
 const lastSnapshotByHost = new Map<number, { signature: string; checkedAt: number }>();
+const lastStatsAtByHost = new Map<number, number>();
+
+/** Agent 报的事件里面板要入库的几种；别的（比如将来加的）只进日志。 */
+const STORED_EVENT_KINDS: ReadonlySet<RouteEventKind> = new Set<RouteEventKind>(["switch", "unhealthy", "recovered", "prewarm", "precheck_failed", "unpinned"]);
 
 /**
  * Agent 报的时刻换成面板存的秒。
@@ -60,10 +74,23 @@ function snapshotSignature(snapshot: unknown[]) {
   ]));
 }
 
+/** Agent 报的下标（2.2.198 起）；老 Agent 没有这个字段，按拨号地址反查。 */
+function reportedIndex(raw: unknown, target: string, endpoints: string[]) {
+  if (raw !== undefined && raw !== null) {
+    const index = Math.floor(Number(raw));
+    if (Number.isInteger(index) && index >= 0 && index < endpoints.length) return index;
+    if (Number.isInteger(index) && index < 0) return -1;
+  }
+  if (!target) return -1;
+  return endpoints.indexOf(target);
+}
+
 export async function ingestFailoverLineReports(input: {
   hostId: number;
   events: unknown;
   snapshot: unknown;
+  /** Agent 2.2.198 起随心跳带的评分快照。 */
+  stats?: unknown;
   /** 这台机器有权报告的规则（带着库里现在记的线路）。只在真有东西要处理时才取。 */
   loadHostRules: () => Promise<any[]>;
   nowMs?: number;
@@ -72,11 +99,13 @@ export async function ingestFailoverLineReports(input: {
   const hostId = Number(input.hostId);
   const events = Array.isArray(input.events) ? input.events.slice(0, 128) : [];
   const snapshot = Array.isArray(input.snapshot) ? input.snapshot.slice(0, 1024) : null;
+  const stats = Array.isArray(input.stats) && input.stats.length > 0 ? input.stats : null;
   const signature = snapshot ? snapshotSignature(snapshot) : "";
   const previous = lastSnapshotByHost.get(hostId);
   const snapshotNeedsCheck = snapshot !== null
     && (!previous || previous.signature !== signature || nowMs - previous.checkedAt >= SNAPSHOT_RECHECK_MS);
-  if (events.length === 0 && !snapshotNeedsCheck) return { written: 0 };
+  const statsDue = stats !== null && nowMs - (lastStatsAtByHost.get(hostId) || 0) >= STATS_RECORD_INTERVAL_MS;
+  if (events.length === 0 && !snapshotNeedsCheck && !statsDue) return { written: 0, events: 0 };
 
   const rules = await input.loadHostRules();
   /*
@@ -89,25 +118,34 @@ export async function ingestFailoverLineReports(input: {
     if (id > 0) rulesById.set(id, rule);
   }
 
+  if (stats && (statsDue || events.length > 0)) {
+    recordRouteAgentStats({ hostId, reports: stats, isAllowed: (ruleId) => rulesById.has(ruleId), nowMs });
+    lastStatsAtByHost.set(hostId, nowMs);
+  }
+
   // 一次心跳里同一条规则可能连切几次，只有最后一次才是「现在」。
   const eventLines = new Map<number, ReportedLine>();
+  let storedEvents = 0;
   for (const rawEvent of events) {
     const ruleId = Math.max(0, Math.floor(Number(rawEvent?.ruleId || 0)));
     if (!ruleId || !rulesById.has(ruleId)) continue;
-    const kind = normalizeAgentText(rawEvent?.kind, 16);
-    if (kind !== "switch" && kind !== "unhealthy" && kind !== "recovered") continue;
+    const kind = normalizeRouteEventKind(normalizeAgentText(rawEvent?.kind, 24));
+    if (!kind || !STORED_EVENT_KINDS.has(kind)) continue;
+    const rule = rulesById.get(ruleId);
     const toTarget = normalizeAgentText(rawEvent?.toTarget, 256);
-    if (!toTarget) continue;
+    if (kind === "switch" && !toTarget) continue;
     const fromTarget = normalizeAgentText(rawEvent?.fromTarget, 256);
     const reason = normalizeAgentText(rawEvent?.reason, 256);
     const latencyMs = Math.max(0, Math.floor(Number(rawEvent?.latencyMs || 0)));
+    // Agent 没评分时报 0 或 -1（切换原因是探测不通、没样本）；只有真有分才记。
+    const score = Number.isFinite(Number(rawEvent?.score)) && Number(rawEvent?.score) > 0 ? Math.min(100, Math.floor(Number(rawEvent.score))) : null;
     const transition = kind === "switch"
       ? `${fromTarget || "(无)"} -> ${toTarget}`
       : toTarget;
     appendPanelLog(
-      kind === "recovered" ? "info" : "warn",
+      kind === "recovered" || kind === "prewarm" ? "info" : "warn",
       `[Failover] host=${hostId} rule=${ruleId} ${kind} ${transition}`
-        + `${reason ? ` reason=${reason}` : ""}${latencyMs > 0 ? ` latencyMs=${latencyMs}` : ""}`,
+        + `${reason ? ` reason=${reason}` : ""}${latencyMs > 0 ? ` latencyMs=${latencyMs}` : ""}${score !== null ? ` score=${score}` : ""}`,
     );
     /*
       只有 switch 改变「现在走哪条」。unhealthy / recovered 说的是某一条
@@ -115,8 +153,50 @@ export async function ingestFailoverLineReports(input: {
       人工钉住都可能压着不切），拿它去写当前线路会显示成一个没有发生过的
       切换。
     */
+    const atSeconds = agentReportedSeconds(rawEvent?.occurredAt, nowMs);
     if (kind === "switch") {
-      eventLines.set(ruleId, { target: toTarget, at: agentReportedSeconds(rawEvent?.occurredAt, nowMs) });
+      eventLines.set(ruleId, { target: toTarget, at: atSeconds });
+    }
+
+    // 入库：目标地址 → 路径。老 Agent 的事件没有下标，按拨号地址反查。
+    const paths = routePathsOf(rule as RouteGroupRule);
+    const endpoints = failoverLineEndpoints(rule as RouteGroupRule);
+    const toIndex = reportedIndex(rawEvent?.toIndex, toTarget, endpoints);
+    const fromIndex = reportedIndex(rawEvent?.fromIndex, fromTarget, endpoints);
+    const toLabel = toIndex >= 0 ? routePathLabel(paths[toIndex], toIndex) : (toTarget || null);
+    const fromLabel = fromIndex >= 0 ? routePathLabel(paths[fromIndex], fromIndex) : (fromTarget || null);
+    try {
+      await db.insertForwardRuleRouteEvent({
+        ruleId,
+        kind,
+        fromKey: fromIndex >= 0 ? paths[fromIndex]?.key : null,
+        toKey: toIndex >= 0 ? paths[toIndex]?.key : null,
+        fromLabel,
+        toLabel,
+        reason: reason || null,
+        score,
+        latencyMs: latencyMs > 0 ? latencyMs : null,
+        atSeconds,
+      });
+      storedEvents += 1;
+    } catch (error) {
+      appendPanelLog("warn", `[Failover] host=${hostId} rule=${ruleId} 切换记录写入失败: ${String((error as any)?.message || error)}`);
+    }
+    if ((kind === "switch" || kind === "precheck_failed") && rule?.telegramErrorNotifyEnabled) {
+      void notifyRouteSwitch({
+        rule,
+        host: null,
+        kind,
+        fromLabel,
+        fromValue: fromTarget || (fromIndex >= 0 ? endpoints[fromIndex] : null),
+        toLabel,
+        toValue: toTarget || (toIndex >= 0 ? endpoints[toIndex] : null),
+        reason,
+        score,
+        latencyMs,
+      }).catch((error) => {
+        appendPanelLog("warn", `[Failover] host=${hostId} rule=${ruleId} Telegram 提醒失败: ${String((error as any)?.message || error)}`);
+      });
     }
   }
 
@@ -155,10 +235,11 @@ export async function ingestFailoverLineReports(input: {
   }
   // 写失败了就不记这份快照，下一次心跳再核一遍。
   if (snapshot && !failed) lastSnapshotByHost.set(hostId, { signature, checkedAt: nowMs });
-  return { written };
+  return { written, events: storedEvents };
 }
 
 /** 测试用：模拟面板重启。 */
 export function resetFailoverLineReportMemory() {
   lastSnapshotByHost.clear();
+  lastStatsAtByHost.clear();
 }
