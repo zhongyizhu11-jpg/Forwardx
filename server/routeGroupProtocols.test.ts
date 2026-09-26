@@ -39,6 +39,8 @@ type Outcome = {
   udpAllowed: boolean;
   nginxTunnelAllowed: boolean;
   forwardxTunnelError: string;
+  statusHosts: Record<string, number[]>;
+  oldest: string[];
 };
 
 function run(): Outcome {
@@ -98,6 +100,39 @@ function run(): Outcome {
       ["nginx-tunnel", "gost", "both", 21006, "198.51.100.7", 7443, 22006, "fallback", "[]", "failover",
         JSON.stringify([direct("main", null), direct("backup", { ip: "198.51.100.9", port: 7443 })]), "smooth"],
     );
+
+    /*
+      7–9：GOST 隧道（入口东京、出口入口机 1），UDP。第三台机器是一个 Agent 很旧的出口节点：
+        7 —— 开着负载均衡，但这个节点停用了；
+        8 —— 节点还在，但负载均衡关掉了；
+        9 —— 开着负载均衡、节点也开着（它真的在出流量）。
+      7、8 用不上那台旧出口，UDP 调度照常下发；9 的入口会把流量分给它，得每个出口都够版本才下发。
+    */
+    await exec(
+      'INSERT INTO hosts (id, name, ip, ipv4, "hostType", "agentToken", "agentVersion", "userId", "isOnline", "lastHeartbeat") VALUES (3, ?, ?, ?, ?, ?, ?, 1, 1, ?)',
+      ["旧出口", "203.0.113.3", "203.0.113.3", "slave", "tok3", "2.2.150", Math.floor(Date.now() / 1000)],
+    );
+    for (const [tunnelId, listenPort, loadBalanceEnabled, nodeEnabled, ruleId, sourcePort] of [
+      [2, 22007, 1, 0, 7, 21007],
+      [3, 22008, 0, 1, 8, 21008],
+      [4, 22009, 1, 1, 9, 21009],
+    ]) {
+      await exec(
+        'INSERT INTO tunnels (id, name, "entryHostId", "exitHostId", mode, "listenPort", "userId", "isEnabled", "loadBalanceEnabled", "loadBalanceStrategy") VALUES (?, ?, 2, 1, ?, ?, 1, 1, ?, ?)',
+        [tunnelId, "GOST 隧道 " + tunnelId, "tls", listenPort, loadBalanceEnabled, "round_robin"],
+      );
+      await exec(
+        'INSERT INTO tunnel_exit_nodes ("tunnelId", seq, "hostId", "listenPort", "isEnabled") VALUES (?, 1, 3, ?, ?)',
+        [tunnelId, listenPort + 100, nodeEnabled],
+      );
+      await exec(
+        'INSERT INTO forward_rules (id, "hostId", name, "forwardType", protocol, "sourcePort", "targetIp", "targetPort", "userId", "isEnabled", "tunnelId", "tunnelExitPort",'
+          + ' "failoverEnabled", "failoverStrategy", "failoverTargets", "failoverSeconds", "recoverSeconds", "autoFailback", "routeMode", "routePaths", "routeSwitchMode", "telegramErrorNotifyEnabled")'
+          + ' VALUES (?, 2, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, 1, ?, ?, 10, 60, 1, ?, ?, ?, 0)',
+        [ruleId, "gost-tunnel-" + ruleId, "gost", "udp", sourcePort, "198.51.100.7", 53, tunnelId, listenPort, "fallback", "[]", "failover",
+          JSON.stringify([direct("main", null), direct("backup", { ip: "198.51.100.9", port: 53 })]), "smooth"],
+      );
+    }
 
     // nginx 和 Nginx 隧道默认是关的（DEFAULT_FORWARD_PROTOCOL_SETTINGS），这里在系统设置里打开。
     const settings = await import(url("server/repositories/settingsRepository.ts"));
@@ -195,7 +230,23 @@ function run(): Outcome {
     } catch (error) {
       forwardxTunnelError = String(error && error.message || error);
     }
-    console.log("OUTCOME " + JSON.stringify({ relays, mainDial, oldAgent, newAgent, kernelError, udpAllowed, nginxTunnelAllowed, forwardxTunnelError }));
+    // 线路面板按哪几台机器读 Agent 版本：和心跳同一个口径（真的从库里读隧道和出口节点）。
+    const dbModule = await import(url("server/db.ts"));
+    const statusHosts = {};
+    for (const tunnelId of [1, 2, 3, 4]) {
+      const tunnel = await dbModule.getTunnelById(tunnelId);
+      statusHosts[tunnelId] = crud.routeSchedulerHostIds(2, tunnel, await dbModule.getTunnelExitNodes(tunnelId));
+    }
+    statusHosts.direct = crud.routeSchedulerHostIds(5, null, []);
+    statusHosts.forwardx = crud.routeSchedulerHostIds(2, { id: 9, mode: "forwardx", exitHostId: 1, loadBalanceEnabled: 1 }, [{ hostId: 3, listenPort: 1, isEnabled: 1 }]);
+    const rulesRouter = await import(url("server/routers/rules.ts"));
+    const oldest = [
+      rulesRouter.oldestAgentVersion(["2.2.199", "2.2.150"]),
+      rulesRouter.oldestAgentVersion(["2.2.150", "2.2.199"]),
+      rulesRouter.oldestAgentVersion(["2.2.199"]),
+      rulesRouter.oldestAgentVersion(["2.2.199", ""]),
+    ];
+    console.log("OUTCOME " + JSON.stringify({ relays, mainDial, oldAgent, newAgent, kernelError, udpAllowed, nginxTunnelAllowed, forwardxTunnelError, statusHosts, oldest }));
   `;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
     cwd: path.resolve(import.meta.dirname, ".."),
@@ -305,4 +356,22 @@ test("Nginx 隧道：出口的 nginx 拨出口机上的调度器，规格下发�
 test("保存时放开 Nginx 隧道，ForwardX 隧道照实拦住", () => {
   assert.equal(outcome.nginxTunnelAllowed, true);
   assert.match(outcome.forwardxTunnelError, /ForwardX 隧道/);
+});
+
+test("负载均衡隧道：停用的出口节点、负载均衡关掉后留着的节点，不拖住 UDP 调度", () => {
+  assert.ok(outcome.newAgent.specs["7"], "停用的旧出口节点让 UDP 调度退回了路径 A");
+  assert.equal(outcome.newAgent.specs["7"].protocol, "udp");
+  assert.ok(outcome.newAgent.specs["8"], "负载均衡关掉后留着的旧节点让 UDP 调度退回了路径 A");
+  assert.equal(outcome.newAgent.specs["9"], undefined, "开着的出口里有一台旧 Agent：每个出口都够版本才下发");
+  assert.equal(outcome.oldAgent.specs["7"], undefined, "出口机自己是老 Agent 时照样不下发");
+});
+
+test("线路面板读版本的机器和心跳同一个口径；按最旧的那台说", () => {
+  assert.deepEqual(outcome.statusHosts["1"], [1], "Nginx 隧道：出口机");
+  assert.deepEqual(outcome.statusHosts["2"], [1], "停用的出口节点不算");
+  assert.deepEqual(outcome.statusHosts["3"], [1], "负载均衡关掉后留着的节点不算");
+  assert.deepEqual(outcome.statusHosts["4"], [1, 3], "开着的负载均衡出口都算");
+  assert.deepEqual(outcome.statusHosts.direct, [5], "直连规则：规则所在的机器");
+  assert.deepEqual(outcome.statusHosts.forwardx, [2], "ForwardX 隧道（老数据）：入口");
+  assert.deepEqual(outcome.oldest, ["2.2.150", "2.2.150", "2.2.199", ""]);
 });

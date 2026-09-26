@@ -2647,16 +2647,32 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       生成配置：入口这边算「出口拨哪儿」时也得按出口的版本判断，所以出口的版本先读好。
     */
     const routeSchedulerAgentVersions = new Map<number, string>([[Number(host.id), String(effectiveAgentVersion || "")]]);
-    const routeSchedulerHostIds = (rule: any): number[] => {
+    /** 可能跑调度器的机器，取全一点，只用来预读版本：规则所在机器、隧道入口、主出口和全部出口节点。 */
+    const routeSchedulerCandidateHostIds = (rule: any): number[] => {
       const tunnel = Number(rule?.tunnelId || 0) > 0 ? tunnelById.get(Number(rule.tunnelId)) as any : null;
       if (!tunnel) return [Number(rule?.hostId || host.id)];
-      const ids = [Number(tunnel.exitHostId || 0)];
+      const ids = [Number(rule?.hostId || 0), Number(tunnel.entryHostId || 0), Number(tunnel.exitHostId || 0)];
       for (const exitNode of tunnelExitNodesByTunnelId.get(Number(tunnel.id)) || []) ids.push(Number((exitNode as any)?.hostId || 0));
       return Array.from(new Set(ids.filter((id) => id > 0)));
     };
+    /*
+      真正跑调度器的机器，UDP 调度要每一台都够版本：直连规则是规则所在的机器；GOST / Nginx 隧道
+      是这条规则实际用到的出口（tunnelExitEndpointsForRule：主出口加上开着的负载均衡出口）——
+      停用的出口节点、负载均衡关掉后还留着的节点不算，不然一台用不上的旧出口会让所有出口都退回
+      路径 A。入口给 gost 链写的出口目标对每个出口都一样，所以要每个出口都够版本。ForwardX 隧道
+      （老数据）的调度在入口。tunnelExitEndpointsForRule 定义在后面：这里只在调用时读，而
+      actionFailover 都是在它定义之后才调的。
+    */
+    const routeSchedulerHostIds = (rule: any): number[] => {
+      const tunnel = Number(rule?.tunnelId || 0) > 0 ? tunnelById.get(Number(rule.tunnelId)) as any : null;
+      if (!tunnel) return [Number(rule?.hostId || host.id)];
+      if (!isGostTunnelMode(tunnel) && !isNginxTunnelMode(tunnel)) return [Number(tunnel.entryHostId || rule?.hostId || host.id)];
+      const ids = Array.from(new Set(tunnelExitEndpointsForRule(rule, tunnel).map((endpoint) => endpoint.exitHostId).filter((id) => id > 0)));
+      return ids.length > 0 ? ids : [Number(tunnel.exitHostId || rule?.hostId || host.id)];
+    };
     for (const rule of [...agentAllRules, ...agentHostRules] as any[]) {
       if (!rule?.failoverEnabled || !routeGroupNeedsUdpAgent(rule?.protocol)) continue;
-      for (const schedulerHostId of routeSchedulerHostIds(rule)) {
+      for (const schedulerHostId of routeSchedulerCandidateHostIds(rule)) {
         if (routeSchedulerAgentVersions.has(schedulerHostId)) continue;
         const schedulerHost = await db.getHostById(schedulerHostId).catch(() => null) as any;
         routeSchedulerAgentVersions.set(schedulerHostId, String(schedulerHost?.agentVersion || ""));

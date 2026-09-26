@@ -13,6 +13,7 @@ import {
   validateFailoverSchedule,
 } from "@shared/failoverSchedule";
 import { readFailoverPin } from "@shared/failoverPin";
+import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
 import {
   MAX_ROUTE_HOPS,
   MAX_ROUTE_PATHS,
@@ -549,6 +550,25 @@ async function routeHostIdsForActor(actor: { id: number; role: string }) {
 export function routeEntryHostId(hostId: number, tunnel: any | null | undefined) {
   if (!tunnel) return hostId;
   return String(tunnel?.mode || "").toLowerCase() === "forwardx" ? hostId : Number(tunnel.exitHostId || hostId);
+}
+
+/**
+ * 调度器实际跑在哪几台机器上，和 server/agentHeartbeatRoute.ts 的 routeSchedulerHostIds 同一个
+ * 口径：直连规则是规则所在的机器；GOST / Nginx 隧道是主出口加上开着的负载均衡出口 —— 停用的
+ * 出口节点、负载均衡关掉后还留着的节点都不算；ForwardX 隧道（老数据）在入口。多出口时每个出口
+ * 各跑一个调度器，UDP 调度要每一台都够版本才下发。
+ */
+export function routeSchedulerHostIds(hostId: number, tunnel: any | null | undefined, exitNodes: readonly any[] = []): number[] {
+  const primary = routeEntryHostId(hostId, tunnel);
+  if (!tunnel || String(tunnel?.mode || "").toLowerCase() === "forwardx") return [primary];
+  const ids = [primary];
+  if (dbBool(tunnel.loadBalanceEnabled) && normalizeExitGroupStrategy(tunnel.loadBalanceStrategy) !== "none") {
+    for (const node of exitNodes) {
+      if (!node || !dbBool(node.isEnabled, true) || Number(node.hostId) <= 0 || Number(node.listenPort) <= 0) continue;
+      ids.push(Number(node.hostId));
+    }
+  }
+  return Array.from(new Set(ids.filter((id) => id > 0)));
 }
 
 /**
