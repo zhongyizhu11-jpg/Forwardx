@@ -17,8 +17,8 @@ import test from "node:test";
  *     UDP 目标表也指向它；
  *   · 出口 Agent 早于 2.2.199 时什么都不下发，入口和出口都拨路径 A（经过中转就拨中转）；
  *   · 开着负载均衡时每个出口各跑一个调度器，要每个出口都够版本；
- *   · 调度器在出口，「现在走哪条」和评分是出口机报上来的 —— 主出口有权报这条规则；负载均衡的
- *     出口节点不报，不然几个出口的状态互相覆盖。
+ *   · 调度器在出口，「现在走哪条」和评分是出口机报上来的 —— 只有主出口有权报这条规则；负载均衡的
+ *     出口节点不报，不然几个出口的状态互相覆盖；入口不跑调度器，也不能报。
  *
  * 起一个真的 sqlite 和真的心跳路由跑一遍。
  */
@@ -198,13 +198,16 @@ function run(): Outcome {
     server.close();
     const entryPlanKeptOutcome = { before: planBefore, afterSameVersion: planAfterSameVersion, afterVersionChange: planAfterVersionChange };
 
-    // 谁有权报这条规则的「现在走哪条」和评分。
+    // 谁有权报这条规则的「现在走哪条」和评分。入口上再放一条不走隧道的线路组规则（101），和一条
+    // 隧道已经删掉的（102）：这两条的调度器在入口本机，入口照旧能报。心跳都跑完了才加，不影响上面。
+    await insertRule(101, null, "tcp", 24101, true, [direct("a", null), direct("b", { ip: "198.51.100.9", port: 443 })]);
+    await insertRule(102, 99, "tcp", 24102, true, [direct("a", null), direct("b", { ip: "198.51.100.9", port: 443 })]);
     const db = await import(url("server/db.ts"));
     const reportable = {};
     for (const hostId of [1, 2, 3, 4]) {
       reportable[hostId] = (await db.getForwardRuleFailoverLinesForAgent(hostId))
         .map((row) => Number(row.id))
-        .filter((id) => id <= 4)
+        .filter((id) => id <= 4 || id > 100)
         .sort((a, b) => a - b);
     }
 
@@ -307,10 +310,10 @@ test("出口的 Agent 换了版本，隧道入口马上重算，不等 5 分钟�
   assert.equal(outcome.entryPlanKept.afterVersionChange, false, "出口降级后入口还按老计划让出口拨调度器，出口那边已经没有调度器了");
 });
 
-test("主出口有权报隧道上的线路组，负载均衡的出口节点和中转机没有", () => {
+test("只有主出口有权报隧道上的线路组，入口、负载均衡的出口节点和中转机没有", () => {
   assert.deepEqual(outcome.reportable["1"], [1, 2, 3, 4], "主出口");
   assert.deepEqual(outcome.reportable["4"], [], "出口节点也跑调度器，但一条规则只有一份状态，几个出口一起报会互相覆盖");
-  assert.deepEqual(outcome.reportable["2"], [1, 2, 3, 4], "入口（规则所在的机器）照旧");
+  assert.deepEqual(outcome.reportable["2"], [101, 102], "入口不跑隧道规则的调度器，不能报；不走隧道的、隧道已经不在的照旧");
   assert.deepEqual(outcome.reportable["3"], [], "中转机只报它自己的中继规则");
 });
 
