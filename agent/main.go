@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.198"
+var Version = "2.2.199"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -2577,6 +2577,13 @@ type failoverSpec struct {
 	PrewarmSeconds int `json:"prewarmSeconds,omitempty"`
 	// 切换时旧连接怎么办：smooth 不动（默认）、fast 只在故障切换时断、force 每次都断。
 	SwitchMode string `json:"switchMode,omitempty"`
+	// 进到调度器的连接开头带着 PROXY protocol 头（前面的转发工具加的）。调度器照样原样转给
+	// 路径，只是「按访客固定」要从这个头里读访客地址 —— 调度器只监听 127.0.0.1，不读的话
+	// 看到的来源永远是本机，所有访客会被分到同一条路径上。
+	ProxyProtocolReceive bool `json:"proxyProtocolReceive,omitempty"`
+	// 这个 PROXY 头是面板专门让前面的转发工具加给调度器的（规则本身不往目标发 PROXY 头，
+	// 可「按访客固定」要知道访客是谁）：调度器读完就扔，不转给路径。
+	ProxyProtocolStrip bool `json:"proxyProtocolStrip,omitempty"`
 }
 
 type tunnelProbe struct {
@@ -11874,9 +11881,15 @@ type failoverProxy struct {
 	// 上面三个 -1 才是「没有」，而 Go 的零值是 0（一个合法的出站序号），所以第一次用之前
 	// 要显式初始化一遍；见 ensureHealthStateLocked。
 	stateInitialized bool
-	ln               net.Listener
-	done             chan struct{}
-	mu               sync.RWMutex
+	// TCP 和 UDP 各一个监听，按规格的 protocol 开：tcp 只有 ln，udp 只有 udp，both 两个都有。
+	ln         net.Listener
+	udp        net.PacketConn
+	done       chan struct{}
+	retireOnce sync.Once
+	mu         sync.RWMutex
+	// UDP 会话：按来源地址记，一个会话一直走它挑中的那条路径，空闲够久回收（route_group_udp.go）。
+	udpMu       sync.Mutex
+	udpSessions map[string]*failoverUDPSession
 }
 
 func failoverID(ruleID int, sourcePort int) string {
@@ -11891,7 +11904,7 @@ func failoverSignature(spec failoverSpec) string {
 	parts := []string{
 		strconv.Itoa(spec.ListenPort),
 		spec.BindAddress,
-		spec.Protocol,
+		failoverProtocol(spec),
 		spec.Strategy,
 		strconv.Itoa(spec.FailoverSeconds),
 		strconv.Itoa(spec.RecoverSeconds),
@@ -11911,6 +11924,8 @@ func failoverSignature(spec failoverSpec) string {
 		strconv.Itoa(spec.ScoreHoldSeconds),
 		strconv.Itoa(spec.PrewarmSeconds),
 		spec.SwitchMode,
+		strconv.FormatBool(spec.ProxyProtocolReceive),
+		strconv.FormatBool(spec.ProxyProtocolStrip),
 	}
 	for _, target := range spec.Targets {
 		// Down / DownReason 是面板随时会变的运行时提示，故意不进签名：进了的话每次提示变化
@@ -11924,6 +11939,7 @@ func normalizeFailoverSpec(spec failoverSpec) failoverSpec {
 	if spec.BindAddress == "" {
 		spec.BindAddress = "127.0.0.1"
 	}
+	spec.Protocol = failoverProtocol(spec)
 	switch strings.TrimSpace(spec.Strategy) {
 	case "round_robin", "random", "ip_hash", "weighted", "fallback":
 		spec.Strategy = strings.TrimSpace(spec.Strategy)
@@ -12031,10 +12047,23 @@ func startFailoverProxyLocked(ruleID int, sourcePort int, spec failoverSpec, act
 	}
 	if existing != nil {
 		existing.mu.Lock()
-		sameEndpoint := existing.spec.ListenPort == spec.ListenPort && existing.spec.BindAddress == spec.BindAddress
+		sameAddress := existing.spec.ListenPort == spec.ListenPort && existing.spec.BindAddress == spec.BindAddress
+		sameProtocol := failoverProtocol(existing.spec) == failoverProtocol(spec)
+		sameEndpoint := sameAddress && sameProtocol
 		if !sameEndpoint {
 			existing.mu.Unlock()
-			failoverMu.Unlock()
+			if sameAddress {
+				/*
+					同一个地址换了协议（tcp → both 之类）：新监听要绑的端口旧的还占着，先起新的再收
+					旧的那一套在这里行不通。先收旧的 —— 换协议是用户改了规则，前面的转发工具本来
+					也要重启，这一下中断躲不掉。
+				*/
+				delete(failoverProxies, id)
+				failoverMu.Unlock()
+				existing.retire()
+			} else {
+				failoverMu.Unlock()
+			}
 		} else {
 			existing.rebuildForSpecLocked(spec, time.Now())
 			existing.mu.Unlock()
@@ -12051,12 +12080,25 @@ func startFailoverProxyLocked(ruleID int, sourcePort int, spec failoverSpec, act
 	}
 
 	addr := net.JoinHostPort(spec.BindAddress, strconv.Itoa(spec.ListenPort))
-	ln, err := net.Listen("tcp", addr)
+	protocol := failoverProtocol(spec)
+	var ln net.Listener
+	var udpConn net.PacketConn
+	var err error
+	if protocol != "udp" {
+		ln, err = net.Listen("tcp", addr)
+	}
+	if err == nil && protocol != "tcp" {
+		udpConn, err = net.ListenPacket("udp", addr)
+		if err != nil && ln != nil {
+			_ = ln.Close()
+			ln = nil
+		}
+	}
 	if err != nil {
 		if actionMessage != nil {
-			actionMessage.set("failover proxy listen failed rule=%d addr=%s: %v", ruleID, addr, err)
+			actionMessage.set("failover proxy listen failed rule=%d addr=%s protocol=%s: %v", ruleID, addr, protocol, err)
 		} else {
-			logf("failover proxy listen failed rule=%d addr=%s: %v", ruleID, addr, err)
+			logf("failover proxy listen failed rule=%d addr=%s protocol=%s: %v", ruleID, addr, protocol, err)
 		}
 		return false
 	}
@@ -12068,6 +12110,7 @@ func startFailoverProxyLocked(ruleID int, sourcePort int, spec failoverSpec, act
 		activeSince: time.Now(),
 		rng:         newFailoverRand(ruleID, sourcePort),
 		ln:          ln,
+		udp:         udpConn,
 		done:        make(chan struct{}),
 	}
 	p.ensureHealthStateLocked()
@@ -12079,15 +12122,19 @@ func startFailoverProxyLocked(ruleID int, sourcePort int, spec failoverSpec, act
 	// keeps a failed bind from tearing down the working proxy and makes dynamic
 	// internal-port handoffs continuous once the backend action completes.
 	go p.healthLoop()
-	go p.acceptLoop()
+	if p.ln != nil {
+		go p.acceptLoop()
+	}
+	if p.udp != nil {
+		go p.serveUDP()
+	}
 	if previous != nil {
-		close(previous.done)
-		_ = previous.ln.Close()
+		previous.retire()
 	}
 	if err := persistFailoverSpec(ruleID, sourcePort, spec); err != nil {
 		logf("failover persistent snapshot write failed rule=%d port=%d: %v", ruleID, sourcePort, err)
 	}
-	logf("failover proxy started rule=%d source=%d listen=%s strategy=%s targets=%d", ruleID, sourcePort, addr, spec.Strategy, len(spec.Targets))
+	logf("failover proxy started rule=%d source=%d listen=%s protocol=%s strategy=%s targets=%d", ruleID, sourcePort, addr, protocol, spec.Strategy, len(spec.Targets))
 	return true
 }
 
@@ -12116,8 +12163,7 @@ func stopFailoverProxyRuntime(ruleID int, sourcePort int) {
 	if p == nil {
 		return
 	}
-	close(p.done)
-	_ = p.ln.Close()
+	p.retire()
 }
 
 func (p *failoverProxy) ensureHealthStateLocked() {
@@ -12210,6 +12256,12 @@ func (p *failoverProxy) candidateIndicesLocked(exclude map[int]bool, healthyOnly
 }
 
 func (p *failoverProxy) pickTarget(client net.Conn, exclude map[int]bool) (failoverTarget, int) {
+	return p.pickTargetForKey(failoverRemoteIP(client), exclude)
+}
+
+// 挑一条路径。hashKey 只有「按访客固定」用：TCP 是访客 IP（带 PROXY 头时从头里读），
+// UDP 是会话的来源地址。
+func (p *failoverProxy) pickTargetForKey(hashKey string, exclude map[int]bool) (failoverTarget, int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.ensureHealthStateLocked()
@@ -12236,7 +12288,7 @@ func (p *failoverProxy) pickTarget(client net.Conn, exclude map[int]bool) (failo
 		}
 		index = candidates[p.rng.Intn(len(candidates))]
 	case "ip_hash":
-		key := failoverRemoteIP(client)
+		key := hashKey
 		if key == "" {
 			key = strconv.Itoa(p.sourcePort)
 		}
@@ -12628,6 +12680,7 @@ func (p *failoverProxy) checkHealth() {
 	failoverSeconds := p.spec.FailoverSeconds
 	recoverSeconds := p.spec.RecoverSeconds
 	failureThreshold := p.spec.FailureThreshold
+	protocol := failoverProtocol(p.spec)
 	specSignature := failoverSignature(p.spec)
 	p.mu.RUnlock()
 	if len(targets) == 0 {
@@ -12636,8 +12689,7 @@ func (p *failoverProxy) checkHealth() {
 	results := make([]bool, len(targets))
 	latencies := make([]int, len(targets))
 	for i, target := range targets {
-		probeHost, probePort := target.probeEndpoint()
-		latencies[i], results[i] = tcpLatency(probeHost, probePort, 2*time.Second)
+		latencies[i], results[i] = failoverProbeTarget(protocol, target)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -12710,13 +12762,14 @@ func (p *failoverProxy) acceptLoop() {
 
 func (p *failoverProxy) handleConn(client net.Conn) {
 	defer client.Close()
+	visitor, prefix := p.readVisitor(client)
 	var upstream net.Conn
 	var target failoverTarget
 	var index int
 	var err error
 	attempted := map[int]bool{}
 	for {
-		target, index = p.pickTarget(client, attempted)
+		target, index = p.pickTargetForKey(visitor, attempted)
 		if index < 0 {
 			logf("failover no target available rule=%d source=%d", p.ruleID, p.sourcePort)
 			return
@@ -12733,7 +12786,7 @@ func (p *failoverProxy) handleConn(client net.Conn) {
 	}
 	if err != nil {
 		p.checkHealth()
-		target, index = p.pickTarget(client, attempted)
+		target, index = p.pickTargetForKey(visitor, attempted)
 		if index >= 0 {
 			upstream, err = net.DialTimeout("tcp", net.JoinHostPort(target.TargetIP, strconv.Itoa(target.TargetPort)), 10*time.Second)
 		} else {
@@ -12746,6 +12799,12 @@ func (p *failoverProxy) handleConn(client net.Conn) {
 		}
 	}
 	defer upstream.Close()
+	// 读 PROXY 头时多读到的字节（以及透传模式下的头本身）要先补给路径，再接着原样拷。
+	if len(prefix) > 0 {
+		if _, err := upstream.Write(prefix); err != nil {
+			return
+		}
+	}
 	p.trackConn(index, client)
 	defer p.untrackConn(index, client)
 	copyDone := make(chan struct{}, 2)

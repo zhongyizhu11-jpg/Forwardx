@@ -34,11 +34,12 @@ function group(mode: RouteMode = "failover", patch: Partial<RouteGroup["policy"]
 }
 
 /** 和编辑框一样：拿表单现在的样子走同一份模型算「此刻」。 */
-function render(value: RouteGroup, advanced: boolean | "auto" = true) {
+function render(value: RouteGroup, advanced: boolean | "auto" = true, protocol = "tcp") {
   const policy = describeRoutePolicy({
     failoverEnabled: true,
     targetIp: "10.95.0.10",
     targetPort: 443,
+    protocol,
     ...routeGroupRuleFields(value, { targetIp: "10.95.0.10", targetPort: 443 }),
   }, { nowMs: NOW, timeZone: TZ });
   return renderToStaticMarkup(
@@ -53,6 +54,7 @@ function render(value: RouteGroup, advanced: boolean | "auto" = true) {
       defaultAdvancedOpen={advanced === "auto" ? undefined : advanced}
       nowMs={NOW}
       timeZone={TZ}
+      protocol={protocol}
     />,
   );
 }
@@ -115,6 +117,43 @@ test("一句话说清楚会怎么走，六种模式各一句", () => {
   assert.match(plain("failover", { switchMode: "force" }), /每次切换都断开旧连接/);
   assert.match(plain("failover", { autoFailback: false }), /首选恢复了也不切回/);
   assert.match(describeRouteGroupPlainly({ ...group(), paths: [newRoutePath(0)] }), /还没有第二条路径/);
+  // 分法的提示本身就以「新连接」开头，拼进句子里不能再重复一遍。
+  assert.match(plain("weighted", { spread: "round_robin" }), /^每条新连接轮流走每一条，旧连接不动；/);
+  assert.match(plain("weighted", { spread: "random" }), /^每条新连接随机挑一条能用的，旧连接不动；/);
+  assert.match(plain("weighted", { spread: "ip_hash" }), /^每条新连接按来源 IP 固定走一条，旧连接不动；/);
+  for (const spread of ["weighted", "round_robin", "random", "ip_hash"] as const) {
+    assert.doesNotMatch(plain("weighted", { spread }), /新连接新连接|，，/);
+  }
+});
+
+test("纯 UDP 按会话说：旧会话、新会话；按访客固定写明是按会话固定", () => {
+  const plain = (mode: RouteMode, patch: Partial<RouteGroup["policy"]> = {}) => describeRouteGroupPlainly(group(mode, patch), { perSession: true });
+  assert.match(plain("failover"), /切换只影响新会话，已有的会话留在原路径。$/);
+  assert.match(plain("failover", { switchMode: "fast" }), /路径挂了会丢掉它上面的会话，下一个包改走新路径；其余切换不动旧会话。$/);
+  assert.match(plain("failover", { switchMode: "force" }), /每次切换都丢掉旧会话，下一个包改走新路径。$/);
+  assert.match(plain("weighted"), /^每个新会话按权重分（主线路 50% \/ 备用线路 50%），旧会话不动；/);
+  assert.match(plain("weighted", { spread: "round_robin" }), /^每个新会话轮流走每一条，旧会话不动；/);
+  assert.match(plain("weighted", { spread: "ip_hash" }), /^UDP 分不出访客，按访客固定在这里是按会话固定：每个会话一直走同一条/);
+  for (const mode of ["failover", "scheduled", "manual", "smart", "hybrid", "weighted"] as const) {
+    for (const switchMode of ["smooth", "fast", "force"] as const) {
+      assert.doesNotMatch(plain(mode, { switchMode }), /连接/, `${mode} / ${switchMode} 还在说连接`);
+    }
+  }
+});
+
+test("纯 UDP 的编辑框：分法和旧会话三选一都按会话说，TCP+UDP 照旧按连接", () => {
+  const udp = render(group("weighted", { spread: "round_robin" }), true, "udp");
+  assert.match(udp, /aria-label="新会话怎么分"/);
+  assert.match(udp, /新会话轮流走每一条/);
+  assert.match(udp, /切换时旧会话怎么办[^]*?平滑切换[^]*?已有的会话留在原路径[^]*?快速故障转移[^]*?丢掉它上面的会话[^]*?强制切换/);
+  assert.match(udp, /data-testid="route-plain"[^>]*>每个新会话轮流走每一条，旧会话不动/);
+  assert.match(udp, /负载均衡[^]*?新会话按权重分到各条路径，旧会话不动/);
+  assert.doesNotMatch(udp, /切换时旧连接怎么办|新连接轮流走每一条/);
+  const both = render(group("weighted", { spread: "round_robin" }), true, "both");
+  assert.match(both, /aria-label="新连接怎么分"/);
+  assert.match(both, /切换时旧连接怎么办/);
+  assert.match(both, /data-testid="route-plain"[^>]*>每条新连接轮流走每一条，旧连接不动/);
+  assert.match(both, /负载均衡[^]*?新连接按权重分到各条路径，旧连接不动/);
 });
 
 test("高级策略默认折起来，折叠条上只列改过模板值的项；改过的打开时直接展开", () => {

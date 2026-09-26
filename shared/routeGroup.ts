@@ -7,6 +7,7 @@ import {
   parseFailoverTargets,
   type FailoverTarget,
 } from "./failoverTargets";
+import { normalizeForwardRuleProtocol } from "./forwardTypes";
 import { timestampMillis } from "./timestamp";
 
 /**
@@ -43,6 +44,45 @@ export const MAX_ROUTE_PATHS = MAX_FAILOVER_TARGETS + 1;
 export const MAX_ROUTE_HOPS = 5;
 /** 评分、权重、预热预检、强制切换、上报评分：Agent 2.2.198 起。更老的只按主备切。 */
 export const ROUTE_GROUP_AGENT_VERSION = "2.2.198";
+/**
+ * UDP、TCP+UDP 的线路组：Agent 2.2.199 起（按会话调度，见 agent/route_group_udp.go）。
+ *
+ * 更老的 Agent 只会开 TCP 监听，前面的转发工具把 UDP 转给它就进了黑洞。所以版本不够时
+ * 面板**不下发**调度：流量直接走主线路（路径 A），不切换，等 Agent 升级。
+ */
+export const ROUTE_GROUP_UDP_AGENT_VERSION = "2.2.199";
+
+/**
+ * 线路组能挂在哪些转发工具上。
+ *
+ * 调度层是入口 Agent 里的一个代理：前面的转发工具把连接交给它，它按连接（UDP 按会话）挑
+ * 路径。所以前面得是**用户态**转发 —— gost、realm、socat、nginx 都是「收下连接、再自己另拨
+ * 一条」，把「另拨」的目标换成调度器就行。iptables / nftables 在内核里改写目的地，没有
+ * 「收下连接」这一步，调度器插不进去：它们要切只能改 DNAT 规则，按连接分、旧连接留在原
+ * 线路、按路径评分都做不到。
+ */
+export const ROUTE_GROUP_FORWARD_TYPES = ["gost", "realm", "socat", "nginx"] as const;
+
+export function routeGroupForwardTypeSupported(forwardType: unknown): boolean {
+  const normalized = String(forwardType ?? "").trim().toLowerCase();
+  return (ROUTE_GROUP_FORWARD_TYPES as readonly string[]).includes(normalized);
+}
+
+/**
+ * 能挂线路组的隧道：GOST 隧道和 Nginx 隧道。调度器在隧道出口机上，出口的 gost / nginx 把
+ * 流量交给它。ForwardX 隧道的出口由 FXP 自己的程序拨目标，还没接上调度器。
+ */
+export const ROUTE_GROUP_TUNNEL_MODES = ["tls", "wss", "tcp", "mtls", "mwss", "mtcp", "nginx_stream"] as const;
+
+export function routeGroupTunnelModeSupported(mode: unknown): boolean {
+  const normalized = String(mode ?? "").trim().toLowerCase();
+  return (ROUTE_GROUP_TUNNEL_MODES as readonly string[]).includes(normalized);
+}
+
+/** 这条规则的线路组要不要 UDP 调度（Agent 2.2.199 起）。 */
+export function routeGroupNeedsUdpAgent(protocol: unknown): boolean {
+  return normalizeForwardRuleProtocol(protocol) !== "tcp";
+}
 
 export type RouteEndpoint = { ip: string; port: number };
 
@@ -157,6 +197,15 @@ export const ROUTE_MODE_INFO: Record<RouteMode, RouteModeInfo> = {
   weighted: { label: "权重负载", template: "负载均衡", hint: "新连接按权重分到各条路径，旧连接不动；哪条出问题就先跳过它" },
 };
 
+/** 模板那句说明：纯 UDP 规则没有连接，权重负载那句换成会话；其余几句不提连接，原样用。 */
+const ROUTE_MODE_SESSION_HINTS: Partial<Record<RouteMode, string>> = {
+  weighted: "新会话按权重分到各条路径，旧会话不动；哪条出问题就先跳过它",
+};
+
+export function routeModeHint(mode: RouteMode, perSession = false): string {
+  return (perSession && ROUTE_MODE_SESSION_HINTS[mode]) || ROUTE_MODE_INFO[mode].hint;
+}
+
 /** 徽标上的两个字：「主备 · 主线路」「定时 · 晚高峰线路」。 */
 export const ROUTE_MODE_SHORT: Record<RouteMode, string> = {
   failover: "主备",
@@ -178,6 +227,23 @@ export const ROUTE_SWITCH_MODE_INFO: Record<RouteSwitchMode, { label: string; hi
   smooth: { label: "平滑切换", hint: "旧连接留在原线路，新连接走新线路，基本无感（推荐）" },
   fast: { label: "快速故障转移", hint: "线路挂了就断开它上面的旧连接，让客户端马上重连到新线路；计划和择优切换仍然平滑" },
   force: { label: "强制切换", hint: "每次切换都断开旧连接，全部客户端立刻走新线路，可能重连" },
+};
+
+/*
+  纯 UDP 没有连接：Agent 按会话（同一个来源地址发来的包）挑路径，切换时丢的是会话映射，
+  下一个包重新挑一条。选项还是那几个，只是说法换成「会话」。
+*/
+export const ROUTE_SPREAD_SESSION_HINTS: Record<RouteSpread, string> = {
+  weighted: "新会话按每条路径的权重分配",
+  round_robin: "新会话轮流走每一条",
+  random: "新会话随机挑一条能用的",
+  ip_hash: "UDP 分不出访客：同一个会话一直走同一条，同一个访客的不同会话可能分到不同路径",
+};
+
+export const ROUTE_SWITCH_MODE_SESSION_HINTS: Record<RouteSwitchMode, string> = {
+  smooth: "已有的会话留在原路径，新会话走新路径，基本无感（推荐）",
+  fast: "路径挂了就丢掉它上面的会话，下一个包改走新路径；计划和择优切换仍然平滑",
+  force: "每次切换都丢掉旧会话，下一个包改走新路径",
 };
 
 /**

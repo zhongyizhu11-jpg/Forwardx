@@ -12,8 +12,10 @@ import { formatFailoverEndpoint } from "@shared/failoverTargets";
 import type { NetworkHealth } from "@shared/networkHealth";
 import {
   ROUTE_EVENT_KIND_LABELS,
+  ROUTE_GROUP_UDP_AGENT_VERSION,
   ROUTE_MODE_INFO,
   normalizeRouteEventKind,
+  routeModeHint,
   routePathLetter,
   routeWeightShares,
   type RouteEndpoint,
@@ -21,6 +23,7 @@ import {
 } from "@shared/routeGroup";
 import { describeRoutePolicyReport, formatPolicyClock, type RoutePolicy } from "@shared/routePolicy";
 import { formatRouteScore, routeScoreGrade } from "@shared/routeScore";
+import { isAgentVersionBehind } from "@shared/version";
 import { ConditionRow, PinSection, SentenceRow } from "./RoutePolicySheet";
 
 /*
@@ -88,6 +91,10 @@ export type RouteStatus = {
   agentStale: boolean;
   agentVersion: string | null;
   agentSupportsScores: boolean;
+  /** UDP、TCP+UDP 的线路组：调度所在那台的 Agent 会不会调度（2.2.199 起）。TCP 永远是 true。 */
+  agentSupportsProtocol?: boolean;
+  /** tcp / udp / both */
+  protocol?: string;
   requiredAgentVersion: string;
 };
 
@@ -234,16 +241,32 @@ export function RouteGroupPanel({ policy, status, events, canEdit, pending = fal
         </div>
       </div>
 
-      {policy.warnings.map((warning) => (
-        <p key={warning} className="rounded-[var(--fx-radius-control)] bg-[var(--fx-warn-soft)] px-3 py-2 text-meta text-[var(--fx-warn-text)]">
-          {warning}
-        </p>
-      ))}
-      {status && !status.agentSupportsScores ? (
+      {policy.warnings
+        /*
+          「Agent 早于 2.2.199」那几句是拿调用方给的机器算的（规则所在的机器）；GOST 隧道规则的
+          调度跑在出口机上，只有 status 读的是对的那台 —— 有 status 就以它为准，下面单独说。
+        */
+        .filter((warning) => !status || !warning.includes(ROUTE_GROUP_UDP_AGENT_VERSION))
+        .map((warning) => (
+          <p key={warning} className="rounded-[var(--fx-radius-control)] bg-[var(--fx-warn-soft)] px-3 py-2 text-meta text-[var(--fx-warn-text)]">
+            {warning}
+          </p>
+        ))}
+      {status && status.agentSupportsProtocol === false ? (
         <p className="rounded-[var(--fx-radius-control)] bg-[var(--fx-warn-soft)] px-3 py-2 text-meta text-[var(--fx-warn-text)]">
-          入口机器的 Agent{status.agentVersion ? `（${status.agentVersion}）` : ""}早于 {status.requiredAgentVersion}：没有评分、不预热预检、不按权重分，只按主备顺序切。升级 Agent 后这些才生效。
+          调度这条线路组的机器上 Agent{status.agentVersion ? `（${status.agentVersion}）` : ""}早于 {status.requiredAgentVersion}，还不会调度 UDP：升级之前这条规则全部走 {policy.lines[0]?.label || routePathLetter(0)}、不切换。
+        </p>
+      ) : status && !status.agentSupportsScores ? (
+        <p className="rounded-[var(--fx-radius-control)] bg-[var(--fx-warn-soft)] px-3 py-2 text-meta text-[var(--fx-warn-text)]">
+          调度这条线路组的机器上 Agent{status.agentVersion ? `（${status.agentVersion}）` : ""}早于 {status.requiredAgentVersion}：没有评分、不预热预检、不按权重分，只按主备顺序切。升级 Agent 后这些才生效。
         </p>
       ) : null}
+      {status && policy.strategy === "ip_hash" && status.protocol !== "udp" && status.agentSupportsProtocol !== false
+        && !!status.agentVersion && isAgentVersionBehind(status.agentVersion, ROUTE_GROUP_UDP_AGENT_VERSION) ? (
+          <p className="rounded-[var(--fx-radius-control)] bg-[var(--fx-warn-soft)] px-3 py-2 text-meta text-[var(--fx-warn-text)]">
+            调度这条线路组的机器上 Agent（{status.agentVersion}）早于 {ROUTE_GROUP_UDP_AGENT_VERSION}：按访客固定读不到访客地址，所有访客都落在同一条路径上。升级 Agent 后才按访客分。
+          </p>
+        ) : null}
 
       <GroupedList>
         <ListSection
@@ -323,7 +346,7 @@ export function RouteGroupPanel({ policy, status, events, canEdit, pending = fal
           header="调度计划"
           footer={weighted ? undefined : "从上往下，先对上的那一条说了算。它指的那条挂了，照样往下找 —— 选路和健康检查是两件事。"}
         >
-          <SentenceRow label="策略" detail={`${modeInfo.template} · ${modeInfo.label}：${modeInfo.hint}`} />
+          <SentenceRow label="策略" detail={`${modeInfo.template} · ${modeInfo.label}：${routeModeHint(policy.mode, policy.perSession)}`} />
           {policy.conditions.map((condition) => <ConditionRow key={condition.key} condition={condition} />)}
           {policy.guards.map((guard) => (
             <SentenceRow key={guard.key} label={guard.label} detail={guard.value} />

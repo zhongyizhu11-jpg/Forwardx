@@ -8,10 +8,16 @@ import { trafficRulesRouter } from "./rules.traffic";
 import { canUseForwardRuleResource, getLinkAccessScope } from "../linkAccessView";
 import { isManagedForwardGroupChildRule } from "../forwardRuleVisibility";
 import { formatHostAddressWithPort, getHostEntryAddress } from "@shared/hostEntryAddress";
-import { isForwardRuleProtocolTcpEnabled, isUserspaceForwardType } from "@shared/forwardTypes";
+import {
+  isForwardRuleProtocolTcpEnabled,
+  isForwardRuleProtocolUdpEnabled,
+  isUserspaceForwardType,
+  normalizeForwardRuleProtocol,
+} from "@shared/forwardTypes";
 import { describeFailoverActiveLine } from "@shared/failoverActiveLine";
 import {
   ROUTE_GROUP_AGENT_VERSION,
+  ROUTE_GROUP_UDP_AGENT_VERSION,
   describeRouteIssue,
   describeRouteReason,
   routeEventMillis,
@@ -197,8 +203,16 @@ export const rulesRouter = router({
         };
       });
       const agentVersion = String(entryHost?.agentVersion || "").trim();
+      /*
+        UDP、TCP+UDP 的线路组要 Agent 2.2.199 起才调度；更老的时候面板不下发调度，流量走
+        路径 A、不切换（server/agentHeartbeatRoute.ts 的 routePrimaryEndpoint）。界面据
+        agentSupportsProtocol 把这件事说出来，别让人以为配了就生效。
+      */
+      const protocol = normalizeForwardRuleProtocol((rule as any).protocol);
+      const needsUdpAgent = protocol !== "tcp";
       return {
         ruleId: Number(rule.id),
+        protocol,
         policy,
         paths: rows,
         activeIndex,
@@ -208,7 +222,8 @@ export const rulesRouter = router({
         agentStale: !status.agent && !!status.staleAgent,
         agentVersion: agentVersion || null,
         agentSupportsScores: !!agentVersion && !isAgentVersionBehind(agentVersion, ROUTE_GROUP_AGENT_VERSION),
-        requiredAgentVersion: ROUTE_GROUP_AGENT_VERSION,
+        agentSupportsProtocol: !needsUdpAgent || (!!agentVersion && !isAgentVersionBehind(agentVersion, ROUTE_GROUP_UDP_AGENT_VERSION)),
+        requiredAgentVersion: needsUdpAgent ? ROUTE_GROUP_UDP_AGENT_VERSION : ROUTE_GROUP_AGENT_VERSION,
       };
     }),
   list: protectedProcedure
@@ -330,7 +345,11 @@ export const rulesRouter = router({
    * 要不要另配探测目标。
    */
   relayCandidates: protectedProcedure
-    .input(z.object({ excludeRuleId: z.number().int().positive().optional() }).optional())
+    .input(z.object({
+      excludeRuleId: z.number().int().positive().optional(),
+      /** 线路组转哪种协议；候选得转得了它。不传按 TCP（上一版的行为）。 */
+      protocol: z.enum(["tcp", "udp", "both"]).optional(),
+    }).optional())
     .query(async ({ input, ctx }) => {
       const isAdmin = ctx.user.role === "admin";
       const rules = await db.getForwardRules(isAdmin ? undefined : ctx.user.id);
@@ -360,9 +379,11 @@ export const rulesRouter = router({
       for (const rule of rules as any[]) {
         const id = Number(rule?.id || 0);
         if (!id || id === excluded) continue;
-        // 备用线路是 TCP 的（主备本身只支持 TCP），关掉的规则不该出现在候选里 ——
-        // 选了等于配了一条一定连不上的备用线路。
-        if (!isForwardRuleProtocolTcpEnabled(rule?.protocol)) continue;
+        // 候选得转得了这条线路组的协议（UDP 的挑 UDP 中转，TCP+UDP 两样都要），关掉的规则
+        // 也不该出现在候选里 —— 选了等于配了一条一定连不上的备用线路。
+        const needed = normalizeForwardRuleProtocol(input?.protocol);
+        if (needed !== "udp" && !isForwardRuleProtocolTcpEnabled(rule?.protocol)) continue;
+        if (needed !== "tcp" && !isForwardRuleProtocolUdpEnabled(rule?.protocol)) continue;
         if (rule?.isEnabled === false) continue;
         const sourcePort = Number(rule?.sourcePort || 0);
         if (!(sourcePort >= 1 && sourcePort <= 65535)) continue;

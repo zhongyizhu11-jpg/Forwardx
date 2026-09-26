@@ -92,7 +92,7 @@ export function forwardRuleFormBlocker(
   if (!form.targetIp) return "还缺目标地址";
   if (!form.targetPort) return "还缺目标端口";
   if (!isValidForwardPort(form.targetPort)) return "目标端口必须在 1-65535 之间";
-  if (form.failoverEnabled && form.protocol !== "tcp") return "主备线路只支持 TCP";
+  // 线路组不卡协议：UDP、TCP+UDP 由入口 Agent 按会话调度（2.2.199 起，更老的走路径 A）。
   return null;
 }
 
@@ -106,7 +106,7 @@ export function forwardRuleFormBlocker(
  * 能被产生出来：改了文案而忘了改这里，名单会静默失效，而失效的表现正是上面那句
  * 「看得见提示、找不到控件」。
  */
-// 现在是空的：唯一的一条「主备线路只支持 TCP」指向的协议和主备都已经在折叠块外面了。
+// 现在是空的：以前唯一的一条「主备线路只支持 TCP」已经没了（线路组支持 UDP 了）。
 // 机制留着 —— 下一个折进去、又能卡住提交的控件，缺口文案要加在这里。
 export const ADVANCED_SECTION_BLOCKERS: readonly string[] = [];
 

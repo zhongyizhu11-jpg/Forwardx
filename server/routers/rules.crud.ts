@@ -24,7 +24,9 @@ import {
   normalizeRouteSpread,
   normalizeRouteSwitchMode,
   parseRoutePaths,
+  routeGroupForwardTypeSupported,
   routeGroupOf,
+  routeGroupTunnelModeSupported,
   routePathLabel,
   routeTemplateGuards,
   serializeRoutePaths,
@@ -103,10 +105,9 @@ const strictProbeTargetSchema = z.object({
   probePort: z.number().int().min(1).max(65535),
 });
 const failoverStrategySchema = z.enum(["fallback", "round_robin", "random", "ip_hash"]);
-const mainBackupGostTunnelModes = new Set(["tls", "wss", "tcp", "mtls", "mwss", "mtcp"]);
-
+// GOST 隧道和 Nginx 隧道：调度器在出口机上（shared/routeGroup 的 ROUTE_GROUP_TUNNEL_MODES）。
 function isMainBackupGostTunnelMode(mode: unknown) {
-  return mainBackupGostTunnelModes.has(String(mode || "").toLowerCase());
+  return routeGroupTunnelModeSupported(mode);
 }
 
 const failoverScheduleInputSchema = z.object({
@@ -340,12 +341,13 @@ function failoverFieldsProvided(input: FailoverInput) {
   return FAILOVER_INPUT_KEYS.some((key) => (input as any)[key] !== undefined);
 }
 
-export function normalizeFailoverInput(input: FailoverInput, protocol?: string | null, context: NormalizeFailoverContext = {}) {
+/**
+ * 协议不再限制：TCP、UDP、TCP+UDP 都能调度（UDP 按会话，Agent 2.2.199 起）。第二个参数
+ * 留着只为调用处不用改；转发方式的限制在 requireMainBackupAllowed。
+ */
+export function normalizeFailoverInput(input: FailoverInput, _protocol?: string | null, context: NormalizeFailoverContext = {}) {
   const enabled = !!input.failoverEnabled;
   const targets: FailoverTarget[] = [];
-  if (enabled && protocol && protocol !== "tcp") {
-    throw new Error("主备模式当前仅支持 TCP 协议");
-  }
   /*
     线路组：传了 routeGroup 就按它；没传但库里这一行已经是线路组（routePaths 有值），
     路径照旧、只换这次改的字段 —— 只改钉子的那一次保存不能把路径抹掉。传 null 是明确
@@ -904,15 +906,12 @@ export function requireMainBackupAllowed(options: {
   isAdmin: boolean;
 }) {
   if (!options.enabled) return;
-  if (options.protocol && options.protocol !== "tcp") {
-    throw new Error("主备线路当前仅支持 TCP 协议");
-  }
-  if (options.forwardType !== "gost") {
-    throw new Error("主备线路仅支持 GOST 端口转发和 GOST 隧道");
+  if (!routeGroupForwardTypeSupported(options.forwardType)) {
+    throw new Error("线路组要用 gost、realm、socat 或 nginx 转发：iptables / nftables 在内核里改写目的地，调度器插不进去");
   }
   const isTunnelRoute = !!options.isTunnelRoute || Number(options.tunnelId || 0) > 0;
   if (isTunnelRoute && options.tunnelMode !== undefined && !isMainBackupGostTunnelMode(options.tunnelMode)) {
-    throw new Error("主备线路仅支持 GOST 隧道");
+    throw new Error("线路组暂不支持 ForwardX 隧道：换一条 GOST 或 Nginx 隧道就可以");
   }
   if (!options.isAdmin && !isTunnelRoute && !options.isPortForwardGroup) {
     throw new Error("普通用户的普通端口转发不支持主备线路，请使用 GOST 隧道转发或联系管理员");
@@ -1781,7 +1780,7 @@ export const crudRulesRouter = router({
           });
         }
         const groupTunnelSupportsFailover = groupIsTunnel ? await forwardGroupTunnelMembersSupportMainBackup(group) : true;
-        const groupSupportsFailover = !isForwardChain && input.protocol === "tcp" && forwardType === "gost" && (!groupIsTunnel || groupTunnelSupportsFailover);
+        const groupSupportsFailover = !isForwardChain && routeGroupForwardTypeSupported(forwardType) && (!groupIsTunnel || groupTunnelSupportsFailover);
         const createFailoverEnabled = groupSupportsFailover ? input.failoverEnabled : false;
         requireMainBackupAllowed({
           enabled: createFailoverEnabled,
@@ -2269,7 +2268,7 @@ export const crudRulesRouter = router({
         );
         const groupIsTunnel = !isForwardChain && (group as any).groupType === "tunnel";
         const groupTunnelSupportsFailover = groupIsTunnel ? await forwardGroupTunnelMembersSupportMainBackup(group) : true;
-        const groupSupportsFailover = !isForwardChain && nextProtocol === "tcp" && nextForwardType === "gost" && (!groupIsTunnel || groupTunnelSupportsFailover);
+        const groupSupportsFailover = !isForwardChain && routeGroupForwardTypeSupported(nextForwardType) && (!groupIsTunnel || groupTunnelSupportsFailover);
         const nextMainBackupEnabled = groupChanged ? false : (groupSupportsFailover ? input.failoverEnabled ?? (rule as any).failoverEnabled : false);
         requireMainBackupAllowed({
           enabled: nextMainBackupEnabled,

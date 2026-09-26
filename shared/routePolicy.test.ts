@@ -206,10 +206,93 @@ test("时长的说法", () => {
   assert.equal(formatPolicyDuration(9000), "2.5 小时");
 });
 
-test("转发方式或协议不支持主备时照实说：配着，但机器上不会走主备", () => {
-  assert.deepEqual(policyAt(IN_WINDOW).warnings, [], "gost + TCP（默认）没有这条提示");
-  assert.match(policyAt(IN_WINDOW, { protocol: "both" }).warnings.join(""), /不会走线路组/);
-  assert.match(policyAt(IN_WINDOW, { forwardType: "realm", protocol: "tcp" }).warnings.join(""), /不会走线路组/);
+test("gost / realm / socat / nginx 都走线路组；只有内核转发照实说不会走", () => {
+  assert.deepEqual(policyAt(IN_WINDOW).warnings, [], "gost + TCP（默认）没有提示");
+  for (const forwardType of ["realm", "socat", "nginx"]) {
+    assert.deepEqual(policyAt(IN_WINDOW, { forwardType, protocol: "tcp" }).warnings, [], `${forwardType} 前置也走线路组`);
+  }
+  for (const forwardType of ["iptables", "nftables"]) {
+    assert.match(policyAt(IN_WINDOW, { forwardType }).warnings.join(""), /内核转发.*不会走线路组/);
+  }
+});
+
+test("UDP、TCP+UDP：调度所在机器的 Agent 到 2.2.199 才调度，更老的全部走路径 A、不切换", () => {
+  const ready = { isOnline: true, agentVersion: "2.2.199" };
+  for (const protocol of ["udp", "both"]) {
+    assert.match(
+      policyAt(IN_WINDOW, { protocol }).warnings.join(""),
+      /早于 2\.2\.199，还不会调度 UDP：升级之前这条规则全部走 主线路、不切换/,
+    );
+  }
+  assert.deepEqual(policyAt(IN_WINDOW, { protocol: "both" }, ready).warnings, [], "TCP+UDP 用 TCP 探测，不用提醒 ping");
+  assert.deepEqual(policyAt(IN_WINDOW, { protocol: "tcp" }).warnings, [], "TCP 不看这个版本");
+});
+
+test("纯 UDP 没有握手：没填探测地址的路径靠 ping，照实提醒；都填了就不提", () => {
+  const ready = { isOnline: true, agentVersion: "2.2.199" };
+  assert.match(policyAt(IN_WINDOW, { protocol: "udp" }, ready).warnings.join(""), /没填探测地址的路径靠 ping 拨号地址/);
+  const probed = {
+    protocol: "udp",
+    failoverProbeTarget: "198.51.100.7:22",
+    failoverTargets: JSON.stringify([
+      { targetIp: "198.51.100.8", targetPort: 443, probeIp: "198.51.100.8", probePort: 22 },
+      { targetIp: "198.51.100.9", targetPort: 443, probeIp: "198.51.100.9", probePort: 22 },
+    ]),
+  };
+  assert.deepEqual(policyAt(IN_WINDOW, probed, ready).warnings, []);
+});
+
+test("纯 UDP 按会话说：没有「新连接拨不通」，旧连接叫旧会话，权重分的是新会话", () => {
+  const ready = { isOnline: true, agentVersion: "2.2.199" };
+  const udp = policyAt(IN_WINDOW, { protocol: "udp" }, ready);
+  assert.equal(udp.perSession, true);
+  const failover = udp.guards.find((guard) => guard.key === "failover")!;
+  assert.doesNotMatch(failover.value, /拨不通/);
+  assert.match(failover.value, /探测连续失败 3 次才算异常/);
+  const oldSessions = udp.guards.find((guard) => guard.key === "switch")!;
+  assert.equal(oldSessions.label, "旧会话");
+  assert.match(oldSessions.value, /^平滑切换：已有的会话留在原路径，新会话走新路径，基本无感$/);
+  const force = policyAt(IN_WINDOW, { protocol: "udp", routeSwitchMode: "force" }, ready).guards.find((guard) => guard.key === "switch")!;
+  assert.match(force.value, /丢掉旧会话，下一个包改走新路径/);
+  const weighted = policyAt(IN_WINDOW, { protocol: "udp", failoverStrategy: "round_robin" }, ready);
+  assert.deepEqual(weighted.conditions.map((condition) => condition.when), ["每个新会话"]);
+  assert.equal(describeRoutePolicyReport(weighted).text, "每个新会话各走各的，共 3 条");
+  // UDP 读不到访客地址，「按访客固定」在这里是按会话固定，不能写成按来源 IP。
+  const pinned = policyAt(IN_WINDOW, { protocol: "udp", failoverStrategy: "ip_hash" }, ready);
+  assert.equal(pinned.conditions[0].then, "按会话固定分到其中一条");
+  assert.equal(policyAt(IN_WINDOW, { protocol: "tcp", failoverStrategy: "ip_hash" }, ready).conditions[0].then, "按来源 IP 固定分到其中一条");
+  // TCP+UDP 里 TCP 那一半照旧按连接说。
+  const both = policyAt(IN_WINDOW, { protocol: "both" }, ready);
+  assert.equal(both.perSession, false);
+  assert.match(both.guards.find((guard) => guard.key === "failover")!.value, /新连接拨不通也算一次失败/);
+  assert.equal(both.guards.find((guard) => guard.key === "switch")!.label, "旧连接");
+});
+
+test("按访客固定：调度器要从 PROXY 头里读访客，读不到时照实说所有访客落在同一条", () => {
+  const ready = { isOnline: true, agentVersion: "2.2.199" };
+  const ipHash = { failoverStrategy: "ip_hash" };
+  // gost 端口转发：面板给调度器专门加一个头，新 Agent 不用提醒；老 Agent 读不了。
+  assert.deepEqual(policyAt(IN_WINDOW, ipHash, ready).warnings, []);
+  assert.match(policyAt(IN_WINDOW, ipHash).warnings.join(""), /早于 2\.2\.199：按访客固定读不到访客地址，所有访客都落在同一条路径上/);
+  // realm / socat / nginx 前置、走隧道：加不了这个头，除非规则本来就发 PROXY 协议。
+  for (const forwardType of ["realm", "socat", "nginx"]) {
+    assert.match(
+      policyAt(IN_WINDOW, { ...ipHash, forwardType }, ready).warnings.join(""),
+      new RegExp(`${forwardType} 转发时调度器只看得到本机.*改用 gost 转发就能按访客分`),
+    );
+  }
+  assert.deepEqual(policyAt(IN_WINDOW, { ...ipHash, forwardType: "realm", proxyProtocolSend: true }, ready).warnings, [], "转发组里开了「发送 PROXY」的 realm 已经带着头");
+  const tunnelled = policyAt(IN_WINDOW, { ...ipHash, tunnelId: 7 }, ready).warnings.join("");
+  assert.match(tunnelled, /走隧道时调度器只看得到本机.*隧道设置里打开 PROXY Protocol 的「出口发送到目标」/);
+  assert.doesNotMatch(tunnelled, /改用 gost/);
+  assert.deepEqual(policyAt(IN_WINDOW, { ...ipHash, tunnelId: 7, proxyProtocolExitSend: true }, ready).warnings, []);
+  // Nginx 隧道连「发送 PROXY 协议」都没有：别让人去找一个不存在的开关。
+  const nginxTunnel = policyAt(IN_WINDOW, { ...ipHash, tunnelId: 7, tunnelMode: "nginx_stream" }, ready).warnings.join("");
+  assert.match(nginxTunnel, /Nginx 隧道传不了访客地址.*改用 GOST 隧道，并在隧道设置里打开「出口发送到目标」/);
+  // UDP 没有访客地址可读：按会话固定。
+  const udp = policyAt(IN_WINDOW, { ...ipHash, protocol: "both" }, ready).warnings.join("");
+  assert.match(udp, /按访客固定对 UDP 是按会话固定/);
+  assert.doesNotMatch(udp, /所有访客会落在同一条路径上/, "TCP 那一半由 gost 加的头解决");
 });
 
 test("时段表那几行带着配置里的序号：前面有一条失效的，此刻也标在对的那一行上", () => {

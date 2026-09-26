@@ -1,3 +1,4 @@
+import { normalizeForwardRuleProtocol, type ForwardRuleProtocol } from "../shared/forwardTypes";
 import { getHostEntryAddress } from "../shared/hostEntryAddress";
 import {
   legacyFailoverFields,
@@ -109,22 +110,30 @@ function relayRuleName(rule: any, path: RoutePath, index: number, hopIndex: numb
   return name.length > RELAY_NAME_LIMIT ? name.slice(0, RELAY_NAME_LIMIT) : name;
 }
 
-async function pickRelayPort(hostId: number, existing: RelayRuleRow | null): Promise<HostPortReservation | null> {
+/**
+ * 中继规则转哪种协议：跟着父规则走。UDP 线路组的路径要一路 UDP 过去，TCP+UDP 的两样都转。
+ * 中继永远是 gost（它 TCP、UDP 都转，也不需要调度器 —— 中转机上没有「挑路径」这一步）。
+ */
+function relayProtocol(rule: any): ForwardRuleProtocol {
+  return normalizeForwardRuleProtocol(rule?.protocol);
+}
+
+async function pickRelayPort(hostId: number, existing: RelayRuleRow | null, protocol: ForwardRuleProtocol): Promise<HostPortReservation | null> {
   const excludeIds = existing ? [Number(existing.id)] : [];
   if (existing && Number(existing.sourcePort) > 0 && Number(existing.hostId) === hostId) {
     const preserved = await reserveSpecificHostPort({
       hostId,
       port: Number(existing.sourcePort),
-      protocol: "tcp",
-      isUsed: (port) => isPortUsedOnHost(hostId, port, excludeIds, "tcp", undefined, false),
+      protocol,
+      isUsed: (port) => isPortUsedOnHost(hostId, port, excludeIds, protocol, undefined, false),
     });
     if (preserved) return preserved;
   }
   return reserveAvailableHostPort({
     hostId,
-    protocol: "tcp",
-    findPort: (reservedPorts) => findAvailablePort(hostId, null, null, "tcp", reservedPorts, excludeIds),
-    isUsed: (port) => isPortUsedOnHost(hostId, port, excludeIds, "tcp", undefined, false),
+    protocol,
+    findPort: (reservedPorts) => findAvailablePort(hostId, null, null, protocol, reservedPorts, excludeIds),
+    isUsed: (port) => isPortUsedOnHost(hostId, port, excludeIds, protocol, undefined, false),
   });
 }
 
@@ -133,7 +142,7 @@ function relayPayload(rule: any, plan: PathPlan, hop: ResolvedHop, parentEnabled
     hostId: hop.hostId,
     name: relayRuleName(rule, plan.path, plan.index, hop.hopIndex, plan.hops.length),
     forwardType: "gost",
-    protocol: "tcp",
+    protocol: relayProtocol(rule),
     gostMode: "direct",
     gostRelayHost: null,
     gostRelayPort: null,
@@ -187,7 +196,7 @@ function relayPayload(rule: any, plan: PathPlan, hop: ResolvedHop, parentEnabled
 }
 
 /** 这几样一变，中转机上的转发得重启；别的（名字、TG 提醒）改了只是元数据。 */
-const RELAY_RUNTIME_FIELDS = ["hostId", "sourcePort", "targetIp", "targetPort", "isEnabled", "routePathKey", "routeHopIndex"] as const;
+const RELAY_RUNTIME_FIELDS = ["hostId", "sourcePort", "targetIp", "targetPort", "protocol", "isEnabled", "routePathKey", "routeHopIndex"] as const;
 const RELAY_META_FIELDS = ["name", "telegramErrorNotifyEnabled", "userId", "routeParentRuleId"] as const;
 
 function sameValue(left: unknown, right: unknown) {
@@ -223,7 +232,7 @@ async function resolvePath(rule: any, path: RoutePath, index: number, hostById: 
       break;
     }
     const existing = liveByKey.get(relayKey(path.key, hopIndex)) || null;
-    const reservation = await pickRelayPort(hostId, existing);
+    const reservation = await pickRelayPort(hostId, existing, relayProtocol(rule));
     if (!reservation) {
       plan.issue = `中转「${hostLabel(host, hostId)}」的端口区间内没有可用端口`;
       break;
