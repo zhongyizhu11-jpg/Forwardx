@@ -1,4 +1,4 @@
-﻿import { eq, inArray } from "drizzle-orm";
+﻿import { eq, inArray, like } from "drizzle-orm";
 import { systemSettings } from "../../drizzle/schema";
 import { executeRaw, getDatabaseKind, getDb } from "../dbRuntime";
 
@@ -31,6 +31,12 @@ const EPHEMERAL_SETTING_PREFIXES = [
   "telegramReminder:",
   "autoRenew:",
 ] as const;
+
+/**
+ * 面板自己用的运行时缓存（比如 server/tunnelExitPorts 记的出口端口）：借设置表存，好让面板重启后
+ * 接着用。它们不是设置，只按前缀读（getSettingsByPrefix），不进 getAllSettings。
+ */
+export const RUNTIME_CACHE_SETTING_PREFIX = "runtimeCache:";
 
 /** 这个键是不是「用完即弃」的日标记。 */
 export function isEphemeralSettingKey(key: unknown): boolean {
@@ -135,7 +141,7 @@ export async function getAllSettings(): Promise<Record<string, string | null>> {
     // 日标记不进设置表：它们只会被 getSetting(精确键) 读，混进来只是让这份
     // 每隔几秒就要重建的映射白白变大。
     for (const row of rows) {
-      if (isEphemeralSettingKey(row.key)) continue;
+      if (isEphemeralSettingKey(row.key) || String(row.key || "").startsWith(RUNTIME_CACHE_SETTING_PREFIX)) continue;
       values[row.key] = row.value ?? null;
     }
     if (generation === allSettingsGeneration) {
@@ -149,6 +155,22 @@ export async function getAllSettings(): Promise<Record<string, string | null>> {
   } finally {
     if (allSettingsLoad?.promise === promise) allSettingsLoad = null;
   }
+}
+
+/**
+ * 按前缀读一批键（运行时缓存用，见 RUNTIME_CACHE_SETTING_PREFIX）。LIKE 只用前缀里第一个 %、_ 或 \ 之前
+ * 的那段，剩下的在这里按原样比，不会把它们当通配符。
+ */
+export async function getSettingsByPrefix(prefix: string): Promise<Record<string, string | null>> {
+  const db = await getDb();
+  if (!db || !prefix) return {};
+  const literal = prefix.split(/[\\%_]/)[0];
+  const rows = await db.select().from(systemSettings).where(like(systemSettings.key, `${literal}%`));
+  const values: Record<string, string | null> = {};
+  for (const row of rows as Array<{ key: string; value: string | null }>) {
+    if (String(row.key || "").startsWith(prefix)) values[row.key] = row.value ?? null;
+  }
+  return values;
 }
 
 /** UPSERT 单个系统设置 */

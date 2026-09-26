@@ -19,7 +19,7 @@ import {
   withSqliteExclusive,
 } from "./dbRuntime";
 import { countAll, quoteIdentifier } from "./dbCompat";
-import { getAllSettings, setSetting } from "./repositories/settingsRepository";
+import { getAllSettings, RUNTIME_CACHE_SETTING_PREFIX, setSetting } from "./repositories/settingsRepository";
 import { clearHostAgentUpgradeRequest, getHosts, HOST_ONLINE_TTL_MS, requestHostAgentUpgrade } from "./db";
 import { pushAgentPanelMigration, pushAgentUpgrade } from "./agentEvents";
 import { assertSafeOutboundUrl } from "./ssrf";
@@ -246,13 +246,17 @@ export async function exportMigrationSnapshot(
     const tableIndex = index + 1;
     options.onProgress?.({ table, tableIndex, tableTotal: includedTables.length, status: "reading" });
     const rows = await queryRaw(`SELECT * FROM ${quote(table)}`);
-    tables[table] = rows;
+    // 设置表里的运行时缓存（出口报的端口等）按这个面板的主机、规则 ID 记，换个面板 ID 就对不上，不带走。
+    const exportedRows = table === "system_settings"
+      ? rows.filter((row: any) => !String(row?.key || "").startsWith(RUNTIME_CACHE_SETTING_PREFIX))
+      : rows;
+    tables[table] = exportedRows;
     options.onProgress?.({
       table,
       tableIndex,
       tableTotal: includedTables.length,
       status: "complete",
-      rowCount: rows.length,
+      rowCount: exportedRows.length,
     });
   }
   return { version: 1, exportedAt: Date.now(), appVersion: APP_VERSION, sourcePanelUrl, dataScope, tables };
@@ -1481,6 +1485,8 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
     case "system_settings": {
       const key = String(source.key || "");
       if (!key) return null;
+      // 运行时缓存按源面板的主机、规则 ID 记，导进来 ID 会重新映射，留着只会让入口拨错端口。导出时已经去掉，这里防着别处来的快照。
+      if (key.startsWith(RUNTIME_CACHE_SETTING_PREFIX)) return null;
       const skippedKeys = new Set([
         "databaseConfigured",
         "databaseType",

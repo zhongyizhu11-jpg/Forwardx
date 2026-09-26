@@ -28,7 +28,7 @@ type Candidate = {
   targetPort: number;
 };
 
-function listCandidates(role: "admin" | "user", userId: number): Candidate[] {
+function listCandidates(role: "admin" | "user", userId: number, protocol?: "tcp" | "udp" | "both"): Candidate[] {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-relay-candidates-"));
   const databasePath = path.join(directory, "relay.db");
   const script = String.raw`
@@ -85,7 +85,8 @@ function listCandidates(role: "admin" | "user", userId: number): Candidate[] {
       authSession: null,
       authFailureReason: null,
     });
-    console.log("CANDIDATES " + JSON.stringify(await caller.relayCandidates({ excludeRuleId: 1 })));
+    const protocol = process.env.CANDIDATE_PROTOCOL || undefined;
+    console.log("CANDIDATES " + JSON.stringify(await caller.relayCandidates(protocol ? { excludeRuleId: 1, protocol } : { excludeRuleId: 1 })));
   `;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
     cwd: path.resolve(import.meta.dirname, ".."),
@@ -96,6 +97,7 @@ function listCandidates(role: "admin" | "user", userId: number): Candidate[] {
       FORWARDX_TEST_DB: databasePath,
       CALLER_ROLE: role,
       CALLER_ID: String(userId),
+      CANDIDATE_PROTOCOL: protocol || "",
     },
     timeout: 180000,
   });
@@ -116,7 +118,7 @@ test("不该当备用线路的都不出现在清单里", () => {
     "清单应当只剩 2（东京中转）和 3（计费机上的中转）。\n"
       + "1 号是正在编辑的这条规则本身（选自己当自己的备用线路没有意义）；\n"
       + "4 号已关掉（选了等于配一条一定连不上的备用线路）；\n"
-      + "5 号只走 UDP（主备本身只支持 TCP）；\n"
+      + "5 号只走 UDP（没说协议时按 TCP 规则挑，它接不住 TCP）；\n"
       + "6 号所在的机器没有入口地址（拼不出 地址:端口）；\n"
       + "7 号是别人的规则。\n"
       + `实际拿到 ${JSON.stringify(tenant, null, 2)}`,
@@ -155,4 +157,17 @@ test("管理员看得到所有人的中转", () => {
     "管理员应当看得到自己的规则（7 号），租户那份清单里不该有它",
   );
   assert.equal(tenant.some((candidate) => candidate.id === 7), false);
+});
+
+test("UDP、TCP+UDP 规则挑中转：只列接得住这个协议的", () => {
+  assert.deepEqual(
+    listCandidates("user", 2, "udp").map((candidate) => candidate.id),
+    [5],
+    "UDP 规则只能接到走 UDP 的中转上；只走 TCP 的 2、3 号接不住",
+  );
+  assert.deepEqual(
+    listCandidates("user", 2, "both").map((candidate) => candidate.id),
+    [],
+    "TCP+UDP 要两样都接得住，这份数据里没有这样的中转",
+  );
 });

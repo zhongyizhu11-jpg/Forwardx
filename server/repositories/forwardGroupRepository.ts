@@ -97,6 +97,7 @@ import { summarizeForwardGroupRuntime } from "../forwardGroupRuntimeStatus";
 import { dbBool, sqlBool } from "./repositoryUtils";
 import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
 import { MAX_FORWARD_GROUP_MEMBERS } from "../../shared/forwardGroup";
+import { routeGroupForwardTypeSupported, routeGroupTunnelModeSupported } from "../../shared/routeGroup";
 import { getLastAuthenticatedAgentActivity } from "../agentActivity";
 import {
   getPresenceCapableHostLivenessSnapshot,
@@ -183,10 +184,9 @@ function managedChildControlState(templateRule: any, existing: any) {
   };
 }
 
-const mainBackupGostTunnelModes = new Set(["tls", "wss", "tcp", "mtls", "mwss", "mtcp"]);
-
+// GOST 隧道和 Nginx 隧道能挂线路组（调度器在出口机上），ForwardX 隧道还不行。
 function isMainBackupGostTunnelMode(mode: unknown) {
-  return mainBackupGostTunnelModes.has(String(mode || "").toLowerCase());
+  return routeGroupTunnelModeSupported(mode);
 }
 
 function canPreserveChildRuleRuntime(existing: any, payload: any, options: SyncForwardGroupRulesOptions) {
@@ -2801,8 +2801,9 @@ async function ensureMemberRuleForTemplate(group: any, templateRule: any, member
   // Realm 2.9.x ignores network.fast_open and network.zero_copy. Child rules
   // must therefore never inherit these legacy flags from a group/template.
   const directRealmOptimizationSupported = false;
-  const templateFailoverEnabled = dbBool((failoverRuntimeSource as any).failoverEnabled) && protocol === "tcp";
-  const directFailoverEnabled = templateFailoverEnabled && directForwardType === "gost";
+  // 线路组不卡协议（UDP、TCP+UDP 由 Agent 2.2.199 起按会话调度），只卡转发工具：内核转发插不进调度器。
+  const templateFailoverEnabled = dbBool((failoverRuntimeSource as any).failoverEnabled);
+  const directFailoverEnabled = templateFailoverEnabled && routeGroupForwardTypeSupported(directForwardType);
   const tunnelMode = String(tunnel?.mode || "").toLowerCase();
   const tunnelFailoverSupported = member.memberType === "tunnel" && isMainBackupGostTunnelMode(tunnelMode);
   const childFailoverEnabled = member.memberType === "tunnel" ? templateFailoverEnabled && tunnelFailoverSupported : directFailoverEnabled;

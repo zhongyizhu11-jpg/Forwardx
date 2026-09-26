@@ -107,12 +107,10 @@ test("自己挑主机那条路要选线路，用转发组那条路不要", () =>
   );
 });
 
-test("主备线路只支持 TCP", () => {
-  assert.equal(
-    forwardRuleFormBlocker({ ...base, failoverEnabled: true, protocol: "udp" }, context()),
-    "主备线路只支持 TCP",
-  );
-  assert.equal(forwardRuleFormBlocker({ ...base, failoverEnabled: true, protocol: "tcp" }, context()), null);
+test("线路组不卡协议：TCP、UDP、TCP+UDP 都能提交", () => {
+  for (const protocol of ["tcp", "udp", "both"]) {
+    assert.equal(forwardRuleFormBlocker({ ...base, failoverEnabled: true, protocol }, context()), null, protocol);
+  }
 });
 
 test("端口合法性只有一处定义", () => {
@@ -133,9 +131,8 @@ test("「更多设置」里的缺口名单，每一条都真的产得出来", ()
     所以这里逐条把它产出来一遍。产不出来就说明名单已经和实现脱节了。
   */
   const producible = new Set<string>();
-  const cases: Array<[Partial<ForwardRuleFormState>, Partial<ForwardRuleFormContext>]> = [
-    [{ failoverEnabled: true, protocol: "udp" }, {}],
-  ];
+  // 折叠块里眼下没有能卡住提交的控件；以后加了，把产出它的输入写在这里。
+  const cases: Array<[Partial<ForwardRuleFormState>, Partial<ForwardRuleFormContext>]> = [];
   for (const [form, ctx] of cases) {
     const blocker = forwardRuleFormBlocker({ ...base, ...form }, context(ctx));
     if (blocker) producible.add(blocker);
@@ -149,10 +146,5 @@ test("「更多设置」里的缺口名单，每一条都真的产得出来", ()
     assert.equal(isAdvancedSectionBlocker(entry), true);
   }
   assert.equal(isAdvancedSectionBlocker("还缺目标地址"), false, "主区的缺口不该触发展开");
-  assert.equal(
-    isAdvancedSectionBlocker("主备线路只支持 TCP"),
-    false,
-    "主备和协议都搬到了折叠块外面：这句缺口指向的控件看得见，不该再替用户展开「更多设置」",
-  );
   assert.equal(isAdvancedSectionBlocker(null), false);
 });

@@ -7,11 +7,17 @@ import {
   parseScheduleMinutes,
 } from "./failoverSchedule";
 import type { NetworkHealth } from "./networkHealth";
+import { normalizeForwardRuleProtocol } from "./forwardTypes";
 import {
   ROUTE_GROUP_AGENT_VERSION,
+  ROUTE_GROUP_UDP_AGENT_VERSION,
   ROUTE_SWITCH_MODE_INFO,
+  ROUTE_SWITCH_MODE_SESSION_HINTS,
   describeRouteIssue,
   routeAgentStrategy,
+  routeGroupForwardTypeSupported,
+  routeGroupIsForwardXTunnel,
+  routeGroupSchedulerAgentVersion,
   routePathLabel,
   routePathsOf,
   routePolicyOf,
@@ -138,6 +144,8 @@ export type RoutePolicyReport =
 export type RoutePolicy = {
   /** 规则级主备（Agent 切出站），还是转发组（面板切解析）。说法不同的地方靠它分。 */
   subject: "rule" | "group";
+  /** 纯 UDP 规则：调度按会话（同一个访客端口发来的包）而不是按连接，说法跟着换。 */
+  perSession?: boolean;
   /** 线路组的调度模式（shared/routeGroup）。转发组只有一种：主备。 */
   mode: RouteMode;
   strategy: RoutePolicyStrategy;
@@ -160,6 +168,12 @@ export type RoutePolicy = {
 export type RoutePolicyRule = RouteGroupRule & {
   forwardType?: unknown;
   protocol?: unknown;
+  /** 走隧道的规则：调度器在隧道出口，看不到访客（除非 PROXY 头一路带过来）。 */
+  tunnelId?: unknown;
+  /** 隧道的类型（tls / wss / … / nginx_stream / forwardx）。Nginx 隧道传不了 PROXY 头，ForwardX 隧道要出口 Agent 2.2.199；不知道时按 GOST 隧道说。 */
+  tunnelMode?: unknown;
+  proxyProtocolSend?: unknown;
+  proxyProtocolExitSend?: unknown;
   failoverActiveTarget?: unknown;
   failoverActiveAt?: unknown;
 };
@@ -237,6 +251,8 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
   const label = (index: number) => routePathLabel(paths[index], index);
   const report = describeReport(rule, options.host, lineCount);
   const warnings: string[] = [];
+  // 纯 UDP 没有连接：Agent 按会话挑路径，没有「拨不通」这回事，旧连接也叫旧会话。
+  const perSession = normalizeForwardRuleProtocol(rule.protocol) === "udp";
 
   const { failoverSeconds, recoverSeconds, autoFailback, minHoldSeconds, failureThreshold } = policy;
 
@@ -255,9 +271,9 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
       weighted: `按权重分：${paths.map((_, index) => `${label(index)} ${shares[index]}%`).join(" / ")}`,
       round_robin: `轮流走这 ${lineCount} 条`,
       random: `从 ${lineCount} 条里随机挑一条`,
-      ip_hash: "按来源 IP 固定分到其中一条",
+      ip_hash: perSession ? "按会话固定分到其中一条" : "按来源 IP 固定分到其中一条",
     };
-    conditions.push({ kind: "spread", key: "spread", when: "每条新连接", then: spread[policy.spread], targetIndex: null, state: "deciding" });
+    conditions.push({ kind: "spread", key: "spread", when: perSession ? "每个新会话" : "每条新连接", then: spread[policy.spread], targetIndex: null, state: "deciding" });
     deciding = "spread";
   } else {
     const supported = report.kind !== "unsupported";
@@ -361,13 +377,56 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
   }
 
   /*
-    主备只在 gost 的 TCP 转发上跑（心跳下发时别的一律不带主备规格）。界面上存不出这种
-    组合，但老数据里可能有 —— 那就照实说：配着，但机器上不会走主备。
+    调度器插在前面那个用户态转发工具（gost / realm / socat / nginx）和路径之间，内核转发没有
+    这一步（心跳下发时不带调度规格）。界面上存不出这种组合，但老数据里可能有 —— 照实说。
   */
   const forwardType = String(rule.forwardType ?? "gost");
-  const protocol = String(rule.protocol ?? "tcp");
-  if (forwardType !== "gost" || protocol !== "tcp") {
-    warnings.push("线路组只在 gost 的 TCP 转发上生效。这条规则的转发方式或协议不是，机器上不会走线路组；保存一次时它会被关掉。");
+  const protocol = normalizeForwardRuleProtocol(rule.protocol);
+  if (!routeGroupForwardTypeSupported(forwardType)) {
+    warnings.push("线路组只在 gost、realm、socat、nginx 转发上生效。这条规则是内核转发（iptables / nftables），机器上不会走线路组；保存一次时它会被关掉。");
+  }
+  const udpAgentReady = !version || isAgentVersionAtLeast(version, ROUTE_GROUP_UDP_AGENT_VERSION);
+  /*
+    ForwardX 隧道、UDP、TCP+UDP 要新 Agent 才调度（routeGroupSchedulerAgentVersion）。面板这时不
+    下发调度，前面的转发工具直接拨路径 A（server 的 routePrimaryEndpoint）；ForwardX 隧道是出口的
+    FXP 拨路径 A。
+  */
+  const forwardXTunnel = Number(rule.tunnelId || 0) > 0 && routeGroupIsForwardXTunnel(rule.tunnelMode);
+  const schedulerAgentVersion = routeGroupSchedulerAgentVersion(protocol, forwardXTunnel ? rule.tunnelMode : null);
+  const schedulerAgentReady = !schedulerAgentVersion || !version || isAgentVersionAtLeast(version, schedulerAgentVersion);
+  if (schedulerAgentVersion && options.host && !schedulerAgentReady) {
+    warnings.push(forwardXTunnel
+      ? `隧道出口的 Agent 早于 ${schedulerAgentVersion}，还不会调度 ForwardX 隧道：升级之前这条规则全部走 ${label(0)}、不切换。`
+      : `这台机器的 Agent 早于 ${schedulerAgentVersion}，还不会调度 UDP：升级之前这条规则全部走 ${label(0)}、不切换。`);
+  }
+  if (protocol === "udp" && paths.some((path) => !path.probe)) {
+    warnings.push("UDP 没有握手可探：没填探测地址的路径靠 ping 拨号地址判断通不通。落地或第一跳中转禁 ping 的，给那条路径填一个 TCP 探测地址，不然会被当成挂了。");
+  }
+  if (strategy === "ip_hash") {
+    if (protocol !== "tcp") {
+      warnings.push("UDP 读不到访客地址：按访客固定对 UDP 是按会话固定，同一个会话一直走同一条，同一个访客的不同会话可能分到不同路径。");
+    }
+    const tunnelled = Number(rule.tunnelId || 0) > 0;
+    const headerSent = truthy(tunnelled ? rule.proxyProtocolExitSend : rule.proxyProtocolSend, false);
+    if (!schedulerAgentReady) {
+      // 调度本身都没下发（上面那句已经说了全部走路径 A），按访客分不分无从谈起，不再多说一句。
+    } else if (protocol !== "udp" && options.host && !udpAgentReady) {
+      warnings.push(`这台机器的 Agent 早于 ${ROUTE_GROUP_UDP_AGENT_VERSION}：按访客固定读不到访客地址，所有访客都落在同一条路径上。升级 Agent 后才按访客分。`);
+    } else if (protocol !== "udp" && !headerSent && (tunnelled || forwardType !== "gost")) {
+      /*
+        调度器只监听本机，访客地址只能从前面加的 PROXY 头里读。gost 端口转发由面板专门加一个
+        只给调度器的头（读完就扔）；realm / socat / nginx 前置、走隧道时加不了，除非规则本来就发。
+        Nginx 隧道连「发送 PROXY 协议」都没有。
+      */
+      const nginxTunnel = tunnelled && String(rule.tunnelMode ?? "").trim().toLowerCase() === "nginx_stream";
+      if (nginxTunnel) {
+        warnings.push("按访客固定要知道访客是谁：Nginx 隧道传不了访客地址，调度器只看得到本机，所有访客会落在同一条路径上。要按访客分，改用 GOST 隧道，并在隧道设置里打开「出口发送到目标」（落地得认 PROXY 头）。");
+      } else if (tunnelled) {
+        warnings.push("按访客固定要知道访客是谁：走隧道时调度器只看得到本机，所有访客会落在同一条路径上。在隧道设置里打开 PROXY Protocol 的「出口发送到目标」可以解决（落地得认 PROXY 头）。");
+      } else {
+        warnings.push(`按访客固定要知道访客是谁：${forwardType} 转发时调度器只看得到本机，所有访客会落在同一条路径上。改用 gost 转发就能按访客分：面板会让 gost 给调度器加一个 PROXY 头，读完就扔，落地收不到。`);
+      }
+    }
   }
 
   const guards: RoutePolicyGuard[] = [
@@ -375,8 +434,8 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
       key: "failover",
       label: "挂了就切",
       value: failureThreshold > 1
-        ? `探测连续失败 ${failureThreshold} 次才算异常，异常持续 ${formatPolicyDuration(failoverSeconds)}就切走；新连接拨不通也算一次失败`
-        : `探测连续失败 ${formatPolicyDuration(failoverSeconds)}，或新连接拨不通`,
+        ? `探测连续失败 ${failureThreshold} 次才算异常，异常持续 ${formatPolicyDuration(failoverSeconds)}就切走${perSession ? "" : "；新连接拨不通也算一次失败"}`
+        : `探测连续失败 ${formatPolicyDuration(failoverSeconds)}${perSession ? "" : "，或新连接拨不通"}`,
     },
   ];
   if (mode !== "weighted") {
@@ -396,10 +455,11 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
       value: `到点前 ${formatPolicyDuration(policy.prewarmSeconds)}开始探测目标路径${mode === "hybrid" ? "，预检不过就不切，继续走当前这条" : "，到点直接切"}`,
     });
   }
+  const switchHint = perSession ? ROUTE_SWITCH_MODE_SESSION_HINTS[policy.switchMode] : ROUTE_SWITCH_MODE_INFO[policy.switchMode].hint;
   guards.push({
     key: "switch",
-    label: "旧连接",
-    value: `${ROUTE_SWITCH_MODE_INFO[policy.switchMode].label}：${ROUTE_SWITCH_MODE_INFO[policy.switchMode].hint.replace("（推荐）", "")}`,
+    label: perSession ? "旧会话" : "旧连接",
+    value: `${ROUTE_SWITCH_MODE_INFO[policy.switchMode].label}：${switchHint.replace("（推荐）", "")}`,
   });
 
   const activeIndex = mode !== "weighted" && (report.kind === "current" || report.kind === "lastSwitch") ? report.index : null;
@@ -417,6 +477,7 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
 
   return {
     subject: "rule",
+    perSession,
     mode,
     strategy,
     lines: paths.map((path, index) => ({
@@ -747,7 +808,7 @@ export function describeRoutePolicyReport(policy: RoutePolicy, options: { nowMs?
   const lineTone = (index: number) => policy.preferredIndex !== null && index !== policy.preferredIndex ? "deviated" : "normal";
   // 轮询、随机、哈希没有「现在走哪条」：每条新连接各走各的，报一条出来只会误导。
   if (policy.mode === "weighted") {
-    return { text: `每条新连接各走各的，共 ${policy.lines.length} 条`, note: null, tone: "normal" };
+    return { text: `${policy.perSession ? "每个新会话" : "每条新连接"}各走各的，共 ${policy.lines.length} 条`, note: null, tone: "normal" };
   }
   switch (report.kind) {
     case "current":

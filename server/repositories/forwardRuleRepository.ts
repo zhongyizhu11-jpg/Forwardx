@@ -885,13 +885,13 @@ export async function getForwardRulesForUserSync(userId: number) {
 }
 
 /** 一台机器的 Agent 管得着哪些规则。下发和收它报上来的东西都按这一份算。 */
-function forwardRulesForAgentConditions(hostId?: number) {
+function forwardRulesForAgentConditions(hostId?: number, options: { failoverReports?: boolean } = {}) {
   const conds: any[] = [
     sql`COALESCE(${forwardRules.isForwardGroupTemplate}, ${sqlBool(false)}) = ${sqlBool(false)}`,
     sql`(COALESCE(${forwardRules.pendingDelete}, ${sqlBool(false)}) = ${sqlBool(false)} OR ${forwardRules.isRunning} = ${sqlBool(true)})`,
   ];
   if (hostId) {
-    conds.push(sql`(
+    const entryScope = sql`(
       ${forwardRules.hostId} = ${hostId}
       OR ${forwardRules.tunnelId} IN (
         SELECT ${tunnels.id}
@@ -907,7 +907,21 @@ function forwardRulesForAgentConditions(hostId?: number) {
             AND ${forwardGroupMembers.isEnabled} = ${sqlBool(true)}
         )
       )
-    )`);
+    )`;
+    /*
+      收线路组上报时（getForwardRuleFailoverLinesForAgent）按调度器在哪台算：不在隧道上的规则是规则
+      所在的机器；隧道规则只认主出口，入口和入口组成员不跑它的调度器（见心跳的 failoverForCurrentHost），
+      不能报。隧道已经不在了的规则按不在隧道上算，和心跳一样。
+    */
+    conds.push(options.failoverReports
+      ? sql`(
+        (
+          ${forwardRules.hostId} = ${hostId}
+          AND NOT EXISTS (SELECT 1 FROM ${tunnels} WHERE ${tunnels.id} = ${forwardRules.tunnelId})
+        )
+        OR ${forwardRules.tunnelId} IN (SELECT ${tunnels.id} FROM ${tunnels} WHERE ${tunnels.exitHostId} = ${hostId})
+      )`
+      : entryScope);
   }
   return conds;
 }
@@ -928,6 +942,15 @@ export async function getForwardRulesForAgent(hostId?: number) {
  * 这台机器有权报告的主备规则：id 和库里记的当前线路之外，还带上路径清单和目标 —— 切换
  * 事件入库要把 Agent 报的「拨了哪个地址」翻成「哪条路径」，Telegram 提醒要规则名和开关。
  * 不按 failoverEnabled 过滤：归属才是这里要验的东西，Agent 报了什么就按规则收什么。
+ *
+ * 隧道规则的调度器跑在隧道的出口机上（见 routers/rules.crud.ts 的 routeSchedulerHostIds），报上来的
+ * 是出口机 —— 所以只有主出口（多跳时就是最后一跳）有权报这条隧道上的规则。上一版只认规则所在的
+ * 入口机，隧道规则的切换、当前线路、评分全被当成越权丢掉了。入口（规则所在的机器、入口组的成员）
+ * 不跑隧道规则的调度器，也不再有权报：留着的话，一个报旧状态的入口会和主出口抢着写。
+ *
+ * 负载均衡的出口节点也各跑一个调度器，但一条规则在面板上只有一份状态：几个出口一起报会互相覆盖，
+ * 当前线路和评分来回跳。所以只收主出口报的，出口节点（停用的、负载均衡关掉后留下的更不用说）不收。
+ * 不在隧道上的规则（包括中转机上的中继规则）照旧只收规则所在机器报的。
  */
 export async function getForwardRuleFailoverLinesForAgent(hostId: number) {
   const db = await getDb();
@@ -949,7 +972,7 @@ export async function getForwardRuleFailoverLinesForAgent(hostId: number) {
     telegramErrorNotifyEnabled: forwardRules.telegramErrorNotifyEnabled,
     failoverActiveTarget: forwardRules.failoverActiveTarget,
     failoverActiveAt: forwardRules.failoverActiveAt,
-  }).from(forwardRules).where(and(...forwardRulesForAgentConditions(hostId)));
+  }).from(forwardRules).where(and(...forwardRulesForAgentConditions(hostId, { failoverReports: true })));
 }
 
 export async function getForwardRulesForAgentScope(hostId: number, tunnelIds: number[]) {

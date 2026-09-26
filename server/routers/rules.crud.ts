@@ -13,6 +13,7 @@ import {
   validateFailoverSchedule,
 } from "@shared/failoverSchedule";
 import { readFailoverPin } from "@shared/failoverPin";
+import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
 import {
   MAX_ROUTE_HOPS,
   MAX_ROUTE_PATHS,
@@ -24,7 +25,9 @@ import {
   normalizeRouteSpread,
   normalizeRouteSwitchMode,
   parseRoutePaths,
+  routeGroupForwardTypeSupported,
   routeGroupOf,
+  routeGroupTunnelModeSupported,
   routePathLabel,
   routeTemplateGuards,
   serializeRoutePaths,
@@ -103,10 +106,9 @@ const strictProbeTargetSchema = z.object({
   probePort: z.number().int().min(1).max(65535),
 });
 const failoverStrategySchema = z.enum(["fallback", "round_robin", "random", "ip_hash"]);
-const mainBackupGostTunnelModes = new Set(["tls", "wss", "tcp", "mtls", "mwss", "mtcp"]);
-
+// GOST、Nginx、ForwardX 隧道：调度器在出口机上（shared/routeGroup 的 ROUTE_GROUP_TUNNEL_MODES）。
 function isMainBackupGostTunnelMode(mode: unknown) {
-  return mainBackupGostTunnelModes.has(String(mode || "").toLowerCase());
+  return routeGroupTunnelModeSupported(mode);
 }
 
 const failoverScheduleInputSchema = z.object({
@@ -340,12 +342,13 @@ function failoverFieldsProvided(input: FailoverInput) {
   return FAILOVER_INPUT_KEYS.some((key) => (input as any)[key] !== undefined);
 }
 
-export function normalizeFailoverInput(input: FailoverInput, protocol?: string | null, context: NormalizeFailoverContext = {}) {
+/**
+ * 协议不再限制：TCP、UDP、TCP+UDP 都能调度（UDP 按会话，Agent 2.2.199 起）。第二个参数
+ * 留着只为调用处不用改；转发方式的限制在 requireMainBackupAllowed。
+ */
+export function normalizeFailoverInput(input: FailoverInput, _protocol?: string | null, context: NormalizeFailoverContext = {}) {
   const enabled = !!input.failoverEnabled;
   const targets: FailoverTarget[] = [];
-  if (enabled && protocol && protocol !== "tcp") {
-    throw new Error("主备模式当前仅支持 TCP 协议");
-  }
   /*
     线路组：传了 routeGroup 就按它；没传但库里这一行已经是线路组（routePaths 有值），
     路径照旧、只换这次改的字段 —— 只改钉子的那一次保存不能把路径抹掉。传 null 是明确
@@ -543,10 +546,32 @@ async function routeHostIdsForActor(actor: { id: number; role: string }) {
   return new Set<number>(scope.useHostIds || scope.hostIds);
 }
 
-/** 调度层跑在哪台机器上：GOST 隧道规则在出口机（那里的 Agent 起主备代理），其余在入口机。 */
+/**
+ * 调度层跑在哪台机器上：隧道规则在隧道的出口机（GOST、Nginx 隧道由出口的 gost / nginx 拨它，
+ * ForwardX 隧道由出口的 FXP 拨它），端口转发在规则所在的机器。
+ */
 export function routeEntryHostId(hostId: number, tunnel: any | null | undefined) {
   if (!tunnel) return hostId;
-  return String(tunnel?.mode || "").toLowerCase() === "forwardx" ? hostId : Number(tunnel.exitHostId || hostId);
+  return Number(tunnel.exitHostId || hostId);
+}
+
+/**
+ * 调度器实际跑在哪几台机器上，和 server/agentHeartbeatRoute.ts 的 routeSchedulerHostIds 同一个
+ * 口径：直连规则是规则所在的机器；隧道（GOST、Nginx、ForwardX）是主出口加上开着的负载均衡
+ * 出口 —— 停用的出口节点、负载均衡关掉后还留着的节点都不算。多出口时每个出口各跑一个调度器，
+ * 需要新 Agent 的调度（UDP、ForwardX 隧道）要每一台都够版本才下发。
+ */
+export function routeSchedulerHostIds(hostId: number, tunnel: any | null | undefined, exitNodes: readonly any[] = []): number[] {
+  const primary = routeEntryHostId(hostId, tunnel);
+  if (!tunnel) return [primary];
+  const ids = [primary];
+  if (dbBool(tunnel.loadBalanceEnabled) && normalizeExitGroupStrategy(tunnel.loadBalanceStrategy) !== "none") {
+    for (const node of exitNodes) {
+      if (!node || !dbBool(node.isEnabled, true) || Number(node.hostId) <= 0 || Number(node.listenPort) <= 0) continue;
+      ids.push(Number(node.hostId));
+    }
+  }
+  return Array.from(new Set(ids.filter((id) => id > 0)));
 }
 
 /**
@@ -904,15 +929,12 @@ export function requireMainBackupAllowed(options: {
   isAdmin: boolean;
 }) {
   if (!options.enabled) return;
-  if (options.protocol && options.protocol !== "tcp") {
-    throw new Error("主备线路当前仅支持 TCP 协议");
-  }
-  if (options.forwardType !== "gost") {
-    throw new Error("主备线路仅支持 GOST 端口转发和 GOST 隧道");
+  if (!routeGroupForwardTypeSupported(options.forwardType)) {
+    throw new Error("线路组要用 gost、realm、socat 或 nginx 转发：iptables / nftables 在内核里改写目的地，调度器插不进去");
   }
   const isTunnelRoute = !!options.isTunnelRoute || Number(options.tunnelId || 0) > 0;
   if (isTunnelRoute && options.tunnelMode !== undefined && !isMainBackupGostTunnelMode(options.tunnelMode)) {
-    throw new Error("主备线路仅支持 GOST 隧道");
+    throw new Error("这种隧道用不了线路组：换一条 GOST、Nginx 或 ForwardX 隧道就可以");
   }
   if (!options.isAdmin && !isTunnelRoute && !options.isPortForwardGroup) {
     throw new Error("普通用户的普通端口转发不支持主备线路，请使用 GOST 隧道转发或联系管理员");
@@ -1781,7 +1803,7 @@ export const crudRulesRouter = router({
           });
         }
         const groupTunnelSupportsFailover = groupIsTunnel ? await forwardGroupTunnelMembersSupportMainBackup(group) : true;
-        const groupSupportsFailover = !isForwardChain && input.protocol === "tcp" && forwardType === "gost" && (!groupIsTunnel || groupTunnelSupportsFailover);
+        const groupSupportsFailover = !isForwardChain && routeGroupForwardTypeSupported(forwardType) && (!groupIsTunnel || groupTunnelSupportsFailover);
         const createFailoverEnabled = groupSupportsFailover ? input.failoverEnabled : false;
         requireMainBackupAllowed({
           enabled: createFailoverEnabled,
@@ -2269,7 +2291,7 @@ export const crudRulesRouter = router({
         );
         const groupIsTunnel = !isForwardChain && (group as any).groupType === "tunnel";
         const groupTunnelSupportsFailover = groupIsTunnel ? await forwardGroupTunnelMembersSupportMainBackup(group) : true;
-        const groupSupportsFailover = !isForwardChain && nextProtocol === "tcp" && nextForwardType === "gost" && (!groupIsTunnel || groupTunnelSupportsFailover);
+        const groupSupportsFailover = !isForwardChain && routeGroupForwardTypeSupported(nextForwardType) && (!groupIsTunnel || groupTunnelSupportsFailover);
         const nextMainBackupEnabled = groupChanged ? false : (groupSupportsFailover ? input.failoverEnabled ?? (rule as any).failoverEnabled : false);
         requireMainBackupAllowed({
           enabled: nextMainBackupEnabled,
