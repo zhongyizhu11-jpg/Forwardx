@@ -544,7 +544,7 @@ async function routeHostIdsForActor(actor: { id: number; role: string }) {
 }
 
 /** 调度层跑在哪台机器上：GOST 隧道规则在出口机（那里的 Agent 起主备代理），其余在入口机。 */
-function routeEntryHostId(hostId: number, tunnel: any | null | undefined) {
+export function routeEntryHostId(hostId: number, tunnel: any | null | undefined) {
   if (!tunnel) return hostId;
   return String(tunnel?.mode || "").toLowerCase() === "forwardx" ? hostId : Number(tunnel.exitHostId || hostId);
 }
@@ -2292,8 +2292,14 @@ export const crudRulesRouter = router({
           });
         }
         const clearable = mergeFailoverClearableFields(input, rule);
+        /*
+          routeGroup 只是传输用的字段，不是列：混在 data 里 Drizzle 会拿一个不存在的字段去
+          更新。而且它得交给 normalizeFailoverInput，否则这次保存会照着老的 failover* 列
+          重算，把用户刚编辑的路径抹成 null。
+        */
+        const { routeGroup: _routeGroupInput, ...inputColumns } = input;
         const data: any = {
-          ...input,
+          ...inputColumns,
           ...(groupChanged || isForwardChain || isPortGroup || !nextMainBackupEnabled || failoverFieldsProvided(input)
             ? normalizeFailoverInput({
                 failoverEnabled: nextMainBackupEnabled,
@@ -2308,7 +2314,14 @@ export const crudRulesRouter = router({
                 failoverSeconds: groupChanged ? 60 : input.failoverSeconds ?? (rule as any).failoverSeconds,
                 recoverSeconds: groupChanged ? 120 : input.recoverSeconds ?? (rule as any).recoverSeconds,
                 autoFailback: groupChanged ? true : input.autoFailback ?? (rule as any).autoFailback,
-              }, nextProtocol)
+                routeGroup: nextMainBackupEnabled && !groupChanged ? input.routeGroup : null,
+              }, nextProtocol, {
+                rule: groupChanged ? null : rule,
+                // 转发组的模板规则不跑在任何一台机器上，路径不能带中转（和新建时同一条口径）。
+                allowHops: false,
+                targetIp: input.targetIp ?? (rule as any).targetIp,
+                targetPort: input.targetPort ?? (rule as any).targetPort,
+              })
             : {}),
           ...(input.targetIp !== undefined ? { targetIp: normalizeRuleTargetIp(input.targetIp, { tunnelId: !isForwardChain && (group as any).groupType === "tunnel" ? 1 : null }) } : {}),
           forwardType: nextForwardType,

@@ -1,7 +1,7 @@
 import { protectedProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import * as db from "../db";
-import { crudRulesRouter } from "./rules.crud";
+import { crudRulesRouter, routeEntryHostId } from "./rules.crud";
 import { portsRulesRouter } from "./rules.ports";
 import { selfTestRulesRouter } from "./rules.selfTest";
 import { trafficRulesRouter } from "./rules.traffic";
@@ -134,10 +134,18 @@ export const rulesRouter = router({
       const agent = status.agent || status.staleAgent;
       const hints = routeHopDownHints(Number(rule.id), paths);
       const hopIds = Array.from(new Set(paths.flatMap((path) => path.hops)));
+      /*
+        评分和预热跑在调度层那台机器上 —— GOST 隧道规则是隧道的出口机，不是规则的入口机。
+        版本读错机器的话，界面会说「支持评分」而真正跑调度的那台 Agent 还是旧的（或者反过来）。
+      */
+      const routeTunnel = Number((rule as any).tunnelId || 0) > 0
+        ? await (db.getTunnelById(Number((rule as any).tunnelId)) as Promise<any>).catch(() => null)
+        : null;
+      const schedulerHostId = routeEntryHostId(Number(rule.hostId), routeTunnel);
       const [names, relays, entryHost] = await Promise.all([
         hopIds.length > 0 ? db.getHostNamesByIds(hopIds) : Promise.resolve(new Map<number, string>()),
         routeRelayRulesByKey(Number(rule.id)),
-        db.getHostById(Number(rule.hostId)) as Promise<any>,
+        db.getHostById(schedulerHostId) as Promise<any>,
       ]);
       const active = describeFailoverActiveLine(rule);
       const activeIndex = status.agent && status.agent.activeIndex >= 0 ? status.agent.activeIndex : (active ? active.index : -1);

@@ -34,6 +34,7 @@ type Outcome = {
   relaysAfterPathRemoved: Array<{ hostId: number; pendingDelete: number }>;
   normalized: any;
   pinOnly: any;
+  groupTemplate: any;
   retired: number;
   eventsAfterDelete: number;
 };
@@ -199,6 +200,21 @@ function run(): Outcome {
       autoFailback: true,
     }, "tcp", { rule: currentRule, entryHostId: 1, targetIp: "198.51.100.7", targetPort: 443 });
 
+    /*
+      转发组模板上的规则：路径不带中转（allowHops: false），保存时照样要落成路径。
+      少传 routeGroup 的那一版在这里会算出 routePaths = null，用户刚编辑的路径当场没了。
+    */
+    const groupTemplate = crud.normalizeFailoverInput({
+      failoverEnabled: true,
+      routeGroup: {
+        mode: "failover",
+        paths: [
+          { name: "主线路", hops: [] },
+          { name: "备用线路", hops: [], dest: { ip: "198.51.100.9", port: 443 } },
+        ],
+      },
+    }, "tcp", { allowHops: false, targetIp: "198.51.100.7", targetPort: 443 });
+
     const retiredResult = await routeGroups.retireRouteRelayRulesForRule(1, { reason: "test-delete" });
     const eventsAfterDelete = Number((await query('SELECT COUNT(*) AS n FROM forward_rule_route_events WHERE "ruleId" = 1'))[0].n);
     server.close();
@@ -219,6 +235,7 @@ function run(): Outcome {
       relaysAfterPathRemoved,
       normalized: { ...normalized, failoverPinnedUntil: normalized.failoverPinnedUntil ? String(normalized.failoverPinnedUntil) : null },
       pinOnly: { ...pinOnly, failoverPinnedUntil: pinOnly.failoverPinnedUntil ? String(pinOnly.failoverPinnedUntil) : null },
+      groupTemplate: { routeMode: groupTemplate.routeMode, routePaths: groupTemplate.routePaths, failoverTargets: groupTemplate.failoverTargets },
       retired: retiredResult.retired,
       eventsAfterDelete,
     }));
@@ -321,4 +338,36 @@ test("整份线路组保存成那几列；只改钉子的一次保存路径照�
   assert.equal(JSON.parse(pinOnly.routePaths).length, 2, "只改钉子不该抹掉路径");
   assert.equal(pinOnly.failoverPinnedIndex, 1);
   assert.equal(pinOnly.routePrewarmSeconds, 300);
+});
+
+test("转发组模板上的线路组也保存成路径；routeGroup 不当成列写进库", () => {
+  /*
+    转发组那一支原来把 routeGroup 直接混在 data 里（Drizzle 会拿一个不存在的字段去更新），
+    又没把它交给 normalizeFailoverInput —— 于是保存要么报错，要么照着老的 failover* 列
+    重算，把刚编辑的路径抹成 null。两件事在这里各钉一条。
+  */
+  const template = outcome.groupTemplate;
+  assert.equal(template.routeMode, "failover");
+  assert.equal(JSON.parse(template.routePaths).length, 2, "转发组模板的路径不能被算成 null");
+  assert.deepEqual(
+    JSON.parse(template.routePaths).map((path: any) => path.hops),
+    [[], []],
+    "转发组模板不跑在机器上，路径不带中转",
+  );
+
+  /*
+    库里的那一行不能拿整个 input 去更新：routeGroup 不是列，Drizzle 会拿一个不存在的字段
+    去写。三条保存路径（直连、转发组模板的新建、转发组模板的编辑）都得先把它摘出来。
+  */
+  const source = fs.readFileSync(path.resolve(import.meta.dirname, "routers/rules.crud.ts"), "utf8");
+  assert.equal(
+    /const data: any = \{\s*\.\.\.input,/.test(source),
+    false,
+    "转发组那一支又把整个 input 摊进库里了：routeGroup 只是传输字段，得先摘出来",
+  );
+  assert.equal(
+    (source.match(/routeGroup: _routeGroupInput, \.\.\./g) || []).length,
+    3,
+    "三条保存路径都要把 routeGroup 从要写库的字段里摘出来",
+  );
 });

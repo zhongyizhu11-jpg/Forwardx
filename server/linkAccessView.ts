@@ -373,11 +373,12 @@ export async function gateForwardRulesForRuntime<T extends Record<string, any>>(
 
   return rules.map((rule) => {
     /*
-      线路组的中继规则跑在中转机上，机器是面板按路径挑的，不是规则主人「有权使用」的
-      资源：主人能不能用这条线路，在保存线路组那一刻已经按他的主机范围校验过了
-      （validateRouteGroup）。这里再按主机权限拦一遍，非管理员的路径会被整条拦掉。
+      线路组的中继规则跑在中转机上，主人是线路组那条规则的主人。保存时 validateRouteGroup
+      已经按他当时的主机范围校验过每一跳，但权限会变：套餐到期、管理员收回一台中转之后，
+      如果这里放行，流量会继续从那台已经无权使用的机器上过 —— 入口和隧道还是他的，父规则
+      拦不住。所以中继和普通规则走同一道闸（它的根资源就是这台中转机），拦掉之后这一跳探
+      测不通，线路组会自己换到别的路径。
     */
-    if (positiveId(rule?.routeParentRuleId) > 0) return rule;
     const userId = positiveId(rule?.userId);
     const scope = scopeByUserId.get(userId);
     const allowed = scope !== undefined && canUseForwardRuleResource(rule, scope);

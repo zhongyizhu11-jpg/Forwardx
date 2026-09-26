@@ -26,6 +26,7 @@ import { assertSafeOutboundUrl } from "./ssrf";
 import { maintainCurrentPostgresqlDatabase } from "./postgresqlMaintenance";
 import { maintainCurrentMysqlDatabase } from "./mysqlMaintenance";
 import { AGENT_VERSION, APP_VERSION } from "../shared/versions";
+import { parseRoutePaths, serializeRoutePaths } from "../shared/routeGroup";
 import { AGENT_PANEL_MIGRATION_VERSION, isAgentVersionAtLeast } from "./agentRouteUtils";
 import { ensureTrafficStatBucketsBackfilled, ensureUserTrafficCountersBackfilled } from "./repositories/metricsRepository";
 import {
@@ -1103,6 +1104,21 @@ function mapStoredHostIds(maps: ImportMaps, value: unknown) {
   return mapped.length > 0 ? mapped.sort((a, b) => a - b).join(",") : null;
 }
 
+/*
+  线路组的路径里藏着主机 ID：paths[].hops 每一项都是一台中转机。导入快照时其余主机引用
+  都过了 ID 映射，这一列是 JSON，照抄过来的话这些跳会指向导入库里另一台机器 —— 启动时
+  的中继修复会照着它在错误的机器上建中继，或者整条路径找不到主机而失效。所以逐跳映射，
+  缺主机就和其他必需引用一样报错，不静悄悄地留一个错的 ID。
+*/
+export function remapRoutePathHosts(value: unknown, maps: ImportMaps) {
+  const paths = parseRoutePaths(value);
+  if (paths.length === 0) return null;
+  return serializeRoutePaths(paths.map((path) => ({
+    ...path,
+    hops: path.hops.map((hostId) => mapRequiredId(maps, "hosts", hostId)),
+  })));
+}
+
 async function prepareImportRow(table: string, source: Record<string, any>, maps: ImportMaps): Promise<PreparedImportRow | null> {
   const row = { ...source };
   delete row.id;
@@ -1163,6 +1179,7 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
 
     case "forward_rules":
       row.hostId = mapRequiredId(maps, "hosts", source.hostId);
+      row.routePaths = remapRoutePathHosts(source.routePaths, maps);
       row.userId = mapRequiredId(maps, "users", source.userId);
       row.tunnelId = mapOptionalId(maps, "tunnels", source.tunnelId);
       row.forwardGroupId = mapOptionalId(maps, "forward_groups", source.forwardGroupId);
