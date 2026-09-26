@@ -17,7 +17,8 @@ import test from "node:test";
  *     UDP 目标表也指向它；
  *   · 出口 Agent 早于 2.2.199 时什么都不下发，入口和出口都拨路径 A（经过中转就拨中转）；
  *   · 开着负载均衡时每个出口各跑一个调度器，要每个出口都够版本；
- *   · 调度器在出口，「现在走哪条」和评分是出口机报上来的 —— 出口机有权报这条规则。
+ *   · 调度器在出口，「现在走哪条」和评分是出口机报上来的 —— 主出口有权报这条规则；负载均衡的
+ *     出口节点不报，不然几个出口的状态互相覆盖。
  *
  * 起一个真的 sqlite 和真的心跳路由跑一遍。
  */
@@ -37,6 +38,7 @@ type Outcome = {
   exitOld: Beat;
   entryOld: Beat;
   reportable: Record<string, number[]>;
+  entryPlanKept: { before: boolean; afterSameVersion: boolean; afterVersionChange: boolean };
   allowed: boolean;
   schedulerHosts: Record<string, number[]>;
 };
@@ -159,13 +161,42 @@ function run(): Outcome {
     };
     const setVersion = (hostId, version) => exec('UPDATE hosts SET "agentVersion" = ? WHERE id = ?', [version, hostId]);
 
+    /*
+      入口的「稳定计划」：入口自己什么都没变时心跳走快路径，5 分钟才核对一次。出口换了 Agent 版本
+      之后入口得马上重算（让出口拨调度器还是拨路径 A 跟着变），这里放一份假的计划看它有没有被清掉。
+    */
+    const gate = await import(url("server/agentHeartbeatGate.ts"));
+    const hash = (c) => c.repeat(64);
+    const entryPlan = {
+      plannedAt: Date.now(), configRevision: 1, desiredStateHash: hash("a"), localStateSignature: hash("b"),
+      stateSignatures: { rules: hash("c") }, agentVersion: "2.2.199", agentBootId: "boot", agentProcessStartedAt: 1,
+      defaultNetworkInterface: "eth0", pluginInventorySignature: "", mimicEnvironmentSignature: "", idleNextInterval: 30, panelUrl: "",
+    };
+    const entryPlanMatch = {
+      forceReconcile: false, hasBlockingWork: false, recoveryTriggered: false, addressChanged: false, hasDnsChanges: false,
+      hasLocalStateUpload: false, hasEndpointEvents: false, localStateSignature: hash("b"), stateSignatures: { rules: hash("c") },
+      agentVersion: "2.2.199", agentBootId: "boot", agentProcessStartedAt: 1, defaultNetworkInterface: "eth0",
+      pluginInventorySignature: "", mimicEnvironmentSignature: "", agentLastReceivedRevision: 1, agentLastAppliedRevision: 1,
+      agentLastReceivedHash: hash("a"), agentLastAppliedHash: hash("a"),
+    };
+    const entryPlanKept = () => !!gate.agentStableHeartbeatPlanCache.match(2, entryPlanMatch);
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+
     const exitNew = await beat("tok1", "2.2.199");
     await setVersion(1, "2.2.199");
     const entryNew = await beat("tok2", "2.2.199");
+    gate.agentStableHeartbeatPlanCache.remember(2, entryPlan);
+    const planBefore = entryPlanKept();
+    await beat("tok1", "2.2.199");
+    await settle();
+    const planAfterSameVersion = entryPlanKept();
     const exitOld = await beat("tok1", "2.2.198");
+    await settle();
+    const planAfterVersionChange = entryPlanKept();
     await setVersion(1, "2.2.198");
     const entryOld = await beat("tok2", "2.2.199");
     server.close();
+    const entryPlanKeptOutcome = { before: planBefore, afterSameVersion: planAfterSameVersion, afterVersionChange: planAfterVersionChange };
 
     // 谁有权报这条规则的「现在走哪条」和评分。
     const db = await import(url("server/db.ts"));
@@ -188,7 +219,7 @@ function run(): Outcome {
     for (const tunnelId of [1, 2]) {
       schedulerHosts[tunnelId] = crud.routeSchedulerHostIds(2, await db.getTunnelById(tunnelId), await db.getTunnelExitNodes(tunnelId));
     }
-    console.log("OUTCOME " + JSON.stringify({ mainDial, exitNew, entryNew, exitOld, entryOld, reportable, allowed, schedulerHosts }));
+    console.log("OUTCOME " + JSON.stringify({ mainDial, exitNew, entryNew, exitOld, entryOld, reportable, entryPlanKept: entryPlanKeptOutcome, allowed, schedulerHosts }));
   `;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
     cwd: path.resolve(import.meta.dirname, ".."),
@@ -270,9 +301,15 @@ test("按访客固定：隧道打开「出口发送到目标」时，调度器�
   assert.deepEqual(outcome.entryNew.entry["4"], { targetIp: "127.0.0.1", targetPort: scheduler.failover.listenPort, failover: false });
 });
 
-test("出口机有权报隧道上的线路组，中转机没有", () => {
+test("出口的 Agent 换了版本，隧道入口马上重算，不等 5 分钟一次的核对", () => {
+  assert.equal(outcome.entryPlanKept.before, true, "前提：入口的稳定计划放进去了");
+  assert.equal(outcome.entryPlanKept.afterSameVersion, true, "出口版本没变时不打扰入口");
+  assert.equal(outcome.entryPlanKept.afterVersionChange, false, "出口降级后入口还按老计划让出口拨调度器，出口那边已经没有调度器了");
+});
+
+test("主出口有权报隧道上的线路组，负载均衡的出口节点和中转机没有", () => {
   assert.deepEqual(outcome.reportable["1"], [1, 2, 3, 4], "主出口");
-  assert.deepEqual(outcome.reportable["4"], [3], "负载均衡的出口节点");
+  assert.deepEqual(outcome.reportable["4"], [], "出口节点也跑调度器，但一条规则只有一份状态，几个出口一起报会互相覆盖");
   assert.deepEqual(outcome.reportable["2"], [1, 2, 3, 4], "入口（规则所在的机器）照旧");
   assert.deepEqual(outcome.reportable["3"], [], "中转机只报它自己的中继规则");
 });

@@ -1,5 +1,5 @@
 ﻿import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { forwardGroupMembers, forwardGroups, forwardRuleRouteEvents, forwardRuleTunnelExits, forwardRules, InsertForwardRule, tunnelExitNodes, tunnels } from "../../drizzle/schema";
+import { forwardGroupMembers, forwardGroups, forwardRuleRouteEvents, forwardRuleTunnelExits, forwardRules, InsertForwardRule, tunnels } from "../../drizzle/schema";
 import { executeRaw, getDb, insertAndGetId, nowDate } from "../dbRuntime";
 import { queryRaw } from "../dbRuntime";
 import { boolLiteral, boolValue, inList, quoteIdentifier } from "../dbCompat";
@@ -885,7 +885,7 @@ export async function getForwardRulesForUserSync(userId: number) {
 }
 
 /** 一台机器的 Agent 管得着哪些规则。下发和收它报上来的东西都按这一份算。 */
-function forwardRulesForAgentConditions(hostId?: number, options: { includeTunnelExits?: boolean } = {}) {
+function forwardRulesForAgentConditions(hostId?: number, options: { includeTunnelExit?: boolean } = {}) {
   const conds: any[] = [
     sql`COALESCE(${forwardRules.isForwardGroupTemplate}, ${sqlBool(false)}) = ${sqlBool(false)}`,
     sql`(COALESCE(${forwardRules.pendingDelete}, ${sqlBool(false)}) = ${sqlBool(false)} OR ${forwardRules.isRunning} = ${sqlBool(true)})`,
@@ -908,11 +908,10 @@ function forwardRulesForAgentConditions(hostId?: number, options: { includeTunne
         )
       )
     )`;
-    conds.push(options.includeTunnelExits
+    conds.push(options.includeTunnelExit
       ? sql`(
         ${entryScope}
         OR ${forwardRules.tunnelId} IN (SELECT ${tunnels.id} FROM ${tunnels} WHERE ${tunnels.exitHostId} = ${hostId})
-        OR ${forwardRules.tunnelId} IN (SELECT ${tunnelExitNodes.tunnelId} FROM ${tunnelExitNodes} WHERE ${tunnelExitNodes.hostId} = ${hostId})
       )`
       : entryScope);
   }
@@ -936,9 +935,12 @@ export async function getForwardRulesForAgent(hostId?: number) {
  * 事件入库要把 Agent 报的「拨了哪个地址」翻成「哪条路径」，Telegram 提醒要规则名和开关。
  * 不按 failoverEnabled 过滤：归属才是这里要验的东西，Agent 报了什么就按规则收什么。
  *
- * 隧道规则的调度器跑在隧道的出口机上（主出口和负载均衡的出口节点，见 routers/rules.crud.ts 的
- * routeSchedulerHostIds），报上来的是出口机 —— 所以出口机也有权报这条隧道上的规则。上一版只认
- * 规则所在的入口机，隧道规则的切换、当前线路、评分全被当成越权丢掉了。
+ * 隧道规则的调度器跑在隧道的出口机上（见 routers/rules.crud.ts 的 routeSchedulerHostIds），报上来的
+ * 是出口机 —— 所以主出口（多跳时就是最后一跳）也有权报这条隧道上的规则。上一版只认规则所在的
+ * 入口机，隧道规则的切换、当前线路、评分全被当成越权丢掉了。
+ *
+ * 负载均衡的出口节点也各跑一个调度器，但一条规则在面板上只有一份状态：几个出口一起报会互相覆盖，
+ * 当前线路和评分来回跳。所以只收主出口报的，出口节点（停用的、负载均衡关掉后留下的更不用说）不收。
  */
 export async function getForwardRuleFailoverLinesForAgent(hostId: number) {
   const db = await getDb();
@@ -960,7 +962,7 @@ export async function getForwardRuleFailoverLinesForAgent(hostId: number) {
     telegramErrorNotifyEnabled: forwardRules.telegramErrorNotifyEnabled,
     failoverActiveTarget: forwardRules.failoverActiveTarget,
     failoverActiveAt: forwardRules.failoverActiveAt,
-  }).from(forwardRules).where(and(...forwardRulesForAgentConditions(hostId, { includeTunnelExits: true })));
+  }).from(forwardRules).where(and(...forwardRulesForAgentConditions(hostId, { includeTunnelExit: true })));
 }
 
 export async function getForwardRulesForAgentScope(hostId: number, tunnelIds: number[]) {
