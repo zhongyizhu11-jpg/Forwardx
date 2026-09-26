@@ -1,6 +1,12 @@
 # Changelog
 
-## [未发布]
+## [2.3.377] - 2026-09-26
+
+### 发布摘要
+
+- **线路组支持 UDP、TCP+UDP 和更多转发方式**：UDP 规则按会话调度；realm、socat、nginx 端口转发，Nginx 隧道和 ForwardX 隧道都能挂线路组，转发组的子规则跟着放开。只剩 iptables / nftables 不支持。用法见 [线路组](https://github.com/zhongyizhu11-jpg/Forwardx/blob/main/docs/guide/failover.md)。
+- **修好线路组的两处问题**：「按访客固定」原来所有访客都落在同一条路径上；隧道规则的「现在走哪条」和评分原来收不到，线路面板一直停在旧状态。
+- 面板与 APK Release `2.3.377`，Android APP `2.3.99`，Agent `2.2.199`，ForwardX FXP runtime `2.2.119`。UDP、TCP+UDP 的调度、gost 的按访客固定和 ForwardX 隧道上的线路组要调度所在机器（端口转发是入口机，隧道是出口机）的 Agent 升到 `2.2.199`；更老的 Agent 上这些规则全部走路径 A、不切换，升级后自动接上。没有数据库变化，FXP runtime 和 Android 源码没有变化。
 
 ### 线路组支持 UDP、TCP+UDP，realm / socat / nginx，Nginx 隧道和 ForwardX 隧道
 
