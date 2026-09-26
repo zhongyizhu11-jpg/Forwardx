@@ -1,21 +1,28 @@
 import { protectedProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import * as db from "../db";
-import { crudRulesRouter, routeEntryHostId } from "./rules.crud";
+import { crudRulesRouter, routeSchedulerHostIds } from "./rules.crud";
 import { portsRulesRouter } from "./rules.ports";
 import { selfTestRulesRouter } from "./rules.selfTest";
 import { trafficRulesRouter } from "./rules.traffic";
 import { canUseForwardRuleResource, getLinkAccessScope } from "../linkAccessView";
 import { isManagedForwardGroupChildRule } from "../forwardRuleVisibility";
 import { formatHostAddressWithPort, getHostEntryAddress } from "@shared/hostEntryAddress";
-import { isForwardRuleProtocolTcpEnabled, isUserspaceForwardType } from "@shared/forwardTypes";
+import {
+  isForwardRuleProtocolTcpEnabled,
+  isForwardRuleProtocolUdpEnabled,
+  isUserspaceForwardType,
+  normalizeForwardRuleProtocol,
+} from "@shared/forwardTypes";
 import { describeFailoverActiveLine } from "@shared/failoverActiveLine";
 import {
   ROUTE_GROUP_AGENT_VERSION,
   describeRouteIssue,
   describeRouteReason,
   routeEventMillis,
+  routeGroupIsForwardXTunnel,
   routeGroupOf,
+  routeGroupSchedulerAgentVersion,
   routePathDestination,
   routePathDial,
   routePathLabel,
@@ -33,6 +40,19 @@ async function requireRuleVisible(user: { id: number; role: string }, ruleId: nu
   if (!rule || dbBool(rule.pendingDelete)) throw new Error("规则不存在或已删除");
   if (user.role !== "admin" && Number(rule.userId) !== Number(user.id)) throw new Error("无权查看此规则");
   return rule;
+}
+
+/**
+ * 几台调度机里最旧的 Agent 版本。有一台读不到版本就返回空串：说不准它认不认，按不支持算，
+ * 和心跳那边 isAgentVersionAtLeast("", …) 为假一致。
+ */
+export function oldestAgentVersion(versions: readonly string[]): string {
+  let oldest = "";
+  for (const version of versions) {
+    if (!version) return "";
+    if (!oldest || isAgentVersionBehind(version, oldest)) oldest = version;
+  }
+  return oldest;
 }
 
 async function withRuleResourceAccess<T extends any>(value: T, user: { id: number; role: string }): Promise<T> {
@@ -137,15 +157,18 @@ export const rulesRouter = router({
       /*
         评分和预热跑在调度层那台机器上 —— GOST 隧道规则是隧道的出口机，不是规则的入口机。
         版本读错机器的话，界面会说「支持评分」而真正跑调度的那台 Agent 还是旧的（或者反过来）。
+        负载均衡的隧道每个出口各跑一个调度器，心跳要每一台都够版本才下发 UDP 调度，所以这里
+        按最旧的那台说（routeSchedulerHostIds 和心跳是同一个口径）。
       */
       const routeTunnel = Number((rule as any).tunnelId || 0) > 0
         ? await (db.getTunnelById(Number((rule as any).tunnelId)) as Promise<any>).catch(() => null)
         : null;
-      const schedulerHostId = routeEntryHostId(Number(rule.hostId), routeTunnel);
-      const [names, relays, entryHost] = await Promise.all([
+      const routeExitNodes = routeTunnel ? await db.getTunnelExitNodes(Number(routeTunnel.id)).catch(() => []) : [];
+      const schedulerHostIds = routeSchedulerHostIds(Number(rule.hostId), routeTunnel, routeExitNodes);
+      const [names, relays, schedulerHosts] = await Promise.all([
         hopIds.length > 0 ? db.getHostNamesByIds(hopIds) : Promise.resolve(new Map<number, string>()),
         routeRelayRulesByKey(Number(rule.id)),
-        db.getHostById(schedulerHostId) as Promise<any>,
+        Promise.all(schedulerHostIds.map((hostId) => (db.getHostById(hostId) as Promise<any>).catch(() => null))),
       ]);
       const active = describeFailoverActiveLine(rule);
       const activeIndex = status.agent && status.agent.activeIndex >= 0 ? status.agent.activeIndex : (active ? active.index : -1);
@@ -196,9 +219,19 @@ export const rulesRouter = router({
           prewarming: !!agent && agent.prewarmIndex === index,
         };
       });
-      const agentVersion = String(entryHost?.agentVersion || "").trim();
+      const agentVersion = oldestAgentVersion(schedulerHosts.map((schedulerHost) => String(schedulerHost?.agentVersion || "").trim()));
+      /*
+        UDP、TCP+UDP 和 ForwardX 隧道的线路组要 Agent 2.2.199 起才调度；更老的时候面板不下发
+        调度，流量走路径 A、不切换（server/agentHeartbeatRoute.ts 的 routePrimaryEndpoint）。
+        界面据 agentSupportsProtocol 把这件事说出来，别让人以为配了就生效；schedulerNeed 说是
+        哪一样要新 Agent，界面的说法跟着换。
+      */
+      const protocol = normalizeForwardRuleProtocol((rule as any).protocol);
+      const schedulerAgentVersion = routeGroupSchedulerAgentVersion(protocol, routeTunnel?.mode);
+      const schedulerNeed = routeGroupIsForwardXTunnel(routeTunnel?.mode) ? "forwardx" : protocol !== "tcp" ? "udp" : null;
       return {
         ruleId: Number(rule.id),
+        protocol,
         policy,
         paths: rows,
         activeIndex,
@@ -208,7 +241,10 @@ export const rulesRouter = router({
         agentStale: !status.agent && !!status.staleAgent,
         agentVersion: agentVersion || null,
         agentSupportsScores: !!agentVersion && !isAgentVersionBehind(agentVersion, ROUTE_GROUP_AGENT_VERSION),
-        requiredAgentVersion: ROUTE_GROUP_AGENT_VERSION,
+        agentSupportsProtocol: !schedulerAgentVersion || (!!agentVersion && !isAgentVersionBehind(agentVersion, schedulerAgentVersion)),
+        requiredAgentVersion: schedulerAgentVersion || ROUTE_GROUP_AGENT_VERSION,
+        schedulerNeed,
+        tunnelMode: routeTunnel ? String(routeTunnel.mode || "") : null,
       };
     }),
   list: protectedProcedure
@@ -330,7 +366,11 @@ export const rulesRouter = router({
    * 要不要另配探测目标。
    */
   relayCandidates: protectedProcedure
-    .input(z.object({ excludeRuleId: z.number().int().positive().optional() }).optional())
+    .input(z.object({
+      excludeRuleId: z.number().int().positive().optional(),
+      /** 线路组转哪种协议；候选得转得了它。不传按 TCP（上一版的行为）。 */
+      protocol: z.enum(["tcp", "udp", "both"]).optional(),
+    }).optional())
     .query(async ({ input, ctx }) => {
       const isAdmin = ctx.user.role === "admin";
       const rules = await db.getForwardRules(isAdmin ? undefined : ctx.user.id);
@@ -360,9 +400,11 @@ export const rulesRouter = router({
       for (const rule of rules as any[]) {
         const id = Number(rule?.id || 0);
         if (!id || id === excluded) continue;
-        // 备用线路是 TCP 的（主备本身只支持 TCP），关掉的规则不该出现在候选里 ——
-        // 选了等于配了一条一定连不上的备用线路。
-        if (!isForwardRuleProtocolTcpEnabled(rule?.protocol)) continue;
+        // 候选得转得了这条线路组的协议（UDP 的挑 UDP 中转，TCP+UDP 两样都要），关掉的规则
+        // 也不该出现在候选里 —— 选了等于配了一条一定连不上的备用线路。
+        const needed = normalizeForwardRuleProtocol(input?.protocol);
+        if (needed !== "udp" && !isForwardRuleProtocolTcpEnabled(rule?.protocol)) continue;
+        if (needed !== "tcp" && !isForwardRuleProtocolUdpEnabled(rule?.protocol)) continue;
         if (rule?.isEnabled === false) continue;
         const sourcePort = Number(rule?.sourcePort || 0);
         if (!(sourcePort >= 1 && sourcePort <= 65535)) continue;

@@ -117,8 +117,10 @@ import { describeRoutePolicy, pinUntilSeconds } from "@shared/routePolicy";
 import {
   ROUTE_MODE_SHORT,
   newRouteGroupDraft,
+  routeGroupForwardTypeSupported,
   routeGroupOf,
   routeGroupRuleFields,
+  routeGroupTunnelModeSupported,
   routePathLetter,
   validateRouteGroup,
   type RouteGroup,
@@ -881,8 +883,9 @@ function getForwardGroupRouteLabel(group: any | null | undefined) {
   return "转发组";
 }
 
+// GOST、Nginx、ForwardX 隧道都能挂线路组：调度器在隧道出口机上。
 function isGostTunnelForMainBackup(tunnel: any | null | undefined) {
-  return gostTunnelModes.has(String(tunnel?.mode || "").toLowerCase());
+  return routeGroupTunnelModeSupported(tunnel?.mode);
 }
 
 function isForwardGroupMainBackupTunnelSupported(group: any | null | undefined, tunnelById: Map<number, any>) {
@@ -3080,18 +3083,29 @@ function RulesContent() {
   */
   const routeHopsAllowed = form.routeMode !== "group";
   /*
-    编辑框里的「此刻」：拿还没保存的线路组走和线路面板同一份模型算一遍。转发方式和协议
-    不传 —— 那两样用不了线路组时，这一块上面已经有一句专门的说明，不重复。
+    编辑框里的「此刻」：拿还没保存的线路组走和线路面板同一份模型算一遍。协议、转发方式、
+    是不是走隧道都带上：UDP 的探测、按访客固定、Agent 版本这几句提醒要靠它们。PROXY 头的
+    开关不在这个表单里，编辑时取这条规则存着的值。
   */
+  const editingStoredRule = useMemo(
+    () => (editingId !== null ? (rules || []).find((rule: any) => Number(rule.id) === editingId) : null),
+    [editingId, rules],
+  );
   const formRoutePolicy = useMemo(() => {
     if (!form.failoverEnabled || !form.routeGroup) return null;
     return describeRoutePolicy({
       failoverEnabled: true,
       targetIp: form.targetIp,
       targetPort: form.targetPort,
+      forwardType: effectiveRouteForwardType,
+      protocol: form.protocol,
+      tunnelId: form.routeMode === "tunnel" ? form.tunnelId : null,
+      tunnelMode: form.routeMode === "tunnel" ? selectedTunnel?.mode : null,
+      proxyProtocolSend: editingStoredRule?.proxyProtocolSend,
+      proxyProtocolExitSend: editingStoredRule?.proxyProtocolExitSend,
       ...routeGroupRuleFields(form.routeGroup, { targetIp: form.targetIp, targetPort: form.targetPort }),
     }, { host: routeEntryHostId ? hostById.get(routeEntryHostId) : undefined });
-  }, [form.failoverEnabled, form.routeGroup, form.targetIp, form.targetPort, routeEntryHostId, hostById]);
+  }, [form.failoverEnabled, form.routeGroup, form.targetIp, form.targetPort, form.protocol, form.routeMode, form.tunnelId, selectedTunnel, effectiveRouteForwardType, editingStoredRule, routeEntryHostId, hostById]);
   const advancedBlocked = isAdvancedSectionBlocker(submitBlocker);
   const advancedOpen = showAdvanced || advancedBlocked;
   const routeModeTabItems: SlidingTabItem<RuleRouteMode>[] = [
@@ -3142,12 +3156,13 @@ function RulesContent() {
   const mainBackupIsTunnelRoute =
     (form.routeMode === "tunnel" && isGostTunnelForMainBackup(selectedTunnel))
     || isForwardGroupMainBackupTunnelSupported(selectedForwardGroup, tunnelById);
+  // 线路组挂在用户态转发上（gost / realm / socat / nginx）：调度器插在它和路径之间。
   const mainBackupPortForwardSupported = !mainBackupUsesTunnelRoute
-    && mainBackupForwardType === "gost"
+    && routeGroupForwardTypeSupported(mainBackupForwardType)
     && (user?.role === "admin" || selectedForwardGroupIsPort);
   const canAutoSwitchMainBackupToGost = !selectedForwardGroupIsChain
     && !mainBackupUsesTunnelRoute
-    && mainBackupForwardType !== "gost"
+    && !routeGroupForwardTypeSupported(mainBackupForwardType)
     && usableForwardTypes.includes("gost")
     && !routeModeLocked
     && user?.role === "admin"
@@ -3179,13 +3194,13 @@ function RulesContent() {
       fix: canUseFailoverGroup && !routeModeLocked ? { label: "改用转发组", run: () => setRouteMode("group") } : undefined,
     }
     : mainBackupUsesTunnelRoute && !mainBackupIsTunnelRoute
-    ? { reason: "这条隧道不是 GOST 隧道，用不了主备线路。换一条 GOST 隧道就可以。" }
+    ? { reason: "这种隧道用不了线路组。换一条 GOST、Nginx 或 ForwardX 隧道就可以。" }
     : user?.role !== "admin" && !mainBackupUsesTunnelRoute && !selectedForwardGroupIsPort
     ? {
-      reason: "普通端口转发用不了主备线路（切换线路要靠 GOST）。改用隧道转发就可以。",
+      reason: "普通用户的端口转发用不了线路组。改用隧道转发就可以。",
       fix: canUseGost && !routeModeLocked ? { label: "改用隧道转发", run: () => setRouteMode("tunnel") } : undefined,
     }
-    : { reason: "主备线路要用 GOST 转发，这条规则现在的转发方式不支持。" };
+    : { reason: "线路组要用 gost、realm、socat 或 nginx 转发：iptables / nftables 在内核里改写目的地，调度器插不进去。" };
   const mainBackupDisabledText = mainBackupBlock?.reason || "";
   const kernelForwardWarning = useMemo(() => buildKernelForwardWarning({
     rule: form,
@@ -3707,10 +3722,6 @@ function RulesContent() {
     if (form.failoverEnabled) {
       if (!canUseMainBackup) {
         toast.error(mainBackupDisabledText || "当前规则类型不支持线路组");
-        return;
-      }
-      if (form.protocol !== "tcp") {
-        toast.error("线路组当前仅支持 TCP 协议");
         return;
       }
       if (!form.routeGroup) {
@@ -7517,7 +7528,6 @@ function RulesContent() {
               onValueChange={(v) => setForm({
               ...form,
               protocol: v as any,
-              failoverEnabled: v === "tcp" ? form.failoverEnabled : false,
               })}
               >
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -7561,8 +7571,8 @@ function RulesContent() {
                       forwardType: nextEnabled && canAutoSwitchMainBackupToGost ? "gost" : form.forwardType,
                       failoverEnabled: nextEnabled,
                       // 勾上时给一份草稿（主线路 + 一条空备用）；勾掉时留着，再勾回来还在。
+                      // 协议不动：TCP、UDP、TCP+UDP 都能走线路组。
                       routeGroup: nextEnabled ? (form.routeGroup ?? newRouteGroupDraft({ timezone: BILLING_TIME_ZONE })) : form.routeGroup,
-                      protocol: nextEnabled ? "tcp" : form.protocol,
                     });
                   }}
                   className="mt-0.5"
@@ -7597,14 +7607,6 @@ function RulesContent() {
                       )}
                     </div>
                   )}
-                  {form.failoverEnabled && form.protocol !== "tcp" && (
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <p className="text-meta leading-5 text-[var(--fx-warn-text)]">线路组只支持 TCP，协议要改回 TCP 才能保存。</p>
-                      <Button type="button" variant="outline" size="sm" className="fx-compact-touch h-7 text-meta" onClick={() => setForm({ ...form, protocol: "tcp" })}>
-                        改回 TCP
-                      </Button>
-                    </div>
-                  )}
                 </div>
               </div>
               {form.failoverEnabled && form.routeGroup && (
@@ -7618,6 +7620,7 @@ function RulesContent() {
                     mainAddress={form.targetIp.trim() && form.targetPort > 0 ? `${form.targetIp.trim()}:${form.targetPort}` : ""}
                     policy={formRoutePolicy}
                     scheduleTimeZone={BILLING_TIME_ZONE}
+                    protocol={form.protocol}
                   />
                 </div>
               )}
@@ -8576,7 +8579,12 @@ function RulesContent() {
 
       {(() => {
         const policyRule = policyRuleId === null ? null : (rules || []).find((rule: any) => Number(rule.id) === policyRuleId);
-        const policy = policyRule ? describeRoutePolicy(policyRule, { host: hostById.get(Number(policyRule.hostId)) }) : null;
+        // 隧道规则的调度器在隧道出口：Agent 版本那几句按出口机说，ForwardX 隧道要知道隧道类型。
+        const policyTunnel = policyRule?.tunnelId ? tunnelById.get(Number(policyRule.tunnelId)) : null;
+        const policy = policyRule ? describeRoutePolicy(
+          { ...policyRule, tunnelMode: policyRule.tunnelMode ?? policyTunnel?.mode },
+          { host: hostById.get(Number(policyTunnel?.exitHostId || policyRule.hostId)) },
+        ) : null;
         return (
           <RouteGroupSheet
             open={policyRuleId !== null}

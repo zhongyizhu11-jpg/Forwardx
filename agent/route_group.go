@@ -422,10 +422,26 @@ func (p *failoverProxy) trackConn(index int, conn net.Conn) {
 func (p *failoverProxy) untrackConn(index int, conn net.Conn) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if index < 0 || index >= len(p.conns) || p.conns[index] == nil {
-		return
+	if index >= 0 && index < len(p.conns) && p.conns[index] != nil {
+		if _, ok := p.conns[index][conn]; ok {
+			delete(p.conns[index], conn)
+			return
+		}
 	}
-	delete(p.conns[index], conn)
+	/*
+		连接建立时记下的下标可能已经过期：换规格时 rebuildForSpecLocked 按「还是同一条出站」
+		把连接表搬到了新下标上（比如前面插了一条路径）。按旧下标删不掉的话，这条连接会一直
+		算在那条路径名下，面板上的连接数只涨不跌。
+	*/
+	for i := range p.conns {
+		if p.conns[i] == nil {
+			continue
+		}
+		if _, ok := p.conns[i][conn]; ok {
+			delete(p.conns[i], conn)
+			return
+		}
+	}
 }
 
 // 关掉走这条出站的全部客户端连接；handleConn 里的拷贝随之结束，上游也就一起关了。

@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { formatFailoverEndpoint, parseFailoverEndpoint } from "@shared/failoverTargets";
+import { normalizeForwardRuleProtocol } from "@shared/forwardTypes";
 import {
   MAX_FAILOVER_SCHEDULE_WINDOWS,
   describeFailoverScheduleWindow,
@@ -24,14 +25,17 @@ import {
   ROUTE_MODE_INFO,
   ROUTE_SPREADS,
   ROUTE_SPREAD_LABELS,
+  ROUTE_SPREAD_SESSION_HINTS,
   ROUTE_SWITCH_MODES,
   ROUTE_SWITCH_MODE_INFO,
+  ROUTE_SWITCH_MODE_SESSION_HINTS,
   applyRouteMode,
   describeRouteIssue,
   newRoutePath,
   routePathLabel,
   routePathLetter,
   routeTemplateGuards,
+  routeModeHint,
   routeWeightShares,
   type RouteEndpoint,
   type RouteGroup,
@@ -85,6 +89,8 @@ export type RouteGroupFieldsProps = {
   timeZone?: string;
   /** 「高级策略」一开始展不展开；不给就看有没有改过模板值。 */
   defaultAdvancedOpen?: boolean;
+  /** 规则的协议（tcp / udp / both）：只转 UDP 的路径没有握手可探，健康检查的说法不一样。 */
+  protocol?: string;
 };
 
 /** 小块选择：选中是整块反白，和策略面板、主机分组同一套。 */
@@ -200,9 +206,15 @@ export function routeGroupPayload(group: RouteGroup) {
   };
 }
 
+export type RoutePlainOptions = {
+  /** 纯 UDP 规则：Agent 按会话挑路径，没有「连接」，说法换成会话。 */
+  perSession?: boolean;
+};
+
 /** 一两句大白话：按现在这套设置，流量会怎么走。 */
-export function describeRouteGroupPlainly(group: RouteGroup): string {
+export function describeRouteGroupPlainly(group: RouteGroup, options: RoutePlainOptions = {}): string {
   const { paths, policy } = group;
+  const perSession = options.perSession === true;
   const label = (index: number) => routePathLabel(paths[index], index);
   if (paths.length < 2) return "还没有第二条路径。至少加一条，主线路出问题时才有地方可换。";
   const failover = policy.failureThreshold > 1
@@ -211,11 +223,17 @@ export function describeRouteGroupPlainly(group: RouteGroup): string {
   const recover = formatPolicyDuration(policy.recoverSeconds);
   const hold = policy.minHoldSeconds > 0 ? `切过去至少走 ${formatPolicyDuration(policy.minHoldSeconds)}，` : "";
   const back = policy.autoFailback ? `首选恢复并稳定 ${recover}后自动切回。` : "首选恢复了也不切回，当前这条不出问题就一直走它。";
-  const old = policy.switchMode === "force"
-    ? "每次切换都断开旧连接。"
-    : policy.switchMode === "fast"
-      ? "线路挂了会断开它上面的旧连接让客户端重连，其余切换不动旧连接。"
-      : "切换只影响新连接，旧连接留在原线路。";
+  const old = perSession
+    ? policy.switchMode === "force"
+      ? "每次切换都丢掉旧会话，下一个包改走新路径。"
+      : policy.switchMode === "fast"
+        ? "路径挂了会丢掉它上面的会话，下一个包改走新路径；其余切换不动旧会话。"
+        : "切换只影响新会话，已有的会话留在原路径。"
+    : policy.switchMode === "force"
+      ? "每次切换都断开旧连接。"
+      : policy.switchMode === "fast"
+        ? "线路挂了会断开它上面的旧连接让客户端重连，其余切换不动旧连接。"
+        : "切换只影响新连接，旧连接留在原线路。";
   switch (policy.mode) {
     case "failover":
       return `平时都走 ${label(0)}；${failover}就换到下一条，${hold}${back}${old}`;
@@ -235,11 +253,20 @@ export function describeRouteGroupPlainly(group: RouteGroup): string {
       return `时段表定首选（${windows} 段），${prewarm}时段外按评分走最好的一条；${failover}照样立刻往下换。${old}`;
     }
     case "weighted": {
+      const skip = `哪条${failover}就先跳过它，恢复并稳定 ${recover}后重新参与。`;
+      // UDP 读不到访客地址：「按访客固定」在这里是按会话固定，单独说清楚。
+      if (perSession && policy.spread === "ip_hash") {
+        return `UDP 分不出访客，按访客固定在这里是按会话固定：每个会话一直走同一条，同一个访客的不同会话可能分到不同路径；${skip}`;
+      }
       const shares = routeWeightShares(paths);
       const spread = policy.spread === "weighted"
         ? `按权重分（${paths.map((_, index) => `${label(index)} ${shares[index]}%`).join(" / ")}）`
-        : ROUTE_SPREAD_LABELS[policy.spread].hint;
-      return `每条新连接${spread}，旧连接不动；哪条${failover}就先跳过它，恢复并稳定 ${recover}后重新参与。`;
+        : policy.spread === "round_robin"
+          ? "轮流走每一条"
+          : policy.spread === "random"
+            ? "随机挑一条能用的"
+            : "按来源 IP 固定走一条";
+      return perSession ? `每个新会话${spread}，旧会话不动；${skip}` : `每条新连接${spread}，旧连接不动；${skip}`;
     }
   }
 }
@@ -296,8 +323,10 @@ export function RouteGroupFields({
   nowMs,
   timeZone,
   defaultAdvancedOpen,
+  protocol = "tcp",
 }: RouteGroupFieldsProps) {
   const now = nowMs ?? Date.now();
+  const udpOnly = normalizeForwardRuleProtocol(protocol) === "udp";
   const { paths, policy: routePolicy } = value;
   const mode = routePolicy.mode;
   const usesSchedule = mode === "scheduled" || mode === "hybrid";
@@ -635,7 +664,7 @@ export function RouteGroupFields({
                   {info.template}
                   <span className={cn("text-meta font-normal", active ? "opacity-80" : "text-muted-foreground")}>{info.label}</span>
                 </span>
-                <span className={cn("text-meta leading-4", active ? "opacity-80" : "text-muted-foreground")}>{info.hint}</span>
+                <span className={cn("text-meta leading-4", active ? "opacity-80" : "text-muted-foreground")}>{routeModeHint(candidate, udpOnly)}</span>
               </button>
             );
           })}
@@ -658,7 +687,7 @@ export function RouteGroupFields({
         ) : null}
         {weighted ? (
           <div className="flex min-w-0 flex-col gap-1.5">
-            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="新连接怎么分">
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={udpOnly ? "新会话怎么分" : "新连接怎么分"}>
               {ROUTE_SPREADS.map((spread) => (
                 <button
                   key={spread}
@@ -673,7 +702,7 @@ export function RouteGroupFields({
               ))}
             </div>
             <p className="text-meta leading-5 text-muted-foreground">
-              {ROUTE_SPREAD_LABELS[routePolicy.spread].hint}
+              {udpOnly ? ROUTE_SPREAD_SESSION_HINTS[routePolicy.spread] : ROUTE_SPREAD_LABELS[routePolicy.spread].hint}
               {routePolicy.spread === "weighted" ? "；权重在上面每条路径的右边填。" : "。"}
             </p>
           </div>
@@ -681,7 +710,7 @@ export function RouteGroupFields({
       </PolicyGroup>
 
       <p className="text-secondary-type leading-relaxed text-foreground" data-testid="route-plain" aria-live="polite">
-        {describeRouteGroupPlainly(value)}
+        {describeRouteGroupPlainly(value, { perSession: udpOnly })}
       </p>
       {(policy?.warnings || []).map((warning) => (
         <p key={warning} className="rounded-[var(--fx-radius-control)] bg-[var(--fx-warn-soft)] px-3 py-2 text-xs leading-5 text-[var(--fx-warn-text)]">
@@ -815,10 +844,11 @@ export function RouteGroupFields({
               </PolicyGroup>
             ) : null}
 
-            <PolicyGroup title="切换时旧连接怎么办">
-              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3" role="radiogroup" aria-label="切换时旧连接怎么办">
+            <PolicyGroup title={udpOnly ? "切换时旧会话怎么办" : "切换时旧连接怎么办"}>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3" role="radiogroup" aria-label={udpOnly ? "切换时旧会话怎么办" : "切换时旧连接怎么办"}>
                 {ROUTE_SWITCH_MODES.map((switchMode) => {
                   const info = ROUTE_SWITCH_MODE_INFO[switchMode];
+                  const hint = udpOnly ? ROUTE_SWITCH_MODE_SESSION_HINTS[switchMode] : info.hint;
                   const active = routePolicy.switchMode === switchMode;
                   return (
                     <button
@@ -830,7 +860,7 @@ export function RouteGroupFields({
                       onClick={() => setPolicy({ switchMode })}
                     >
                       <span className="text-secondary-type font-medium">{info.label}</span>
-                      <span className={cn("text-meta leading-4", active ? "opacity-80" : "text-muted-foreground")}>{info.hint}</span>
+                      <span className={cn("text-meta leading-4", active ? "opacity-80" : "text-muted-foreground")}>{hint}</span>
                     </button>
                   );
                 })}
@@ -858,8 +888,12 @@ export function RouteGroupFields({
                   中转活着 —— 上游断了不会切，面板上一切正常。走中转的路径，面板会让每台中转机
                   自己探它的下一跳，所以中转到落地那段也看得见；直连的路径要探到落地本身。
                 */
-                "每 5 秒对每条路径连一次 TCP，同时每台中转探它的下一跳。留空就探路径的拨号地址；"
-                + "直连落地是用户态转发（gost、realm）时，给它填一个能反映整条路径的探测地址。"
+                udpOnly
+                  // 只转 UDP：拨号地址上多半只有 UDP 服务，连 TCP 只会一直失败（agent 的 failoverProbeTarget）。
+                  ? "每 5 秒探一次每条路径，同时每台中转探它的下一跳。UDP 没有握手：留空就 ping 路径的拨号地址，"
+                    + "填了就连它的 TCP 端口。落地或第一跳中转禁 ping 的，一定要填一个。"
+                  : "每 5 秒对每条路径连一次 TCP，同时每台中转探它的下一跳。留空就探路径的拨号地址；"
+                    + "直连落地是用户态转发（gost、realm）时，给它填一个能反映整条路径的探测地址。"
               }
             >
               <div className="grid min-w-0 grid-cols-[3.25rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5">
@@ -876,7 +910,7 @@ export function RouteGroupFields({
                           onChange={(event) => setDrafts({ ...drafts, [field]: event.target.value.replace(/\s+/g, "") })}
                           onFocus={() => setEditingField(field)}
                           onBlur={() => { setEditingField(null); commitEndpoint(index, "probe", text); }}
-                          placeholder="留空就探拨号地址"
+                          placeholder={udpOnly ? "留空就 ping 拨号地址" : "留空就探拨号地址"}
                           className="h-9 font-mono text-sm"
                           spellCheck={false}
                           autoComplete="off"

@@ -1,11 +1,19 @@
 import { Router, Request, Response } from "express";
 import { parseFailoverTargets } from "../shared/failoverTargets";
-import { routeAgentStrategy, routeGroupOf, routePathDial } from "../shared/routeGroup";
+import {
+  ROUTE_GROUP_UDP_AGENT_VERSION,
+  routeAgentStrategy,
+  routeGroupForwardTypeSupported,
+  routeGroupOf,
+  routeGroupSchedulerAgentVersion,
+  routePathDial,
+} from "../shared/routeGroup";
 import { routeHopDownHints } from "./routeGroupStats";
 import { ingestFailoverLineReports } from "./failoverLineReports";
+import { claimTunnelExitReportRequest, hasTunnelExitPort, loadTunnelExitPorts, recordTunnelExitPorts, tunnelExitPortFor, type TunnelExitPortEntry } from "./tunnelExitPorts";
 import * as db from "./db";
 import { AGENT_VERSION } from "./_core/systemRouter";
-import { clearHostTcpingRequest, hasHostTcpingRequest, isHostMetricsWatching, pushAgentDesiredState } from "./agentEvents";
+import { clearHostTcpingRequest, hasHostTcpingRequest, isHostMetricsWatching, pushAgentDesiredState, pushAgentRefresh } from "./agentEvents";
 import { getEnabledProxyInboundsWithUsersByHost } from "./repositories/proxyInboundRepository";
 import { buildSingboxRuntimePlan } from "./singboxRuntimePlan";
 import {
@@ -2423,8 +2431,24 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         // The heartbeat resolver already preserves the last known-good IP and
         // dnsGeneration restarts FXP when it changes. Passing that IP avoids a
         // blocking DNS lookup in the shared UDP receive loop for every session.
-        const targetIp = forwardXUDPTargetAddress(rule);
-        const targetPort = Number(rule.targetPort || 0);
+        let targetIp = forwardXUDPTargetAddress(rule);
+        let targetPort = Number(rule.targetPort || 0);
+        if (rule.failoverEnabled) {
+          /*
+            线路组：这台出口跑着调度器就交给它（本机），没跑（出口 Agent 早于 2.2.199）就拨路径 A，
+            和入口给 TCP 的目标一个口径（failoverTargetEndpoint）。路径 A 就是规则自己的目标时
+            照旧用解析好的 IP。
+          */
+          const scheduler = forwardXSchedulerFailover(rule, tunnel);
+          const primary = scheduler ? null : routePrimaryEndpoint(rule);
+          if (scheduler) {
+            targetIp = "127.0.0.1";
+            targetPort = Number(scheduler.listenPort);
+          } else if (primary && (primary.targetIp !== processTarget(rule) || Number(primary.targetPort) !== targetPort)) {
+            targetIp = String(primary.targetIp || "").trim();
+            targetPort = Number(primary.targetPort || 0);
+          }
+        }
         if (!Number.isInteger(ruleId) || ruleId <= 0 || !targetIp || !Number.isInteger(targetPort) || targetPort <= 0 || targetPort > 65535) continue;
         targets.set(ruleId, { ruleId, targetIp, targetPort });
       }
@@ -2633,14 +2657,97 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       return plan;
     };
     const failoverProxyPort = (rule: any) => protocolGuardPortsForRule(rule).failoverProxyPort;
-    const actionFailover = (rule: any, options?: { listenPort?: number; bindAddress?: string; proxyDirection?: "send" | "exitSend" }) => {
-      if (!rule || !rule.failoverEnabled) return undefined;
-      if (rule.forwardType !== "gost") return undefined;
+    /*
+      线路组的调度器跑在哪台机上，就看哪台机的 Agent：直连规则是规则所在的机器，隧道规则是
+      出口（多出口时每个出口各跑一个）。UDP、TCP+UDP 和 ForwardX 隧道的调度要 Agent 2.2.199 起
+      （shared/routeGroup 的 routeGroupSchedulerAgentVersion）—— 更老的只会开 TCP 监听、也不认
+      「只跑调度器」，下发了反而坏事。隧道规则的入口和出口各自心跳、各自生成配置：入口这边算
+      「出口拨哪儿」时也得按出口的版本判断，所以出口的版本先读好。
+    */
+    // 出口报过的调度器、守卫端口（server/tunnelExitPorts）：面板重启后第一次用之前从库里读回来。
+    await loadTunnelExitPorts();
+    const routeSchedulerAgentVersions = new Map<number, string>([[Number(host.id), String(effectiveAgentVersion || "")]]);
+    const routeTunnelOf = (rule: any) => (Number(rule?.tunnelId || 0) > 0 ? tunnelById.get(Number(rule.tunnelId)) as any : null);
+    /** 可能跑调度器的机器，取全一点，只用来预读版本：规则所在机器、隧道入口、主出口、最后一跳和全部出口节点。 */
+    const routeSchedulerCandidateHostIds = (rule: any): number[] => {
+      const tunnel = routeTunnelOf(rule);
+      if (!tunnel) return [Number(rule?.hostId || host.id)];
+      const ids = [Number(rule?.hostId || 0), Number(tunnel.entryHostId || 0), Number(tunnel.exitHostId || 0)];
+      const hops = tunnelHopsByTunnelId.get(Number(tunnel.id));
+      if (Array.isArray(hops) && hops.length > 0) ids.push(Number((hops[hops.length - 1] as any)?.hostId || 0));
+      for (const exitNode of tunnelExitNodesByTunnelId.get(Number(tunnel.id)) || []) ids.push(Number((exitNode as any)?.hostId || 0));
+      return Array.from(new Set(ids.filter((id) => id > 0)));
+    };
+    /*
+      ForwardX 隧道由出口的 FXP 拨目标：主出口（多跳时是最后一跳），负载均衡开着时还有额外的
+      出口节点 —— 和入口分流用的 forwardXExtraExitRoutes 同一个条件（开着负载均衡、分法不是
+      none、节点开着、有端口）。每个出口各跑一个调度器。
+    */
+    const forwardXSchedulerHostIds = (tunnel: any): number[] => {
+      const hops = tunnelHopsByTunnelId.get(Number(tunnel?.id || 0));
+      const lastHop = Array.isArray(hops) && hops.length >= 2 ? hops[hops.length - 1] as any : null;
+      const ids = [Number(tunnel?.exitHostId || 0), Number(lastHop?.hostId || 0)];
+      if (runtimeBool(tunnel?.loadBalanceEnabled) && normalizeExitGroupStrategy(tunnel?.loadBalanceStrategy) !== "none") {
+        for (const exitNode of tunnelExitNodesByTunnelId.get(Number(tunnel?.id || 0)) || []) {
+          if (!runtimeBool((exitNode as any)?.isEnabled, true) || Number((exitNode as any)?.listenPort || 0) <= 0) continue;
+          ids.push(Number((exitNode as any)?.hostId || 0));
+        }
+      }
+      return Array.from(new Set(ids.filter((id) => id > 0)));
+    };
+    /*
+      真正跑调度器的机器，要新 Agent 的调度得每一台都够版本：直连规则是规则所在的机器；GOST /
+      Nginx 隧道是这条规则实际用到的出口（tunnelExitEndpointsForRule：主出口加上开着的负载均衡
+      出口）—— 停用的出口节点、负载均衡关掉后还留着的节点不算，不然一台用不上的旧出口会让所有
+      出口都退回路径 A；ForwardX 隧道是 forwardXSchedulerHostIds。入口给出口的目标对每个出口
+      都一样，所以要每个出口都够版本。tunnelExitEndpointsForRule 定义在后面：这里只在调用时读，
+      而 actionFailover 都是在它定义之后才调的。
+    */
+    const routeSchedulerHostIds = (rule: any): number[] => {
+      const tunnel = routeTunnelOf(rule);
+      if (!tunnel) return [Number(rule?.hostId || host.id)];
+      if (isForwardXTunnel(tunnel)) {
+        const ids = forwardXSchedulerHostIds(tunnel);
+        return ids.length > 0 ? ids : [Number(rule?.hostId || host.id)];
+      }
+      const ids = Array.from(new Set(tunnelExitEndpointsForRule(rule, tunnel).map((endpoint) => endpoint.exitHostId).filter((id) => id > 0)));
+      return ids.length > 0 ? ids : [Number(tunnel.exitHostId || rule?.hostId || host.id)];
+    };
+    for (const rule of [...agentAllRules, ...agentHostRules] as any[]) {
+      if (!rule?.failoverEnabled || !routeGroupSchedulerAgentVersion(rule?.protocol, routeTunnelOf(rule)?.mode)) continue;
+      for (const schedulerHostId of routeSchedulerCandidateHostIds(rule)) {
+        if (routeSchedulerAgentVersions.has(schedulerHostId)) continue;
+        const schedulerHost = await db.getHostById(schedulerHostId).catch(() => null) as any;
+        routeSchedulerAgentVersions.set(schedulerHostId, String(schedulerHost?.agentVersion || ""));
+      }
+    }
+    const routeSchedulerAgentAtLeast = (rule: any, version: string) => routeSchedulerHostIds(rule).every((schedulerHostId) => (
+      isAgentVersionAtLeast(routeSchedulerAgentVersions.get(schedulerHostId) || "", version)
+    ));
+    /*
+      「按访客固定」要让调度器知道访客是谁：规则本来不往目标发 PROXY 头的 gost 端口转发，由面板
+      让 gost 专门给调度器加一个头，调度器读完就扔（proxyProtocolStrip）。名单在下面生成 gost
+      配置之前填好（要等 shouldUseRuleGuard，见 routeHeaderStripReady）；gost 配置和下发给 Agent
+      的规格都按这一份名单，两边必须一致 —— gost 发了头而调度器不扔，目标就会收到一个它不认识的头。
+    */
+    const routeHeaderStripRuleIds = new Set<number>();
+    /** 线路组在这条规则上能不能由 Agent 调度（不看协议和版本）。 */
+    const routeSchedulingAllowed = (rule: any) => {
+      if (!rule || !rule.failoverEnabled) return false;
+      // 调度器插在前面那个用户态转发工具和路径之间；内核转发（iptables / nftables）没有这一步。
+      if (!routeGroupForwardTypeSupported(rule.forwardType)) return false;
       if (!rule.tunnelId) {
         const owner = rateLimitUserById.get(Number(rule.userId)) as any;
-        if (owner?.role !== "admin") return undefined;
+        if (owner?.role !== "admin") return false;
       }
-      if (rule.protocol !== "tcp") return undefined;
+      return true;
+    };
+    const actionFailover = (rule: any, options?: { listenPort?: number; bindAddress?: string; proxyDirection?: "send" | "exitSend" | "none" }) => {
+      if (!routeSchedulingAllowed(rule)) return undefined;
+      const protocol = normalizeForwardRuleProtocol(rule.protocol);
+      // 版本不够时不下发：前面的转发工具（ForwardX 隧道是出口的 FXP）改拨主线路（routePrimaryEndpoint），等 Agent 升级。
+      const requiredAgentVersion = routeGroupSchedulerAgentVersion(protocol, routeTunnelOf(rule)?.mode);
+      if (requiredAgentVersion && !routeSchedulerAgentAtLeast(rule, requiredAgentVersion)) return undefined;
       /*
         线路组（shared/routeGroup）：一条路径对入口 Agent 来说就是一个要拨的地址（dial）。
         没有中转的路径拨落地；有中转的拨第一跳上那条中继规则的入口（server/routeGroups.ts
@@ -2675,13 +2782,18 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           ...(hint?.down ? { down: true, downReason: hint.reason } : {}),
         };
       });
-      const failoverProxyEnabled = proxyProtocolEnabled(rule, options?.proxyDirection || "send");
+      // "none"：前面那一跳根本不发 PROXY 头（Nginx 隧道的出口）。
+      const failoverProxyEnabled = options?.proxyDirection === "none" ? false : proxyProtocolEnabled(rule, options?.proxyDirection || "send");
+      const stripProxyHeader = !failoverProxyEnabled
+        && (options?.proxyDirection || "send") === "send"
+        && routeHeaderStripRuleIds.has(Number(rule.id));
       const pin = policy.pin;
       return {
         enabled: true,
         listenPort: Number(options?.listenPort || rule.sourcePort || 0),
         bindAddress: options?.bindAddress || "127.0.0.1",
-        protocol: rule.protocol || "tcp",
+        // UDP 按会话调度，TCP+UDP 两个都开（Agent 2.2.199 起，上面已经按版本挡过）。
+        protocol,
         // 权重负载按它的分法（按权重 / 轮流 / 随机 / 按访客），其余模式都是主备（fallback）。
         strategy: routeAgentStrategy(policy),
         targets,
@@ -2702,32 +2814,93 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         switchMode: policy.switchMode,
         // The local failover process is another hop and must preserve the header
         // generated by either the entry side or the tunnel exit bridge.
-        proxyProtocolReceive: failoverProxyEnabled,
+        // 头在的时候「按访客固定」从头里读访客地址（Agent 2.2.199 起）；strip 表示这个头是面板
+        // 专门加给调度器的，读完就扔（见 routeHeaderStripRuleIds）。
+        proxyProtocolReceive: failoverProxyEnabled || stripProxyHeader,
+        ...(stripProxyHeader ? { proxyProtocolStrip: true } : {}),
         proxyProtocolSend: failoverProxyEnabled,
         proxyProtocolVersion: proxyProtocolVersion(rule),
       };
     };
-    const failoverTargetAddr = (rule: any, proxyDirection: "send" | "exitSend" = "send") => {
-      const failover = actionFailover(rule, { listenPort: failoverProxyPort(rule), bindAddress: "127.0.0.1", proxyDirection });
-      return failover ? endpointHostPort("127.0.0.1", failover.listenPort) : endpointHostPort(processTarget(rule), rule.targetPort);
+    /*
+      调度器下发不了（UDP 规则或 ForwardX 隧道，而调度所在机器的 Agent 还没到 2.2.199）时，前面的转发工具拨主线路
+      （路径 A）的拨号地址。直接拨规则目标的话，路径 A 带中转时流量会绕过中转直奔落地 —— 用户
+      配中转多半就是因为直连不通。不是线路组、或者路径 A 解析不出来，才退回规则目标（老行为）。
+    */
+    const routePrimaryEndpoint = (rule: any) => {
+      const fallback = { targetIp: processTarget(rule), targetPort: Number(rule.targetPort) };
+      if (!routeSchedulingAllowed(rule)) return fallback;
+      const routeRule = { ...rule, targetIp: processTarget(rule) };
+      const primary = routeGroupOf(routeRule)?.paths[0];
+      const dial = primary ? routePathDial(primary, routeRule) : null;
+      return dial ? { targetIp: dial.ip, targetPort: Number(dial.port) } : fallback;
     };
     const failoverTargetEndpoint = (rule: any, proxyDirection: "send" | "exitSend" = "send") => {
       const failover = actionFailover(rule, { listenPort: failoverProxyPort(rule), bindAddress: "127.0.0.1", proxyDirection });
       return failover
         ? { targetIp: "127.0.0.1", targetPort: Number(failover.listenPort) }
-        : { targetIp: processTarget(rule), targetPort: Number(rule.targetPort) };
+        : routePrimaryEndpoint(rule);
+    };
+    const failoverTargetAddr = (rule: any, proxyDirection: "send" | "exitSend" = "send") => {
+      const endpoint = failoverTargetEndpoint(rule, proxyDirection);
+      return endpointHostPort(endpoint.targetIp, endpoint.targetPort);
+    };
+    /*
+      隧道入口让出口拨的调度器（GOST 隧道写进 relay 请求，ForwardX 隧道写进握手）。调度器跑在出口上，
+      端口是出口按它自己的规则集分的，不一定等于入口这边算的：按出口报的填（server/tunnelExitPorts）。
+      几个出口分到的不一样时，一个目标满足不了所有出口，这条规则退回路径 A（不调度，流量照样通）。
+    */
+    const tunnelExitPortWarnedRuleIds = new Set<number>();
+    const tunnelExitSchedulerEndpoint = (rule: any) => {
+      const failover = actionFailover(rule, { listenPort: failoverProxyPort(rule), bindAddress: "127.0.0.1", proxyDirection: "exitSend" });
+      if (!failover) return routePrimaryEndpoint(rule);
+      const ruleId = Number(rule.id);
+      const exitHostIds = routeSchedulerHostIds(rule);
+      /*
+        出口还没报这条规则：规则刚建、出口还没重算时先拨路径 A（whenRuleMissing: "none"），出口一次
+        都没报过（刚升级）时按本机算的。两种都催出口来一次心跳，它报上来端口不一样会推回入口。
+      */
+      const pending = exitHostIds.filter((exitHostId) => exitHostId !== Number(host.id) && !hasTunnelExitPort(exitHostId, "scheduler", ruleId));
+      for (const exitHostId of pending) {
+        if (claimTunnelExitReportRequest(exitHostId)) pushAgentRefresh(exitHostId, "tunnel-exit-ports-needed");
+      }
+      const port = tunnelExitPortFor("scheduler", ruleId, exitHostIds, Number(failover.listenPort), { selfHostId: Number(host.id), whenRuleMissing: "none" });
+      if (port) return { targetIp: "127.0.0.1", targetPort: port };
+      if (pending.length === 0 && !tunnelExitPortWarnedRuleIds.has(ruleId)) {
+        tunnelExitPortWarnedRuleIds.add(ruleId);
+        appendPanelLog("warn", `[RouteGroup] tunnel exits run the scheduler on different ports; entry dials path A rule=${ruleId} exits=${exitHostIds.join(",")}`);
+      }
+      return routePrimaryEndpoint(rule);
     };
     const failoverForCurrentHost = (rule: any, tunnel?: any | null, options?: { listenPort?: number }) => {
       if (!rule?.failoverEnabled) return undefined;
       const listenPort = Number(options?.listenPort || failoverProxyPort(rule));
       if (!tunnel) return actionFailover(rule, { listenPort, bindAddress: "127.0.0.1" });
-      if (isForwardXTunnel(tunnel) && isCurrentHostTunnelEntry(tunnel)) {
-        return actionFailover(rule, { listenPort, bindAddress: "127.0.0.1" });
-      }
+      /*
+        ForwardX 隧道的调度器不在入口：FXP 的出口拨的是入口握手里给的目标，调度器只能在出口机上
+        （forwardXSchedulerFailover，出口机收到一条只跑调度器的运行规则）。上一版把它开在入口、
+        又让入口把 127.0.0.1 当目标发给出口，出口拨的是它自己的本机 —— 那里什么都没有。
+      */
+      if (isForwardXTunnel(tunnel)) return undefined;
       if (isGostTunnelMode(tunnel) && isCurrentHostTunnelExitForRule(rule, tunnel)) {
         return actionFailover(rule, { listenPort, bindAddress: "127.0.0.1", proxyDirection: "exitSend" });
       }
+      // Nginx 隧道：出口的 nginx 拨本机的调度器（见下面生成 fwx_texit_* upstream 的地方）。出口不发 PROXY 头。
+      if (isNginxTunnelMode(tunnel) && isCurrentHostTunnelExitForRule(rule, tunnel)) {
+        return actionFailover(rule, { listenPort, bindAddress: "127.0.0.1", proxyDirection: "none" });
+      }
       return undefined;
+    };
+    /*
+      ForwardX 隧道在这台出口机上的调度规格（这台是 forwardXSchedulerHostIds 之一时）。FXP 出口
+      按入口握手里的 exitSend 给目标发 PROXY 头：发的话调度器原样转，按访客固定从头里读访客。
+      入口按出口报上来的端口当目标（tunnelExitSchedulerEndpoint），出口的 UDP 目标表
+      （forwardXUDPTargets）也指到这里。
+    */
+    const forwardXSchedulerFailover = (rule: any, tunnel: any) => {
+      if (!rule?.failoverEnabled || !tunnel || !isForwardXTunnel(tunnel)) return undefined;
+      if (!forwardXSchedulerHostIds(tunnel).includes(Number(host.id))) return undefined;
+      return actionFailover(rule, { listenPort: failoverProxyPort(rule), bindAddress: "127.0.0.1", proxyDirection: "exitSend" });
     };
     const proxyProtocolOptions = (rule: any) => resolveRuleProxyProtocolOptions(
       rule,
@@ -3505,10 +3678,38 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       const useExitBridge = shouldUseProtocolGuard(rule, policy)
         || !!tunnelProxyPlan.exitBridgeReceive
         || !!tunnelProxyPlan.exitBridgeSend;
-      return useExitBridge
-        ? `127.0.0.1:${guardListenPort(rule)}`
-        : failoverTargetAddr(rule, "exitSend");
+      if (useExitBridge) {
+        /*
+          出口桥的守卫端口也是出口自己分的（见 server/tunnelExitPorts）：按出口报的填。几个出口分到的
+          不一样时没有能绕过守卫的退路，还用本机算的（和以前一样）。
+        */
+        const localPort = guardListenPort(rule);
+        const exitHostIds = routeSchedulerHostIds(rule);
+        for (const exitHostId of exitHostIds) {
+          if (exitHostId === Number(host.id) || hasTunnelExitPort(exitHostId, "guard", Number(rule.id))) continue;
+          if (claimTunnelExitReportRequest(exitHostId)) pushAgentRefresh(exitHostId, "tunnel-exit-ports-needed");
+        }
+        const port = tunnelExitPortFor("guard", Number(rule.id), exitHostIds, localPort, { selfHostId: Number(host.id), whenRuleMissing: "local" });
+        return `127.0.0.1:${port ?? localPort}`;
+      }
+      const endpoint = tunnelExitSchedulerEndpoint(rule);
+      return endpointHostPort(endpoint.targetIp, endpoint.targetPort);
     };
+    /*
+      填「按访客固定」要剥头的 gost 端口转发名单（routeHeaderStripRuleIds 的来历见那里）。条件：
+      gost 直连、不过协议守卫（守卫在前面时 gost 看到的访客是守卫自己）、有 TCP、规则本身不发
+      PROXY 头（发的话头已经在了，调度器读完原样转）、调度确实会下发且分法是按访客、调度器那台
+      Agent 认得 proxyProtocolStrip（2.2.199 起；老的会把头原样转给目标）。
+    */
+    for (const rule of Array.from(new Set([...agentAllRules, ...agentHostRules])) as any[]) {
+      if (!rule?.failoverEnabled || rule.forwardType !== "gost" || Number(rule.tunnelId || 0) > 0) continue;
+      if (!isForwardRuleProtocolTcpEnabled(rule.protocol) || proxyProtocolEnabled(rule, "send")) continue;
+      if (!routeSchedulerAgentAtLeast(rule, ROUTE_GROUP_UDP_AGENT_VERSION)) continue;
+      const spec = actionFailover(rule, { listenPort: failoverProxyPort(rule), bindAddress: "127.0.0.1" });
+      if (!spec || spec.strategy !== "ip_hash") continue;
+      if (await shouldUseRuleGuard(rule)) continue;
+      routeHeaderStripRuleIds.add(Number(rule.id));
+    }
     const gostServiceConfig = (await Promise.all(gostRules
       .map(async (r: any) => {
         const useRuleGuard = await shouldUseRuleGuard(r);
@@ -3542,7 +3743,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
             secretSeed: tunnelSecretSeed(tunnel),
           }) : null;
           const handlerProxyMetadata = proto === "tcp"
-            ? (tunnel ? tunnelProxyPlan?.entryHandler : maybeProxyProtocolMetadata(r, "send"))
+            ? (tunnel
+              ? tunnelProxyPlan?.entryHandler
+              : maybeProxyProtocolMetadata(r, "send")
+                // 只发给本机的调度器、由它剥掉的头（按访客固定），见 routeHeaderStripRuleIds。
+                || (routeHeaderStripRuleIds.has(Number(r.id)) ? gostProxyProtocolMetadata(1) : undefined))
             : undefined;
           const serviceListenPort = useRuleGuard && !tunnel ? guardBackendPort(r) : Number(r.sourcePort);
           const service: any = {
@@ -4015,10 +4220,12 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         if (!isRuleProtocolEnabled(forwardProtocolSettings, rule, null)) continue;
         const useRuleGuard = await shouldUseRuleGuard(rule);
         const listenPort = useRuleGuard ? guardBackendPort(rule) : Number(rule.sourcePort);
+        // 线路组生效时 nginx 拨本机的调度器，由它挑路径（failoverTargetEndpoint）。
+        const nginxTarget = failoverTargetEndpoint(rule);
         for (const proto of nginxProtocolsForRule(rule)) {
           const upstream = `fwx_rule_${Number(rule.id)}_${proto}`;
-          if (!addUpstreamServer(upstream, [{ addr: nginxEndpoint(processTarget(rule), rule.targetPort), primary: true }])) continue;
-          routeSummaries.push(`rule=${rule.id} port=${Number(rule.sourcePort)} listen=${listenPort} proto=${proto} target=${processTarget(rule)}:${Number(rule.targetPort) || 0}`);
+          if (!addUpstreamServer(upstream, [{ addr: nginxEndpoint(nginxTarget.targetIp, nginxTarget.targetPort), primary: true }])) continue;
+          routeSummaries.push(`rule=${rule.id} port=${Number(rule.sourcePort)} listen=${listenPort} proto=${proto} target=${nginxTarget.targetIp}:${Number(nginxTarget.targetPort) || 0}`);
           addServer({
             name: `rule ${Number(rule.id)} ${proto}`,
             listenPort,
@@ -4079,12 +4286,14 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         const exitPorts = currentHostTunnelExitPortsForRule(rule, tunnel);
         if (exitPorts.length === 0) continue;
         let cert: ReturnType<typeof buildNginxTunnelServerCertificate> | null | undefined;
+        // 线路组生效时出口的 nginx 拨本机的调度器，由它挑路径（failoverForCurrentHost 下发规格）。
+        const exitTarget = failoverTargetEndpoint(rule);
         for (const exitPort of exitPorts) {
           nginxBusinessListenKeys.add(`${Number(host.id)}:${Number(exitPort)}`);
-          routeSummaries.push(`exit rule=${rule.id} tunnel=${tunnel.id} host=${Number(host.id)} listen=${Number(exitPort)} target=${processTarget(rule)}:${Number(rule.targetPort) || 0}`);
+          routeSummaries.push(`exit rule=${rule.id} tunnel=${tunnel.id} host=${Number(host.id)} listen=${Number(exitPort)} target=${exitTarget.targetIp}:${Number(exitTarget.targetPort) || 0}`);
           for (const proto of nginxProtocolsForRule(rule)) {
             const upstream = `fwx_texit_${Number(tunnel.id)}_${Number(rule.id)}_${Number(exitPort)}_${proto}`;
-            if (!addUpstreamServer(upstream, [{ addr: nginxEndpoint(processTarget(rule), rule.targetPort), primary: true }])) continue;
+            if (!addUpstreamServer(upstream, [{ addr: nginxEndpoint(exitTarget.targetIp, exitTarget.targetPort), primary: true }])) continue;
             if (proto === "tcp" && cert === undefined) cert = ensureNginxTunnelCert(tunnel);
             addServer({
               name: `tunnel exit ${Number(tunnel.id)} rule ${Number(rule.id)} port ${Number(exitPort)} ${proto}`,
@@ -4213,10 +4422,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         exitPorts: tunnel ? currentHostTunnelExitPortsForRule(rule, tunnel) : [],
       });
     };
-    const runningRules: { ruleId: number; tunnelId?: number; sourcePort: number; targetIp: string; targetPort: number; protocol: string; forwardType: string; failover?: any; forwardGroupHealth?: any }[] = [];
+    const runningRules: { ruleId: number; tunnelId?: number; sourcePort: number; targetIp: string; targetPort: number; protocol: string; forwardType: string; failover?: any; forwardGroupHealth?: any; schedulerOnly?: boolean }[] = [];
     const runningRuleSeen = new Set<string>();
     const guardRules: any[] = [];
-    const addRunningRule = (rule: { ruleId: number; tunnelId?: number; sourcePort: number; targetIp: string; targetPort: number; protocol: string; forwardType: string; failover?: any; forwardGroupHealth?: any }) => {
+    const addRunningRule = (rule: { ruleId: number; tunnelId?: number; sourcePort: number; targetIp: string; targetPort: number; protocol: string; forwardType: string; failover?: any; forwardGroupHealth?: any; schedulerOnly?: boolean }) => {
       if (!rule.ruleId || !rule.sourcePort) return;
       const key = ruleRuntimeIdentityKey(rule.ruleId, rule.sourcePort, rule.protocol);
       if (runningRuleSeen.has(key)) return;
@@ -5028,10 +5237,12 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
             protocol: normalizeForwardRuleProtocol(rule.protocol),
             networkInterface: hostInterface,
           };
+          // 守卫后面的 realm / socat 拨哪儿：线路组生效时是本机的调度器，否则是规则目标。
+          const backendDial = failoverTargetEndpoint(rule);
           if (guardTarget.backendPort > 0 && rule.forwardType === "realm") {
             const svcName = `forwardx-realm-guard-${rule.sourcePort}`;
             const realmConfigPath = realmGuardConfigPathForPort(rule.sourcePort);
-            const realmRemote = endpointHostPort(processTarget(rule), rule.targetPort);
+            const realmRemote = endpointHostPort(backendDial.targetIp, backendDial.targetPort);
             const realmConfig = [
               "[log]",
               'level = "warn"',
@@ -5099,7 +5310,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
                 "",
                 "[Service]",
                 "Type=simple",
-                `ExecStart=/usr/bin/socat TCP4-LISTEN:${guardTarget.backendPort},fork,reuseaddr,bind=127.0.0.1 ${socatDialEndpoint("TCP", processTarget(rule), rule.targetPort)}`,
+                `ExecStart=/usr/bin/socat TCP4-LISTEN:${guardTarget.backendPort},fork,reuseaddr,bind=127.0.0.1 ${socatDialEndpoint("TCP", backendDial.targetIp, backendDial.targetPort)}`,
                 "Restart=always",
                 "RestartSec=5",
                 "LimitNOFILE=65535",
@@ -5115,7 +5326,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
                 "",
                 "[Service]",
                 "Type=simple",
-                `ExecStart=/usr/bin/socat UDP4-LISTEN:${guardTarget.backendPort},fork,reuseaddr,bind=127.0.0.1 ${socatDialEndpoint("UDP", processTarget(rule), rule.targetPort)}`,
+                `ExecStart=/usr/bin/socat UDP4-LISTEN:${guardTarget.backendPort},fork,reuseaddr,bind=127.0.0.1 ${socatDialEndpoint("UDP", backendDial.targetIp, backendDial.targetPort)}`,
                 "Restart=always",
                 "RestartSec=5",
                 "LimitNOFILE=65535",
@@ -5140,7 +5351,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
                 "",
                 "[Service]",
                 "Type=simple",
-                `ExecStart=/usr/bin/socat ${listenProto}-LISTEN:${guardTarget.backendPort},fork,reuseaddr,bind=127.0.0.1 ${socatDialEndpoint(protoUpper, processTarget(rule), rule.targetPort)}`,
+                `ExecStart=/usr/bin/socat ${listenProto}-LISTEN:${guardTarget.backendPort},fork,reuseaddr,bind=127.0.0.1 ${socatDialEndpoint(protoUpper, backendDial.targetIp, backendDial.targetPort)}`,
                 "Restart=always",
                 "RestartSec=5",
                 "LimitNOFILE=65535",
@@ -5187,7 +5398,9 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         } else if (rule.forwardType === "realm") {
           const svcName = realmServiceNameForPort(rule.sourcePort, rule.protocol);
           const realmConfigPath = realmConfigPathForPort(rule.sourcePort, rule.protocol);
-          const realmRemote = endpointHostPort(processTarget(rule), rule.targetPort);
+          // 线路组生效时 realm 拨本机的调度器，由它挑路径。
+          const realmDial = failoverTargetEndpoint(rule);
+          const realmRemote = endpointHostPort(realmDial.targetIp, realmDial.targetPort);
           const realmConfig = buildRealmConfigToml({
             sourcePort: rule.sourcePort,
             protocol: rule.protocol,
@@ -5237,6 +5450,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
             `command -v socat >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq socat || yum install -y -q socat || dnf install -y -q socat || zypper -n install socat || apk add --no-cache socat || pacman -Sy --noconfirm socat; } 2>/dev/null`,
           ];
           const socatPostCmds: string[] = [];
+          // 线路组生效时 socat 拨本机的调度器，由它挑路径。
+          const socatDial = failoverTargetEndpoint(rule);
 
           // 根据协议生成 socat 命令
           // TCP: socat TCP-LISTEN:sourcePort,fork,reuseaddr TCP:targetIp:targetPort
@@ -5250,8 +5465,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
               sourcePort: rule.sourcePort,
               targetIp: rule.targetIp,
               targetPort: rule.targetPort,
-              dialHost: processTarget(rule),
-              dialPort: rule.targetPort,
+              dialHost: socatDial.targetIp,
+              dialPort: socatDial.targetPort,
             };
             const unitTcp = buildSocatServiceUnit({ ...socatUnitBase, descriptionProtocol: "TCP", dialProtocol: "TCP" });
             const unitUdp = buildSocatServiceUnit({ ...socatUnitBase, descriptionProtocol: "UDP", dialProtocol: "UDP" });
@@ -5285,8 +5500,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
               sourcePort: rule.sourcePort,
               targetIp: rule.targetIp,
               targetPort: rule.targetPort,
-              dialHost: processTarget(rule),
-              dialPort: rule.targetPort,
+              dialHost: socatDial.targetIp,
+              dialPort: socatDial.targetPort,
             });
             // socat 单协议模式下为该端口挂入 mangle 计数链
             for (const c of buildCountingChainCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol)) socatPostCmds.push(c);
@@ -5325,6 +5540,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
               ...cleanupGuardBackendCmds(rule),
               nginxRuntimeVerifyCmd(),
             ],
+            // nginx 的 upstream 在线路组生效时指向本机的调度器（见上面的 stream 配置）。
+            failover: actionFailover(rule, { listenPort: failoverProxyPort(rule), bindAddress: "127.0.0.1" }),
           });
         } else if (rule.forwardType === "gost") {
           const tunnel = (rule as any).tunnelId ? tunnelById.get((rule as any).tunnelId) as any : null;
@@ -5356,7 +5573,12 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
             }
             const rateLimits = ruleRateLimits(rule, tunnel);
             const accessLimits = userAccessLimits(Number(rule.userId));
-            const mainBackup = failoverForCurrentHost(rule, tunnel, { listenPort: failoverProxyPort(rule) });
+            /*
+              出口拨什么：线路组由出口机上的调度器调度时是出口本机的调度器（端口按出口报的），调度
+              下发不了（出口 Agent 早于 2.2.199）时是路径 A，不是线路组就是规则目标。调度器不在入口
+              （见 failoverForCurrentHost）。
+            */
+            const fxpTarget = tunnelExitSchedulerEndpoint(rule);
             const useUdpOverTcp = udpOverTcpEnabled(rule, tunnel);
             const wireGuardV2 = isForwardXWireGuardV2(tunnel);
             const effectiveProxyProtocol = effectiveTunnelProxyProtocolOptions({
@@ -5411,8 +5633,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
                 key: route.key,
                 peerId: wireGuardV2 ? String(Number((route as any).hostId || 0)) : undefined,
               })),
-              targetIp: mainBackup ? "127.0.0.1" : processTarget(rule),
-              targetPort: mainBackup ? failoverProxyPort(rule) : rule.targetPort,
+              targetIp: fxpTarget.targetIp,
+              targetPort: fxpTarget.targetPort,
               key: entryRoute.key,
               limitIn: rateLimits.limitIn,
               limitOut: rateLimits.limitOut,
@@ -5445,7 +5667,6 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
                 ...buildCountingChainCmds(rule.sourcePort, rule.targetIp, rule.targetPort, rule.protocol, "forwardx"),
               ] : [],
               fxp: fxpSpec,
-              failover: mainBackup,
             });
             continue;
           }
@@ -5571,6 +5792,32 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         });
       }
     }
+    /*
+      ForwardX 隧道的线路组：出口机上只跑调度器（schedulerOnly，Agent 2.2.199 起，见 shared/routeGroup
+      的 ROUTE_GROUP_FORWARDX_AGENT_VERSION）。这台机器上没有这条规则的端口：sourcePort 填调度器自己
+      的监听端口，只给 Agent 当认调度器的标识；Agent 不给它写端口状态、不装计数链，流量照旧在入口计。
+      版本不够时 forwardXSchedulerFailover 返回空、这里不发，老 Agent 不会把它当普通规则去装端口。
+    */
+    for (const rule of agentAllRules as any[]) {
+      if (!rule || runtimeBool(rule.pendingDelete) || !runtimeBool(rule.isEnabled) || !rule.failoverEnabled) continue;
+      if (rule.forwardType !== "gost" || !rule.tunnelId) continue;
+      const tunnel = tunnelById.get(Number(rule.tunnelId)) as any;
+      if (!tunnel || !isForwardXTunnel(tunnel) || !runtimeBool(tunnel.isEnabled)) continue;
+      if (!isTunnelProtocolEnabled(forwardProtocolSettings, tunnel) || !isRuleProtocolEnabled(forwardProtocolSettings, rule, tunnel)) continue;
+      const failover = forwardXSchedulerFailover(rule, tunnel);
+      if (!failover || Number(failover.listenPort || 0) <= 0) continue;
+      addRunningRule({
+        ruleId: Number(rule.id),
+        tunnelId: Number(tunnel.id),
+        sourcePort: Number(failover.listenPort),
+        targetIp: rule.targetIp,
+        targetPort: rule.targetPort,
+        protocol: rule.protocol,
+        forwardType: "route-scheduler",
+        schedulerOnly: true,
+        failover,
+      });
+    }
 
     const gostMultiHopRelayRules = await Promise.all(agentAllRules
       .filter((rule: any) => {
@@ -5633,6 +5880,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     }
 
     for (const runningRule of runningRules) {
+      // 只跑调度器的那种不占端口（上面 ForwardX 隧道出口那段），不算这台机器上「应该有」的端口。
+      if (runningRule.schedulerOnly) continue;
       const port = Number(runningRule.sourcePort || 0);
       if (port > 0) expectedRulePorts.add(runtimePortProtocolKey(port, runningRule.protocol));
       if (port > 0) expectedRuleIdentityKeys.add(ruleRuntimeIdentityKey(runningRule.ruleId, port, runningRule.protocol));
@@ -6390,6 +6639,35 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       configHash: desiredStateHash,
       actions: orderedActions,
     } : undefined;
+    /*
+      这台是隧道出口时，把调度器和出口桥守卫实际用的端口记到 server/tunnelExitPorts：这两个端口由入口
+      替出口填，得按出口自己分到的来。端口有变化（包括出口升级、降级后调度器出现或没了）就推这些隧道的
+      入口（含入口组的成员）马上重算，不等 5 分钟一次的核对。
+    */
+    const tunnelExitPortEntries: TunnelExitPortEntry[] = [];
+    for (const runningRule of runningRules) {
+      const tunnel = tunnelById.get(Number(runningRule.tunnelId || 0)) as any;
+      if (!tunnel || !runningRule.failover?.enabled || (!isGostTunnelMode(tunnel) && !isForwardXTunnel(tunnel))) continue;
+      tunnelExitPortEntries.push({
+        ruleId: Number(runningRule.ruleId),
+        kind: "scheduler",
+        port: Number(runningRule.failover.listenPort),
+        entryHostIds: tunnelEntryHostIds(tunnel),
+      });
+    }
+    for (const guardRule of guardRules) {
+      const tunnel = tunnelById.get(Number(guardRule?.tunnelId || 0)) as any;
+      if (!tunnel || !isGostTunnelMode(tunnel)) continue;
+      tunnelExitPortEntries.push({
+        ruleId: Number(guardRule.ruleId),
+        kind: "guard",
+        port: Number(guardRule.listenPort),
+        entryHostIds: tunnelEntryHostIds(tunnel),
+      });
+    }
+    for (const entryHostId of recordTunnelExitPorts(Number(host.id), tunnelExitPortEntries)) {
+      pushAgentRefresh(entryHostId, "tunnel-exit-ports-changed");
+    }
     const stateSections = buildAgentStateResponseSections({
       runningRules,
       ruleLatencyProbes,
