@@ -214,6 +214,14 @@ rgba(86,170,242,.92)`，白字，一圈 `rgba(143,194,235,.66)` 的线，下面�
 状态色盖掉，半透明的高光不会 —— 默认时看起来和渐变一样，染了色也还是那个颜色。白字压在浅天蓝上对比
 只有 3:1 左右，靠 600 字重补 —— 这是参考站的做法，用户要的。
 
+**配色预设也管这道渐变**（2026-09-26 补）。上面这组 `--fx-primary-*` 刚上线时，个性化配置的预设只写强调色，
+选了薰衣草，链接和图标变紫、按钮和选中项还是天蓝，用户拿着设置页的截图问「这个有生效吗」。现在
+`client/src/lib/personalizationTheme.ts` 换预设时把 `--fx-primary-gradient / -gradient-hover / -fill /
+-fill-hover / -text / -stroke / -shadow` 和首页背景的 `--fx-mesh-1` 一起写到 `<html>` 上：两端由预设主色推
+（`shared/personalization.ts` 的 `primaryGradientStops`，浅色「主色兑 35% 白 → 主色」、深色「主色 → 主色兑 25% 黑」，
+和默认那道一样左上亮右下深），字色用预设的 `primaryForeground`（松石 / 森绿等深色下是深字）。「面板默认」
+照旧一个变量都不写，设置页色卡第一枚画的就是令牌里那道渐变，`shared/personalization.test.ts` 守着两边一致。
+
 **毛玻璃（照 iOS 26/27 的材质）。** 只给固定不动的外壳和浮在内容上面的弹层：顶栏、手机底部
 标签栏（`--fx-glass` 66% 白 + `saturate(180%) blur(20px)`），分段控件的槽（72% 灰 + `blur(12px)`），
 对话框 / 手机底部 sheet / 下拉菜单 / 选择框列表（`--fx-glass-strong` 78%）。**滚动的内容本身不做

@@ -1,4 +1,4 @@
-import { getPersonalizationThemePreset, normalizePersonalizationThemePresetId } from "@shared/personalization";
+import { getPersonalizationThemePreset, linearGradient135, normalizePersonalizationThemePresetId, primaryGradientStops } from "@shared/personalization";
 
 /*
   预设写到 <html> 上的变量。
@@ -26,6 +26,23 @@ const THEME_VAR_MAP = {
 */
 const ACCENT_VARS = ["--fx-accent", "--fx-accent-strong", "--fx-accent-soft", "--fx-accent-fill", "--fx-accent-fill-foreground"] as const;
 
+/*
+  主色控件的那道渐变也跟着预设走。2.3.375 把主按钮、选中的分段项 / chip / 侧栏项、开关换成
+  --fx-primary-gradient 之后，这里只改了强调色，换成薰衣草时按钮还是天蓝 —— 用户看到的就是「没生效」。
+  渐变两端由主色推出来（见 shared/personalization.ts 的 primaryGradientStops），字色用预设的 primaryForeground。
+  --fx-mesh-1 是首页背景那团最大的淡色，也换成主色，对得上「背景轻微渐变会同步变化」那句说明。
+*/
+const PRIMARY_CONTROL_VARS = [
+  "--fx-primary-gradient",
+  "--fx-primary-gradient-hover",
+  "--fx-primary-fill",
+  "--fx-primary-fill-hover",
+  "--fx-primary-text",
+  "--fx-primary-stroke",
+  "--fx-primary-shadow",
+  "--fx-mesh-1",
+] as const;
+
 type PresetColors = { primary: string; primaryForeground: string; ring: string; accent?: string };
 
 function presetFollowsTokens(preset: unknown) {
@@ -46,7 +63,8 @@ export function applyPersonalizationTheme(value: unknown, root?: HTMLElement) {
     target.setAttribute("data-personalization-theme", id);
     return id;
   }
-  const values = target.classList.contains("dark") ? preset.dark : preset.light;
+  const mode = target.classList.contains("dark") ? "dark" : "light";
+  const values = mode === "dark" ? preset.dark : preset.light;
   for (const [key, cssVars] of Object.entries(THEME_VAR_MAP)) {
     const cssValue = values[key as keyof typeof values];
     for (const cssVar of cssVars) {
@@ -59,6 +77,16 @@ export function applyPersonalizationTheme(value: unknown, root?: HTMLElement) {
   target.style.setProperty("--fx-accent-soft", `color-mix(in srgb, ${colors.primary} 12%, transparent)`);
   target.style.setProperty("--fx-accent-fill", colors.primary);
   target.style.setProperty("--fx-accent-fill-foreground", colors.primaryForeground);
+  const [from, to] = primaryGradientStops(colors.primary, mode);
+  const darker = (color: string) => `color-mix(in oklab, ${color} 90%, black)`;
+  target.style.setProperty("--fx-primary-gradient", linearGradient135([from, to]));
+  target.style.setProperty("--fx-primary-gradient-hover", linearGradient135([darker(from), darker(to)]));
+  target.style.setProperty("--fx-primary-fill", to);
+  target.style.setProperty("--fx-primary-fill-hover", darker(to));
+  target.style.setProperty("--fx-primary-text", colors.primaryForeground);
+  target.style.setProperty("--fx-primary-stroke", `color-mix(in srgb, ${colors.primary} 45%, transparent)`);
+  target.style.setProperty("--fx-primary-shadow", `0 8px 18px -10px color-mix(in srgb, ${to} 70%, transparent)`);
+  target.style.setProperty("--fx-mesh-1", `color-mix(in srgb, ${colors.primary} ${mode === "dark" ? 18 : 22}%, transparent)`);
   target.setAttribute("data-personalization-theme", id);
   return id;
 }
@@ -69,7 +97,7 @@ function clearThemeVariables(target: HTMLElement) {
       target.style.removeProperty(cssVar);
     }
   }
-  for (const cssVar of ACCENT_VARS) {
+  for (const cssVar of [...ACCENT_VARS, ...PRIMARY_CONTROL_VARS]) {
     target.style.removeProperty(cssVar);
   }
 }
