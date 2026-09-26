@@ -228,6 +228,25 @@ test("UDP、TCP+UDP：调度所在机器的 Agent 到 2.2.199 才调度，更老
   assert.deepEqual(policyAt(IN_WINDOW, { protocol: "tcp" }).warnings, [], "TCP 不看这个版本");
 });
 
+test("ForwardX 隧道：隧道出口的 Agent 到 2.2.199 才调度，更老的全部走路径 A、不切换", () => {
+  const ready = { isOnline: true, agentVersion: "2.2.199" };
+  const fxp = { tunnelId: 7, tunnelMode: "forwardx" };
+  for (const protocol of ["tcp", "udp", "both"]) {
+    const warnings = policyAt(IN_WINDOW, { ...fxp, protocol }).warnings.join("");
+    assert.match(warnings, /隧道出口的 Agent 早于 2\.2\.199，还不会调度 ForwardX 隧道：升级之前这条规则全部走 主线路、不切换/);
+    assert.doesNotMatch(warnings, /还不会调度 UDP/, "说一句就够");
+  }
+  assert.deepEqual(policyAt(IN_WINDOW, { ...fxp, protocol: "tcp" }, ready).warnings, []);
+  // 调度都没下发时不再说「按访客固定读不到访客」：上面那句已经说了全部走路径 A。
+  const oldIpHash = policyAt(IN_WINDOW, { ...fxp, failoverStrategy: "ip_hash" }).warnings.join("");
+  assert.doesNotMatch(oldIpHash, /读不到访客地址|所有访客会落在同一条路径上/);
+  // 新 Agent：和 GOST 隧道一样，按访客分要打开「出口发送到目标」。
+  assert.match(policyAt(IN_WINDOW, { ...fxp, failoverStrategy: "ip_hash" }, ready).warnings.join(""), /走隧道时调度器只看得到本机.*「出口发送到目标」/);
+  assert.deepEqual(policyAt(IN_WINDOW, { ...fxp, failoverStrategy: "ip_hash", proxyProtocolExitSend: true }, ready).warnings, []);
+  // 不知道隧道类型（没传 tunnelMode）时按 GOST 隧道说：TCP 不看版本。
+  assert.deepEqual(policyAt(IN_WINDOW, { tunnelId: 7, protocol: "tcp" }).warnings, []);
+});
+
 test("纯 UDP 没有握手：没填探测地址的路径靠 ping，照实提醒；都填了就不提", () => {
   const ready = { isOnline: true, agentVersion: "2.2.199" };
   assert.match(policyAt(IN_WINDOW, { protocol: "udp" }, ready).warnings.join(""), /没填探测地址的路径靠 ping 拨号地址/);

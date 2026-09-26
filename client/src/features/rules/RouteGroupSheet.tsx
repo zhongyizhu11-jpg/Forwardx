@@ -12,6 +12,7 @@ import { formatFailoverEndpoint } from "@shared/failoverTargets";
 import type { NetworkHealth } from "@shared/networkHealth";
 import {
   ROUTE_EVENT_KIND_LABELS,
+  ROUTE_GROUP_FORWARDX_AGENT_VERSION,
   ROUTE_GROUP_UDP_AGENT_VERSION,
   ROUTE_MODE_INFO,
   normalizeRouteEventKind,
@@ -91,8 +92,10 @@ export type RouteStatus = {
   agentStale: boolean;
   agentVersion: string | null;
   agentSupportsScores: boolean;
-  /** UDP、TCP+UDP 的线路组：调度所在那台的 Agent 会不会调度（2.2.199 起）。TCP 永远是 true。 */
+  /** UDP、TCP+UDP 和 ForwardX 隧道的线路组：调度所在那台的 Agent 会不会调度（2.2.199 起）。其余永远是 true。 */
   agentSupportsProtocol?: boolean;
+  /** 哪一样要新 Agent 才调度：ForwardX 隧道、UDP（含 TCP+UDP），都不是时为 null。 */
+  schedulerNeed?: "forwardx" | "udp" | null;
   /** tcp / udp / both */
   protocol?: string;
   requiredAgentVersion: string;
@@ -243,10 +246,10 @@ export function RouteGroupPanel({ policy, status, events, canEdit, pending = fal
 
       {policy.warnings
         /*
-          「Agent 早于 2.2.199」那几句是拿调用方给的机器算的（规则所在的机器）；GOST 隧道规则的
-          调度跑在出口机上，只有 status 读的是对的那台 —— 有 status 就以它为准，下面单独说。
+          「Agent 早于 2.2.199」那几句是拿调用方给的机器算的（规则所在的机器）；隧道规则的调度
+          跑在出口机上，只有 status 读的是对的那台 —— 有 status 就以它为准，下面单独说。
         */
-        .filter((warning) => !status || !warning.includes(ROUTE_GROUP_UDP_AGENT_VERSION))
+        .filter((warning) => !status || ![ROUTE_GROUP_UDP_AGENT_VERSION, ROUTE_GROUP_FORWARDX_AGENT_VERSION].some((version) => warning.includes(version)))
         .map((warning) => (
           <p key={warning} className="rounded-[var(--fx-radius-control)] bg-[var(--fx-warn-soft)] px-3 py-2 text-meta text-[var(--fx-warn-text)]">
             {warning}
@@ -254,7 +257,9 @@ export function RouteGroupPanel({ policy, status, events, canEdit, pending = fal
         ))}
       {status && status.agentSupportsProtocol === false ? (
         <p className="rounded-[var(--fx-radius-control)] bg-[var(--fx-warn-soft)] px-3 py-2 text-meta text-[var(--fx-warn-text)]">
-          调度这条线路组的机器上 Agent{status.agentVersion ? `（${status.agentVersion}）` : ""}早于 {status.requiredAgentVersion}，还不会调度 UDP：升级之前这条规则全部走 {policy.lines[0]?.label || routePathLetter(0)}、不切换。
+          {status.schedulerNeed === "forwardx"
+            ? <>隧道出口的 Agent{status.agentVersion ? `（${status.agentVersion}）` : ""}早于 {status.requiredAgentVersion}，还不会调度 ForwardX 隧道：升级之前这条规则全部走 {policy.lines[0]?.label || routePathLetter(0)}、不切换。</>
+            : <>调度这条线路组的机器上 Agent{status.agentVersion ? `（${status.agentVersion}）` : ""}早于 {status.requiredAgentVersion}，还不会调度 UDP：升级之前这条规则全部走 {policy.lines[0]?.label || routePathLetter(0)}、不切换。</>}
         </p>
       ) : status && !status.agentSupportsScores ? (
         <p className="rounded-[var(--fx-radius-control)] bg-[var(--fx-warn-soft)] px-3 py-2 text-meta text-[var(--fx-warn-text)]">

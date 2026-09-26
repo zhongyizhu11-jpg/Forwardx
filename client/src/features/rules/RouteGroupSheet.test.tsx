@@ -204,6 +204,24 @@ test("UDP：调度那台机器的 Agent 早于 2.2.199 时说一次「全部走�
   assert.doesNotMatch(ready, /还不会调度 UDP/, "入口机旧、出口机（调度在这）新：不该报");
 });
 
+test("ForwardX 隧道：出口的 Agent 早于 2.2.199 时说一次，按 ForwardX 隧道说而不是按 UDP 说", () => {
+  const fxp = { protocol: "tcp", tunnelId: 7, tunnelMode: "forwardx" };
+  const html = renderFor(
+    fxp,
+    { protocol: "tcp", agentVersion: "2.2.198", agentSupportsProtocol: false, requiredAgentVersion: "2.2.199", schedulerNeed: "forwardx" },
+    { isOnline: true, agentVersion: "2.2.198" },
+  );
+  assert.equal((html.match(/还不会调度 ForwardX 隧道/g) || []).length, 1, "策略算出来的那句和线路状态那句不能都出来");
+  assert.match(html, /隧道出口的 Agent（2\.2\.198）早于 2\.2\.199，还不会调度 ForwardX 隧道：升级之前这条规则全部走 主线路、不切换/);
+  assert.doesNotMatch(html, /还不会调度 UDP/);
+  const ready = renderFor(
+    fxp,
+    { protocol: "tcp", agentVersion: "2.2.199", agentSupportsProtocol: true, requiredAgentVersion: "2.2.199", schedulerNeed: "forwardx" },
+    { isOnline: true, agentVersion: "2.2.198" },
+  );
+  assert.doesNotMatch(ready, /还不会调度/, "入口机旧、出口机（调度在这）新：不该报");
+});
+
 test("按访客固定：只看调度那台机器的 Agent 版本", () => {
   const weighted = routeGroupRuleFields(
     { ...group, policy: { ...group.policy, mode: "weighted", spread: "ip_hash" } },

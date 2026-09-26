@@ -17,7 +17,7 @@ import test from "node:test";
  *   · 中转机上的中继规则跟着父规则的协议走；
  *   · gost 端口转发的「按访客固定」：面板让 gost 给调度器加一个 PROXY 头、调度器读完就扔，
  *     只在 Agent 认得这个（2.2.199 起）时才这么做 —— 老 Agent 会把头原样转给目标；
- *   · Nginx 隧道：调度器在出口机上，出口的 nginx 拨它；ForwardX 隧道还不行，保存时拦住。
+ *   · Nginx 隧道：调度器在出口机上，出口的 nginx 拨它（ForwardX 隧道见 routeGroupForwardX.test.ts）。
  *
  * 起一个真的 sqlite 和真的心跳路由跑一遍。
  */
@@ -38,7 +38,8 @@ type Outcome = {
   kernelError: string;
   udpAllowed: boolean;
   nginxTunnelAllowed: boolean;
-  forwardxTunnelError: string;
+  forwardxTunnelAllowed: boolean;
+  unknownTunnelError: string;
   statusHosts: Record<string, number[]>;
   oldest: string[];
 };
@@ -224,11 +225,18 @@ function run(): Outcome {
     } catch {
       nginxTunnelAllowed = false;
     }
-    let forwardxTunnelError = "";
+    let forwardxTunnelAllowed = true;
     try {
-      crud.requireMainBackupAllowed({ enabled: true, protocol: "tcp", forwardType: "gost", tunnelId: 9, tunnelMode: "forwardx", isAdmin: false });
+      crud.requireMainBackupAllowed({ enabled: true, protocol: "both", forwardType: "gost", tunnelId: 9, tunnelMode: "forwardx", isAdmin: false });
+    } catch {
+      forwardxTunnelAllowed = false;
+    }
+    // 认不出来的隧道类型（老数据）照样拦。
+    let unknownTunnelError = "";
+    try {
+      crud.requireMainBackupAllowed({ enabled: true, protocol: "tcp", forwardType: "gost", tunnelId: 9, tunnelMode: "wireguard", isAdmin: false });
     } catch (error) {
-      forwardxTunnelError = String(error && error.message || error);
+      unknownTunnelError = String(error && error.message || error);
     }
     // 线路面板按哪几台机器读 Agent 版本：和心跳同一个口径（真的从库里读隧道和出口节点）。
     const dbModule = await import(url("server/db.ts"));
@@ -239,6 +247,7 @@ function run(): Outcome {
     }
     statusHosts.direct = crud.routeSchedulerHostIds(5, null, []);
     statusHosts.forwardx = crud.routeSchedulerHostIds(2, { id: 9, mode: "forwardx", exitHostId: 1, loadBalanceEnabled: 1 }, [{ hostId: 3, listenPort: 1, isEnabled: 1 }]);
+    statusHosts.forwardxSingle = crud.routeSchedulerHostIds(2, { id: 10, mode: "forwardx", exitHostId: 1, loadBalanceEnabled: 0 }, [{ hostId: 3, listenPort: 1, isEnabled: 1 }]);
     const rulesRouter = await import(url("server/routers/rules.ts"));
     const oldest = [
       rulesRouter.oldestAgentVersion(["2.2.199", "2.2.150"]),
@@ -246,7 +255,7 @@ function run(): Outcome {
       rulesRouter.oldestAgentVersion(["2.2.199"]),
       rulesRouter.oldestAgentVersion(["2.2.199", ""]),
     ];
-    console.log("OUTCOME " + JSON.stringify({ relays, mainDial, oldAgent, newAgent, kernelError, udpAllowed, nginxTunnelAllowed, forwardxTunnelError, statusHosts, oldest }));
+    console.log("OUTCOME " + JSON.stringify({ relays, mainDial, oldAgent, newAgent, kernelError, udpAllowed, nginxTunnelAllowed, forwardxTunnelAllowed, unknownTunnelError, statusHosts, oldest }));
   `;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
     cwd: path.resolve(import.meta.dirname, ".."),
@@ -353,9 +362,10 @@ test("Nginx 隧道：出口的 nginx 拨出口机上的调度器，规格下发�
   assert.match(outcome.oldAgent.nginxConfig, /upstream fwx_texit_1_6_22006_tcp\s*\{[^}]*198\.51\.100\.7:7443/, outcome.oldAgent.nginxConfig);
 });
 
-test("保存时放开 Nginx 隧道，ForwardX 隧道照实拦住", () => {
+test("保存时放开 Nginx 隧道和 ForwardX 隧道，认不出来的隧道类型照样拦", () => {
   assert.equal(outcome.nginxTunnelAllowed, true);
-  assert.match(outcome.forwardxTunnelError, /ForwardX 隧道/);
+  assert.equal(outcome.forwardxTunnelAllowed, true);
+  assert.match(outcome.unknownTunnelError, /这种隧道用不了线路组/);
 });
 
 test("负载均衡隧道：停用的出口节点、负载均衡关掉后留着的节点，不拖住 UDP 调度", () => {
@@ -372,6 +382,7 @@ test("线路面板读版本的机器和心跳同一个口径；按最旧的那�
   assert.deepEqual(outcome.statusHosts["3"], [1], "负载均衡关掉后留着的节点不算");
   assert.deepEqual(outcome.statusHosts["4"], [1, 3], "开着的负载均衡出口都算");
   assert.deepEqual(outcome.statusHosts.direct, [5], "直连规则：规则所在的机器");
-  assert.deepEqual(outcome.statusHosts.forwardx, [2], "ForwardX 隧道（老数据）：入口");
+  assert.deepEqual(outcome.statusHosts.forwardx, [1, 3], "ForwardX 隧道：出口和开着的负载均衡出口");
+  assert.deepEqual(outcome.statusHosts.forwardxSingle, [1], "ForwardX 隧道没开负载均衡：只有出口");
   assert.deepEqual(outcome.oldest, ["2.2.150", "2.2.150", "2.2.199", ""]);
 });

@@ -106,7 +106,7 @@ const strictProbeTargetSchema = z.object({
   probePort: z.number().int().min(1).max(65535),
 });
 const failoverStrategySchema = z.enum(["fallback", "round_robin", "random", "ip_hash"]);
-// GOST 隧道和 Nginx 隧道：调度器在出口机上（shared/routeGroup 的 ROUTE_GROUP_TUNNEL_MODES）。
+// GOST、Nginx、ForwardX 隧道：调度器在出口机上（shared/routeGroup 的 ROUTE_GROUP_TUNNEL_MODES）。
 function isMainBackupGostTunnelMode(mode: unknown) {
   return routeGroupTunnelModeSupported(mode);
 }
@@ -546,21 +546,24 @@ async function routeHostIdsForActor(actor: { id: number; role: string }) {
   return new Set<number>(scope.useHostIds || scope.hostIds);
 }
 
-/** 调度层跑在哪台机器上：GOST 隧道规则在出口机（那里的 Agent 起主备代理），其余在入口机。 */
+/**
+ * 调度层跑在哪台机器上：隧道规则在隧道的出口机（GOST、Nginx 隧道由出口的 gost / nginx 拨它，
+ * ForwardX 隧道由出口的 FXP 拨它），端口转发在规则所在的机器。
+ */
 export function routeEntryHostId(hostId: number, tunnel: any | null | undefined) {
   if (!tunnel) return hostId;
-  return String(tunnel?.mode || "").toLowerCase() === "forwardx" ? hostId : Number(tunnel.exitHostId || hostId);
+  return Number(tunnel.exitHostId || hostId);
 }
 
 /**
  * 调度器实际跑在哪几台机器上，和 server/agentHeartbeatRoute.ts 的 routeSchedulerHostIds 同一个
- * 口径：直连规则是规则所在的机器；GOST / Nginx 隧道是主出口加上开着的负载均衡出口 —— 停用的
- * 出口节点、负载均衡关掉后还留着的节点都不算；ForwardX 隧道（老数据）在入口。多出口时每个出口
- * 各跑一个调度器，UDP 调度要每一台都够版本才下发。
+ * 口径：直连规则是规则所在的机器；隧道（GOST、Nginx、ForwardX）是主出口加上开着的负载均衡
+ * 出口 —— 停用的出口节点、负载均衡关掉后还留着的节点都不算。多出口时每个出口各跑一个调度器，
+ * 需要新 Agent 的调度（UDP、ForwardX 隧道）要每一台都够版本才下发。
  */
 export function routeSchedulerHostIds(hostId: number, tunnel: any | null | undefined, exitNodes: readonly any[] = []): number[] {
   const primary = routeEntryHostId(hostId, tunnel);
-  if (!tunnel || String(tunnel?.mode || "").toLowerCase() === "forwardx") return [primary];
+  if (!tunnel) return [primary];
   const ids = [primary];
   if (dbBool(tunnel.loadBalanceEnabled) && normalizeExitGroupStrategy(tunnel.loadBalanceStrategy) !== "none") {
     for (const node of exitNodes) {
@@ -931,7 +934,7 @@ export function requireMainBackupAllowed(options: {
   }
   const isTunnelRoute = !!options.isTunnelRoute || Number(options.tunnelId || 0) > 0;
   if (isTunnelRoute && options.tunnelMode !== undefined && !isMainBackupGostTunnelMode(options.tunnelMode)) {
-    throw new Error("线路组暂不支持 ForwardX 隧道：换一条 GOST 或 Nginx 隧道就可以");
+    throw new Error("这种隧道用不了线路组：换一条 GOST、Nginx 或 ForwardX 隧道就可以");
   }
   if (!options.isAdmin && !isTunnelRoute && !options.isPortForwardGroup) {
     throw new Error("普通用户的普通端口转发不支持主备线路，请使用 GOST 隧道转发或联系管理员");

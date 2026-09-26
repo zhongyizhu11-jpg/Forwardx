@@ -16,7 +16,8 @@ import {
   describeRouteIssue,
   routeAgentStrategy,
   routeGroupForwardTypeSupported,
-  routeGroupNeedsUdpAgent,
+  routeGroupIsForwardXTunnel,
+  routeGroupSchedulerAgentVersion,
   routePathLabel,
   routePathsOf,
   routePolicyOf,
@@ -169,7 +170,7 @@ export type RoutePolicyRule = RouteGroupRule & {
   protocol?: unknown;
   /** 走隧道的规则：调度器在隧道出口，看不到访客（除非 PROXY 头一路带过来）。 */
   tunnelId?: unknown;
-  /** 隧道的类型（tls / wss / … / nginx_stream）。Nginx 隧道传不了 PROXY 头；不知道时按 GOST 隧道说。 */
+  /** 隧道的类型（tls / wss / … / nginx_stream / forwardx）。Nginx 隧道传不了 PROXY 头，ForwardX 隧道要出口 Agent 2.2.199；不知道时按 GOST 隧道说。 */
   tunnelMode?: unknown;
   proxyProtocolSend?: unknown;
   proxyProtocolExitSend?: unknown;
@@ -385,9 +386,18 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
     warnings.push("线路组只在 gost、realm、socat、nginx 转发上生效。这条规则是内核转发（iptables / nftables），机器上不会走线路组；保存一次时它会被关掉。");
   }
   const udpAgentReady = !version || isAgentVersionAtLeast(version, ROUTE_GROUP_UDP_AGENT_VERSION);
-  if (routeGroupNeedsUdpAgent(protocol) && options.host && !udpAgentReady) {
-    // 面板这时不下发调度，前面的转发工具直接拨路径 A（server 的 routePrimaryEndpoint）。
-    warnings.push(`这台机器的 Agent 早于 ${ROUTE_GROUP_UDP_AGENT_VERSION}，还不会调度 UDP：升级之前这条规则全部走 ${label(0)}、不切换。`);
+  /*
+    ForwardX 隧道、UDP、TCP+UDP 要新 Agent 才调度（routeGroupSchedulerAgentVersion）。面板这时不
+    下发调度，前面的转发工具直接拨路径 A（server 的 routePrimaryEndpoint）；ForwardX 隧道是出口的
+    FXP 拨路径 A。
+  */
+  const forwardXTunnel = Number(rule.tunnelId || 0) > 0 && routeGroupIsForwardXTunnel(rule.tunnelMode);
+  const schedulerAgentVersion = routeGroupSchedulerAgentVersion(protocol, forwardXTunnel ? rule.tunnelMode : null);
+  const schedulerAgentReady = !schedulerAgentVersion || !version || isAgentVersionAtLeast(version, schedulerAgentVersion);
+  if (schedulerAgentVersion && options.host && !schedulerAgentReady) {
+    warnings.push(forwardXTunnel
+      ? `隧道出口的 Agent 早于 ${schedulerAgentVersion}，还不会调度 ForwardX 隧道：升级之前这条规则全部走 ${label(0)}、不切换。`
+      : `这台机器的 Agent 早于 ${schedulerAgentVersion}，还不会调度 UDP：升级之前这条规则全部走 ${label(0)}、不切换。`);
   }
   if (protocol === "udp" && paths.some((path) => !path.probe)) {
     warnings.push("UDP 没有握手可探：没填探测地址的路径靠 ping 拨号地址判断通不通。落地或第一跳中转禁 ping 的，给那条路径填一个 TCP 探测地址，不然会被当成挂了。");
@@ -398,7 +408,9 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
     }
     const tunnelled = Number(rule.tunnelId || 0) > 0;
     const headerSent = truthy(tunnelled ? rule.proxyProtocolExitSend : rule.proxyProtocolSend, false);
-    if (protocol !== "udp" && options.host && !udpAgentReady) {
+    if (!schedulerAgentReady) {
+      // 调度本身都没下发（上面那句已经说了全部走路径 A），按访客分不分无从谈起，不再多说一句。
+    } else if (protocol !== "udp" && options.host && !udpAgentReady) {
       warnings.push(`这台机器的 Agent 早于 ${ROUTE_GROUP_UDP_AGENT_VERSION}：按访客固定读不到访客地址，所有访客都落在同一条路径上。升级 Agent 后才按访客分。`);
     } else if (protocol !== "udp" && !headerSent && (tunnelled || forwardType !== "gost")) {
       /*

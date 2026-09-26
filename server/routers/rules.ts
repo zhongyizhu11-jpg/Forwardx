@@ -17,11 +17,12 @@ import {
 import { describeFailoverActiveLine } from "@shared/failoverActiveLine";
 import {
   ROUTE_GROUP_AGENT_VERSION,
-  ROUTE_GROUP_UDP_AGENT_VERSION,
   describeRouteIssue,
   describeRouteReason,
   routeEventMillis,
+  routeGroupIsForwardXTunnel,
   routeGroupOf,
+  routeGroupSchedulerAgentVersion,
   routePathDestination,
   routePathDial,
   routePathLabel,
@@ -220,12 +221,14 @@ export const rulesRouter = router({
       });
       const agentVersion = oldestAgentVersion(schedulerHosts.map((schedulerHost) => String(schedulerHost?.agentVersion || "").trim()));
       /*
-        UDP、TCP+UDP 的线路组要 Agent 2.2.199 起才调度；更老的时候面板不下发调度，流量走
-        路径 A、不切换（server/agentHeartbeatRoute.ts 的 routePrimaryEndpoint）。界面据
-        agentSupportsProtocol 把这件事说出来，别让人以为配了就生效。
+        UDP、TCP+UDP 和 ForwardX 隧道的线路组要 Agent 2.2.199 起才调度；更老的时候面板不下发
+        调度，流量走路径 A、不切换（server/agentHeartbeatRoute.ts 的 routePrimaryEndpoint）。
+        界面据 agentSupportsProtocol 把这件事说出来，别让人以为配了就生效；schedulerNeed 说是
+        哪一样要新 Agent，界面的说法跟着换。
       */
       const protocol = normalizeForwardRuleProtocol((rule as any).protocol);
-      const needsUdpAgent = protocol !== "tcp";
+      const schedulerAgentVersion = routeGroupSchedulerAgentVersion(protocol, routeTunnel?.mode);
+      const schedulerNeed = routeGroupIsForwardXTunnel(routeTunnel?.mode) ? "forwardx" : protocol !== "tcp" ? "udp" : null;
       return {
         ruleId: Number(rule.id),
         protocol,
@@ -238,8 +241,10 @@ export const rulesRouter = router({
         agentStale: !status.agent && !!status.staleAgent,
         agentVersion: agentVersion || null,
         agentSupportsScores: !!agentVersion && !isAgentVersionBehind(agentVersion, ROUTE_GROUP_AGENT_VERSION),
-        agentSupportsProtocol: !needsUdpAgent || (!!agentVersion && !isAgentVersionBehind(agentVersion, ROUTE_GROUP_UDP_AGENT_VERSION)),
-        requiredAgentVersion: needsUdpAgent ? ROUTE_GROUP_UDP_AGENT_VERSION : ROUTE_GROUP_AGENT_VERSION,
+        agentSupportsProtocol: !schedulerAgentVersion || (!!agentVersion && !isAgentVersionBehind(agentVersion, schedulerAgentVersion)),
+        requiredAgentVersion: schedulerAgentVersion || ROUTE_GROUP_AGENT_VERSION,
+        schedulerNeed,
+        tunnelMode: routeTunnel ? String(routeTunnel.mode || "") : null,
       };
     }),
   list: protectedProcedure

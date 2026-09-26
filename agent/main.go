@@ -2495,6 +2495,10 @@ type runningRule struct {
 	ForwardType string                  `json:"forwardType"`
 	Failover    *failoverSpec           `json:"failover,omitempty"`
 	GroupHealth *forwardGroupHealthSpec `json:"forwardGroupHealth,omitempty"`
+	// 只跑线路组的调度器（2.2.199 起）：ForwardX 隧道的出口机上没有这条规则自己的进程，出口的
+	// FXP 拨本机的调度器。它不占规则端口 —— SourcePort 是调度器自己的监听端口，只当标识用；
+	// 不写端口状态、不装计数链、不算进要保留的端口，流量照旧在入口计。
+	SchedulerOnly bool `json:"schedulerOnly,omitempty"`
 }
 
 type forwardGroupHealthSpec struct {
@@ -4108,6 +4112,9 @@ func heartbeat(cfg Config, forceReconcile ...bool) (heartbeatResult, error) {
 	}
 	syncRunningRuleState(state.RunningRules, pendingActionPorts)
 	for _, r := range state.RunningRules {
+		if r.SchedulerOnly {
+			continue
+		}
 		if runningRuleStateWriteProtected(r, pendingActionPorts) {
 			logVerbosef("running rule state write deferred for pending action rule=%d port=%d protocol=%s", r.RuleID, r.SourcePort, normalizeRuntimeProtocol(r.Protocol))
 			continue
@@ -5564,7 +5571,8 @@ func rememberDesiredRunningRules(rules []runningRule) {
 	next := map[string]runningRule{}
 	nextByRulePort := map[string]runningRule{}
 	for _, r := range rules {
-		if r.RuleID <= 0 || r.SourcePort <= 0 {
+		// 只跑调度器的不占端口：不能让它顶替端口上真正的规则，也不能上报成本机的端口状态。
+		if r.RuleID <= 0 || r.SourcePort <= 0 || r.SchedulerOnly {
 			continue
 		}
 		next[actionPortProtocolKey(r.SourcePort, r.Protocol)] = r
@@ -8069,22 +8077,36 @@ func resetTrafficStateIfRuleChanged(port string, nextRuleID int) {
 	}
 }
 
-func syncRunningRuleState(rules []runningRule, protectedPorts map[string]bool) {
-	wanted := map[string]bool{}
-	wantedFailover := map[string]bool{}
+// 运行规则里哪些端口要留着（端口状态、计数链），哪些调度器要开着。只跑调度器的规则
+// （ForwardX 隧道的出口，见 runningRule.SchedulerOnly）只进后者：它不占端口，同号端口上要是
+// 有别的规则留下的状态，照常按孤儿清。
+func runningRuleWants(rules []runningRule) (map[string]bool, []runningRule) {
+	ports := map[string]bool{}
+	failovers := make([]runningRule, 0)
 	for _, r := range rules {
 		if r.RuleID <= 0 || r.SourcePort <= 0 {
 			continue
 		}
-		wanted[strconv.Itoa(r.SourcePort)] = true
+		if !r.SchedulerOnly {
+			ports[strconv.Itoa(r.SourcePort)] = true
+		}
 		if r.Failover != nil && r.Failover.Enabled {
-			wantedFailover[failoverID(r.RuleID, r.SourcePort)] = true
-			port := strconv.Itoa(r.SourcePort)
-			if protectedActionMatchesPort(protectedPorts, port, r.Protocol) {
-				logVerbosef("failover reconcile deferred for pending action rule=%d port=%d protocol=%s", r.RuleID, r.SourcePort, normalizeRuntimeProtocol(r.Protocol))
-			} else {
-				startFailoverProxy(r.RuleID, r.SourcePort, *r.Failover, nil)
-			}
+			failovers = append(failovers, r)
+		}
+	}
+	return ports, failovers
+}
+
+func syncRunningRuleState(rules []runningRule, protectedPorts map[string]bool) {
+	wanted, failovers := runningRuleWants(rules)
+	wantedFailover := map[string]bool{}
+	for _, r := range failovers {
+		wantedFailover[failoverID(r.RuleID, r.SourcePort)] = true
+		port := strconv.Itoa(r.SourcePort)
+		if protectedActionMatchesPort(protectedPorts, port, r.Protocol) {
+			logVerbosef("failover reconcile deferred for pending action rule=%d port=%d protocol=%s", r.RuleID, r.SourcePort, normalizeRuntimeProtocol(r.Protocol))
+		} else {
+			startFailoverProxy(r.RuleID, r.SourcePort, *r.Failover, nil)
 		}
 	}
 	failoverMu.Lock()

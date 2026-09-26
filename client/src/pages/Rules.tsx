@@ -883,7 +883,7 @@ function getForwardGroupRouteLabel(group: any | null | undefined) {
   return "转发组";
 }
 
-// GOST 隧道和 Nginx 隧道能挂线路组：调度器在出口机上。ForwardX 隧道还不行。
+// GOST、Nginx、ForwardX 隧道都能挂线路组：调度器在隧道出口机上。
 function isGostTunnelForMainBackup(tunnel: any | null | undefined) {
   return routeGroupTunnelModeSupported(tunnel?.mode);
 }
@@ -3194,7 +3194,7 @@ function RulesContent() {
       fix: canUseFailoverGroup && !routeModeLocked ? { label: "改用转发组", run: () => setRouteMode("group") } : undefined,
     }
     : mainBackupUsesTunnelRoute && !mainBackupIsTunnelRoute
-    ? { reason: "ForwardX 隧道还用不了线路组。换一条 GOST 或 Nginx 隧道就可以。" }
+    ? { reason: "这种隧道用不了线路组。换一条 GOST、Nginx 或 ForwardX 隧道就可以。" }
     : user?.role !== "admin" && !mainBackupUsesTunnelRoute && !selectedForwardGroupIsPort
     ? {
       reason: "普通用户的端口转发用不了线路组。改用隧道转发就可以。",
@@ -8579,7 +8579,12 @@ function RulesContent() {
 
       {(() => {
         const policyRule = policyRuleId === null ? null : (rules || []).find((rule: any) => Number(rule.id) === policyRuleId);
-        const policy = policyRule ? describeRoutePolicy(policyRule, { host: hostById.get(Number(policyRule.hostId)) }) : null;
+        // 隧道规则的调度器在隧道出口：Agent 版本那几句按出口机说，ForwardX 隧道要知道隧道类型。
+        const policyTunnel = policyRule?.tunnelId ? tunnelById.get(Number(policyRule.tunnelId)) : null;
+        const policy = policyRule ? describeRoutePolicy(
+          { ...policyRule, tunnelMode: policyRule.tunnelMode ?? policyTunnel?.mode },
+          { host: hostById.get(Number(policyTunnel?.exitHostId || policyRule.hostId)) },
+        ) : null;
         return (
           <RouteGroupSheet
             open={policyRuleId !== null}

@@ -69,19 +69,44 @@ export function routeGroupForwardTypeSupported(forwardType: unknown): boolean {
 }
 
 /**
- * 能挂线路组的隧道：GOST 隧道和 Nginx 隧道。调度器在隧道出口机上，出口的 gost / nginx 把
- * 流量交给它。ForwardX 隧道的出口由 FXP 自己的程序拨目标，还没接上调度器。
+ * 能挂线路组的隧道：GOST 隧道、Nginx 隧道和 ForwardX 隧道。调度器都在隧道出口机上：出口的
+ * gost / nginx / FXP 把流量交给它。
  */
-export const ROUTE_GROUP_TUNNEL_MODES = ["tls", "wss", "tcp", "mtls", "mwss", "mtcp", "nginx_stream"] as const;
+export const ROUTE_GROUP_TUNNEL_MODES = ["tls", "wss", "tcp", "mtls", "mwss", "mtcp", "nginx_stream", "forwardx"] as const;
 
 export function routeGroupTunnelModeSupported(mode: unknown): boolean {
   const normalized = String(mode ?? "").trim().toLowerCase();
   return (ROUTE_GROUP_TUNNEL_MODES as readonly string[]).includes(normalized);
 }
 
+/**
+ * ForwardX 隧道的线路组：出口 Agent 2.2.199 起。
+ *
+ * FXP 的出口是整条隧道共用的一个进程，按入口给的目标拨出去（UDP 按面板给出口的 udpTargets），
+ * 出口机上没有这条规则自己的进程可以挂调度器。所以出口机收到一条「只跑调度器」的运行规则
+ * （runningRules[].schedulerOnly）：只开调度器，不占规则端口、不写端口状态、不装计数链 ——
+ * 流量照旧在入口计。入口让出口拨出口本机的调度器。更老的 Agent 认不出 schedulerOnly，会把它
+ * 当成普通规则去装端口状态和计数链，所以版本不够时面板不下发，出口直接拨路径 A、不切换。
+ */
+export const ROUTE_GROUP_FORWARDX_AGENT_VERSION = "2.2.199";
+
+export function routeGroupIsForwardXTunnel(mode: unknown): boolean {
+  return String(mode ?? "").trim().toLowerCase() === "forwardx";
+}
+
 /** 这条规则的线路组要不要 UDP 调度（Agent 2.2.199 起）。 */
 export function routeGroupNeedsUdpAgent(protocol: unknown): boolean {
   return normalizeForwardRuleProtocol(protocol) !== "tcp";
+}
+
+/**
+ * 调度所在机器的 Agent 至少要多新，面板才下发调度：ForwardX 隧道、UDP、TCP+UDP 要 2.2.199；
+ * 其余返回 null（老 Agent 照老规矩按主备切）。版本不够时前面的转发工具拨路径 A、不切换。
+ */
+export function routeGroupSchedulerAgentVersion(protocol: unknown, tunnelMode?: unknown): string | null {
+  if (routeGroupIsForwardXTunnel(tunnelMode)) return ROUTE_GROUP_FORWARDX_AGENT_VERSION;
+  if (routeGroupNeedsUdpAgent(protocol)) return ROUTE_GROUP_UDP_AGENT_VERSION;
+  return null;
 }
 
 export type RouteEndpoint = { ip: string; port: number };
