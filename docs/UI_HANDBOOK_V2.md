@@ -489,8 +489,8 @@ EmptyState · LoadingState · ErrorState · OfflineState
 `PathPreview`；iOS 那一套 `GroupedList`（`ListSection` / `ListRow`）、导航栏、
 标签栏；首页的 `AttentionSection` / `TrafficSurface` / `AccountSection`
 （`client/src/features/dashboard/`）；主备策略的 `RoutePolicyPanel` /
-`RoutePolicySheet` / `FailoverPolicyFields` / `PolicyBlocks`（`client/src/features/rules/`，
-判断在 `shared/routePolicy.ts`），转发组的 `GroupFailoverPolicyFields`
+`RoutePolicySheet` / `RouteGroupFields` / `RouteGroupSheet` / `PolicyBlocks`（`client/src/features/rules/`，
+判断在 `shared/routePolicy.ts`，路径模型在 `shared/routeGroup.ts`），转发组的 `GroupFailoverPolicyFields`
 （`client/src/features/links/`，同一份模型、同一块面板）；页头的 `SummaryStrip`、
 手机上的流水行 `LedgerRow`、卡片底部的 `CardActions`（`EntityActions` 两个带字 + ···）、
 设置页的 `SettingList` / `SettingRow`、诊断的 `DiagnoseDialog`、三种状态块 `EmptyState` /

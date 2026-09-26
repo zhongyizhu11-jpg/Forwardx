@@ -135,6 +135,8 @@ export async function getUserRuleCount(userId: number): Promise<number> {
     eq(forwardRules.userId, userId),
     eq(forwardRules.pendingDelete, false),
     sql`${forwardRules.forwardGroupRuleId} IS NULL`,
+    // 线路组的中继规则是面板生成的，不算用户的配额。
+    sql`${forwardRules.routeParentRuleId} IS NULL`,
   ));
   return Number(r[0]?.count) || 0;
 }
@@ -147,6 +149,7 @@ export async function getUserPortCount(userId: number): Promise<number> {
     eq(forwardRules.userId, userId),
     eq(forwardRules.pendingDelete, false),
     sql`${forwardRules.forwardGroupRuleId} IS NULL`,
+    sql`${forwardRules.routeParentRuleId} IS NULL`,
   ));
   return Number(r[0]?.count) || 0;
 }

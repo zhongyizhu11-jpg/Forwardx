@@ -8,6 +8,7 @@ import {
   type RoutePolicyHost,
   type RoutePolicyReportText,
 } from "@shared/routePolicy";
+import { ROUTE_MODE_SHORT } from "@shared/routeGroup";
 
 /**
  * 规则行上那一小块主备状态该说什么。
@@ -40,9 +41,10 @@ export type FailoverLineDisplay = {
   policy: RoutePolicy;
 };
 
-// 和编辑框里「怎么分配线路」的选项同一套叫法（features/rules/failoverPlainText）。
-const strategyText: Record<RoutePolicy["strategy"], string> = {
+// 权重负载下说分法（和编辑框里的选项同一套叫法），其余模式说模式。
+const spreadText: Record<RoutePolicy["strategy"], string> = {
   fallback: "主备",
+  weighted: "按权重",
   round_robin: "轮流",
   random: "随机",
   ip_hash: "按访客",
@@ -56,10 +58,11 @@ export function describeFailoverLineDisplay(
   const policy = describeRoutePolicy(rule, { host, nowMs });
   if (!policy) return null;
   const report = describeRoutePolicyReport(policy, { nowMs });
-  const label = strategyText[policy.strategy];
+  const label = policy.mode === "weighted" ? spreadText[policy.strategy] : ROUTE_MODE_SHORT[policy.mode];
   const activeIndex = policy.report.kind === "current" || policy.report.kind === "lastSwitch" ? policy.report.index : null;
   return {
-    text: activeIndex !== null ? `${label} · ${policy.lines[activeIndex].label}` : `${label} ${policy.lines.length - 1}`,
+    // 还不知道走哪条时报路径条数：「混合 · 3 条」比「混合 2」（备用条数）看得懂。
+    text: activeIndex !== null ? `${label} · ${policy.lines[activeIndex].label}` : `${label} · ${policy.lines.length} 条`,
     // 每一句自己带句号，只有第一句（「现在走 备用 1，21:30 起」）是短语，补一个。
     title: `${report.text}。${report.note || ""}${policy.divergence || ""}`,
     tone: report.tone,

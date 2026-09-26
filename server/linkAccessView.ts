@@ -372,6 +372,12 @@ export async function gateForwardRulesForRuntime<T extends Record<string, any>>(
   const scopeByUserId = new Map(scopeEntries);
 
   return rules.map((rule) => {
+    /*
+      线路组的中继规则跑在中转机上，机器是面板按路径挑的，不是规则主人「有权使用」的
+      资源：主人能不能用这条线路，在保存线路组那一刻已经按他的主机范围校验过了
+      （validateRouteGroup）。这里再按主机权限拦一遍，非管理员的路径会被整条拦掉。
+    */
+    if (positiveId(rule?.routeParentRuleId) > 0) return rule;
     const userId = positiveId(rule?.userId);
     const scope = scopeByUserId.get(userId);
     const allowed = scope !== undefined && canUseForwardRuleResource(rule, scope);

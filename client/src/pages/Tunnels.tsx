@@ -14,6 +14,7 @@ import { formatLatencyTimeLabel } from "@/lib/latencyTimeLabel";
 import { hostIpv6Address, hostPrivateAddress, normalizeConnectHostForHost, sameAddress } from "@/lib/multiHopAddress";
 import { addressKey } from "@/lib/multiHopAddress";
 import SectionTransition from "@/components/SectionTransition";
+import { RouteGroupsSection } from "@/features/rules/RouteGroupsSection";
 import { loadReactGlobe, prefetchReactGlobe } from "@/lib/reactGlobeLoader";
 import { escapeTooltipHtml, hostGeoCoordinate } from "@/lib/hostGeo";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -95,6 +96,7 @@ import {
   Loader2,
   LogIn,
   LogOut,
+  Waypoints,
   Network,
   Server,
   Pencil,
@@ -703,10 +705,10 @@ function getTunnelModeDisplay(mode: unknown, showNginxLabel = true, forwardxVers
 }
 
 type TunnelViewMode = "card" | "table" | "globe";
-type TunnelSection = "tunnels" | "ports" | "chains" | "groups" | "entries" | "exits";
+type TunnelSection = "tunnels" | "ports" | "chains" | "groups" | "entries" | "exits" | "routes";
 type TunnelGroupMode = "port" | "failover" | "entry" | "exit";
 
-const TUNNEL_SECTIONS = ["tunnels", "ports", "chains", "groups", "entries", "exits"] as const;
+const TUNNEL_SECTIONS = ["tunnels", "ports", "chains", "groups", "entries", "exits", "routes"] as const;
 const TUNNEL_SECTION_ITEMS = [
   { value: "tunnels", label: "隧道链路", icon: Network },
   { value: "ports", label: "端口转发", icon: ArrowRightLeft },
@@ -714,6 +716,7 @@ const TUNNEL_SECTION_ITEMS = [
   { value: "groups", label: "转发组", icon: ShieldCheck },
   { value: "entries", label: "入口组", icon: LogIn },
   { value: "exits", label: "出口组", icon: LogOut },
+  { value: "routes", label: "线路组", icon: Waypoints },
 ] as const satisfies readonly SlidingTabItem<TunnelSection>[];
 
 const TUNNEL_SECTION_STORAGE_KEY = "forwardx.tunnels.section";
@@ -4238,6 +4241,12 @@ function TunnelsContent() {
               searchQuery={normalizedLinkSearchQuery}
               createRequestKey={groupCreateRequest?.mode === "entry" ? groupCreateRequest.requestKey : undefined}
             />
+          </SectionTransition>
+        </TabsContent>
+
+        <TabsContent value="routes" className="space-y-4">
+          <SectionTransition transitionKey={`routes-${normalizedLinkSearchQuery || "all"}`}>
+            <RouteGroupsSection searchQuery={normalizedLinkSearchQuery} isAdmin={user?.role === "admin"} />
           </SectionTransition>
         </TabsContent>
 

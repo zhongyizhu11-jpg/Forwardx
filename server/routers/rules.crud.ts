@@ -13,6 +13,28 @@ import {
   validateFailoverSchedule,
 } from "@shared/failoverSchedule";
 import { readFailoverPin } from "@shared/failoverPin";
+import {
+  MAX_ROUTE_HOPS,
+  MAX_ROUTE_PATHS,
+  ROUTE_GUARD_LIMITS,
+  ROUTE_MODES,
+  ROUTE_SPREADS,
+  ROUTE_SWITCH_MODES,
+  newRoutePathKey,
+  normalizeRouteSpread,
+  normalizeRouteSwitchMode,
+  parseRoutePaths,
+  routeGroupOf,
+  routePathLabel,
+  routeTemplateGuards,
+  serializeRoutePaths,
+  validateRouteGroup,
+  type RouteGroup,
+  type RouteGroupPolicy,
+  type RoutePath,
+} from "@shared/routeGroup";
+import { legacyFailoverColumns, retireRouteRelayRulesForRule, syncRouteRelayRulesForRule } from "../routeGroups";
+import { getLinkAccessScope } from "../linkAccessView";
 import { timestampMillis } from "@shared/timestamp";
 import { dbBool } from "../repositories/repositoryUtils";
 import { z } from "zod";
@@ -87,6 +109,59 @@ function isMainBackupGostTunnelMode(mode: unknown) {
   return mainBackupGostTunnelModes.has(String(mode || "").toLowerCase());
 }
 
+const failoverScheduleInputSchema = z.object({
+  timezone: z.string().min(1).max(64),
+  windows: z.array(z.object({
+    days: z.array(z.number().int().min(0).max(6)).max(7),
+    from: z.string().max(5),
+    to: z.string().max(5),
+    targetIndex: z.number().int().min(0).max(MAX_FAILOVER_TARGETS),
+  })).max(MAX_FAILOVER_SCHEDULE_WINDOWS),
+});
+
+const routeEndpointInputSchema = z.object({
+  ip: targetHostSchema,
+  port: z.number().int().min(1).max(65535),
+});
+
+/**
+ * 线路组（shared/routeGroup）：一个入口 + 多条路径 + 一个调度策略。
+ *
+ * 界面整份提交；没传的参数沿用库里的，库里也没有就按模式的模板预填。老的 failover*
+ * 字段照常收（Telegram 机器人、老界面、只改钉子的那一次保存都还走它们），落库时由线路组
+ * 推导出来，见 normalizeFailoverInput。
+ */
+const routePathInputSchema = z.object({
+  key: z.string().max(32).optional(),
+  name: z.string().max(40).optional(),
+  hops: z.array(z.number().int().positive()).max(MAX_ROUTE_HOPS).optional(),
+  dest: routeEndpointInputSchema.nullable().optional(),
+  weight: z.number().int().min(ROUTE_GUARD_LIMITS.weight.min).max(ROUTE_GUARD_LIMITS.weight.max).optional(),
+  probe: routeEndpointInputSchema.nullable().optional(),
+});
+
+const routeGroupInputSchema = z.object({
+  paths: z.array(routePathInputSchema).min(1).max(MAX_ROUTE_PATHS),
+  mode: z.enum(ROUTE_MODES),
+  spread: z.enum(ROUTE_SPREADS).optional(),
+  schedule: failoverScheduleInputSchema.nullable().optional(),
+  pin: z.object({
+    index: z.number().int().min(0).max(MAX_ROUTE_PATHS),
+    untilMs: z.number().int().min(0).nullable().optional(),
+  }).nullable().optional(),
+  failureThreshold: z.number().int().min(ROUTE_GUARD_LIMITS.failureThreshold.min).max(ROUTE_GUARD_LIMITS.failureThreshold.max).optional(),
+  failoverSeconds: z.number().int().min(ROUTE_GUARD_LIMITS.failoverSeconds.min).max(ROUTE_GUARD_LIMITS.failoverSeconds.max).optional(),
+  recoverSeconds: z.number().int().min(ROUTE_GUARD_LIMITS.recoverSeconds.min).max(ROUTE_GUARD_LIMITS.recoverSeconds.max).optional(),
+  minHoldSeconds: z.number().int().min(ROUTE_GUARD_LIMITS.minHoldSeconds.min).max(ROUTE_GUARD_LIMITS.minHoldSeconds.max).optional(),
+  autoFailback: z.boolean().optional(),
+  scoreMargin: z.number().int().min(ROUTE_GUARD_LIMITS.scoreMargin.min).max(ROUTE_GUARD_LIMITS.scoreMargin.max).optional(),
+  scoreHoldSeconds: z.number().int().min(ROUTE_GUARD_LIMITS.scoreHoldSeconds.min).max(ROUTE_GUARD_LIMITS.scoreHoldSeconds.max).optional(),
+  prewarmSeconds: z.number().int().min(ROUTE_GUARD_LIMITS.prewarmSeconds.min).max(ROUTE_GUARD_LIMITS.prewarmSeconds.max).optional(),
+  switchMode: z.enum(ROUTE_SWITCH_MODES).optional(),
+});
+
+type RouteGroupInput = z.infer<typeof routeGroupInputSchema>;
+
 const failoverInputShape = {
   failoverEnabled: z.boolean().optional(),
   failoverStrategy: failoverStrategySchema.optional(),
@@ -94,15 +169,9 @@ const failoverInputShape = {
   /** 主线路的探测目标（`地址:端口`），留空就探出站地址本身。 */
   failoverProbeTarget: z.string().max(300).nullable().optional(),
   /** 时段表：某几个时段里优先走哪一条出站。 */
-  failoverSchedule: z.object({
-    timezone: z.string().min(1).max(64),
-    windows: z.array(z.object({
-      days: z.array(z.number().int().min(0).max(6)).max(7),
-      from: z.string().max(5),
-      to: z.string().max(5),
-      targetIndex: z.number().int().min(0).max(MAX_FAILOVER_TARGETS),
-    })).max(MAX_FAILOVER_SCHEDULE_WINDOWS),
-  }).nullable().optional(),
+  failoverSchedule: failoverScheduleInputSchema.nullable().optional(),
+  /** 线路组整份：传了它，上面的老字段只当补充（钉子、时段表）。null = 退回老式主备。 */
+  routeGroup: routeGroupInputSchema.nullable().optional(),
   failoverMinHoldSeconds: z.number().int().min(0).max(86400).optional(),
   /** 人工指定优先走第几条出站；null = 交回自动。 */
   failoverPinnedIndex: z.number().int().min(0).max(MAX_FAILOVER_TARGETS).nullable().optional(),
@@ -154,6 +223,21 @@ type FailoverInput = {
   failoverSeconds?: number;
   recoverSeconds?: number;
   autoFailback?: boolean;
+  routeGroup?: RouteGroupInput | null;
+};
+
+/** 归一化时要知道的上下文：编辑的是哪一行、入口在哪台机器、主人能用哪些主机。 */
+export type NormalizeFailoverContext = {
+  /** 编辑时库里的那一行：没传 routeGroup 而它有 routePaths 时，路径照旧，只换这次改的字段。 */
+  rule?: any | null;
+  /** 调度层所在的机器（直连规则是入口机，GOST 隧道规则是出口机）：路径的中转不能是它。 */
+  entryHostId?: number | null;
+  /** 主人能用的主机；不给就不查（管理员）。 */
+  hostIds?: Set<number> | null;
+  targetIp?: unknown;
+  targetPort?: unknown;
+  /** 转发组模板不跑在任何一台机器上，路径不能带中转。 */
+  allowHops?: boolean;
 };
 
 /** 主线路的探测目标：`地址:端口`，留空存 null。填错必须报错，不能默默当成没填。 */
@@ -256,12 +340,20 @@ function failoverFieldsProvided(input: FailoverInput) {
   return FAILOVER_INPUT_KEYS.some((key) => (input as any)[key] !== undefined);
 }
 
-export function normalizeFailoverInput(input: FailoverInput, protocol?: string | null) {
+export function normalizeFailoverInput(input: FailoverInput, protocol?: string | null, context: NormalizeFailoverContext = {}) {
   const enabled = !!input.failoverEnabled;
   const targets: FailoverTarget[] = [];
   if (enabled && protocol && protocol !== "tcp") {
     throw new Error("主备模式当前仅支持 TCP 协议");
   }
+  /*
+    线路组：传了 routeGroup 就按它；没传但库里这一行已经是线路组（routePaths 有值），
+    路径照旧、只换这次改的字段 —— 只改钉子的那一次保存不能把路径抹掉。传 null 是明确
+    退回老式主备。
+  */
+  const storedPaths = context.rule ? parseRoutePaths(context.rule.routePaths) : [];
+  const usesRouteGroup = enabled && (input.routeGroup ? true : input.routeGroup === undefined && storedPaths.length > 0);
+  if (usesRouteGroup) return normalizeRouteGroupInput(input, context, storedPaths);
   if (enabled) {
     for (const target of input.failoverTargets || []) {
       const targetIp = String(target.targetIp || "").trim();
@@ -304,7 +396,197 @@ export function normalizeFailoverInput(input: FailoverInput, protocol?: string |
     failoverSeconds: input.failoverSeconds ?? 60,
     recoverSeconds: input.recoverSeconds ?? 120,
     autoFailback: input.autoFailback ?? true,
+    // 老式主备（或者关掉了）：路径清单清掉，failover* 列重新成为真源。
+    routeMode: null,
+    routePaths: null,
   };
+}
+
+function clampGuard(value: unknown, field: keyof typeof ROUTE_GUARD_LIMITS, fallback: number) {
+  const number = Math.floor(Number(value));
+  if (!Number.isFinite(number)) return fallback;
+  const limit = ROUTE_GUARD_LIMITS[field];
+  return Math.min(limit.max, Math.max(limit.min, number));
+}
+
+function sameEndpoint(left: { ip: string; port: number } | null | undefined, right: { ip: string; port: number } | null | undefined) {
+  if (!left || !right) return !left && !right;
+  return left.ip === right.ip && Number(left.port) === Number(right.port);
+}
+
+/**
+ * 线路组落库前的归一化：路径 + 策略 → routePaths / routeMode 那几列，外加推导出来的老列。
+ *
+ * 校验用 shared 那一份（validateRouteGroup）：客户端提交前跑的是同一个函数，「面板收下了、
+ * 机器上不生效」这种分家不会发生在这一层。中转在中转机上要建中继规则，那是保存之后的事
+ * （syncRouteRelayRulesForRule），这里只把路径存下来。
+ */
+function normalizeRouteGroupInput(input: FailoverInput, context: NormalizeFailoverContext, storedPaths: RoutePath[]) {
+  const rule = context.rule || null;
+  const target = {
+    targetIp: context.targetIp !== undefined ? context.targetIp : rule?.targetIp,
+    targetPort: context.targetPort !== undefined ? context.targetPort : rule?.targetPort,
+  };
+  const nowMs = Date.now();
+  const storedGroup = rule && storedPaths.length > 0 ? routeGroupOf({ ...rule, failoverEnabled: true }, { nowMs }) : null;
+  let paths: RoutePath[];
+  let policy: RouteGroupPolicy;
+  const routeGroup = input.routeGroup;
+  if (routeGroup) {
+    const storedByKey = new Map(storedPaths.map((path) => [path.key, path]));
+    const usedKeys = new Set<string>();
+    const drafted: RoutePath[] = routeGroup.paths.map((raw) => {
+      let key = String(raw.key || "").trim().toLowerCase();
+      if (!key || usedKeys.has(key)) {
+        do key = newRoutePathKey(); while (usedKeys.has(key) || storedByKey.has(key));
+      }
+      usedKeys.add(key);
+      const hops = Array.from(new Set((raw.hops || []).map((hop) => Math.floor(Number(hop))).filter((hop) => hop > 0)));
+      const dest = raw.dest ? { ip: String(raw.dest.ip).trim(), port: Number(raw.dest.port) } : null;
+      const stored = storedByKey.get(key);
+      const unchanged = !!stored
+        && stored.hops.length === hops.length
+        && stored.hops.every((hop, index) => hop === hops[index])
+        && sameEndpoint(stored.dest, dest);
+      return {
+        key,
+        name: String(raw.name || "").trim().slice(0, 40),
+        hops,
+        dest,
+        weight: raw.weight ?? stored?.weight ?? 50,
+        probe: raw.probe ? { ip: String(raw.probe.ip).trim(), port: Number(raw.probe.port) } : null,
+        // 拨号地址由保存后的同步解析；中转和落地没动的路径先沿用上次的，Agent 不用等一轮。
+        dial: unchanged ? stored!.dial : null,
+        issue: unchanged ? stored!.issue : null,
+      };
+    });
+    paths = parseRoutePaths(drafted);
+    const mode = routeGroup.mode;
+    const base = storedGroup?.policy;
+    const template = routeTemplateGuards(mode);
+    const pin = routeGroup.pin === undefined
+      ? (base?.pin ?? null)
+      : routeGroup.pin
+        ? readFailoverPin(
+          { failoverPinnedIndex: routeGroup.pin.index, failoverPinnedUntil: routeGroup.pin.untilMs ? Math.floor(routeGroup.pin.untilMs / 1000) : null },
+          { nowMs, lineCount: paths.length },
+        )
+        : null;
+    const schedule = routeGroup.schedule === undefined ? (base?.schedule ?? null) : parseFailoverSchedule(routeGroup.schedule as any);
+    policy = {
+      mode,
+      spread: normalizeRouteSpread(routeGroup.spread ?? base?.spread),
+      schedule: mode === "scheduled" || mode === "hybrid" ? schedule : null,
+      pin: mode === "weighted" ? null : pin,
+      failureThreshold: clampGuard(routeGroup.failureThreshold ?? base?.failureThreshold, "failureThreshold", template.failureThreshold),
+      failoverSeconds: clampGuard(routeGroup.failoverSeconds ?? base?.failoverSeconds, "failoverSeconds", template.failoverSeconds),
+      recoverSeconds: clampGuard(routeGroup.recoverSeconds ?? base?.recoverSeconds, "recoverSeconds", template.recoverSeconds),
+      minHoldSeconds: clampGuard(routeGroup.minHoldSeconds ?? base?.minHoldSeconds, "minHoldSeconds", template.minHoldSeconds),
+      autoFailback: routeGroup.autoFailback ?? base?.autoFailback ?? template.autoFailback,
+      scoreMargin: clampGuard(routeGroup.scoreMargin ?? base?.scoreMargin, "scoreMargin", template.scoreMargin),
+      scoreHoldSeconds: clampGuard(routeGroup.scoreHoldSeconds ?? base?.scoreHoldSeconds, "scoreHoldSeconds", template.scoreHoldSeconds),
+      prewarmSeconds: clampGuard(routeGroup.prewarmSeconds ?? base?.prewarmSeconds, "prewarmSeconds", template.prewarmSeconds),
+      switchMode: normalizeRouteSwitchMode(routeGroup.switchMode ?? base?.switchMode),
+    };
+  } else {
+    /*
+      老字段更新到线路组规则上：钉子、时段表、切换保护这些照单收，路径和模式照旧。
+      编辑那条路把没传的字段用库里的值补齐了再传进来，而库里那几列本来就是从线路组
+      推导出来的，所以这里读到的要么是这次改的，要么和线路组一致。
+    */
+    paths = storedPaths;
+    const base = storedGroup!.policy;
+    const usesSchedule = base.mode === "scheduled" || base.mode === "hybrid";
+    policy = {
+      ...base,
+      schedule: usesSchedule ? parseFailoverSchedule(input.failoverSchedule as any) : null,
+      pin: base.mode === "weighted"
+        ? null
+        : readFailoverPin(
+          { failoverPinnedIndex: input.failoverPinnedIndex, failoverPinnedUntil: input.failoverPinnedUntil },
+          { nowMs, lineCount: paths.length },
+        ),
+      minHoldSeconds: clampGuard(input.failoverMinHoldSeconds, "minHoldSeconds", base.minHoldSeconds),
+      failoverSeconds: clampGuard(input.failoverSeconds, "failoverSeconds", base.failoverSeconds),
+      recoverSeconds: clampGuard(input.recoverSeconds, "recoverSeconds", base.recoverSeconds),
+      autoFailback: input.autoFailback ?? base.autoFailback,
+    };
+  }
+  if (context.allowHops === false && paths.some((path) => path.hops.length > 0)) {
+    throw new Error("转发组模板的线路不支持中转：模板本身不跑在任何一台机器上");
+  }
+  const group: RouteGroup = { paths, policy };
+  const error = validateRouteGroup(group, {
+    entryHostId: context.entryHostId ?? (rule ? Number(rule.hostId) : null),
+    hostIds: context.hostIds ?? null,
+    hasRuleTarget: !!String(target.targetIp || "").trim() && Number(target.targetPort) > 0,
+  });
+  if (error) throw new Error(error);
+  return {
+    failoverEnabled: true,
+    ...legacyFailoverColumns(group, target),
+    routeMode: policy.mode,
+    routePaths: serializeRoutePaths(paths),
+    routeSwitchMode: policy.switchMode,
+    routeFailureThreshold: policy.failureThreshold,
+    routeScoreMargin: policy.scoreMargin,
+    routeScoreHoldSeconds: policy.scoreHoldSeconds,
+    routePrewarmSeconds: policy.prewarmSeconds,
+  };
+}
+
+/** 非管理员能把哪些主机当中转：他有权使用的那些。管理员不限（返回 null 表示不查）。 */
+async function routeHostIdsForActor(actor: { id: number; role: string }) {
+  if (actor.role === "admin") return null;
+  const scope = await getLinkAccessScope(actor);
+  if (!scope) return new Set<number>();
+  return new Set<number>(scope.useHostIds || scope.hostIds);
+}
+
+/** 调度层跑在哪台机器上：GOST 隧道规则在出口机（那里的 Agent 起主备代理），其余在入口机。 */
+function routeEntryHostId(hostId: number, tunnel: any | null | undefined) {
+  if (!tunnel) return hostId;
+  return String(tunnel?.mode || "").toLowerCase() === "forwardx" ? hostId : Number(tunnel.exitHostId || hostId);
+}
+
+/**
+ * 保存之后把路径落实到中转机上（缺的建、多的收），见 server/routeGroups.ts。
+ * 没有中转、也没有历史中继规则的规则什么都不做 —— 绝大多数规则。
+ */
+async function syncRouteGroupAfterSave(ruleId: number, reason: string) {
+  const rule = await db.getForwardRuleById(ruleId);
+  if (!rule) return;
+  const hasHops = parseRoutePaths((rule as any).routePaths).some((path) => path.hops.length > 0);
+  if (!hasHops) {
+    const relays = await db.getRouteRelayRules(ruleId);
+    if (relays.length === 0) return;
+  }
+  await syncRouteRelayRulesForRule(ruleId, { reason });
+}
+
+/** 人工指定变了就记一条：切换历史里「谁在什么时候把它钉到 B」和 Agent 报的切换排在一起。 */
+async function recordRoutePinChange(rule: any, data: Record<string, unknown>) {
+  if (!dbBool(data.failoverEnabled ?? rule?.failoverEnabled)) return;
+  const nowMs = Date.now();
+  const before = readFailoverPin(rule, { nowMs });
+  const after = readFailoverPin(
+    { failoverPinnedIndex: data.failoverPinnedIndex, failoverPinnedUntil: data.failoverPinnedUntil },
+    { nowMs },
+  );
+  if (!!before === !!after && before?.index === after?.index && (before?.untilMs ?? null) === (after?.untilMs ?? null)) return;
+  const paths = parseRoutePaths(data.routePaths ?? rule?.routePaths);
+  const label = (index: number) => paths[index] ? routePathLabel(paths[index], index) : (index === 0 ? "主线路" : `备用 ${index}`);
+  await db.insertForwardRuleRouteEvent({
+    ruleId: Number(rule.id),
+    kind: after ? "pinned" : "unpinned",
+    fromKey: before ? paths[before.index]?.key ?? null : null,
+    toKey: after ? paths[after.index]?.key ?? null : null,
+    fromLabel: before ? label(before.index) : null,
+    toLabel: after ? label(after.index) : null,
+    reason: after
+      ? (after.untilMs ? `panel: 人工指定，到 ${new Date(after.untilMs).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })} 为止` : "panel: 人工指定，直到手动取消")
+      : "panel: 交回自动",
+  }).catch(() => undefined);
 }
 
 export function normalizeProxyProtocolInput(input: {
@@ -546,6 +828,17 @@ function sameStoredValue(next: unknown, current: unknown) {
   return next === current;
 }
 
+/** 线路组那几列：改了要推给 Agent，而且能热更新（换规格不重启转发）。 */
+const ROUTE_RULE_COLUMNS = [
+  "routeMode",
+  "routePaths",
+  "routeSwitchMode",
+  "routeFailureThreshold",
+  "routeScoreMargin",
+  "routeScoreHoldSeconds",
+  "routePrewarmSeconds",
+] as const;
+
 function isFailoverHotUpdate(input: Record<string, unknown>, rule: any, nextHostId: number, nextTunnelId: number | null) {
   const changedFields = [
     "sourcePort",
@@ -571,6 +864,7 @@ function isFailoverHotUpdate(input: Record<string, unknown>, rule: any, nextHost
     "failoverSeconds",
     "recoverSeconds",
     "autoFailback",
+    ...ROUTE_RULE_COLUMNS,
   ].filter((field) => input[field] !== undefined && !sameStoredValue(input[field], rule?.[field]));
   if (changedFields.length === 0) return false;
   if (!dbBool(rule?.isEnabled) || !dbBool(rule?.isRunning) || !dbBool(rule?.failoverEnabled)) return false;
@@ -594,6 +888,7 @@ function isFailoverHotUpdate(input: Record<string, unknown>, rule: any, nextHost
     "failoverSeconds",
     "recoverSeconds",
     "autoFailback",
+    ...ROUTE_RULE_COLUMNS,
   ]);
   return changedFields.every((field) => hotFields.has(field));
 }
@@ -990,6 +1285,7 @@ export async function deleteForwardRuleForActor(
     if (!rule || dbBool((rule as any).pendingDelete)) throw new Error("规则不存在或已删除");
     if (actor.role !== "admin" && rule.userId !== actor.id) throw new Error("无权操作此规则");
     if ((rule as any).forwardGroupRuleId) throw new Error("转发组成员规则由系统维护，不能直接删除");
+    if (Number((rule as any).routeParentRuleId || 0) > 0) throw new Error("线路组的中转规则由面板维护，不能直接删除");
     const reasonPrefix = String(options.reasonPrefix || "forward-rule").trim() || "forward-rule";
     let chargedCents = 0;
     let balanceAfterCents: number | null = null;
@@ -1020,6 +1316,8 @@ export async function deleteForwardRuleForActor(
     }
 
     collectBilling(await settleTrafficBillingForDeletedRule(rule));
+    // 线路组：中转机上的中继规则跟着走，切换记录一并清掉。
+    await retireRouteRelayRulesForRule(ruleId, { reason: `${reasonPrefix}-deleted` });
     if ((rule as any).tunnelId) {
       const tunnel = await db.getTunnelById((rule as any).tunnelId);
       await db.updateTunnel((rule as any).tunnelId, { isRunning: false } as any);
@@ -1043,6 +1341,7 @@ export async function toggleForwardRuleForActor(
       if (!rule) throw new Error("规则不存在");
       if (actor.role !== "admin" && rule.userId !== actor.id) throw new Error("无权操作此规则");
       if ((rule as any).forwardGroupRuleId) throw new Error("转发组成员规则由系统维护，不能直接开关");
+      if (Number((rule as any).routeParentRuleId || 0) > 0) throw new Error("线路组的中转规则由面板维护，不能直接开关");
       if ((rule as any).isForwardGroupTemplate) {
         if (actor.role !== "admin") {
           const groupId = Number((rule as any).forwardGroupId || 0);
@@ -1141,6 +1440,8 @@ export async function toggleForwardRuleForActor(
         await db.toggleForwardRule(ruleId, false);
       }
       pushAgentRefresh(Number(rule.hostId), `${reasonPrefix}-${isEnabled ? "enabled" : "disabled"}`);
+      // 中转机上的中继规则跟着入口这条开关。
+      await syncRouteGroupAfterSave(ruleId, `${reasonPrefix}-${isEnabled ? "enabled" : "disabled"}`);
       return { success: true, rule };
     } finally {
       sourcePortReservation?.release();
@@ -1291,9 +1592,16 @@ export async function createDirectForwardRuleForActor(
     const runtimeOptionInput = tunnelId ? tunnelRuntimeOptionInput(selectedTunnelForRule) : input;
     const proxyProtocol = normalizeProxyProtocolInput(runtimeOptionInput, input.protocol, input.forwardType, false, { tunnelRoute: !!tunnelId, clearUnsupported: !!tunnelId });
     const transportTuning = normalizeTransportTuningInput(runtimeOptionInput, input.protocol, input.forwardType, false, { tunnelRoute: !!tunnelId, forwardxTunnel: String(selectedTunnelForRule?.mode || "").toLowerCase() === "forwardx", clearUnsupported: !!tunnelId });
+    const failoverColumns = normalizeFailoverInput(input, input.protocol, {
+      entryHostId: routeEntryHostId(hostId, selectedTunnelForRule),
+      hostIds: await routeHostIdsForActor(actor),
+      targetIp: input.targetIp,
+      targetPort: input.targetPort,
+    });
+    const { routeGroup: _routeGroupInput, ...ruleInput } = input;
     const id = await db.createForwardRule({
-      ...input,
-      ...normalizeFailoverInput(input, input.protocol),
+      ...ruleInput,
+      ...failoverColumns,
       ...proxyProtocol,
       ...transportTuning,
       telegramErrorNotifyEnabled: !!input.telegramErrorNotifyEnabled,
@@ -1331,6 +1639,7 @@ export async function createDirectForwardRuleForActor(
     } else {
       pushAgentRefresh(hostId, `${options.reasonPrefix || "forward-rule"}-created`);
     }
+    await syncRouteGroupAfterSave(Number(id), `${options.reasonPrefix || "forward-rule"}-created`);
     /**
      * 自动加进订阅这件事要说出来。
      *
@@ -1536,7 +1845,8 @@ export const crudRulesRouter = router({
             failoverPinnedIndex: createFailoverEnabled ? input.failoverPinnedIndex : null,
             failoverPinnedUntil: createFailoverEnabled ? input.failoverPinnedUntil : null,
             failoverPreferFastest: createFailoverEnabled ? input.failoverPreferFastest : false,
-          }, input.protocol),
+            routeGroup: createFailoverEnabled ? input.routeGroup : null,
+          }, input.protocol, { allowHops: false, targetIp: input.targetIp, targetPort: input.targetPort }),
           isRunning: false,
           userId: ctx.user.id,
         } as any);
@@ -1631,6 +1941,7 @@ export const crudRulesRouter = router({
       if (!rule) throw new Error("规则不存在");
       if (ctx.user.role !== "admin" && rule.userId !== ctx.user.id) throw new Error("无权操作此规则");
       if ((rule as any).forwardGroupRuleId) throw new Error("转发组成员规则由系统维护，不能直接修改");
+      if (Number((rule as any).routeParentRuleId || 0) > 0) throw new Error("线路组的中转规则由面板维护，不能直接修改");
       await requireRuleTelegramNotifyReady(input.telegramErrorNotifyEnabled);
 
       if (input.sourcePort === 0) {
@@ -2154,6 +2465,8 @@ export const crudRulesRouter = router({
         }
         await db.updateForwardRule(input.id, data);
         await db.clearForwardRuleTunnelExits(input.id);
+        // 变成转发组模板之后没有线路组了：中转机上的中继规则收回。
+        await syncRouteGroupAfterSave(input.id, "forward-rule-route-changed");
         if ((rule as any).tunnelId) {
           const oldTunnel = await db.getTunnelById((rule as any).tunnelId);
           await db.updateTunnel((rule as any).tunnelId, { isRunning: false } as any);
@@ -2277,7 +2590,7 @@ export const crudRulesRouter = router({
         }
       }
 
-      const { id, ...data } = input;
+      const { id, routeGroup: _routeGroupInput, ...data } = input;
       (data as any).hostId = nextHostIdForRule;
       if (input.targetIp !== undefined) (data as any).targetIp = normalizeRuleTargetIp(input.targetIp, { tunnelId: nextTunnelIdForRule });
       if (
@@ -2299,7 +2612,15 @@ export const crudRulesRouter = router({
           failoverSeconds: routeChanged ? 60 : input.failoverSeconds ?? (rule as any).failoverSeconds,
           recoverSeconds: routeChanged ? 120 : input.recoverSeconds ?? (rule as any).recoverSeconds,
           autoFailback: routeChanged ? true : input.autoFailback ?? (rule as any).autoFailback,
-        }, nextProtocolForRule));
+          routeGroup: nextMainBackupEnabled && !routeChanged ? input.routeGroup : null,
+        }, nextProtocolForRule, {
+          rule: routeChanged ? null : rule,
+          entryHostId: routeEntryHostId(Number(nextHostIdForRule), selectedTunnelForRule),
+          hostIds: await routeHostIdsForActor(ctx.user),
+          targetIp: (data as any).targetIp ?? (rule as any).targetIp,
+          targetPort: input.targetPort ?? (rule as any).targetPort,
+        }));
+        await recordRoutePinChange(rule, data as any);
       }
       if (
         input.proxyProtocolReceive !== undefined ||
@@ -2472,7 +2793,7 @@ export const crudRulesRouter = router({
         (data as any).protocolBlockReason = null;
       }
       // 关键字段变更时重置 isRunning
-      const watchedFields: (keyof typeof data)[] = [
+      const watchedFields: string[] = [
         "sourcePort",
         "targetIp",
         "targetPort",
@@ -2511,9 +2832,10 @@ export const crudRulesRouter = router({
         "failoverSeconds",
         "recoverSeconds",
         "autoFailback",
+        ...ROUTE_RULE_COLUMNS,
       ];
       const keyFieldChanged = watchedFields.some((f) => {
-        const v = data[f];
+        const v = (data as any)[f];
         return v !== undefined && !sameStoredValue(v, (rule as any)[f]);
       });
       const failoverHotUpdate = keyFieldChanged
@@ -2583,6 +2905,8 @@ export const crudRulesRouter = router({
           else pushAgentRefresh(Number(nextHostIdForRule), "forward-rule-failover-hot-update");
         }
       }
+      // 线路组的中转：缺的建、多的收、dial 写回，再推一次入口（见 server/routeGroups.ts）。
+      await syncRouteGroupAfterSave(id, "forward-rule-updated");
       return {
         success: true,
         reset: keyFieldChanged && !failoverHotUpdate,

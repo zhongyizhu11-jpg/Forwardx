@@ -452,6 +452,15 @@ export async function initDatabase() {
     }).catch((error) => {
       console.warn("[Database] Forward-group rule integrity repair skipped:", error instanceof Error ? error.message : String(error));
     }));
+    // 线路组的中继规则：父规则没了的收回，还在的重新对一遍（见 server/routeGroups.ts）。
+    // 动态引入：routeGroups 依赖各 repository，而 db.ts 是它们的汇总出口，静态引入会绕成环。
+    await runInitializationStep("repair-route-relays", () => import("./routeGroups").then((module) => module.repairRouteRelayRuleIntegrity()).then((repair) => {
+      if (repair.orphans > 0 || repair.synced > 0) {
+        console.log(`[Database] Route relay rules reconciled orphans=${repair.orphans} synced=${repair.synced}`);
+      }
+    }).catch((error) => {
+      console.warn("[Database] Route relay rule repair skipped:", error instanceof Error ? error.message : String(error));
+    }));
     // Run the compatibility scan after relationship repairs so valid template
     // pointers are visible and retired/orphaned children are excluded. This
     // remains before any scheduler-driven group synchronization.

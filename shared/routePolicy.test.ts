@@ -176,11 +176,14 @@ test("没走首选时只说确实可能的原因，不下结论", () => {
 
 test("切换条件：挂了就切、切不切回、最短驻留", () => {
   assert.deepEqual(policyAt(IN_WINDOW, { failoverMinHoldSeconds: 600 }).guards.map((guard) => `${guard.label}：${guard.value}`), [
-    "挂了就切：探测连续失败 60 秒，或新连接拨不通",
+    "挂了就切：探测连续失败 3 次才算异常，异常持续 60 秒就切走；新连接拨不通也算一次失败",
     "切回首选：首选那条恢复后稳定 2 分钟",
-    "最短驻留：切过去之后至少走 10 分钟",
+    "最短驻留：切过去之后至少走 10 分钟，线路挂了不受它限制",
+    "旧连接：平滑切换：旧连接留在原线路，新连接走新线路，基本无感",
   ]);
-  assert.deepEqual(policyAt(IN_WINDOW, { autoFailback: false }).guards.map((guard) => guard.label), ["挂了就切", "不切回"]);
+  assert.deepEqual(policyAt(IN_WINDOW, { autoFailback: false }).guards.map((guard) => guard.label), ["挂了就切", "不切回", "旧连接"]);
+  // 连续失败次数调成 1 就回到老说法：一次不通就开始计时。
+  assert.match(policyAt(IN_WINDOW, { routeFailureThreshold: 1 }).guards[0].value, /^探测连续失败 60 秒，或新连接拨不通$/);
 });
 
 test("轮询、随机、哈希：只有一行分摊的规矩，没有首选，也不说现在走哪条", () => {
@@ -190,7 +193,7 @@ test("轮询、随机、哈希：只有一行分摊的规矩，没有首选，�
     assert.deepEqual(policy.conditions.map((condition) => `${condition.when}→${condition.then}`), [`每条新连接→${then}`]);
     assert.equal(policy.preferredIndex, null);
     assert.deepEqual(policy.lines.map((line) => `${line.preferred}/${line.active}`), ["false/false", "false/false", "false/false"]);
-    assert.equal(policy.guards.length, 1, "切不切回、最短驻留只对主备有意义");
+    assert.deepEqual(policy.guards.map((guard) => guard.label), ["挂了就切", "恢复后回来", "旧连接"], "切不切回、最短驻留只对主备有意义");
     assert.equal(describeRoutePolicyReport(policy).text, "每条新连接各走各的，共 3 条");
   }
 });
@@ -205,8 +208,8 @@ test("时长的说法", () => {
 
 test("转发方式或协议不支持主备时照实说：配着，但机器上不会走主备", () => {
   assert.deepEqual(policyAt(IN_WINDOW).warnings, [], "gost + TCP（默认）没有这条提示");
-  assert.match(policyAt(IN_WINDOW, { protocol: "both" }).warnings.join(""), /不会走主备/);
-  assert.match(policyAt(IN_WINDOW, { forwardType: "realm", protocol: "tcp" }).warnings.join(""), /不会走主备/);
+  assert.match(policyAt(IN_WINDOW, { protocol: "both" }).warnings.join(""), /不会走线路组/);
+  assert.match(policyAt(IN_WINDOW, { forwardType: "realm", protocol: "tcp" }).warnings.join(""), /不会走线路组/);
 });
 
 test("时段表那几行带着配置里的序号：前面有一条失效的，此刻也标在对的那一行上", () => {

@@ -5,7 +5,8 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { FailoverPolicyFields, type FailoverPolicyValue } from "./features/rules/FailoverPolicyFields";
+import { RouteGroupFields } from "./features/rules/RouteGroupFields";
+import { applyRouteMode, newRouteGroupDraft, type RouteMode } from "@shared/routeGroup";
 
 /**
  * 「更多设置」折起来的东西，必须是真的可以不看的。
@@ -46,7 +47,7 @@ test("主备线路不折进「更多设置」—— 它是用户会专门来找�
   */
   const source = fs.readFileSync(rulesPagePath, "utf8");
   const section = collapsedSection(source);
-  assert.equal(section.includes("<FailoverPolicyFields"), false, "主备的编辑块又被折进「更多设置」了");
+  assert.equal(section.includes("<RouteGroupFields"), false, "线路组的编辑块又被折进「更多设置」了");
   assert.equal(section.includes('data-testid="failover-section"'), false);
   const dialogStart = source.indexOf("<DialogTitle>{editingId ?");
   const foldAt = source.indexOf("更多设置</span>");
@@ -110,49 +111,33 @@ test("缺口指向折叠里的控件时会自动展开", () => {
   assert.match(source, /isAdvancedSectionBlocker\(submitBlocker\)/);
 });
 
-test("时段表编辑器跟着主备线路走，发出去的那一份也归零", () => {
+test("时段表编辑器跟着定时 / 混合走，发出去的那一份也按模式归零", () => {
   /*
-    时段表只在主备模式下生效。界面上可以先配好它、再把策略改成轮询 —— 这时候如果
-    照样把它发上去，服务端会拒绝整次保存，用户看到的是「改个策略而已，怎么报了个
+    时段表只在定时主备、混合策略下生效。界面上可以先配好它、再把模式改成权重负载 —— 这时候
+    如果照样把它发上去，服务端会拒绝整次保存，用户看到的是「改个策略而已，怎么报了个
     时段表的错」。一个看着能用的控件把保存弄失败了，是最难受的那种坏法。
 
-    所以两件事都得做到：编辑器只在主备下渲染，提交前按策略归零。缺任何一件，
-    要么控件在那儿骗人，要么保存直接失败。
+    所以两件事都得做到：编辑器只在这两种模式下渲染，提交前按模式归零（routeGroupPayload）。
+    缺任何一件，要么控件在那儿骗人，要么保存直接失败。
   */
-  /*
-    编辑器搬进了 features/rules/FailoverPolicyFields。原来这里用正则认 Rules.tsx 里包着它的
-    那个 div 的类名 —— 搬家、改样式都会让它红，却说明不了控件是不是还只在主备下出现。
-    现在直接渲染看。
-  */
-  const value = (failoverStrategy: FailoverPolicyValue["failoverStrategy"]): FailoverPolicyValue => ({
-    failoverStrategy,
-    failoverTargetsText: "10.0.0.2:80",
-    failoverProbeTarget: "",
-    failoverSchedule: { timezone: "Asia/Shanghai", windows: [{ days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1 }] },
-    failoverPin: null,
-    failoverPreferFastest: false,
-    failoverSeconds: 60,
-    recoverSeconds: 120,
-    failoverMinHoldSeconds: 0,
-    autoFailback: true,
-  });
-  const render = (strategy: FailoverPolicyValue["failoverStrategy"]) => renderToStaticMarkup(createElement(FailoverPolicyFields, {
-    value: value(strategy),
+  const draft = newRouteGroupDraft({ timezone: "Asia/Shanghai" });
+  const render = (mode: RouteMode) => renderToStaticMarkup(createElement(RouteGroupFields, {
+    value: { ...draft, policy: applyRouteMode(draft.policy, mode, { timezone: "Asia/Shanghai", pathCount: draft.paths.length }) },
     onChange: () => {},
-    policy: null,
-    lineHints: [],
-    relayCandidates: [],
+    hosts: [],
+    entryHostId: 1,
     mainAddress: "10.0.0.1:80",
+    policy: null,
     scheduleTimeZone: "Asia/Shanghai",
     defaultAdvancedOpen: true,
   }));
-  assert.match(render("fallback"), /添加时段/, "主备模式下应当能配时段表");
-  assert.doesNotMatch(render("round_robin"), /添加时段|第 1 个时段/, "时段表编辑器不再只在主备模式下渲染了");
+  assert.match(render("scheduled"), /添加时段/, "定时主备下应当能配时段表");
+  assert.match(render("hybrid"), /添加时段/, "混合策略下应当能配时段表");
+  assert.doesNotMatch(render("weighted"), /添加时段|第 1 个时段/, "时段表编辑器不再只在定时 / 混合下渲染了");
+  assert.doesNotMatch(render("failover"), /添加时段|第 1 个时段/);
   assert.match(
     fs.readFileSync(rulesPagePath, "utf8"),
-    /failoverSchedulePayload\(form\.failoverSchedule, form\.failoverStrategy\)/,
-    "提交时没有按策略给时段表归零 —— 换成轮询之后保存会被服务端拒绝",
+    /routeGroupPayload\(form\.routeGroup\)/,
+    "提交时没有走 routeGroupPayload 按模式归零 —— 换成权重负载之后保存会被服务端拒绝",
   );
-  // 而且得提前把「保存后会清空」说出来：等用户回来发现空了，比现在多一行字糟得多。
-  assert.match(render("round_robin"), /保存后会清空/, "没有提前告诉用户时段表会被清空");
 });

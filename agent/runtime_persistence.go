@@ -504,7 +504,7 @@ func persistFailoverSpec(ruleID int, sourcePort int, spec failoverSpec) error {
 	if ruleID <= 0 || sourcePort <= 0 {
 		return fmt.Errorf("invalid failover persistence identity rule=%d port=%d", ruleID, sourcePort)
 	}
-	spec = normalizeFailoverSpec(spec)
+	spec = stripFailoverRelayHints(normalizeFailoverSpec(spec))
 	persistentRuntimeMu.Lock()
 	defer persistentRuntimeMu.Unlock()
 	return writePersistentJSON(persistentFailoverPath(ruleID, sourcePort), persistedFailover{

@@ -39,7 +39,7 @@ const reportHealth: Record<ReturnType<typeof describeRoutePolicyReport>["tone"],
 };
 
 /** 选择用的小块：选中是整块反白，和主机分组、分段控件同一套 —— 选择不是状态，不染状态色。 */
-function choiceClass(active: boolean) {
+export function choiceClass(active: boolean) {
   return cn(
     "inline-flex h-9 min-w-0 items-center justify-center rounded-[var(--fx-radius-control)] px-3 text-sm transition-colors",
     active
@@ -48,7 +48,7 @@ function choiceClass(active: boolean) {
   );
 }
 
-function ConditionRow({ condition }: { condition: RoutePolicyCondition }) {
+export function ConditionRow({ condition }: { condition: RoutePolicyCondition }) {
   const deciding = condition.state === "deciding";
   return (
     <div
@@ -80,7 +80,7 @@ function ConditionRow({ condition }: { condition: RoutePolicyCondition }) {
  * 整句话的一行：「什么时候切」、转发组的「现在按顺序重新选」。ListRow 的说明只给一行，
  * 转发组这几句在手机上会被截成「…」—— 规矩恰恰在后半句（「Agent 已判定失败的不等」）。
  */
-function SentenceRow({ label, detail, trailing }: { label: string; detail: string; trailing?: ReactNode }) {
+export function SentenceRow({ label, detail, trailing }: { label: string; detail: string; trailing?: ReactNode }) {
   return (
     <div className="fx-list-row flex w-full min-w-0 items-center gap-3 px-4 py-3">
       <span className="flex min-w-0 flex-1 flex-col">
@@ -89,6 +89,106 @@ function SentenceRow({ label, detail, trailing }: { label: string; detail: strin
       </span>
       {trailing ? <span className="shrink-0">{trailing}</span> : null}
     </div>
+  );
+}
+
+/**
+ * 「人工指定」那一节：钉着时是「强制走 X / 交回自动」，没钉时是一个入口，点开选线、选多久。
+ * 规则的主备策略面板和线路组面板共用。
+ */
+export function PinSection({
+  policy,
+  pending = false,
+  onPin,
+  onUnpin,
+  nowMs,
+  timeZone,
+  header = "人工指定",
+  footer = "应急用：压过时段表和评分，到点自动交回。指定的那条要是挂了，仍然会往下切 —— 不会为了守着它把连接送进死路。",
+}: {
+  policy: RoutePolicy;
+  pending?: boolean;
+  onPin: (index: number, durationSeconds: number | null) => void;
+  onUnpin: () => void;
+  nowMs?: number;
+  timeZone?: string;
+  header?: string;
+  footer?: string;
+}) {
+  const now = nowMs ?? Date.now();
+  const [picking, setPicking] = useState(false);
+  const [pickIndex, setPickIndex] = useState<number | null>(null);
+  // 默认 2 小时，不默认「一直」：应急处理完没人记得关，时段表和评分就一直被压着。
+  const [pickDuration, setPickDuration] = useState<number | null>(7200);
+  const pinLabel = policy.pin ? policy.lines[policy.pin.index]?.label : null;
+  const closePicker = () => { setPicking(false); setPickIndex(null); };
+  return (
+    <ListSection header={header} footer={footer}>
+      {policy.pin ? (
+        <ListRow
+          label={`强制走 ${pinLabel}`}
+          detail={policy.pin.untilMs ? `到 ${formatPolicyClock(policy.pin.untilMs, now, timeZone)} 自动交回` : "一直钉着，直到交回自动"}
+          trailing={(
+            <Button type="button" variant="outline" size="sm" disabled={pending} onClick={onUnpin}>
+              交回自动
+            </Button>
+          )}
+        />
+      ) : !picking ? (
+        <ListRow label="强制走一条" detail="选一条线、选多久" onSelect={() => setPicking(true)} />
+      ) : (
+        <div className="fx-list-row flex flex-col gap-3 px-4 py-3" data-testid="pin-picker">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="强制走哪条出站">
+            {policy.lines.map((line) => (
+              <button
+                key={line.index}
+                type="button"
+                aria-pressed={pickIndex === line.index}
+                className={choiceClass(pickIndex === line.index)}
+                onClick={() => setPickIndex(line.index)}
+              >
+                {line.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="强制走多久">
+            {PIN_DURATION_OPTIONS.map((option) => (
+              <button
+                key={option.label}
+                type="button"
+                aria-pressed={pickDuration === option.seconds}
+                className={choiceClass(pickDuration === option.seconds)}
+                onClick={() => setPickDuration(option.seconds)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {pickDuration === null ? (
+            <p className="text-meta text-[var(--fx-warn-text)]">一直钉着：时段表和评分都不会再改变首选，直到你回来交回自动。</p>
+          ) : null}
+          <div className="flex items-center justify-end gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={closePicker}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={pickIndex === null || pending}
+              onClick={() => {
+                if (pickIndex === null) return;
+                onPin(pickIndex, pickDuration);
+                // 交出去就收起来：钉上之后这一块换成「强制走 … / 交回自动」，交回之后
+                // 应该回到入口，而不是又摊开一个带着上次选择的选择器。
+                closePicker();
+              }}
+            >
+              {pickIndex === null ? "强制走" : `强制走 ${policy.lines[pickIndex]?.label}`}
+            </Button>
+          </div>
+        </div>
+      )}
+    </ListSection>
   );
 }
 
@@ -122,11 +222,8 @@ export function RoutePolicyPanel({ policy, canEdit, pending = false, onPin, onUn
   const group = policy.subject === "group";
   const [picking, setPicking] = useState(false);
   const [pickIndex, setPickIndex] = useState<number | null>(null);
-  // 默认 2 小时，不默认「一直」：应急处理完没人记得关，时段表和自动择优就一直被压着。
-  const [pickDuration, setPickDuration] = useState<number | null>(7200);
   const knowsActive = policy.lines.some((line) => line.active);
   const activeTag = activeTagText[policy.report.kind] || "在走";
-  const pinLabel = policy.pin ? policy.lines[policy.pin.index]?.label : null;
   // 换首选只在启用的成员里挑，而且不列已经排在最前的那个。不看健康点：组停用时成员全是「待命」，顺序照样能改。
   const preferChoices = policy.lines.filter((line) => line.enabled !== false && !line.preferred);
   const closePicker = () => { setPicking(false); setPickIndex(null); };
@@ -180,7 +277,7 @@ export function RoutePolicyPanel({ policy, canEdit, pending = false, onPin, onUn
           header="按什么选"
           footer={group
             ? "排在最前、而且健康的成员拿到解析；它不健康了就往下找。"
-            : policy.strategy === "fallback"
+            : policy.mode !== "weighted"
               ? "从上往下，先对上的那一条说了算。它指的那条挂了，照样往下找。"
               : undefined}
         >
@@ -250,76 +347,8 @@ export function RoutePolicyPanel({ policy, canEdit, pending = false, onPin, onUn
           </ListSection>
         ) : null}
 
-        {!group && policy.strategy === "fallback" && canEdit && onPin && onUnpin ? (
-          <ListSection
-            header="人工指定"
-            footer="应急用：压过时段表和自动择优，到点自动交回。指定的那条要是挂了，仍然会往下切 —— 不会为了守着它把连接送进死路。"
-          >
-            {policy.pin ? (
-              <ListRow
-                label={`强制走 ${pinLabel}`}
-                detail={policy.pin.untilMs ? `到 ${formatPolicyClock(policy.pin.untilMs, now, timeZone)} 自动交回` : "一直钉着，直到交回自动"}
-                trailing={(
-                  <Button type="button" variant="outline" size="sm" disabled={pending} onClick={onUnpin}>
-                    交回自动
-                  </Button>
-                )}
-              />
-            ) : !picking ? (
-              <ListRow label="强制走一条" detail="选一条线、选多久" onSelect={() => setPicking(true)} />
-            ) : (
-              <div className="fx-list-row flex flex-col gap-3 px-4 py-3" data-testid="pin-picker">
-                <div className="flex flex-wrap gap-2" role="group" aria-label="强制走哪条出站">
-                  {policy.lines.map((line) => (
-                    <button
-                      key={line.index}
-                      type="button"
-                      aria-pressed={pickIndex === line.index}
-                      className={choiceClass(pickIndex === line.index)}
-                      onClick={() => setPickIndex(line.index)}
-                    >
-                      {line.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-2" role="group" aria-label="强制走多久">
-                  {PIN_DURATION_OPTIONS.map((option) => (
-                    <button
-                      key={option.label}
-                      type="button"
-                      aria-pressed={pickDuration === option.seconds}
-                      className={choiceClass(pickDuration === option.seconds)}
-                      onClick={() => setPickDuration(option.seconds)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                {pickDuration === null ? (
-                  <p className="text-meta text-[var(--fx-warn-text)]">一直钉着：时段表和自动择优都不会再改变首选，直到你回来交回自动。</p>
-                ) : null}
-                <div className="flex items-center justify-end gap-2">
-                  <Button type="button" variant="ghost" size="sm" onClick={closePicker}>
-                    取消
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={pickIndex === null || pending}
-                    onClick={() => {
-                      if (pickIndex === null) return;
-                      onPin(pickIndex, pickDuration);
-                      // 交出去就收起来：钉上之后这一块换成「强制走 … / 交回自动」，交回之后
-                      // 应该回到入口，而不是又摊开一个带着上次选择的选择器。
-                      closePicker();
-                    }}
-                  >
-                    {pickIndex === null ? "强制走" : `强制走 ${policy.lines[pickIndex]?.label}`}
-                  </Button>
-                </div>
-              </div>
-            )}
-          </ListSection>
+        {!group && policy.mode !== "weighted" && canEdit && onPin && onUnpin ? (
+          <PinSection policy={policy} pending={pending} onPin={onPin} onUnpin={onUnpin} nowMs={now} timeZone={timeZone} />
         ) : null}
       </GroupedList>
     </div>

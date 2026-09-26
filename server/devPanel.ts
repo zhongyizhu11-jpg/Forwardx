@@ -8,6 +8,9 @@ import { hashPassword } from "./password";
 import { randomAvataaarsValue } from "../shared/avatar";
 import { syncForwardGroupRules } from "./repositories/forwardGroupRepository";
 import { reconcileForwardRuleTunnelExits } from "./repositories/tunnelRepository";
+import { insertForwardRuleRouteEvent } from "./repositories/forwardRuleRepository";
+import { syncRouteRelayRulesForRule } from "./routeGroups";
+import { recordRouteAgentStats, recordRouteHopProbe } from "./routeGroupStats";
 import { AGENT_VERSION } from "../shared/versions";
 
 export const DEV_PANEL_FLAG = "FORWARDX_DEV_PANEL";
@@ -1343,6 +1346,62 @@ async function seedTunnelsAndGroups(adminId: number, hostIds: number[]): Promise
   };
 }
 
+/**
+ * 线路组演示：中转机上生成中继规则，再假装入口 Agent 和中转 Agent 已经报过一轮 ——
+ * 评分、逐跳延迟、切换历史，界面上四段都有东西可看。真实面板上这些由 Agent 上报。
+ */
+async function seedRouteGroupDemo(ruleId: number, hostIds: number[]) {
+  const synced = await syncRouteRelayRulesForRule(ruleId, { deferRefresh: true, reason: "dev-seed" });
+  const paths = synced.paths || [];
+  const dialOf = (key: string) => {
+    const path = paths.find((item) => item.key === key);
+    return path?.dial ? `${path.dial.ip}:${path.dial.port}` : "";
+  };
+  const mainDial = dialOf("main");
+  const backupDial = dialOf("backup-sg");
+  // 现在走的是主线路（切回来 20 分钟了）。
+  await executeRaw(
+    `UPDATE ${quoteDbIdentifier("forward_rules")} SET ${quoteDbIdentifier("failoverActiveTarget")} = ?, ${quoteDbIdentifier("failoverActiveAt")} = ? WHERE ${quoteDbIdentifier("id")} = ?`,
+    [mainDial, Math.floor(minutesAgo(20).getTime() / 1000), ruleId],
+  );
+  // 中继规则在在线机器上都在跑。
+  await executeRaw(
+    `UPDATE ${quoteDbIdentifier("forward_rules")} SET ${quoteDbIdentifier("isRunning")} = ? WHERE ${quoteDbIdentifier("routeParentRuleId")} = ?`,
+    [true, ruleId],
+  );
+  const at = (minutes: number) => Math.floor(minutesAgo(minutes).getTime() / 1000);
+  await insertForwardRuleRouteEvent({ ruleId, kind: "prewarm", toKey: "backup-sg", toLabel: "晚高峰线路", reason: "schedule", atSeconds: at(95) });
+  await insertForwardRuleRouteEvent({ ruleId, kind: "switch", fromKey: "main", toKey: "backup-sg", fromLabel: "主线路", toLabel: "晚高峰线路", reason: "schedule", score: 88, latencyMs: 46, atSeconds: at(90) });
+  await insertForwardRuleRouteEvent({ ruleId, kind: "unhealthy", toKey: "backup-sg", toLabel: "晚高峰线路", reason: "relay down: SG relay 03 → US backup 04", atSeconds: at(41) });
+  await insertForwardRuleRouteEvent({ ruleId, kind: "switch", fromKey: "backup-sg", toKey: "main", fromLabel: "晚高峰线路", toLabel: "主线路", reason: "health check", score: 93, latencyMs: 38, atSeconds: at(40) });
+  await insertForwardRuleRouteEvent({ ruleId, kind: "recovered", toKey: "backup-sg", toLabel: "晚高峰线路", reason: "relay recovered", atSeconds: at(31) });
+  await insertForwardRuleRouteEvent({ ruleId, kind: "precheck_failed", fromKey: "main", toKey: "backup-sg", fromLabel: "主线路", toLabel: "晚高峰线路", reason: "precheck: loss 6%", atSeconds: at(12) });
+  await insertForwardRuleRouteEvent({ ruleId, kind: "pinned", fromKey: "main", toKey: "main", fromLabel: "主线路", toLabel: "主线路", reason: "panel: 人工指定，到今晚为止", atSeconds: at(5) });
+  await insertForwardRuleRouteEvent({ ruleId, kind: "unpinned", toKey: "main", toLabel: "主线路", reason: "pin expired", atSeconds: at(2) });
+  const now = Date.now();
+  recordRouteAgentStats({
+    hostId: hostIds[0],
+    isAllowed: () => true,
+    reports: [{
+      ruleId,
+      sourcePort: 25300,
+      strategy: "fallback",
+      activeIndex: 0,
+      activeSince: now - 20 * 60 * 1000,
+      prewarmIndex: -1,
+      targets: [
+        { index: 0, target: mainDial, healthy: true, score: 93, latencyMs: 38, lossPct: 0, jitterMs: 4, availabilityPct: 100, consecutiveFailures: 0, connections: 27, samples: 120, lastProbeAt: now - 3000 },
+        { index: 1, target: backupDial, healthy: true, score: 81, latencyMs: 74, lossPct: 0.8, jitterMs: 11, availabilityPct: 99.2, consecutiveFailures: 0, connections: 0, samples: 120, lastProbeAt: now - 3000 },
+        { index: 2, target: "10.95.0.12:443", healthy: true, score: 64, latencyMs: 186, lossPct: 2.5, jitterMs: 28, availabilityPct: 97.5, consecutiveFailures: 0, connections: 0, samples: 120, lastProbeAt: now - 3000 },
+      ],
+    }],
+  });
+  const hostName = (index: number) => ["HK entry 01", "JP exit 02", "SG relay 03", "US backup 04"][index];
+  recordRouteHopProbe({ parentRuleId: ruleId, pathKey: "main", hopIndex: 0, hostId: hostIds[1], hostName: hostName(1), nextLabel: "落地", ok: true, latencyMs: 92 });
+  recordRouteHopProbe({ parentRuleId: ruleId, pathKey: "backup-sg", hopIndex: 0, hostId: hostIds[2], hostName: hostName(2), nextLabel: hostName(3), ok: true, latencyMs: 41 });
+  recordRouteHopProbe({ parentRuleId: ruleId, pathKey: "backup-sg", hopIndex: 1, hostId: hostIds[3], hostName: hostName(3), nextLabel: "落地", ok: true, latencyMs: 18 });
+}
+
 async function seedRules(hostIds: number[], resources: DevResources, usersSeed: DevUsers): Promise<DevRules> {
   const rules = [
     { userId: usersSeed.adminId, hostId: hostIds[0], name: "Website TCP forward", forwardType: "iptables", protocol: "tcp", sourcePort: 15201, targetIp: "2a0e:97c0:3f4:1::41d", targetPort: 5201, sortOrder: 0, isRunning: true },
@@ -1361,6 +1420,17 @@ async function seedRules(hostIds: number[], resources: DevResources, usersSeed: 
       failoverSchedule: JSON.stringify({ timezone: "Asia/Shanghai", windows: [{ days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1 }] }),
       failoverMinHoldSeconds: 600,
       failoverActiveTarget: "10.91.0.81:8080", failoverActiveAt: new Date() },
+    // 线路组：一个入口 + 三条路径 + 混合策略。主线路经 JP 中转，备用经 SG → US 两跳到另一个落地，
+    // 第三条直连。保存后由 syncRouteRelayRulesForRule 在中转机上生成中继规则、把 dial 写回。
+    { userId: usersSeed.adminId, hostId: hostIds[0], name: "US game route group", forwardType: "gost", protocol: "tcp", sourcePort: 25300, targetIp: "10.95.0.10", targetPort: 443, sortOrder: 6, isRunning: true,
+      failoverEnabled: true, routeMode: "hybrid", routeSwitchMode: "smooth", routeFailureThreshold: 3, routeScoreMargin: 10, routeScoreHoldSeconds: 180, routePrewarmSeconds: 300,
+      failoverSeconds: 10, recoverSeconds: 300, failoverMinHoldSeconds: 600, failoverPreferFastest: true, failoverTargets: "[]",
+      routePaths: JSON.stringify([
+        { key: "main", name: "主线路", hops: [hostIds[1]], dest: null, weight: 60, probe: null, dial: null },
+        { key: "backup-sg", name: "晚高峰线路", hops: [hostIds[2], hostIds[3]], dest: { ip: "10.95.0.11", port: 443 }, weight: 30, probe: null, dial: null },
+        { key: "direct", name: "直连兜底", hops: [], dest: { ip: "10.95.0.12", port: 443 }, weight: 10, probe: null, dial: null },
+      ]),
+      failoverSchedule: JSON.stringify({ timezone: "Asia/Shanghai", windows: [{ days: [1, 2, 3, 4, 5], from: "18:00", to: "01:00", targetIndex: 1 }] }) },
     { userId: usersSeed.adminId, hostId: hostIds[0], name: "Dev group template", forwardType: "nginx_stream", protocol: "both", sourcePort: 15566, targetIp: "10.20.0.88", targetPort: 25565, forwardGroupId: resources.groups.failoverGroupId, isForwardGroupTemplate: true, telegramErrorNotifyEnabled: true, sortOrder: 0, isRunning: false },
     { userId: usersSeed.adminId, hostId: hostIds[1], name: "API failover template", forwardType: "nginx_stream", protocol: "tcp", sourcePort: 16443, targetIp: "10.70.0.44", targetPort: 443, forwardGroupId: resources.groups.apiFailoverGroupId, isForwardGroupTemplate: true, telegramErrorNotifyEnabled: true, sortOrder: 1, isRunning: false, proxyProtocolSend: true },
     { userId: usersSeed.adminId, hostId: hostIds[2], name: "Media failover template", forwardType: "realm", protocol: "both", sourcePort: 19350, targetIp: "10.71.0.35", targetPort: 1935, forwardGroupId: resources.groups.mediaFailoverGroupId, isForwardGroupTemplate: true, sortOrder: 2, isRunning: false },
@@ -1396,6 +1466,8 @@ async function seedRules(hostIds: number[], resources: DevResources, usersSeed: 
       { id: resources.tunnels.multiEntryMultiExitTunnelId, mode: "tls", loadBalanceEnabled: true },
     );
   }
+  const routeGroupRuleId = ruleIdByName.get("US game route group");
+  if (routeGroupRuleId) await seedRouteGroupDemo(routeGroupRuleId, hostIds);
   for (const groupId of [resources.groups.failoverGroupId, resources.groups.apiFailoverGroupId, resources.groups.mediaFailoverGroupId]) {
     await syncForwardGroupRules(groupId, { preserveRuntime: true });
   }

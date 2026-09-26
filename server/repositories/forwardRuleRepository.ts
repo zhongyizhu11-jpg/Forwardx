@@ -1,5 +1,5 @@
 ﻿import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { forwardGroupMembers, forwardGroups, forwardRuleTunnelExits, forwardRules, InsertForwardRule, tunnels } from "../../drizzle/schema";
+import { forwardGroupMembers, forwardGroups, forwardRuleRouteEvents, forwardRuleTunnelExits, forwardRules, InsertForwardRule, tunnels } from "../../drizzle/schema";
 import { executeRaw, getDb, insertAndGetId, nowDate } from "../dbRuntime";
 import { queryRaw } from "../dbRuntime";
 import { boolLiteral, boolValue, inList, quoteIdentifier } from "../dbCompat";
@@ -74,6 +74,8 @@ export async function getForwardRules(userId?: number, hostId?: number) {
   const conds: any[] = [
     sql`COALESCE(${forwardRules.pendingDelete}, ${sqlBool(false)}) = ${sqlBool(false)}`,
     sql`COALESCE(${forwardRules.forwardGroupRuleId}, 0) = 0`,
+    // 线路组在中转机上生成的中继规则由面板维护，不进用户的列表（见 server/routeGroups.ts）。
+    sql`COALESCE(${forwardRules.routeParentRuleId}, 0) = 0`,
     sql`${forwardRules.id} NOT IN (SELECT ${forwardGroupMembers.ruleId} FROM ${forwardGroupMembers} WHERE ${forwardGroupMembers.ruleId} IS NOT NULL)`,
   ];
   if (userId) conds.push(eq(forwardRules.userId, userId));
@@ -277,6 +279,7 @@ function buildForwardRuleSqlFilter(
   const conditions = [
     "COALESCE(" + ruleColumn("r", "pendingDelete") + ", " + boolLiteral(false) + ") = " + boolLiteral(false),
     "COALESCE(" + ruleColumn("r", "forwardGroupRuleId") + ", 0) = 0",
+    "COALESCE(" + ruleColumn("r", "routeParentRuleId") + ", 0) = 0",
     "NOT EXISTS (SELECT 1 FROM " + quoteIdentifier("forward_group_members") + " linked_member"
       + " WHERE " + ruleColumn("linked_member", "ruleId") + " = " + ruleColumn("r", "id") + ")",
   ];
@@ -921,11 +924,29 @@ export async function getForwardRulesForAgent(hostId?: number) {
  * 这一步在心跳的所有早退之前跑（见 failoverLineReports），所以只取三列 —— 整行取出来
  * 是给下发拼命令用的，这里用不着。
  */
+/**
+ * 这台机器有权报告的主备规则：id 和库里记的当前线路之外，还带上路径清单和目标 —— 切换
+ * 事件入库要把 Agent 报的「拨了哪个地址」翻成「哪条路径」，Telegram 提醒要规则名和开关。
+ * 不按 failoverEnabled 过滤：归属才是这里要验的东西，Agent 报了什么就按规则收什么。
+ */
 export async function getForwardRuleFailoverLinesForAgent(hostId: number) {
   const db = await getDb();
   if (!db || !hostId) return [];
   return db.select({
     id: forwardRules.id,
+    hostId: forwardRules.hostId,
+    tunnelId: forwardRules.tunnelId,
+    userId: forwardRules.userId,
+    name: forwardRules.name,
+    sourcePort: forwardRules.sourcePort,
+    targetIp: forwardRules.targetIp,
+    targetPort: forwardRules.targetPort,
+    failoverEnabled: forwardRules.failoverEnabled,
+    failoverTargets: forwardRules.failoverTargets,
+    failoverProbeTarget: forwardRules.failoverProbeTarget,
+    routeMode: forwardRules.routeMode,
+    routePaths: forwardRules.routePaths,
+    telegramErrorNotifyEnabled: forwardRules.telegramErrorNotifyEnabled,
     failoverActiveTarget: forwardRules.failoverActiveTarget,
     failoverActiveAt: forwardRules.failoverActiveAt,
   }).from(forwardRules).where(and(...forwardRulesForAgentConditions(hostId)));
@@ -1115,6 +1136,109 @@ export async function updateForwardRuleFailoverActiveLine(id: number, target: st
   await db.update(forwardRules)
     .set({ failoverActiveTarget: value, failoverActiveAt: new Date(seconds * 1000) } as any)
     .where(eq(forwardRules.id, id));
+}
+
+// ==================== 线路组：切换记录与中转跳规则 ====================
+
+export type ForwardRuleRouteEventInput = {
+  ruleId: number;
+  kind: string;
+  fromKey?: string | null;
+  toKey?: string | null;
+  fromLabel?: string | null;
+  toLabel?: string | null;
+  reason?: string | null;
+  score?: number | null;
+  latencyMs?: number | null;
+  /** 事件实际发生的时间（秒）。Agent 上报的事件带自己的时间戳；不给就是现在。 */
+  atSeconds?: number | null;
+};
+
+const ROUTE_EVENT_TEXT_LIMIT = 500;
+
+function routeEventText(value: unknown, limit = ROUTE_EVENT_TEXT_LIMIT) {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, limit) : null;
+}
+
+function routeEventInt(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : null;
+}
+
+/**
+ * 切换记录和 updateForwardRuleFailoverActiveLine 一样，是数据面的日常事件，
+ * 不走配置审计，也不动规则的 updatedAt。
+ */
+export async function insertForwardRuleRouteEvent(event: ForwardRuleRouteEventInput) {
+  const db = await getDb();
+  if (!db) return 0;
+  const ruleId = Number(event.ruleId);
+  const kind = routeEventText(event.kind, 24);
+  if (!Number.isInteger(ruleId) || ruleId <= 0 || !kind) return 0;
+  const seconds = Math.max(0, Math.floor(Number(event.atSeconds) || 0)) || Math.floor(Date.now() / 1000);
+  const row = {
+    ruleId,
+    kind,
+    fromKey: routeEventText(event.fromKey, 32),
+    toKey: routeEventText(event.toKey, 32),
+    fromLabel: routeEventText(event.fromLabel),
+    toLabel: routeEventText(event.toLabel),
+    reason: routeEventText(event.reason),
+    score: routeEventInt(event.score),
+    latencyMs: routeEventInt(event.latencyMs),
+    createdAt: new Date(seconds * 1000),
+  };
+  const inserted: any = await db.insert(forwardRuleRouteEvents).values(row as any);
+  return Number(inserted?.insertId || inserted?.lastInsertRowid || 0);
+}
+
+export async function getForwardRuleRouteEvents(ruleId: number, limit = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  const size = Math.min(200, Math.max(1, Math.floor(Number(limit) || 20)));
+  return db
+    .select()
+    .from(forwardRuleRouteEvents)
+    .where(eq(forwardRuleRouteEvents.ruleId, ruleId))
+    .orderBy(desc(forwardRuleRouteEvents.createdAt), desc(forwardRuleRouteEvents.id))
+    .limit(size);
+}
+
+export async function deleteForwardRuleRouteEvents(ruleId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(forwardRuleRouteEvents).where(eq(forwardRuleRouteEvents.ruleId, ruleId));
+}
+
+export async function cleanOldForwardRuleRouteEvents(retainHours = 72) {
+  const cutoff = Math.floor((Date.now() - retainHours * 3600 * 1000) / 1000);
+  await executeRaw(
+    `DELETE FROM ${quoteIdentifier("forward_rule_route_events")} WHERE ${quoteIdentifier("createdAt")} < ?`,
+    [cutoff],
+  );
+}
+
+/** 一条线路组规则在各中转跳上自动生成的转发规则（含等待删除的）。 */
+export async function getRouteRelayRules(parentRuleId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(forwardRules)
+    .where(eq(forwardRules.routeParentRuleId, parentRuleId))
+    .orderBy(forwardRules.routePathKey, forwardRules.routeHopIndex);
+}
+
+/** 所有中转跳规则（完整性修复用：父规则没了或路径删了的要回收）。 */
+export async function getAllRouteRelayRules() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(forwardRules)
+    .where(and(sql`${forwardRules.routeParentRuleId} IS NOT NULL`, sql`${forwardRules.routeParentRuleId} <> 0`));
 }
 
 export async function updateForwardRule(id: number, data: Partial<InsertForwardRule>) {

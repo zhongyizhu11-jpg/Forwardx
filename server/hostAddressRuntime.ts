@@ -1,4 +1,5 @@
 import * as db from "./db";
+import { syncRouteRelayRulesForHost } from "./routeGroups";
 import { pushAgentRefresh } from "./agentEvents";
 import * as hopRepo from "./repositories/tunnelRepository";
 import { clearTunnelRuntimeStatusForHost } from "./tunnelRuntimeStatus";
@@ -53,6 +54,13 @@ export async function refreshHostAddressRuntime(hostId: number, previousHost: an
    * 更新的：客户端拉到订阅连不上，而面板上转发和隧道都显示正常。
    */
   await db.syncProxyNodesForHostAddress(hostId);
+  /*
+   * 线路组的中转也一样：这台机器要是某条路径的中转，上一跳（或入口）拨的是它的入口
+   * 地址加端口 —— 地址变了，上一跳的目标要跟着改，入口的 dial 也要重写。
+   */
+  await syncRouteRelayRulesForHost(hostId, { reason }).catch((error) => {
+    console.warn(`[HostAddress] Route relay sync failed host=${hostId}: ${error instanceof Error ? error.message : String(error)}`);
+  });
   await db.resetAgentRuntimeStateForHost(hostId);
   clearTunnelRuntimeStatusForHost(hostId);
   await refreshAgentsAffectedByHostAddress(hostId, reason);
