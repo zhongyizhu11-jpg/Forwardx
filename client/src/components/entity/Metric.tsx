@@ -89,6 +89,7 @@ export function MetricGroup({
 export function ResourceMeter({
   label,
   percent,
+  valueText,
   warnAt = 75,
   criticalAt = 90,
   className,
@@ -96,6 +97,8 @@ export function ResourceMeter({
   label: ReactNode;
   /** 0–100。null / undefined 表示拿不到数据，画成「—」而不是 0% */
   percent: number | null | undefined;
+  /** 右边那个数的写法，不传就是四舍五入的百分比（CPU 传「<1%」这种） */
+  valueText?: string;
   warnAt?: number;
   criticalAt?: number;
   className?: string;
@@ -128,7 +131,7 @@ export function ResourceMeter({
           拿不到数据时写「—」而不是「0%」。一台离线的机器 CPU 不是 0%，
           是不知道 —— 写 0% 等于报了一个它没说过的数。
         */}
-        {known ? `${Math.round(value)}%` : "—"}
+        {valueText ?? (known ? `${Math.round(value)}%` : "—")}
       </span>
     </div>
   );

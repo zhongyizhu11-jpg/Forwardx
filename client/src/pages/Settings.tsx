@@ -119,6 +119,7 @@ import {
   BUILTIN_WALLPAPERS,
   DEFAULT_PERSONALIZATION_BACKGROUND,
   PERSONALIZATION_THEME_PRESETS,
+  personalizationSwatchGradient,
   clampBackgroundBlur,
   clampBackgroundOpacity,
   getPersonalizationThemePreset,
@@ -3797,11 +3798,12 @@ function PersonalizationSettingsSection() {
                     </span>
                   </div>
                   <div className="mt-4 flex items-center gap-2">
-                    {preset.swatches.map((color) => (
+                    {/* 第一枚是这套预设的主按钮渐变（浅色），和实际按钮一致；后两枚是淡底和深色 */}
+                    {[personalizationSwatchGradient(preset.id), ...preset.swatches.slice(1)].map((color, index) => (
                       <span
-                        key={color}
+                        key={`${preset.id}-${index}`}
                         className="h-7 w-7 rounded-full border border-background shadow-sm ring-1 ring-border/60"
-                        style={{ backgroundColor: color }}
+                        style={{ background: color }}
                       />
                     ))}
                   </div>

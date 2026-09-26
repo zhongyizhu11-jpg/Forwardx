@@ -66,15 +66,24 @@ export function EntityCard({
  */
 export function EntityHeader({
   health,
+  leading,
   title,
   subtitle,
+  meta,
   badges,
   trailing,
   className,
 }: {
   health?: NetworkHealth;
+  /**
+   * 顶替左边那枚状态点的东西（主机卡放发行版图标，状态点挂在图标右下角）。
+   * 传了它就不再画 health 的点 —— 状态要由它自己带上。
+   */
+  leading?: ReactNode;
   title: ReactNode;
   subtitle?: ReactNode;
+  /** 名字下面、注脚上面的一行标识（主机的「Debian 12」「Agent v2.2.196」） */
+  meta?: ReactNode;
   /** 名字右边的小标记。**最多两个** —— 再多就该收进详情 */
   badges?: ReactNode;
   /** 右上角：开关、操作菜单 */
@@ -88,12 +97,13 @@ export function EntityHeader({
         className,
       )}
     >
-      {health ? <StatusDot health={health} size="large" className="mt-1.5" /> : null}
+      {leading ?? (health ? <StatusDot health={health} size="large" className="mt-1.5" /> : null)}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-primary-type font-medium text-foreground">{title}</span>
           {badges}
         </div>
+        {meta ? <div className="mt-1 mb-0.5 flex min-w-0">{meta}</div> : null}
         {subtitle ? (
           <span className="truncate text-meta text-muted-foreground">{subtitle}</span>
         ) : null}

@@ -38,8 +38,11 @@ import {
   hostRegionText,
   isAgentUpgradeTimedOut,
   isAgentVersionBehind,
+  formatCpuPercent,
   metricUsageProgressClass,
 } from "@/components/hosts/hostDisplay";
+import { HostOsAvatar } from "@/components/hosts/HostOsBadge";
+import { parseHostOs } from "@shared/hostOs";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import { SortableDragHandle, SortableItem, SortableReorderContext, useSortableReorder } from "@/components/SortableDragHandle";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -780,12 +783,15 @@ function HostListResourceRow({
   value,
   detail,
   isOnline,
+  formatValue = formatUsagePercent,
 }: {
   icon: typeof ActivitySquare;
   label: string;
   value: unknown;
   detail?: string;
   isOnline: boolean;
+  /** 右边那个数怎么写；CPU 用它把在线时的 0 写成「<1%」 */
+  formatValue?: (value: unknown) => string;
 }) {
   const percent = clampPercent(value);
   const progressValue = percent ?? 0;
@@ -793,7 +799,7 @@ function HostListResourceRow({
     ? "h-1.5 bg-muted [&>div]:bg-muted-foreground/20"
     : metricUsageProgressClass(progressValue, isOnline);
   const tooltip = [
-    `${label}: ${formatUsagePercent(value)}`,
+    `${label}: ${formatValue(value)}`,
     detail,
   ].filter(Boolean).join("\n");
   return (
@@ -805,7 +811,7 @@ function HostListResourceRow({
               <Icon className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate">{label}</span>
             </div>
-            <span className="shrink-0 text-right text-[11px] font-semibold tabular-nums text-foreground">{formatUsagePercent(value)}</span>
+            <span className="shrink-0 text-right text-[11px] font-semibold tabular-nums text-foreground">{formatValue(value)}</span>
           </div>
           <Progress value={progressValue} className={cn(progressClass, "mt-1.5 w-full min-w-0")} />
         </div>
@@ -843,6 +849,7 @@ function HostListResourceBundle({
           value={cpuValue}
           detail={cpuDetail}
           isOnline={isOnline}
+          formatValue={(value) => (clampPercent(value) === null ? "--" : formatCpuPercent(value, isOnline))}
         />
         <HostListResourceRow
           icon={MemoryStick}
@@ -2581,6 +2588,7 @@ function HostsContent() {
                       const agentNeedsUpdate = isAgentVersionBehind(host.agentVersion, latestAgentVersion);
                       const remainingDays = formatHostRemainingDays(host.purchasedAt, host.stoppedAt);
                       const primaryAddressText = hostPrimaryAddressText(host);
+                      const hostOs = parseHostOs(host.osInfo);
                       const uptimeText = latestMetric?.uptime == null ? "--" : formatUptime(latestMetric.uptime);
                       const uptimeTitle = formatHostUptimeTitle(latestMetric?.uptime, uptimeText);
                       const expiryTitle = formatHostExpiryTitle(host.stoppedAt, remainingDays);
@@ -2614,17 +2622,20 @@ function HostsContent() {
                             {hostSortingEnabled && (
                               <SortableDragHandle dragHandleProps={handleProps} visible={isDragging} busy={hostReorderPending} className="shrink-0" />
                             )}
-                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/50 bg-muted/20 text-muted-foreground">
-                              <Server className="h-3.5 w-3.5" />
-                            </span>
+                            <HostOsAvatar os={hostOs} size="sm" />
                             <div className="min-w-0 flex-1 space-y-0.5">
                               <div className="flex min-w-0 items-center gap-1.5">
                                 <HostListStatusBadge host={host} />
                                 <span className="min-w-0 truncate font-semibold" title={hostRuntimeTitle}>{host.name}</span>
                               </div>
                               <div className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] text-muted-foreground">
+                                {hostOs.label && (
+                                  <span className="shrink-0 rounded border border-border/50 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium leading-none text-foreground/80" title={hostOs.full}>
+                                    {hostOs.label}
+                                  </span>
+                                )}
                                 {host.agentVersion && (
-                                  <span className="shrink-0 rounded border border-border/50 bg-muted/35 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">
+                                  <span className="shrink-0 rounded border border-border/50 bg-muted/35 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground" title="Agent 版本">
                                     v{host.agentVersion}
                                   </span>
                                 )}
