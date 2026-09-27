@@ -700,10 +700,10 @@
   像能点进去）。backdrop-filter 一并关掉：不透明的白底上做模糊，只是白白占 GPU。
 */
 .workspace-main [data-slot="card"] {
-  border: 1px solid var(--fx-stroke-weak);
+  border: 1px solid var(--fx-card-stroke, var(--fx-stroke-weak));
   border-radius: var(--fx-radius-surface);
   background: var(--fx-l1-surface);
-  box-shadow: none;
+  box-shadow: var(--fx-elevation-card);
   backdrop-filter: none;
 }
 /* 侧栏：一列白纸 + 右侧一条弱线（见上面导航那一节）；深色下比页面再深一档 */
@@ -965,6 +965,14 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
   统计行里的大数：正文字体、等宽数字、24px；手机上 20px。
   上一版桌面是等宽字体、手机 14px —— 同一个数在两台设备上不像同一个数。
 */
+/*
+  统计带：原来是页面上「上下两条弱线夹着的几格」。页面换成浅灰底之后，白卡之间夹一条裸的
+  灰格子像安卓设置的分割线；现在它也是一张白卡（不描边、软影），格子之间仍用弱线分。
+*/
+.fx-summary { padding: 0 14px; border: 1px solid var(--fx-card-stroke, var(--fx-stroke-weak)); border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface); box-shadow: var(--fx-elevation-card); }
+.fx-summary-cell { border-radius: 0; }
+.fx-summary-cell:first-child { border-top-left-radius: var(--fx-radius-surface); border-bottom-left-radius: var(--fx-radius-surface); }
+.fx-summary-cell:last-child { border-top-right-radius: var(--fx-radius-surface); border-bottom-right-radius: var(--fx-radius-surface); }
 .fx-summary-value { font-size: var(--fx-size-metric); line-height: var(--fx-line-metric); font-variant-numeric: tabular-nums; }
 @media (max-width: 767px) { .fx-summary-value { font-size: 20px; line-height: 26px; letter-spacing: -0.02em; } }
 @media (max-width: 639px) {
@@ -1573,25 +1581,55 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
 @media (pointer: coarse) { .fx-chip-scroller > .fx-chip { min-height: 32px; } }
 
 /* 搜索框：40px 的灰底 pill，不画描边（效果图）。 */
-.fx-search-pill { height: 36px !important; border-radius: var(--fx-radius-pill) !important; border-color: transparent !important; background: var(--fx-l2-group) !important; padding-left: 34px !important; font-size: 13.5px !important; }
+.fx-search-pill { height: 36px !important; border-radius: var(--fx-radius-pill) !important; border-color: transparent !important; background: var(--fx-l3-control-fill) !important; padding-left: 34px !important; font-size: 13.5px !important; }
 .fx-search-pill:focus-visible { border-color: var(--fx-primary-stroke) !important; }
 /* 输入框自己不定位：它在 DOM 里排在放大镜后面，一旦 relative 就会把放大镜盖住 */
 .fx-search-pill { position: static !important; }
 
 /*
-  规则卡底部：一条 4px 的流量占比条（这条规则占当前这一页总流量的份额），下面一行
-  「累计总量  ↓ 近 24H 入 · ↑ 近 24H 出」；切到备线 / 中断时右边那段换成状态色的一句话。
+  规则卡（玻璃 · 大数字）。卡本身由 [data-slot="card"] 那条给：白、不描边、软影。
+  这里只管卡里的四段：卡头、大数字一行、提醒一行、地址一行，和左上角那抹状态色的光。
+  --fx-rule-tone 由卡上的 style 给（主色 / 警告 / 故障 / 停用）。
 */
-.fx-rule-bar { height: 4px; overflow: hidden; border-radius: 2px; background: var(--fx-l2-group); }
-.fx-rule-bar > i { display: block; height: 100%; min-width: 4px; border-radius: 2px; background: var(--fx-primary-fill); background-image: var(--fx-primary-gradient); }
-.fx-rule-foot { display: flex; min-width: 0; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--fx-stroke-weak); font-size: 12.5px; line-height: 16px; color: var(--fx-text-muted); }
-.fx-rule-foot > b { flex: none; font-size: 13.5px; font-weight: 600; color: var(--fx-text); font-variant-numeric: tabular-nums; }
-.fx-rule-foot-detail { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.fx-rule-foot-detail[data-tone="warn"] { color: var(--fx-warn-text); font-weight: 500; }
-.fx-rule-foot-detail[data-tone="down"] { color: var(--fx-down-text); font-weight: 500; }
-.fx-rule-foot-detail[data-tone="standby"] { color: var(--fx-text-muted); }
-button.fx-rule-foot-detail { text-align: left; }
-.fx-rule-foot-aside { display: inline-flex; flex: none; align-items: center; gap: 10px; margin-left: auto; }
+.fx-rule-card { overflow: hidden; isolation: isolate; }
+.fx-rule-card::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(120% 90% at 0% 0%, color-mix(in srgb, var(--fx-rule-tone) 15%, transparent), transparent 55%); }
+.fx-rule-card[data-tone="off"]::before { background: none; }
+.workspace-main .fx-rule-card .fx-rule-card-body { padding: 14px 14px 12px; }
+.workspace-main .fx-rule-card[data-size="standard"] .fx-rule-card-body { padding: 16px 16px 14px; }
+.workspace-main .fx-rule-card .fx-rule-card-body > * + * { margin-top: 0; }
+.fx-rule-head { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.fx-rule-tile { position: relative; display: inline-flex; flex: none; }
+/* 状态点骑在图标格右下角，一圈卡色的白边把它从格子上托出来 */
+.fx-rule-tile-dot { position: absolute; right: -3px; bottom: -3px; display: inline-flex; border-radius: 999px; padding: 2px; background: var(--fx-l1-surface); line-height: 0; }
+.fx-rule-tile-dot [role="img"] { box-shadow: none !important; }
+.fx-rule-title { min-width: 0; flex: 1 1 auto; }
+.fx-rule-name { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 15.5px; font-weight: 600; letter-spacing: -.01em; line-height: 20px; color: var(--fx-text); }
+.fx-rule-sub { margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 16px; color: var(--fx-text-muted); }
+.fx-rule-head-actions { display: flex; flex: none; align-items: center; gap: 2px; }
+.fx-rule-big { display: flex; min-width: 0; align-items: flex-end; gap: 12px; margin-top: 14px; }
+.fx-rule-num { flex: none; display: inline-flex; align-items: baseline; gap: 3px; line-height: 1; font-variant-numeric: tabular-nums; }
+.fx-rule-num > b { font-size: 26px; font-weight: 700; letter-spacing: -.03em; color: var(--fx-text); }
+.fx-rule-num > small { font-size: 12.5px; font-weight: 500; color: var(--fx-text-muted); }
+.fx-rule-spark { flex: 1 1 72px; min-width: 56px; max-width: 128px; width: auto; height: 28px; align-self: flex-end; color: var(--fx-text-muted); }
+.fx-rule-day { flex: none; min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; text-align: right; font-size: 11.5px; line-height: 15px; color: var(--fx-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fx-rule-day-val { color: var(--fx-text-secondary); }
+.fx-rule-alerts { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; }
+/* 地址放不下就折行：入口一行、「→ 目标 [标签]」下一行；只有单个地址本身比卡还宽才截。 */
+.fx-rule-path { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--fx-stroke-weak); font-family: var(--fx-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; line-height: 16px; color: var(--fx-text-secondary); letter-spacing: -.01em; }
+.fx-rule-addr { display: inline-flex; min-width: 0; max-width: 100%; flex: 0 1 auto; align-items: center; gap: 4px; border-radius: 4px; text-align: left; color: inherit; font: inherit; }
+.fx-rule-addr > .truncate { min-width: 0; }
+button.fx-rule-addr:enabled:hover { color: var(--fx-text); }
+.fx-rule-addr-more { flex: none; color: var(--fx-text-muted); }
+/* 箭头和目标绑在一起：折行时整段「→ 目标」下去，不会箭头留在上一行末尾 */
+.fx-rule-path-to { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: 6px; }
+.fx-rule-path-arrow { flex: none; width: 13px; height: 13px; color: var(--fx-rule-tone); }
+.fx-rule-card[data-tone="off"] .fx-rule-path-arrow { color: var(--fx-text-muted); }
+.fx-rule-path-end { display: inline-flex; flex: none; align-items: center; gap: 8px; margin-left: auto; padding-left: 4px; font-family: var(--fx-font); letter-spacing: 0; }
+.fx-rule-tag { display: inline-flex; height: 20px; max-width: 160px; align-items: center; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: color-mix(in srgb, var(--fx-primary-fill) 13%, transparent); color: var(--fx-accent); }
+.fx-rule-tag[data-tone="warn"] { background: var(--fx-warn-soft); color: var(--fx-warn-text); }
+.fx-rule-tag[data-tone="down"] { background: var(--fx-down-soft); color: var(--fx-down-text); }
+.fx-rule-tag[data-tone="off"] { background: var(--fx-l3-control-fill); color: var(--fx-text-muted); }
+button.fx-rule-tag:hover { filter: brightness(.96); }
 /* 线路组按规矩在走：右下角一小段绿字，点开线路面板。切了线的那种走 .fx-rule-foot-detail 的状态色。 */
 .fx-rule-foot-link { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--fx-healthy-text); }
 .fx-rule-foot-link:hover { text-decoration: underline; text-underline-offset: 3px; }
@@ -1633,7 +1671,7 @@ button.fx-rule-foot-detail { text-align: left; }
   触摸屏上全局 button 有 44px 的最小高度（index.css）。这些是行内的小按钮，命中区靠周围留白，
   不能各自撑成 44 高：地址那一行会把路径条顶高 30px，卡底那一行会变成两倍高。
 */
-.fx-pathstrip-node button, .fx-rule-foot button, .fx-rule-foot-link, .fx-chip { min-height: 0; }
+.fx-pathstrip-node button, .fx-rule-foot button, .fx-rule-foot-link, .fx-rule-addr, .fx-rule-tag, .fx-chip { min-height: 0; }
 .fx-chip { min-height: 32px; }
 /* 搜索栏那一行最右边的「新建 / 添加」：和 36px 的搜索胶囊一样高，触摸屏的 44 最小高度不套在它身上 */
 .fx-row-action { height: 36px; min-height: 36px; }

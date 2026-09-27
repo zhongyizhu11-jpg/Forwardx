@@ -17,11 +17,11 @@ test("几个数排成一行读数：四个也一行放下，不折成 2×2", () 
   assert.match(one, /grid-cols-1/);
 });
 
-test("统计行不画框：外面只有上下两条线，格与格之间一条竖线，数字不用等宽字体", () => {
+test("统计行是一张卡：外框全交给 .fx-summary（灰底白卡、不描边），格与格之间一条竖线，数字不用等宽字体", () => {
   const html = render([1, 2, 3].map((n) => ({ key: String(n), label: `数 ${n}`, value: n })));
   const [outer] = [...html.matchAll(/class="([^"]*)"/g)].map((m) => m[1]);
-  assert.match(outer, /border-y/);
-  assert.doesNotMatch(outer, /rounded|bg-\[/);
+  assert.match(outer, /\bfx-summary\b/);
+  assert.doesNotMatch(outer, /border-y|rounded|bg-\[/);
   assert.doesNotMatch(html, /font-mono/);
   assert.equal((html.match(/fx-summary-cell/g) || []).length, 3);
 });

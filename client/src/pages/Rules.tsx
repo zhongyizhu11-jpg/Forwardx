@@ -198,7 +198,7 @@ import {
   pushUniqueHostEntryAddress,
   type HostEntryAddress,
 } from "@shared/hostEntryAddress";
-import { Fragment, lazy, memo, Suspense, useState, useMemo, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { Fragment, lazy, memo, Suspense, useState, useMemo, useEffect, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import { useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { useLocation, useSearch } from "wouter";
@@ -213,7 +213,8 @@ import {
 } from "@/lib/linkTestNodeMeta";
 import { getTunnelExitNames, getTunnelHopIds, getTunnelRouteText, tunnelHopHostName } from "@/lib/tunnelDisplay";
 import { StatusDot } from "@/components/network/StatusDot";
-import { PathStrip } from "@/components/network/PathStrip";
+import { describeNetworkHealth } from "@shared/networkHealth";
+import { Sparkline } from "@/components/charts/Sparkline";
 import {
   decideRuleFlowLayout,
   ruleVisualStateToHealth,
@@ -4193,6 +4194,7 @@ function RulesContent() {
         utils.rules.trafficSummary.invalidate(),
         utils.rules.traffic.invalidate(),
         utils.rules.trafficSeries.invalidate(),
+        utils.rules.trafficSeriesBatch.invalidate(),
         utils.dashboard.trafficTotals.invalidate(),
         utils.dashboard.trafficSeries.invalidate(),
         utils.dashboard.trafficBreakdown.invalidate(),
@@ -4303,6 +4305,38 @@ function RulesContent() {
     });
     return m;
   }, [dailyTrafficSummaryRows]);
+  /*
+    规则卡上那条小走势线：这一页规则近 24 小时的逐时字节，一次请求全拿。表格和地图视图
+    不画它，就不请求。
+  */
+  const { data: ruleTrafficSeriesRows } = trpc.rules.trafficSeriesBatch.useQuery(
+    { ruleIds: visibleRuleIdsForMetrics, hours: 24, bucketMinutes: 60 },
+    {
+      enabled: secondaryQueriesReady && visibleRuleIdsForMetrics.length > 0 && effectiveViewMode === "card",
+      refetchInterval: pollingInterval("slow"),
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+      placeholderData: (previousData) => previousData,
+    }
+  );
+  const sparkByRule = useMemo(() => {
+    const m = new Map<number, number[]>();
+    if (!ruleTrafficSeriesRows) return m;
+    const hourMs = 60 * 60 * 1000;
+    // 24 格 = 过去 24 个整点小时；正在走的这个小时并进最后一格，刚发生的流量不会被截掉。
+    const firstHour = Math.floor(Date.now() / hourMs) - 24;
+    ruleTrafficSeriesRows.forEach((row: any) => {
+      const rid = Number(row.ruleId);
+      const at = new Date(row.bucket).getTime();
+      if (!Number.isFinite(at)) return;
+      const index = Math.min(23, Math.floor(at / hourMs) - firstHour);
+      if (index < 0) return;
+      const slots = m.get(rid) || new Array<number>(24).fill(0);
+      slots[index] += (Number(row.bytesIn) || 0) + (Number(row.bytesOut) || 0);
+      m.set(rid, slots);
+    });
+    return m;
+  }, [ruleTrafficSeriesRows]);
   const totalTrafficByRule = useMemo(() => {
     const m = new Map<number, { bytesIn: number; bytesOut: number; connections: number }>();
     totalTrafficSummaryRows.forEach((t: any) => {
@@ -4322,12 +4356,6 @@ function RulesContent() {
     });
     return m;
   }, [totalTrafficSummaryRows]);
-  /* 这一页所有规则的累计流量之和：每张卡上那条 4px 的占比条按它算份额。 */
-  const pageTotalTrafficSum = useMemo(() => {
-    let sum = 0;
-    totalTrafficByRule.forEach((t) => { sum += Number(t.bytesIn || 0) + Number(t.bytesOut || 0); });
-    return sum;
-  }, [totalTrafficByRule]);
   const pageDailyTrafficTotals = useMemo(() => {
     let bytesIn = 0;
     let bytesOut = 0;
@@ -5861,48 +5889,6 @@ function RulesContent() {
     状态，线中间的小药丸写转发工具和协议；隧道 / 转发链的中继画成线上的小圆点，名字写在
     药丸里。资源名从卡头的第二行挪到了这里 —— 它本来就是「入口」。
   */
-  const renderPathStrip = (rule: any) => {
-    const { entryAddresses, targetAddress, entryTitle } = getRuleTransferDisplay(rule);
-    const category = getRuleCategory(rule, forwardGroupById);
-    const visual = ruleVisualStatuses.get(Number(rule.id))?.display || resolveRuleVisualStatus(rule);
-    const health = !isRuleSupported(rule) || rule.resourceAccessAllowed === false
-      ? "down"
-      : ruleVisualStateToHealth(visual?.state);
-    // 转发组规则的「中继」就是组本身，而组名已经是左端的名字，不重复画。
-    const hops = decideRuleFlowLayout(category) === "flow" && category !== "group" ? getRuleHopNames(rule) : [];
-    const primaryEntry = entryAddresses[0];
-    const extraEntries = Math.max(0, entryAddresses.length - 1);
-    const forwardLabel = FORWARD_TYPE_LABELS[rule?.forwardType as ForwardType] || "";
-    const via = [forwardLabel, formatForwardRuleProtocol(rule.protocol)].filter(Boolean).join(" · ");
-    // 线上流动的小点只给近 24 小时真有字节的规则：开着但没人用的不假装在跑。
-    const daily = dailyTrafficByRule.get(rule.id);
-    const flowing = Number(daily?.bytesIn || 0) + Number(daily?.bytesOut || 0) > 0;
-    const entryAddress = primaryEntry ? (
-      <button
-        type="button"
-        onClick={() => primaryEntry.copyable && copyEntryAddress(rule, primaryEntry.value)}
-        disabled={!primaryEntry.copyable}
-        className="group inline-flex min-w-0 max-w-full items-center gap-1 rounded text-left enabled:hover:text-primary disabled:cursor-default"
-        title={primaryEntry.copyable ? entryTitle : primaryEntry.text}
-      >
-        <span className="min-w-0 truncate">{primaryEntry.text}</span>
-        {extraEntries > 0 ? <span className="shrink-0 text-muted-foreground">+{extraEntries}</span> : null}
-        {primaryEntry.copyable ? <Copy className="hidden h-3 w-3 shrink-0 text-muted-foreground opacity-60 group-hover:opacity-100 sm:inline" aria-hidden="true" /> : null}
-      </button>
-    ) : null;
-    return (
-      <PathStrip
-        entry={{ name: getRuleResourceName(rule), address: entryAddress }}
-        target={{ address: targetAddress, title: targetAddress }}
-        health={health}
-        via={via}
-        hops={hops}
-        flowing={flowing}
-        title={`${entryAddresses.map((entry) => entry.text).join(" / ")} → ${targetAddress}`}
-      />
-    );
-  };
-
   const renderTableTransferEntry = (rule: any) => {
     const { entryAddresses, entryTitle } = getRuleTransferDisplay(rule);
     // 表里的地址是等宽的裸文字（参考站的模型名那一列），不再套小框；能复制的悬停时才显出底。
@@ -6250,90 +6236,6 @@ function RulesContent() {
     );
   };
 
-  /*
-    卡底（效果图）：一条 4px 的占比条（这条规则占本页总流量的份额），下面一行
-    「累计总量  ↓ 24H 入 · ↑ 24H 出」。线路组切到备线、或规则出错时，右边那段换成
-    状态色的一句话（点它打开线路面板）—— 一张卡上最要紧的一句话就该在这个位置。
-  */
-  const renderRuleFooter = (rule: any, withLatency = false) => {
-    const total = totalTrafficByRule.get(rule.id);
-    const totalBytes = Number(total?.bytesIn || 0) + Number(total?.bytesOut || 0);
-    const daily = dailyTrafficByRule.get(rule.id);
-    const dailyBytes = Number(daily?.bytesIn || 0) + Number(daily?.bytesOut || 0);
-    const share = pageTotalTrafficSum > 0 ? Math.max(2, Math.min(100, (totalBytes / pageTotalTrafficSum) * 100)) : 0;
-    const failover = describeFailoverLineDisplay(rule, hostById.get(Number(rule.hostId)));
-    const visual = ruleVisualStatuses.get(Number(rule.id))?.display || resolveRuleVisualStatus(rule);
-    // 线路组按规矩在走时不占卡上的一行：右下角一小段绿色的字，点开是线路面板。
-    const failoverAside = failover && failover.tone === "normal" ? (
-      <button
-        type="button"
-        className="fx-rule-foot-link"
-        title={failover.title}
-        aria-label={`线路组：${failover.title}`}
-        onClick={() => setPolicyRuleId(Number(rule.id))}
-      >
-        <GitBranch className="h-3 w-3" aria-hidden="true" />
-        {failover.text}
-      </button>
-    ) : null;
-    let detail: ReactNode;
-    if (failover && failover.tone !== "normal") {
-      detail = (
-        <button
-          type="button"
-          className="fx-rule-foot-detail"
-          data-tone={failover.tone === "warn" ? "warn" : failover.tone === "muted" ? "standby" : "warn"}
-          title={failover.title}
-          onClick={() => setPolicyRuleId(Number(rule.id))}
-        >
-          {failover.text}
-        </button>
-      );
-    } else if (visual?.state === "error") {
-      detail = <span className="fx-rule-foot-detail" data-tone="down" title={visual.title}>{visual.title}</span>;
-    } else if (visual?.state === "disabled") {
-      detail = <span className="fx-rule-foot-detail" data-tone="standby">已停用</span>;
-    } else if (dailyBytes > 0) {
-      detail = <span className="fx-rule-foot-detail" title="近 24 小时入向 · 出向">↓ {formatBytes(Number(daily?.bytesIn || 0))} · ↑ {formatBytes(Number(daily?.bytesOut || 0))}</span>;
-    } else {
-      detail = <span className="fx-rule-foot-detail">近 24H 没有流量</span>;
-    }
-    return (
-      <>
-        {totalBytes > 0 ? (
-          <div className="fx-rule-bar" aria-hidden="true"><i style={{ width: `${share}%` }} /></div>
-        ) : null}
-        <div className="fx-rule-foot">
-          <b title={total ? `累计入向 ${formatBytes(Number(total.bytesIn || 0))} / 出向 ${formatBytes(Number(total.bytesOut || 0))}` : undefined}>{formatBytes(totalBytes)}</b>
-          {detail}
-          {failoverAside || withLatency ? (
-            <span className="fx-rule-foot-aside">
-              {failoverAside}
-              {withLatency ? renderLatestLatency(rule) : null}
-            </span>
-          ) : null}
-        </div>
-      </>
-    );
-  };
-
-  const renderMobileRuleTotalTraffic = (rule: any) => {
-    const t = totalTrafficByRule.get(rule.id);
-    const total = Number(t?.bytesIn || 0) + Number(t?.bytesOut || 0);
-    if (!t || total <= 0) {
-      return <span className="text-xs text-muted-foreground">—</span>;
-    }
-    return (
-      <span
-        className="flex items-center gap-1 whitespace-nowrap text-xs font-medium tabular-nums text-foreground"
-        title={`累计入向 ${formatBytes(Number(t.bytesIn || 0))} / 出向 ${formatBytes(Number(t.bytesOut || 0))}`}
-      >
-        <ArrowRightLeft className="h-3 w-3 shrink-0 text-muted-foreground" />
-        {formatBytes(total)}
-      </span>
-    );
-  };
-
   const renderRuleTotalTraffic = (rule: any) => {
     const t = totalTrafficByRule.get(rule.id);
     if (!t) {
@@ -6677,115 +6579,144 @@ function RulesContent() {
     );
   };
 
+  /*
+    规则卡（「玻璃 · 大数字」那版样稿，用户选的方向，按他们的要求收紧到一屏四张）：
+
+      [图标格·角上状态点] 名字                       ··· [开关]
+                          入口主机 · 转发工具 · 协议
+      113 GB   ～～走势线～～          近 24H
+                                      ↓ 2.76 GB · ↑ 3.42 GB
+      ─────────────────────────────────────────────
+      192.0.2.21:443  →  10.10.3.88:443        [46 ms]
+
+    卡不描边，坐在浅灰页面上靠一层很淡的投影成形；左上角一抹状态色的光（--fx-rule-tone）。
+    状态点仍在名字左边 —— 骑在图标格的右下角，像头像上的在线点，不在标题行里再占一格。
+    大数字是累计总量：一张卡最值得一眼看到的数。走势线是近 24 小时逐时字节，只画形状。
+    地址一行等宽字、不截断；右端一枚小标签：延迟，或者切了线 / 出错 / 停用这些更要紧的话。
+  */
+  const RULE_TONE_COLOR: Record<"ok" | "warn" | "down" | "off", string> = {
+    ok: "var(--fx-primary-fill)",
+    warn: "var(--fx-warn)",
+    down: "var(--fx-down)",
+    off: "var(--fx-text-muted)",
+  };
+  const splitBytes = (bytes: number) => {
+    const [value, unit] = formatBytes(bytes).split(" ");
+    return { value: value || "0", unit: unit || "B" };
+  };
   const renderRuleCard = (rule: any, sortable?: RuleSortableRenderState) => {
     const supported = isRuleSupported(rule);
     const protocolKey = getRuleProtocolKey(rule);
-    if (effectiveRuleCardSize === "compact") {
-      return (
-        <Card
-          key={rule.id}
-          {...(sortable?.itemProps || {})}
-          className={cn(
-            "group/sortable relative action-card border-border bg-card transition-[box-shadow,opacity]",
-            !supported && "opacity-70",
-            sortable?.isDragging && "opacity-55 ring-1 ring-primary/35",
-            sortable?.isDropTarget && "ring-1 ring-primary/45",
-          )}
-          title={!supported ? unsupportedProtocolTitle : undefined}
-        >
-          <CardContent className="action-card-content space-y-2.5 p-3">
-            <div className="flex min-w-0 items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2.5">
-                {renderRuleTile(getRuleCategory(rule, forwardGroupById) as RuleGroupType, "sm")}
-                <div className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                  {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
-                </div>
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-1.5"><span className="truncate text-[15px] font-medium">{rule.name}</span>{renderSubscriptionMark(rule)}</div>
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                {sortable && (
-                  <SortableDragHandle
-                    dragHandleProps={sortable.handleProps}
-                    visible={sortable.isDragging}
-                    busy={ruleReorderPending}
-                    className="bg-card/70"
-                  />
-                )}
-                {renderRuleActions(rule, true)}
-                {renderRuleEnabledSwitch(rule)}
-              </div>
-            </div>
+    const compact = effectiveRuleCardSize === "compact";
+    const category = getRuleCategory(rule, forwardGroupById) as RuleGroupType;
+    const visual = ruleVisualStatuses.get(Number(rule.id))?.display || resolveRuleVisualStatus(rule);
+    const health = !supported || rule.resourceAccessAllowed === false ? "down" : ruleVisualStateToHealth(visual?.state);
+    const healthToken = describeNetworkHealth(health).token;
+    const failover = describeFailoverLineDisplay(rule, hostById.get(Number(rule.hostId)));
+    const tone: "ok" | "warn" | "down" | "off" = healthToken === "down"
+      ? "down"
+      : healthToken === "standby"
+        ? "off"
+        : healthToken === "warn" || (failover && failover.tone === "warn")
+          ? "warn"
+          : "ok";
+    const toneColor = RULE_TONE_COLOR[tone];
 
-            <div className="min-w-0">
-              {renderPathStrip(rule)}
-            </div>
+    const { entryAddresses, targetAddress, entryTitle } = getRuleTransferDisplay(rule);
+    const primaryEntry = entryAddresses[0];
+    const extraEntries = Math.max(0, entryAddresses.length - 1);
+    const hops = decideRuleFlowLayout(category) === "flow" && category !== "group" ? getRuleHopNames(rule) : [];
+    const forwardLabel = FORWARD_TYPE_LABELS[rule?.forwardType as ForwardType] || "";
+    const subtitleParts = [
+      getRuleResourceName(rule),
+      hops.length > 0 ? `经 ${hops.join(" / ")}` : "",
+      forwardLabel,
+      formatForwardRuleProtocol(rule.protocol),
+      !compact && user?.role === "admin" ? getRuleOwnerName(rule) : "",
+    ].filter(Boolean);
+    const subtitle = subtitleParts.join(" · ");
 
-            {/*
-              路径条上的小药丸已经写了转发工具和协议，线路组在卡底，「订阅」在名字后面；这一行
-              只留要人处理的：内核转发的提醒、订阅指向已变、协议不支持。没有就整行不出现。
-            */}
-            {(renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule)) || renderSubscriptionBadge(rule, "card") || !supported) ? (
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-              {renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule))}
-              {renderSubscriptionBadge(rule, "card")}
-              {!supported && (
-                <Badge variant="outline" className="h-5 border-destructive/30 px-1.5 text-[10px] text-destructive">
-                  {protocolUnsupportedLabel(protocolKey)} 不支持
-                </Badge>
-              )}
-            </div>
-            ) : null}
+    const total = totalTrafficByRule.get(rule.id);
+    const totalBytes = Number(total?.bytesIn || 0) + Number(total?.bytesOut || 0);
+    const big = splitBytes(totalBytes);
+    const daily = dailyTrafficByRule.get(rule.id);
+    const dailyBytes = Number(daily?.bytesIn || 0) + Number(daily?.bytesOut || 0);
+    const spark = sparkByRule.get(Number(rule.id)) || [];
 
-            {(rule.protocolBlockReason || rule.resourceAccessAllowed === false) && (
-              <div className="line-clamp-2 text-[11px] leading-4 text-destructive">
-                {rule.protocolBlockReason || revokedResourceTitle}
-              </div>
-            )}
-
-            {renderRuleFooter(rule)}
-          </CardContent>
-        </Card>
+    // 地址行右端那枚小标签：切了线 / 出错 / 停用比延迟要紧，有就换掉延迟。
+    let tag: ReactNode = null;
+    if (failover && failover.tone !== "normal") {
+      tag = (
+        <button type="button" className="fx-rule-tag" data-tone={failover.tone === "warn" ? "warn" : "off"} title={failover.title} onClick={() => setPolicyRuleId(Number(rule.id))}>
+          {failover.text}
+        </button>
       );
+    } else if (visual?.state === "error") {
+      tag = <span className="fx-rule-tag" data-tone="down" title={visual.title}>{visual.title}</span>;
+    } else if (visual?.state === "disabled") {
+      tag = <span className="fx-rule-tag" data-tone="off">已停用</span>;
+    } else {
+      const probe = stableProbeByRule.get(Number(rule.id));
+      if (probe?.latestLatencyAt) {
+        if (probe.latestLatencyIsTimeout) {
+          tag = <span className="fx-rule-tag" data-tone="down" title="最近一次测试超时">超时</span>;
+        } else if (typeof probe.latestLatencyMs === "number" && Number.isFinite(probe.latestLatencyMs)) {
+          const ms = probe.latestLatencyMs;
+          tag = <span className="fx-rule-tag" data-tone={ms < 150 ? "ok" : ms < 300 ? "warn" : "down"} title="最近一次测得的延迟">{ms} ms</span>;
+        }
+      }
     }
+    const failoverAside = failover && failover.tone === "normal" ? (
+      <button
+        type="button"
+        className="fx-rule-foot-link"
+        title={failover.title}
+        aria-label={`线路组：${failover.title}`}
+        onClick={() => setPolicyRuleId(Number(rule.id))}
+      >
+        <GitBranch className="h-3 w-3" aria-hidden="true" />
+        {failover.text}
+      </button>
+    ) : null;
+
+    const alerts = [
+      renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule)),
+      renderSubscriptionBadge(rule, "card"),
+      !supported ? (
+        <Badge key="unsupported" variant="outline" className="h-5 border-destructive/30 px-1.5 text-[10px] text-destructive">
+          {protocolUnsupportedLabel(protocolKey)} 不支持
+        </Badge>
+      ) : null,
+    ].filter(Boolean);
+
     return (
       <Card
         key={rule.id}
         {...(sortable?.itemProps || {})}
         className={cn(
-          "group/sortable relative action-card border-border bg-card transition-[box-shadow,opacity]",
+          "group/sortable fx-rule-card relative action-card transition-[box-shadow,opacity]",
           !supported && "opacity-70",
           sortable?.isDragging && "opacity-55 ring-1 ring-primary/35",
           sortable?.isDropTarget && "ring-1 ring-primary/45",
         )}
+        data-tone={tone}
+        data-size={compact ? "compact" : "standard"}
+        style={{ "--fx-rule-tone": toneColor } as CSSProperties}
         title={!supported ? unsupportedProtocolTitle : undefined}
       >
-        <CardContent className="action-card-content space-y-3 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2.5">
-              {renderRuleTile(getRuleCategory(rule, forwardGroupById) as RuleGroupType, "md")}
-              <div className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+        <CardContent className="fx-rule-card-body action-card-content">
+          <div className="fx-rule-head">
+            <span className="fx-rule-tile">
+              {renderRuleTile(category, "md")}
+              <span className="fx-rule-tile-dot">
                 {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
-              </div>
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-1.5"><span className="truncate font-medium">{rule.name}</span>{renderSubscriptionMark(rule)}</div>
-                {user?.role === "admin" && (
-                  <div className="mt-1 text-xs text-muted-foreground">用户: {getRuleOwnerName(rule)}</div>
-                )}
-                {!supported && (
-                  <div className="mt-1 text-[11px] text-destructive">
-                    {protocolUnsupportedLabel(protocolKey)} 当前不支持
-                  </div>
-                )}
-                {(rule.protocolBlockReason || rule.resourceAccessAllowed === false) && (
-                  <div className="mt-1 text-[11px] leading-4 text-destructive">
-                    {rule.protocolBlockReason || revokedResourceTitle}
-                  </div>
-                )}
-              </div>
+              </span>
+            </span>
+            <div className="fx-rule-title">
+              <div className="fx-rule-name"><span className="truncate" title={rule.name}>{rule.name}</span>{renderSubscriptionMark(rule)}</div>
+              <div className="fx-rule-sub" title={subtitle}>{subtitle}</div>
             </div>
-            <div className="flex shrink-0 items-center gap-1">
+            <div className="fx-rule-head-actions">
               {sortable && (
                 <SortableDragHandle
                   dragHandleProps={sortable.handleProps}
@@ -6799,21 +6730,61 @@ function RulesContent() {
             </div>
           </div>
 
-          <div className="min-w-0">
-            {renderPathStrip(rule)}
-          </div>
-          {/*
-            原来这里是「链路 / 协议」两格：转发工具的徽标和协议的徽标。路径条上的小药丸已经
-            写了这两样，线路组在卡底右下角（也是线路面板的入口），「订阅」在名字后面；这一行
-            只留要人处理的：内核转发的提醒、订阅指向已变。没有就整行不出现。
-          */}
-          {(renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule)) || renderSubscriptionBadge(rule, "card")) ? (
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-              {renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule))}
-              {renderSubscriptionBadge(rule, "card")}
+          <div className="fx-rule-big">
+            <div
+              className="fx-rule-num"
+              title={total ? `累计入向 ${formatBytes(Number(total.bytesIn || 0))} / 出向 ${formatBytes(Number(total.bytesOut || 0))}` : "还没有流量"}
+            >
+              <b>{big.value}</b><small>{big.unit}</small>
             </div>
+            <Sparkline
+              values={spark}
+              width={96}
+              height={28}
+              stroke={toneColor}
+              className="fx-rule-spark"
+              title={spark.some((value) => value > 0) ? "近 24 小时逐时流量走势" : undefined}
+            />
+            <div className="fx-rule-day">
+              <span>近 24H</span>
+              <span className="fx-rule-day-val" title="近 24 小时入向 · 出向">
+                {dailyBytes > 0 ? `↓ ${formatBytes(Number(daily?.bytesIn || 0))} · ↑ ${formatBytes(Number(daily?.bytesOut || 0))}` : "没有流量"}
+              </span>
+            </div>
+          </div>
+
+          {alerts.length > 0 ? (
+            <div className="fx-rule-alerts">{alerts}</div>
           ) : null}
-          {renderRuleFooter(rule, true)}
+          {(rule.protocolBlockReason || rule.resourceAccessAllowed === false) && (
+            <div className="line-clamp-2 text-[11px] leading-4 text-destructive">
+              {rule.protocolBlockReason || revokedResourceTitle}
+            </div>
+          )}
+
+          <div className="fx-rule-path" title={`${entryAddresses.map((entry) => entry.text).join(" / ")} → ${targetAddress}`}>
+            {primaryEntry ? (
+              <button
+                type="button"
+                onClick={() => primaryEntry.copyable && copyEntryAddress(rule, primaryEntry.value)}
+                disabled={!primaryEntry.copyable}
+                className="fx-rule-addr group"
+                title={primaryEntry.copyable ? entryTitle : primaryEntry.text}
+              >
+                <span className="truncate">{primaryEntry.text}</span>
+                {extraEntries > 0 ? <span className="fx-rule-addr-more">+{extraEntries}</span> : null}
+                {primaryEntry.copyable ? <Copy className="hidden h-3 w-3 shrink-0 opacity-50 group-hover:opacity-100 sm:inline" aria-hidden="true" /> : null}
+              </button>
+            ) : null}
+            <span className="fx-rule-path-to">
+              <ArrowRight className="fx-rule-path-arrow" aria-hidden="true" />
+              <code className="fx-rule-addr" title={targetAddress}><span className="truncate">{targetAddress}</span></code>
+            </span>
+            <span className="fx-rule-path-end">
+              {failoverAside}
+              {tag}
+            </span>
+          </div>
         </CardContent>
       </Card>
     );

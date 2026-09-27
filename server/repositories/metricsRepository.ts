@@ -2350,6 +2350,91 @@ export async function getTrafficSeriesByRule(
   })).filter((r: { bucket: Date }) => r.bucket.getTime() / 1000 >= sinceSec);
 }
 
+/**
+ * 一批规则各自的流量走势（规则卡上那条小走势线）。
+ *
+ * 一页几十张卡各发一次 getTrafficSeriesByRule 就是几十条 SQL，这里一条 GROUP BY ruleId, bucket
+ * 出全部；转发组子规则的字节记到父规则头上（和 getTrafficSeriesByRule 的口径一致）。
+ * 有 30 分钟桶表且时间窗在桶的保留期内时读桶（再按请求的桶宽合并），否则读原始样本。
+ */
+export async function getTrafficSeriesByRules(
+  ruleIds: number[],
+  opts: { bucketMinutes?: number; since?: Date; userId?: number } = {}
+) {
+  const db = await getDb();
+  const empty = [] as Array<{ ruleId: number; bucket: Date; bytesIn: number; bytesOut: number }>;
+  if (!db) return empty;
+  const requestedRuleIds = Array.from(new Set(ruleIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (requestedRuleIds.length === 0) return empty;
+  const bucket = clampPositiveInt(opts.bucketMinutes, 1, 24 * 60);
+  const bucketSec = bucket * 60;
+  const since = opts.since ?? new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const sinceSec = Math.floor(since.getTime() / 1000);
+  const { queryRuleIds, parentByChildRuleId } = await expandTrafficQueryRuleIds(requestedRuleIds);
+  const effectiveRuleIds = queryRuleIds.length > 0 ? queryRuleIds : requestedRuleIds;
+  const q = quoteIdentifier;
+  const placeholders = effectiveRuleIds.map(() => "?").join(",");
+  const userJoin = opts.userId
+    ? `INNER JOIN ${q("forward_rules")} fr ON fr.${q("id")} = src.${q("ruleId")}
+       ${managedParentRuleJoin("fr")}`
+    : "";
+  const userWhere = opts.userId ? `AND COALESCE(parent.${q("userId")}, fr.${q("userId")}) = ?` : "";
+  const userParams = opts.userId ? [opts.userId] : [];
+
+  const useBuckets = bucket % TRAFFIC_BUCKET_MINUTES === 0 && await trafficBucketsReady() && canUseTrafficBuckets(since);
+  const bucketRows = useBuckets
+    ? await queryRaw<{ ruleId: number; bucket: number; bytesIn: number; bytesOut: number }>(
+      `SELECT src.${q("ruleId")} AS ${q("ruleId")},
+              ${bucketExpression("src", "bucketStart", bucketSec)} AS ${q("bucket")},
+              COALESCE(SUM(src.${q("bytesIn")}), 0) AS ${q("bytesIn")},
+              COALESCE(SUM(src.${q("bytesOut")}), 0) AS ${q("bytesOut")}
+         FROM ${q("traffic_stat_buckets")} src
+         ${userJoin}
+        WHERE src.${q("bucketMinutes")} = ?
+          AND src.${q("ruleId")} IN (${placeholders})
+          AND src.${q("bucketStart")} >= ?
+          ${userWhere}
+        GROUP BY src.${q("ruleId")}, ${bucketExpression("src", "bucketStart", bucketSec)}
+        ORDER BY ${q("bucket")} ASC`,
+      [TRAFFIC_BUCKET_MINUTES, ...effectiveRuleIds, bucketStartFor(sinceSec), ...userParams],
+    ).catch(() => null)
+    : null;
+  const rows = bucketRows && bucketRows.length > 0 ? bucketRows : await queryRaw<{ ruleId: number; bucket: number; bytesIn: number; bytesOut: number }>(
+    `SELECT src.${q("ruleId")} AS ${q("ruleId")},
+            ${bucketExprSql("src", bucketSec)} AS ${q("bucket")},
+            COALESCE(SUM(src.${q("bytesIn")}), 0) AS ${q("bytesIn")},
+            COALESCE(SUM(src.${q("bytesOut")}), 0) AS ${q("bytesOut")}
+       FROM ${q("traffic_stats")} src
+       ${userJoin}
+      WHERE src.${q("ruleId")} IN (${placeholders})
+        AND src.${q("recordedAt")} >= ?
+        ${userWhere}
+      GROUP BY src.${q("ruleId")}, ${bucketExprSql("src", bucketSec)}
+      ORDER BY ${q("bucket")} ASC`,
+    [...effectiveRuleIds, sinceSec, ...userParams],
+  ).catch(() => [] as Array<{ ruleId: number; bucket: number; bytesIn: number; bytesOut: number }>);
+
+  // 子规则并回父规则同一个桶
+  const merged = new Map<string, { ruleId: number; bucket: number; bytesIn: number; bytesOut: number }>();
+  for (const raw of rows as any[]) {
+    const childId = Number(raw.ruleId);
+    const ruleId = parentByChildRuleId.get(childId) ?? childId;
+    const bucketAt = Number(raw.bucket);
+    if (!Number.isFinite(bucketAt) || bucketAt < sinceSec) continue;
+    const key = `${ruleId}:${bucketAt}`;
+    const prev = merged.get(key);
+    if (prev) {
+      prev.bytesIn += Number(raw.bytesIn) || 0;
+      prev.bytesOut += Number(raw.bytesOut) || 0;
+    } else {
+      merged.set(key, { ruleId, bucket: bucketAt, bytesIn: Number(raw.bytesIn) || 0, bytesOut: Number(raw.bytesOut) || 0 });
+    }
+  }
+  return Array.from(merged.values())
+    .sort((a, b) => a.ruleId - b.ruleId || a.bucket - b.bucket)
+    .map((r) => ({ ruleId: r.ruleId, bucket: new Date(r.bucket * 1000), bytesIn: r.bytesIn, bytesOut: r.bytesOut }));
+}
+
 /** Aggregate global traffic trend by time bucket for the dashboard. */
 export async function getGlobalTrafficSeries(opts: { bucketMinutes?: number; since?: Date; userId?: number } = {}) {
   const db = await getDb();

@@ -1492,12 +1492,14 @@ async function seedRules(hostIds: number[], resources: DevResources, usersSeed: 
 
   for (const [index, ruleId] of allRuleIds.entries()) {
     const rule = rules[index];
-    for (let i = 24; i >= 0; i -= 1) {
+    // 近 24 小时每半小时一条，带点起伏：规则卡上的走势线不该是一条直线。
+    for (let i = 48; i >= 0; i -= 1) {
+      const wave = 0.55 + 0.45 * Math.abs(Math.sin(i * 0.55 + ruleId * 1.3));
       await insertAndGetId("traffic_stats", {
         ruleId,
         hostId: rule.hostId,
-        bytesIn: Math.round((40 + i * 3 + ruleId) * 1024 ** 2),
-        bytesOut: Math.round((55 + i * 4 + ruleId) * 1024 ** 2),
+        bytesIn: Math.round((40 + i * 1.5 + ruleId) * wave * 1024 ** 2),
+        bytesOut: Math.round((55 + i * 2 + ruleId) * wave * 1024 ** 2),
         connections: 20 + i + ruleId,
         recordedAt: minutesAgo(i * 30),
       });

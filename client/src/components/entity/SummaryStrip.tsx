@@ -72,7 +72,7 @@ export function SummaryStrip({
     <div
       role="group"
       aria-label={ariaLabel}
-      className={cn("fx-summary grid border-y border-[var(--fx-stroke-weak)]", grid, className)}
+      className={cn("fx-summary grid", grid, className)}
       data-testid="summary-strip"
     >
       {items.map((item) => {
@@ -107,7 +107,7 @@ export function SummaryStrip({
             ) : null}
           </>
         );
-        const cell = "fx-summary-cell flex min-w-0 flex-col gap-0.5 border-l border-[var(--fx-stroke-weak)] py-2.5 pl-3 pr-1 text-left first:border-l-0 first:pl-0.5 sm:py-3 sm:pl-4";
+        const cell = "fx-summary-cell flex min-w-0 flex-col gap-0.5 border-l border-[var(--fx-stroke-weak)] py-3 pl-3 pr-1 text-left first:border-l-0 first:pl-0 sm:py-3.5 sm:pl-4";
         return item.onClick ? (
           <button
             key={item.key}
