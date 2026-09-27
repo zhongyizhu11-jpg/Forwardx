@@ -13,6 +13,7 @@ import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth
  * 现在左边一个节点（名字在上、地址在下）、右边一个节点、中间一条线；线的颜色就是这条
  * 规则的状态（天蓝在跑 / 琥珀虚线降级 / 红虚线中断 / 灰虚线停用），线中间一枚小药丸写
  * 经过什么（转发工具 · 协议，或者中继的名字）。两头各自截断，方向由位置说，不靠箭头。
+ * 在跑的线上有两颗从左往右走的小点 —— 那是「有流量」，少动效模式下停住。
  *
  * 它和首页网络地图、需要关注列表里的那一小段线是同一套词汇：点是主机，线是关系。
  */
@@ -51,11 +52,18 @@ export function PathStrip({
         style={{ "--fx-pathstrip-color": `var(--fx-${descriptor.token})` } as React.CSSProperties}
         aria-hidden="true"
       >
+        {descriptor.token === "healthy" && !dashed ? (
+          <>
+            <i className="fx-pathstrip-flow" />
+            <i className="fx-pathstrip-flow" />
+          </>
+        ) : null}
         {hops.length > 0 ? hops.map((hop, index) => (
           <i key={`${hop}:${index}`} className="fx-pathstrip-hop" style={{ left: `${((index + 1) / (hops.length + 1)) * 100}%` }} />
         )) : null}
         {hopText || via ? (
-          <span className="fx-pathstrip-label">
+          // 手机上药丸里不写跳点名（CSS 藏掉），完整的一句放在 title 里；跳点本身还画在线上。
+          <span className="fx-pathstrip-label" title={[hopText ? `经 ${hopText}` : "", typeof via === "string" ? via : ""].filter(Boolean).join(" · ") || undefined}>
             {hopText ? <span className="fx-pathstrip-hops">经 {hopText}</span> : null}
             {hopText && via ? <span className="fx-pathstrip-sep">·</span> : null}
             {via}

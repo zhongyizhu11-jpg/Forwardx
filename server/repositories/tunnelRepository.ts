@@ -1959,6 +1959,53 @@ export async function getTunnelHopsByTunnelIds(tunnelIds: number[]) {
   return db.select().from(tunnelHops).where(inArray(tunnelHops.tunnelId, ids)).orderBy(asc(tunnelHops.tunnelId), asc(tunnelHops.seq));
 }
 
+/**
+ * 一批主机各自经过多少条隧道 —— 入口、出口或多级隧道的任一跳落在这台机器上都算。
+ *
+ * 给主机列表的卡片用：「这台机器在几条隧道里」。跳的信息存在 tunnel_hops 表里
+ * （一跳一行），所以用一次 LEFT JOIN 把整页主机相关的隧道 × 跳一次取回，再在 JS 里
+ * 按主机去重：同一条隧道里一台机器既是入口又是某一跳，也只算一次。
+ * 没有隧道的主机不会出现在结果里，调用方按 0 处理。
+ */
+export async function countTunnelsByHostIds(hostIds: readonly number[]): Promise<Map<number, number>> {
+  const counts = new Map<number, number>();
+  const db = await getDb();
+  if (!db) return counts;
+  const wanted = Array.from(new Set(hostIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return counts;
+  const wantedSet = new Set(wanted);
+  const rows = await db
+    .select({
+      tunnelId: tunnels.id,
+      entryHostId: tunnels.entryHostId,
+      exitHostId: tunnels.exitHostId,
+      hopHostId: tunnelHops.hostId,
+    })
+    .from(tunnels)
+    .leftJoin(tunnelHops, eq(tunnelHops.tunnelId, tunnels.id))
+    .where(or(
+      inArray(tunnels.entryHostId, wanted),
+      inArray(tunnels.exitHostId, wanted),
+      inArray(tunnelHops.hostId, wanted),
+    ));
+  const tunnelIdsByHost = new Map<number, Set<number>>();
+  for (const row of rows as any[]) {
+    const tunnelId = Number(row.tunnelId);
+    for (const raw of [row.entryHostId, row.exitHostId, row.hopHostId]) {
+      const hostId = Number(raw);
+      if (!wantedSet.has(hostId)) continue;
+      let set = tunnelIdsByHost.get(hostId);
+      if (!set) {
+        set = new Set<number>();
+        tunnelIdsByHost.set(hostId, set);
+      }
+      set.add(tunnelId);
+    }
+  }
+  for (const [hostId, set] of tunnelIdsByHost) counts.set(hostId, set.size);
+  return counts;
+}
+
 export async function getTunnelExitNodes(tunnelId: number) {
   const db = await getDb();
   if (!db) return [];

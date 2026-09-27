@@ -61,6 +61,7 @@ export default function SystemStatusHeader({ health, loading, isAdmin, onRetry, 
       key: "hosts",
       label: "主机",
       icon: Server,
+      iconTone: "sky" as const,
       value: health?.hosts.total ?? "—",
       hint: health ? (health.hosts.offline > 0 ? `${health.hosts.offline} 离线` : `${health.hosts.online} 在线`) : null,
       hintTone: health ? (health.hosts.offline > 0 ? "warn" : "healthy") : undefined,
@@ -69,6 +70,7 @@ export default function SystemStatusHeader({ health, loading, isAdmin, onRetry, 
       key: "links",
       label: "线路",
       icon: Route,
+      iconTone: "violet" as const,
       value: health?.links.total ?? "—",
       hint: health
         ? health.links.unhealthy > 0
@@ -83,6 +85,7 @@ export default function SystemStatusHeader({ health, loading, isAdmin, onRetry, 
       key: "forwards",
       label: "转发",
       icon: ArrowRightLeft,
+      iconTone: "teal" as const,
       value: health?.forwards.total ?? "—",
       hint: health
         ? health.forwards.stalled > 0

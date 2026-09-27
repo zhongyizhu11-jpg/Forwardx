@@ -113,7 +113,9 @@
 @media (pointer: coarse) { .fx-chip-scroller > button { min-height: 34px; } }
 .workspace-tab-scroll { position: absolute; top: 3px; bottom: 3px; z-index: 1; width: 32px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: calc(var(--fx-radius-control) - 2px); background: var(--fx-raised); color: var(--fx-text); box-shadow: var(--fx-elevation-popover); }
 .workspace-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
-.workspace-filter-search { min-width: 0; flex: 1 1 240px; }
+/* 搜索框不铺满：桌面上最多 340px（用户要它小），新建按钮靠最右 */
+.workspace-filter-search { min-width: 0; flex: 1 1 240px; max-width: 340px; }
+.workspace-filter-action { margin-left: auto; }
 .workspace-filter-search > div { width: 100%; }
 .workspace-filter-search input { height: 36px; font-size: 14px; background: var(--fx-surface); }
 .workspace-filter-options { flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -436,13 +438,18 @@
   */
   .workspace-filter {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     /* 筛选条件那一行不写进模板：写进去就算收起来也有一道 8px 的空行，用隐式行只在展开时出现 */
-    grid-template-areas: "filter search action";
-    column-gap: 6px;
+    /* 搜索靠左顶到头（效果图），筛选那个圆钮在它右边，再右边是这一页的主操作 */
+    grid-template-areas: "search filter action";
+    column-gap: 8px;
     row-gap: 8px;
   }
-  .workspace-filter > [data-slot="button"] { grid-area: filter; min-width: 34px; padding-inline: 9px; }
+  .workspace-filter > [data-slot="button"] { grid-area: filter; min-width: 36px; padding-inline: 0; }
+  /* 和搜索胶囊同一种灰底、同一个 36px 高，看着是一组 */
+  .workspace-filter > .fx-filter-pill { width: 36px; height: 36px !important; min-height: 36px; border-color: transparent; background: var(--fx-l2-group); color: var(--fx-text-secondary); }
+  .workspace-filter-search { max-width: none; }
+  .workspace-filter > .fx-filter-pill[data-variant="secondary"] { background: var(--fx-primary-soft, var(--fx-l2-group)); color: var(--fx-accent); }
   .workspace-filter-options { grid-column: 1 / -1; }
   .workspace-filter-action { grid-area: action; }
   .workspace-filter-search { grid-area: search; min-width: 0; }
@@ -461,7 +468,7 @@
   .workspace-filter > [data-slot="button"],
   .workspace-filter-action [data-slot="button"],
   .workspace-filter-options [data-slot="button"] {
-    position: relative; min-height: 34px; height: 34px;
+    position: relative; min-height: 36px; height: 36px;
   }
   .workspace-filter > [data-slot="button"]::after,
   .workspace-filter-action [data-slot="button"]::after {
@@ -1149,15 +1156,16 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
   */
   .fx-tabbar {
     position: fixed;
-    inset-inline: 14px;
-    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    /* 用户说太大：从离边 14、高 62 收到离边 22、高 52，图标 22、字 10 —— 一枚胶囊，不是一条带子 */
+    inset-inline: 22px;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     z-index: var(--fx-z-sticky); /* 和顶栏同一层：都是常驻外壳，都该被对话框盖住 */
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
     gap: 2px;
-    height: 62px;
-    padding: 6px;
+    height: 52px;
+    padding: 4px;
     border: 1px solid var(--fx-stroke-weak);
     border-radius: var(--fx-radius-pill);
     background: var(--fx-glass-strong);
@@ -1171,8 +1179,8 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 2px;
-    height: 48px;
+    gap: 1px;
+    height: 44px;
     min-width: 0;
     padding: 0 2px;
     border-radius: var(--fx-radius-pill);
@@ -1191,21 +1199,22 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 10.5px;
+    font-size: 10px;
     line-height: 12px;
     letter-spacing: 0.01em;
   }
   .fx-tabbar-item-active .fx-tabbar-label { font-weight: 600; }
+  .fx-tabbar-item > svg { width: 21px; height: 21px; }
 
   /*
-    有标签栏时，内容底部要让出胶囊的高度（14 + 62 + 14 = 90px），否则最后一张卡
+    有标签栏时，内容底部要让出胶囊的高度（12 + 52 + 12 = 76px），否则最后一张卡
     有一半压在栏底下。
 
     改的是变量不是 padding：index.css 里那条 [data-mobile-main] 带 !important，
     直接写 padding-bottom 压不过它（实测还是 12px）。自定义属性按正常层叠走，
     所以这里设一下变量就够了，安全区那一份由那条规则自己加。
   */
-  .workspace-has-tabbar { --forwardx-mobile-bottom-inset: 90px; }
+  .workspace-has-tabbar { --forwardx-mobile-bottom-inset: 76px; }
 
   /* 有页面自己的导航栏时，顶部不再预留常驻顶栏的高度 */
   .workspace-has-iosnav { --forwardx-mobile-top-inset: 12px; }
@@ -1501,25 +1510,130 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
   路径条：左节点 ─ 线 ─ 右节点。线用 background 画（虚线用 repeating-linear-gradient），
   颜色由 --fx-pathstrip-color 给，是这条规则的状态色；正常那一档走天蓝渐变。
 */
-.fx-pathstrip { display: grid; grid-template-columns: minmax(0, 1fr) minmax(64px, max-content) minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
+/*
+  用 flex 不用 grid：两头的节点按自己的内容宽度来（放得下就不截），中间的线拿剩下的全部；
+  放不下时两头按比例缩、各自省略，线上的药丸永远完整 —— 它写的是「怎么转的」，是这条里
+  最不能缺的字。grid 的 auto 列会先缩到最小再把空间给 1fr，结果是名字被截成「HK ent…」。
+*/
+.fx-pathstrip { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.fx-pathstrip-node { flex: 0 1 auto; max-width: min(46%, 200px); }
+.fx-pathstrip-wire { flex: 1 0 auto; }
+@media (max-width: 767px) { .fx-pathstrip-node { max-width: 42%; } }
 .fx-pathstrip-node { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .fx-pathstrip-node-end { align-items: flex-end; text-align: right; }
 .fx-pathstrip-node > b { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; line-height: 18px; color: var(--fx-text); }
 .fx-pathstrip-node > span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--fx-font-mono); font-size: 11px; line-height: 16px; color: var(--fx-text-muted); }
 .fx-pathstrip-node > span > button { max-width: 100%; }
-.fx-pathstrip-wire { position: relative; display: flex; align-items: center; justify-content: center; height: 28px; min-width: 0; padding-inline: 10px; box-sizing: border-box; }
+.fx-pathstrip-wire { position: relative; display: flex; align-items: center; justify-content: center; height: 28px; min-width: 56px; padding-inline: 12px; box-sizing: border-box; }
 .fx-pathstrip-wire::before { content: ""; position: absolute; inset-inline: 0; top: 50%; height: 2px; margin-top: -1px; border-radius: 2px; background: var(--fx-pathstrip-color, var(--fx-accent)); }
 .fx-pathstrip[data-health="healthy"] .fx-pathstrip-wire::before { background: var(--fx-primary-gradient); }
 .fx-pathstrip-wire-dashed::before { background: repeating-linear-gradient(90deg, var(--fx-pathstrip-color, var(--fx-standby)) 0 6px, transparent 6px 10px) !important; }
-.fx-pathstrip-wire::after { content: ""; position: absolute; right: -1px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 999px; background: var(--fx-pathstrip-color, var(--fx-accent)); }
+/* 正常在跑的线上两颗从左往右走的小点：这是「有流量」的意思。系统要求少动效时停住不动。 */
+.fx-pathstrip-flow { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 999px; background: var(--fx-l1-surface); border: 2px solid var(--fx-primary-fill); left: 8%; animation: fx-pathstrip-flow 3.2s linear infinite; }
+.fx-pathstrip-flow + .fx-pathstrip-flow { animation-delay: -1.6s; }
+@keyframes fx-pathstrip-flow { from { left: 4%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } to { left: 96%; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .fx-pathstrip-flow { animation: none; } .fx-pathstrip-flow + .fx-pathstrip-flow { left: 88%; } }
 .fx-pathstrip-hop { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 999px; background: var(--fx-l1-surface); border: 2px solid var(--fx-pathstrip-color, var(--fx-accent)); }
 .fx-pathstrip-label { position: relative; z-index: 1; display: inline-flex; max-width: 160px; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--fx-radius-pill); border: 1px solid var(--fx-stroke-weak); background: var(--fx-l1-surface); font-size: 11px; line-height: 14px; font-weight: 600; color: var(--fx-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fx-pathstrip-label > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .fx-pathstrip-hops { color: var(--fx-text); }
 .fx-pathstrip-sep { color: var(--fx-text-muted); }
+/*
+  手机上药丸只写「工具 · 协议」：跳点名一进药丸就有 160px，两头的地址各剩八十来像素，
+  「hk-entry.dev:443」都放不下。跳点还是线上的小圆点，名字在药丸的 title 和详情页里。
+*/
+/* 按路径条自己的宽度判断（桌面三列卡片里的路径条和手机上一样窄），不按视口 */
+.fx-pathstrip { container-type: inline-size; }
+@container (max-width: 520px) {
+  .fx-pathstrip-hops, .fx-pathstrip-sep { display: none; }
+  .fx-pathstrip-label { max-width: 132px; }
+  .fx-pathstrip-wire { min-width: 48px; padding-inline: 10px; }
+}
+@media (max-width: 767px) {
+  .fx-pathstrip-hops, .fx-pathstrip-sep { display: none; }
+  .fx-pathstrip-label { max-width: 132px; }
+  .fx-pathstrip-wire { min-width: 48px; padding-inline: 10px; }
+}
 
 /* 列表行里的一小段线：「HK entry 01 ──── SG relay 03」 */
 .fx-pathline { display: inline-flex; min-width: 0; align-items: center; gap: 6px; }
 .fx-pathline-ln { position: relative; flex: 1 1 18px; min-width: 18px; height: 2px; border-radius: 2px; background: var(--fx-pathline-color, var(--fx-accent)); }
 .fx-pathline-ln-dashed { background: repeating-linear-gradient(90deg, var(--fx-pathline-color, var(--fx-standby)) 0 5px, transparent 5px 9px); }
 .fx-pathline-ln::after { content: ""; position: absolute; right: -1px; top: -2px; width: 6px; height: 6px; border-radius: 999px; background: var(--fx-pathline-color, var(--fx-accent)); }
+
+/*
+  筛选药丸（效果图那一排）：32px 高、细描边、圆角 pill；选中的那一枚是主色渐变白字。
+  手机上一行横滑不换行（复用 .fx-chip-scroller 的滚动规则），桌面上换行。
+*/
+.fx-chip { display: inline-flex; height: 32px; flex: none; align-items: center; gap: 6px; padding: 0 13px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-pill); background: var(--fx-l1-surface); font-size: 13px; line-height: 1; color: var(--fx-text-secondary); white-space: nowrap; transition: color .15s, background-color .15s; }
+.fx-chip:hover { color: var(--fx-text); }
+.fx-chip-count { font-variant-numeric: tabular-nums; opacity: .7; }
+.fx-chip-on { border-color: var(--fx-primary-stroke); background: var(--fx-primary-fill); background-image: var(--fx-primary-gradient); color: var(--fx-primary-text); font-weight: 600; }
+.fx-chip-on:hover { color: var(--fx-primary-text); }
+@media (pointer: coarse) { .fx-chip-scroller > .fx-chip { min-height: 32px; } }
+
+/* 搜索框：40px 的灰底 pill，不画描边（效果图）。 */
+.fx-search-pill { height: 36px !important; border-radius: var(--fx-radius-pill) !important; border-color: transparent !important; background: var(--fx-l2-group) !important; padding-left: 34px !important; font-size: 13.5px !important; }
+.fx-search-pill:focus-visible { border-color: var(--fx-primary-stroke) !important; }
+/* 输入框自己不定位：它在 DOM 里排在放大镜后面，一旦 relative 就会把放大镜盖住 */
+.fx-search-pill { position: static !important; }
+
+/*
+  规则卡底部：一条 4px 的流量占比条（这条规则占当前这一页总流量的份额），下面一行
+  「累计总量  ↓ 近 24H 入 · ↑ 近 24H 出」；切到备线 / 中断时右边那段换成状态色的一句话。
+*/
+.fx-rule-bar { height: 4px; overflow: hidden; border-radius: 2px; background: var(--fx-l2-group); }
+.fx-rule-bar > i { display: block; height: 100%; min-width: 4px; border-radius: 2px; background: var(--fx-primary-fill); background-image: var(--fx-primary-gradient); }
+.fx-rule-foot { display: flex; min-width: 0; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--fx-stroke-weak); font-size: 12.5px; line-height: 16px; color: var(--fx-text-muted); }
+.fx-rule-foot > b { flex: none; font-size: 13.5px; font-weight: 600; color: var(--fx-text); font-variant-numeric: tabular-nums; }
+.fx-rule-foot-detail { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fx-rule-foot-detail[data-tone="warn"] { color: var(--fx-warn-text); font-weight: 500; }
+.fx-rule-foot-detail[data-tone="down"] { color: var(--fx-down-text); font-weight: 500; }
+.fx-rule-foot-detail[data-tone="standby"] { color: var(--fx-text-muted); }
+button.fx-rule-foot-detail { text-align: left; }
+.fx-rule-foot-aside { display: inline-flex; flex: none; align-items: center; gap: 10px; margin-left: auto; }
+/* 线路组按规矩在走：右下角一小段绿字，点开线路面板。切了线的那种走 .fx-rule-foot-detail 的状态色。 */
+.fx-rule-foot-link { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--fx-healthy-text); }
+.fx-rule-foot-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* 名字后面的「订阅」两个字：一个身份，不是一条状态，所以是裸的彩色小字，不套框。 */
+.fx-rule-mark { display: inline-flex; flex: none; align-items: center; gap: 2px; font-size: 11px; line-height: 16px; font-weight: 500; color: var(--fx-path); }
+.fx-rule-mark[data-muted] { color: var(--fx-text-muted); }
+
+/* 主机卡：三个规格格（无图标、标签在上）和底部一行「速率 …… N 条转发 · N 条线路经过」 */
+.fx-host-spec { display: flex; min-width: 0; flex-direction: column; gap: 1px; border-radius: 12px; background: var(--fx-l2-group); padding: 7px 10px; }
+.fx-host-spec > i { font-style: normal; font-size: 11px; line-height: 14px; color: var(--fx-text-muted); }
+.fx-host-spec > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; line-height: 20px; font-weight: 600; color: var(--fx-text); font-variant-numeric: tabular-nums; }
+.fx-host-spec > b[data-tone="warn"] { color: var(--fx-warn-text); }
+.fx-host-spec > b[data-tone="down"] { color: var(--fx-down-text); }
+.fx-host-spec > b[data-muted] { color: var(--fx-text-muted); font-weight: 500; }
+.fx-host-foot { display: flex; min-width: 0; align-items: center; gap: 10px; font-size: 12.5px; line-height: 16px; color: var(--fx-text-secondary); font-variant-numeric: tabular-nums; }
+.fx-host-foot > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-host-foot-links { margin-left: auto; flex: none; color: var(--fx-accent); }
+.fx-host-foot-links[data-muted] { color: var(--fx-text-muted); }
+.fx-host-foot[data-tone="down"] > span:first-child { color: var(--fx-down-text); }
+.fx-host-foot[data-tone="warn"] > span:first-child { color: var(--fx-warn-text); }
+
+/* ── 小图标格（IconTile）：圆角方块 + 渐变底 + 白色线条图标，一道很浅的顶部高光让它有一点玻璃的厚度 ── */
+.fx-tile { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; color: var(--fx-tile-text); background: var(--fx-tile-sky); box-shadow: inset 0 1px 0 rgb(255 255 255 / 38%), 0 4px 10px -6px rgb(0 0 0 / 28%); }
+.fx-tile[data-tone="violet"] { background: var(--fx-tile-violet); }
+.fx-tile[data-tone="teal"] { background: var(--fx-tile-teal); }
+.fx-tile[data-tone="orange"] { background: var(--fx-tile-orange); }
+.fx-tile[data-tone="pink"] { background: var(--fx-tile-pink); }
+.fx-tile[data-tone="green"] { background: var(--fx-tile-green); }
+.fx-tile[data-size="xs"] { width: 20px; height: 20px; border-radius: 6px; }
+.fx-tile[data-size="xs"] > svg { width: 12px; height: 12px; }
+.fx-tile[data-size="sm"] { width: 28px; height: 28px; border-radius: 8px; }
+.fx-tile[data-size="sm"] > svg { width: 15px; height: 15px; }
+.fx-tile[data-size="md"] { width: 36px; height: 36px; border-radius: 10px; }
+.fx-tile[data-size="md"] > svg { width: 19px; height: 19px; }
+.fx-tile[data-size="lg"] { width: 40px; height: 40px; border-radius: 11px; }
+.fx-tile[data-size="lg"] > svg { width: 21px; height: 21px; }
+
+/*
+  触摸屏上全局 button 有 44px 的最小高度（index.css）。这些是行内的小按钮，命中区靠周围留白，
+  不能各自撑成 44 高：地址那一行会把路径条顶高 30px，卡底那一行会变成两倍高。
+*/
+.fx-pathstrip-node button, .fx-rule-foot button, .fx-rule-foot-link, .fx-chip { min-height: 0; }
+.fx-chip { min-height: 32px; }
+/* 搜索栏那一行最右边的「新建 / 添加」：和 36px 的搜索胶囊一样高，触摸屏的 44 最小高度不套在它身上 */
+.fx-row-action { height: 36px; min-height: 36px; }

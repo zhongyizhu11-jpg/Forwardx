@@ -129,6 +129,17 @@
   --fx-primary-text: #ffffff;
   --fx-primary-stroke: rgb(143 194 235 / 66%);
   --fx-primary-shadow: 0 8px 18px -10px rgb(86 170 242 / 70%);
+  /*
+    小图标格（IconTile）的几档底色：iOS「设置」那种圆角方块。sky 就是主色渐变，其余是固定色相，
+    是身份不是状态（主机 / 线路 / 转发各一档），不会因为出事变色。
+  */
+  --fx-tile-sky: var(--fx-primary-gradient);
+  --fx-tile-violet: linear-gradient(135deg, #a78bfa 0%, #7c6cf6 100%);
+  --fx-tile-teal: linear-gradient(135deg, #5eead4 0%, #22b8cf 100%);
+  --fx-tile-orange: linear-gradient(135deg, #fdba74 0%, #f5923e 100%);
+  --fx-tile-pink: linear-gradient(135deg, #f9a8d4 0%, #ec6aa8 100%);
+  --fx-tile-green: linear-gradient(135deg, #86efac 0%, #34c07a 100%);
+  --fx-tile-text: #ffffff;
   /* 毛玻璃：顶栏、底部标签栏、分段控件、弹层用。底色半透明 + 背后模糊，见 workspace.css 的 .fx-glass */
   --fx-glass: rgb(255 255 255 / 66%);
   --fx-glass-strong: rgb(255 255 255 / 78%);
@@ -481,6 +492,13 @@
   --fx-primary-text: #ffffff;
   --fx-primary-stroke: rgb(102 182 255 / 40%);
   --fx-primary-shadow: 0 8px 18px -10px rgb(47 134 214 / 80%);
+  --fx-tile-sky: var(--fx-primary-gradient);
+  --fx-tile-violet: linear-gradient(135deg, #8b78f0 0%, #6558e0 100%);
+  --fx-tile-teal: linear-gradient(135deg, #3fd1bd 0%, #1899b3 100%);
+  --fx-tile-orange: linear-gradient(135deg, #f7a35a 0%, #e07a24 100%);
+  --fx-tile-pink: linear-gradient(135deg, #f08cc0 0%, #d64f90 100%);
+  --fx-tile-green: linear-gradient(135deg, #5fd899 0%, #22a765 100%);
+  --fx-tile-text: #ffffff;
   --fx-glass: rgb(38 38 38 / 66%);
   --fx-glass-strong: rgb(42 42 42 / 78%);
   --fx-glass-blur: saturate(160%) blur(20px);

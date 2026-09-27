@@ -5,7 +5,6 @@ import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { InlineLinkCreator } from "@/features/links/InlineLinkCreator";
 import { describeLinkKind, linkKindForRouteMode, linkKindRequiresAdmin } from "@/features/links/inlineLinkDraft";
 import FilterToolbar from "@/components/FilterToolbar";
-import TrafficOverview from "@/components/TrafficOverview";
 import { useAuth } from "@/_core/hooks/useAuth";
 import SectionTransition from "@/components/SectionTransition";
 import { forwardGroupModeOf } from "@shared/forwardTypes";
@@ -53,6 +52,7 @@ import {
 import { OptimisticSwitch, Switch } from "@/components/ui/switch";
 import { Tabs } from "@/components/ui/tabs";
 import { SlidingTabsList, type SlidingTabItem } from "@/components/ui/sliding-tabs";
+import { FilterChips, type FilterChipItem } from "@/components/ui/filter-chips";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Table,
@@ -108,6 +108,7 @@ import {
 import { FAILOVER_TONE_CLASS, describeFailoverLineDisplay } from "@/lib/failoverLineDisplay";
 import { RouteGroupSheet } from "@/features/rules/RouteGroupSheet";
 import { EntityActions } from "@/components/entity/EntityActions";
+import { IconTile, type IconTileTone } from "@/components/entity/IconTile";
 import { RouteGroupFields, routeGroupPayload, type RouteHostOption } from "@/features/rules/RouteGroupFields";
 import { docsUrl } from "@/lib/docsLinks";
 import { ROUTE_MODE_HINTS } from "@/features/rules/routeModeHints";
@@ -4102,12 +4103,12 @@ function RulesContent() {
   }, [hasFreshRuleCategoryCounts, liveRuleCategoryCounts, ruleCategoryCountsCacheKey]);
   const ruleCategoryCountsReady = hasFreshRuleCategoryCounts || stableRuleCategoryCounts.ready;
   const ruleCategoryCounts = hasFreshRuleCategoryCounts ? liveRuleCategoryCounts : stableRuleCategoryCounts.counts;
-  const ruleCategoryItems = useMemo<SlidingTabItem<RuleCategory>[]>(() => [
-    { value: "all", label: "全部", icon: LayoutGrid, badge: ruleCategoryCountsReady ? ruleCategoryCounts.all : null },
-    { value: "local", label: desktopRuleTypeLabels.local, icon: ArrowRightLeft, badge: ruleCategoryCountsReady ? ruleCategoryCounts.local : null },
-    { value: "tunnel", label: desktopRuleTypeLabels.tunnel, icon: Network, badge: ruleCategoryCountsReady ? ruleCategoryCounts.tunnel : null },
-    { value: "chain", label: desktopRuleTypeLabels.chain, icon: GitBranch, badge: ruleCategoryCountsReady ? ruleCategoryCounts.chain : null },
-    { value: "group", label: desktopRuleTypeLabels.group, icon: Layers3, badge: ruleCategoryCountsReady ? ruleCategoryCounts.group : null },
+  const ruleCategoryItems = useMemo<FilterChipItem<RuleCategory>[]>(() => [
+    { value: "all", label: "全部", count: ruleCategoryCountsReady ? ruleCategoryCounts.all : null },
+    { value: "local", label: desktopRuleTypeLabels.local, count: ruleCategoryCountsReady ? ruleCategoryCounts.local : null },
+    { value: "tunnel", label: desktopRuleTypeLabels.tunnel, count: ruleCategoryCountsReady ? ruleCategoryCounts.tunnel : null },
+    { value: "chain", label: desktopRuleTypeLabels.chain, count: ruleCategoryCountsReady ? ruleCategoryCounts.chain : null },
+    { value: "group", label: desktopRuleTypeLabels.group, count: ruleCategoryCountsReady ? ruleCategoryCounts.group : null },
   ], [ruleCategoryCounts, ruleCategoryCountsReady]);
   const visibleRuleIdsForMetrics = useMemo(() => (
     Array.from(new Set(filteredRules.map((rule: any) => Number(rule.id)).filter((id: number) => Number.isInteger(id) && id > 0)))
@@ -4321,6 +4322,12 @@ function RulesContent() {
     });
     return m;
   }, [totalTrafficSummaryRows]);
+  /* 这一页所有规则的累计流量之和：每张卡上那条 4px 的占比条按它算份额。 */
+  const pageTotalTrafficSum = useMemo(() => {
+    let sum = 0;
+    totalTrafficByRule.forEach((t) => { sum += Number(t.bytesIn || 0) + Number(t.bytesOut || 0); });
+    return sum;
+  }, [totalTrafficByRule]);
   const pageDailyTrafficTotals = useMemo(() => {
     let bytesIn = 0;
     let bytesOut = 0;
@@ -5877,7 +5884,7 @@ function RulesContent() {
       >
         <span className="min-w-0 truncate">{primaryEntry.text}</span>
         {extraEntries > 0 ? <span className="shrink-0 text-muted-foreground">+{extraEntries}</span> : null}
-        {primaryEntry.copyable ? <Copy className="h-3 w-3 shrink-0 text-muted-foreground opacity-60 group-hover:opacity-100" aria-hidden="true" /> : null}
+        {primaryEntry.copyable ? <Copy className="hidden h-3 w-3 shrink-0 text-muted-foreground opacity-60 group-hover:opacity-100 sm:inline" aria-hidden="true" /> : null}
       </button>
     ) : null;
     return (
@@ -5995,17 +6002,20 @@ function RulesContent() {
    * 「在订阅里」这一小块。没绑就什么都不显示 —— 大多数转发跟订阅无关，
    * 给每一行都挂个「未加入订阅」只是噪音。
    */
-  const renderSubscriptionBadge = (rule: any) => {
+  const renderSubscriptionBadge = (rule: any, placement: "table" | "card" = "table") => {
     if (!subscriptionAllowed) return null;
     const nodeId = Number(rule?.proxyNodeId || 0);
     if (!nodeId) return null;
     const nodeName = proxyNodeNameById.get(nodeId) || "落地节点";
     const visible = rule?.proxyNodeVisible !== false;
+    const drifted = driftedRuleIds.has(Number(rule?.id || 0));
+    // 卡片上正常的「订阅」写在名字后面（renderSubscriptionMark），这里只剩指向已变那种要人看的。
+    if (placement === "card" && !drifted) return null;
     /*
       绑定和现实对不上了：这条线路还在订阅里，但客户端会拿着「nodeName」那个落地的
       凭据去连现在这个目标。比「少一条线路」严重，所以用警示色，别混在正常的订阅角标里。
     */
-    if (driftedRuleIds.has(Number(rule?.id || 0))) {
+    if (drifted) {
       return (
         <Badge
           variant="outline"
@@ -6030,6 +6040,33 @@ function RulesContent() {
         <Zap className="mr-1 h-3 w-3" />
         {visible ? "订阅" : "订阅已隐藏"}
       </Badge>
+    );
+  };
+
+  /**
+   * 卡片名字后面那两个字「订阅」：说明这条转发在客户端订阅里。
+   *
+   * 原来是名字下面单独一行的徽标 —— 卡上为它多 24px，看着像又一条状态。它其实是这条
+   * 转发的一个身份，跟名字待在一起就够了；指向已变那种要人处理的仍走 renderSubscriptionBadge。
+   */
+  const renderSubscriptionMark = (rule: any) => {
+    if (!subscriptionAllowed) return null;
+    const nodeId = Number(rule?.proxyNodeId || 0);
+    if (!nodeId) return null;
+    if (driftedRuleIds.has(Number(rule?.id || 0))) return null;
+    const nodeName = proxyNodeNameById.get(nodeId) || "落地节点";
+    const visible = rule?.proxyNodeVisible !== false;
+    return (
+      <span
+        className="fx-rule-mark"
+        data-muted={visible ? undefined : ""}
+        title={visible
+          ? `这条转发以「${nodeName}」的身份出现在你的订阅里。改目标、停用或删掉它，客户端里那条线路会跟着变。`
+          : `已绑定「${nodeName}」，但设成了不进订阅。转发照常跑，客户端里看不到它。`}
+      >
+        <Zap className="h-3 w-3" aria-hidden="true" />
+        {visible ? "订阅" : "订阅已隐藏"}
+      </span>
     );
   };
 
@@ -6206,6 +6243,73 @@ function RulesContent() {
         {renderRuleDailyTrafficValue(rule, "in")}
         {renderRuleDailyTrafficValue(rule, "out")}
       </div>
+    );
+  };
+
+  /*
+    卡底（效果图）：一条 4px 的占比条（这条规则占本页总流量的份额），下面一行
+    「累计总量  ↓ 24H 入 · ↑ 24H 出」。线路组切到备线、或规则出错时，右边那段换成
+    状态色的一句话（点它打开线路面板）—— 一张卡上最要紧的一句话就该在这个位置。
+  */
+  const renderRuleFooter = (rule: any, withLatency = false) => {
+    const total = totalTrafficByRule.get(rule.id);
+    const totalBytes = Number(total?.bytesIn || 0) + Number(total?.bytesOut || 0);
+    const daily = dailyTrafficByRule.get(rule.id);
+    const dailyBytes = Number(daily?.bytesIn || 0) + Number(daily?.bytesOut || 0);
+    const share = pageTotalTrafficSum > 0 ? Math.max(2, Math.min(100, (totalBytes / pageTotalTrafficSum) * 100)) : 0;
+    const failover = describeFailoverLineDisplay(rule, hostById.get(Number(rule.hostId)));
+    const visual = ruleVisualStatuses.get(Number(rule.id))?.display || resolveRuleVisualStatus(rule);
+    // 线路组按规矩在走时不占卡上的一行：右下角一小段绿色的字，点开是线路面板。
+    const failoverAside = failover && failover.tone === "normal" ? (
+      <button
+        type="button"
+        className="fx-rule-foot-link"
+        title={failover.title}
+        aria-label={`线路组：${failover.title}`}
+        onClick={() => setPolicyRuleId(Number(rule.id))}
+      >
+        <GitBranch className="h-3 w-3" aria-hidden="true" />
+        {failover.text}
+      </button>
+    ) : null;
+    let detail: ReactNode;
+    if (failover && failover.tone !== "normal") {
+      detail = (
+        <button
+          type="button"
+          className="fx-rule-foot-detail"
+          data-tone={failover.tone === "warn" ? "warn" : failover.tone === "muted" ? "standby" : "warn"}
+          title={failover.title}
+          onClick={() => setPolicyRuleId(Number(rule.id))}
+        >
+          {failover.text}
+        </button>
+      );
+    } else if (visual?.state === "error") {
+      detail = <span className="fx-rule-foot-detail" data-tone="down" title={visual.title}>{visual.title}</span>;
+    } else if (visual?.state === "disabled") {
+      detail = <span className="fx-rule-foot-detail" data-tone="standby">已停用</span>;
+    } else if (dailyBytes > 0) {
+      detail = <span className="fx-rule-foot-detail" title="近 24 小时入向 · 出向">↓ {formatBytes(Number(daily?.bytesIn || 0))} · ↑ {formatBytes(Number(daily?.bytesOut || 0))}</span>;
+    } else {
+      detail = <span className="fx-rule-foot-detail">近 24H 没有流量</span>;
+    }
+    return (
+      <>
+        {totalBytes > 0 ? (
+          <div className="fx-rule-bar" aria-hidden="true"><i style={{ width: `${share}%` }} /></div>
+        ) : null}
+        <div className="fx-rule-foot">
+          <b title={total ? `累计入向 ${formatBytes(Number(total.bytesIn || 0))} / 出向 ${formatBytes(Number(total.bytesOut || 0))}` : undefined}>{formatBytes(totalBytes)}</b>
+          {detail}
+          {failoverAside || withLatency ? (
+            <span className="fx-rule-foot-aside">
+              {failoverAside}
+              {withLatency ? renderLatestLatency(rule) : null}
+            </span>
+          ) : null}
+        </div>
+      </>
     );
   };
 
@@ -6447,6 +6551,21 @@ function RulesContent() {
 
     类型该由图标形状和旁边的文字说，颜色只留给状态。
   */
+  /*
+    卡头和分组标题上的小图标格：四类各一个颜色 —— 端口转发天蓝（主色）、隧道紫、转发链青、
+    转发组橙。这是身份不是状态：卡片出了事由状态点说，格子不变色。
+  */
+  const RULE_TILE: Record<RuleGroupType, { icon: typeof ArrowRightLeft; tone: IconTileTone }> = {
+    local: { icon: ArrowRightLeft, tone: "sky" },
+    tunnel: { icon: Network, tone: "violet" },
+    chain: { icon: GitBranch, tone: "teal" },
+    group: { icon: Layers3, tone: "orange" },
+  };
+  const renderRuleTile = (type: RuleGroupType, size: "xs" | "sm" | "md" = "md") => {
+    const spec = RULE_TILE[type] || RULE_TILE.local;
+    return <IconTile icon={spec.icon} tone={spec.tone} size={size} />;
+  };
+
   function renderRuleGroupIcon(type: RuleGroupType, className = "h-4 w-4") {
     const tone = `${className} text-muted-foreground`;
     if (type === "chain") return <GitBranch className={tone} />;
@@ -6464,11 +6583,12 @@ function RulesContent() {
         className="fx-rule-group-header flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={() => toggleRuleGroupCollapsed(group.type)}
       >
-        <ChevronRight className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${collapsed ? "" : "rotate-90"}`} />
-        {renderRuleGroupIcon(group.type, compact ? "h-3.5 w-3.5" : "h-4 w-4")}
-        <span className="truncate text-sm font-semibold">{group.label}</span>
-        <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-[10px]">{group.rules.length}</Badge>
+        {/* 一枚这类规则的小图标格、名字、个数、一句说明；折叠箭头在最右边（iOS 的展开样式） */}
+        {renderRuleTile(group.type, "xs")}
+        <span className="truncate text-[15px] font-medium">{group.label}</span>
+        <Badge variant="outline" className="h-5 min-w-5 shrink-0 justify-center rounded-full px-1.5 text-[11px] font-normal text-muted-foreground">{group.rules.length}</Badge>
         {!compact && <span className="min-w-0 truncate text-xs text-muted-foreground">{ruleTypeDescriptions[group.type]}</span>}
+        <ChevronRight className={`ml-auto h-4 w-4 shrink-0 text-muted-foreground/60 transition-transform duration-200 ${collapsed ? "" : "rotate-90"}`} />
       </button>
     );
   };
@@ -6570,13 +6690,14 @@ function RulesContent() {
           title={!supported ? unsupportedProtocolTitle : undefined}
         >
           <CardContent className="action-card-content space-y-2.5 p-3">
-            <div className="flex min-w-0 items-start justify-between gap-2">
-              <div className="flex min-w-0 items-start gap-2">
-                <div className="mt-1.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2.5">
+                {renderRuleTile(getRuleCategory(rule, forwardGroupById) as RuleGroupType, "sm")}
+                <div className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
                   {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{rule.name}</div>
+                  <div className="flex min-w-0 items-center gap-1.5"><span className="truncate text-[15px] font-medium">{rule.name}</span>{renderSubscriptionMark(rule)}</div>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
@@ -6598,14 +6719,13 @@ function RulesContent() {
             </div>
 
             {/*
-              路径条上的小药丸已经写了转发工具和协议，这一行只留它说不了的：主备、内核转发的
-              提醒、订阅来源、协议不支持。没有就整行不出现。
+              路径条上的小药丸已经写了转发工具和协议，线路组在卡底，「订阅」在名字后面；这一行
+              只留要人处理的：内核转发的提醒、订阅指向已变、协议不支持。没有就整行不出现。
             */}
-            {(renderFailoverLineBadge(rule) || renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule)) || renderSubscriptionBadge(rule) || !supported) ? (
+            {(renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule)) || renderSubscriptionBadge(rule, "card") || !supported) ? (
             <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-              {renderFailoverLineBadge(rule)}
               {renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule))}
-              {renderSubscriptionBadge(rule)}
+              {renderSubscriptionBadge(rule, "card")}
               {!supported && (
                 <Badge variant="outline" className="h-5 border-destructive/30 px-1.5 text-[10px] text-destructive">
                   {protocolUnsupportedLabel(protocolKey)} 不支持
@@ -6620,17 +6740,7 @@ function RulesContent() {
               </div>
             )}
 
-            {/*
-              「累计流量」「24H」原来各带一行标题、占两行栅格。数字自带单位，
-              标题是在解释一个本来就看得懂的东西，删掉之后这一块从 4 行变 1 行。
-            */}
-            {/* 流量和上面的徽标是同一条规则的属性，中间不需要分界线。 */}
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
-              {renderMobileRuleTotalTraffic(rule)}
-              <span className="text-border">·</span>
-              {renderRuleDailyTrafficValue(rule, "in")}
-              {renderRuleDailyTrafficValue(rule, "out")}
-            </div>
+            {renderRuleFooter(rule)}
           </CardContent>
         </Card>
       );
@@ -6649,12 +6759,13 @@ function RulesContent() {
       >
         <CardContent className="action-card-content space-y-3 p-4">
           <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-start gap-2">
-              <div className="mt-2 flex h-4 w-4 flex-shrink-0 items-center justify-center">
+            <div className="flex min-w-0 items-center gap-2.5">
+              {renderRuleTile(getRuleCategory(rule, forwardGroupById) as RuleGroupType, "md")}
+              <div className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
                 {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
               </div>
               <div className="min-w-0">
-                <div className="truncate font-medium">{rule.name}</div>
+                <div className="flex min-w-0 items-center gap-1.5"><span className="truncate font-medium">{rule.name}</span>{renderSubscriptionMark(rule)}</div>
                 {user?.role === "admin" && (
                   <div className="mt-1 text-xs text-muted-foreground">用户: {getRuleOwnerName(rule)}</div>
                 )}
@@ -6689,51 +6800,73 @@ function RulesContent() {
           </div>
           {/*
             原来这里是「链路 / 协议」两格：转发工具的徽标和协议的徽标。路径条上的小药丸已经
-            写了这两样，这一行只留它说不了的：主备（它也是主备策略面板的入口）、内核转发的
-            提醒、订阅来源。没有就整行不出现。
+            写了这两样，线路组在卡底右下角（也是线路面板的入口），「订阅」在名字后面；这一行
+            只留要人处理的：内核转发的提醒、订阅指向已变。没有就整行不出现。
           */}
-          {(renderFailoverLineBadge(rule) || renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule)) || renderSubscriptionBadge(rule)) ? (
+          {(renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule)) || renderSubscriptionBadge(rule, "card")) ? (
             <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-              {renderFailoverLineBadge(rule)}
               {renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule))}
-              {renderSubscriptionBadge(rule)}
+              {renderSubscriptionBadge(rule, "card")}
             </div>
           ) : null}
-          <div className="grid grid-cols-2 gap-x-3 gap-y-2 border-t border-border/40 pt-2 text-xs">
-            <div className="min-w-0">
-              <div className="mb-1 text-muted-foreground">24H 入向</div>
-              {renderRuleDailyTrafficValue(rule, "in")}
-            </div>
-            <div className="min-w-0">
-              <div className="mb-1 text-muted-foreground">24H 出向</div>
-              {renderRuleDailyTrafficValue(rule, "out")}
-            </div>
-            <div className="min-w-0">
-              <div className="mb-1 text-muted-foreground">累计流量</div>
-              {renderMobileRuleTotalTraffic(rule)}
-            </div>
-            <div className="min-w-0">
-              <div className="mb-1 text-muted-foreground">延迟</div>
-              {renderLatestLatency(rule)}
-            </div>
-          </div>
+          {renderRuleFooter(rule, true)}
         </CardContent>
       </Card>
     );
   };
 
+  /*
+    「新建规则」放在搜索栏那一行的最右边（用户要的位置）：搜索、筛选、新建都是「对这个列表
+    做事」，并排一行；页头只剩视图切换和 ···。手机上按钮带字，不缩成一个「＋」。
+  */
+  const createRuleAction = (
+        rulePermissionLoading ? (
+          <Button disabled className="fx-row-action h-9 shrink-0 gap-1.5 rounded-full px-3.5">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            权限加载中
+          </Button>
+        ) : canAdd ? (
+          <Button
+            onClick={() => openCreate()}
+            className="fx-row-action h-9 shrink-0 gap-1.5 rounded-full px-3.5"
+            disabled={!canCreateRule}
+            aria-label="新建规则"
+            title={!canCreateRule ? "暂无可用转发资源" : "新建规则"}
+          >
+            <Plus className="h-4 w-4" />
+            新建规则
+          </Button>
+        ) : (
+          <Button disabled className="fx-row-action h-9 shrink-0 gap-1.5 rounded-full px-3.5" aria-label="新建规则" title="需要管理员授权后才能新建规则">
+            <Plus className="h-4 w-4" />
+            新建规则
+          </Button>
+        )
+  );
+
   return (
     <div className="space-y-6">
       <WorkspaceHeader title="转发规则" status={
-          <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
-            <Zap className="h-3 w-3 text-chart-2" />
+          /*
+            页头一行字（效果图）：几条在跑，近 24H 进出多少。原来页头下面还有一条三格的
+            累计 / 24H 统计带，手机第一屏为此让出 130px；累计流量每张卡上都有，24H 的总数
+            放这里一句话就够。
+          */
+          <span className="text-meta tabular-nums text-muted-foreground">
             <AnimatedStatValue
+              as="span"
               value={`${activeCount} / ${filteredRuleTotal} 已启用`}
               loading={rulesHeaderLoading}
               cacheKey={`rules.header.active.${trafficTotalsCacheScope}`}
               fallbackValue="0 / 0 已启用"
             />
-          </Badge>
+            {" · 近 24H ↓ "}
+            <AnimatedStatValue as="span" value={formatBytes(dailyTrafficTotals.bytesIn)} loading={dailyTrafficTotalsLoading} fallbackValue="0 B"
+              cacheKey={`rules.traffic.${trafficTotalsCacheScope}.daily.bytesIn`} />
+            {" ↑ "}
+            <AnimatedStatValue as="span" value={formatBytes(dailyTrafficTotals.bytesOut)} loading={dailyTrafficTotalsLoading} fallbackValue="0 B"
+              cacheKey={`rules.traffic.${trafficTotalsCacheScope}.daily.bytesOut`} />
+          </span>
       } actions={<>
           <div className="hidden items-center overflow-hidden rounded-md border border-border/40 md:flex">
             <Button
@@ -6782,40 +6915,9 @@ function RulesContent() {
               <DropdownMenuItem onSelect={() => setResetTrafficTarget({ scope: "all" })} disabled={visibleRuleIdsForMetrics.length === 0 || resetTrafficMutation.isPending}><RotateCcw className="h-4 w-4" />重置数据</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {/*
-            主操作回到页面标题这一行，和主机页、隧道页、公告页放在同一个位置：
-            每一页的「新建」都在右上角，手指不用每页重新找。手机上只留「＋」，
-            字留在 aria-label 里给读屏。
-          */}
-          {rulePermissionLoading ? (
-            <Button disabled className="gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              权限加载中
-            </Button>
-          ) : canAdd ? (
-            <Button
-              onClick={() => openCreate()}
-              className="gap-2 max-md:w-9 max-md:px-0"
-              disabled={!canCreateRule}
-              aria-label="新建规则"
-              title={!canCreateRule ? "暂无可用转发资源" : "新建规则"}
-            >
-              <Plus className="h-4 w-4" />
-              <span className="max-md:sr-only">新建规则</span>
-            </Button>
-          ) : (
-            <Button disabled className="gap-2 max-md:w-9 max-md:px-0" aria-label="新建规则" title="需要管理员授权后才能新建规则">
-              <Plus className="h-4 w-4" />
-              <span className="max-md:sr-only">新建规则</span>
-            </Button>
-          )}
       </>} />
 
       <FreezeWhile frozen={showDialog || showImportDialog || showCopyDialog} render={() => <>
-      <TrafficOverview total={totalTrafficTotals} daily={dailyTrafficTotals}
-        totalLoading={totalTrafficTotalsLoading} dailyLoading={dailyTrafficTotalsLoading}
-        scope={trafficTotalsCacheScope} lastScope={trafficTotalsLastCacheScope} />
-
       {!canAdd && !rulePermissionLoading && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--fx-warn-soft)] border border-[color-mix(in_srgb,var(--fx-warn)_20%,transparent)] text-sm text-[var(--fx-warn-text)]">
           <AlertCircle className="h-4 w-4 flex-shrink-0" />
@@ -6825,19 +6927,18 @@ function RulesContent() {
 
       {(user?.role === "admin" || ruleScopeTotal > 0 || hasActiveRuleFilter || (rules && rules.length > 0)) && (
         <div className="space-y-3">
-          <Tabs value={ruleCategory} onValueChange={handleRuleCategoryChange}>
-            <SlidingTabsList items={ruleCategoryItems} activeValue={ruleCategory} ariaLabel="转发规则分类" minItemWidthRem={8.5} />
-          </Tabs>
+          {/* 第一行：小搜索框、筛选、最右边「新建规则」；第二行：分类药丸（选中的走主色渐变）。 */}
           <FilterToolbar
             activeCount={Number(hasActiveUserFilter) + Number(filterResource !== "all")}
+            action={createRuleAction}
             search={
             <div className="relative w-full">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={ruleSearchQuery}
                 onChange={(event) => setRuleSearchQuery(event.target.value)}
-                aria-label="搜索转发规则" placeholder="搜索端口、IP、域名或备注"
-                className="h-8 w-full pl-8 pr-8 text-xs"
+                aria-label="搜索转发规则" placeholder="搜索端口、IP、备注"
+                className="fx-search-pill w-full pr-9"
               />
               {ruleSearchQuery ? (
                 <button
@@ -6961,6 +7062,7 @@ function RulesContent() {
               </SelectContent>
             </Select>
           </FilterToolbar>
+          <FilterChips items={ruleCategoryItems} value={ruleCategory} onChange={handleRuleCategoryChange} ariaLabel="转发规则分类" />
 
 
         </div>

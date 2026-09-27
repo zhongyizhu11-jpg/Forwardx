@@ -739,7 +739,8 @@
 
   .standard-card-grid-compact {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 15.5rem), 1fr));
+    /* 20rem：Summary 卡要放得下「名字 · 系统标签 · ···」一行，15.5rem 时 1440 宽排四列，名字截成「HK e…」 */
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
   }
 
   .action-card {

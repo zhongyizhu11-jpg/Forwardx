@@ -5,7 +5,6 @@ import WorkspaceHeader from "@/components/WorkspaceHeader";
 import ConnectionPath from "@/components/ConnectionPath";
 import EntityGallery from "./EntityGallery";
 import FilterToolbar from "@/components/FilterToolbar";
-import TrafficOverview from "@/components/TrafficOverview";
 import SystemStatusHeader, { type SystemHealth } from "@/components/SystemStatusHeader";
 import { AttentionSection } from "@/features/dashboard/AttentionSection";
 import { TrafficSurface, type TrafficChartPoint } from "@/features/dashboard/TrafficSurface";
@@ -143,7 +142,6 @@ function Demo() {
           <WorkspaceHeader title={page} description={page==="链路管理"?"管理隧道、端口转发、转发链及入口/出口组":"管理转发规则和运行状态"}
             status={<Badge variant="outline"><Activity className="mr-1 h-3 w-3"/>{page==="链路管理"?"2 / 2 可用":"3 / 3 已启用"}</Badge>}
             actions={<Button onClick={()=>setDialog(true)} className="gap-2"><Plus className="h-4 w-4"/>{page==="链路管理"?"新建链路":"新建规则"}</Button>}/>
-          {page==="转发规则"&&<TrafficOverview total={{bytesIn:1148900000,bytesOut:11124000000,connections:61794}} daily={{bytesIn:111620000,bytesOut:1664300000,connections:7248}} totalLoading={false} dailyLoading={false} scope="preview" lastScope="preview"/>}
           <Tabs value={tab} onValueChange={setTab} className="space-y-4">
             <SlidingTabsList items={page==="链路管理"?linkTabs:ruleTabs} activeValue={tab} ariaLabel="资源分类"/>
             <FilterToolbar search={<div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground"/><Input aria-label="搜索资源" placeholder="搜索名称、主机或 IP" value={query} onChange={e=>setQuery(e.target.value)} className="pl-9"/></div>}>
