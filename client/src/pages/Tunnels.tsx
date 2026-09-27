@@ -3750,7 +3750,7 @@ function TunnelsContent() {
       <div className={cn("space-y-1", maxItems && "max-h-[2.35rem] overflow-hidden")}>
         {visibleItems.map((item) => (
           <div key={item.key} className="flex min-w-0 items-center justify-between gap-2 whitespace-nowrap text-xs">
-            <span className="min-w-0 truncate text-muted-foreground">{item.label}</span>
+            <span className="min-w-0 truncate text-muted-foreground">{String(item.label).replace(/ -> /g, " → ")}</span>
             <LatencyRating
               latencyMs={item.latencyMs}
               isTimeout={item.isTimeout}
