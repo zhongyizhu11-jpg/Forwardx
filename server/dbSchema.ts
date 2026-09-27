@@ -561,6 +561,8 @@ const seedSettings = [
   ["homepageEnabled", "true"],
   ["homepageCustomEnabled", "false"],
   ["personalizationTheme", "ink"],
+  ["personalizationPageTint", "grey"],
+  ["personalizationCardStyle", "edge"],
   ["lookingGlassUserEnabled", "true"],
   ["allowMultiDeviceLogin", "false"],
   ["publicHostMonitorEnabled", "false"],

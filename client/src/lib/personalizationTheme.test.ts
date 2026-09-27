@@ -80,3 +80,26 @@ test("clearPersonalizationTheme 也撤掉主色控件的变量", () => {
   assert.equal(props.size, 0);
   assert.equal(attrs.has("data-personalization-theme"), false);
 });
+
+test("页面底色只在浅色下写到 <html>，深色撤掉；卡片风格是一个属性", async () => {
+  const { applyPersonalizationSurface, clearPersonalizationSurface } = await import("./personalizationTheme");
+  const light = fakeRoot(false);
+  applyPersonalizationSurface({ pageTint: "mist", cardStyle: "glow" }, light.root);
+  assert.equal(light.props.get("--fx-l0-page"), "#edf3fb");
+  assert.equal(light.props.get("--fx-l3-control-fill"), "#d9e5f2");
+  assert.equal(light.attrs.get("data-page-tint"), "mist");
+  assert.equal(light.attrs.get("data-card-style"), "glow");
+  // 换回浅灰：变量撤掉、属性去掉
+  applyPersonalizationSurface({ pageTint: "grey", cardStyle: "nope" }, light.root);
+  assert.equal(light.props.has("--fx-l0-page"), false);
+  assert.equal(light.attrs.has("data-page-tint"), false);
+  assert.equal(light.attrs.get("data-card-style"), "edge");
+
+  const dark = fakeRoot(true);
+  applyPersonalizationSurface({ pageTint: "#eef3fb", cardStyle: "bar" }, dark.root);
+  assert.equal(dark.props.has("--fx-l0-page"), false, "深色不写底色");
+  assert.equal(dark.attrs.get("data-card-style"), "bar");
+
+  clearPersonalizationSurface(light.root);
+  assert.equal(light.attrs.has("data-card-style"), false);
+});

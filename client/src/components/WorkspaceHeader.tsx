@@ -15,8 +15,13 @@ import { useIsMobile } from "@/hooks/useMobile";
  * 「我在哪」由底部标签栏的选中格说，页面标题就退回一行 —— 每一页顶上省下 60px，
  * 一屏多看一条规则。搜索也不再挂在标题旁边，它在顶栏上。
  */
-export default function WorkspaceHeader({ title, description, status, actions, level = 1 }: {
-  title: ReactNode; description?: ReactNode; status?: ReactNode; actions?: ReactNode; level?: 1 | 2;
+export default function WorkspaceHeader({ title, description, status, actions, chips, aside, level = 1 }: {
+  title: ReactNode; description?: ReactNode; status?: ReactNode; actions?: ReactNode;
+  /** 标题下面一行状态点（HeaderStatusChips）：「● 运行 5 · ● 停用 0」。 */
+  chips?: ReactNode;
+  /** 标题那一行的右边：一条小走势 + 一行数（HeaderSpark）。 */
+  aside?: ReactNode;
+  level?: 1 | 2;
 }) {
   const isMobile = useIsMobile();
   const Heading = level === 1 ? "h1" : "h2";
@@ -26,19 +31,36 @@ export default function WorkspaceHeader({ title, description, status, actions, l
   */
   const meta = isMobile && level === 1 ? (status ?? description) : null;
 
+  const titleBlock = (
+    <div className="min-w-0">
+      <Heading className="workspace-header-title">{title}</Heading>
+      {isMobile && level === 1 ? (
+        meta ? <div className="workspace-header-meta">{meta}</div> : null
+      ) : (status || description) ? (
+        <div className="workspace-header-meta">
+          {status}
+          {description && <p>{description}</p>}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  /*
+    2026-09-27 第三轮：用户说各页「上边布局总感觉缺点什么，但又不能太占地方」。加两样，各占
+    一行的高度：标题右边一条小走势 + 一行数（aside），标题下面一行状态点（chips）。
+    都没传时结构和原来一样。
+  */
   return (
     <header className="workspace-header" data-level={level}>
-      <div className="min-w-0">
-        <Heading className="workspace-header-title">{title}</Heading>
-        {isMobile && level === 1 ? (
-          meta ? <div className="workspace-header-meta">{meta}</div> : null
-        ) : (status || description) ? (
-          <div className="workspace-header-meta">
-            {status}
-            {description && <p>{description}</p>}
+      {chips || aside ? (
+        <div className="workspace-header-main">
+          <div className="workspace-header-row">
+            {titleBlock}
+            {aside ? <div className="workspace-header-aside">{aside}</div> : null}
           </div>
-        ) : null}
-      </div>
+          {chips ? <div className="workspace-header-chips">{chips}</div> : null}
+        </div>
+      ) : titleBlock}
       {actions && <div className="workspace-header-actions">{actions}</div>}
     </header>
   );

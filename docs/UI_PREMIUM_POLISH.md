@@ -389,6 +389,44 @@ gzip 和缓存：第二次打开只下 `index.html` 和 API。
 截图：`docs/screenshots/2026-09-27-mockup-parity/compare-b-*.png`（规则页是 样稿 B | 上一版 | 本次 三栏，
 其余是 上一版 | 本次），手机 / 桌面、浅 / 深的单张也已换成这一版。
 
+## 14. 第三轮：总览卡、页头、链路卡、卡片风格、页面底色（2026-09-27）
+
+用户看了 2.3.379 的真机后提了五处：「主页大卡片还需要重构」「转发规则以及其他功能页上边布局总感觉缺点
+什么，但又不能太占地方」「链路管理卡片还可以改善吗」「总体卡片可以增加渐变色颜色吗？或者边框增加渲染色」
+「整个系统背景是否可以选择颜色背景」，随后补了一句「网络地图布局在页面顶端，可以策划设计的高级一点吗」。
+样稿在 `docs/screenshots/2026-09-27-round3-mockups/`，用户的选择是「全都要，都弄在设置页自由选择」。
+
+- **总览**：网络地图仍在最上面，重画：节点是白色圆盘 + 状态色的环 + 一圈淡光，盘里是这台机器的国旗
+  （`countryCodeToEmoji`），名字下面一行「地区 · 状态」；线下面垫一层淡光，线中间一枚小白标签写延迟
+  （线多于 8 条不挂，标签位置在两排之间的空带，`curve()` 的 t = 2/3）；底是左上角一团主色光 + 往四边淡出的
+  点阵；图例移到标题那一行右边。手机上 224px 高（190 时延迟标签压到上排名字）。
+  数字和结论合成一张卡（`.fx-overview-card`）：三格读数（SummaryStrip `embedded`）+ 一条弱线 + 一行
+  「N 处需要关注 → 查看」，不再是「一张统计卡 + 一条带框的结论行」。
+- **页头**（`WorkspaceHeader` 新增 `chips` / `aside`）：标题下一行状态点「● 运行 5 · ● 停用 1」
+  （`HeaderStatusChips`），标题右边一条 96×22 的小走势 + 一行数（`HeaderSpark`，数据是
+  `dashboard.trafficSeries` 那条按用户缓存的 24H 序列，`useDailyTrafficSpark`）。规则页：运行 / 停用 +
+  近 24H 进出；主机页：在线 / 离线 / 可升级（管理员）+ 此刻速率；链路页：可用 / 中断（别的段落是已启用 / 停用），
+  从 `headerStat` 那句里拆数，不另算。
+- **链路卡**：和规则卡同一套骨架（`.fx-rule-card` 的类）：卡头「状态点 + 名字」和一行「模式 · 直连 / N 跳 ·
+  状态」；一条路径线（`NetworkPath`，三个节点以内横排，线旁只标延迟不再标模式）；卡底「延迟大数字 + 评级标签 +
+  近 24H 延迟走势 + 平均 / 最高」。走势数据是新端点 `tunnels.latencySparkBatch`（一页隧道一次请求，
+  `getTunnelLatencySparkBatch` 按小时 GROUP BY，只取 total 序列；非管理员 JOIN tunnels 限制 userId）。
+  两处卡片（网格和手机列表）合成一个 `renderTunnelCard`。
+- **卡片风格**（设置 › 个性化 › 卡片风格，`personalizationCardStyle`，出厂 `edge`）：`<html data-card-style>`
+  选四种画法，全靠背景 / 边框、不用伪元素（伪元素要 overflow: hidden，会裁掉弹层）。颜色从 `--fx-card-tone`
+  来：规则卡 / 链路卡把状态色写进去（`--fx-rule-tone`），别的卡是主色；停用的卡 tone 透明。
+  `edge` 1.5px 渐变边（padding-box 铺白、border-box 铺渐变）；`glow` 左上角一抹光（2.3.379 规则卡那种，
+  原来的 `::before` 和 z-index -1 都去掉了）；`bar` 顶上 3px 渐变线 + 极淡的纵向渐变；`plain` 纯白。
+  首屏没读到设置时按 `edge` 画（`html:not([data-card-style])`），不闪。
+- **页面底色**（设置 › 个性化 › 页面底色，`personalizationPageTint`，出厂 `grey`）：浅灰 / 冷白 / 暖米 /
+  雾蓝 / 淡紫 / 薄荷 / 跟随配色 / 自定义 #rrggbb（`PERSONALIZATION_PAGE_TINTS`）。只在浅色下写
+  `--fx-l0-page` 和 `--fx-l3-control-fill`（搜索框、分段槽要比底色深一档才成形），深色撤掉；
+  `applyPersonalizationSurface` 在 PersonalizationLayer 里随 class 变化重算。
+- 保存后即时生效（和默认配色一样走 `system.updateSettings`，`publicInfo` 里带出来）。
+
+截图：`docs/screenshots/2026-09-27-round3/`（手机 / 桌面、浅 / 深；`settings-*` 是两块新设置，`*-mist-bar-*` /
+`*-mist-glow-*` 是「雾蓝底 + 渐变卡头 / 状态光」的效果）。
+
 ## 没改什么
 
 - 工作区的信息架构和交互逻辑（首页和登录页的版式见第 8 节）。

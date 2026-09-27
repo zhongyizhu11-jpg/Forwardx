@@ -36,3 +36,24 @@ test("浅色是「主色兑白 → 主色」，深色是「主色 → 主色兑�
   assert.deepEqual(primaryGradientStops("#6e56cf", "light"), ["color-mix(in oklab, #6e56cf 65%, white)", "#6e56cf"]);
   assert.deepEqual(primaryGradientStops("#6e56cf", "dark"), ["#6e56cf", "color-mix(in oklab, #6e56cf 75%, black)"]);
 });
+
+test("页面底色：预设 id 或 #rrggbb，别的回到浅灰；浅灰不写变量，自定义色的控件槽从底色兑 5% 黑", async () => {
+  const { normalizePersonalizationPageTint, personalizationPageTintVars } = await import("./personalization");
+  assert.equal(normalizePersonalizationPageTint("mist"), "mist");
+  assert.equal(normalizePersonalizationPageTint("#EEF3FB"), "#eef3fb");
+  assert.equal(normalizePersonalizationPageTint("#fff"), "grey");
+  assert.equal(normalizePersonalizationPageTint("nope"), "grey");
+  assert.equal(normalizePersonalizationPageTint(undefined), "grey");
+  assert.equal(personalizationPageTintVars("grey"), null);
+  assert.deepEqual(personalizationPageTintVars("mist"), { page: "#edf3fb", control: "#d9e5f2" });
+  assert.deepEqual(personalizationPageTintVars("#eef3fb"), { page: "#eef3fb", control: "color-mix(in srgb, #eef3fb 95%, black)" });
+  assert.match(personalizationPageTintVars("accent")!.page, /var\(--fx-primary-fill\)/);
+});
+
+test("卡片风格：四选一，默认彩色描边", async () => {
+  const { normalizePersonalizationCardStyle, PERSONALIZATION_CARD_STYLES } = await import("./personalization");
+  assert.deepEqual(PERSONALIZATION_CARD_STYLES.map((style) => style.id), ["edge", "glow", "bar", "plain"]);
+  assert.equal(normalizePersonalizationCardStyle("glow"), "glow");
+  assert.equal(normalizePersonalizationCardStyle("zebra"), "edge");
+  assert.equal(normalizePersonalizationCardStyle(""), "edge");
+});

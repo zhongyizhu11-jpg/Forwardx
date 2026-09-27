@@ -2756,6 +2756,55 @@ export async function getTunnelLatencySeries(
   });
 }
 
+/**
+ * 一批隧道近 N 小时的逐时延迟（链路卡上那条小走势）：每条隧道每个整点一行，平均 / 最高 / 样本数。
+ *
+ * 只取「总延迟」那一条序列（seriesKey = total，老数据是空的），超时的样本没有毫秒数，
+ * 自然不进平均。普通用户传 userId 只看自己的隧道；管理员不传。
+ */
+export async function getTunnelLatencySparkBatch(
+  tunnelIds: number[],
+  opts: { since?: Date; bucketMinutes?: number; userId?: number } = {},
+) {
+  const db = await getDb();
+  const ids = [...new Set(tunnelIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
+  if (!db || ids.length === 0) return [] as Array<{ tunnelId: number; bucket: Date; avgMs: number; maxMs: number; samples: number }>;
+  const since = opts.since ?? new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const bucketSec = Math.max(60, Math.floor((opts.bucketMinutes ?? 60) * 60));
+  const q = quoteIdentifier;
+  const placeholders = ids.map(() => "?").join(", ");
+  const userJoin = opts.userId
+    ? `INNER JOIN ${q("tunnels")} t ON t.${q("id")} = s.${q("tunnelId")} AND t.${q("userId")} = ?`
+    : "";
+  const params: unknown[] = opts.userId ? [opts.userId] : [];
+  params.push(...ids, epochSeconds(since));
+  const startedAt = Date.now();
+  const rows = await queryRaw<{ tunnelId: unknown; bucket: unknown; avgMs: unknown; maxMs: unknown; samples: unknown }>(
+    `SELECT s.${q("tunnelId")} AS ${q("tunnelId")}, ${bucketExprSql("s", bucketSec)} AS ${q("bucket")},
+            AVG(s.${q("latencyMs")}) AS ${q("avgMs")}, MAX(s.${q("latencyMs")}) AS ${q("maxMs")}, COUNT(*) AS ${q("samples")}
+       FROM ${q("tunnel_latency_stats")} s
+       ${userJoin}
+      WHERE s.${q("tunnelId")} IN (${placeholders})
+        AND s.${q("recordedAt")} >= ?
+        AND s.${q("latencyMs")} IS NOT NULL
+        AND (s.${q("seriesKey")} = 'total' OR s.${q("seriesKey")} IS NULL OR s.${q("seriesKey")} = '')
+      GROUP BY s.${q("tunnelId")}, ${bucketExprSql("s", bucketSec)}
+      ORDER BY s.${q("tunnelId")}, ${q("bucket")}`,
+    params,
+  );
+  const elapsedMs = Date.now() - startedAt;
+  if (elapsedMs > 800) {
+    console.warn(`[TunnelLatency] slow spark batch tunnels=${ids.length} rows=${rows.length} elapsedMs=${elapsedMs}`);
+  }
+  return rows.map((row) => ({
+    tunnelId: Number(row.tunnelId),
+    bucket: rowDate(row.bucket),
+    avgMs: Math.round(numeric(row.avgMs)),
+    maxMs: Math.round(numeric(row.maxMs)),
+    samples: numeric(row.samples),
+  }));
+}
+
 export async function insertForwardGroupLatencyStat(stat: InsertForwardGroupLatencyStat) {
   const db = await getDb();
   if (!db) return;

@@ -220,8 +220,8 @@ function DashboardContent() {
         </span>
       ) : null} />
       {/*
-        网络地图放在数字前面：这一页第一眼看到的是「谁连着谁、哪条断了」，数字是第二眼的事。
-        没有主机时它自己不出现。
+        网络地图放在数字前面：这一页第一眼看到的是「谁连着谁、哪条断了」，数字是第二眼的事
+        （用户 2026-09-27 明确要它留在顶端）。没有主机时它自己不出现。
       */}
       <NetworkMapSection enabled={!!health && health.hosts.total > 0} onOpen={setLocation} />
       <SystemStatusHeader

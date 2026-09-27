@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { NetworkMap, type NetworkMapLink, type NetworkMapNode } from "@/components/network/NetworkMap";
 import { tunnelHealthFromAvailability } from "@/features/links/tunnelHealth";
 import { hostGeoCoordinate } from "@/lib/hostGeo";
+import { countryCodeToEmoji } from "@/lib/linkTestNodeMeta";
 import { pollingInterval } from "@/lib/polling";
 import { getTunnelHopIds } from "@/lib/tunnelDisplay";
 import { trpc } from "@/lib/trpc";
@@ -95,13 +96,19 @@ export function buildNetworkMapModel(input: {
       latencyMs: typeof tunnel?.lastLatencyMs === "number" ? tunnel.lastLatencyMs : null,
     });
   }
-  const nodes: NetworkMapNode[] = hosts.map((host) => ({
-    id: Number(host.id),
-    name: String(host.name || host.ip || host.ipv4 || `主机 #${host.id}`),
-    health: hostHealth(host),
-    note: hostNote(host, now, linkCountByHost.get(Number(host.id)) || 0),
-    geo: hostGeoCoordinate(host),
-  }));
+  const nodes: NetworkMapNode[] = hosts.map((host) => {
+    // 名字下面那行前面带上地区（「香港 · 2 条线路」）；国旗画在圆盘里
+    const region = String(host?.geoRegion || host?.geoCountryName || "").trim();
+    const note = hostNote(host, now, linkCountByHost.get(Number(host.id)) || 0);
+    return {
+      id: Number(host.id),
+      name: String(host.name || host.ip || host.ipv4 || `主机 #${host.id}`),
+      health: hostHealth(host),
+      note: [region, note].filter(Boolean).join(" · ") || null,
+      geo: hostGeoCoordinate(host),
+      emoji: countryCodeToEmoji(host?.geoCountryCode) || null,
+    };
+  });
   return { nodes, links, linkTotal: tunnels.length, hiddenLinkCount, legend };
 }
 
@@ -151,11 +158,26 @@ export function NetworkMapSection({ enabled = true, onOpen }: { enabled?: boolea
   return (
     <section
       aria-label="网络地图"
-      className="fx-netmap-card flex min-w-0 flex-col overflow-hidden rounded-[var(--fx-radius-surface)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)]"
+      className="fx-netmap-card fx-card-face flex min-w-0 flex-col overflow-hidden"
     >
+      {/*
+        图例放在标题那一行右边（「● 正常 2  ● 离线 1」），不再在图下面单占一行：
+        「N 台主机 · N 条线路」页头已经说过，这里说的是颜色各代表什么、各几条。
+      */}
       <div className="flex items-center justify-between gap-2 px-4 pt-3.5">
         <span className="text-primary-type font-semibold text-foreground">网络地图</span>
-        <span className="text-meta tabular-nums text-muted-foreground">{model.nodes.length} 台主机 · {model.linkTotal} 条线路</span>
+        {legendItems.length > 0 ? (
+          <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-0.5 text-meta text-[var(--fx-text-secondary)]">
+            {legendItems.map((item) => (
+              <span key={item.key} className="inline-flex items-center gap-1.5 tabular-nums">
+                <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ background: item.color }} />
+                {item.label} {item.count}
+              </span>
+            ))}
+          </span>
+        ) : (
+          <span className="text-meta tabular-nums text-muted-foreground">{model.nodes.length} 台主机</span>
+        )}
       </div>
       <NetworkMap
         nodes={model.nodes}
@@ -163,21 +185,11 @@ export function NetworkMapSection({ enabled = true, onOpen }: { enabled?: boolea
         onSelectNode={() => onOpen("/hosts")}
         onSelectLink={() => onOpen("/tunnels")}
       />
-      {legendItems.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pb-3.5 text-meta text-[var(--fx-text-secondary)]">
-          {legendItems.map((item) => (
-            <span key={item.key} className="inline-flex items-center gap-1.5 tabular-nums">
-              <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ background: item.color }} />
-              {item.label} {item.count}
-            </span>
-          ))}
-          {model.hiddenLinkCount > 0 ? (
-            <span className="tabular-nums text-muted-foreground">{model.hiddenLinkCount} 条经过你看不到的主机，没有画出来</span>
-          ) : null}
-        </div>
-      ) : (
-        <div className="px-4 pb-3.5 text-meta text-muted-foreground">还没有线路。把两台主机连起来，这里就会出现第一条线。</div>
-      )}
+      {model.hiddenLinkCount > 0 ? (
+        <div className="px-4 pb-3 text-meta tabular-nums text-muted-foreground">{model.hiddenLinkCount} 条经过你看不到的主机，没有画出来</div>
+      ) : legendItems.length === 0 ? (
+        <div className="px-4 pb-3 text-meta text-muted-foreground">还没有线路。把两台主机连起来，这里就会出现第一条线。</div>
+      ) : null}
     </section>
   );
 }

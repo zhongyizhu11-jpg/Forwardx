@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { mobileAuth } from "@/lib/mobileAuth";
-import { applyPersonalizationTheme, clearPersonalizationTheme } from "@/lib/personalizationTheme";
+import { applyPersonalizationSurface, applyPersonalizationTheme, clearPersonalizationSurface, clearPersonalizationTheme } from "@/lib/personalizationTheme";
 import { useEffect, useLayoutEffect, useState } from "react";
 
 const MOBILE_BACKGROUND_MEDIA = "(max-width: 767px), (pointer: coarse)";
@@ -29,6 +29,8 @@ export default function PersonalizationLayer() {
   const opacity = Math.min(1, Math.max(0, Number(background?.opacity ?? 0.22)));
   const blur = Math.min(32, Math.max(0, Number(background?.blur ?? 0)));
   const personalizationTheme = (data as any)?.personalizationTheme;
+  const personalizationPageTint = (data as any)?.personalizationPageTint;
+  const personalizationCardStyle = (data as any)?.personalizationCardStyle;
   const effectiveBlur = reduceMobileBackground ? 0 : blur;
   const scale = 1 + effectiveBlur / 320;
   const isVideoBackground = source === "url" && urlType === "video" && !!effectiveUrl;
@@ -74,6 +76,8 @@ export default function PersonalizationLayer() {
     const root = document.documentElement;
     const applyTheme = () => {
       applyPersonalizationTheme(personalizationTheme, root);
+      // 底色只在浅色下写，所以深浅切换（class 变化）时要跟着重算
+      applyPersonalizationSurface({ pageTint: personalizationPageTint, cardStyle: personalizationCardStyle }, root);
     };
     applyTheme();
     const observer = new MutationObserver(applyTheme);
@@ -81,8 +85,9 @@ export default function PersonalizationLayer() {
     return () => {
       observer.disconnect();
       clearPersonalizationTheme(root);
+      clearPersonalizationSurface(root);
     };
-  }, [personalizationTheme]);
+  }, [personalizationTheme, personalizationPageTint, personalizationCardStyle]);
 
   if (!showVideo) return null;
 

@@ -39,7 +39,7 @@ import { trpc } from "@/lib/trpc";
 import { getPanelChangelogUrl, getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
 import { compressImageFile, imageDataUrlSize } from "@/lib/imageUpload";
 import { downloadTextFile, type TextDownloadFile } from "@/lib/fileDownload";
-import { applyPersonalizationTheme } from "@/lib/personalizationTheme";
+import { applyPersonalizationSurface, applyPersonalizationTheme } from "@/lib/personalizationTheme";
 import { cn } from "@/lib/utils";
 import {
   FORWARD_PROTOCOL_LABELS,
@@ -118,7 +118,12 @@ import { DOCS_BASE_URL } from "@/lib/docsLinks";
 import {
   BUILTIN_WALLPAPERS,
   DEFAULT_PERSONALIZATION_BACKGROUND,
+  PERSONALIZATION_CARD_STYLES,
+  PERSONALIZATION_PAGE_TINTS,
   PERSONALIZATION_THEME_PRESETS,
+  isHexColor,
+  normalizePersonalizationCardStyle,
+  normalizePersonalizationPageTint,
   personalizationSwatchGradient,
   clampBackgroundBlur,
   clampBackgroundOpacity,
@@ -3175,12 +3180,14 @@ function normalizePublicHostMonitorPathInput(value: string) {
     .toLowerCase();
 }
 
-type PersonalizationSaveKey = "title" | "logo" | "theme" | "background" | "homepage" | "sidebarPages";
+type PersonalizationSaveKey = "title" | "logo" | "theme" | "pageTint" | "cardStyle" | "background" | "homepage" | "sidebarPages";
 
 const personalizationSaveMessages: Record<PersonalizationSaveKey, string> = {
   title: "网站标题已保存",
   logo: "Logo 已保存",
   theme: "默认配色已保存",
+  pageTint: "页面底色已保存",
+  cardStyle: "卡片风格已保存",
   background: "自定义背景已保存",
   homepage: "公开首页已保存",
   sidebarPages: "自定义菜单已保存",
@@ -3190,6 +3197,8 @@ const personalizationSaveErrorMessages: Record<PersonalizationSaveKey, string> =
   title: "网站标题保存失败",
   logo: "Logo 保存失败",
   theme: "默认配色保存失败",
+  pageTint: "页面底色保存失败",
+  cardStyle: "卡片风格保存失败",
   background: "自定义背景保存失败",
   homepage: "公开首页保存失败",
   sidebarPages: "自定义菜单保存失败",
@@ -3208,6 +3217,11 @@ function PersonalizationSettingsSection() {
   const [siteLogoDataUrl, setSiteLogoDataUrl] = useState("");
   const [personalizationTheme, setPersonalizationTheme] = useState<PersonalizationThemePresetId>("ink");
   const [savedPersonalizationTheme, setSavedPersonalizationTheme] = useState<PersonalizationThemePresetId>("ink");
+  const [pageTint, setPageTint] = useState<string>("grey");
+  const [savedPageTint, setSavedPageTint] = useState<string>("grey");
+  const [customTintInput, setCustomTintInput] = useState<string>("#eef3fb");
+  const [cardStyle, setCardStyle] = useState<string>("edge");
+  const [savedCardStyle, setSavedCardStyle] = useState<string>("edge");
   const [homepageEnabled, setHomepageEnabled] = useState(true);
   const [homepageCustomEnabled, setHomepageCustomEnabled] = useState(false);
   const [homepageHtml, setHomepageHtml] = useState("");
@@ -3232,6 +3246,13 @@ function PersonalizationSettingsSection() {
     const nextTheme = normalizePersonalizationThemePresetId((settings as any).personalizationTheme);
     setPersonalizationTheme(nextTheme);
     setSavedPersonalizationTheme(nextTheme);
+    const nextTint = normalizePersonalizationPageTint((settings as any).personalizationPageTint);
+    setPageTint(nextTint);
+    setSavedPageTint(nextTint);
+    if (nextTint.startsWith("#")) setCustomTintInput(nextTint);
+    const nextCardStyle = normalizePersonalizationCardStyle((settings as any).personalizationCardStyle);
+    setCardStyle(nextCardStyle);
+    setSavedCardStyle(nextCardStyle);
     setHomepageEnabled(settings.homepageEnabled ?? true);
     setHomepageCustomEnabled(!!settings.homepageCustomEnabled);
     setHomepageHtml(settings.homepageHtml || "");
@@ -3248,6 +3269,14 @@ function PersonalizationSettingsSection() {
       if (key === "theme") {
         setSavedPersonalizationTheme(personalizationTheme);
         applyPersonalizationTheme(personalizationTheme);
+      }
+      if (key === "pageTint") {
+        setSavedPageTint(pageTint);
+        applyPersonalizationSurface({ pageTint, cardStyle: savedCardStyle });
+      }
+      if (key === "cardStyle") {
+        setSavedCardStyle(cardStyle);
+        applyPersonalizationSurface({ pageTint: savedPageTint, cardStyle });
       }
       if (key === "sidebarPages" && pendingCustomSidebarPagesRef.current) {
         setCustomSidebarPages(pendingCustomSidebarPagesRef.current);
@@ -3274,6 +3303,8 @@ function PersonalizationSettingsSection() {
   const personalizationSaving = updateSettingsMutation.isPending;
   const isSavingPersonalization = (key: PersonalizationSaveKey) => savingSection === key && personalizationSaving;
   const themeDirty = personalizationTheme !== savedPersonalizationTheme;
+  const pageTintDirty = pageTint !== savedPageTint;
+  const cardStyleDirty = cardStyle !== savedCardStyle;
   const savePersonalizationSection = (
     key: PersonalizationSaveKey,
     payload: Parameters<typeof updateSettingsMutation.mutate>[0],
@@ -3446,6 +3477,19 @@ function PersonalizationSettingsSection() {
 
   const handleSaveThemePreset = () => {
     savePersonalizationSection("theme", { personalizationTheme });
+  };
+
+  const handleSavePageTint = () => {
+    savePersonalizationSection("pageTint", { personalizationPageTint: pageTint });
+  };
+
+  const handleCustomTintChange = (value: string) => {
+    setCustomTintInput(value);
+    if (isHexColor(value)) setPageTint(value.trim().toLowerCase());
+  };
+
+  const handleSaveCardStyle = () => {
+    savePersonalizationSection("cardStyle", { personalizationCardStyle: cardStyle });
   };
 
   const handleSaveBackground = () => {
@@ -3807,6 +3851,143 @@ function PersonalizationSettingsSection() {
                       />
                     ))}
                   </div>
+                </button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/*
+        页面底色：白卡下面那层底的颜色。色块画的就是效果本身：一小块底色上一枚白色的圆角矩形
+        （一张卡），选中的描一圈主色。「跟随配色」那块用当前主色兑出来的底，自定义那块是彩虹。
+        深色模式不受影响（applyPersonalizationSurface 只在浅色下写变量）。
+      */}
+      <Card className="border-border bg-card">
+        <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1.5">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Palette className="h-4 w-4 text-primary" />
+              页面底色
+            </CardTitle>
+            <CardDescription>
+              白卡下面那一层底的颜色。选「跟随配色」时用当前配色兑出来的极淡色；深色模式不受影响。
+            </CardDescription>
+          </div>
+          <Button
+            type="button"
+            onClick={handleSavePageTint}
+            disabled={isSavingPersonalization("pageTint") || !pageTintDirty}
+            className="w-full gap-2 sm:w-auto"
+          >
+            {isSavingPersonalization("pageTint") && <Loader2 className="h-4 w-4 animate-spin" />}
+            保存底色
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-4 gap-3 sm:grid-cols-8">
+            {[...PERSONALIZATION_PAGE_TINTS.map((tint) => ({ id: tint.id as string, name: tint.name, page: tint.page, custom: false })), { id: "custom", name: "自定义", page: "", custom: true }].map((tint) => {
+              const active = tint.custom ? pageTint.startsWith("#") : pageTint === tint.id;
+              const swatchBackground = tint.custom
+                ? (pageTint.startsWith("#") ? pageTint : "linear-gradient(135deg, #ffd6d6, #fff2cc 30%, #d9f5e5 60%, #dbe7ff 80%, #efdcff)")
+                : tint.page;
+              return (
+                <button
+                  key={tint.id}
+                  type="button"
+                  onClick={() => (tint.custom ? setPageTint(isHexColor(customTintInput) ? customTintInput.toLowerCase() : "#eef3fb") : setPageTint(tint.id))}
+                  disabled={isSavingPersonalization("pageTint")}
+                  aria-pressed={active}
+                  className="group flex flex-col items-center gap-1.5 text-center disabled:pointer-events-none disabled:opacity-70"
+                >
+                  <span
+                    className={cn(
+                      "fx-tint-swatch flex h-14 w-full items-center justify-center rounded-xl border transition",
+                      active ? "border-primary ring-2 ring-primary/20" : "border-border/50 group-hover:border-primary/40",
+                    )}
+                    style={{ background: swatchBackground }}
+                  >
+                    <span className="h-5 w-3/5 rounded-md bg-white shadow-[0_1px_2px_rgb(0_0_0/6%),0_6px_14px_-8px_rgb(0_0_0/25%)]" />
+                  </span>
+                  <span className={cn("text-xs", active ? "font-semibold text-foreground" : "text-muted-foreground")}>{tint.name}</span>
+                </button>
+              );
+            })}
+          </div>
+          {pageTint.startsWith("#") ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                自定义颜色
+                <input
+                  type="color"
+                  value={isHexColor(customTintInput) ? customTintInput : "#eef3fb"}
+                  onChange={(event) => handleCustomTintChange(event.target.value)}
+                  className="h-9 w-12 cursor-pointer rounded-md border border-border/60 bg-transparent p-0.5"
+                  aria-label="选择自定义底色"
+                />
+              </label>
+              <Input
+                value={customTintInput}
+                onChange={(event) => handleCustomTintChange(event.target.value)}
+                placeholder="#eef3fb"
+                className="h-9 w-32 font-mono text-sm"
+                aria-label="自定义底色的十六进制值"
+              />
+              <span className="text-xs text-muted-foreground">建议选很浅的颜色：白卡靠软影坐在底上，底一深卡就浮不起来。</span>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      {/*
+        卡片风格：卡上那一点颜色怎么给。色块画的是四种风格各自的缩影（左上角一抹光 / 一圈渐变边 /
+        顶上一条线 / 纯白），和真卡用的是同一套 CSS 变量，所以色块和实际效果一致。
+      */}
+      <Card className="border-border bg-card">
+        <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1.5">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Palette className="h-4 w-4 text-primary" />
+              卡片风格
+            </CardTitle>
+            <CardDescription>
+              卡片上的一点颜色：状态光、彩色描边、渐变卡头，或者都不要。颜色跟卡的状态走（正常主色、偏高琥珀、中断红）。
+            </CardDescription>
+          </div>
+          <Button
+            type="button"
+            onClick={handleSaveCardStyle}
+            disabled={isSavingPersonalization("cardStyle") || !cardStyleDirty}
+            className="w-full gap-2 sm:w-auto"
+          >
+            {isSavingPersonalization("cardStyle") && <Loader2 className="h-4 w-4 animate-spin" />}
+            保存风格
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {PERSONALIZATION_CARD_STYLES.map((style) => {
+              const active = cardStyle === style.id;
+              return (
+                <button
+                  key={style.id}
+                  type="button"
+                  onClick={() => setCardStyle(style.id)}
+                  disabled={isSavingPersonalization("cardStyle")}
+                  aria-pressed={active}
+                  className={cn(
+                    "group flex flex-col gap-2 rounded-lg border p-2.5 text-left transition hover:border-primary/50 disabled:pointer-events-none disabled:opacity-70",
+                    active ? "border-primary bg-primary/5 ring-2 ring-primary/15" : "border-border/40",
+                  )}
+                >
+                  <span className="fx-cardstyle-swatch" data-style={style.id} aria-hidden="true">
+                    <span className="fx-cardstyle-swatch-face" />
+                  </span>
+                  <span className="flex items-center justify-between gap-2">
+                    <span className={cn("text-sm", active ? "font-semibold text-foreground" : "font-medium text-foreground")}>{style.name}</span>
+                    {active ? <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" /> : null}
+                  </span>
+                  <span className="text-xs leading-5 text-muted-foreground">{style.description}</span>
                 </button>
               );
             })}

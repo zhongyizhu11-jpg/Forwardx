@@ -215,6 +215,8 @@ import { getTunnelExitNames, getTunnelHopIds, getTunnelRouteText, tunnelHopHostN
 import { StatusDot } from "@/components/network/StatusDot";
 import { describeNetworkHealth } from "@shared/networkHealth";
 import { Sparkline } from "@/components/charts/Sparkline";
+import { HeaderSpark, HeaderStatusChips } from "@/components/HeaderStatusChips";
+import { useDailyTrafficSpark } from "@/features/traffic/useDailyTrafficSpark";
 import {
   decideRuleFlowLayout,
   ruleVisualStateToHealth,
@@ -4309,6 +4311,8 @@ function RulesContent() {
     规则卡上那条小走势线：这一页规则近 24 小时的逐时字节，一次请求全拿。表格和地图视图
     不画它，就不请求。
   */
+  // 页头右上角那条近 24H 小走势（和首页图表同一条数据，服务端按用户缓存）
+  const dailySpark = useDailyTrafficSpark(secondaryQueriesReady);
   const { data: ruleTrafficSeriesRows } = trpc.rules.trafficSeriesBatch.useQuery(
     { ruleIds: visibleRuleIdsForMetrics, hours: 24, bucketMinutes: 60 },
     {
@@ -6707,7 +6711,7 @@ function RulesContent() {
         )}
         data-tone={tone}
         data-size={compact ? "compact" : "standard"}
-        style={{ "--fx-rule-tone": toneColor } as CSSProperties}
+        style={{ ...(sortable?.itemProps?.style || {}), "--fx-rule-tone": toneColor } as CSSProperties}
         title={!supported ? unsupportedProtocolTitle : undefined}
       >
         <CardContent className="fx-rule-card-body action-card-content">
@@ -6839,9 +6843,9 @@ function RulesContent() {
     <div className="space-y-6">
       <WorkspaceHeader title="转发规则" status={
           /*
-            页头一行字（效果图）：几条在跑，近 24H 进出多少。原来页头下面还有一条三格的
-            累计 / 24H 统计带，手机第一屏为此让出 130px；累计流量每张卡上都有，24H 的总数
-            放这里一句话就够。
+            页头（第三轮样稿）：标题下一行「5 / 5 已启用」，再一行状态点「● 运行 5 · ● 停用 0」；
+            标题右边一条近 24H 的小走势，走势下面是这 24 小时的进出总数。
+            原来页头下面还有一条三格的累计 / 24H 统计带，手机第一屏为此让出 130px。
           */
           <span className="text-meta tabular-nums text-muted-foreground">
             <AnimatedStatValue
@@ -6851,13 +6855,21 @@ function RulesContent() {
               cacheKey={`rules.header.active.${trafficTotalsCacheScope}`}
               fallbackValue="0 / 0 已启用"
             />
-            {" · 近 24H ↓ "}
+          </span>
+      } chips={
+          <HeaderStatusChips items={[
+            { key: "running", label: "运行", count: activeCount, tone: "healthy" },
+            { key: "disabled", label: "停用", count: Math.max(0, filteredRuleTotal - activeCount), tone: "off" },
+          ]} />
+      } aside={
+          <HeaderSpark values={dailySpark.values} title="近 24 小时流量走势" caption={<>
+            {"近 24H ↓ "}
             <AnimatedStatValue as="span" value={formatBytes(dailyTrafficTotals.bytesIn)} loading={dailyTrafficTotalsLoading} fallbackValue="0 B"
               cacheKey={`rules.traffic.${trafficTotalsCacheScope}.daily.bytesIn`} />
-            {" ↑ "}
+            {" · ↑ "}
             <AnimatedStatValue as="span" value={formatBytes(dailyTrafficTotals.bytesOut)} loading={dailyTrafficTotalsLoading} fallbackValue="0 B"
               cacheKey={`rules.traffic.${trafficTotalsCacheScope}.daily.bytesOut`} />
-          </span>
+          </>} />
       } actions={<>
           <div className="hidden items-center overflow-hidden rounded-md border border-border/40 md:flex">
             <Button
