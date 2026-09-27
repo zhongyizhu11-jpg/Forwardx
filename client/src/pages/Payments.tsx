@@ -121,7 +121,7 @@ const PAYMENT_TAB_STORAGE_KEY = "forwardx.payments.tab";
 
 const emptyForm: PaymentConfigForm = {
   enabled: false,
-  productName: "ForwardX 充值",
+  productName: "NEX 充值",
   minAmount: 1,
   maxAmount: 0,
   orderTimeoutMinutes: 30,

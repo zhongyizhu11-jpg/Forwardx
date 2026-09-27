@@ -1,4 +1,4 @@
-# 卸载 ForwardX
+# 卸载 NEX
 
 本页说明如何卸载面板和 Agent（当前版本：面板 2.3.266 / Agent 2.2.181）。卸载前请先确认是否需要备份数据库、配置和日志。
 
@@ -137,14 +137,14 @@ iptables -t nat -S | grep -i forwardx
 ip6tables -t nat -S | grep -i forwardx
 ```
 
-如果使用 nftables，确认没有业务依赖后，可删除 ForwardX 表：
+如果使用 nftables，确认没有业务依赖后，可删除 NEX 表：
 
 ```bash
 nft delete table inet forwardx
 ```
 
 ::: danger 谨慎操作
-不要随意清空整台机器的 iptables 或 nftables 规则。服务器防火墙、Docker、面板和其他业务可能也依赖这些规则。只针对 ForwardX 相关条目进行清理。
+不要随意清空整台机器的 iptables 或 nftables 规则。服务器防火墙、Docker、面板和其他业务可能也依赖这些规则。只针对 NEX 相关条目进行清理。
 :::
 
 ## 保留数据后重新安装

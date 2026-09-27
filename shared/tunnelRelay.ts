@@ -5,7 +5,7 @@ export type TunnelRelayMode = (typeof TUNNEL_RELAY_MODES)[number];
 export const AGENT_FORWARDX_RELAY_FAILOVER_VERSION = "2.2.160";
 
 /**
- * Single-connection multipath aggregation is a ForwardX protocol feature, so an
+ * Single-connection multipath aggregation is a NEX protocol feature, so an
  * Agent older than this cannot run an aggregate tunnel.
  */
 export const AGENT_FORWARDX_RELAY_AGGREGATE_VERSION = "2.2.194";
@@ -30,7 +30,7 @@ export function tunnelRelayFailoverSupported(mode: unknown) {
 
 /**
  * Bandwidth aggregation splits one connection across the relays and reassembles
- * it at the exit, which only the ForwardX protocol implements. GOST transports
+ * it at the exit, which only the NEX protocol implements. GOST transports
  * can fail over between relays but cannot stripe a single stream across them.
  */
 export function tunnelRelayAggregateSupported(mode: unknown) {
@@ -104,7 +104,7 @@ export function tunnelRelayModeAvailability(options: {
       // be wrong when the transport cannot stripe a connection at all.
       available: hasEnoughRelays && !!options.aggregateSupported,
       reason: !options.aggregateSupported
-        ? "仅 ForwardX 隧道支持中转带宽叠加"
+        ? "仅 NEX 隧道支持中转带宽叠加"
         : hasEnoughRelays
           ? ""
           : relayCountReason,

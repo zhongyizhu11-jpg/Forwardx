@@ -5,10 +5,10 @@ import ImageIO
 import UniformTypeIdentifiers
 
 let root = URL(fileURLWithPath: CommandLine.arguments[1])
-let source = root.appendingPathComponent("client/public/favicon.png")
+let source = root.appendingPathComponent("assets/brand/nex-icon.png")
 guard let input = CGImageSourceCreateWithURL(source as CFURL, nil),
       let image = CGImageSourceCreateImageAtIndex(input, 0, nil) else {
-    fatalError("Cannot load ForwardX icon: \(source.path)")
+    fatalError("Cannot load NEX icon: \(source.path)")
 }
 guard let context = CGContext(data: nil, width: 1024, height: 1024,
     bitsPerComponent: 8, bytesPerRow: 4096, space: CGColorSpaceCreateDeviceRGB(),
@@ -16,7 +16,7 @@ guard let context = CGContext(data: nil, width: 1024, height: 1024,
     fatalError("Cannot create opaque RGB icon context")
 }
 let rect = CGRect(x: 0, y: 0, width: 1024, height: 1024)
-context.setFillColor(CGColor(gray: 1, alpha: 1))
+context.setFillColor(CGColor(gray: 0, alpha: 1))
 context.fill(rect)
 context.interpolationQuality = .high
 context.draw(image, in: rect)

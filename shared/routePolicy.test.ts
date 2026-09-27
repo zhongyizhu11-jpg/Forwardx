@@ -233,7 +233,7 @@ test("ForwardX 隧道：隧道出口的 Agent 到 2.2.199 才调度，更老的�
   const fxp = { tunnelId: 7, tunnelMode: "forwardx" };
   for (const protocol of ["tcp", "udp", "both"]) {
     const warnings = policyAt(IN_WINDOW, { ...fxp, protocol }).warnings.join("");
-    assert.match(warnings, /隧道出口的 Agent 早于 2\.2\.199，还不会调度 ForwardX 隧道：升级之前这条规则全部走 主线路、不切换/);
+    assert.match(warnings, /隧道出口的 Agent 早于 2\.2\.199，还不会调度 NEX 隧道：升级之前这条规则全部走 主线路、不切换/);
     assert.doesNotMatch(warnings, /还不会调度 UDP/, "说一句就够");
   }
   assert.deepEqual(policyAt(IN_WINDOW, { ...fxp, protocol: "tcp" }, ready).warnings, []);

@@ -42,7 +42,7 @@ async function telegramForwardGroupSwitchEnabled() {
 }
 
 function forwardGroupSwitchMessage(payload: ForwardGroupSwitchNotifyPayload) {
-  const title = payload.groupMode === "entry" ? "ForwardX 入口组自动切换告警" : "ForwardX 转发组自动切换告警";
+  const title = payload.groupMode === "entry" ? "NEX 入口组自动切换告警" : "NEX 转发组自动切换告警";
   const modeLabel = payload.groupMode === "entry" ? "入口组" : "转发组";
   const lines = [
     `<b>▌ ${escapeHtml(title)}</b>`,

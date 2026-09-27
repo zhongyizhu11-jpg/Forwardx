@@ -66,7 +66,7 @@ export async function sendMail(payload: MailPayload) {
 export async function sendVerificationCode(to: string, code: string) {
   return sendMail({
     to,
-    subject: "ForwardX 验证码",
-    text: `你的 ForwardX 验证码是 ${code}，5 分钟内有效。`,
+    subject: "NEX 验证码",
+    text: `你的 NEX 验证码是 ${code}，5 分钟内有效。`,
   });
 }

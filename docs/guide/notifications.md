@@ -1,6 +1,6 @@
 # 通知与提醒
 
-ForwardX 支持邮件（SMTP）和 Telegram 两种通知渠道，可以同时启用，互不影响。
+NEX 支持邮件（SMTP）和 Telegram 两种通知渠道，可以同时启用，互不影响。
 
 ## 通知触发事件
 

@@ -2117,7 +2117,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                             <Badge variant="outline">{item.category}</Badge>
                           </div>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            {item.author || "ForwardX"} · v{item.version || "0.0.0"} · {formatDateText(item.updatedAt)}
+                            {item.author || "NEX"} · v{item.version || "0.0.0"} · {formatDateText(item.updatedAt)}
                           </p>
                           <p className="mt-3 line-clamp-3 text-sm leading-6 text-muted-foreground">{item.description}</p>
                           {Array.isArray(item.features) && item.features.length > 0 && (
@@ -2295,7 +2295,7 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
                         {installedIds.has(storeDetailItem.id) && <Badge className="bg-[var(--fx-healthy)] text-white">已安装</Badge>}
                       </DialogTitle>
                       <DialogDescription className="mt-1">
-                        开发者：{storeDetailItem.author || "ForwardX"} · v{storeDetailItem.version || "0.0.0"} · 更新：{formatDateText(storeDetailItem.updatedAt)}
+                        开发者：{storeDetailItem.author || "NEX"} · v{storeDetailItem.version || "0.0.0"} · 更新：{formatDateText(storeDetailItem.updatedAt)}
                       </DialogDescription>
                     </div>
                   </div>

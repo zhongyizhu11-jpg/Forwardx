@@ -193,7 +193,7 @@ export default function Live2DWidgetHost() {
         observer.observe(document.body, { childList: true, subtree: true });
         window.setTimeout(() => applyWidgetLayout(config), 0);
       } catch (error) {
-        console.warn("[ForwardX] Live2D widget was not loaded", error);
+        console.warn("[NEX] Live2D widget was not loaded", error);
       }
     };
     void start();

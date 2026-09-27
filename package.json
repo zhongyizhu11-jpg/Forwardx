@@ -1,7 +1,7 @@
 {
   "name": "forwardx",
   "version": "2.3.381",
-  "description": "ForwardX 多主机端口转发与隧道管理面板",
+  "description": "NEX 多主机端口转发与隧道管理面板",
   "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",

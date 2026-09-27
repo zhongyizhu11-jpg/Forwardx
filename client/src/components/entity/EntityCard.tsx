@@ -7,7 +7,7 @@ import type { NetworkHealth } from "@shared/networkHealth";
 /**
  * Entity —— 一个真实业务对象的卡片。
  *
- * ForwardX 只允许三种 Surface：
+ * NEX 只允许三种 Surface：
  *
  *   A  Page Section  页面级大模块（系统状态、实时流量、需要关注）
  *   B  Entity        一个真实业务对象：Host / Tunnel / Rule / Subscription

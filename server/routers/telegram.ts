@@ -267,7 +267,7 @@ export const telegramRouter = router({
     await sendTelegramMessage(
       user.telegramId,
       [
-        "ForwardX Telegram 测试消息",
+        "NEX Telegram 测试消息",
         "",
         `接收用户：${displayName}`,
         `机器人：${botLabel}`,
@@ -417,4 +417,3 @@ export const telegramRouter = router({
       return await issueTelegramSession(ctx, user, "telegram", input.mobile);
     }),
 });
-

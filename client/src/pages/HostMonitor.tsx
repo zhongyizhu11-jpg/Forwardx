@@ -1,3 +1,4 @@
+import { resolveSiteTitle } from "@shared/brand";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { formatMetricSizeDetail } from "@/lib/formatMetricSize";
 import { LatencyPeakCutToggle } from "@/components/LatencyPeakCutToggle";
@@ -804,7 +805,7 @@ export default function HostMonitor() {
   const totalCount = summary.totalHosts;
   const isLoggedIn = !!currentUser.data;
   const monitorTitle = publicInfo.data?.publicHostMonitor?.title?.trim()
-    || `${publicInfo.data?.siteTitle || "ForwardX"} 主机监控`;
+    || `${resolveSiteTitle(publicInfo.data?.siteTitle)} 主机监控`;
   const selectedHost = selectedHostId ? hosts.find((host) => Number(host.id) === selectedHostId) || null : null;
   const handleViewModeChange = (mode: HostMonitorViewMode) => {
     setViewMode(mode);

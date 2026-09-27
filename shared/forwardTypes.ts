@@ -93,7 +93,7 @@ export const FORWARD_PROTOCOL_LABELS: Record<ForwardProtocolKey, string> = {
   socat: "socat",
   gost: "gost",
   nginx: "Nginx",
-  forwardx: "ForwardX",
+  forwardx: "NEX",
   tls: "GOST TLS",
   wss: "GOST WSS",
   tcp: "GOST TCP",

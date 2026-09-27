@@ -106,7 +106,7 @@ const strictProbeTargetSchema = z.object({
   probePort: z.number().int().min(1).max(65535),
 });
 const failoverStrategySchema = z.enum(["fallback", "round_robin", "random", "ip_hash"]);
-// GOST、Nginx、ForwardX 隧道：调度器在出口机上（shared/routeGroup 的 ROUTE_GROUP_TUNNEL_MODES）。
+// GOST、Nginx、NEX 隧道：调度器在出口机上（shared/routeGroup 的 ROUTE_GROUP_TUNNEL_MODES）。
 function isMainBackupGostTunnelMode(mode: unknown) {
   return routeGroupTunnelModeSupported(mode);
 }
@@ -548,7 +548,7 @@ async function routeHostIdsForActor(actor: { id: number; role: string }) {
 
 /**
  * 调度层跑在哪台机器上：隧道规则在隧道的出口机（GOST、Nginx 隧道由出口的 gost / nginx 拨它，
- * ForwardX 隧道由出口的 FXP 拨它），端口转发在规则所在的机器。
+ * NEX 隧道由出口的 FXP 拨它），端口转发在规则所在的机器。
  */
 export function routeEntryHostId(hostId: number, tunnel: any | null | undefined) {
   if (!tunnel) return hostId;
@@ -557,9 +557,9 @@ export function routeEntryHostId(hostId: number, tunnel: any | null | undefined)
 
 /**
  * 调度器实际跑在哪几台机器上，和 server/agentHeartbeatRoute.ts 的 routeSchedulerHostIds 同一个
- * 口径：直连规则是规则所在的机器；隧道（GOST、Nginx、ForwardX）是主出口加上开着的负载均衡
+ * 口径：直连规则是规则所在的机器；隧道（GOST、Nginx、NEX）是主出口加上开着的负载均衡
  * 出口 —— 停用的出口节点、负载均衡关掉后还留着的节点都不算。多出口时每个出口各跑一个调度器，
- * 需要新 Agent 的调度（UDP、ForwardX 隧道）要每一台都够版本才下发。
+ * 需要新 Agent 的调度（UDP、NEX 隧道）要每一台都够版本才下发。
  */
 export function routeSchedulerHostIds(hostId: number, tunnel: any | null | undefined, exitNodes: readonly any[] = []): number[] {
   const primary = routeEntryHostId(hostId, tunnel);
@@ -676,7 +676,7 @@ export function normalizeTransportTuningInput(input: {
   // Realm 2.9.x removed the network.fast_open and network.zero_copy options
   // (the old TOML keys are silently ignored). Keep the database columns for
   // migration compatibility, but never advertise or persist these options for
-  // Realm. ForwardX's own TFO implementation remains supported below.
+  // Realm. NEX's own TFO implementation remains supported below.
   const fastOpenSupported = !isForwardChain && protocolSupported
     && forwardType === "gost" && tunnelRoute && forwardxTunnel;
   const zeroCopySupported = false;
@@ -688,7 +688,7 @@ export function normalizeTransportTuningInput(input: {
     if (protocol !== "udp" && protocol !== "both") {
       throw new Error("UDP 混淆仅支持 UDP 或 TCP+UDP 规则");
     }
-    throw new Error("UDP 混淆仅支持 ForwardX 自定义加密隧道的 UDP/TCP+UDP 规则");
+    throw new Error("UDP 混淆仅支持 NEX 自定义加密隧道的 UDP/TCP+UDP 规则");
   }
   if (!tcpFastOpen && !zeroCopy && !udpOverTcp) {
     if (clearUnsupported) return { tcpFastOpen: false, zeroCopy: false, udpOverTcp: false, udpOverTcpPort: null };
@@ -934,7 +934,7 @@ export function requireMainBackupAllowed(options: {
   }
   const isTunnelRoute = !!options.isTunnelRoute || Number(options.tunnelId || 0) > 0;
   if (isTunnelRoute && options.tunnelMode !== undefined && !isMainBackupGostTunnelMode(options.tunnelMode)) {
-    throw new Error("这种隧道用不了线路组：换一条 GOST、Nginx 或 ForwardX 隧道就可以");
+    throw new Error("这种隧道用不了线路组：换一条 GOST、Nginx 或 NEX 隧道就可以");
   }
   if (!options.isAdmin && !isTunnelRoute && !options.isPortForwardGroup) {
     throw new Error("普通用户的普通端口转发不支持主备线路，请使用 GOST 隧道转发或联系管理员");
@@ -1007,7 +1007,7 @@ async function prepareDirectRuleRouteForActor(
     currentUser = await requireForwardAccessReady(actor.id, { allowTrafficBillingRecovery: isTrafficBillingRule });
     await requireTrafficBillingBalanceForRule(actor.id, isTrafficBillingRule);
     if (String(selectedTunnelForRule?.mode || "").toLowerCase() === "forwardx" && !(currentUser as any)?.canAddRules) {
-      throw new Error("无权使用 ForwardX 加密隧道");
+      throw new Error("无权使用 NEX 加密隧道");
     }
     if (currentUser?.expiresAt && new Date(currentUser.expiresAt) <= new Date()) {
       throw new Error("您的账户已到期，无法添加或启用规则");

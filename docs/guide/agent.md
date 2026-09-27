@@ -93,7 +93,7 @@ curl -fsSL https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scri
 | Agent 通讯配置 | `/etc/forwardx/agent/config.json` |
 | Agent 日志 | `/var/log/forwardx-agent/agent-go.log` |
 | Agent 本地状态 | `/var/lib/forwardx-agent/` |
-| ForwardX FXP 运行时（Go 实现） | `/usr/local/bin/forwardx-fxp` |
+| NEX FXP 运行时（Go 实现） | `/usr/local/bin/forwardx-fxp` |
 | GOST / 隧道运行时配置 | `/etc/forwardx/runtime/` |
 
 **历史路径说明：** 旧版本留下的 `/etc/forwardx-agent`、`/etc/forwardx-runtime`、`/etc/forwardx-tunnel-runtime`、`/etc/forwardx-gost`、`/etc/forwardx-tunnels` 属于历史路径，升级时会优先迁移到 `/etc/forwardx` 下，后续不再新增这些分散目录。

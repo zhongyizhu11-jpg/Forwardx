@@ -443,10 +443,10 @@ function planUserEmailReminders(
           send: async () => {
             await sendMail({
               to: user.email,
-              subject: "ForwardX 套餐到期提醒",
+              subject: "NEX 套餐到期提醒",
               text: daysLeft === 0
-                ? "你的 ForwardX 套餐今天到期，到期后订阅与转发都会停止，请及时续费或联系管理员。"
-                : `你的 ForwardX 套餐将在 ${daysLeft} 天后到期，请及时续费或联系管理员。`,
+                ? "你的 NEX 套餐今天到期，到期后订阅与转发都会停止，请及时续费或联系管理员。"
+                : `你的 NEX 套餐将在 ${daysLeft} 天后到期，请及时续费或联系管理员。`,
             });
           },
         });
@@ -463,8 +463,8 @@ function planUserEmailReminders(
           send: async () => {
             await sendMail({
               to: user.email,
-              subject: "ForwardX 流量余量提醒",
-              text: `你的 ForwardX 流量剩余约 ${leftPercent}%，请及时续费或联系管理员。`,
+              subject: "NEX 流量余量提醒",
+              text: `你的 NEX 流量剩余约 ${leftPercent}%，请及时续费或联系管理员。`,
             });
           },
         });
@@ -528,7 +528,7 @@ async function planHostEmailReminders(users: any[], now: number): Promise<Pendin
         send: async () => {
           await sendMail({
             to: owner.email,
-            subject: "ForwardX 主机流量提醒",
+            subject: "NEX 主机流量提醒",
             text: [
               `主机：${host.name || `#${host.id}`}`,
               `剩余约 ${plan.leftPercent}%`,
@@ -557,7 +557,7 @@ async function planHostEmailReminders(users: any[], now: number): Promise<Pendin
       send: async () => {
         await sendMail({
           to: owner.email,
-          subject: "ForwardX 主机续费提醒",
+          subject: "NEX 主机续费提醒",
           text: [
             `主机：${host.name || `#${host.id}`}`,
             renewal.daysLeft === 0
@@ -644,7 +644,7 @@ export async function runTelegramReminders() {
               await sendTelegramMessage(
                 user.telegramId,
                 [
-                  "ForwardX 到期提醒",
+                  "NEX 到期提醒",
                   "",
                   daysLeft === 0 ? "你的套餐今天到期。" : `你的套餐将在 ${daysLeft} 天后到期。`,
                   `到期时间：${new Date(user.expiresAt).toLocaleDateString("zh-CN")}`,
@@ -667,7 +667,7 @@ export async function runTelegramReminders() {
               await sendTelegramMessage(
                 user.telegramId,
                 [
-                  "ForwardX 流量提醒",
+                  "NEX 流量提醒",
                   "",
                   `你的流量剩余约 ${leftPercent}%。`,
                   `已用：${formatBytes(used)}`,
@@ -701,7 +701,7 @@ export async function runTelegramReminders() {
             await sendTelegramMessage(
               owner.telegramId,
               [
-                "ForwardX 主机流量提醒",
+                "NEX 主机流量提醒",
                 "",
                 `主机：${escapeHtmlLocal(host.name || `#${host.id}`)}`,
                 `剩余约 ${leftPercent}%`,
@@ -757,7 +757,7 @@ export async function runTelegramReminders() {
           await sendTelegramMessage(
             owner.telegramId,
             [
-              "ForwardX 主机续费提醒",
+              "NEX 主机续费提醒",
               "",
               `主机：${escapeHtmlLocal(host.name || `#${host.id}`)}`,
               `剩余：${daysLeft} 天`,

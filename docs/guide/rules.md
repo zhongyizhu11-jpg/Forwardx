@@ -48,7 +48,7 @@
 
 ## Nginx 转发
 
-ForwardX 使用独立的 `forwardx-nginx` 运行时，监听规则配置的入口端口，不固定占用 80 端口。TCP、UDP 和 TCP+UDP 规则均可使用；是否支持某项高级参数由界面按当前模式显示。
+NEX 使用独立的 `forwardx-nginx` 运行时，监听规则配置的入口端口，不固定占用 80 端口。TCP、UDP 和 TCP+UDP 规则均可使用；是否支持某项高级参数由界面按当前模式显示。
 
 ## 状态
 
@@ -63,7 +63,7 @@ ForwardX 使用独立的 `forwardx-nginx` 运行时，监听规则配置的入�
 
 ## 高级设置
 
-PROXY Protocol、TCP Fast Open、流量倍率和主备线路等链路级参数在对应资源中配置。TCP Fast Open 仅在受支持的 ForwardX/GOST 路径提供；Realm 的旧 `fast_open`/`zero_copy` 选项不再生成。界面只显示当前工具支持的选项，后端仍会校验不兼容配置。
+PROXY Protocol、TCP Fast Open、流量倍率和主备线路等链路级参数在对应资源中配置。TCP Fast Open 仅在受支持的 NEX/GOST 路径提供；Realm 的旧 `fast_open`/`zero_copy` 选项不再生成。界面只显示当前工具支持的选项，后端仍会校验不兼容配置。
 
 线路组（一个入口后面挂几条路径，可以经过中转；出问题自动换，也能定时、择优、按权重分流）直接在规则表单里勾选，怎么用见 [线路组](./failover.md)。
 
@@ -87,7 +87,7 @@ PROXY Protocol、TCP Fast Open、流量倍率和主备线路等链路级参数�
 
 ## mimic UDP 混淆
 
-mimic 只用于 ForwardX 隧道，且规则协议需要包含 UDP：
+mimic 只用于 NEX 隧道，且规则协议需要包含 UDP：
 
 - V1：处理 FXP 的 UDP 承载。
 - V2：处理 userspace WireGuard 的外层 UDP。
@@ -99,7 +99,7 @@ mimic 只用于 ForwardX 隧道，且规则协议需要包含 UDP：
 curl -fsSL https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-mimic.sh | sudo bash
 ```
 
-ForwardX 安装器默认安装或升级到 `mimic v0.7.1`。该版本仍要求 Linux 6.1+、XDP 入站和 TC 出站 eBPF 钩子；Agent 会在 XDP `native` 与 `skb` 模式之间自动回退。发行版没有对应二进制包时，上游安装器会尝试源码构建。
+NEX 安装器默认安装或升级到 `mimic v0.7.1`。该版本仍要求 Linux 6.1+、XDP 入站和 TC 出站 eBPF 钩子；Agent 会在 XDP `native` 与 `skb` 模式之间自动回退。发行版没有对应二进制包时，上游安装器会尝试源码构建。
 
 Agent 会只读检测 mimic 命令和内核模块，并把结果上报给面板。开启 UDP 混淆、重新启用隧道或更换链路主机时，面板会逐台校验；缺少环境时本次操作失败并提示手动安装，Agent 不会自行安装。
 

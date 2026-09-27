@@ -67,7 +67,7 @@ export function shouldNotifyRouteSwitch(ruleId: number, kind: string, now = Date
 export function routeSwitchMessage(payload: RouteSwitchNotifyPayload) {
   const { rule, host } = payload;
   const isPrecheck = payload.kind === "precheck_failed";
-  const title = isPrecheck ? "ForwardX 线路组计划切换未执行" : "ForwardX 线路组切换提醒";
+  const title = isPrecheck ? "NEX 线路组计划切换未执行" : "NEX 线路组切换提醒";
   const reason = describeRouteReason(payload.reason) || "-";
   const lines = [
     `<b>${isPrecheck ? "🟡" : "🔁"} ${escapeHtml(title)}</b>`,

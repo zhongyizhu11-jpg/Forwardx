@@ -102,8 +102,8 @@ export async function collectDueProxyTrafficReminders(): Promise<ProxyTrafficRem
 /** 标题与正文两个渠道共用，省得哪天只改了一边。 */
 export function proxyTrafficReminderTitle(subject: ProxyTrafficReminderSubject): string {
   return subject.plan.state === "exceeded"
-    ? `ForwardX ${subject.kindText}流量已用完`
-    : `ForwardX ${subject.kindText}流量提醒`;
+    ? `NEX ${subject.kindText}流量已用完`
+    : `NEX ${subject.kindText}流量提醒`;
 }
 
 export function proxyTrafficReminderTail(subject: ProxyTrafficReminderSubject): string {

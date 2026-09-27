@@ -5,8 +5,8 @@ const base = process.env.VITEPRESS_BASE || "/";
 export default defineConfig({
   base,
   lang: "zh-CN",
-  title: "ForwardX",
-  description: "ForwardX 转发管理面板用户教程",
+  title: "NEX",
+  description: "NEX 转发管理面板用户教程",
   cleanUrls: true,
   lastUpdated: true,
   head: [
@@ -14,7 +14,8 @@ export default defineConfig({
     ["meta", { name: "referrer", content: "strict-origin-when-cross-origin" }],
   ],
   themeConfig: {
-    siteTitle: "ForwardX 教程",
+    siteTitle: "NEX 教程",
+    logo: "/nex-logo.png",
     nav: [
       { text: "快速开始", link: "/guide/quick-start" },
       { text: "部署面板", link: "/guide/deploy-panel" },
@@ -60,7 +61,7 @@ export default defineConfig({
           { text: "用户、套餐和权限", link: "/guide/users-billing" },
           { text: "Telegram 和通知", link: "/guide/notifications" },
           { text: "升级和备份", link: "/guide/upgrade-backup" },
-          { text: "卸载 ForwardX", link: "/guide/uninstall" },
+          { text: "卸载 NEX", link: "/guide/uninstall" },
           { text: "常见问题排查", link: "/guide/troubleshooting" },
         ],
       },

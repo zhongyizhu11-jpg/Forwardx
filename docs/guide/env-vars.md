@@ -1,6 +1,6 @@
 # 环境变量
 
-ForwardX 大多数设置都可以在后台页面中配置。环境变量主要用于容器启动、数据库连接、登录密钥、Telegram Token 和升级命令这类“启动前就要确定”的配置。
+NEX 大多数设置都可以在后台页面中配置。环境变量主要用于容器启动、数据库连接、登录密钥、Telegram Token 和升级命令这类“启动前就要确定”的配置。
 
 Docker 部署时，环境变量通常写在部署目录的 `.env` 文件中。本地 systemd 部署时，可以写入 systemd 服务的环境配置，或由安装脚本生成的服务配置管理。
 
@@ -31,7 +31,7 @@ Docker 部署时，环境变量通常写在部署目录的 `.env` 文件中。�
 :::
 
 ::: tip Docker 与时间校准
-Docker 容器与宿主机共享系统时钟，不能独立运行一套时间。ForwardX 会使用多个 HTTPS 来源校准旧版 Agent/FXP 加密协议的时间基准；新版 Agent 与 ForwardX FXP 面板上报使用一次性挑战认证，不再依赖双方系统时间。宿主机仍建议开启 NTP。外网受限时，可通过 `FORWARDX_PANEL_TIME_SOURCES` 指向部署方可信且会返回标准 `Date` 响应头的 HTTPS 服务。
+Docker 容器与宿主机共享系统时钟，不能独立运行一套时间。NEX 会使用多个 HTTPS 来源校准旧版 Agent/FXP 加密协议的时间基准；新版 Agent 与 NEX FXP 面板上报使用一次性挑战认证，不再依赖双方系统时间。宿主机仍建议开启 NTP。外网受限时，可通过 `FORWARDX_PANEL_TIME_SOURCES` 指向部署方可信且会返回标准 `Date` 响应头的 HTTPS 服务。
 
 官方 Docker 部署默认只有一个面板进程。自行横向扩容面板时，请保持单副本或为 `/api/agent/*`、`/api/sync` 和 `/api/stream` 配置粘性路由，确保一次性挑战由同一面板进程签发和消费。
 :::

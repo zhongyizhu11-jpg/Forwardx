@@ -6,7 +6,7 @@ import { describeNetworkHealth, type NetworkHealth, type NetworkLineStyle } from
 import { StatusDot } from "./StatusDot";
 
 /**
- * ForwardX 的核心视觉语言：节点是点，链路是线，转发是流。
+ * NEX 的核心视觉语言：节点是点，链路是线，转发是流。
  *
  * 这个文件里的三个组件（NetworkNode / NetworkEdge / NetworkPath）是整个设计
  * 系统的地基。**凡是表达网络关系的地方，都用它们，不再各写各的**。
@@ -33,7 +33,7 @@ import { StatusDot } from "./StatusDot";
 
 export type NetworkNodeSpec = {
   id: string;
-  /** 节点名。主机名、落地名、「ForwardX」这种中继标识都算 */
+  /** 节点名。主机名、落地名、「NEX」这种中继标识都算 */
   name: string;
   /** 名字底下那行：地区、地址、角色。不是第二个标题，是注脚 */
   sublabel?: string;
@@ -43,7 +43,7 @@ export type NetworkNodeSpec = {
 };
 
 export type NetworkEdgeSpec = {
-  /** 这一段经过谁：ForwardX、GOST、中继名。写在线的旁边 */
+  /** 这一段经过谁：NEX、GOST、中继名。写在线的旁边 */
   via?: string;
   /** 这一段的延迟。数字本身是视觉元素，所以单独一档字号 */
   latencyMs?: number | null;

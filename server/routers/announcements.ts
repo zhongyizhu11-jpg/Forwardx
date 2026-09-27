@@ -51,7 +51,7 @@ function announcementTelegramText(title: string, content: string) {
     .trim();
   const body = plain.length > 3200 ? `${plain.slice(0, 3200)}...` : plain;
   return [
-    "<b>ForwardX 新公告</b>",
+    "<b>NEX 新公告</b>",
     "",
     `<b>${escapeTelegramHtml(title)}</b>`,
     "",

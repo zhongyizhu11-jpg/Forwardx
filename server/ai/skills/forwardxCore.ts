@@ -72,8 +72,8 @@ export const forwardxManageIntentResponseSchema = z.object({
 export const forwardxCoreSkill: AiSkillDefinition = {
   id: "forwardx-core",
   version: "1.0.0",
-  name: "ForwardX 核心管理",
-  description: "理解 ForwardX 主机、转发规则、隧道、转发组、用户与计费资源，并将自然语言路由到受控的本地工具。",
+  name: "NEX 核心管理",
+  description: "理解 NEX 主机、转发规则、隧道、转发组、用户与计费资源，并将自然语言路由到受控的本地工具。",
   instructions: [
     "模型只负责识别意图和提取参数，不直接回答运行数据，也不生成可执行代码。",
     "所有面板数据均由本地只读工具查询，不向模型发送数据库记录。",
@@ -108,7 +108,7 @@ function skillHeader(mode: "read" | "write") {
 export function buildForwardxQueryIntentPrompt() {
   return [
     ...skillHeader("read"),
-    "Classify the ForwardX Telegram message into one read-only query intent.",
+    "Classify the NEX Telegram message into one read-only query intent.",
     "Return only JSON with keys: intent, id, keyword, ruleStatus, rankMetric, rankOrder, limit.",
     `Allowed intents: ${FORWARDX_QUERY_INTENTS.join(",")}.`,
     "For abnormal, pending, disabled, or running rule queries, use rules and set ruleStatus.",
@@ -124,7 +124,7 @@ export function buildForwardxQueryIntentPrompt() {
 export function buildForwardxManageIntentPrompt() {
   return [
     ...skillHeader("write"),
-    "Classify the ForwardX Telegram message into one write operation.",
+    "Classify the NEX Telegram message into one write operation.",
     "Return only JSON keys: action,target,amountYuan,durationValue,durationUnit,ruleId,tunnel,host,forwardMode,sourcePort,targetIp,targetPort,codeCount,discountPercent,writeLike.",
     `Allowed actions: ${FORWARDX_MANAGE_ACTIONS.join(",")}.`,
     "Use rule_enable/rule_disable only for a specific rule id, and tunnel_rules_enable/tunnel_rules_disable for rules belonging to one tunnel.",

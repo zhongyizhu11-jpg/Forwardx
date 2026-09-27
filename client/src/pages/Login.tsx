@@ -1,3 +1,4 @@
+import { resolveSiteTitle } from "@shared/brand";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -335,7 +336,7 @@ export default function Login() {
     refetchOnWindowFocus: false,
   });
   const registrationEnabled = emailConfig?.registrationEnabled !== false && publicInfo?.registrationEnabled !== false;
-  const siteTitle = publicInfo?.siteTitle?.trim() || "ForwardX";
+  const siteTitle = resolveSiteTitle(publicInfo?.siteTitle);
   const logoSrc = publicInfo?.siteLogoDataUrl || (resolvedTheme === "dark" ? "/logo-dark.png" : "/logo-light.png");
 
   useEffect(() => {
@@ -895,7 +896,13 @@ export default function Login() {
           <span>{siteTitle}</span>
         </Link>
       )}
-      <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
+      <div
+        className="absolute z-20 flex items-center gap-2"
+        style={{
+          top: "calc(env(safe-area-inset-top, 0px) + 16px)",
+          right: "calc(env(safe-area-inset-right, 0px) + 16px)",
+        }}
+      >
         {mobileAuth.isNative && (
           <button
             onClick={() => {

@@ -20,7 +20,7 @@ import type { NetworkHealth } from "@shared/networkHealth";
  * 换成 Path 之后：
  *
  *   ● Po0 ───── ● Relay-HK ───── ● Jinx
- *     广东        ForwardX          香港
+ *     广东        NEX          香港
  *
  * 标签位置留给真正有信息量的东西：地区、经过谁、多少 ms。
  *
@@ -38,7 +38,7 @@ export type TunnelPathContext = {
   health?: NetworkHealth;
   /** 链路延迟，标在中间那一段上 */
   latencyMs?: number | null;
-  /** 经过什么转发实现（ForwardX V1/V2、GOST…） */
+  /** 经过什么转发实现（NEX V1/V2、GOST…） */
   via?: string;
 };
 

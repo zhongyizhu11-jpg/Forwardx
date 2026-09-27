@@ -1362,7 +1362,7 @@ function normalizeStoreItem(input: any, options: {
     return {
       id,
       name: String(input?.name || id).trim().slice(0, 120) || id,
-      description: String(input?.description || "").trim().slice(0, 500) || "ForwardX 插件",
+      description: String(input?.description || "").trim().slice(0, 500) || "NEX 插件",
       detailsMarkdown: normalizeOptionalText(input?.detailsMarkdown || input?.detailMarkdown || input?.longDescription, 5000),
       features: normalizePluginFeatures(input?.features),
       version: normalizeOptionalText(input?.version, 64),
@@ -1375,7 +1375,7 @@ function normalizeStoreItem(input: any, options: {
       branch: String(input?.branch || "main").trim().slice(0, 128) || "main",
       manifestPath: String(input?.manifestPath || "forwardx-plugin.json").trim().slice(0, 256) || "forwardx-plugin.json",
       homepage: String(input?.homepage || repository).trim().slice(0, 512) || repository,
-      author: String(input?.author || "ForwardX").trim().slice(0, 120) || "ForwardX",
+      author: String(input?.author || "NEX").trim().slice(0, 120) || "NEX",
       logo: normalizeOptionalLogo(input?.logo),
       packageRepository,
       packageBranch: String(input?.packageBranch || "").trim().slice(0, 128) || undefined,
@@ -2049,7 +2049,7 @@ function builtinFallbackManifest(storeItem: PluginStoreItem): ForwardxPluginMani
         id: "overview",
         title: "许可证与资源说明",
         contentType: "markdown",
-        content: "本插件适配 stevenjoezhang/live2d-widget；运行时代码按 GPL-3.0-or-later 发布。ForwardX 不内置模型，模型资源请按所选仓库的许可使用。",
+        content: "本插件适配 stevenjoezhang/live2d-widget；运行时代码按 GPL-3.0-or-later 发布。NEX 不内置模型，模型资源请按所选仓库的许可使用。",
       }],
     });
   }
@@ -2079,7 +2079,7 @@ function builtinFallbackManifest(storeItem: PluginStoreItem): ForwardxPluginMani
         id: "overview",
         title: "插件说明",
         contentType: "markdown",
-        content: "该插件由 ForwardX 内置适配，用于按主机管理中国区域白名单规则和实时状态。",
+        content: "该插件由 NEX 内置适配，用于按主机管理中国区域白名单规则和实时状态。",
       },
     ],
     actions: [

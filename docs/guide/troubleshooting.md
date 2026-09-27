@@ -445,7 +445,7 @@ tcpdump -ni any 'ip6 and port 入口端口'
 
 ### Nginx Stream 隧道
 
-ForwardX 使用独立运行时，与系统的 `nginx` 命令和 `nginx.service` 无关：
+NEX 使用独立运行时，与系统的 `nginx` 命令和 `nginx.service` 无关：
 
 1. 确认独立服务和二进制存在：
    ```bash

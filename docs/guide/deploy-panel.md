@@ -1,6 +1,6 @@
 # 部署面板
 
-ForwardX 面板支持 Docker 部署和本地 systemd 部署。普通用户优先推荐 Docker 部署；如果你希望面板直接运行在宿主机上，可以选择本地 systemd 部署。
+NEX 面板支持 Docker 部署和本地 systemd 部署。普通用户优先推荐 Docker 部署；如果你希望面板直接运行在宿主机上，可以选择本地 systemd 部署。
 
 ## Docker 一键部署
 
@@ -46,7 +46,7 @@ docker logs -n 300 forwardx-panel
 /opt/forwardx-docker
 ```
 
-如需卸载 Docker 面板，请先阅读 [卸载 ForwardX](./uninstall.md)，确认是否保留数据卷和数据库。
+如需卸载 Docker 面板，请先阅读 [卸载 NEX](./uninstall.md)，确认是否保留数据卷和数据库。
 
 ## 重置管理员密码
 
@@ -209,7 +209,7 @@ docker image ls --no-trunc --format '{{.Repository}} {{.Tag}} {{.ID}}' ghcr.io/z
   | xargs -r docker image rm
 ```
 
-一键升级脚本会在新容器成功运行后自动删除同一仓库内不再使用的旧版 ForwardX 镜像；上面的手动命令也只清理 ForwardX 镜像，不会影响其他项目。升级不会删除 `forwardx-data` 数据卷，也不会改动 `.env`。如果你手动执行 `docker volume rm`，数据才会被删除。
+一键升级脚本会在新容器成功运行后自动删除同一仓库内不再使用的旧版 NEX 镜像；上面的手动命令也只清理 NEX 镜像，不会影响其他项目。升级不会删除 `forwardx-data` 数据卷，也不会改动 `.env`。如果你手动执行 `docker volume rm`，数据才会被删除。
 
 ### 7. Docker 外部数据库地址怎么填
 
@@ -261,7 +261,7 @@ journalctl -u forwardx-panel -n 300 --no-pager
 /opt/forwardx-panel
 ```
 
-如需卸载本地面板，请先阅读 [卸载 ForwardX](./uninstall.md)，确认是否保留安装目录和数据库。
+如需卸载本地面板，请先阅读 [卸载 NEX](./uninstall.md)，确认是否保留安装目录和数据库。
 
 ## 使用 GitHub 加速站安装和升级
 
@@ -316,7 +316,7 @@ GitHub 加速参数用于 GitHub API、Raw 文件和 Release 资产，不会改�
 
 ### 1. 准备 Node.js 和 pnpm
 
-ForwardX 面板需要 Node.js 22 或以上版本。
+NEX 面板需要 Node.js 22 或以上版本。
 
 Ubuntu/Debian 示例：
 

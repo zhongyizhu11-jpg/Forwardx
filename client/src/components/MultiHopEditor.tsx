@@ -59,7 +59,7 @@ interface MultiHopEditorProps {
   externalExit?: boolean;
   relayMode?: TunnelRelayMode;
   relayModeSupported?: boolean;
-  /** Bandwidth aggregation is a ForwardX-only protocol feature. */
+  /** Bandwidth aggregation is a NEX-only protocol feature. */
   relayAggregateSupported?: boolean;
   onRelayModeChange?: (mode: TunnelRelayMode) => void;
 }
