@@ -28,6 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { mobileAuth } from "@/lib/mobileAuth";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import {
@@ -462,7 +463,7 @@ export default function AgentTokenManager({
 
   const { data: systemSettings } = trpc.system.getSettings.useQuery();
   const configuredPanelUrl = normalizeConfigUrl(systemSettings?.panelPublicUrl || "");
-  const currentPanelUrl = typeof window !== "undefined" ? normalizeConfigUrl(window.location.origin) : "";
+  const currentPanelUrl = normalizeConfigUrl(mobileAuth.panelOrigin());
   const panelUrl = configuredPanelUrl || currentPanelUrl;
   const installAddressOptions = useMemo<InstallAddressOption[]>(() => {
     const options: InstallAddressOption[] = [];

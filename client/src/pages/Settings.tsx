@@ -36,6 +36,7 @@ import { segmentedControlClassName, segmentedOptionClassName } from "@/component
 import { useIsMobile } from "@/hooks/useMobile";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { pollingInterval } from "@/lib/polling";
+import { mobileAuth } from "@/lib/mobileAuth";
 import { trpc } from "@/lib/trpc";
 import { getPanelChangelogUrl, getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
 import { compressImageFile, imageDataUrlSize } from "@/lib/imageUpload";
@@ -699,10 +700,10 @@ function SettingsContent() {
     setActiveTab(tab);
   };
 
-  // 面板地址统一使用「系统配置」Tab 中配置的 panelPublicUrl；未配置时回退 window.location.origin
+  // 面板地址统一使用「系统配置」Tab 中配置的 panelPublicUrl；未配置时回退当前面板地址（App 里是登录时填的地址）
   const { data: systemSettings } = trpc.system.getSettings.useQuery();
   const panelUrl = (systemSettings?.panelPublicUrl && systemSettings.panelPublicUrl.trim())
-    || (typeof window !== "undefined" ? window.location.origin : "");
+    || mobileAuth.panelOrigin();
 
   const copyToClipboard = async (text: string) => {
     /*
@@ -4751,7 +4752,7 @@ function SystemInfoSection() {
   const webPortChangeDisabled = !settings?.webPortManagement?.enabled || updateWebPortMutation.isPending;
   const publicHostMonitorNormalizedPath = normalizePublicHostMonitorPathInput(publicHostMonitorPath) || "dev";
   const publicHostMonitorUrl = useMemo(() => {
-    const base = (settings?.panelPublicUrl || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/+$/, "");
+    const base = (settings?.panelPublicUrl || mobileAuth.panelOrigin()).replace(/\/+$/, "");
     return base ? `${base}/${publicHostMonitorNormalizedPath}` : `/${publicHostMonitorNormalizedPath}`;
   }, [publicHostMonitorNormalizedPath, settings?.panelPublicUrl]);
 

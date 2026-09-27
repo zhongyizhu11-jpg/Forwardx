@@ -132,6 +132,21 @@ export const mobileAuth = {
     return getLocalValue(LOGGED_OUT_KEY) === "1";
   },
 
+  /**
+   * 面板对外的地址，用来拼要交给别处的链接（订阅地址、安装命令、图片）。
+   *
+   * App 里页面跑在 capacitor://localhost（安卓是 https://localhost），直接拿
+   * window.location.origin 拼出来的订阅地址，Shadowrocket 报「不支持的 URL」，
+   * Loon 报「配置文件下载失败」。App 里要用登录时填的面板地址。
+   */
+  panelOrigin() {
+    if (isCapacitorRuntime()) {
+      const panelUrl = getLocalValue(PANEL_URL_KEY);
+      if (isValidPanelUrl(panelUrl)) return normalizePanelUrl(panelUrl);
+    }
+    return typeof window === "undefined" ? "" : window.location.origin;
+  },
+
   trpcUrl() {
     if (!isCapacitorRuntime()) return "/api/trpc";
     const panelUrl = mobileAuth.getPanelUrl();

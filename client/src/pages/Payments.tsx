@@ -34,6 +34,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { SlidingTabsList, type SlidingTabItem } from "@/components/ui/sliding-tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useUrlTab } from "@/hooks/useUrlTab";
+import { mobileAuth } from "@/lib/mobileAuth";
 import { trpc } from "@/lib/trpc";
 import {
   CheckCircle2,
@@ -390,8 +391,7 @@ export default function Payments() {
   const panelUrl = useMemo(() => {
     const configured = settings?.panelPublicUrl?.trim();
     if (configured) return configured.replace(/\/+$/, "");
-    if (typeof window !== "undefined") return window.location.origin;
-    return "";
+    return mobileAuth.panelOrigin();
   }, [settings?.panelPublicUrl]);
 
   const updateConfig = trpc.payment.updateConfig.useMutation({

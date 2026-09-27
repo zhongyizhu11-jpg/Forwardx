@@ -22,6 +22,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
 import { pollingInterval } from "@/lib/polling";
+import { mobileAuth } from "@/lib/mobileAuth";
 import { trpc } from "@/lib/trpc";
 import {
   PROXY_NODE_PROTOCOL_LABELS,
@@ -166,7 +167,7 @@ function subscriptionUrl(
   kind: ProxySubscriptionKind,
   pinFormat = false,
 ) {
-  return buildProxySubscriptionUrl({ origin: window.location.origin, token, format, kind, pinFormat });
+  return buildProxySubscriptionUrl({ origin: mobileAuth.panelOrigin(), token, format, kind, pinFormat });
 }
 
 async function copyText(value: string, message: string) {
@@ -455,7 +456,7 @@ export default function ClientSubscriptionsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/client-logos")
+    fetch(`${mobileAuth.panelOrigin()}/api/client-logos`)
       .then((res) => (res.ok ? res.json() : {}))
       .then((data) => {
         if (!cancelled && data && typeof data === "object") {
@@ -1205,7 +1206,7 @@ export default function ClientSubscriptionsPage() {
                             const { icon: Icon, className: iconClass } = clientIcon(target);
                             // 运行时的优先：放在服务器上就能换图，不必重新构建。
                             const logo = runtimeLogos[target.id]
-                              ? `/api/client-logos/${target.id}`
+                              ? `${mobileAuth.panelOrigin()}/api/client-logos/${target.id}`
                               : CLIENT_LOGOS[target.id];
                             const offPlatform = platform ? !target.platforms.includes(platform) : false;
                             const usable = supported && !offPlatform;
