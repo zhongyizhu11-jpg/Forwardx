@@ -1302,13 +1302,18 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
   */
   .workspace-has-tabbar { --forwardx-mobile-bottom-inset: 76px; }
 
-  /* iOS 真机已提供手势安全区，不再在安全区上额外叠加 12px 悬浮间距。 */
+  /*
+    iOS App 里底栏贴近底边（iOS 26 悬浮标签栏那样）：底栏下沿压进 Home 指示条那一带 12px，
+    指示条（34pt 安全区里靠下的一截）仍露在底栏下面，上滑回桌面的手势不受影响。
+    没有 Home 指示条的机型（安全区为 0）至少离底边 8px。2026-09-27 用户在真机上选的「再贴近底边」。
+  */
+  html.capacitor-ios { --fx-ios-tabbar-bottom: max(8px, calc(env(safe-area-inset-bottom, 0px) - 12px)); }
   html.capacitor-ios .fx-tabbar {
-    bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    bottom: var(--fx-ios-tabbar-bottom);
   }
   html.capacitor-ios .workspace-has-tabbar {
     /* 52px 底栏 + 12px 内容间隔；index.css 会再加安全区，所以这里先抵消一次。 */
-    --forwardx-mobile-bottom-inset: calc(64px + max(8px, env(safe-area-inset-bottom, 0px)) - var(--forwardx-safe-area-bottom));
+    --forwardx-mobile-bottom-inset: calc(64px + var(--fx-ios-tabbar-bottom) - var(--forwardx-safe-area-bottom));
   }
 
   /* 有页面自己的导航栏时，顶部不再预留常驻顶栏的高度 */
