@@ -86,14 +86,14 @@ test("an unsupported protocol is reported instead of a misleading relay count", 
   // stripe a connection at all, so the protocol reason wins.
   const gost = tunnelRelayModeAvailability({ relayCount: 0, aggregateSupported: false });
   assert.equal(gost.aggregate.available, false);
-  assert.match(gost.aggregate.reason, /仅 ForwardX/);
+  assert.match(gost.aggregate.reason, /仅 NEX/);
   // Failover still works on those transports, so it keeps the relay-count reason.
   assert.match(gost.failover.reason, /当前 0 台/);
 
   const gostWithRelays = tunnelRelayModeAvailability({ relayCount: 3, aggregateSupported: false });
   assert.equal(gostWithRelays.failover.available, true);
   assert.equal(gostWithRelays.aggregate.available, false);
-  assert.match(gostWithRelays.aggregate.reason, /仅 ForwardX/);
+  assert.match(gostWithRelays.aggregate.reason, /仅 NEX/);
 });
 
 test("a malformed relay count is treated as zero rather than throwing", () => {

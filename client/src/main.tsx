@@ -1,3 +1,4 @@
+import { resolveSiteTitle } from "@shared/brand";
 import { trpc } from "@/lib/trpc";
 import { ACCOUNT_DISABLED_ERR_MSG, SESSION_REPLACED_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -20,7 +21,7 @@ const cachedSiteTitle = (() => {
 })();
 
 if (cachedSiteTitle) {
-  document.title = cachedSiteTitle;
+  document.title = resolveSiteTitle(cachedSiteTitle);
 }
 
 const queryClient = new QueryClient({
@@ -146,6 +147,7 @@ async function bootstrap() {
 
   if (mobileAuth.isNative) {
     document.documentElement.classList.add("capacitor-native");
+    document.documentElement.classList.toggle("capacitor-ios", mobileAuth.platform === "ios");
   }
 
   createRoot(document.getElementById("root")!).render(

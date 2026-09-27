@@ -4,7 +4,7 @@ import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth
 /**
  * 状态信号点。
  *
- * 这是 ForwardX 里最小的一个视觉元素，但它承担的事情最多：一屏上十几条记录，
+ * 这是 NEX 里最小的一个视觉元素，但它承担的事情最多：一屏上十几条记录，
  * 用户第一眼扫的就是这一列点。所以它只做一件事 —— 说出健康状态，不兼职表示
  * 类型、不兼职表示选中。
  *

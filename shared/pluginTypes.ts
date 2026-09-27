@@ -584,10 +584,10 @@ export type PluginStoreSource = {
 export const BUILTIN_PLUGIN_STORE_ITEMS: PluginStoreItem[] = [
   {
     id: "china-region-whitelist",
-    name: "ForwardX 中国区域白名单",
+    name: "NEX 中国区域白名单",
     description: "按主机实时管理中国大陆全国、省级 CIDR 和 ASN 白名单规则。",
     detailsMarkdown: [
-      "ForwardX 中国区域白名单插件用于把中国大陆全国、省级 CIDR 和 ASN 白名单规则应用到 Agent 主机。",
+      "NEX 中国区域白名单插件用于把中国大陆全国、省级 CIDR 和 ASN 白名单规则应用到 Agent 主机。",
       "",
       "启用后，插件程序和数据会自动同步到所有 Agent。左侧展示全部主机并支持筛选；点击主机后，可在右侧新增、查看、修改、删除和刷新实际白名单规则。",
       "",
@@ -626,17 +626,17 @@ export const BUILTIN_PLUGIN_STORE_ITEMS: PluginStoreItem[] = [
   },
   {
     id: "live2d-widget",
-    name: "ForwardX Live2D 看板娘",
+    name: "NEX Live2D 看板娘",
     description: "在面板中按需启用并配置 stevenjoezhang/live2d-widget 看板娘。",
     detailsMarkdown: [
-      "ForwardX Live2D 看板娘是 `stevenjoezhang/live2d-widget` 的官方适配插件。",
+      "NEX Live2D 看板娘是 `stevenjoezhang/live2d-widget` 的官方适配插件。",
       "",
       "插件默认关闭；安装并启用后，浏览器才会按设置加载固定版本的上游运行时和模型资源。面板端不执行插件包内的任意 JavaScript。",
       "",
       "- 可设置显示范围、移动端显示、模型 CDN、默认模型和停靠位置。",
       "- 可选择一言、切换模型、换装、拍照、项目说明和关闭等工具。",
       "- 可设置拖动、关闭后的重新唤起方式和日志等级。",
-      "- ForwardX 不打包 Live2D 模型；模型资源的许可由所配置的模型仓库单独决定。",
+      "- NEX 不打包 Live2D 模型；模型资源的许可由所配置的模型仓库单独决定。",
     ].join("\n"),
     version: "1.0.0",
     releaseDate: "2026-07-24",
@@ -680,5 +680,5 @@ export const PLUGIN_SECURITY_MODEL = {
   maxAssetBytes: 512 * 1024,
   maxPackageBytes: 5 * 1024 * 1024,
   maxHttpResponseBytes: 256 * 1024,
-  description: "ForwardX 插件由面板解释 manifest。普通插件不执行面板后端代码；声明 net:http 后可发起受控 HTTP 请求；声明 Agent 权限后可在独立任务队列中执行插件包内固定脚本入口。panel.request 仅允许管理员已设为信任且声明对应细分权限的插件调用固定面板操作，不支持任意路由、SQL 或后端代码执行。",
+  description: "NEX 插件由面板解释 manifest。普通插件不执行面板后端代码；声明 net:http 后可发起受控 HTTP 请求；声明 Agent 权限后可在独立任务队列中执行插件包内固定脚本入口。panel.request 仅允许管理员已设为信任且声明对应细分权限的插件调用固定面板操作，不支持任意路由、SQL 或后端代码执行。",
 } as const;

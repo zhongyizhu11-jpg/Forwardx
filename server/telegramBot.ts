@@ -760,7 +760,7 @@ async function ensureTelegramIdentity(message: TelegramMessage) {
 
 function helpText(bound: boolean, isAdmin = false) {
   const base = [
-    "ForwardX Telegram Bot",
+    "NEX Telegram Bot",
     "",
     bound
       ? "可用命令："
@@ -842,7 +842,7 @@ async function sendBindPrompt(chatId: number | string) {
     [
       "<b>绑定 Telegram</b>",
       "",
-      "当前 Telegram 尚未绑定 ForwardX 账户。",
+      "当前 Telegram 尚未绑定 NEX 账户。",
       "请先在网页面板的个人菜单里点击 Telegram 绑定生成绑定码，然后点击下面按钮并发送绑定码。",
     ].join("\n"),
     bindPromptKeyboard(),
@@ -1089,7 +1089,7 @@ function ruleListBackKeyboard(page = 0): InlineKeyboardMarkup {
 }
 
 function menuText(user: any) {
-  const title = user?.role === "admin" ? "ForwardX 管理菜单" : "ForwardX 用户菜单";
+  const title = user?.role === "admin" ? "NEX 管理菜单" : "NEX 用户菜单";
   return [
     `<b>${escapeHtml(title)}</b>`,
     "",
@@ -1384,7 +1384,7 @@ async function handleBind(message: TelegramMessage, code: string) {
   });
   await sendMessage(
     message.chat.id,
-    `已绑定到 ForwardX 账户：<b>${escapeHtml(user.name || user.username)}</b>\n之后可以使用 /usage、/rules 和功能菜单。`,
+    `已绑定到 NEX 账户：<b>${escapeHtml(user.name || user.username)}</b>\n之后可以使用 /usage、/rules 和功能菜单。`,
   );
   const boundUser = await db.getUserById(user.id);
   if (boundUser) await sendMainMenu(message.chat.id, boundUser);
@@ -1393,11 +1393,11 @@ async function handleBind(message: TelegramMessage, code: string) {
 async function handleMobileLoginStart(message: TelegramMessage, code: string, user: any | null | undefined) {
   const normalized = code.trim().toUpperCase();
   if (!hasMobileTelegramLoginChallenge(normalized)) {
-    await sendMessage(message.chat.id, "登录请求已过期，请回到 ForwardX 重新发起。");
+    await sendMessage(message.chat.id, "登录请求已过期，请回到 NEX 重新发起。");
     return;
   }
   if (!user) {
-    await sendMessage(message.chat.id, "当前 Telegram 未绑定任何 ForwardX 账户，请先使用账号密码登录后绑定 Telegram。", bindPromptKeyboard());
+    await sendMessage(message.chat.id, "当前 Telegram 未绑定任何 NEX 账户，请先使用账号密码登录后绑定 Telegram。", bindPromptKeyboard());
     return;
   }
   if ((user as any).accountEnabled === false) {
@@ -1407,7 +1407,7 @@ async function handleMobileLoginStart(message: TelegramMessage, code: string, us
   await sendMessage(
     message.chat.id,
     [
-      "<b>ForwardX 登录确认</b>",
+      "<b>NEX 登录确认</b>",
       "",
       `将登录账户：<b>${escapeHtml(user.name || user.username)}</b>`,
       "如果这是你本人操作，请点击下方按钮确认。登录请求 5 分钟内有效。",
@@ -1419,7 +1419,7 @@ async function handleMobileLoginStart(message: TelegramMessage, code: string, us
 async function confirmMobileLogin(chatId: number | string, messageId: number, code: string, user: any) {
   const normalized = code.trim().toUpperCase();
   if (!hasMobileTelegramLoginChallenge(normalized)) {
-    await editMessage(chatId, messageId, "登录请求已过期，请回到 ForwardX 重新发起。");
+    await editMessage(chatId, messageId, "登录请求已过期，请回到 NEX 重新发起。");
     return;
   }
   if ((user as any).accountEnabled === false) {
@@ -1427,7 +1427,7 @@ async function confirmMobileLogin(chatId: number | string, messageId: number, co
     return;
   }
   await db.createTelegramLoginCode(user.id, normalized, new Date(Date.now() + LOGIN_CODE_TTL_MS));
-  await editMessage(chatId, messageId, "登录已确认，请返回 ForwardX。");
+  await editMessage(chatId, messageId, "登录已确认，请返回 NEX。");
   deleteMessageLater(chatId, messageId, LOGIN_SUCCESS_MESSAGE_DELETE_MS);
 }
 
@@ -4645,7 +4645,7 @@ async function handleWebApp(message: TelegramMessage, user?: any | null) {
   await sendMessage(
     message.chat.id,
     [
-      "<b>ForwardX WebApp</b>",
+      "<b>NEX WebApp</b>",
       "",
       user
         ? "点击下方按钮可在 Telegram 内打开面板，已绑定账号会自动登录。"
@@ -5005,7 +5005,7 @@ async function handleCallback(query: TelegramCallbackQuery) {
     return;
   }
   if (!user) {
-    await editMessage(chatId, messageId, "当前 Telegram 尚未绑定 ForwardX 账户。请先完成绑定。", bindPromptKeyboard());
+    await editMessage(chatId, messageId, "当前 Telegram 尚未绑定 NEX 账户。请先完成绑定。", bindPromptKeyboard());
     return;
   }
   if ((user as any).accountEnabled === false) {
@@ -5497,4 +5497,3 @@ export function resetTelegramBotPolling() {
   updateOffset = 0;
   activeTokenKey = "";
 }
-

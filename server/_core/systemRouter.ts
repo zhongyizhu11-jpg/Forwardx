@@ -1,3 +1,4 @@
+import { resolveSiteTitle } from "../../shared/brand";
 import { router, publicProcedure, protectedProcedure, adminProcedure } from "./trpc";
 import { githubRepoParts } from "../../shared/githubAccelerator";
 import { updateMultiDeviceLoginSettingCache } from "./context";
@@ -1607,7 +1608,7 @@ function publicSystemSettings(all: Record<string, string | null>, activeProtocol
     androidAppVersion: ANDROID_APP_VERSION,
     androidApkDownloadUrl: ANDROID_APK_DOWNLOAD_URL,
     agentVersion: AGENT_VERSION,
-    siteTitle: all.siteTitle || "ForwardX",
+    siteTitle: resolveSiteTitle(all.siteTitle),
     siteLogoDataUrl: all.siteLogoDataUrl || "",
     personalizationTheme: normalizePersonalizationThemePresetId(all.personalizationTheme),
     personalizationPageTint: normalizePersonalizationPageTint(all.personalizationPageTint),
@@ -1754,7 +1755,7 @@ export const systemRouter = router({
       androidAppVersion: ANDROID_APP_VERSION,
       androidApkDownloadUrl: ANDROID_APK_DOWNLOAD_URL,
       agentVersion: AGENT_VERSION,
-      siteTitle: all.siteTitle || "ForwardX",
+      siteTitle: resolveSiteTitle(all.siteTitle),
       siteLogoDataUrl: all.siteLogoDataUrl || "",
       personalizationTheme: normalizePersonalizationThemePresetId(all.personalizationTheme),
       personalizationPageTint: normalizePersonalizationPageTint(all.personalizationPageTint),
@@ -2738,8 +2739,8 @@ export const systemRouter = router({
     .mutation(async ({ input }) => {
       const result = await sendMail({
         to: input.to,
-        subject: "ForwardX 邮箱测试",
-        text: "这是一封 ForwardX 邮箱对接测试邮件。如果你收到此邮件，说明 SMTP 配置已生效。",
+        subject: "NEX 邮箱测试",
+        text: "这是一封 NEX 邮箱对接测试邮件。如果你收到此邮件，说明 SMTP 配置已生效。",
       });
       if (result.skipped) {
         throw new Error("邮箱服务尚未启用，请先保存邮箱设置");

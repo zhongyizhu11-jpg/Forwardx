@@ -656,7 +656,7 @@ function buildTunnelGlobeDataKey(
 }
 
 const tunnelModeLabels: Record<TunnelForm["mode"], string> = {
-  forwardx: "ForwardX",
+  forwardx: "NEX",
   tls: "TLS",
   wss: "WSS",
   tcp: "TCP",
@@ -703,7 +703,7 @@ function getTunnelModeDisplay(mode: unknown, showNginxLabel = true, forwardxVers
   const normalized = String(mode || "").toLowerCase() as TunnelForm["mode"];
   const label = tunnelModeLabels[normalized] || String(mode || "").toUpperCase();
   if (isNginxTunnelModeValue(normalized)) return showNginxLabel ? "Nginx" : "Stream";
-  if (normalized === "forwardx") return normalizeForwardXVersion(forwardxVersion) === "v2" ? "ForwardX V2" : "ForwardX V1";
+  if (normalized === "forwardx") return normalizeForwardXVersion(forwardxVersion) === "v2" ? "NEX V2" : "NEX V1";
   return gostTunnelModes.includes(normalized) ? `GOST ${label}` : label;
 }
 
@@ -2093,7 +2093,7 @@ function TunnelsContent() {
     // The response is role-sensitive: an anonymous request intentionally
     // returns globalEnabled=false. Always refresh once this page has a
     // resolved session so a cached anonymous response cannot hide the admin
-    // ForwardX V1 option.
+    // NEX V1 option.
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
@@ -3542,7 +3542,7 @@ function TunnelsContent() {
           )}
           {renderTransportSwitch(
             "mimic UDP 混淆",
-            "ForwardX UDP 外观混淆",
+            "NEX UDP 外观混淆",
             form.udpOverTcp,
             (udpOverTcp) => setForm((prev) => ({ ...prev, udpOverTcp })),
             "需要安装 mimic/mimic-dkms。UDP 丢包时可将业务 MTU 调整为 1200-1300。",
@@ -4518,7 +4518,7 @@ function TunnelsContent() {
                           className={segmentedOptionClassName(form.mode === "forwardx", forwardxRuntimeDisabled, "px-2")}
                         >
                           <ShieldCheck className={segmentedIconClassName(form.mode === "forwardx")} />
-                          <span className="truncate">ForwardX</span>
+                          <span className="truncate">NEX</span>
                         </button>
                         {nginxTunnelEnabled && <button
                           type="button"
@@ -4827,7 +4827,7 @@ function TunnelsContent() {
                   className={segmentedOptionClassName(form.mode === "forwardx", forwardxRuntimeDisabled, "px-2")}
                 >
                   <ShieldCheck className={segmentedIconClassName(form.mode === "forwardx")} />
-                  <span className="truncate">ForwardX</span>
+                  <span className="truncate">NEX</span>
                 </button>
                 {nginxTunnelEnabled && <button
                   type="button"
@@ -4893,5 +4893,4 @@ export default function TunnelsPage() {
     </DashboardLayout>
   );
 }
-
 

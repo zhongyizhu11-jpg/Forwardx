@@ -14,7 +14,7 @@ import {
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
 
 /**
- * ForwardX 的路径语言 —— 全站唯一入口。
+ * NEX 的路径语言 —— 全站唯一入口。
  *
  * 「入口 → 出口」这件事在面板里有六处在画：隧道页、规则页、转发链、转发组、
  * 链路诊断、创建预览。六处画法都不一样，有的两行带标题竖排，有的一行加箭头，

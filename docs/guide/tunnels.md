@@ -19,11 +19,11 @@
 | 类型 | 说明 |
 | --- | --- |
 | GOST | 使用 TLS、WSS、TCP、MTLS、MWSS 或 MTCP 等 GOST 模式 |
-| ForwardX V1 | 使用 AES-256-GCM 认证加密的 FXP 传输 |
-| ForwardX V2 | 外层使用 Agent 内置 userspace WireGuard，内层继续使用 FXP |
+| NEX V1 | 使用 AES-256-GCM 认证加密的 FXP 传输 |
+| NEX V2 | 外层使用 Agent 内置 userspace WireGuard，内层继续使用 FXP |
 | Nginx Stream | 使用独立 Nginx 四层运行时，支持 TCP/UDP；TCP 可选 TLS 证书 |
 
-## ForwardX V1 与 V2
+## NEX V1 与 V2
 
 | 版本 | 传输 | 兼容性 |
 | --- | --- | --- |
@@ -46,7 +46,7 @@ Nginx 仅保留 Stream 模式：
 - TCP 可配置证书和私钥启用 TLS；UDP 不使用 TLS。
 - 使用独立 `forwardx-nginx` 二进制、配置目录和服务。
 - 监听隧道配置中的端口，不固定占用 80 端口。
-- 适合出口组负载均衡，不等同于 ForwardX 自定义加密隧道。
+- 适合出口组负载均衡，不等同于 NEX 自定义加密隧道。
 
 隧道模式只接受当前的 `nginx_stream`。旧 `nginx_tls` 数据不再由运行时自动转换，跨版本升级时请先按[升级和备份](./upgrade-backup.md#跨兼容边界升级)执行一次性迁移。
 
@@ -82,7 +82,7 @@ Nginx 仅保留 Stream 模式：
 
 前提条件：
 
-- 仅 ForwardX 隧道支持，GOST 与 Nginx Stream 传输无法拆分单条连接。
+- 仅 NEX 隧道支持，GOST 与 Nginx Stream 传输无法拆分单条连接。
 - 至少两台中转，且入口、中转和出口的 Agent 都需要 v2.2.194 或更高版本。
 - 实际能叠加的是**入口到出口**这一段。如果瓶颈在客户端到入口，或出口到目标，叠加中转不会提升速度。
 - 各条线路延迟差异越大，出口重组时的缓冲越多；面板会限制缓冲上限并对过快的线路施加背压，避免内存增长。
@@ -101,7 +101,7 @@ Nginx 仅保留 Stream 模式：
 
 ## 高级设置
 
-界面按隧道类型显示 PROXY Protocol、TCP Fast Open、流量倍率、主备线路和传输参数。TCP Fast Open 仅在 ForwardX 隧道的受支持路径提供；Realm 的旧 `fast_open`/`zero_copy` 选项不再生成。未显示的参数不受当前类型支持。
+界面按隧道类型显示 PROXY Protocol、TCP Fast Open、流量倍率、主备线路和传输参数。TCP Fast Open 仅在 NEX 隧道的受支持路径提供；Realm 的旧 `fast_open`/`zero_copy` 选项不再生成。未显示的参数不受当前类型支持。
 
 修改隧道拓扑后，面板会生成新的拓扑标识；旧拓扑迟到的探测结果不会写入新图表。
 

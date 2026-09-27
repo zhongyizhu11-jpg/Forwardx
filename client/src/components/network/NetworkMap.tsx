@@ -6,7 +6,7 @@ import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth
 /**
  * 网络地图：主机是带状态环的点，线路是点与点之间的线。
  *
- * 这是「线路」方向的门面（2026-09-26 版式提案里选定的那一个）：ForwardX 管的是机器之间
+ * 这是「线路」方向的门面（2026-09-26 版式提案里选定的那一个）：NEX 管的是机器之间
  * 的连接，首页第一眼就该看到这张关系图，而不是四张写着数字的卡。
  *
  * 画法：

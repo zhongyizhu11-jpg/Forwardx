@@ -15,7 +15,7 @@
       "需要切换模型时，可以使用工具栏中的切换按钮。",
       "祝你的隧道和转发规则保持稳定。"
     ],
-    "console": "Live2D 看板娘由 ForwardX 官方插件按需加载。",
+    "console": "Live2D 看板娘由 NEX 官方插件按需加载。",
     "copy": "已复制内容。",
     "visibilitychange": "欢迎回来。",
     "changeSuccess": "已切换纹理。",
@@ -23,8 +23,8 @@
     "photo": "可以使用拍照按钮保存当前画面。",
     "goodbye": "看板娘已暂时隐藏。",
     "hitokoto": "这句一言来自 <span>「$1」</span>，投稿者是 <span>$2</span>。",
-    "welcome": "欢迎使用 ForwardX。",
-    "referrer": "欢迎访问 ForwardX 面板。",
+    "welcome": "欢迎使用 NEX。",
+    "referrer": "欢迎访问 NEX 面板。",
     "hoverBody": ["可以在设置中调整看板娘的显示方式。"],
     "tapBody": ["需要帮助时，可以打开项目说明。"]
   },

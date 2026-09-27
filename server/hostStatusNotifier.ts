@@ -62,7 +62,7 @@ function hostAddress(host: any) {
 function hostStatusMessage(host: any, status: HostStatus) {
   const online = status === "online";
   const marker = online ? "🟢" : "🔴";
-  const title = online ? "ForwardX 主机上线通知" : "ForwardX 主机离线告警";
+  const title = online ? "NEX 主机上线通知" : "NEX 主机离线告警";
   const statusLabel = online ? "在线" : "离线";
   const statusText = online ? "Agent 已重新连接面板" : "心跳超时，主机已被标记离线";
   return [

@@ -58,7 +58,7 @@ export type RuleFlowInput = {
    * 隧道是它的跳点，转发链是链上的主机，转发组是组名。
    */
   hops?: readonly string[];
-  /** 经过什么转发实现：ForwardX V2 / GOST TLS / realm… */
+  /** 经过什么转发实现：NEX V2 / GOST TLS / realm… */
   via?: string;
   latencyMs?: number | null;
   /** 整条规则的健康状态 */

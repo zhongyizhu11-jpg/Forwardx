@@ -1,3 +1,4 @@
+import { resolveSiteTitle } from "@shared/brand";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -47,7 +48,7 @@ const journeys: Record<"user" | "admin", { title: string; text: string; icon: Lu
 };
 
 export function CustomPublicHome({ html }: { html: string }) {
-  return <iframe title="ForwardX 自定义首页" className="h-svh w-full border-0 bg-background"
+  return <iframe title="NEX 自定义首页" className="h-svh w-full border-0 bg-background"
     sandbox="allow-scripts allow-forms allow-popups allow-top-navigation-by-user-activation"
     srcDoc={createHomepageDocument(html)} />;
 }
@@ -217,7 +218,7 @@ export function PublicHomeView({ siteTitle, logoSrc, version, repoUrl, registrat
         </div>
         <div className="public-home-container public-footer-legal">
           <span>{siteTitle}{version ? ` · v${version}` : ""}</span>
-          <span>Powered by ForwardX</span>
+          <span>Powered by NEX</span>
         </div>
       </footer>
     </div>
@@ -228,7 +229,7 @@ export default function PublicHome() {
   const { resolvedTheme, setTheme } = useTheme();
   const { data: info } = trpc.system.publicInfo.useQuery(undefined, { refetchOnWindowFocus: false });
   return <PublicHomeView
-    siteTitle={(info?.siteTitle || "ForwardX").trim() || "ForwardX"}
+    siteTitle={resolveSiteTitle(info?.siteTitle)}
     logoSrc={info?.siteLogoDataUrl || (resolvedTheme === "dark" ? "/logo-dark.png" : "/logo-light.png")}
     version={info?.version} repoUrl={info?.repoUrl}
     registrationEnabled={info ? info.registrationEnabled !== false : undefined}

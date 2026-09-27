@@ -1,6 +1,6 @@
 # 插件开发
 
-ForwardX 插件用于给面板增加可选能力。插件可以声明设置项、说明页、数据资产、扩展点、受控动作、主机使用页和 Agent 动态资源，面板负责安装、更新、权限校验、任务调度、状态保存和通用界面渲染。
+NEX 插件用于给面板增加可选能力。插件可以声明设置项、说明页、数据资产、扩展点、受控动作、主机使用页和 Agent 动态资源，面板负责安装、更新、权限校验、任务调度、状态保存和通用界面渲染。
 
 插件入口默认隐藏，管理员可在「系统设置 -> 左侧导航栏菜单展示设置 -> 管理菜单开关」中开启"插件"。开启后左侧会显示「插件」菜单。
 
@@ -8,7 +8,7 @@ ForwardX 插件用于给面板增加可选能力。插件可以声明设置项�
 
 管理员可以通过三种方式安装插件：
 
-- 官方插件：面板从 ForwardX GitHub 仓库读取 `plugins/official-store.json`，页面中可一键安装。
+- 官方插件：面板从 NEX GitHub 仓库读取 `plugins/official-store.json`，页面中可一键安装。
 - 第三方商店：添加一个或多个 GitHub 商店仓库，面板读取其中的 `forwardx-store.json` 并把插件合并到商店。
 - 上传插件包：上传 `.zip`、`.tar.gz` 或 `.tgz` 插件包。
 
@@ -236,18 +236,18 @@ ForwardX 插件用于给面板增加可选能力。插件可以声明设置项�
 }
 ```
 
-具体 3x-ui 路径、请求体和认证方式以 3x-ui 自身 OpenAPI 为准。ForwardX 插件层只负责保存配置、渲染输入表单、发起声明式请求和展示响应结果。
+具体 3x-ui 路径、请求体和认证方式以 3x-ui 自身 OpenAPI 为准。NEX 插件层只负责保存配置、渲染输入表单、发起声明式请求和展示响应结果。
 
 ### 信任插件与面板 API
 
-`panel.request` 用于需要直接管理 ForwardX 数据的插件。信任状态保存在当前面板的插件实例中，默认关闭，不能由 manifest 声明，也不会在插件安装或更新时自动开启。
+`panel.request` 用于需要直接管理 NEX 数据的插件。信任状态保存在当前面板的插件实例中，默认关闭，不能由 manifest 声明，也不会在插件安装或更新时自动开启。
 
 执行一个面板动作必须同时满足：
 
 1. 当前插件已启用。
 2. 插件包含有效的 `panel.request` 高权限动作，详情页才会显示"插件信任"开关，并由管理员手动确认开启。
 3. manifest 声明了该操作要求的细分权限。
-4. `panel.operation` 位于 ForwardX 固定操作白名单中。
+4. `panel.operation` 位于 NEX 固定操作白名单中。
 
 ```json
 {
@@ -385,7 +385,7 @@ ForwardX 插件用于给面板增加可选能力。插件可以声明设置项�
 
 ## Agent 动态资源 `resourceSchema`
 
-`resourceSchema` 用于声明通用节点管理界面。插件只负责通过固定 Agent 脚本读取和保存数据，ForwardX 会在当前插件的"插件使用"页下方提供 Agent 列表、资源表格、详情、编辑表单、删除确认、任务状态和刷新流程。主机较多时可直接搜索，移动端会改用紧凑选择器。
+`resourceSchema` 用于声明通用节点管理界面。插件只负责通过固定 Agent 脚本读取和保存数据，NEX 会在当前插件的"插件使用"页下方提供 Agent 列表、资源表格、详情、编辑表单、删除确认、任务状态和刷新流程。主机较多时可直接搜索，移动端会改用紧凑选择器。
 
 ```json
 {
@@ -553,7 +553,7 @@ pnpm plugins:package
 
 执行后把生成的 `plugins/packages/*.tar.gz` 和对应清单一起提交即可。
 
-### ForwardX 中国区域白名单
+### NEX 中国区域白名单
 
 插件 ID：`china-region-whitelist`，当前版本：`0.7.1`，许可证：AGPL-3.0-only。
 
@@ -562,7 +562,7 @@ pnpm plugins:package
 主要功能：
 
 - 支持全国 CN 或按省份选择入站白名单，以及额外 ASN 和端口优先白名单。
-- 支持 nftables 或 iptables/ipset 防火墙后端，ForwardX 自有适配，不依赖上游 shell 脚本运行时。
+- 支持 nftables 或 iptables/ipset 防火墙后端，NEX 自有适配，不依赖上游 shell 脚本运行时。
 - 在 Agent 节点管理中实时读取、新增、编辑、应用和清理各主机独立配置。
 - 实时展示防火墙后端、规则数量、持久化状态和执行错误。
 
@@ -570,7 +570,7 @@ pnpm plugins:package
 
 插件定义、运行时和白名单数据随本项目维护，数据位于 `plugins/china-region-whitelist/data/`，入口位于 `plugins/china-region-whitelist/forwardx-agent-run.sh`；第三方数据来源和许可证边界见插件目录的 `THIRD_PARTY_NOTICES.md`。
 
-### ForwardX Live2D 看板娘
+### NEX Live2D 看板娘
 
 插件 ID：`live2d-widget`，当前版本：`1.0.0`，许可证：AGPL-3.0-only + GPL-3.0-or-later。
 
@@ -583,7 +583,7 @@ pnpm plugins:package
 - 工具按钮：一言、切换模型、换装、拍照、项目说明和关闭。
 - 拖动行为、关闭后的重新唤起方式和日志等级。
 
-上游 Cubism 运行时版本由 ForwardX 固定，避免普通插件通过设置项加载任意脚本；模型 JSON、纹理和动作仍由所选模型仓库提供。ForwardX 不打包模型资源，默认模型端点和可选工具可能有独立的版权、隐私和商业使用限制，管理员应在启用前确认对应仓库和服务的条款。插件目录中的 `README.md`、`THIRD_PARTY_NOTICES.md` 和 `LICENSE.live2d-widget.txt` 保留了上游运行时、Cubism Core 与模型资源的声明。
+上游 Cubism 运行时版本由 NEX 固定，避免普通插件通过设置项加载任意脚本；模型 JSON、纹理和动作仍由所选模型仓库提供。NEX 不打包模型资源，默认模型端点和可选工具可能有独立的版权、隐私和商业使用限制，管理员应在启用前确认对应仓库和服务的条款。插件目录中的 `README.md`、`THIRD_PARTY_NOTICES.md` 和 `LICENSE.live2d-widget.txt` 保留了上游运行时、Cubism Core 与模型资源的声明。
 
 ## 第三方插件商店
 

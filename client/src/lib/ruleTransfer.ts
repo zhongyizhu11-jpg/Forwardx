@@ -109,7 +109,7 @@ export function parseRuleTransferFile(raw: unknown): RuleTransferParseResult {
   }
   const source = raw as Record<string, unknown>;
   if (source.kind !== RULE_TRANSFER_FILE_KIND) {
-    return { ok: false, error: "文件不是 ForwardX 转发规则导出文件" };
+    return { ok: false, error: "文件不是 NEX 转发规则导出文件" };
   }
   if (source.version !== RULE_TRANSFER_FILE_VERSION) {
     return { ok: false, error: `不支持该规则文件版本（当前支持 v${RULE_TRANSFER_FILE_VERSION}）` };

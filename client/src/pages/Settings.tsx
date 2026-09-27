@@ -1,3 +1,4 @@
+import { resolveSiteTitle } from "@shared/brand";
 import { clipboardNeedsManualCopy, copyTextToClipboard } from "@/lib/clipboard";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { FormField } from "@/components/ui/form-field";
@@ -278,7 +279,7 @@ function createDefaultHomepageHtml(themeId: PersonalizationThemePresetId) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ForwardX</title>
+  <title>NEX</title>
   <style>
     :root {
       --fx-primary: ${theme.light.primary};
@@ -430,7 +431,7 @@ function createDefaultHomepageHtml(themeId: PersonalizationThemePresetId) {
   <main class="page">
     <section class="hero">
       <div>
-        <span class="eyebrow"><span class="dot"></span>ForwardX 面板</span>
+        <span class="eyebrow"><span class="dot"></span>NEX 面板</span>
         <h1>多主机转发管理</h1>
         <p>管理转发、隧道、用户和流量。</p>
         <div class="actions">
@@ -3213,7 +3214,7 @@ function PersonalizationSettingsSection() {
   const customSidebarIconInputRef = useRef<HTMLInputElement | null>(null);
   const savingSectionRef = useRef<PersonalizationSaveKey | null>(null);
   const pendingCustomSidebarPagesRef = useRef<CustomSidebarPage[] | null>(null);
-  const [siteTitleInput, setSiteTitleInput] = useState("ForwardX");
+  const [siteTitleInput, setSiteTitleInput] = useState("NEX");
   const [siteLogoDataUrl, setSiteLogoDataUrl] = useState("");
   const [personalizationTheme, setPersonalizationTheme] = useState<PersonalizationThemePresetId>("ink");
   const [savedPersonalizationTheme, setSavedPersonalizationTheme] = useState<PersonalizationThemePresetId>("ink");
@@ -3241,7 +3242,7 @@ function PersonalizationSettingsSection() {
     const nextBackground = normalizePersonalizationBackgroundConfig(
       (settings as any).personalizationBackgroundConfig || settings.personalizationBackground,
     );
-    setSiteTitleInput(settings.siteTitle || "ForwardX");
+    setSiteTitleInput(resolveSiteTitle(settings.siteTitle));
     setSiteLogoDataUrl(settings.siteLogoDataUrl || "");
     const nextTheme = normalizePersonalizationThemePresetId((settings as any).personalizationTheme);
     setPersonalizationTheme(nextTheme);
@@ -3638,7 +3639,7 @@ function PersonalizationSettingsSection() {
               <Input
                 value={siteTitleInput}
                 onChange={(event) => setSiteTitleInput(event.target.value.slice(0, 64))}
-                placeholder="ForwardX"
+                placeholder="NEX"
                 className="flex-1"
               />
               <Button type="button" onClick={handleSaveTitle} disabled={isSavingPersonalization("title")} className="gap-2">
@@ -5155,7 +5156,13 @@ function SystemInfoSection() {
     : "";
   const canRunPanelRollback = rollbackType !== "panel" || (!!upgradeEnabled && !isDockerDeployment);
   const androidApkDownloadUrl = settings?.androidApkDownloadUrl || "";
-  const contactLinks = [
+  const contactLinks: Array<{
+    label: string;
+    url: string;
+    icon: typeof Github;
+    iconClassName: string;
+    description?: string;
+  }> = [
     {
       label: "GitHub 仓库",
       url: settings?.repoUrl || "#",
@@ -5174,6 +5181,14 @@ function SystemInfoSection() {
       icon: Download,
       iconClassName: "text-[var(--fx-healthy-text)]",
     }] : []),
+    {
+      label: "iOS IPA 下载",
+      // 固定到已发布的安装包，避免面板升级后链接指向尚未构建的 IPA。
+      url: "https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v2.3.381/forwardx-ios-v2.3.381-unsigned.ipa",
+      icon: Download,
+      iconClassName: "text-[var(--fx-healthy-text)]",
+      description: "iPhone / iPad · 需自行签名后安装",
+    },
   ];
   const isUpgradeRunning = upgradeStatus?.job.status === "running";
   const upgradeProgress = getPanelUpgradeProgress(upgradeStatus?.job);
@@ -6039,7 +6054,7 @@ function SystemInfoSection() {
                 版本升级
               </CardTitle>
               <CardDescription>
-                检查并升级 ForwardX。
+                检查并升级 NEX。
               </CardDescription>
             </div>
           </CardHeader>
@@ -6081,7 +6096,7 @@ function SystemInfoSection() {
               <AlertTitle>{isDockerDeployment ? "Docker 部署请使用一键升级脚本" : "当前环境尚未启用一键升级"}</AlertTitle>
               <AlertDescription>
                 {isDockerDeployment
-                  ? "检查到新版本后可复制脚本到服务器执行，脚本会覆盖原有 ForwardX 容器。"
+                  ? "检查到新版本后可复制脚本到服务器执行，脚本会覆盖原有 NEX 容器。"
                   : <>配置 <code>FORWARDX_UPGRADE_COMMAND</code> 后可一键升级。</>}
               </AlertDescription>
             </Alert>
@@ -6573,7 +6588,7 @@ function SystemInfoSection() {
           )}
           <Alert>
             <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>升级会重建原有 ForwardX 容器</AlertTitle>
+            <AlertTitle>升级会重建原有 NEX 容器</AlertTitle>
             <AlertDescription>
               脚本会复用当前部署目录的 .env 配置，只重建容器，不删除 Docker 数据卷；原有数据库和 /data 数据会保留。
             </AlertDescription>
@@ -6623,6 +6638,7 @@ function SystemInfoSection() {
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="truncate text-secondary-type font-medium text-foreground group-hover:underline">{item.label}</span>
                     <span className="truncate font-mono text-meta text-muted-foreground">{item.url}</span>
+                    {item.description && <span className="text-meta text-muted-foreground">{item.description}</span>}
                   </span>
                   <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </a>

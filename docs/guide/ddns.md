@@ -1,14 +1,14 @@
 # DDNS 与故障转移
 
-DDNS 用来把域名自动解析到可用入口。ForwardX 可以在主机 IP 变化、入口组成员变化或转发组故障切换时，自动更新 DNS 记录。
+DDNS 用来把域名自动解析到可用入口。NEX 可以在主机 IP 变化、入口组成员变化或转发组故障切换时，自动更新 DNS 记录。
 
 ## 工作原理 {#how-it-works}
 
-ForwardX 的 DDNS 功能分两层：
+NEX 的 DDNS 功能分两层：
 
-**自动更新层**：ForwardX 监听主机 Agent 上报的公网 IP 和入口组成员状态。当检测到变化时，调用你配置的 DNS 服务商 API，将指定域名的记录值改写为当前可用地址。
+**自动更新层**：NEX 监听主机 Agent 上报的公网 IP 和入口组成员状态。当检测到变化时，调用你配置的 DNS 服务商 API，将指定域名的记录值改写为当前可用地址。
 
-**故障转移层**：转发组持续对成员入口执行健康检查。当主入口不可用时，ForwardX 将域名切换到备用入口；主入口恢复后，可根据配置决定是否切回。
+**故障转移层**：转发组持续对成员入口执行健康检查。当主入口不可用时，NEX 将域名切换到备用入口；主入口恢复后，可根据配置决定是否切回。
 
 ### 故障转移触发条件
 
@@ -48,7 +48,7 @@ ForwardX 的 DDNS 功能分两层：
 基本流程：
 
 1. 在 DNS 服务商处准备好域名和 API 密钥。
-2. 在 ForwardX 的 DDNS 服务商中选择对应服务商。
+2. 在 NEX 的 DDNS 服务商中选择对应服务商。
 3. 填写服务商要求的密钥、主域名、Zone ID 或线路等信息。
 4. 设置 TTL，建议先使用默认值 `600`。
 5. 保存 DDNS 配置。
@@ -152,7 +152,7 @@ Token 权限建议：
 | Endpoint | 默认 `https://alidns.aliyuncs.com` |
 | 默认线路 | 默认 `default` |
 
-例如你要维护 `a.example.com`，主域名填 `example.com`，ForwardX 会自动拆分主机记录 `a`。
+例如你要维护 `a.example.com`，主域名填 `example.com`，NEX 会自动拆分主机记录 `a`。
 
 ## 腾讯云 DNSPod {#tencentcloud}
 
@@ -223,7 +223,7 @@ https://ddns.example.com/update?domain={{domain}}&type={{type}}&value={{value}}&
 主机管理 -> 新增/编辑主机 -> DDNS 服务
 ```
 
-开启后，Agent 上报的公网 IP 变化时，ForwardX 会自动更新该主机的 DDNS 域名。
+开启后，Agent 上报的公网 IP 变化时，NEX 会自动更新该主机的 DDNS 域名。
 
 记录类型建议：
 
@@ -236,7 +236,7 @@ https://ddns.example.com/update?domain={{domain}}&type={{type}}&value={{value}}&
 
 ## 入口组与转发组 {#group-ddns}
 
-**入口组**适合多个入口机器共用一个域名，ForwardX 将全部成员的地址同步到同一条域名记录。
+**入口组**适合多个入口机器共用一个域名，NEX 将全部成员的地址同步到同一条域名记录。
 
 配置路径：
 
@@ -252,7 +252,7 @@ https://ddns.example.com/update?domain={{domain}}&type={{type}}&value={{value}}&
 | AAAA | 成员机器需要有 IPv6 |
 | CNAME | 成员机器需要配置 DDNS 域名 |
 
-如果选择 CNAME，ForwardX 会把入口域名指向成员机器配置好的 DDNS 域名。这样成员 IP 变化时，通常只需要更新成员自己的 DDNS，入口域名记录无需重新写入。
+如果选择 CNAME，NEX 会把入口域名指向成员机器配置好的 DDNS 域名。这样成员 IP 变化时，通常只需要更新成员自己的 DDNS，入口域名记录无需重新写入。
 
 ## 故障切换建议 {#failover-tips}
 
@@ -264,7 +264,7 @@ https://ddns.example.com/update?domain={{domain}}&type={{type}}&value={{value}}&
 
 ## 域名来源优先级 {#domain-priority}
 
-ForwardX 展示入口地址时，优先级如下：
+NEX 展示入口地址时，优先级如下：
 
 1. 用户在主机或组内手动填写的域名或 IP。
 2. 自动检测到的公网地址或 DDNS 地址。

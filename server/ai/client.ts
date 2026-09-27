@@ -233,7 +233,7 @@ export class ForwardxAiClient {
         const parsedJson = extractJsonObject(content);
         const validated = request.schema.safeParse(parsedJson);
         if (!validated.success) {
-          throw new AiClientError("AI 返回的结构不符合 ForwardX Skill 定义", "invalid_response");
+          throw new AiClientError("AI 返回的结构不符合 NEX Skill 定义", "invalid_response");
         }
         this.recordSuccess(key);
         this.metrics.successes += 1;

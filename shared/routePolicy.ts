@@ -170,7 +170,7 @@ export type RoutePolicyRule = RouteGroupRule & {
   protocol?: unknown;
   /** 走隧道的规则：调度器在隧道出口，看不到访客（除非 PROXY 头一路带过来）。 */
   tunnelId?: unknown;
-  /** 隧道的类型（tls / wss / … / nginx_stream / forwardx）。Nginx 隧道传不了 PROXY 头，ForwardX 隧道要出口 Agent 2.2.199；不知道时按 GOST 隧道说。 */
+  /** 隧道的类型（tls / wss / … / nginx_stream / forwardx）。Nginx 隧道传不了 PROXY 头，NEX 隧道要出口 Agent 2.2.199；不知道时按 GOST 隧道说。 */
   tunnelMode?: unknown;
   proxyProtocolSend?: unknown;
   proxyProtocolExitSend?: unknown;
@@ -387,8 +387,8 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
   }
   const udpAgentReady = !version || isAgentVersionAtLeast(version, ROUTE_GROUP_UDP_AGENT_VERSION);
   /*
-    ForwardX 隧道、UDP、TCP+UDP 要新 Agent 才调度（routeGroupSchedulerAgentVersion）。面板这时不
-    下发调度，前面的转发工具直接拨路径 A（server 的 routePrimaryEndpoint）；ForwardX 隧道是出口的
+    NEX 隧道、UDP、TCP+UDP 要新 Agent 才调度（routeGroupSchedulerAgentVersion）。面板这时不
+    下发调度，前面的转发工具直接拨路径 A（server 的 routePrimaryEndpoint）；NEX 隧道是出口的
     FXP 拨路径 A。
   */
   const forwardXTunnel = Number(rule.tunnelId || 0) > 0 && routeGroupIsForwardXTunnel(rule.tunnelMode);
@@ -396,7 +396,7 @@ export function describeRoutePolicy(rule: RoutePolicyRule, options: RoutePolicyO
   const schedulerAgentReady = !schedulerAgentVersion || !version || isAgentVersionAtLeast(version, schedulerAgentVersion);
   if (schedulerAgentVersion && options.host && !schedulerAgentReady) {
     warnings.push(forwardXTunnel
-      ? `隧道出口的 Agent 早于 ${schedulerAgentVersion}，还不会调度 ForwardX 隧道：升级之前这条规则全部走 ${label(0)}、不切换。`
+      ? `隧道出口的 Agent 早于 ${schedulerAgentVersion}，还不会调度 NEX 隧道：升级之前这条规则全部走 ${label(0)}、不切换。`
       : `这台机器的 Agent 早于 ${schedulerAgentVersion}，还不会调度 UDP：升级之前这条规则全部走 ${label(0)}、不切换。`);
   }
   if (protocol === "udp" && paths.some((path) => !path.probe)) {

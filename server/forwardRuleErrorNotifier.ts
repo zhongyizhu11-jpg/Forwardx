@@ -80,7 +80,7 @@ function ruleErrorMessage(payload: ForwardRuleErrorPayload) {
   const reason = String(message || "").trim() || "Agent 上报规则运行异常";
   const modeLabel = ruleModeLabel(rule, forwardGroup);
   return [
-    `<b>🔴 ForwardX 转发规则异常提醒</b>`,
+    `<b>🔴 NEX 转发规则异常提醒</b>`,
     "",
     `<b>规则</b>：${escapeHtml(rule?.name || "未命名规则")} (#${escapeHtml(rule?.id || "-")})`,
     `<b>入口主机</b>：${escapeHtml(hostName(host))} (#${escapeHtml(host?.id || rule?.hostId || "-")})`,

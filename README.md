@@ -1,6 +1,6 @@
-# ForwardX 转发管理面板
+# NEX 转发管理面板
 
-ForwardX 通过轻量 Agent 统一管理多台 Linux 服务器上的端口转发、加密隧道、转发链、故障转移、用户权限、套餐和流量统计。面板不保存主机 SSH 密钥。
+NEX 通过轻量 Agent 统一管理多台 Linux 服务器上的端口转发、加密隧道、转发链、故障转移、用户权限、套餐和流量统计。面板不保存主机 SSH 密钥。
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/zhongyizhu11-jpg/Forwardx?display_name=tag&sort=semver)](https://github.com/zhongyizhu11-jpg/Forwardx/releases/latest)
@@ -16,8 +16,8 @@ ForwardX 通过轻量 Agent 统一管理多台 Linux 服务器上的端口转发
 ## 主要功能
 
 - 创建 TCP、UDP 或 TCP+UDP 规则，支持 `iptables`、`nftables`、`realm`、`socat`、`gost` 和 `nginx`。
-- 管理 GOST、ForwardX V1/V2 和 Nginx Stream 隧道，支持多跳、入口组、出口组和多出口。
-- ForwardX 隧道支持中转带宽叠加：单条连接拆分到多台中转并行传输，由出口按序重组。
+- 管理 GOST、NEX V1/V2 和 Nginx Stream 隧道，支持多跳、入口组、出口组和多出口。
+- NEX 隧道支持中转带宽叠加：单条连接拆分到多台中转并行传输，由出口按序重组。
 - 使用转发链组织固定的入口、中转和出口路径。
 - 使用转发组和 DDNS 实现多入口故障转移，支持 Cloudflare、华为云、阿里云、腾讯云 DNSPod 和 Webhook。
 - 查看主机状态、规则流量、累计流量、延迟趋势、链路图、自测结果和系统日志。
@@ -148,17 +148,17 @@ curl -fsSL http://你的面板地址:9810/api/agent/install.sh | bash -s -- unin
 | 类型 | 说明 |
 | --- | --- |
 | GOST | 使用 TLS、WSS、TCP、MTLS、MWSS 或 MTCP 等 GOST 模式 |
-| ForwardX V1 | 使用原有 FXP 加密传输，兼容已部署隧道 |
-| ForwardX V2 | 使用 Agent 内置的 userspace WireGuard 作为外层 UDP 传输，内层继续使用 FXP |
+| NEX V1 | 使用原有 FXP 加密传输，兼容已部署隧道 |
+| NEX V2 | 使用 Agent 内置的 userspace WireGuard 作为外层 UDP 传输，内层继续使用 FXP |
 | Nginx Stream | 使用独立 `forwardx-nginx` 运行时进行四层 TCP/UDP 转发；TCP 可选 TLS 证书 |
 
-ForwardX V2 不要求系统安装 `wg`，不会创建系统 WireGuard 网卡或修改主机路由。防火墙和安全组需要放行配置的 WireGuard UDP 端口。
+NEX V2 不要求系统安装 `wg`，不会创建系统 WireGuard 网卡或修改主机路由。防火墙和安全组需要放行配置的 WireGuard UDP 端口。
 
 Nginx 运行时监听规则或隧道配置中的端口，不会固定占用 80 端口。若主机上的其他 Nginx 出现 80 端口冲突，应检查该服务自身的站点配置和监听进程。
 
 ## mimic UDP 混淆
 
-mimic 仅在用户为 ForwardX 隧道启用混淆时使用。V1 处理 FXP UDP，V2 处理 userspace WireGuard 的外层 UDP；TCP 仍使用原有 TCP 通道。参与链路的主机需要安装 `mimic`/`mimic-dkms`，并具备所需的 Linux 内核与 XDP/TC 能力。
+mimic 仅在用户为 NEX 隧道启用混淆时使用。V1 处理 FXP UDP，V2 处理 userspace WireGuard 的外层 UDP；TCP 仍使用原有 TCP 通道。参与链路的主机需要安装 `mimic`/`mimic-dkms`，并具备所需的 Linux 内核与 XDP/TC 能力。
 
 Agent 安装脚本会询问是否安装 mimic，默认选择 `n`。也可以手动执行：
 
@@ -174,7 +174,7 @@ mimic 只改变 UDP 包在物理网卡上的外观，不负责端口转发，也
 
 ## 数据库
 
-ForwardX 支持 SQLite、MySQL 和 PostgreSQL：
+NEX 支持 SQLite、MySQL 和 PostgreSQL：
 
 - SQLite 适合单机部署，默认文件为 `/data/forwardx.db`。
 - MySQL 和 PostgreSQL 适合已有独立数据库运维的环境。
@@ -233,7 +233,7 @@ USDT (Polygon)：`0x44543FE6C5569Efe2b0Dc13454D4008378c92fE3`
 
 GNU Affero General Public License v3.0 only. See [LICENSE](LICENSE).
 
-ForwardX Agent also includes the third-party userspace WireGuard implementation
+NEX Agent also includes the third-party userspace WireGuard implementation
 under the MIT License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Star 趋势

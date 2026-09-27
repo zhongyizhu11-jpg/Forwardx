@@ -2299,7 +2299,7 @@ async function seedForwardTests(usersSeed: DevUsers, rules: DevRules, hostIds: n
 async function seedSettings() {
   await setSettings({
     setupDataChoice: "new-panel",
-    siteTitle: "ForwardX Dev",
+    siteTitle: "NEX Dev",
     registrationEnabled: "true",
     storeEnabled: "true",
     trafficBillingEnabled: "true",
@@ -2308,7 +2308,7 @@ async function seedSettings() {
     lookingGlassUserEnabled: "true",
     publicHostMonitorEnabled: "true",
     publicHostMonitorPath: "dev",
-    publicHostMonitorTitle: "ForwardX Dev Host Monitor",
+    publicHostMonitorTitle: "NEX Dev Host Monitor",
     latestAgentVersion: AGENT_VERSION,
     agentVersion: AGENT_VERSION,
     telegramBotEnabled: "false",

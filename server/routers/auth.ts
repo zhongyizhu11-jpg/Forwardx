@@ -35,7 +35,7 @@ const EMAIL_CODE_MAX_ATTEMPTS = 5;
 const EMAIL_CODE_IP_WINDOW_MS = 30 * 60 * 1000;
 const EMAIL_CODE_IP_MAX_PER_WINDOW = 10;
 const EMAIL_AUTH_STORE_MAX_KEYS = 50_000;
-const TWO_FACTOR_ISSUER = "ForwardX";
+const TWO_FACTOR_ISSUER = "NEX";
 const DISPLAY_NAME_MAX_LENGTH = 24;
 
 type LoginFailEntry = { count: number; lastFailAt: number };

@@ -223,7 +223,7 @@ export function EmailSettingsContent() {
           <div className="grid gap-4 md:grid-cols-[1fr_260px]">
             <FormField className="space-y-2">
               <Label>发件邮箱</Label>
-              <Input value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} placeholder="ForwardX <noreply@example.com>" />
+              <Input value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} placeholder="NEX <noreply@example.com>" />
             </FormField>
             <FormField className="space-y-2">
               <Label>连接加密</Label>

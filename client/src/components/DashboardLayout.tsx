@@ -1,3 +1,4 @@
+import { resolveSiteTitle } from "@shared/brand";
 import { avatarQuotaState } from "@/lib/avatarQuota";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Progress } from "@/components/ui/progress";
@@ -425,7 +426,7 @@ function DashboardLayoutContent({
     () => normalizeSidebarMenuSettings(publicInfo?.sidebarMenu),
     [publicInfo?.sidebarMenu]
   );
-  const siteTitle = (publicInfo?.siteTitle || "ForwardX").trim() || "ForwardX";
+  const siteTitle = resolveSiteTitle(publicInfo?.siteTitle);
   const [cachedSiteLogo, setCachedSiteLogo] = useState(() => readCachedSiteLogo());
   const defaultLogoSrc = resolvedTheme === "dark" ? "/logo-dark.png" : "/logo-light.png";
   const logoSrc = publicInfo?.siteLogoDataUrl || (publicInfo ? defaultLogoSrc : cachedSiteLogo);
@@ -1097,7 +1098,7 @@ function DashboardLayoutContent({
         startedAt: upgradeJob?.startedAt || (backgroundUpgrade?.startedAt ? new Date(backgroundUpgrade.startedAt).toISOString() : null),
         finishedAt: upgradeJob?.finishedAt || new Date().toISOString(),
         targetVersion: upgradeJob?.targetVersion || backgroundUpgrade?.targetVersion || upgradeStatus?.currentVersion || "",
-        logs: upgradeJob?.logs || ["[ForwardX] Upgrade completed; browser refresh scheduled"],
+        logs: upgradeJob?.logs || ["[NEX] Upgrade completed; browser refresh scheduled"],
         error: null,
         mode: upgradeJob?.mode || backgroundUpgrade?.mode || "upgrade",
       };
@@ -1109,7 +1110,7 @@ function DashboardLayoutContent({
       startedAt: new Date(backgroundUpgrade.startedAt).toISOString(),
       finishedAt: null,
       targetVersion: backgroundUpgrade.targetVersion,
-      logs: ["[ForwardX] Starting upgrade in background"],
+      logs: ["[NEX] Starting upgrade in background"],
       error: null,
       mode: backgroundUpgrade.mode || "upgrade",
     };
@@ -1722,7 +1723,7 @@ function DashboardLayoutContent({
           <DialogDescription>
             {isPanelRollbackTask
               ? "后台回退，完成后自动重启。"
-              : (isDockerDeployment ? "复制一键脚本后在服务器执行，脚本会重建 ForwardX 容器。" : "后台升级，完成后自动重启。")}
+              : (isDockerDeployment ? "复制一键脚本后在服务器执行，脚本会重建 NEX 容器。" : "后台升级，完成后自动重启。")}
           </DialogDescription>
           {(() => {
             const job = displayUpgradeJob;

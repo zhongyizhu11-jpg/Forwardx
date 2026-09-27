@@ -2,7 +2,10 @@
 layout: home
 
 hero:
-  name: ForwardX
+  name: NEX
+  image:
+    src: /nex-logo.png
+    alt: NEX
   text: 转发管理面板用户教程
   tagline: 面板部署、Agent 安装、转发配置和故障排查。
   actions:

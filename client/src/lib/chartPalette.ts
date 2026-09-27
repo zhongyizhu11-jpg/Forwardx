@@ -44,7 +44,7 @@ export const CHART_SEMANTIC_COLORS = {
   warning: "var(--fx-health-warning)",
   critical: "var(--fx-health-critical)",
   standby: "var(--fx-network-standby)",
-  /** 网络路径 / 主数据系列。ForwardX 的识别色 */
+  /** 网络路径 / 主数据系列。NEX 的识别色 */
   path: "var(--fx-network-path)",
   delivery: "var(--fx-delivery)",
 } as const;

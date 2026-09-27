@@ -92,9 +92,9 @@ export type RouteStatus = {
   agentStale: boolean;
   agentVersion: string | null;
   agentSupportsScores: boolean;
-  /** UDP、TCP+UDP 和 ForwardX 隧道的线路组：调度所在那台的 Agent 会不会调度（2.2.199 起）。其余永远是 true。 */
+  /** UDP、TCP+UDP 和 NEX 隧道的线路组：调度所在那台的 Agent 会不会调度（2.2.199 起）。其余永远是 true。 */
   agentSupportsProtocol?: boolean;
-  /** 哪一样要新 Agent 才调度：ForwardX 隧道、UDP（含 TCP+UDP），都不是时为 null。 */
+  /** 哪一样要新 Agent 才调度：NEX 隧道、UDP（含 TCP+UDP），都不是时为 null。 */
   schedulerNeed?: "forwardx" | "udp" | null;
   /** tcp / udp / both */
   protocol?: string;
@@ -258,7 +258,7 @@ export function RouteGroupPanel({ policy, status, events, canEdit, pending = fal
       {status && status.agentSupportsProtocol === false ? (
         <p className="rounded-[var(--fx-radius-control)] bg-[var(--fx-warn-soft)] px-3 py-2 text-meta text-[var(--fx-warn-text)]">
           {status.schedulerNeed === "forwardx"
-            ? <>隧道出口的 Agent{status.agentVersion ? `（${status.agentVersion}）` : ""}早于 {status.requiredAgentVersion}，还不会调度 ForwardX 隧道：升级之前这条规则全部走 {policy.lines[0]?.label || routePathLetter(0)}、不切换。</>
+            ? <>隧道出口的 Agent{status.agentVersion ? `（${status.agentVersion}）` : ""}早于 {status.requiredAgentVersion}，还不会调度 NEX 隧道：升级之前这条规则全部走 {policy.lines[0]?.label || routePathLetter(0)}、不切换。</>
             : <>调度这条线路组的机器上 Agent{status.agentVersion ? `（${status.agentVersion}）` : ""}早于 {status.requiredAgentVersion}，还不会调度 UDP：升级之前这条规则全部走 {policy.lines[0]?.label || routePathLetter(0)}、不切换。</>}
         </p>
       ) : status && !status.agentSupportsScores ? (

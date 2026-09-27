@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>ForwardX</string>
+        <string>NEX</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,7 +25,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>连接你配置的局域网 ForwardX 面板。</string>
+	<string>连接你配置的局域网 NEX 面板。</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- Self-hosted panels may use HTTP. Never bypass TLS certificate validation. -->

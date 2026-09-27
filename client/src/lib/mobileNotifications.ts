@@ -129,7 +129,7 @@ export async function scheduleMobileReminders(settings: MobileNotificationSettin
     if (remainingPercent <= normalized.trafficThresholdPercent) {
       notifications.push({
         id: 40101,
-        title: "ForwardX 流量提醒",
+        title: "NEX 流量提醒",
         body: `套餐流量剩余约 ${remainingPercent}%，请及时关注。`,
         schedule: { at: nextReminderDate(normalized.reminderTime) },
       });
@@ -144,7 +144,7 @@ export async function scheduleMobileReminders(settings: MobileNotificationSettin
       if (notifyAt <= expiresAt) {
         notifications.push({
           id: 40102,
-          title: "ForwardX 套餐到期提醒",
+          title: "NEX 套餐到期提醒",
           body: `套餐将在 ${normalized.expiryDaysBefore} 天内到期，请及时续费或联系管理员。`,
           schedule: { at: new Date(notifyAt) },
         });

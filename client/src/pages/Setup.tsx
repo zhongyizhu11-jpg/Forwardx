@@ -321,9 +321,9 @@ export default function Setup() {
     <div className="setup-shell px-4 py-8 text-foreground">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
         <div className="text-center">
-          <img src="/logo-light.png" alt="ForwardX" className="mx-auto h-14 w-14 object-contain dark:hidden" />
-          <img src="/logo-dark.png" alt="ForwardX" className="mx-auto hidden h-14 w-14 object-contain dark:block" />
-          <h1 className="mt-4 text-2xl font-semibold tracking-tight">ForwardX 首次部署</h1>
+          <img src="/logo-light.png" alt="NEX" className="mx-auto h-14 w-14 object-contain dark:hidden" />
+          <img src="/logo-dark.png" alt="NEX" className="mx-auto hidden h-14 w-14 object-contain dark:block" />
+          <h1 className="mt-4 text-2xl font-semibold tracking-tight">NEX 首次部署</h1>
           <p className="mt-2 text-sm text-muted-foreground">按步骤完成数据库初始化、旧面板迁移和管理员配置。</p>
         </div>
 
@@ -547,7 +547,7 @@ export default function Setup() {
                           onClick={async () => {
                             if (await confirmDialog({
                               title: "清空面板数据",
-                              description: "确定要清空当前数据库中的 ForwardX 面板数据，并作为新面板重新初始化吗？此操作不可撤销。",
+                              description: "确定要清空当前数据库中的 NEX 面板数据，并作为新面板重新初始化吗？此操作不可撤销。",
                               confirmText: "清空",
                               tone: "destructive",
                             })) {

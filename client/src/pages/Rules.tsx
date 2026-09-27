@@ -835,9 +835,9 @@ function getTunnelDisplay(tunnel: any | null | undefined, showNginxLabel = true)
   const mode = String(tunnel?.mode || "").toLowerCase();
   if (mode === "forwardx") {
     return {
-      shortLabel: "ForwardX",
-      badgeLabel: "隧道 / ForwardX",
-      toolLabel: "ForwardX 加密隧道",
+      shortLabel: "NEX",
+      badgeLabel: "隧道 / NEX",
+      toolLabel: "NEX 加密隧道",
     };
   }
   if (gostTunnelModes.has(mode)) {
@@ -885,7 +885,7 @@ function getForwardGroupRouteLabel(group: any | null | undefined) {
   return "转发组";
 }
 
-// GOST、Nginx、ForwardX 隧道都能挂线路组：调度器在隧道出口机上。
+// GOST、Nginx、NEX 隧道都能挂线路组：调度器在隧道出口机上。
 function isGostTunnelForMainBackup(tunnel: any | null | undefined) {
   return routeGroupTunnelModeSupported(tunnel?.mode);
 }
@@ -3196,7 +3196,7 @@ function RulesContent() {
       fix: canUseFailoverGroup && !routeModeLocked ? { label: "改用转发组", run: () => setRouteMode("group") } : undefined,
     }
     : mainBackupUsesTunnelRoute && !mainBackupIsTunnelRoute
-    ? { reason: "这种隧道用不了线路组。换一条 GOST、Nginx 或 ForwardX 隧道就可以。" }
+    ? { reason: "这种隧道用不了线路组。换一条 GOST、Nginx 或 NEX 隧道就可以。" }
     : user?.role !== "admin" && !mainBackupUsesTunnelRoute && !selectedForwardGroupIsPort
     ? {
       reason: "普通用户的端口转发用不了线路组。改用隧道转发就可以。",
@@ -7347,7 +7347,7 @@ function RulesContent() {
                     <FormField className="space-y-1.5">
                       <div className="flex min-w-0 items-center justify-between gap-2">
                         <Label>使用隧道</Label>
-                        {/* 隧道的类型（GOST / ForwardX）下拉框里已经写着，不再另起一个徽标重复一遍 */}
+                        {/* 隧道的类型（GOST / NEX）下拉框里已经写着，不再另起一个徽标重复一遍 */}
                         {renderInlineLinkTrigger("tunnel")}
                       </div>
                       <Select
@@ -8634,7 +8634,7 @@ function RulesContent() {
 
       {(() => {
         const policyRule = policyRuleId === null ? null : (rules || []).find((rule: any) => Number(rule.id) === policyRuleId);
-        // 隧道规则的调度器在隧道出口：Agent 版本那几句按出口机说，ForwardX 隧道要知道隧道类型。
+        // 隧道规则的调度器在隧道出口：Agent 版本那几句按出口机说，NEX 隧道要知道隧道类型。
         const policyTunnel = policyRule?.tunnelId ? tunnelById.get(Number(policyRule.tunnelId)) : null;
         const policy = policyRule ? describeRoutePolicy(
           { ...policyRule, tunnelMode: policyRule.tunnelMode ?? policyTunnel?.mode },
