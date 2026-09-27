@@ -63,15 +63,14 @@ export function NetworkNode({
   className?: string;
 }) {
   const health = node.health || "unknown";
+  /*
+    横竖两种排法里点都在名字那一行的左边（名字 22px 行高，圆心在 11px，点 8px，所以 pt 7px）。
+    上一版横排时点在名字上面一行、线又对着点画，结果隧道卡上「● ── ●」那条线浮在两个名字
+    的上方，看着像三样东西各排各的。
+  */
   return (
-    <div
-      className={cn(
-        "flex min-w-0 gap-2",
-        orientation === "horizontal" ? "flex-col items-start" : "flex-row items-start",
-        className,
-      )}
-    >
-      <span className={cn("flex shrink-0 items-center gap-2", orientation === "vertical" && "pt-1")}>
+    <div className={cn("flex min-w-0 flex-row items-start gap-2", className)}>
+      <span className="flex shrink-0 items-center gap-2 pt-[7px]">
         <StatusDot health={health} />
       </span>
       <span className="flex min-w-0 flex-col">
@@ -225,7 +224,7 @@ export function NetworkPath({
                 /*
                   线要落在状态点的圆心上，横竖两个方向都是。
 
-                  横排：点高 8px，圆心在 4px 处，所以 mt-1（4px），不是 mt-1.5。
+                  横排：点现在和名字同一行，圆心在 11px 处，所以 mt-[10px]（1px 的线压在 10–11px 上）。
                   竖排：点宽 8px 从 x=0 起，圆心在 x=4；边自己的 w-2 容器已经把
                   线居中到 4px 了，所以**不能再加左边距** —— 之前那个 ml-1 把线
                   推到 x=8，比圆心右了 4px，一条三跳的路径看上去就是线和点各走
@@ -234,7 +233,7 @@ export function NetworkPath({
                   差几个像素在这里不是审美问题：Path 的全部意义就是「这两个点
                   是连着的」，线没接上点，这句话就没说出来。
                 */
-                className={direction === "horizontal" ? "mt-1" : undefined}
+                className={direction === "horizontal" ? "mt-[10px]" : undefined}
               />
             ) : null}
           </div>

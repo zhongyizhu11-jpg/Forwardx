@@ -1479,3 +1479,37 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
 [data-slot="switch"][data-state="checked"] { background-image: var(--fx-primary-gradient); }
 [data-slot="checkbox"]:checked { background-image: var(--fx-primary-gradient); border-color: transparent; }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   线路语言：首页网络地图、规则卡路径条、列表行里的一小段线
+   ═══════════════════════════════════════════════════════════════════════ */
+.fx-netmap-label { font-size: 11px; font-weight: 600; fill: var(--fx-text); font-family: var(--fx-font); }
+.fx-netmap-note { font-size: 9.5px; fill: var(--fx-text-muted); font-family: var(--fx-font); font-variant-numeric: tabular-nums; }
+.fx-netmap svg [role="button"]:focus-visible { outline: 0; }
+.fx-netmap svg [role="button"]:focus-visible > circle:first-of-type { stroke-width: 4; }
+
+/*
+  路径条：左节点 ─ 线 ─ 右节点。线用 background 画（虚线用 repeating-linear-gradient），
+  颜色由 --fx-pathstrip-color 给，是这条规则的状态色；正常那一档走天蓝渐变。
+*/
+.fx-pathstrip { display: grid; grid-template-columns: minmax(0, 1fr) minmax(64px, max-content) minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
+.fx-pathstrip-node { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.fx-pathstrip-node-end { align-items: flex-end; text-align: right; }
+.fx-pathstrip-node > b { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; line-height: 18px; color: var(--fx-text); }
+.fx-pathstrip-node > span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--fx-font-mono); font-size: 11px; line-height: 16px; color: var(--fx-text-muted); }
+.fx-pathstrip-node > span > button { max-width: 100%; }
+.fx-pathstrip-wire { position: relative; display: flex; align-items: center; justify-content: center; height: 28px; min-width: 0; padding-inline: 10px; box-sizing: border-box; }
+.fx-pathstrip-wire::before { content: ""; position: absolute; inset-inline: 0; top: 50%; height: 2px; margin-top: -1px; border-radius: 2px; background: var(--fx-pathstrip-color, var(--fx-accent)); }
+.fx-pathstrip[data-health="healthy"] .fx-pathstrip-wire::before { background: var(--fx-primary-gradient); }
+.fx-pathstrip-wire-dashed::before { background: repeating-linear-gradient(90deg, var(--fx-pathstrip-color, var(--fx-standby)) 0 6px, transparent 6px 10px) !important; }
+.fx-pathstrip-wire::after { content: ""; position: absolute; right: -1px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 999px; background: var(--fx-pathstrip-color, var(--fx-accent)); }
+.fx-pathstrip-hop { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 999px; background: var(--fx-l1-surface); border: 2px solid var(--fx-pathstrip-color, var(--fx-accent)); }
+.fx-pathstrip-label { position: relative; z-index: 1; display: inline-flex; max-width: 160px; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--fx-radius-pill); border: 1px solid var(--fx-stroke-weak); background: var(--fx-l1-surface); font-size: 11px; line-height: 14px; font-weight: 600; color: var(--fx-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-pathstrip-label > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fx-pathstrip-hops { color: var(--fx-text); }
+.fx-pathstrip-sep { color: var(--fx-text-muted); }
+
+/* 列表行里的一小段线：「HK entry 01 ──── SG relay 03」 */
+.fx-pathline { display: inline-flex; min-width: 0; align-items: center; gap: 6px; }
+.fx-pathline-ln { position: relative; flex: 1 1 18px; min-width: 18px; height: 2px; border-radius: 2px; background: var(--fx-pathline-color, var(--fx-accent)); }
+.fx-pathline-ln-dashed { background: repeating-linear-gradient(90deg, var(--fx-pathline-color, var(--fx-standby)) 0 5px, transparent 5px 9px); }
+.fx-pathline-ln::after { content: ""; position: absolute; right: -1px; top: -2px; width: 6px; height: 6px; border-radius: 999px; background: var(--fx-pathline-color, var(--fx-accent)); }

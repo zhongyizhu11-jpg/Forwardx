@@ -12,6 +12,7 @@ import { trafficQuotaBreakdown } from "@/lib/trafficQuota";
 import { trpc } from "@/lib/trpc";
 import { AccountSection } from "@/features/dashboard/AccountSection";
 import { AttentionSection } from "@/features/dashboard/AttentionSection";
+import { NetworkMapSection } from "@/features/dashboard/NetworkMapSection";
 import { QuickStartSection } from "@/features/dashboard/QuickStartSection";
 import { TrafficSurface, type TrafficChartPoint } from "@/features/dashboard/TrafficSurface";
 import { useEffect, useMemo, useState } from "react";
@@ -218,6 +219,11 @@ function DashboardContent() {
           ].filter(Boolean).join(" · ")}
         </span>
       ) : null} />
+      {/*
+        网络地图放在数字前面：这一页第一眼看到的是「谁连着谁、哪条断了」，数字是第二眼的事。
+        没有主机时它自己不出现。
+      */}
+      <NetworkMapSection enabled={!!health && health.hosts.total > 0} onOpen={setLocation} />
       <SystemStatusHeader
         health={health as SystemHealth | undefined}
         loading={healthLoading}

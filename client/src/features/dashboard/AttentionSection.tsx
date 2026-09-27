@@ -1,4 +1,5 @@
 import { ListRow, ListSection } from "@/components/ios/GroupedList";
+import { PathLine } from "@/components/network/PathStrip";
 import { StatusDot } from "@/components/network/StatusDot";
 import {
   attentionHealth,
@@ -17,6 +18,26 @@ import { attentionHref } from "./attentionLinks";
  * 在脚注里按类别说清楚（「还有 2 条转发、1 个转发组」），人知道该去哪一页找。
  */
 export const ATTENTION_VISIBLE_ROWS = 5;
+
+/**
+ * 说明里的「A → B」画成一小段线：那是隧道两头的两台机器，线断了就是虚线。
+ * 其余部分（「隧道没在运行 · 」）照原样是字。
+ */
+export function renderAttentionDetail(detail: string, health: Parameters<typeof PathLine>[0]["health"]) {
+  const parts = detail.split(" · ");
+  const index = parts.findIndex((part) => part.includes(" → "));
+  if (index < 0) return detail;
+  const [from, ...rest] = parts[index].split(" → ");
+  const before = parts.slice(0, index).join(" · ");
+  const after = parts.slice(index + 1).join(" · ");
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      {before ? <span className="shrink-0">{before} ·</span> : null}
+      <PathLine from={from} to={rest.join(" → ")} health={health} className="min-w-0 flex-1" />
+      {after ? <span className="shrink-0">· {after}</span> : null}
+    </span>
+  );
+}
 
 /**
  * 「需要关注」。
@@ -53,12 +74,13 @@ export function AttentionSection({
       {shown.map((row) => {
         const { title, detail } = describeAttentionRow(row, now);
         const href = attentionHref(row, { isAdmin });
+        const health = attentionHealth(row.reason);
         return (
           <ListRow
             key={`${row.reason}:${row.id}`}
-            icon={<StatusDot health={attentionHealth(row.reason)} />}
+            icon={<StatusDot health={health} />}
             label={title}
-            detail={detail}
+            detail={renderAttentionDetail(detail, health)}
             onSelect={href ? () => onOpen(href) : undefined}
           />
         );
