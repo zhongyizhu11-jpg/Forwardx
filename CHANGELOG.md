@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.3.382] - 2026-09-27
+
+### 发布摘要
+
+- **正式更名 NEX，换上新 Logo**：网页、登录页、设置、通知、文档和 iOS / Android 桌面名称统一为 NEX，网页图标、iOS 和 Android 图标、启动图换成黑底白字、蓝色 X 的新标识。站名留空或仍是旧默认名 ForwardX 时自动显示 NEX；管理员自定义的站名和 Logo 保留。
+- **iOS 顶部和底栏修正**：登录页右上角的设置和深色按钮避开状态栏（安全区 + 16px，横屏右侧同样避让）；App 内底栏不再在手势安全区之上再叠 12px，整体下移、页面底部留白同步缩小，点击面积不变。
+- **设置 › 开源与联系新增 iOS IPA 下载**，在 Android APK 下方，注明「需自行签名后安装」；链接跟着面板版本走，指向同一个 Release 里的 IPA。
+- 面板与 APK Release `2.3.382`，iOS APP `2.3.382`，Android APP `2.3.100`，Agent `2.2.199`，ForwardX FXP runtime `2.2.119`。数据库结构和 Agent 没有变化，不用升级 Agent。手机桌面上的名称和图标需要安装新的 APK / IPA 后才变；安装标识仍是 `com.forwardx.app`，可以直接覆盖升级（iOS 自签时沿用原来的签名）。GitHub 仓库、Release 文件名、容器、数据目录、环境变量和协议标识保持不变，兼容说明见 [docs/BRANDING_NEX.md](docs/BRANDING_NEX.md)。
+
 ## [2.3.381] - 2026-09-27
 
 ### 发布摘要

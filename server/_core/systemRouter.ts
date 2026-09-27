@@ -129,6 +129,9 @@ export const REPO_URL = "https://github.com/zhongyizhu11-jpg/Forwardx";
 export const TELEGRAM_BOT_URL = "";
 const ANDROID_APK_DOWNLOAD_URL =
   `${REPO_URL}/releases/download/v${ANDROID_APK_RELEASE_VERSION}/forwardx-android-v${ANDROID_APP_VERSION}.apk`;
+// iOS 安装包随面板同一个 Release 发布（ios-ipa.yml 在标签上构建后挂到这个 Release）。
+const IOS_IPA_DOWNLOAD_URL =
+  `${REPO_URL}/releases/download/v${APP_VERSION}/forwardx-ios-v${APP_VERSION}-unsigned.ipa`;
 const UPDATE_CHECK_COOLDOWN_MS = 60 * 1000;
 const UPGRADE_ASSETS_PENDING_EXIT_CODE = 12;
 const DEFAULT_DOCKER_IMAGE = "ghcr.io/zhongyizhu11-jpg/forwardx:latest";
@@ -1607,6 +1610,7 @@ function publicSystemSettings(all: Record<string, string | null>, activeProtocol
     version: APP_VERSION,
     androidAppVersion: ANDROID_APP_VERSION,
     androidApkDownloadUrl: ANDROID_APK_DOWNLOAD_URL,
+    iosIpaDownloadUrl: IOS_IPA_DOWNLOAD_URL,
     agentVersion: AGENT_VERSION,
     siteTitle: resolveSiteTitle(all.siteTitle),
     siteLogoDataUrl: all.siteLogoDataUrl || "",
@@ -1754,6 +1758,7 @@ export const systemRouter = router({
       version: APP_VERSION,
       androidAppVersion: ANDROID_APP_VERSION,
       androidApkDownloadUrl: ANDROID_APK_DOWNLOAD_URL,
+      iosIpaDownloadUrl: IOS_IPA_DOWNLOAD_URL,
       agentVersion: AGENT_VERSION,
       siteTitle: resolveSiteTitle(all.siteTitle),
       siteLogoDataUrl: all.siteLogoDataUrl || "",
