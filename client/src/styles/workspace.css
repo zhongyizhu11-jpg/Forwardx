@@ -21,23 +21,28 @@
   .workspace-appbar, .fx-tabbar, .fx-glass { background: var(--fx-l1-surface); }
   .fx-glass-surface { background: var(--fx-l2-elevated, var(--fx-l1-surface)); }
 }
-.workspace-appbar-inner { display: flex; align-items: center; gap: 6px; height: var(--fx-header-height); padding-inline: 8px 10px; }
-.workspace-appbar-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; color: var(--fx-text-secondary); transition: background-color 120ms, color 120ms; }
+/*
+  顶栏上的控件只有一种尺寸：36×36、圆的、没有描边，悬停一层浅灰。上一版折叠键 32px 方角、
+  搜索 32px 带描边的胶囊、头像 32px 圆 —— 一行四个控件三种长相。
+*/
+.workspace-appbar-inner { display: flex; align-items: center; gap: 4px; height: var(--fx-header-height); padding-inline: 8px 10px; }
+.workspace-appbar-icon { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 999px; color: var(--fx-text-secondary); transition: background-color 120ms, color 120ms; }
 .workspace-appbar-icon:hover { background: var(--fx-hover); color: var(--fx-text); }
 .workspace-appbar-icon:focus-visible, .workspace-appbar-brand:focus-visible, .workspace-appbar-search:focus-visible, .workspace-appbar-account:focus-visible { outline: 0; box-shadow: var(--fx-focus-ring); }
-.workspace-appbar-brand { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 32px; padding: 0 6px; border-radius: 10px; }
+.workspace-appbar-brand { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 36px; padding: 0 8px; border-radius: 999px; }
 .workspace-appbar-brand img, .workspace-appbar-brand > div { width: 24px; height: 24px; }
 .workspace-appbar-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--fx-text); white-space: nowrap; }
 /* 版本号是一枚小胶囊，参考站品牌旁边就挂着它 */
 .workspace-appbar-version { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: var(--fx-radius-pill); background: var(--fx-l3-control-fill); color: var(--fx-text-muted); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.workspace-appbar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.workspace-appbar-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 /* 搜索：一枚描弱线的胶囊，参考站顶栏的 Search 就是这个形状 */
-.workspace-appbar-search { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-pill); background: var(--fx-l1-surface); color: var(--fx-text-muted); font-size: 13px; transition: color 120ms, border-color 120ms; }
-.workspace-appbar-search:hover { color: var(--fx-text); border-color: var(--fx-stroke-base); }
+.workspace-appbar-search { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 0; border-radius: var(--fx-radius-pill); background: var(--fx-l3-control-fill); color: var(--fx-text-muted); font-size: 13px; transition: color 120ms, background-color 120ms; }
+.workspace-appbar-search:hover { color: var(--fx-text); background: var(--fx-hover); }
 .workspace-appbar-kbd { font-family: inherit; font-size: 11px; color: var(--fx-text-muted); }
-.workspace-appbar-account { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 999px; }
+.workspace-appbar-account { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 999px; transition: background-color 120ms; }
+.workspace-appbar-account:hover { background: var(--fx-hover); }
 @media (max-width: 639px) {
-  .workspace-appbar-search { width: 32px; padding: 0; justify-content: center; }
+  .workspace-appbar-search { width: 36px; padding: 0; justify-content: center; background: transparent; color: var(--fx-text-secondary); }
   .workspace-appbar-search-label, .workspace-appbar-kbd { display: none; }
   .workspace-appbar-version { display: none; }
 }
@@ -1123,27 +1128,32 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
 */
 @media (max-width: 767px) {
   /* ── 底部标签栏 ─────────────────────────────────────── */
+  /*
+    底栏是一枚悬浮的玻璃胶囊（iOS 26 那种），不再是一条贴着屏幕底边、横跨全宽的带子：
+    离屏幕边 14px、离底 14px + 安全区，圆角走 pill 档，一圈弱线加一层弹层投影把它从
+    页面上托起来。选中的那一格是一颗天蓝渐变的药丸、白字 —— 和主按钮、分段控件的
+    选中项同一个渐变（走 --fx-primary-* 令牌，跟着「默认配色」换）。
+
+    标签栏仍是少数应该半透明的东西：内容从它底下滑过去时透出来的那点颜色就是
+    「下面还有，能继续滚」。模糊只在这一枚固定的胶囊上，滚动内容本身不模糊。
+  */
   .fx-tabbar {
     position: fixed;
-    inset-inline: 0;
-    bottom: 0;
+    inset-inline: 14px;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
     z-index: var(--fx-z-sticky); /* 和顶栏同一层：都是常驻外壳，都该被对话框盖住 */
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
-    /*
-      49px 是 iOS 标签栏的标准高度，下面再补一个 home indicator 的安全区。
-      写成 padding 而不是加高：内容要贴着 49px 那条线排，安全区是留白不是控件。
-    */
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    border-top: 1px solid var(--fx-stroke-weak);
-    /*
-      标签栏是少数应该半透明的东西：内容从它底下滑过去时透出来的那点颜色
-      就是「下面还有，能继续滚」。这是信息，不是装饰。
-    */
-    background: var(--fx-glass);
+    gap: 2px;
+    height: 62px;
+    padding: 6px;
+    border: 1px solid var(--fx-stroke-weak);
+    border-radius: var(--fx-radius-pill);
+    background: var(--fx-glass-strong);
     backdrop-filter: var(--fx-glass-blur);
     -webkit-backdrop-filter: var(--fx-glass-blur);
+    box-shadow: var(--fx-elevation-popover);
   }
 
   .fx-tabbar-item {
@@ -1152,34 +1162,40 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
     align-items: center;
     justify-content: center;
     gap: 2px;
-    height: 49px;
+    height: 48px;
     min-width: 0;
     padding: 0 2px;
+    border-radius: var(--fx-radius-pill);
     color: var(--fx-text-muted);
-    transition: color 120ms ease;
+    transition: color 120ms ease, background-color 160ms ease, box-shadow 160ms ease;
     -webkit-tap-highlight-color: transparent;
   }
-  /* 选中态走黑白，不引入第三种颜色去和状态语义色抢注意力 */
-  .fx-tabbar-item-active { color: var(--fx-accent); }
+  .fx-tabbar-item-active {
+    color: var(--fx-primary-text);
+    background: var(--fx-primary-fill);
+    background-image: var(--fx-primary-gradient);
+    box-shadow: var(--fx-primary-shadow);
+  }
   .fx-tabbar-label {
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 10px;
+    font-size: 10.5px;
     line-height: 12px;
     letter-spacing: 0.01em;
   }
   .fx-tabbar-item-active .fx-tabbar-label { font-weight: 600; }
 
   /*
-    有标签栏时，内容底部要让出 49px，否则最后一张卡有一半压在栏底下。
+    有标签栏时，内容底部要让出胶囊的高度（14 + 62 + 14 = 90px），否则最后一张卡
+    有一半压在栏底下。
 
     改的是变量不是 padding：index.css 里那条 [data-mobile-main] 带 !important，
     直接写 padding-bottom 压不过它（实测还是 12px）。自定义属性按正常层叠走，
     所以这里设一下变量就够了，安全区那一份由那条规则自己加。
   */
-  .workspace-has-tabbar { --forwardx-mobile-bottom-inset: calc(0.75rem + 49px); }
+  .workspace-has-tabbar { --forwardx-mobile-bottom-inset: 90px; }
 
   /* 有页面自己的导航栏时，顶部不再预留常驻顶栏的高度 */
   .workspace-has-iosnav { --forwardx-mobile-top-inset: 12px; }
@@ -1462,3 +1478,4 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
 */
 [data-slot="switch"][data-state="checked"] { background-image: var(--fx-primary-gradient); }
 [data-slot="checkbox"]:checked { background-image: var(--fx-primary-gradient); border-color: transparent; }
+
