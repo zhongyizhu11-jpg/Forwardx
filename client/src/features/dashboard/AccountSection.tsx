@@ -99,7 +99,7 @@ export function AccountSection({
 
   if (isAdmin) {
     return (
-      <ListSection header="我的消耗" footer="只统计当前登录的这个账号。">
+      <ListSection header="我的消耗">
         <ListRow label="已用流量" value={cached("trafficUsed", formatBytes(trafficUsed), "0 B")} />
         {billingRows}
       </ListSection>

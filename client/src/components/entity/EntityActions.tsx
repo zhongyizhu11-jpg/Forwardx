@@ -48,13 +48,18 @@ export type EntityAction = {
 export function partitionEntityActions(
   primary: readonly EntityAction[] = [],
   menu: readonly EntityAction[] = [],
+  options: { menuOnly?: boolean } = {},
 ): { shown: EntityAction[]; safe: EntityAction[]; destructive: EntityAction[] } {
   /*
     截断而不是报错：多传的那些不会消失，会被并进菜单。调用方一时传多了，
     用户也不会丢掉任何一个操作 —— 只是位置变了。
+
+    menuOnly：卡片右上角那一个 ···，所有操作都在菜单里、一级操作排最前。
+    卡片底部原来那一行「诊断 / 编辑 / ···」和这个菜单是同一组操作画了两遍，
+    每张卡为此多出 60px；收进一个 ··· 之后，一屏能多看一张卡。
   */
-  const shown = primary.slice(0, 2);
-  const items = [...primary.slice(2), ...menu];
+  const shown = options.menuOnly ? [] : primary.slice(0, 2);
+  const items = options.menuOnly ? [...primary, ...menu] : [...primary.slice(2), ...menu];
   return {
     shown,
     safe: items.filter((item) => !item.destructive),
@@ -66,15 +71,18 @@ export function EntityActions({
   primary = [],
   menu = [],
   menuLabel = "更多操作",
+  menuOnly = false,
   className,
 }: {
   /** 常驻在外面的操作。**超过 2 个会被截断** —— 这是刻意的硬约束，不是 bug */
   primary?: EntityAction[];
   menu?: EntityAction[];
   menuLabel?: string;
+  /** 只画一个 ···，所有操作都收进菜单（卡片右上角用；表格行仍用常驻 + ···） */
+  menuOnly?: boolean;
   className?: string;
 }) {
-  const { shown, safe, destructive } = partitionEntityActions(primary, menu);
+  const { shown, safe, destructive } = partitionEntityActions(primary, menu, { menuOnly });
 
   return (
     <div className={cn("flex min-w-0 items-center gap-1", className)}>
@@ -97,7 +105,7 @@ export function EntityActions({
       {safe.length > 0 || destructive.length > 0 ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" aria-label={menuLabel}>
+            <Button type="button" variant="ghost" size="icon" aria-label={menuLabel} className={menuOnly ? "h-8 w-8 rounded-full text-muted-foreground" : undefined}>
               <MoreHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>

@@ -4,7 +4,6 @@ import { buildChainPath } from "@/features/links/chainPath";
 import { GroupFailoverPolicyFields } from "@/features/links/GroupFailoverPolicyFields";
 import { RoutePolicySheet } from "@/features/rules/RoutePolicySheet";
 import { EntityActions } from "@/components/entity/EntityActions";
-import { CardActions } from "@/components/entity/EntityCard";
 import { FAILOVER_TONE_CLASS, describeGroupPolicyDisplay } from "@/lib/failoverLineDisplay";
 import { FormField } from "@/components/ui/form-field";
 import DataSectionError from "@/components/DataSectionError";
@@ -1958,6 +1957,7 @@ export function ForwardGroupsContent({
                         busy={groupReorderPending}
                         className="bg-card/70"
                       />
+                      {renderGroupActions(group, true)}
                       {renderGroupEnabledSwitch(group)}
                     </div>
                   </div>
@@ -1976,8 +1976,6 @@ export function ForwardGroupsContent({
                   </div>
 
                   {renderGroupFacts(group)}
-
-                  <CardActions>{renderGroupActions(group)}</CardActions>
                   </CardContent>
                 </Card>
       )}
@@ -2027,7 +2025,7 @@ export function ForwardGroupsContent({
     一律是「……链路」—— 哪怕它是转发组、入口组。常用的带字放外面：转发链是「诊断 + 编辑」，
     其余只有「编辑」；同步、延迟记录收进 ···，删除永远最后、红色、隔一条线。
   */
-  const renderGroupActions = (group: any) => {
+  const renderGroupActions = (group: any, menuOnly = false) => {
     const resource = groupModeDisplayLabel(group.groupMode);
     const isChain = normalizeGroupMode(group.groupMode) === "chain";
     return (
@@ -2061,6 +2059,7 @@ export function ForwardGroupsContent({
           { key: "delete", label: "删除", ariaLabel: `删除${resource} ${group.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => setDeleteGroup(group) },
         ]}
         menuLabel={`${resource} ${group.name} 的更多操作`}
+        menuOnly={menuOnly}
       />
     );
   };
@@ -2200,7 +2199,7 @@ export function ForwardGroupsContent({
         <>
         {viewMode === "card" ? (
           <SortableReorderContext sortable={groupSortable} ids={pagedGroups.map((group: any) => Number(group.id))} strategy="rect">
-          <div className="standard-card-grid gap-4">
+          <div className="standard-card-grid items-start gap-4">
             {pagedGroups.map((group: any) => renderForwardGroupCard(group))}
           </div>
           </SortableReorderContext>

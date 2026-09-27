@@ -205,7 +205,19 @@ function DashboardContent() {
   */
   return (
     <div className="space-y-6">
-      <WorkspaceHeader title="总览" description="查看运行状态、资源使用和流量趋势。" />
+      {/*
+        标题下面那一行是此刻的数（「4 台主机 · 19 条线路 · 19 条转发」），不是一句说明书。
+        「查看运行状态、资源使用和流量趋势」是在解释这一页叫总览 —— 它叫总览就够了。
+      */}
+      <WorkspaceHeader title="总览" status={health ? (
+        <span className="tabular-nums">
+          {[
+            isAdmin ? `${health.hosts.total} 台主机` : null,
+            `${health.links.total} 条线路`,
+            `${health.forwards.total} 条转发`,
+          ].filter(Boolean).join(" · ")}
+        </span>
+      ) : null} />
       <SystemStatusHeader
         health={health as SystemHealth | undefined}
         loading={healthLoading}

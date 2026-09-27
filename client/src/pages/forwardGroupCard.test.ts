@@ -24,9 +24,11 @@ function slice(from: string, to: string) {
 test("转发组卡片里不再套带边框的小框", () => {
   const card = slice("const renderForwardGroupCard", "const renderTableMembersSummary");
   assert.doesNotMatch(card, /rounded-md border/);
-  // 反向对照：取到的确实是那张卡（CardActions 在里面），底部换成了小表
-  assert.match(card, /<CardActions>/);
+  // 反向对照：取到的确实是那张卡（右上角的 ··· 在里面），底部换成了小表
+  assert.match(card, /renderGroupActions\(group, true\)/);
   assert.match(card, /renderGroupFacts\(group\)/);
+  // 底部不再有一行「诊断 / 编辑 / ···」：右上角那个 ··· 已经是全部操作
+  assert.doesNotMatch(card, /<CardActions>/);
 });
 
 test("小表只写上面没说过的：DDNS 域名、链路延迟、没有入口组时的入口地址", () => {

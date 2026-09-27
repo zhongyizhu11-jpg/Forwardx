@@ -118,7 +118,7 @@ export function NetworkEdge({
       {typeof edge.latencyMs === "number" ? (
         <span className="text-meta font-medium tabular-nums text-foreground">
           {edge.latencyMs}
-          <span className="ml-0.5 font-normal text-muted-foreground">ms</span>
+          <span className="ml-1 font-normal text-muted-foreground">ms</span>
         </span>
       ) : null}
     </span>

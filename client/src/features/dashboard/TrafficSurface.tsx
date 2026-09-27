@@ -71,7 +71,7 @@ export function TrafficSurface({
   const cumulativeReady = !(totalsLoading && !totals);
 
   return (
-    <ListSection header="流量 · 近 24H" footer="按小时汇总，只统计你名下的转发。">
+    <ListSection header="流量 · 近 24H">
       <div className="flex min-w-0 flex-col gap-[var(--fx-space-4)] p-[var(--fx-card-padding)]">
         {/*
           宽屏上走势和排行并排：竖着叠的话，桌面上这一块要 800px，而右边大半截是空的。

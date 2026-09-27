@@ -109,7 +109,6 @@ import {
 import { FAILOVER_TONE_CLASS, describeFailoverLineDisplay } from "@/lib/failoverLineDisplay";
 import { RouteGroupSheet } from "@/features/rules/RouteGroupSheet";
 import { EntityActions } from "@/components/entity/EntityActions";
-import { CardActions } from "@/components/entity/EntityCard";
 import { RouteGroupFields, routeGroupPayload, type RouteHostOption } from "@/features/rules/RouteGroupFields";
 import { docsUrl } from "@/lib/docsLinks";
 import { ROUTE_MODE_HINTS } from "@/features/rules/routeModeHints";
@@ -214,6 +213,7 @@ import {
 } from "@/lib/linkTestNodeMeta";
 import { getTunnelExitNames, getTunnelHopIds, getTunnelRouteText, tunnelHopHostName } from "@/lib/tunnelDisplay";
 import { NetworkPath } from "@/components/network/NetworkPath";
+import { StatusDot } from "@/components/network/StatusDot";
 import {
   buildRuleFlow,
   decideRuleFlowLayout,
@@ -1537,7 +1537,7 @@ function buildRuleGlobeData(
     const bytesOut = Number(traffic?.bytesOut || 0);
     const routeWithTarget = [...routePoints, targetPoint];
     const exitPoint = routePoints[routePoints.length - 1];
-    const finalHopText = `${exitPoint.name} -> ${targetText}`;
+    const finalHopText = `${exitPoint.name} → ${targetText}`;
     rawRoutes.push({
       rule,
       color,
@@ -5766,18 +5766,16 @@ function RulesContent() {
     else toast.error("复制失败，请手动复制");
   };
 
-  const renderResolvedStatusDot = (visual: ReturnType<typeof resolveForwardRuleVisualStatus>) => {
-    if (visual.state === "running") {
-      return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" />;
-    }
-    if (visual.state === "error") {
-      return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-destructive/70 shadow-sm shadow-destructive/40" />;
-    }
-    if (visual.state === "pending") {
-      return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-[var(--fx-warn)] shadow-sm" />;
-    }
-    return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30" />;
-  };
+  /*
+    规则的状态点和主机、隧道、首页「需要关注」用同一枚 StatusDot：运行中是绿，不再是
+    一颗会呼吸的青色。上一版三页三种点（青色脉冲 / 红 70% / 灰 30%），同一个「正常」
+    在隧道页是绿、在规则页是青，眼睛每换一页要重新学一次。
+  */
+  const renderResolvedStatusDot = (visual: ReturnType<typeof resolveForwardRuleVisualStatus>) => (
+    <span title={visual.title} className="inline-flex">
+      <StatusDot health={visual.state === "pending" ? "degraded" : ruleVisualStateToHealth(visual.state)} size="large" label={visual.title} />
+    </span>
+  );
 
   const renderStatusDot = (rule: any) => {
     const visual = ruleVisualStatuses.get(Number(rule.id))?.display || resolveRuleVisualStatus(rule);
@@ -6331,7 +6329,12 @@ function RulesContent() {
     就是六十个图标，而且得记住听诊器是「自测」、转圈的箭头是「重置统计」。常用的两个带字
     放外面，其余收进 ···；删除永远在菜单最后、红色、隔一条线。
   */
-  const renderRuleActions = (rule: any) => {
+  /*
+    卡片右上角只有一个 ···（menuOnly），表格行保留「诊断 / 编辑」常驻 + ···。
+    原来卡片底部还有一行「诊断 / 编辑 / ···」—— 和右上角的 ··· 是同一组操作画了两遍，
+    每张卡为此多 60px，十六条规则要翻九屏。
+  */
+  const renderRuleActions = (rule: any, menuOnly = false) => {
     const ruleCategory = getRuleCategory(rule, forwardGroupById);
     const isForwardChainRule = ruleCategory === "chain";
     const probeMethod = ruleLatencyProbeMethodForRule(rule);
@@ -6367,6 +6370,7 @@ function RulesContent() {
           { key: "delete", label: "删除", ariaLabel: `删除 ${rule.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => setDeleteRule(rule) },
         ]}
         menuLabel={`${rule.name} 的更多操作`}
+        menuOnly={menuOnly}
       />
     );
   };
@@ -6535,7 +6539,7 @@ function RulesContent() {
         )}
         <TableCell className="px-3 py-2">
           <div className="flex items-center justify-center">
-            {supported ? renderStatusDot(rule) : <span className="h-2.5 w-2.5 rounded-full bg-destructive/60" />}
+            {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
           </div>
         </TableCell>
         <TableCell className="px-3 py-2">
@@ -6608,7 +6612,7 @@ function RulesContent() {
             <div className="flex min-w-0 items-start justify-between gap-2">
               <div className="flex min-w-0 items-start gap-2">
                 <div className="mt-1.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                  {supported ? renderStatusDot(rule) : <span className="h-2.5 w-2.5 rounded-full bg-destructive/60" />}
+                  {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{rule.name}</div>
@@ -6626,6 +6630,7 @@ function RulesContent() {
                     className="bg-card/70"
                   />
                 )}
+                {renderRuleActions(rule, true)}
                 {renderRuleEnabledSwitch(rule)}
               </div>
             </div>
@@ -6664,8 +6669,6 @@ function RulesContent() {
               {renderRuleDailyTrafficValue(rule, "in")}
               {renderRuleDailyTrafficValue(rule, "out")}
             </div>
-
-            <CardActions>{renderRuleActions(rule)}</CardActions>
           </CardContent>
         </Card>
       );
@@ -6686,7 +6689,7 @@ function RulesContent() {
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-start gap-2">
               <div className="mt-2 flex h-4 w-4 flex-shrink-0 items-center justify-center">
-                {supported ? renderStatusDot(rule) : <span className="h-2.5 w-2.5 rounded-full bg-destructive/60" />}
+                {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
               </div>
               <div className="min-w-0">
                 <div className="truncate font-medium">{rule.name}</div>
@@ -6717,6 +6720,7 @@ function RulesContent() {
                   className="bg-card/70"
                 />
               )}
+              {renderRuleActions(rule, true)}
               {renderRuleEnabledSwitch(rule)}
             </div>
           </div>
@@ -6759,7 +6763,6 @@ function RulesContent() {
               {renderLatestLatency(rule)}
             </div>
           </div>
-          <CardActions>{renderRuleActions(rule)}</CardActions>
         </CardContent>
       </Card>
     );
@@ -6767,7 +6770,7 @@ function RulesContent() {
 
   return (
     <div className="space-y-6">
-      <WorkspaceHeader title="转发规则" description="管理转发规则和运行状态" status={
+      <WorkspaceHeader title="转发规则" status={
           <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
             <Zap className="h-3 w-3 text-chart-2" />
             <AnimatedStatValue
@@ -6825,12 +6828,33 @@ function RulesContent() {
               <DropdownMenuItem onSelect={() => setResetTrafficTarget({ scope: "all" })} disabled={visibleRuleIdsForMetrics.length === 0 || resetTrafficMutation.isPending}><RotateCcw className="h-4 w-4" />重置数据</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {/*
+            主操作回到页面标题这一行，和主机页、隧道页、公告页放在同一个位置：
+            每一页的「新建」都在右上角，手指不用每页重新找。手机上只留「＋」，
+            字留在 aria-label 里给读屏。
+          */}
           {rulePermissionLoading ? (
             <Button disabled className="gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
               权限加载中
             </Button>
-          ) : null}
+          ) : canAdd ? (
+            <Button
+              onClick={() => openCreate()}
+              className="gap-2 max-md:w-[34px] max-md:px-0"
+              disabled={!canCreateRule}
+              aria-label="新建规则"
+              title={!canCreateRule ? "暂无可用转发资源" : "新建规则"}
+            >
+              <Plus className="h-4 w-4" />
+              <span className="max-md:sr-only">新建规则</span>
+            </Button>
+          ) : (
+            <Button disabled className="gap-2 max-md:w-[34px] max-md:px-0" aria-label="新建规则" title="需要管理员授权后才能新建规则">
+              <Plus className="h-4 w-4" />
+              <span className="max-md:sr-only">新建规则</span>
+            </Button>
+          )}
       </>} />
 
       <FreezeWhile frozen={showDialog || showImportDialog || showCopyDialog} render={() => <>
@@ -6852,34 +6876,6 @@ function RulesContent() {
           </Tabs>
           <FilterToolbar
             activeCount={Number(hasActiveUserFilter) + Number(filterResource !== "all")}
-            action={
-              /*
-                主操作挪到筛选右边。原来在页面顶栏 —— 手机上顶栏只有 393px，
-                它要和页面标题、搜索、主题切换抢位置。筛选这一行本来就是
-                「对这个列表做事」的地方，新建和它并排才是同一类东西。
-              */
-              /*
-                手机上只留「＋」（和 iOS 列表右上角那个加号一个意思）：三样东西要挤一行，
-                字留在 aria-label 里给读屏。md 以上照旧写「新建规则」。
-              */
-              rulePermissionLoading ? null : canAdd ? (
-                <Button
-                  onClick={() => openCreate()}
-                  className="gap-2 max-md:w-[34px] max-md:px-0"
-                  disabled={!canCreateRule}
-                  aria-label="新建规则"
-                  title={!canCreateRule ? "暂无可用转发资源" : "新建规则"}
-                >
-                  <Plus className="h-4 w-4" />
-                  <span className="max-md:sr-only">新建规则</span>
-                </Button>
-              ) : (
-                <Button disabled className="gap-2 max-md:w-[34px] max-md:px-0" aria-label="新建规则" title="需要管理员授权后才能新建规则">
-                  <Plus className="h-4 w-4" />
-                  <span className="max-md:sr-only">新建规则</span>
-                </Button>
-              )
-            }
             search={
             <div className="relative w-full">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />

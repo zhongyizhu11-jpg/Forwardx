@@ -131,16 +131,16 @@ export default function Announcements() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <WorkspaceHeader title={<>{isAdmin ? "公告管理" : "公告"}</>} description={<>
-              {isAdmin ? "管理普通公告和登录弹窗。" : "查看管理员发布的公告信息。"}
-            </>} />
-          {isAdmin && (
-            <Button onClick={() => { setForm(emptyForm); setOpen(true); }}>
-              <Plus className="mr-2 h-4 w-4" /> 新增公告
+        <WorkspaceHeader
+          title={<>{isAdmin ? "公告管理" : "公告"}</>}
+          description={isAdmin ? "管理普通公告和登录弹窗。" : "查看管理员发布的公告信息。"}
+          actions={isAdmin ? (
+            <Button onClick={() => { setForm(emptyForm); setOpen(true); }} className="gap-2 max-md:w-[34px] max-md:px-0" aria-label="新增公告">
+              <Plus className="h-4 w-4" />
+              <span className="max-md:sr-only">新增公告</span>
             </Button>
-          )}
-        </div>
+          ) : undefined}
+        />
 
         {isLoading ? (
           <DataSectionLoading label="正在加载公告" />

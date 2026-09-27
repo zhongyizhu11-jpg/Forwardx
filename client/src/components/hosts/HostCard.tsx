@@ -455,7 +455,11 @@ export default function HostCard({
   */
   const infoPanelClass = isOnline ? "" : "text-muted-foreground";
   const trafficPanelClass = isOnline ? "" : "text-muted-foreground";
-  const cardMinHeightClass = compact ? "min-h-[260px]" : "min-h-[420px]";
+  /*
+    卡不再有最低高度。原来标准卡钉在 420px、紧凑卡 260px：一台只有三行指标的机器也得
+    撑出一张 420px 的卡，底下 150px 是空的。卡多高由它说了多少决定。
+  */
+  const cardMinHeightClass = "";
   const compactMetricPanelClass = `border-t border-[var(--fx-stroke-weak)] pt-2 ${trafficPanelClass}`;
   const compactMetricItemClass = "grid min-w-0 grid-cols-[18px_minmax(0,1fr)_42px] items-center gap-2 rounded px-1 py-0.5 transition-colors hover:bg-background/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
   const compactMetricItems = [

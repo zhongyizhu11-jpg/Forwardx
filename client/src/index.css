@@ -745,6 +745,16 @@
   .action-card {
     height: 100%;
   }
+  /*
+    桌面上的隧道 / 转发组卡不再拉到同一行里最高的那张那么高：一张四行内容的卡
+    旁边站着一张十行的，中间那 250px 空白只是在证明它们同一行。栅格 items-start
+    之后，卡按自己的内容收。
+  */
+  .standard-card-grid.items-start > *,
+  .standard-card-grid.items-start > * > .action-card,
+  .standard-card-grid.items-start > .action-card {
+    height: auto;
+  }
 
   .action-card-content {
     display: flex;

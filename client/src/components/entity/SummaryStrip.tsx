@@ -3,19 +3,17 @@ import type { LucideIcon } from "lucide-react";
 import { ChevronRight } from "lucide-react";
 
 import AnimatedStatValue from "@/components/AnimatedStatValue";
-import { IconBadge, type IconBadgeTone } from "@/components/ui/icon-badge";
 import { cn } from "@/lib/utils";
 
 /**
- * 页面顶部的统计块：几个数并排，一个数一小格。
+ * 页面顶部的统计行：几个数并排，一格一个数。
  *
- * 照参考站（New API / Vexo）首页的 summary cards 画：外面一张白卡，里面一排小格，每格
- * 是「图标底座 + 标签」一行、下面一个等宽字体的大数、再下面一行小灰字。格与格之间靠
- * 各自的一圈细线分开，不再是上一版那种「一个面、中间几根竖线」的摘要条 —— 那种看着
- * 像表头，这种看着像仪表。
+ * 上一版是「外面一张白卡，里面一排小格，每格再描一圈线」—— 同一条边界画了两次，
+ * 而且大数用等宽字体、首页的大数用正文字体，两页对不上。这一版按 2026-09-26 那份
+ * 版式提案（「线路」方向）的统计行画：**不画框**，上下各一条细线，格与格之间一条竖线，
+ * 标签在上、大数在中、一行状态色的小字在下。它是一行读数，不是三张小卡。
  *
- * 图标底座只在传了 `icon` 的格上画：颜色按格的顺序从图表色板取（天蓝 / 青 / 淡靛 …），
- * 传了 `tone` 的格用状态色 —— 数字本身不正常时，底座和数字一起变色。
+ * 数字统一用正文字体的等宽数字（tabular-nums），和首页、表格里的数一个样。
  */
 export type SummaryItem = {
   key: string;
@@ -25,9 +23,11 @@ export type SummaryItem = {
   hint?: ReactNode;
   /** 悬停看的完整说明：补充那一行太长、被截断的时候用。 */
   title?: string;
-  /** 需要用颜色说话时才传（状态色）。大部分数不需要颜色。 */
+  /** 需要用颜色说话时才传（状态色）：数字本身跟着变色。大部分数不需要颜色。 */
   tone?: "healthy" | "warn" | "down" | "path";
-  /** 标签前面的图标。不传就没有底座，标签顶格。 */
+  /** 只给补充那一行上色（「3 在线」绿、「1 异常」琥珀），数字保持黑色。 */
+  hintTone?: "healthy" | "warn" | "down";
+  /** 标签前面的图标。画成一枚灰色小图标，不再是彩色底座 —— 颜色只留给状态。 */
   icon?: LucideIcon;
   /**
    * 这个数本身就是一件要去处理的事（「待处理 33」）时，点它直接过去 —— 让人看完这个数
@@ -45,14 +45,10 @@ export type SummaryItem = {
   fallbackValue?: string | number;
 };
 
-const SERIES_TONES: IconBadgeTone[] = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"];
-
-function badgeTone(item: SummaryItem, index: number): IconBadgeTone {
-  if (item.tone === "healthy") return "healthy";
-  if (item.tone === "warn") return "warn";
-  if (item.tone === "down") return "down";
-  if (item.tone === "path") return "accent";
-  return SERIES_TONES[index % SERIES_TONES.length];
+function toneColor(tone: "healthy" | "warn" | "down" | "path" | undefined) {
+  if (!tone) return undefined;
+  if (tone === "path") return "var(--fx-accent)";
+  return `var(--fx-${tone}-text, var(--fx-${tone}))`;
 }
 
 export function SummaryStrip({
@@ -68,29 +64,26 @@ export function SummaryStrip({
   className?: string;
 }) {
   const count = items.length;
-  // 手机上四个折成 2×2；三个以内一行放得下。
-  const grid = count >= 4 ? "grid-cols-2 sm:grid-cols-4" : count === 3 ? "grid-cols-3" : count === 2 ? "grid-cols-2" : "grid-cols-1";
+  // 四个也排一行：一格只有标签、数、一行小字，90px 宽放得下；折成 2×2 就成了四张卡。
+  const grid = count >= 4 ? "grid-cols-4" : count === 3 ? "grid-cols-3" : count === 2 ? "grid-cols-2" : "grid-cols-1";
   return (
     <div
       role="group"
       aria-label={ariaLabel}
-      className={cn(
-        "fx-summary grid gap-2 rounded-[var(--fx-radius-surface)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] p-2 sm:gap-3 sm:p-3",
-        grid,
-        className,
-      )}
+      className={cn("fx-summary grid border-y border-[var(--fx-stroke-weak)]", grid, className)}
       data-testid="summary-strip"
     >
-      {items.map((item, index) => {
+      {items.map((item) => {
         const Icon = item.icon;
+        const hintColor = toneColor(item.hintTone ?? (item.tone === "path" ? undefined : item.tone));
         const body = (
           <>
-            <span className="flex min-w-0 items-center gap-1.5 text-meta font-medium text-muted-foreground sm:gap-2">
-              {Icon ? <IconBadge tone={badgeTone(item, index)}><Icon /></IconBadge> : null}
+            <span className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
+              {Icon ? <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
               <span className="truncate">{item.label}</span>
               {item.onClick ? <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
             </span>
-            <span className="block min-w-0" style={item.tone ? { color: `var(--fx-${item.tone}-text, var(--fx-${item.tone}))` } : undefined}>
+            <span className="block min-w-0" style={item.tone ? { color: toneColor(item.tone) } : undefined}>
               <AnimatedStatValue
                 as="span"
                 value={item.value}
@@ -99,13 +92,20 @@ export function SummaryStrip({
                 fallbackCacheKeys={item.fallbackCacheKeys}
                 mirrorCacheKeys={item.mirrorCacheKeys}
                 fallbackValue={item.fallbackValue}
-                className="fx-summary-value block truncate font-mono font-semibold tabular-nums tracking-tight"
+                className="fx-summary-value block truncate font-semibold tabular-nums tracking-tight"
               />
             </span>
-            {item.hint ? <span className="block truncate text-meta text-muted-foreground">{item.hint}</span> : null}
+            {item.hint ? (
+              <span
+                className={cn("block truncate text-meta", hintColor ? "font-medium" : "text-muted-foreground")}
+                style={hintColor ? { color: hintColor } : undefined}
+              >
+                {item.hint}
+              </span>
+            ) : null}
           </>
         );
-        const cell = "fx-summary-cell flex min-w-0 flex-col gap-1 rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] px-2 py-2 text-left sm:gap-1.5 sm:p-3";
+        const cell = "fx-summary-cell flex min-w-0 flex-col gap-0.5 border-l border-[var(--fx-stroke-weak)] py-2.5 pl-3 pr-1 text-left first:border-l-0 first:pl-0.5 sm:py-3 sm:pl-4";
         return item.onClick ? (
           <button
             key={item.key}

@@ -94,12 +94,9 @@ export function QuickStartSection({
     <ListSection
       header={`快速开始 · 已完成 ${doneCount}/${steps.length}`}
       footer={(
-        <span className="flex flex-wrap items-center gap-x-2">
-          <span>三步让第一条转发跑起来。</span>
-          <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={dismiss}>
-            不再显示
-          </button>
-        </span>
+        <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={dismiss}>
+          不再显示
+        </button>
       )}
     >
       {steps.map((step, index) => (

@@ -46,7 +46,11 @@
 .workspace-sidebar { top: calc(var(--fx-header-height) + env(safe-area-inset-top, 0px)); bottom: 0; height: auto; background: var(--fx-sidebar); border-right: 1px solid var(--fx-stroke-weak); }
 .workspace-body > .peer > .relative.h-svh { height: auto; }
 .workspace-inset { min-height: calc(100svh - var(--fx-header-height)); }
-.workspace-main { width: 100%; max-width: 1440px; margin-inline: auto; min-width: 0; }
+/*
+  1440px 的屏上内容不再拉满：卡片栅格到 1280px 就停，两边留白。
+  拉到 1440 时四列卡每张 330px，里面的字只占一半，剩下一半是空 —— 留白放在两边比塞进每张卡里好看。
+*/
+.workspace-main { width: 100%; max-width: 1280px; margin-inline: auto; min-width: 0; }
 .workspace-main .route-content-enter > div { min-width: 0; }
 /*
   页面标题照参考站压紧：一行 20px 的粗标题，主操作在同一行右侧；说明和状态是下面一行
@@ -939,17 +943,18 @@
 html[data-personalization-background="image"] .auth-divider-label, html[data-personalization-background="video"] .auth-divider-label { background: var(--fx-surface); }
 .setup-shell { min-height: 100svh; background: var(--fx-canvas); }
 .setup-progress { border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-surface); padding: 16px; box-shadow: none; }
-/* 首页状态区：和全站卡片同一套 —— 白底、一圈弱线、不投影。 */
-.system-health { border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface); box-shadow: none; }
-/* 结论那一块的底：三团很淡的图表色渐变（参考站首页右侧那块面板同款） */
-.system-health-verdict { background: linear-gradient(135deg, color-mix(in srgb, var(--fx-chart-2) 12%, var(--fx-l1-surface)) 0%, color-mix(in srgb, var(--fx-chart-5) 8%, var(--fx-l1-surface)) 48%, color-mix(in srgb, var(--fx-chart-1) 9%, var(--fx-l1-surface)) 100%); }
 /*
-  统计块里的大数：等宽字体、24px（参考站 StatCard 的 text-2xl），手机上 16px。
-  等宽不只是好看 —— 一排数上下对齐之后能直接比大小。
+  首页状态区：不再是一张卡。上面一行读数（SummaryStrip，只有上下两条线），下面一行结论。
+  结论那一行平时是白底一圈弱线；有事的时候底下铺一层很淡的琥珀→天蓝渐变 —— 整页唯一
+  一块有颜色的面，眼睛先落在这里。深色模式下同一套 color-mix，兑到表面色上自然就是平的。
 */
-.fx-summary-value { font-size: var(--fx-size-metric); line-height: var(--fx-line-metric); }
-/* 手机上格子只有 90px 宽，等宽字体的「↓ 12.49 MB/s」放不下：换回正文字体（等宽数字），15px。 */
-@media (max-width: 767px) { .fx-summary-value { font-family: var(--fx-font); font-size: 14px; line-height: 22px; letter-spacing: -0.01em; } }
+.system-health-verdict[data-tone="warn"] { background: linear-gradient(135deg, color-mix(in srgb, var(--fx-warn) 12%, var(--fx-l1-surface)) 0%, color-mix(in srgb, var(--fx-accent) 10%, var(--fx-l1-surface)) 100%); }
+/*
+  统计行里的大数：正文字体、等宽数字、24px；手机上 20px。
+  上一版桌面是等宽字体、手机 14px —— 同一个数在两台设备上不像同一个数。
+*/
+.fx-summary-value { font-size: var(--fx-size-metric); line-height: var(--fx-line-metric); font-variant-numeric: tabular-nums; }
+@media (max-width: 767px) { .fx-summary-value { font-size: 20px; line-height: 26px; letter-spacing: -0.02em; } }
 @media (max-width: 639px) {
   .workspace-header { flex-wrap: wrap; }
   .workspace-header > div:first-child { flex: 1 1 130px; }

@@ -12,7 +12,7 @@ import EmptyState from "@/components/EmptyState";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import { ListRow, ListSection } from "@/components/ios/GroupedList";
-import { CardActions, EntityCard } from "@/components/entity/EntityCard";
+import { EntityCard } from "@/components/entity/EntityCard";
 import { EntityActions } from "@/components/entity/EntityActions";
 import { SettingList, SettingRow } from "@/components/SettingRow";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -294,7 +294,16 @@ function PlanCard({
   return (
     <EntityCard className="h-full">
       <div className="px-[var(--fx-card-padding)] pt-[var(--fx-space-3)]">
-        <h3 className="break-words text-primary-type font-semibold text-foreground">{plan.name}</h3>
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <h3 className="min-w-0 break-words text-primary-type font-semibold text-foreground">{plan.name}</h3>
+          <EntityActions
+            menuOnly
+            className="-mr-1.5 -mt-1"
+            primary={[{ key: "edit", label: "编辑", ariaLabel: `编辑套餐 ${plan.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: onEdit }]}
+            menu={[{ key: "delete", label: "删除", ariaLabel: `删除套餐 ${plan.name}`, destructive: true, onSelect: onDelete }]}
+            menuLabel={`${plan.name} 的更多操作`}
+          />
+        </div>
         <div className="mt-0.5 break-words text-meta text-muted-foreground">{plan.description || "无描述"}</div>
         <div className="mt-2 flex flex-wrap items-baseline gap-x-1.5">
           <span className="text-metric font-semibold tabular-nums text-foreground">{money(plan.priceCents, plan.currency)}</span>
@@ -325,13 +334,6 @@ function PlanCard({
           onToggleStoreVisible={onToggleStoreVisible}
         />
       </div>
-      <CardActions className="px-[var(--fx-space-2)] pb-1">
-        <EntityActions
-          primary={[{ key: "edit", label: "编辑", ariaLabel: `编辑套餐 ${plan.name}`, icon: <Pencil className="h-3.5 w-3.5" />, onSelect: onEdit }]}
-          menu={[{ key: "delete", label: "删除", ariaLabel: `删除套餐 ${plan.name}`, destructive: true, onSelect: onDelete }]}
-          menuLabel={`${plan.name} 的更多操作`}
-        />
-      </CardActions>
     </EntityCard>
   );
 }

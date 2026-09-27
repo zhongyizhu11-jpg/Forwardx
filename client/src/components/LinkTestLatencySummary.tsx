@@ -226,7 +226,7 @@ function parseRouteEndpoints(detail: LinkTestDetail, index: number) {
   if (arrowParts.length >= 2) {
     return {
       from: cleanNodeLabel(arrowParts[0]),
-      to: arrowParts.slice(1).map(cleanNodeLabel).join(" -> "),
+      to: arrowParts.slice(1).map(cleanNodeLabel).join(" → "),
     };
   }
 
