@@ -1,6 +1,12 @@
 # Changelog
 
-## [未发布]
+## [2.3.385] - 2026-09-27
+
+### 发布摘要
+
+- **NEX App 里一键订阅能用了**：原来 App 里给出的订阅地址是 App 内部地址，Shadowrocket 报「不支持的 URL」、Loon 报「配置文件下载失败」，客户端图标也不显示。现在都用登录时填的面板地址。需要装新的 IPA / APK。
+- **带宽叠加组只放中转**：落地直连不再混进叠加组。
+- 面板与 APK Release `2.3.385`，iOS APP `2.3.385`，Android APP `2.3.100`，Agent `2.2.199`，ForwardX FXP runtime `2.2.119`。数据库结构和 Agent 没有变化，不用升级 Agent。
 
 ### 订阅
 
