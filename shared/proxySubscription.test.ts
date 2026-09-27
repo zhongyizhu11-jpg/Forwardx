@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { parseProxyNodeLink, relayProxyNode, decodeBase64Utf8, encodeBase64Utf8, type ProxyNode } from "./proxyNode";
 import { buildProxySubscriptionDocument } from "./proxySubscriptionPlan";
+import { buildProxyRulePlan } from "./proxyRuleset";
 import {
   formatProxySubscriptionUserInfo,
   normalizeProxySubscriptionFormat,
@@ -343,6 +344,52 @@ test("sing-box 的自动选路组渲染成 urltest", () => {
 
   // 组之后才是真实节点。
   assert.equal(outbounds[2].type, "vless");
+});
+
+test("Clash 的带宽叠加组是轮询的 load-balance", () => {
+  const document = {
+    nodes: [
+      node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" }),
+      node(VLESS_WS, { address: "5.6.7.8", port: 20002, name: "广州2 → HKT" }),
+    ],
+    groups: [
+      { name: "ForwardX", type: "select" as const, members: ["HKT 带宽叠加"] },
+      { name: "HKT 带宽叠加", type: "load-balance" as const, members: ["广州1 → HKT", "广州2 → HKT"] },
+    ],
+    ruleSets: [],
+    rules: [],
+  };
+
+  const parsed = parseYamlSubset(renderProxySubscription(document, "clash"));
+  const groups = parsed["proxy-groups"] as Record<string, any>[];
+
+  assert.equal(groups[1].type, "load-balance");
+  assert.deepEqual(groups[1].proxies, ["广州1 → HKT", "广州2 → HKT"]);
+  // 一致性哈希会让同一个测速站、同一个下载站的连接全落在一台中转上，叠不起来。
+  assert.equal(groups[1].strategy, "round-robin");
+  // 健康检查还要：一台中转挂了，轮询要能跳过它。
+  assert.equal(groups[1].url, "http://www.gstatic.com/generate_204");
+  assert.equal(groups[1].tolerance, undefined);
+});
+
+test("sing-box 没有负载均衡出站，带宽叠加退成 urltest", () => {
+  const document = {
+    nodes: [
+      node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" }),
+      node(VLESS_WS, { address: "5.6.7.8", port: 20002, name: "广州2 → HKT" }),
+    ],
+    groups: [
+      { name: "ForwardX", type: "select" as const, members: ["HKT 带宽叠加"] },
+      { name: "HKT 带宽叠加", type: "load-balance" as const, members: ["广州1 → HKT", "广州2 → HKT"] },
+    ],
+    ruleSets: [],
+    rules: [],
+  };
+
+  const parsed = JSON.parse(renderProxySubscription(document, "singbox"));
+  const outbounds = parsed.outbounds as Record<string, any>[];
+  assert.equal(outbounds[1].type, "urltest", "不能输出 sing-box 不认的类型");
+  assert.deepEqual(outbounds[1].outbounds, ["广州1 → HKT", "广州2 → HKT"]);
 });
 
 test("base64 与 Loon 忽略策略组，只输出节点", () => {
@@ -893,4 +940,126 @@ test("跳掉节点时，策略组里对它的引用要一起清干净", () => {
   const singbox = JSON.parse(renderProxySubscription(document, "singbox"));
   const selector = singbox.outbounds.find((item: any) => item.tag === "ForwardX");
   assert.deepEqual(selector.outbounds, ["S6 自动选路", "广州1 → S6", "广州2 → HK"]);
+});
+
+// ==================== iOS 客户端完整配置（规则订阅） ====================
+
+function profileDocument() {
+  const nodes = [
+    node(TROJAN, { address: "1.2.3.4", port: 20001, name: "前置A → HKT" }),
+    node(TROJAN, { address: "5.6.7.8", port: 20002, name: "前置B → HKT" }),
+  ];
+  const lb = { name: "HKT 带宽叠加", type: "load-balance" as const, members: nodes.map((item) => item.name) };
+  const selectable = [lb.name, ...nodes.map((item) => item.name)];
+  const plan = buildProxyRulePlan({ preset: "balanced", mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME, selectableMembers: selectable });
+  return {
+    nodes,
+    groups: [
+      { name: PROXY_SUBSCRIPTION_GROUP_NAME, type: "select" as const, members: selectable },
+      lb,
+      ...plan.categoryGroups.map((group) => ({ ...group, type: "select" as const })),
+    ],
+    ruleSets: plan.ruleSets,
+    rules: plan.rules,
+  };
+}
+
+function section(text: string, name: string): string[] {
+  const lines = text.split("\n");
+  const start = lines.indexOf(name);
+  assert.ok(start >= 0, `缺少 ${name}`);
+  const out: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^\[.+\]$/.test(line)) break;
+    if (line.trim()) out.push(line);
+  }
+  return out;
+}
+
+test("不带 rules 时 Surge / Loon / QX 仍是节点列表，Shadowrocket 仍是 base64", () => {
+  const document = profileDocument();
+  for (const format of ["surge", "loon", "quantumultx"] as const) {
+    assert.doesNotMatch(renderProxySubscription(document, format), /\[Proxy Group\]|\[policy\]/, format);
+  }
+  const links = decodeBase64Utf8(renderProxySubscription(document, "shadowrocket")).split("\n").filter(Boolean);
+  assert.equal(links.length, 2);
+  assert.match(links[0], /^trojan:\/\//);
+});
+
+test("Surge 完整配置：托管地址、叠加组是 load-balance、规则走 blackmatrix7 的 Surge 列表", () => {
+  const url = "https://panel.example.com/api/sub/tok?format=surge&rules=1";
+  const text = renderProxySubscription(profileDocument(), "surge", { profile: true, profileUrl: url });
+  assert.equal(text.split("\n")[0], `#!MANAGED-CONFIG ${url} interval=43200 strict=false`);
+  // 测速地址在 [General]，组上的 url= 新版 Surge 已无效。
+  assert.ok(section(text, "[General]").includes("proxy-test-url = http://www.gstatic.com/generate_204"));
+  assert.equal(section(text, "[Proxy]").length, 2);
+
+  const groups = section(text, "[Proxy Group]");
+  assert.equal(groups[0], "ForwardX = select, HKT 带宽叠加, 前置A → HKT, 前置B → HKT");
+  // 不带 persistent：每个请求随机挑，才叠得起来。
+  assert.equal(groups[1], "HKT 带宽叠加 = load-balance, 前置A → HKT, 前置B → HKT");
+
+  const rules = section(text, "[Rule]");
+  assert.ok(rules.includes("RULE-SET,https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Surge/OpenAI/OpenAI.list,🤖 AI 服务"));
+  assert.ok(rules.includes("RULE-SET,https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Surge/AdvertisingLite/AdvertisingLite.list,REJECT"));
+  assert.ok(rules.includes("IP-CIDR,192.168.0.0/16,🏠 局域网,no-resolve"));
+  // 国内 IP 用内置 GEOIP，不下列表。
+  assert.ok(rules.includes("GEOIP,CN,🎯 国内直连"));
+  assert.equal(rules[rules.length - 1], "FINAL,ForwardX");
+});
+
+test("Loon 完整配置：叠加组 Round-Robin，远程规则放 [Remote Rule]", () => {
+  const text = renderProxySubscription(profileDocument(), "loon", { profile: true });
+  const groups = section(text, "[Proxy Group]");
+  const lb = groups.find((line) => line.startsWith("HKT 带宽叠加 = "));
+  assert.equal(
+    lb,
+    "HKT 带宽叠加 = load-balance,前置A → HKT,前置B → HKT,url = http://www.gstatic.com/generate_204,interval = 300,algorithm = Round-Robin",
+  );
+  assert.equal(section(text, "[Proxy]").length, 2);
+  const remote = section(text, "[Remote Rule]");
+  assert.ok(remote.includes("https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Loon/YouTube/YouTube.list,policy=📹 油管视频,enabled=true"));
+  const local = section(text, "[Rule]");
+  assert.equal(local[local.length - 1], "FINAL,ForwardX");
+});
+
+test("Quantumult X 完整配置：round-robin、内置策略小写、force-policy 盖掉列表自带的策略", () => {
+  const text = renderProxySubscription(profileDocument(), "quantumultx", { profile: true });
+  const policies = section(text, "[policy]");
+  assert.ok(policies.includes("round-robin=HKT 带宽叠加, 前置A → HKT, 前置B → HKT"));
+  // 分类组里的 DIRECT 在 QX 里必须是小写 direct。
+  const lan = policies.find((line) => line.startsWith("static=🏠 局域网, "));
+  assert.match(String(lan), /^static=🏠 局域网, direct, ForwardX/);
+  assert.ok(section(text, "[filter_remote]").some((line) =>
+    line.startsWith("https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/QuantumultX/Google/Google.list, tag=google-Google, force-policy=🔍 谷歌服务,")));
+  const local = section(text, "[filter_local]");
+  assert.ok(local.includes("ip-cidr, 10.0.0.0/8, 🏠 局域网"));
+  assert.ok(local.includes("geoip, cn, 🎯 国内直连"));
+  assert.equal(local[local.length - 1], "final, ForwardX");
+  assert.equal(section(text, "[server_local]").length, 2);
+});
+
+test("Shadowrocket 完整配置：不带节点，叠加用 random，名字和 base64 订阅一致", () => {
+  const url = "https://panel.example.com/api/sub/tok?format=shadowrocket&rules=1";
+  const text = renderProxySubscription(profileDocument(), "shadowrocket", { profile: true, profileUrl: url });
+  assert.doesNotMatch(text, /^\[Proxy\]$/m);
+  assert.ok(section(text, "[General]").includes(`update-url = ${url}`));
+  const groups = section(text, "[Proxy Group]");
+  // Shadowrocket 的 load-balance 是同域名固定节点，叠加要用 random。
+  assert.ok(groups.includes("HKT 带宽叠加 = random, 前置A → HKT, 前置B → HKT, url=http://www.gstatic.com/generate_204, interval=300"));
+  const rules = section(text, "[Rule]");
+  assert.ok(rules.some((line) => line.includes("/rule/Shadowrocket/Telegram/Telegram.list,✈️ 电报消息")));
+  assert.equal(rules[rules.length - 1], "FINAL,ForwardX");
+});
+
+test("完整配置里组名和节点名去掉逗号与等号，引用处同步改", () => {
+  const document = {
+    nodes: [node(TROJAN, { address: "1.2.3.4", port: 1, name: "A,B=C" })],
+    groups: [{ name: "主=选", type: "select" as const, members: ["A,B=C", "DIRECT"] }],
+    ruleSets: [],
+    rules: [{ type: "match" as const, target: "主=选" }],
+  };
+  const text = renderProxySubscription(document, "surge", { profile: true });
+  assert.ok(section(text, "[Proxy Group]").includes("主 选 = select, A B C, DIRECT"));
+  assert.ok(section(text, "[Rule]").includes("FINAL,主 选"));
 });

@@ -321,6 +321,7 @@ test("没有节点时不产出任何策略组", () => {
 test("自动选路模式的取值收敛", () => {
   assert.equal(normalizeProxyNodeAutoGroup("off"), "off");
   assert.equal(normalizeProxyNodeAutoGroup("fallback"), "fallback");
+  assert.equal(normalizeProxyNodeAutoGroup("load-balance"), "load-balance");
   assert.equal(normalizeProxyNodeAutoGroup("URL-TEST"), "url-test");
   // 未设置时默认开启自动选路，这是多中转场景下最有用的行为。
   assert.equal(normalizeProxyNodeAutoGroup(undefined), "url-test");
@@ -330,6 +331,33 @@ test("自动选路模式的取值收敛", () => {
 test("组名带后缀，避免和落地节点本身重名", () => {
   assert.equal(autoGroupNameForTemplate("HKT"), "HKT 自动选路");
   assert.equal(autoGroupNameForTemplate(""), "节点 自动选路");
+  assert.equal(autoGroupNameForTemplate("HKT", "load-balance"), "HKT 带宽叠加");
+});
+
+test("带宽叠加：同一落地的多条中转进一个 load-balance 组", () => {
+  const template = { ...DIRECT_TEMPLATE, includeDirect: false, autoGroup: "load-balance" };
+  const plan = buildProxySubscriptionPlan({
+    rules: [
+      { id: 1, hostId: 1, name: "前置A", sourcePort: 10001, proxyNodeId: 7, isEnabled: true },
+      { id: 2, hostId: 2, name: "前置B", sourcePort: 10002, proxyNodeId: 7, isEnabled: true },
+    ],
+    templates: [template],
+    hosts: [
+      { id: 1, name: "前置A", ipv4: "1.2.3.4" },
+      { id: 2, name: "前置B", ipv4: "5.6.7.8" },
+    ],
+  });
+
+  const document = buildProxySubscriptionDocument(plan, [template], {
+    mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME,
+  });
+
+  const group = document.groups.find((item) => item.type === "load-balance");
+  assert.ok(group, "应该生成带宽叠加组");
+  assert.equal(group.name, "CST/hk 带宽叠加");
+  assert.equal(group.members.length, 2);
+  // 主选择器第一项就是叠加组，导入后默认就在叠加。
+  assert.equal(document.groups[0].members[0], group.name);
 });
 
 // ==================== 落地直连 ====================

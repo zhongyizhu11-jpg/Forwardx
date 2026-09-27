@@ -8,6 +8,7 @@
 
 import {
   PROXY_SUBSCRIPTION_FORMAT_LABELS,
+  proxySubscriptionFormatHasProfile,
   type ProxySubscriptionFormat,
 } from "./proxySubscription";
 import { encodeBase64Utf8 } from "./proxyNode";
@@ -60,6 +61,13 @@ export type ProxyClientTarget = {
    * scheme 不等于不支持，只是少一步自动化。
    */
   manualHint?: string;
+  /**
+   * 规则订阅（完整配置）走的导入方式，和节点订阅不同时才写。
+   *
+   * Loon / QX 的 scheme 导入的是节点资源，拿去导完整配置会被当成节点列表；
+   * 没有核实过的配置导入 scheme 就走手动，不编。
+   */
+  profileImport?: Pick<ProxyClientTarget, "buildImportUrl" | "manualHint">;
 };
 
 const ALL_PLATFORMS = PROXY_CLIENT_PLATFORMS;
@@ -112,6 +120,7 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
     platforms: ["ios"],
     format: "loon",
     buildImportUrl: (url, name) => `loon://import?sub=${q(url)}&name=${q(name)}`,
+    profileImport: { manualHint: "配置 → 添加配置文件 → 从 URL 下载 → 粘贴这条地址，之后在配置里切到它" },
   },
   {
     id: "surge",
@@ -125,6 +134,8 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
     format: "surge",
     // surge 后面是三条斜杠，少一条不会被识别。
     buildImportUrl: (url) => `surge:///install-config?url=${q(url)}`,
+    // install-config 装的本来就是完整配置，规则订阅同样走它；配置自带 MANAGED-CONFIG，会自己更新。
+    profileImport: { buildImportUrl: (url) => `surge:///install-config?url=${q(url)}` },
   },
   {
     id: "quantumultx",
@@ -137,6 +148,7 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
       const payload = JSON.stringify({ server_remote: [`${url}, tag=${name}`] });
       return `quantumult-x:///add-resource?remote-resource=${q(payload)}`;
     },
+    profileImport: { manualHint: "设置 → 配置文件 → 下载 → 粘贴这条地址（会替换当前配置）" },
   },
   {
     id: "hiddify",
@@ -154,9 +166,13 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
     label: "Shadowrocket",
     shortLabel: "Shadowrocket",
     platforms: ["ios"],
-    format: "base64",
+    // 节点订阅按 base64 给；单列格式是为了规则订阅能给它一份完整配置。
+    format: "shadowrocket",
     // sub:// 后面直接跟订阅地址的 base64，不是查询参数。
     buildImportUrl: (url, name) => `sub://${base64UrlOfText(url)}#${q(name)}`,
+    profileImport: {
+      manualHint: "先在「节点订阅」里点 Shadowrocket 导入节点；再到 配置 → 右上角 ＋ → 粘贴这条地址 → 下载，点这份配置选「使用配置」",
+    },
   },
   {
     id: "v2rayng",
@@ -178,6 +194,7 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
     format: "surge",
     // surge:///install-config 是 Surge 的 iOS/macOS 专属，Surfboard 不认。
     manualHint: "配置标签页 → 右下角「添加订阅」→ 从 URL 导入 → 粘贴这条地址",
+    profileImport: { manualHint: "配置标签页 → 右下角「添加订阅」→ 从 URL 导入 → 粘贴这条地址" },
   },
   {
     id: "nekobox",
@@ -205,6 +222,15 @@ export const PROXY_CLIENT_TARGETS: readonly ProxyClientTarget[] = [
     manualHint: "订阅 → 订阅分组设置 → 添加 → 粘贴这条地址 → 再点「更新订阅」",
   },
 ];
+
+/** 这个客户端导入这一种订阅，是一键 scheme 还是手动粘贴。 */
+export function proxyClientImportFor(
+  target: ProxyClientTarget,
+  kind: ProxySubscriptionKind,
+): Pick<ProxyClientTarget, "buildImportUrl" | "manualHint"> {
+  if (kind === "rules" && target.profileImport) return target.profileImport;
+  return { buildImportUrl: target.buildImportUrl, manualHint: target.manualHint };
+}
 
 export function proxyClientTargetsForFormat(format: ProxySubscriptionFormat): ProxyClientTarget[] {
   return PROXY_CLIENT_TARGETS.filter((target) => target.format === format);
@@ -258,7 +284,7 @@ export const PROXY_SUBSCRIPTION_KIND_LABELS: Record<ProxySubscriptionKind, strin
 
 export const PROXY_SUBSCRIPTION_KIND_HINTS: Record<ProxySubscriptionKind, string> = {
   nodes: "只有节点，分流规则由你在客户端里自己配。所有客户端都适用。",
-  rules: "连分流规则一起给，导入后不用再设置。仅 Clash 与 sing-box 能表达规则。",
+  rules: "一份完整配置：节点、策略组（自动选路、带宽叠加）和分流规则一起给，导入后不用再设置。Clash、sing-box、Surge、Loon、Quantumult X、Shadowrocket 都有；Shadowrocket 的节点仍来自节点订阅。",
 };
 
 /**
@@ -296,6 +322,6 @@ export function proxySubscriptionKindSupported(
   kind: ProxySubscriptionKind,
 ): boolean {
   if (kind === "nodes") return true;
-  return format === "clash" || format === "singbox";
+  return format === "clash" || format === "singbox" || proxySubscriptionFormatHasProfile(format);
 }
 

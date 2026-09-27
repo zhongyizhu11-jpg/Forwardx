@@ -512,10 +512,14 @@ export function dedupeProxyNodeNames(nodes: readonly ProxyNode[]): ProxyNode[] {
  * 同一个落地节点被多台中转指向时，订阅里额外生成一个策略组让客户端自己选路。
  *
  * off       不生成，只留裸节点
- * url-test  客户端定期测速，自动走最快的那条中转，挂掉自动切
- * fallback  按顺序主备，前一条不通才切下一条
+ * url-test      客户端定期测速，自动走最快的那条中转，挂掉自动切
+ * fallback      按顺序主备，前一条不通才切下一条
+ * load-balance  每条新连接轮流走下一条中转，多条连接的带宽相加（两台 300M 的中转
+ *               合起来约 600M）。单条连接仍只走一条中转，上限还是一台的带宽。
+ *               所有中转最后都从同一台落地出去，出口 IP 不变，所以轮询不会让网站
+ *               看到 IP 跳来跳去。
  */
-export const PROXY_NODE_AUTO_GROUPS = ["off", "url-test", "fallback"] as const;
+export const PROXY_NODE_AUTO_GROUPS = ["off", "url-test", "fallback", "load-balance"] as const;
 
 export type ProxyNodeAutoGroup = (typeof PROXY_NODE_AUTO_GROUPS)[number];
 
@@ -523,12 +527,14 @@ export const PROXY_NODE_AUTO_GROUP_LABELS: Record<ProxyNodeAutoGroup, string> = 
   off: "不生成",
   "url-test": "自动选最快",
   fallback: "主备切换",
+  "load-balance": "带宽叠加",
 };
 
 export const PROXY_NODE_AUTO_GROUP_HINTS: Record<ProxyNodeAutoGroup, string> = {
   off: "订阅里只有裸节点，由你自己在客户端里选。",
   "url-test": "客户端定期测速，自动走延迟最低的中转；该条中转故障时自动切换。",
   fallback: "按列表顺序主备，前一条不通才切下一条，适合有明确主力线路时。",
+  "load-balance": "每条新连接轮流走不同中转，多线程下载、多设备同时用时带宽相加（两台 300M 约 600M）；单条连接仍只走一条中转。只有 Clash / Mihomo 订阅支持，sing-box 按「自动选最快」生成。",
 };
 
 /**
@@ -547,7 +553,7 @@ export function normalizeProxyNodeAutoGroup(value: unknown): ProxyNodeAutoGroup 
     : PROXY_NODE_DEFAULT_AUTO_GROUP;
 }
 
-export type ProxySubscriptionGroupType = "select" | "url-test" | "fallback";
+export type ProxySubscriptionGroupType = "select" | "url-test" | "fallback" | "load-balance";
 
 export type ProxySubscriptionGroup = {
   name: string;
@@ -565,8 +571,9 @@ export type ProxySubscriptionDocument = {
 };
 
 /** 自动选路组的名字，和模板同名会让客户端里两个条目难以区分，所以加后缀。 */
-export function autoGroupNameForTemplate(templateName: string): string {
-  return `${text(templateName) || "节点"} 自动选路`;
+export function autoGroupNameForTemplate(templateName: string, mode: ProxyNodeAutoGroup = "url-test"): string {
+  // 叠加组单独起名：用户要在客户端里一眼认出「选这个才叠带宽」。
+  return `${text(templateName) || "节点"} ${mode === "load-balance" ? "带宽叠加" : "自动选路"}`;
 }
 
 /** 一台中转不构成选路，低于这个数量不生成自动组。 */
@@ -622,7 +629,7 @@ export function buildProxySubscriptionDocument(
     const mode = normalizeProxyNodeAutoGroup(template?.autoGroup);
     if (mode === "off") continue;
     autoGroups.push({
-      name: autoGroupNameForTemplate(text(template?.name)),
+      name: autoGroupNameForTemplate(text(template?.name), mode),
       type: mode,
       members: memberNames,
     });

@@ -276,6 +276,56 @@ export function singboxRuleSetUrl(ref: ProxyRuleSetRef): string {
     : `${SINGBOX_GEOSITE_BASE}/geosite-${ref.geoKey}.srs`;
 }
 
+/**
+ * Surge / Loon / Quantumult X / Shadowrocket 的完整配置用的规则列表。
+ *
+ * 这四家读不了 mihomo 的 .mrs，也读不了 sing-box 的 .srs，要各自格式的文本列表。
+ * blackmatrix7/ios_rule_script 为四家各出一份同名文件，2026-09-27 逐个
+ * HEAD 过（名字 × 四家全部 200）。新增分类时同样要逐个核对再加进来。
+ *
+ * 空数组表示跳过：telegram / netflix 的 IP 已经在各自域名列表里带着；
+ * biliintl 由 BiliBili 覆盖；国内 IP 用四家都原生支持的 GEOIP,CN（见
+ * iosRuleUsesNativeGeoipCn），不必再下一份列表。
+ */
+export type IosRuleClient = "Surge" | "Loon" | "QuantumultX" | "Shadowrocket";
+
+export const IOS_RULE_SCRIPT_BASE = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule";
+
+const IOS_RULE_LIST_NAMES: Record<string, readonly string[]> = {
+  "domain:private": ["Lan"],
+  "domain:category-ads-all": ["AdvertisingLite"],
+  "domain:category-ai-!cn": ["Claude", "Gemini"],
+  "domain:openai": ["OpenAI"],
+  "domain:youtube": ["YouTube"],
+  "domain:google": ["Google"],
+  "domain:telegram": ["Telegram"],
+  "domain:github": ["GitHub"],
+  "domain:netflix": ["Netflix"],
+  "domain:microsoft": ["Microsoft"],
+  "domain:apple": ["Apple"],
+  "domain:spotify": ["Spotify"],
+  "domain:disney": ["Disney"],
+  "domain:steam": ["Steam"],
+  "domain:twitter": ["Twitter"],
+  "domain:tiktok": ["TikTok"],
+  "domain:paypal": ["PayPal"],
+  "domain:bilibili": ["BiliBili"],
+  "domain:cn": ["China"],
+};
+
+export function iosRuleListNames(ref: Pick<ProxyRuleSetRef, "behavior" | "geoKey">): readonly string[] {
+  return IOS_RULE_LIST_NAMES[`${ref.behavior}:${ref.geoKey}`] || [];
+}
+
+/** 国内 IP 走各家内置的 GEOIP，不用下载列表。 */
+export function iosRuleUsesNativeGeoipCn(ref: Pick<ProxyRuleSetRef, "behavior" | "geoKey">): boolean {
+  return ref.behavior === "ipcidr" && ref.geoKey === "cn";
+}
+
+export function iosRuleListUrl(client: IosRuleClient, name: string): string {
+  return `${IOS_RULE_SCRIPT_BASE}/${client}/${name}/${name}.list`;
+}
+
 export type ProxyRulePlan = {
   ruleSets: ProxyRuleSetRef[];
   /** 分类策略组，需要用户能改去向的分类才有 */
