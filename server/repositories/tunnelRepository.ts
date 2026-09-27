@@ -1960,12 +1960,14 @@ export async function getTunnelHopsByTunnelIds(tunnelIds: number[]) {
 }
 
 /**
- * 一批主机各自经过多少条隧道 —— 入口、出口或多级隧道的任一跳落在这台机器上都算。
+ * 一批主机各自经过多少条隧道 —— 和 getTunnelsByHost 同一套「算不算参与」的口径：
+ * 入口、出口、多级隧道的任一跳、负载均衡的额外出口（tunnel_exit_nodes）、入口组里
+ * 启用着的成员主机，落在这台机器上都算。
  *
  * 给主机列表的卡片用：「这台机器在几条隧道里」。跳的信息存在 tunnel_hops 表里
- * （一跳一行），所以用一次 LEFT JOIN 把整页主机相关的隧道 × 跳一次取回，再在 JS 里
- * 按主机去重：同一条隧道里一台机器既是入口又是某一跳，也只算一次。
- * 没有隧道的主机不会出现在结果里，调用方按 0 处理。
+ * （一跳一行），所以用一次 LEFT JOIN 把整页主机相关的隧道 × 跳一次取回；额外出口和
+ * 入口组成员各再查一次；最后在 JS 里按主机去重：同一条隧道里一台机器既是入口又是
+ * 某一跳、又是额外出口，也只算一次。没有隧道的主机不会出现在结果里，调用方按 0 处理。
  */
 export async function countTunnelsByHostIds(hostIds: readonly number[]): Promise<Map<number, number>> {
   const counts = new Map<number, number>();
@@ -1988,20 +1990,39 @@ export async function countTunnelsByHostIds(hostIds: readonly number[]): Promise
       inArray(tunnels.exitHostId, wanted),
       inArray(tunnelHops.hostId, wanted),
     ));
+  const extraExitRows = await db
+    .select({ tunnelId: tunnelExitNodes.tunnelId, hostId: tunnelExitNodes.hostId })
+    .from(tunnelExitNodes)
+    .where(inArray(tunnelExitNodes.hostId, wanted));
+  const entryGroupRows = await db
+    .select({ tunnelId: tunnels.id, hostId: forwardGroupMembers.hostId })
+    .from(tunnels)
+    .innerJoin(forwardGroups, eq(forwardGroups.id, tunnels.entryGroupId))
+    .innerJoin(forwardGroupMembers, eq(forwardGroupMembers.groupId, forwardGroups.id))
+    .where(and(
+      sql`${forwardGroups.groupMode} = 'entry'`,
+      sql`${forwardGroups.isEnabled} = ${sqlBool(true)}`,
+      sql`${forwardGroupMembers.memberType} = 'host'`,
+      sql`${forwardGroupMembers.isEnabled} = ${sqlBool(true)}`,
+      inArray(forwardGroupMembers.hostId, wanted),
+    ));
   const tunnelIdsByHost = new Map<number, Set<number>>();
-  for (const row of rows as any[]) {
-    const tunnelId = Number(row.tunnelId);
-    for (const raw of [row.entryHostId, row.exitHostId, row.hopHostId]) {
-      const hostId = Number(raw);
-      if (!wantedSet.has(hostId)) continue;
-      let set = tunnelIdsByHost.get(hostId);
-      if (!set) {
-        set = new Set<number>();
-        tunnelIdsByHost.set(hostId, set);
-      }
-      set.add(tunnelId);
+  const mark = (rawHostId: unknown, rawTunnelId: unknown) => {
+    const hostId = Number(rawHostId);
+    const tunnelId = Number(rawTunnelId);
+    if (!wantedSet.has(hostId) || !(tunnelId > 0)) return;
+    let set = tunnelIdsByHost.get(hostId);
+    if (!set) {
+      set = new Set<number>();
+      tunnelIdsByHost.set(hostId, set);
     }
+    set.add(tunnelId);
+  };
+  for (const row of rows as any[]) {
+    for (const raw of [row.entryHostId, row.exitHostId, row.hopHostId]) mark(raw, row.tunnelId);
   }
+  for (const row of extraExitRows as any[]) mark(row.hostId, row.tunnelId);
+  for (const row of entryGroupRows as any[]) mark(row.hostId, row.tunnelId);
   for (const [hostId, set] of tunnelIdsByHost) counts.set(hostId, set.size);
   return counts;
 }

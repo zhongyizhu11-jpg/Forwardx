@@ -1326,6 +1326,8 @@ export async function getBillingRelevantRulesByHostIds(hostIds: readonly number[
  *
  * 给主机列表的卡片用：「这台上挂了几条转发」。一次 GROUP BY 查完整页，不一台台查。
  * 没有转发的主机不会出现在结果里，调用方按 0 处理。
+ * 已删除、等 Agent 确认清理的（pendingDelete）不算：规则列表本来就不显示它们，
+ * 卡片上再把它们报成「受影响」就对不上号。
  */
 export async function countForwardRulesByHostIds(hostIds: readonly number[]): Promise<Map<number, number>> {
   const counts = new Map<number, number>();
@@ -1339,7 +1341,10 @@ export async function countForwardRulesByHostIds(hostIds: readonly number[]): Pr
       count: sql<number>`COUNT(*)`,
     })
     .from(forwardRules)
-    .where(inArray(forwardRules.hostId, wanted))
+    .where(and(
+      inArray(forwardRules.hostId, wanted),
+      sql`COALESCE(${forwardRules.pendingDelete}, ${sqlBool(false)}) = ${sqlBool(false)}`,
+    ))
     .groupBy(forwardRules.hostId);
   for (const row of rows as any[]) {
     counts.set(Number(row.hostId), Number(row.count || 0));

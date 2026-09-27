@@ -5874,6 +5874,9 @@ function RulesContent() {
     const extraEntries = Math.max(0, entryAddresses.length - 1);
     const forwardLabel = FORWARD_TYPE_LABELS[rule?.forwardType as ForwardType] || "";
     const via = [forwardLabel, formatForwardRuleProtocol(rule.protocol)].filter(Boolean).join(" · ");
+    // 线上流动的小点只给近 24 小时真有字节的规则：开着但没人用的不假装在跑。
+    const daily = dailyTrafficByRule.get(rule.id);
+    const flowing = Number(daily?.bytesIn || 0) + Number(daily?.bytesOut || 0) > 0;
     const entryAddress = primaryEntry ? (
       <button
         type="button"
@@ -5894,6 +5897,7 @@ function RulesContent() {
         health={health}
         via={via}
         hops={hops}
+        flowing={flowing}
         title={`${entryAddresses.map((entry) => entry.text).join(" / ")} → ${targetAddress}`}
       />
     );
