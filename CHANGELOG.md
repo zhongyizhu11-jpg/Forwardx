@@ -5,6 +5,7 @@
 ### 订阅
 
 - **落地节点的「自动选路」新增「带宽叠加」**：同一个落地被多台前置中转时，Clash / Mihomo 订阅里生成 `<落地名> 带宽叠加` 组（load-balance，轮询），每条新连接轮流走下一台前置，多线程下载、多设备同时用时带宽相加（两台 300M 约 600M）；单条连接仍只走一台前置。sing-box 没有负载均衡出站，按「自动选最快」生成。用法见 [线路组 › 两台前置能不能叠加带宽](docs/guide/failover.md#bandwidth-aggregation)。
+- **Surge、Loon、Quantumult X、Shadowrocket 也有「规则订阅」了**：给一份完整配置（节点、自动选路 / 带宽叠加等策略组、分流规则），分流规则用 blackmatrix7 为各家出的规则列表，国内 IP 用各家内置的 GEOIP,CN。Surge 一键导入并按托管配置自动更新；Loon、Quantumult X 在 App 里从 URL 下载配置；Shadowrocket 先导入节点订阅，再添加这份配置（配置里带 update-url）。这几家原来的节点订阅不变。Shadowrocket 单列为一种订阅格式，节点订阅内容仍是通用 Base64。
 
 ## [2.3.383] - 2026-09-27
 

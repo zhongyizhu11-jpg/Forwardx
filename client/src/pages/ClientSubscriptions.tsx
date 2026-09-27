@@ -54,6 +54,7 @@ import {
   proxyClientPlatformsLabel,
   PROXY_CLIENT_PLATFORM_LABELS,
   PROXY_CLIENT_TARGETS,
+  proxyClientImportFor,
   proxySubscriptionKindSupported,
   PROXY_SUBSCRIPTION_KINDS,
   PROXY_SUBSCRIPTION_KIND_HINTS,
@@ -1195,6 +1196,8 @@ export default function ClientSubscriptionsPage() {
                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                           {visibleTargets.map((target) => {
                             const supported = proxySubscriptionKindSupported(target.format, kind);
+                            // 规则订阅在 Loon / QX / Shadowrocket 上是完整配置，导入方式和节点订阅不同。
+                            const importer = proxyClientImportFor(target, kind);
                             // 从客户端图标点进去时已经知道是哪个客户端了，钉死格式，
                             // 不让它掉到令牌默认格式上。
                             const url = subscriptionUrl(token.token, target.format, kind, true);
@@ -1232,7 +1235,7 @@ export default function ClientSubscriptionsPage() {
                                     ? "不支持规则"
                                     : offPlatform
                                       ? "本机没有"
-                                      : target.buildImportUrl
+                                      : importer.buildImportUrl
                                         ? proxyClientPlatformsLabel(target)
                                         : "手动添加"}
                                 </span>
@@ -1243,7 +1246,7 @@ export default function ClientSubscriptionsPage() {
                             const covers = target.covers ? `。同样适用于：${target.covers}` : "";
 
                             // 不支持时置灰而不是隐藏：藏起来用户不知道为什么少了几个客户端。
-                            if (usable && !target.buildImportUrl) {
+                            if (usable && !importer.buildImportUrl) {
                               // 没有官方 scheme 的客户端：点开给它对应格式的地址和二维码，
                               // 外加一句粘到哪儿 —— 订阅地址本身对任何客户端都有效，
                               // 少的只是自动跳转那一步，不是不支持。
@@ -1256,7 +1259,7 @@ export default function ClientSubscriptionsPage() {
                                     setQrTarget({
                                       title: `${target.label} · ${PROXY_SUBSCRIPTION_KIND_LABELS[kind]}`,
                                       url,
-                                      hint: target.manualHint,
+                                      hint: importer.manualHint,
                                     })
                                   }
                                   className={tileClass}
@@ -1269,7 +1272,7 @@ export default function ClientSubscriptionsPage() {
                             return usable ? (
                               <a
                                 key={target.id}
-                                href={target.buildImportUrl!(url, importName)}
+                                href={importer.buildImportUrl!(url, importName)}
                                 title={`在 ${target.label} 中打开${covers}`}
                                 className={tileClass}
                               >

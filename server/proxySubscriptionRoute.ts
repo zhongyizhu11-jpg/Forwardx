@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from "express";
 
 import * as db from "./db";
+import { resolveRequestPanelUrl } from "./agentPanelUrl";
 import {
   formatProxySubscriptionUserInfo,
   normalizeProxySubscriptionFormat,
@@ -29,7 +30,8 @@ function formatFromUserAgent(userAgent: string): ProxySubscriptionFormat | null 
   if (ua.includes("quantumult")) return "quantumultx";
   // 下面这些吃通用 base64。不认它们的话会掉到令牌默认格式上 ——
   // 默认设成 Clash 的话，Shadowrocket 会收到一份它读不懂的 Clash YAML。
-  if (ua.includes("shadowrocket")) return "base64";
+  // Shadowrocket 的节点订阅就是 base64；单列一种格式是为了规则订阅能给它完整配置。
+  if (ua.includes("shadowrocket")) return "shadowrocket";
   if (ua.includes("hiddify")) return "base64";
   if (ua.includes("v2rayng") || ua.includes("v2rayn")) return "base64";
   if (ua.includes("nekobox") || ua.includes("nekoray")) return "base64";
@@ -117,7 +119,13 @@ proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Respons
     }
 
     const document = await db.getProxySubscriptionDocumentForUser(Number(record.userId), { rulePreset });
-    const body = renderProxySubscription(document, format);
+    // 带 rules 参数就是规则订阅：Surge / Loon / QX / Shadowrocket 此时给完整配置。
+    const profile = !!rulesParam && rulesParam !== "0" && rulesParam !== "false";
+    const panelUrl = resolveRequestPanelUrl(req);
+    const body = renderProxySubscription(document, format, {
+      profile,
+      profileUrl: panelUrl ? `${panelUrl.replace(/\/+$/, "")}${req.originalUrl}` : "",
+    });
 
     {
       const used = Number(owner.trafficUsed || 0);

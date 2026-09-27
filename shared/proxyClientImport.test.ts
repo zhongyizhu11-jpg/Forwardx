@@ -9,6 +9,7 @@ import {
   proxyClientPlatformsLabel,
   proxyClientTargetsForFormat,
   proxyClientTargetsForPlatform,
+  proxyClientImportFor,
   proxySubscriptionKindSupported,
   PROXY_CLIENT_PLATFORMS,
   PROXY_CLIENT_TARGETS,
@@ -77,10 +78,12 @@ test("origin 末尾多余的斜杠不会拼出双斜杠", () => {
 test("只有能表达规则的格式才提供规则订阅", () => {
   assert.equal(proxySubscriptionKindSupported("clash", "rules"), true);
   assert.equal(proxySubscriptionKindSupported("singbox", "rules"), true);
-  // Loon、Surge、QX 的订阅是节点列表，规则要写在用户自己的配置里。
-  assert.equal(proxySubscriptionKindSupported("loon", "rules"), false);
-  assert.equal(proxySubscriptionKindSupported("surge", "rules"), false);
-  assert.equal(proxySubscriptionKindSupported("quantumultx", "rules"), false);
+  // Loon、Surge、QX、Shadowrocket 的节点订阅是节点列表，规则订阅给的是一份完整配置。
+  assert.equal(proxySubscriptionKindSupported("loon", "rules"), true);
+  assert.equal(proxySubscriptionKindSupported("surge", "rules"), true);
+  assert.equal(proxySubscriptionKindSupported("quantumultx", "rules"), true);
+  assert.equal(proxySubscriptionKindSupported("shadowrocket", "rules"), true);
+  // base64 是 URI 列表，装不下任何配置。
   assert.equal(proxySubscriptionKindSupported("base64", "rules"), false);
 
   // 节点订阅所有格式都有。
@@ -314,7 +317,7 @@ test("伪装成 Mac 的 iPad 靠触摸点数认出来", () => {
   assert.equal(detectProxyClientPlatform(mac, { maxTouchPoints: 0 }), "macos");
 });
 
-test("节点订阅下全部客户端可用，规则订阅下只剩吃 Clash / sing-box 格式的那几个", () => {
+test("节点订阅下全部客户端可用，规则订阅下只剩能出完整配置的那几个", () => {
   const usable = (kind: "nodes" | "rules") =>
     PROXY_CLIENT_TARGETS.filter((target) => proxySubscriptionKindSupported(target.format, kind));
 
@@ -322,6 +325,24 @@ test("节点订阅下全部客户端可用，规则订阅下只剩吃 Clash / si
   // 其余客户端在界面上置灰而不是隐藏，所以这里断言的是"可用数量"，不是"展示数量"。
   assert.deepEqual(
     usable("rules").map((target) => target.id).sort(),
-    ["clash", "singbox", "stash"],
+    ["clash", "loon", "quantumultx", "shadowrocket", "singbox", "stash", "surfboard", "surge"],
   );
+});
+
+test("规则订阅在 Loon / QX / Shadowrocket 上走手动添加配置，不借用节点资源的 scheme", () => {
+  const byId = (id: string) => PROXY_CLIENT_TARGETS.find((target) => target.id === id)!;
+  // 节点订阅照旧一键导入。
+  for (const id of ["loon", "quantumultx", "shadowrocket"]) {
+    assert.ok(proxyClientImportFor(byId(id), "nodes").buildImportUrl, id);
+    const profile = proxyClientImportFor(byId(id), "rules");
+    assert.equal(profile.buildImportUrl, undefined, id);
+    assert.ok(profile.manualHint, id);
+  }
+  // Surge 的 install-config 装的就是完整配置。
+  assert.match(
+    proxyClientImportFor(byId("surge"), "rules").buildImportUrl!("https://p/api/sub/t?format=surge&rules=1", "x"),
+    /^surge:\/\/\/install-config\?url=/,
+  );
+  // 没有单独写 profileImport 的客户端，两种订阅同一个入口。
+  assert.equal(proxyClientImportFor(byId("clash"), "rules").buildImportUrl, byId("clash").buildImportUrl);
 });

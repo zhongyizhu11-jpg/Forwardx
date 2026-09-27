@@ -109,6 +109,22 @@ test("订阅地址按 token 返回节点，并按客户端 UA 选择格式", () 
     assert.ok(comprehensive.body.includes("🎬 TikTok"), comprehensive.body.slice(0, 2000));
     assert.ok(!clashRules.body.includes("🎬 TikTok"), "精简预设不该包含 TikTok");
 
+    // Surge / Loon / QX / Shadowrocket 带 rules=1 拿到完整配置，节点订阅不变。
+    const surgeProfile = await get("/api/sub/token-live?format=surge&rules=1", { host: "panel.example.com" });
+    assert.ok(surgeProfile.body.startsWith("#!MANAGED-CONFIG http://panel.example.com/api/sub/token-live?format=surge&rules=1 "), surgeProfile.body.slice(0, 200));
+    // 这里的节点是 VLESS，Surge 不支持，整份被跳过；分组和规则用 Loon 验。
+    const loonProfile = await get("/api/sub/token-live?format=loon&rules=1");
+    assert.ok(loonProfile.body.includes("HKT 自动选路 = url-test,"), loonProfile.body);
+    assert.ok(loonProfile.body.includes("FINAL,ForwardX"), loonProfile.body);
+    const loonNodes = await get("/api/sub/token-live?format=loon");
+    assert.ok(!loonNodes.body.includes("[Proxy Group]"), loonNodes.body);
+
+    const rocketNodes = await get("/api/sub/token-live", { "user-agent": "Shadowrocket/2070 CFNetwork/1568 Darwin/24.1.0" });
+    assert.ok(proxyNode.decodeBase64Utf8(rocketNodes.body).split("\n").filter(Boolean).length > 0);
+    const rocketProfile = await get("/api/sub/token-live?rules=1", { "user-agent": "Shadowrocket/2070 CFNetwork/1568 Darwin/24.1.0" });
+    assert.ok(rocketProfile.body.includes("[Proxy Group]"), rocketProfile.body);
+    assert.ok(rocketProfile.body.includes("HKT 自动选路 = url-test"), rocketProfile.body);
+
     // rules=0 明确表示节点订阅。
     const off = await get("/api/sub/token-live?format=clash&rules=0");
     assert.ok(!off.body.includes("rule-providers:"), off.body);
