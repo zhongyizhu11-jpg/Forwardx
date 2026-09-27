@@ -924,6 +924,18 @@ export const hostsRouter = router({
         const hostBillingConfigs = ctx.user.role === "admin"
           ? await db.findHostTrafficBillingConfigs(items.map((row: any) => Number(row.id)))
           : new Map();
+        /*
+          这台机器上挂了几条转发、在几条隧道里 —— 摆到卡片上。
+
+          两个数都是整页一次 GROUP BY 查完（不是一台台查）。只是个数，不按人过滤：
+          能看见这台机器的人看见「上面有 3 条转发」透不出别的租户的任何东西。
+          转发不看启用状态；隧道按入口 / 出口 / 任一跳算，同一条隧道只算一次。
+        */
+        const pageHostIds = items.map((row: any) => Number(row.id));
+        const [ruleCounts, tunnelCounts] = await Promise.all([
+          db.countForwardRulesByHostIds(pageHostIds),
+          db.countTunnelsByHostIds(pageHostIds),
+        ]);
         const billingStatsByHost = new Map<number, { total: number; billed: number; milliCents: number; hostDefault: boolean }>();
         for (const rule of billingRules) {
           const hostId = Number(rule.hostId);
@@ -963,6 +975,9 @@ export const hostsRouter = router({
               : null,
             // 这台机器自己配的整台兜底价（含停用的），只给管理员。
             hostBillingConfig: hostBillingConfigs.get(Number(row.id)) || null,
+            // 这台上挂了几条转发、在几条隧道里；没有的话就是 0，不是 undefined。
+            ruleCount: ruleCounts.get(Number(row.id)) || 0,
+            tunnelCount: tunnelCounts.get(Number(row.id)) || 0,
             // 不是自己的机器：能看（说明管理员授权过），但改不动也删不掉 ——
             // 服务端 update/delete 本来就按 userId 挡着，界面据此收起入口。
             manageable: ctx.user.role === "admin" || Number(row.userId) === ctx.user.id,
@@ -1081,11 +1096,19 @@ export const hostsRouter = router({
           groupId: input?.groupId,
         });
         const hostIds = summaryScope.hostIds;
-        const [metricSnapshots, trafficRows] = await Promise.all([
+        const [metricSnapshots, trafficRows, statusRows] = await Promise.all([
           db.getLatestHostMetricSnapshots(hostIds),
           db.getHostTrafficSummary(hostIds),
+          db.getHostStatusRows({ ...scope, search: input?.search || "", groupId: input?.groupId, hostIds }),
         ]);
-        const instantTraffic = db.summarizeHostInstantTraffic(metricSnapshots);
+        // 「此刻进出多快」只算在线的：离线主机最后两份快照算出来的速度是它掉线前的，
+        // 加进去会让页头在 0 台在线时还写着几十 MB/s。
+        const onlineHostIds = new Set(
+          (statusRows as any[]).filter((row) => !!row?.isOnline).map((row) => Number(row.id)),
+        );
+        const instantTraffic = db.summarizeHostInstantTraffic(
+          (metricSnapshots as any[]).filter((row) => onlineHostIds.has(Number(row?.hostId))),
+        );
         let totalTrafficIn = 0;
         let totalTrafficOut = 0;
         for (const row of trafficRows as any[]) {

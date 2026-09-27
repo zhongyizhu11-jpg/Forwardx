@@ -121,6 +121,34 @@ export const trafficRulesRouter = router({
           }),
       );
     }),
+  /* 规则卡上的小走势线：一次要一页规则的 24 小时逐时字节，不是每张卡各发一次。 */
+  trafficSeriesBatch: protectedProcedure
+    .input(
+      z.object({
+        ruleIds: z.array(z.number()).max(500),
+        hours: z.number().min(1).max(TRAFFIC_RETENTION_HOURS).default(24),
+        bucketMinutes: z.number().min(5).max(24 * 60).default(60),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const ruleIds = Array.from(new Set(input.ruleIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0)))
+        .sort((a, b) => a - b);
+      if (ruleIds.length === 0) return [] as Array<{ ruleId: number; bucket: Date; bytesIn: number; bytesOut: number }>;
+      const hours = Math.min(input.hours, TRAFFIC_RETENTION_HOURS);
+      const since = new Date(Date.now() - hours * 3600 * 1000);
+      const isAdmin = ctx.user.role === "admin";
+      return trafficQueryCache.get(
+        `series-batch:${ctx.user.id}:${hours}:${input.bucketMinutes}:${ruleIds.join(",")}`,
+        { ttlMs: 30_000, staleMs: 2 * 60_000 },
+        () => db.getTrafficSeriesByRules(ruleIds, {
+          bucketMinutes: input.bucketMinutes,
+          since,
+          userId: isAdmin ? undefined : ctx.user.id,
+        }),
+      );
+    }),
   trafficSeries: protectedProcedure
     .input(
       z.object({

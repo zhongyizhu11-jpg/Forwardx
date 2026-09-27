@@ -14,8 +14,8 @@ import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth
  *          灰未接入），下面两行字：名字、一句状态（「46 ms」「离线 30 分钟」）。
  *   线     正常是一条天蓝渐变的实线，上面有几颗慢慢流动的小点（流量在跑）；降级是琥珀虚线；
  *          中断是红虚线；停用是灰虚线。多跳线路一段一段画，每段都弯一点，不和别的线叠成一根。
- *   布局   有经纬度的机器按经纬度落位（等距投影到画布里），没有的排成一个椭圆。之后再互相
- *          推开几轮，免得两台同城的机器叠在一起。
+ *   布局   八台以内从左到右摊开、一高一低错成一条折线（有经纬度的按经度排，西边的在左）；
+ *          更多就排成一个椭圆。之后再互相推开几轮，免得两台叠在一起。
  *
  * 它不是 deck.gl 那张地球 —— 那张是给「看某台机器在哪」用的，这张是给「谁连着谁、哪条断了」
  * 用的：不画海岸线、不画国界，只画节点和线。也因此它只是一个 SVG，没有 WebGL、不吃电。
@@ -55,48 +55,31 @@ function healthColor(health: NetworkHealth) {
 /**
  * 把节点放进 width × height 的画布里。
  *
- * 全部有坐标 → 按经纬度线性投影到去掉边距的矩形里（纬度是南北向，y 轴反过来）。
- * 否则 → 一个椭圆，从正上方开始逆时针放；三个以内改成一条微弯的弧，免得三个点撑成一个三角。
- * 然后推开：任意两点近于 minGap 时沿连线方向各退一半，跑 40 轮；最后夹回画布里。
+ * 八台以内：从左到右摊开（有经纬度的按经度排，西边的在左边），一高一低错开成一条折线 ——
+ * 效果图上就是这个样子：每台机器占自己的一段横向空间，名字和状态各有地方写，谁也不压谁。
+ * 原来按经纬度投影落位：三台同城的机器挤在一个角落、一台美国机独占半张图，剩下的全是空白，
+ * 看着乱。这张图要说的是「谁连着谁、哪条断了」，不是「谁在地球的哪儿」。
+ * 超过八台：一个椭圆，从正上方开始放。
+ * 之后推开：任意两点近于 minGap 时沿连线方向各退一半，跑 60 轮；最后夹回画布里。
  */
 export function layoutNetworkMap(nodes: readonly NetworkMapNode[], width: number, height: number): Placed[] {
   if (nodes.length === 0) return [];
   const innerW = Math.max(1, width - PAD_X * 2);
   const innerH = Math.max(1, height - PAD_TOP - PAD_BOTTOM);
-  const allGeo = nodes.every((node) => node.geo);
   let placed: Placed[];
-  if (allGeo && nodes.length > 1) {
-    /*
-      经纬度一半、名次一半。纯按经纬度画，三台亚洲机器会挤在右上角一个指甲盖大的地方，
-      而美国那台独占左边半张图；按东西、南北的名次各摊开一半之后，亚洲三台之间有了距离，
-      美国那台仍然在最左边 —— 看得出「谁在谁的西边」就够了，这不是一张地图。
-    */
-    const lats = nodes.map((node) => node.geo!.lat);
-    const lngs = nodes.map((node) => node.geo!.lng);
-    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-    const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-    const latSpan = Math.max(maxLat - minLat, 4);
-    const lngSpan = Math.max(maxLng - minLng, 6);
-    const latMid = (minLat + maxLat) / 2;
-    const lngMid = (minLng + maxLng) / 2;
-    const lngOrder = [...lngs].sort((a, b) => a - b);
-    const latOrder = [...lats].sort((a, b) => b - a);
-    const last = Math.max(1, nodes.length - 1);
-    placed = nodes.map((node) => {
-      const tx = (node.geo!.lng - (lngMid - lngSpan / 2)) / lngSpan;
-      const ty = (latMid + latSpan / 2 - node.geo!.lat) / latSpan;
-      const rx = lngOrder.indexOf(node.geo!.lng) / last;
-      const ry = latOrder.indexOf(node.geo!.lat) / last;
-      return {
-        ...node,
-        x: PAD_X + ((tx + rx) / 2) * innerW,
-        y: PAD_TOP + ((ty + ry) / 2) * innerH,
-      };
+  if (nodes.length <= 8) {
+    const ordered = [...nodes].sort((a, b) => {
+      const la = a.geo ? a.geo.lng : Number.POSITIVE_INFINITY;
+      const lb = b.geo ? b.geo.lng : Number.POSITIVE_INFINITY;
+      if (la !== lb) return la - lb;
+      return 0;
     });
-  } else if (nodes.length <= 3) {
-    placed = nodes.map((node, index) => {
-      const t = nodes.length === 1 ? 0.5 : index / (nodes.length - 1);
-      return { ...node, x: PAD_X + t * innerW, y: PAD_TOP + innerH * (0.5 - 0.22 * Math.sin(t * Math.PI)) };
+    const last = Math.max(1, ordered.length - 1);
+    placed = ordered.map((node, index) => {
+      const t = ordered.length === 1 ? 0.5 : index / last;
+      // 上下两排拉开到画布的 15% / 85%：中间留出走线的地方，下排两台之间的弧线不会压到上排的名字。
+      const row = ordered.length === 1 ? 0.5 : index % 2 === 0 ? 0.15 : 0.85;
+      return { ...node, x: PAD_X + t * innerW, y: PAD_TOP + row * innerH };
     });
   } else {
     const cx = width / 2, cy = PAD_TOP + innerH / 2;
@@ -202,6 +185,10 @@ export function NetworkMap({
   // 手机上 360 宽画 220 高；桌面拉宽之后按比例长高一点，但封顶 300，别成一张海报。
   const height = Math.round(Math.min(300, Math.max(210, width * 0.5)));
   const placed = useMemo(() => layoutNetworkMap(nodes, width, height), [nodes, width, height]);
+  // 名字能写多长跟着同一行相邻两台的间距走：八台挤在 360 宽里时名字短一点，别互相压着。
+  const labelMax = nodes.length > 1
+    ? Math.max(6, Math.min(14, Math.round(((2 * (width - PAD_X * 2)) / Math.max(1, nodes.length - 1)) / 6.2)))
+    : 14;
   const byId = useMemo(() => new Map(placed.map((node) => [node.id, node])), [placed]);
 
   const segments = useMemo(() => {
@@ -300,8 +287,8 @@ export function NetworkMap({
                 <title>{`${node.name}${note ? ` · ${note}` : ""}`}</title>
                 <circle r={NODE_RADIUS} fill="var(--fx-l1-surface)" stroke={color} strokeWidth={3} />
                 <circle r={4} fill={color} />
-                <text y={NODE_RADIUS + 15} textAnchor="middle" className="fx-netmap-label">{truncateLabel(node.name)}</text>
-                {note ? <text y={NODE_RADIUS + 28} textAnchor="middle" className="fx-netmap-note">{truncateLabel(note, 18)}</text> : null}
+                <text y={NODE_RADIUS + 15} textAnchor="middle" className="fx-netmap-label">{truncateLabel(node.name, labelMax)}</text>
+                {note ? <text y={NODE_RADIUS + 28} textAnchor="middle" className="fx-netmap-note">{truncateLabel(note, labelMax + 4)}</text> : null}
               </g>
             );
           })}

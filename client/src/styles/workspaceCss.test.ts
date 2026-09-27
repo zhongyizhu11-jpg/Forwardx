@@ -47,12 +47,12 @@ function topLevelRules(source: string) {
   return rules;
 }
 
-test("工作区卡片一圈弱线、不投影 —— 写在媒体查询外面，桌面也成立", () => {
+test("工作区卡片：描边和投影都由令牌给（浅色灰底白卡不描边、软影；深色弱线）—— 写在媒体查询外面，桌面也成立", () => {
   const rules = topLevelRules(code).filter((item) => item.selector === '.workspace-main [data-slot="card"]');
   assert.ok(rules.length > 0, "最外层有一条 .workspace-main [data-slot=\"card\"] 规则");
   const body = rules.map((item) => item.body).join(";");
-  assert.match(body, /border:\s*1px solid var\(--fx-stroke-weak\)/, "白纸上的卡片靠一圈弱线成形");
-  assert.match(body, /box-shadow:\s*none/);
+  assert.match(body, /border:\s*1px solid var\(--fx-card-stroke/, "卡片描边由 --fx-card-stroke 决定：浅色 transparent，深色弱线");
+  assert.match(body, /box-shadow:\s*var\(--fx-elevation-card\)/, "灰底上的白卡靠一层软影成形");
 });
 
 /*

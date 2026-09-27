@@ -1322,6 +1322,37 @@ export async function getBillingRelevantRulesByHostIds(hostIds: readonly number[
 }
 
 /**
+ * 一批主机上各有多少条转发 —— 不看启用状态，只按 hostId 数。
+ *
+ * 给主机列表的卡片用：「这台上挂了几条转发」。一次 GROUP BY 查完整页，不一台台查。
+ * 没有转发的主机不会出现在结果里，调用方按 0 处理。
+ * 已删除、等 Agent 确认清理的（pendingDelete）不算：规则列表本来就不显示它们，
+ * 卡片上再把它们报成「受影响」就对不上号。
+ */
+export async function countForwardRulesByHostIds(hostIds: readonly number[]): Promise<Map<number, number>> {
+  const counts = new Map<number, number>();
+  const db = await getDb();
+  if (!db) return counts;
+  const wanted = Array.from(new Set(hostIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return counts;
+  const rows = await db
+    .select({
+      hostId: forwardRules.hostId,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(forwardRules)
+    .where(and(
+      inArray(forwardRules.hostId, wanted),
+      sql`COALESCE(${forwardRules.pendingDelete}, ${sqlBool(false)}) = ${sqlBool(false)}`,
+    ))
+    .groupBy(forwardRules.hostId);
+  for (const row of rows as any[]) {
+    counts.set(Number(row.hostId), Number(row.count || 0));
+  }
+  return counts;
+}
+
+/**
  * 一批用户名下还开着的转发有多少条。
  *
  * 给「配了兜底价会停掉谁」的预检用：余额扣不动时 setUserForwardAccess 停的是这个人

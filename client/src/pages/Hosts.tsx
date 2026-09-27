@@ -23,7 +23,6 @@ import HostCard, { HostActionButtons } from "@/components/hosts/HostCard";
 // 本页 902 行已有一个同名的统计小卡，这里取别名区分：这个是主机列表里的实体卡
 import HostEntitySummaryCard from "@/components/hosts/HostSummaryCard";
 import HostDetailDialog from "@/components/hosts/HostDetailDialog";
-import { SummaryStrip } from "@/components/entity/SummaryStrip";
 import HostGroupManager, { compareHostGroupDisplayOrder, type HostGroupView, type HostGroupViewMode } from "@/components/hosts/HostGroupManager";
 import HostProbeServiceManager, { type HostProbeServiceViewMode } from "@/components/hosts/HostProbeServiceManager";
 import HostProbeServiceLatencyDialog from "@/components/hosts/HostProbeServiceLatencyDialog";
@@ -683,6 +682,26 @@ function formatTrafficLimitGbInput(value: unknown) {
   return Number.isInteger(gb) ? String(gb) : String(Number(gb.toFixed(3)));
 }
 
+/* 页头那一行只留一位小数：「12.5 MB/s」够看，两位小数在 393px 上会把这行挤成两行。 */
+function formatHeaderRate(value: unknown) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B/s";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let n = bytes;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+  return `${i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}/s`;
+}
+
+/* 两个方向同一个单位时只写一次（「↓ 12.5 · ↑ 38.2 MB/s」），393px 上这一行才放得下。 */
+function formatHeaderRates(inValue: unknown, outValue: unknown) {
+  const down = formatHeaderRate(inValue);
+  const up = formatHeaderRate(outValue);
+  const unit = (text: string) => text.slice(text.indexOf(" ") + 1);
+  if (unit(down) === unit(up)) return `↓ ${down.slice(0, down.indexOf(" "))} · ↑ ${up}`;
+  return `↓ ${down} ↑ ${up}`;
+}
+
 function formatBytesPerSecond(value: unknown) {
   const bytes = Number(value || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B/s";
@@ -986,7 +1005,7 @@ const HOST_MANAGE_TAB_ITEMS_USER = [
 ] as const satisfies readonly SlidingTabItem<HostManageTab>[];
 
 const HOST_MANAGE_FILTER_CONFIG: Record<HostManageTab, { placeholder: string; unit: string }> = {
-  hosts: { placeholder: "搜索主机 / IP / 系统 / Agent 版本", unit: "台" },
+  hosts: { placeholder: "搜索主机 / IP / 系统", unit: "台" },
   groups: { placeholder: "搜索分组 / 主机名称 / 状态", unit: "组" },
   tokens: { placeholder: "搜索 Token / 备注 / 状态 / 关联主机", unit: "个" },
   services: { placeholder: "搜索服务 / 目标地址 / 类型 / 主机范围", unit: "项" },
@@ -1007,16 +1026,19 @@ const HOST_GROUP_VIEW_MODE_STORAGE_KEY = "forwardx.hostGroups.viewMode";
   连一台都看不全，而紧凑卡本来就是为这个宽度做的，默认值正好反了（转发规则
   那边是同一个毛病）。桌面仍然按用户自己选过的来。
 */
+/*
+  默认都是 Summary 卡（compact-card）：桌面上原来默认旧的详情卡 —— 一张卡九行图标、四条进度条、
+  三种标签，和手机上那张干净的卡不是一套东西。详情卡还在视图切换里，想看再切。
+*/
 function defaultHostViewMode(): HostViewMode {
-  if (typeof window === "undefined") return "card";
-  return window.matchMedia?.("(max-width: 767px)")?.matches ? "compact-card" : "card";
+  return "compact-card";
 }
 
 function getStoredHostViewMode(): HostViewMode {
   if (typeof window === "undefined") return "card";
   try {
     const value = window.localStorage.getItem(HOST_VIEW_MODE_STORAGE_KEY);
-    return value === "compact-card" || value === "table" || value === "map" || value === "flat-map" ? value : defaultHostViewMode();
+    return value === "card" || value === "compact-card" || value === "table" || value === "map" || value === "flat-map" ? value : defaultHostViewMode();
   } catch {
     return defaultHostViewMode();
   }
@@ -1128,12 +1150,8 @@ function HostGroupFilterBar({
     分组是选择，不是状态，所以选中的那一格走强调色，和主按钮、侧栏选中项同一套 ——
     不用状态色的绿：那会让「这台机器正常」和「我点了这一格」共用一个颜色。
   */
-  const chipClass = (active: boolean) => [
-    "inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-[var(--fx-radius-control)] px-3 text-sm transition-colors sm:h-9 sm:gap-2",
-    active
-      ? "border border-[var(--fx-primary-stroke)] bg-[var(--fx-primary-fill)] bg-[image:var(--fx-primary-gradient)] font-semibold text-[var(--fx-primary-text)]"
-      : "border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] text-muted-foreground hover:text-foreground",
-  ].join(" ");
+  // 和转发规则页的分类药丸同一套样式（workspace.css 的 .fx-chip）。
+  const chipClass = (active: boolean) => cn("fx-chip", active && "fx-chip-on");
   const countForGroup = (group: HostGroupView) => Number(groupCounts[Number(group.id)] || 0);
 
   return (
@@ -1144,9 +1162,8 @@ function HostGroupFilterBar({
     */
     <div className="fx-chip-scroller min-w-0 items-center">
       <button type="button" className={chipClass(selectedGroupId === "all")} onClick={() => onSelectGroup("all")}>
-        <Server className="h-3.5 w-3.5 max-sm:hidden" />
         <span>全部</span>
-        <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === "all" ? "bg-white/25 text-[var(--fx-primary-text)]" : "text-muted-foreground")}>{totalHosts}</span>
+        <span className="fx-chip-count">{totalHosts}</span>
       </button>
       {enabledGroups.map((group) => (
         <button
@@ -1156,9 +1173,8 @@ function HostGroupFilterBar({
           onClick={() => onSelectGroup(Number(group.id))}
           title={group.name}
         >
-          <FolderKanban className="h-3.5 w-3.5 max-sm:hidden" />
           <span className="max-w-[160px] truncate">{group.name}</span>
-          <span className={cn("rounded px-1.5 py-0.5 text-[11px] tabular-nums", selectedGroupId === Number(group.id) ? "bg-white/25 text-[var(--fx-primary-text)]" : "text-muted-foreground")}>{countForGroup(group)}</span>
+          <span className="fx-chip-count">{countForGroup(group)}</span>
         </button>
       ))}
     </div>
@@ -1996,6 +2012,7 @@ function HostsContent() {
           metrics={hostLatestMetricSeriesById.get(host.id) ?? null}
           traffic={hostTrafficById.get(host.id)}
           canUpgrade={user?.role === "admin"}
+          upgradeAvailable={user?.role === "admin" && !!host?.agentVersion && !!latestAgentVersion && !isAgentLatest(host)}
           resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
           onOpenDetail={setDetailHost}
           onEdit={openEdit}
@@ -2135,17 +2152,25 @@ function HostsContent() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <WorkspaceHeader title={<>主机管理</>} description={<>
-            管理 Agent 主机和运行状态
-          </>} status={<><Badge variant="outline" className="justify-center gap-1.5 px-2.5 py-1 text-xs">
-            <Server className="h-3 w-3 text-chart-2" />
-            <AnimatedStatValue
-              value={`${onlineCount} / ${displayedHostTotal} 在线`}
-              loading={isInitialLoadingWithoutCache}
-              cacheKey="hosts.header.online"
-              fallbackValue="0 / 0 在线"
-            />
-          </Badge>{/*
+      <WorkspaceHeader title={<>主机管理</>} status={<>
+          {/*
+            页头一行字（效果图）：几台在线、此刻进出多快；第二行是「N 台可升级」。原来是两枚
+            带图标的徽标加一条三格统计带（在线 / 瞬时 / 累计），第一屏为此让出 150px；
+            累计流量在详情里有，这里只留一眼要看的。
+          */}
+          <span className="text-meta tabular-nums text-muted-foreground">
+            <span className={cn("font-medium", onlineCount > 0 ? "text-[var(--fx-healthy-text)]" : displayedHostTotal > 0 ? "text-[var(--fx-down-text)]" : "text-foreground")}>
+              <AnimatedStatValue
+                as="span"
+                value={`${onlineCount} / ${displayedHostTotal} 在线`}
+                loading={isInitialLoadingWithoutCache}
+                cacheKey="hosts.header.online"
+                fallbackValue="0 / 0 在线"
+              />
+            </span>
+            {/* 一台都不在线时没有「此刻」可言，不写「↓ 0 · ↑ 0 B/s」 */}
+            {onlineCount > 0 ? <>{" · "}{formatHeaderRates(effectiveHostSummary?.currentTrafficIn, effectiveHostSummary?.currentTrafficOut)}</> : null}
+          </span>{/*
             「N 台发现新版本」也只给管理员看。升级是管理员专属的接口，租户看到
             这句黄字既升不了、也不知道该做什么 —— 一条看着要人动手却没有门的提示，
             比不提示更让人不安。
@@ -2156,10 +2181,7 @@ function HostsContent() {
             「0 / 4 在线」待在同一行。
           */}
           {updateCount > 0 && user?.role === "admin" && (
-            <Badge variant="outline" className="justify-center gap-1.5 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-2.5 py-1 text-xs text-[var(--fx-warn-text)]">
-              <AlertTriangle className="h-3 w-3" />
-              {updateCount} 台发现新版本
-            </Badge>
+            <span className="basis-full text-meta font-medium text-[var(--fx-warn-text)]">{updateCount} 台可升级</span>
           )}</>} actions={<>
           {/* 布局切换按钮 */}
           {activeManageTab === "hosts" && (
@@ -2318,25 +2340,6 @@ function HostsContent() {
               </Button>
             </div>
           )}
-          {/*
-            租户也能加机器 —— 那本来就是 protectedProcedure，额度在服务端卡着。
-            额度用满时按钮留着但点不动，并把「几台/上限几台」写在上面：到了上限
-            才弹一句错误提示，等于让人白填一遍表单。
-          */}
-          {(user?.role === "admin" || activeManageTab === "hosts") && (
-            <Button
-              onClick={openCreate}
-              disabled={!canAddSelfServiceHost}
-              title={canAddSelfServiceHost ? undefined : selfServiceHostLimitLabel}
-              className="col-span-2 w-full gap-2 sm:col-span-1 sm:w-auto"
-            >
-              <Plus className="h-4 w-4" />
-              {activeManageTab === "services" ? "添加服务" : activeManageTab === "groups" ? "添加分组" : "添加主机"}
-              {selfServiceHostLimitLabel ? (
-                <span className="text-xs font-normal opacity-80">{selfServiceHostLimitLabel}</span>
-              ) : null}
-            </Button>
-          )}
         </>} />
 
 
@@ -2347,9 +2350,10 @@ function HostsContent() {
         className="space-y-4"
       >
         <SlidingTabsList items={hostManageTabItems} activeValue={activeManageTab} ariaLabel="主机管理" minItemWidthRem={7.5} />
-      <div className="flex items-center gap-3">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+      {/* 搜索栏一行：小搜索框在左、「添加主机」在最右（用户要的位置）；分组药丸在下一行。 */}
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1 sm:max-w-[340px]">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={activeManageSearchQuery}
             onChange={(event) => {
@@ -2358,7 +2362,7 @@ function HostsContent() {
             }}
             placeholder={activeManageFilterConfig.placeholder}
             aria-label={activeManageFilterConfig.placeholder}
-            className="h-10 w-full pl-8 pr-8 text-sm"
+            className="fx-search-pill w-full pr-9"
           />
           {activeManageSearchQuery ? (
             <button
@@ -2371,53 +2375,33 @@ function HostsContent() {
             </button>
           ) : null}
         </div>
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-          {activeManageFilterStats.filtered} / {activeManageFilterStats.total} {activeManageFilterConfig.unit}
-        </span>
+        {activeManageSearchQuery ? (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {activeManageFilterStats.filtered} / {activeManageFilterStats.total} {activeManageFilterConfig.unit}
+          </span>
+        ) : null}
+        {/*
+          租户也能加机器 —— 那本来就是 protectedProcedure，额度在服务端卡着。
+          额度用满时按钮留着但点不动，并把「几台/上限几台」写在上面：到了上限
+          才弹一句错误提示，等于让人白填一遍表单。
+        */}
+        {(user?.role === "admin" || activeManageTab === "hosts") && (
+          <Button
+            onClick={openCreate}
+            disabled={!canAddSelfServiceHost}
+            title={canAddSelfServiceHost ? undefined : selfServiceHostLimitLabel}
+            className="fx-row-action ml-auto h-9 shrink-0 gap-1.5 rounded-full px-3.5"
+          >
+            <Plus className="h-4 w-4" />
+            {activeManageTab === "services" ? "添加服务" : activeManageTab === "groups" ? "添加分组" : "添加主机"}
+            {selfServiceHostLimitLabel ? (
+              <span className="text-xs font-normal opacity-80">{selfServiceHostLimitLabel}</span>
+            ) : null}
+          </Button>
+        )}
       </div>
 
         <TabsContent value="hosts" className="space-y-4">
-        {/*
-          三个数一条带，不是三张卡。
-
-          原来是三张各 112px 高的卡片竖排，在 393px 的屏幕上要 360px ——
-          还没看到第一台机器，一屏已经过半。而它们回答的是同一个问题的三个
-          侧面（几台在线、现在跑多快、一共跑了多少），本来就该在一起。
-
-          这是 Surface A（页面级模块）：一个面，内部靠竖线分栏，不各画各的框。
-        */}
-        <SummaryStrip
-          ariaLabel="主机概况"
-          items={[
-            {
-              key: "online",
-              label: "在线",
-              icon: Server,
-              value: `${effectiveHostSummary?.onlineHosts ?? onlineCount} / ${effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length}`,
-              hint: (() => {
-                if (!effectiveHostSummary) return "暂无统计";
-                const total = effectiveHostSummary?.totalHosts ?? filteredDisplayHosts.length;
-                const online = effectiveHostSummary?.onlineHosts ?? onlineCount;
-                const offline = Math.max(0, total - online);
-                return offline > 0 ? `离线 ${offline} 台` : "全部在线";
-              })(),
-            },
-            {
-              key: "rate",
-              label: "瞬时",
-              icon: Gauge,
-              value: `↓ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficIn)}`,
-              hint: `↑ ${formatBytesPerSecond(effectiveHostSummary?.currentTrafficOut)}`,
-            },
-            {
-              key: "total",
-              label: "累计",
-              icon: Database,
-              value: `↓ ${formatBytes(effectiveHostSummary?.totalTrafficIn)}`,
-              hint: `↑ ${formatBytes(effectiveHostSummary?.totalTrafficOut)}`,
-            },
-          ]}
-        />
         {user?.role === "admin" && (
           <HostGroupFilterBar
             groups={hostGroups as HostGroupView[]}

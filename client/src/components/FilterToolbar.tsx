@@ -26,7 +26,7 @@ export default function FilterToolbar({ search, children, activeCount = 0, actio
           三样并排一行 34px；按钮的名字还在 aria-label 里，读屏照样念得出来。
         */}
         <Button type="button" variant={open || activeCount > 0 ? "secondary" : "outline"}
-          className="gap-1 sm:hidden" aria-expanded={open} aria-controls={id}
+          className="fx-filter-pill h-10 w-10 shrink-0 gap-1 rounded-full sm:hidden" aria-expanded={open} aria-controls={id}
           aria-label={activeCount > 0 ? `筛选（已设 ${activeCount} 项）` : "筛选"} title="筛选"
           onClick={() => setOpen(!open)}>
           <SlidersHorizontal className="h-4 w-4" />{activeCount > 0 && <span className="tabular-nums">{activeCount}</span>}

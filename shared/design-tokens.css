@@ -46,11 +46,17 @@
 
      中性色一律**纯中性**（R=G=B）：偏蓝的灰一屏读起来就是发闷。
      ═══════════════════════════════════════════════════════ */
-  --fx-l0-page: #ffffff;       /* 页面底：白纸 */
-  --fx-l1-surface: #ffffff;    /* 卡片：白，靠 --fx-stroke-weak 一圈细线成形 */
+  /*
+     2026-09-27 又换回「浅灰底托白卡」：用户选定的规则卡样稿（玻璃 · 大数字）是 iOS 设置那种
+     灰底白卡、卡不描边、一层很淡的投影。灰是 iOS 的 #f5f5f7（systemGroupedBackground），
+     只在浅色下这样；深色本来就是炭灰页面 + 亮一档的卡，不动。
+  */
+  --fx-l0-page: #f5f5f7;       /* 页面底：iOS 分组页那种浅灰 */
+  --fx-l1-surface: #ffffff;    /* 卡片：白，坐在灰底上靠一层软影成形，不描边 */
+  --fx-card-stroke: transparent; /* 卡片描边：浅色不画；深色用弱线（影子在深色上看不见） */
   --fx-l2-group: #f7f7f7;      /* 卡片内部还要再分一格时：比白纸深一点点 */
   --fx-l3-control: #ffffff;
-  --fx-l3-control-fill: #f0f0f0; /* 分段控件的槽、填充式的搜索框：坐在白纸上要深一档才成形 */
+  --fx-l3-control-fill: #e9e9e9; /* 分段控件的槽、填充式的搜索框：坐在浅灰页面上要再深一档才成形 */
   --fx-sidebar: #ffffff;       /* 侧栏：和页面同一张白纸，靠右侧一条细线分开 */
 
   /* 悬停/按下的瞬时反馈：白纸上一层很浅的灰 */
@@ -129,6 +135,17 @@
   --fx-primary-text: #ffffff;
   --fx-primary-stroke: rgb(143 194 235 / 66%);
   --fx-primary-shadow: 0 8px 18px -10px rgb(86 170 242 / 70%);
+  /*
+    小图标格（IconTile）的几档底色：iOS「设置」那种圆角方块。sky 就是主色渐变，其余是固定色相，
+    是身份不是状态（主机 / 线路 / 转发各一档），不会因为出事变色。
+  */
+  --fx-tile-sky: var(--fx-primary-gradient);
+  --fx-tile-violet: linear-gradient(135deg, #a78bfa 0%, #7c6cf6 100%);
+  --fx-tile-teal: linear-gradient(135deg, #5eead4 0%, #22b8cf 100%);
+  --fx-tile-orange: linear-gradient(135deg, #fdba74 0%, #f5923e 100%);
+  --fx-tile-pink: linear-gradient(135deg, #f9a8d4 0%, #ec6aa8 100%);
+  --fx-tile-green: linear-gradient(135deg, #86efac 0%, #34c07a 100%);
+  --fx-tile-text: #ffffff;
   /* 毛玻璃：顶栏、底部标签栏、分段控件、弹层用。底色半透明 + 背后模糊，见 workspace.css 的 .fx-glass */
   --fx-glass: rgb(255 255 255 / 66%);
   --fx-glass-strong: rgb(255 255 255 / 78%);
@@ -346,7 +363,7 @@
     一层大而淡的影子给距离。大而黑的影子是 2015 年的 Material，不是精致。
   */
   --fx-elevation-flat: none;
-  --fx-elevation-card: 0 1px 2px rgb(0 0 0 / 4%), 0 1px 1px rgb(0 0 0 / 2%);
+  --fx-elevation-card: 0 1px 2px rgb(0 0 0 / 3%), 0 14px 34px -24px rgb(0 0 0 / 22%); /* 贴边一层给轮廓，一层大而淡的托起白卡 */
   --fx-elevation-control: 0 1px 2px rgb(0 0 0 / 5%);
   --fx-elevation-popover: 0 12px 32px -8px rgb(0 0 0 / 14%), 0 2px 6px rgb(0 0 0 / 6%), 0 0 0 1px rgb(0 0 0 / 4%);
   --fx-elevation-modal: 0 32px 80px -24px rgb(0 0 0 / 28%), 0 8px 24px -8px rgb(0 0 0 / 12%), 0 0 0 1px rgb(0 0 0 / 5%);
@@ -449,6 +466,7 @@
   */
   --fx-l0-page: #1e1e1e;
   --fx-l1-surface: #2a2a2a;
+  --fx-card-stroke: rgb(255 255 255 / 8%);
   --fx-l2-group: #242424;      /* 卡内再分一格：比卡深一点、比页面亮一点 */
   --fx-l3-control: #2a2a2a;
   --fx-l3-control-fill: #373737;
@@ -481,6 +499,13 @@
   --fx-primary-text: #ffffff;
   --fx-primary-stroke: rgb(102 182 255 / 40%);
   --fx-primary-shadow: 0 8px 18px -10px rgb(47 134 214 / 80%);
+  --fx-tile-sky: var(--fx-primary-gradient);
+  --fx-tile-violet: linear-gradient(135deg, #8b78f0 0%, #6558e0 100%);
+  --fx-tile-teal: linear-gradient(135deg, #3fd1bd 0%, #1899b3 100%);
+  --fx-tile-orange: linear-gradient(135deg, #f7a35a 0%, #e07a24 100%);
+  --fx-tile-pink: linear-gradient(135deg, #f08cc0 0%, #d64f90 100%);
+  --fx-tile-green: linear-gradient(135deg, #5fd899 0%, #22a765 100%);
+  --fx-tile-text: #ffffff;
   --fx-glass: rgb(38 38 38 / 66%);
   --fx-glass-strong: rgb(42 42 42 / 78%);
   --fx-glass-blur: saturate(160%) blur(20px);

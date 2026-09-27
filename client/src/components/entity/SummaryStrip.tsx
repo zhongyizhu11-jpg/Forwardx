@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 import { ChevronRight } from "lucide-react";
 
 import AnimatedStatValue from "@/components/AnimatedStatValue";
+import { IconTile, type IconTileTone } from "@/components/entity/IconTile";
 import { cn } from "@/lib/utils";
 
 /**
@@ -27,8 +28,9 @@ export type SummaryItem = {
   tone?: "healthy" | "warn" | "down" | "path";
   /** 只给补充那一行上色（「3 在线」绿、「1 异常」琥珀），数字保持黑色。 */
   hintTone?: "healthy" | "warn" | "down";
-  /** 标签前面的图标。画成一枚灰色小图标，不再是彩色底座 —— 颜色只留给状态。 */
+  /** 标签前面的图标：一枚 20px 的小图标格（IconTile），底色由 iconTone 定，默认主色。 */
   icon?: LucideIcon;
+  iconTone?: IconTileTone;
   /**
    * 这个数本身就是一件要去处理的事（「待处理 33」）时，点它直接过去 —— 让人看完这个数
    * 再自己去别处找，是把走完的一半路又还给他。
@@ -70,7 +72,7 @@ export function SummaryStrip({
     <div
       role="group"
       aria-label={ariaLabel}
-      className={cn("fx-summary grid border-y border-[var(--fx-stroke-weak)]", grid, className)}
+      className={cn("fx-summary grid", grid, className)}
       data-testid="summary-strip"
     >
       {items.map((item) => {
@@ -79,7 +81,7 @@ export function SummaryStrip({
         const body = (
           <>
             <span className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
-              {Icon ? <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
+              {Icon ? <IconTile icon={Icon} tone={item.iconTone} size="xs" /> : null}
               <span className="truncate">{item.label}</span>
               {item.onClick ? <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
             </span>
@@ -105,7 +107,7 @@ export function SummaryStrip({
             ) : null}
           </>
         );
-        const cell = "fx-summary-cell flex min-w-0 flex-col gap-0.5 border-l border-[var(--fx-stroke-weak)] py-2.5 pl-3 pr-1 text-left first:border-l-0 first:pl-0.5 sm:py-3 sm:pl-4";
+        const cell = "fx-summary-cell flex min-w-0 flex-col gap-0.5 border-l border-[var(--fx-stroke-weak)] py-3 pl-3 pr-1 text-left first:border-l-0 first:pl-0 sm:py-3.5 sm:pl-4";
         return item.onClick ? (
           <button
             key={item.key}
