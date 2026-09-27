@@ -40,6 +40,8 @@ jobs:
         with:
           xcode-version: '26.0.1'
       - run: pnpm install --frozen-lockfile
+      - name: Validate headless icon conversion
+        run: xcrun swift scripts/prepare-ios-assets.swift "$PWD"
       - name: Validate versions and application code
         env:
           FORWARDX_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}

@@ -1,27 +1,31 @@
-// Build-time conversion of the existing ForwardX icon; no external asset service.
-import AppKit
+// Headless build-time conversion of the existing icon; no WindowServer required.
+import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 let root = URL(fileURLWithPath: CommandLine.arguments[1])
 let source = root.appendingPathComponent("client/public/favicon.png")
-guard let image = NSImage(contentsOf: source),
-      let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1024,
-          pixelsHigh: 1024, bitsPerSample: 8, samplesPerPixel: 3,
-          hasAlpha: false, isPlanar: false, colorSpaceName: .deviceRGB,
-          bytesPerRow: 0, bitsPerPixel: 0),
-      let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
-    fatalError("Cannot load or render the ForwardX icon")
+guard let input = CGImageSourceCreateWithURL(source as CFURL, nil),
+      let image = CGImageSourceCreateImageAtIndex(input, 0, nil) else {
+    fatalError("Cannot load ForwardX icon: \(source.path)")
 }
-NSGraphicsContext.saveGraphicsState()
-NSGraphicsContext.current = context
-let rect = NSRect(x: 0, y: 0, width: 1024, height: 1024)
-NSColor.white.setFill()
-rect.fill()
-context.imageInterpolation = .high
-image.draw(in: rect)
-NSGraphicsContext.restoreGraphicsState()
-guard let png = bitmap.representation(using: .png, properties: [:]) else {
-    fatalError("Cannot encode the ForwardX icon")
+guard let context = CGContext(data: nil, width: 1024, height: 1024,
+    bitsPerComponent: 8, bytesPerRow: 4096, space: CGColorSpaceCreateDeviceRGB(),
+    bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+    fatalError("Cannot create opaque RGB icon context")
 }
-try png.write(to: root.appendingPathComponent(
-    "ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"))
+let rect = CGRect(x: 0, y: 0, width: 1024, height: 1024)
+context.setFillColor(CGColor(gray: 1, alpha: 1))
+context.fill(rect)
+context.interpolationQuality = .high
+context.draw(image, in: rect)
+let output = root.appendingPathComponent(
+    "ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png")
+guard let rendered = context.makeImage(),
+      let destination = CGImageDestinationCreateWithURL(output as CFURL,
+          UTType.png.identifier as CFString, 1, nil) else {
+    fatalError("Cannot create PNG output")
+}
+CGImageDestinationAddImage(destination, rendered, nil)
+guard CGImageDestinationFinalize(destination) else { fatalError("Cannot save PNG icon") }
