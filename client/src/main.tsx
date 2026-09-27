@@ -146,6 +146,7 @@ async function bootstrap() {
 
   if (mobileAuth.isNative) {
     document.documentElement.classList.add("capacitor-native");
+    document.documentElement.classList.toggle("capacitor-ios", mobileAuth.platform === "ios");
   }
 
   createRoot(document.getElementById("root")!).render(
