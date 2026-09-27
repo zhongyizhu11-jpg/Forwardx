@@ -5761,6 +5761,11 @@ function RulesContent() {
   };
 
   /** 复制入口 IP:端口 到剪贴板 */
+  const copyTargetAddress = async (text: string) => {
+    if (await copyTextToClipboard(text)) toast.success(`已复制目标地址: ${text}`);
+    else toast.error("复制失败，请手动复制");
+  };
+
   const copyEntryAddress = async (rule: any, entryValue?: string) => {
     if (rule.forwardGroupId) {
       const group = forwardGroupById.get(Number(rule.forwardGroupId));
@@ -6582,15 +6587,16 @@ function RulesContent() {
   /*
     规则卡（「玻璃 · 大数字」那版样稿，用户选的方向，按他们的要求收紧到一屏四张）：
 
-      [图标格·角上状态点] 名字                       ··· [开关]
-                          入口主机 · 转发工具 · 协议
+      ● 名字                                        ··· [开关]
+        入口主机 · 转发工具 · 协议
       113 GB   ～～走势线～～          近 24H
                                       ↓ 2.76 GB · ↑ 3.42 GB
       ─────────────────────────────────────────────
       192.0.2.21:443  →  10.10.3.88:443        [46 ms]
 
     卡不描边，坐在浅灰页面上靠一层很淡的投影成形；左上角一抹状态色的光（--fx-rule-tone）。
-    状态点仍在名字左边 —— 骑在图标格的右下角，像头像上的在线点，不在标题行里再占一格。
+    状态点在名字左边（用户定的）。第一版卡头还有一枚类型图标格，用户看图说「图标不要」，去掉了；
+    类型仍由分组标题上的小图标格和卡上那抹光的色调说。
     大数字是累计总量：一张卡最值得一眼看到的数。走势线是近 24 小时逐时字节，只画形状。
     地址一行等宽字、不截断；右端一枚小标签：延迟，或者切了线 / 出错 / 停用这些更要紧的话。
   */
@@ -6706,14 +6712,15 @@ function RulesContent() {
       >
         <CardContent className="fx-rule-card-body action-card-content">
           <div className="fx-rule-head">
-            <span className="fx-rule-tile">
-              {renderRuleTile(category, "md")}
-              <span className="fx-rule-tile-dot">
-                {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
-              </span>
-            </span>
             <div className="fx-rule-title">
-              <div className="fx-rule-name"><span className="truncate" title={rule.name}>{rule.name}</span>{renderSubscriptionMark(rule)}</div>
+              <div className="fx-rule-name">
+                {/* 状态点在名字左边（用户定的），图标格不要了（用户看了图说「图标不要」） */}
+                <span className="fx-rule-dot">
+                  {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
+                </span>
+                <span className="truncate" title={rule.name}>{rule.name}</span>
+                {renderSubscriptionMark(rule)}
+              </div>
               <div className="fx-rule-sub" title={subtitle}>{subtitle}</div>
             </div>
             <div className="fx-rule-head-actions">
@@ -6763,22 +6770,31 @@ function RulesContent() {
           )}
 
           <div className="fx-rule-path" title={`${entryAddresses.map((entry) => entry.text).join(" / ")} → ${targetAddress}`}>
+            {/* 入口和目标都是点一下就复制（用户要的）；小复制图标常驻，不用悬停才显出来 */}
             {primaryEntry ? (
               <button
                 type="button"
                 onClick={() => primaryEntry.copyable && copyEntryAddress(rule, primaryEntry.value)}
                 disabled={!primaryEntry.copyable}
-                className="fx-rule-addr group"
+                className="fx-rule-addr"
                 title={primaryEntry.copyable ? entryTitle : primaryEntry.text}
               >
                 <span className="truncate">{primaryEntry.text}</span>
                 {extraEntries > 0 ? <span className="fx-rule-addr-more">+{extraEntries}</span> : null}
-                {primaryEntry.copyable ? <Copy className="hidden h-3 w-3 shrink-0 opacity-50 group-hover:opacity-100 sm:inline" aria-hidden="true" /> : null}
+                {primaryEntry.copyable ? <Copy className="fx-rule-addr-copy" aria-hidden="true" /> : null}
               </button>
             ) : null}
             <span className="fx-rule-path-to">
               <ArrowRight className="fx-rule-path-arrow" aria-hidden="true" />
-              <code className="fx-rule-addr" title={targetAddress}><span className="truncate">{targetAddress}</span></code>
+              <button
+                type="button"
+                onClick={() => copyTargetAddress(targetAddress)}
+                className="fx-rule-addr"
+                title={`复制目标地址: ${targetAddress}`}
+              >
+                <span className="truncate">{targetAddress}</span>
+                <Copy className="fx-rule-addr-copy" aria-hidden="true" />
+              </button>
             </span>
             <span className="fx-rule-path-end">
               {failoverAside}

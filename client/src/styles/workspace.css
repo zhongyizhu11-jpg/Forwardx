@@ -1598,19 +1598,17 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
 .workspace-main .fx-rule-card[data-size="standard"] .fx-rule-card-body { padding: 16px 16px 14px; }
 .workspace-main .fx-rule-card .fx-rule-card-body > * + * { margin-top: 0; }
 .fx-rule-head { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.fx-rule-tile { position: relative; display: inline-flex; flex: none; }
-/* 状态点骑在图标格右下角，一圈卡色的白边把它从格子上托出来 */
-.fx-rule-tile-dot { position: absolute; right: -3px; bottom: -3px; display: inline-flex; border-radius: 999px; padding: 2px; background: var(--fx-l1-surface); line-height: 0; }
-.fx-rule-tile-dot [role="img"] { box-shadow: none !important; }
+/* 状态点在名字左边，和 15.5px 的字对中；点自带一圈软光 */
+.fx-rule-dot { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 14px; height: 20px; margin-right: 2px; }
 .fx-rule-title { min-width: 0; flex: 1 1 auto; }
 .fx-rule-name { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 15.5px; font-weight: 600; letter-spacing: -.01em; line-height: 20px; color: var(--fx-text); }
 .fx-rule-sub { margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 16px; color: var(--fx-text-muted); }
 .fx-rule-head-actions { display: flex; flex: none; align-items: center; gap: 2px; }
-.fx-rule-big { display: flex; min-width: 0; align-items: flex-end; gap: 12px; margin-top: 14px; }
+.fx-rule-big { display: flex; min-width: 0; align-items: flex-end; gap: 12px; margin-top: 12px; }
 .fx-rule-num { flex: none; display: inline-flex; align-items: baseline; gap: 3px; line-height: 1; font-variant-numeric: tabular-nums; }
-.fx-rule-num > b { font-size: 26px; font-weight: 700; letter-spacing: -.03em; color: var(--fx-text); }
+.fx-rule-num > b { font-size: 22px; font-weight: 700; letter-spacing: -.025em; color: var(--fx-text); }
 .fx-rule-num > small { font-size: 12.5px; font-weight: 500; color: var(--fx-text-muted); }
-.fx-rule-spark { flex: 1 1 72px; min-width: 56px; max-width: 128px; width: auto; height: 28px; align-self: flex-end; color: var(--fx-text-muted); }
+.fx-rule-spark { flex: 1 1 72px; min-width: 56px; max-width: 128px; width: auto; height: 26px; align-self: flex-end; color: var(--fx-text-muted); }
 .fx-rule-day { flex: none; min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; text-align: right; font-size: 11.5px; line-height: 15px; color: var(--fx-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fx-rule-day-val { color: var(--fx-text-secondary); }
 .fx-rule-alerts { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; }
@@ -1620,6 +1618,8 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
 .fx-rule-addr > .truncate { min-width: 0; }
 button.fx-rule-addr:enabled:hover { color: var(--fx-text); }
 .fx-rule-addr-more { flex: none; color: var(--fx-text-muted); }
+.fx-rule-addr-copy { flex: none; width: 12px; height: 12px; color: var(--fx-text-muted); opacity: .7; }
+button.fx-rule-addr:enabled:hover .fx-rule-addr-copy, button.fx-rule-addr:enabled:active .fx-rule-addr-copy { opacity: 1; color: var(--fx-accent); }
 /* 箭头和目标绑在一起：折行时整段「→ 目标」下去，不会箭头留在上一行末尾 */
 .fx-rule-path-to { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: 6px; }
 .fx-rule-path-arrow { flex: none; width: 13px; height: 13px; color: var(--fx-rule-tone); }
