@@ -5767,11 +5767,12 @@ function RulesContent() {
   /*
     规则的状态点和主机、隧道、首页「需要关注」用同一枚 StatusDot：运行中是绿，不再是
     一颗会呼吸的青色。上一版三页三种点（青色脉冲 / 红 70% / 灰 30%），同一个「正常」
-    在隧道页是绿、在规则页是青，眼睛每换一页要重新学一次。
+    在隧道页是绿、在规则页是青，眼睛每换一页要重新学一次。「待确认」走词汇表里的
+    unknown（灰）：还没等到 Agent 回话不等于出了问题，琥珀留给真的降级。
   */
   const renderResolvedStatusDot = (visual: ReturnType<typeof resolveForwardRuleVisualStatus>) => (
     <span title={visual.title} className="inline-flex">
-      <StatusDot health={visual.state === "pending" ? "degraded" : ruleVisualStateToHealth(visual.state)} size="large" label={visual.title} />
+      <StatusDot health={ruleVisualStateToHealth(visual.state)} size="large" label={visual.title} />
     </span>
   );
 
@@ -5859,7 +5860,7 @@ function RulesContent() {
     const visual = ruleVisualStatuses.get(Number(rule.id))?.display || resolveRuleVisualStatus(rule);
     const health = !isRuleSupported(rule) || rule.resourceAccessAllowed === false
       ? "down"
-      : visual?.state === "pending" ? "degraded" : ruleVisualStateToHealth(visual?.state);
+      : ruleVisualStateToHealth(visual?.state);
     // 转发组规则的「中继」就是组本身，而组名已经是左端的名字，不重复画。
     const hops = decideRuleFlowLayout(category) === "flow" && category !== "group" ? getRuleHopNames(rule) : [];
     const primaryEntry = entryAddresses[0];
