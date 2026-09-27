@@ -292,6 +292,9 @@ function renderClash(
         lines.push(`    interval: ${PROXY_AUTO_GROUP_INTERVAL_SECONDS}`);
         // 容差避免两条中转延迟接近时来回横跳，每次切换都会断开正在进行的连接。
         if (group.type === "url-test") lines.push(`    tolerance: ${PROXY_AUTO_GROUP_TOLERANCE_MS}`);
+        // 轮询而不是一致性哈希：一致性哈希按目标域名固定中转，测速和单站多线程下载
+        // 全落在同一台上，叠加不起来。落地是同一台，出口 IP 不会因为轮询而变。
+        if (group.type === "load-balance") lines.push("    strategy: round-robin");
       }
     }
   }
@@ -436,14 +439,15 @@ function singboxGroupOutbound(group: ProxySubscriptionGroup): Record<string, unk
     return { type: "selector", tag: group.name, outbounds: [...group.members] };
   }
   // sing-box 没有单独的 fallback 类型，两种模式都用 urltest 表达；它本身就带
-  // 故障切换，主备与择快的差别只在成员顺序。
+  // 故障切换，主备与择快的差别只在成员顺序。sing-box 也没有负载均衡出站，
+  // 带宽叠加在这里退成择快 —— 少了叠加，但节点照样能用，不会生成它不认的类型。
   return {
     type: "urltest",
     tag: group.name,
     outbounds: [...group.members],
     url: PROXY_AUTO_GROUP_TEST_URL,
     interval: `${PROXY_AUTO_GROUP_INTERVAL_SECONDS}s`,
-    ...(group.type === "url-test" ? { tolerance: PROXY_AUTO_GROUP_TOLERANCE_MS } : {}),
+    ...(group.type === "fallback" ? {} : { tolerance: PROXY_AUTO_GROUP_TOLERANCE_MS }),
   };
 }
 

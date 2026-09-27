@@ -345,6 +345,52 @@ test("sing-box 的自动选路组渲染成 urltest", () => {
   assert.equal(outbounds[2].type, "vless");
 });
 
+test("Clash 的带宽叠加组是轮询的 load-balance", () => {
+  const document = {
+    nodes: [
+      node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" }),
+      node(VLESS_WS, { address: "5.6.7.8", port: 20002, name: "广州2 → HKT" }),
+    ],
+    groups: [
+      { name: "ForwardX", type: "select" as const, members: ["HKT 带宽叠加"] },
+      { name: "HKT 带宽叠加", type: "load-balance" as const, members: ["广州1 → HKT", "广州2 → HKT"] },
+    ],
+    ruleSets: [],
+    rules: [],
+  };
+
+  const parsed = parseYamlSubset(renderProxySubscription(document, "clash"));
+  const groups = parsed["proxy-groups"] as Record<string, any>[];
+
+  assert.equal(groups[1].type, "load-balance");
+  assert.deepEqual(groups[1].proxies, ["广州1 → HKT", "广州2 → HKT"]);
+  // 一致性哈希会让同一个测速站、同一个下载站的连接全落在一台中转上，叠不起来。
+  assert.equal(groups[1].strategy, "round-robin");
+  // 健康检查还要：一台中转挂了，轮询要能跳过它。
+  assert.equal(groups[1].url, "http://www.gstatic.com/generate_204");
+  assert.equal(groups[1].tolerance, undefined);
+});
+
+test("sing-box 没有负载均衡出站，带宽叠加退成 urltest", () => {
+  const document = {
+    nodes: [
+      node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" }),
+      node(VLESS_WS, { address: "5.6.7.8", port: 20002, name: "广州2 → HKT" }),
+    ],
+    groups: [
+      { name: "ForwardX", type: "select" as const, members: ["HKT 带宽叠加"] },
+      { name: "HKT 带宽叠加", type: "load-balance" as const, members: ["广州1 → HKT", "广州2 → HKT"] },
+    ],
+    ruleSets: [],
+    rules: [],
+  };
+
+  const parsed = JSON.parse(renderProxySubscription(document, "singbox"));
+  const outbounds = parsed.outbounds as Record<string, any>[];
+  assert.equal(outbounds[1].type, "urltest", "不能输出 sing-box 不认的类型");
+  assert.deepEqual(outbounds[1].outbounds, ["广州1 → HKT", "广州2 → HKT"]);
+});
+
 test("base64 与 Loon 忽略策略组，只输出节点", () => {
   const document = {
     nodes: [node(VLESS_WS, { address: "1.2.3.4", port: 20001, name: "广州1 → HKT" })],
