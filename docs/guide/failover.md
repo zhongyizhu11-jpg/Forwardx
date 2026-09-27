@@ -178,7 +178,7 @@ UDP 没有握手可探。纯 UDP 规则没填探测地址时，Agent ping 拨号
    - Clash / Mihomo / Stash：节点订阅、规则订阅都带这个组；
    - Surge、Loon、Quantumult X、Shadowrocket：它们的节点订阅装不下分组，要用「规则订阅」（一份完整配置）。Surge 一键导入；Loon、Quantumult X 在 App 里从 URL 下载配置；Shadowrocket 先导入节点订阅，再在「配置」里添加规则订阅的地址。
 
-每条新连接轮流走下一台前置，多线程下载、多个设备同时用时带宽相加（两台 300M 约 600M）。单条连接只能走一台前置，单线程下载、单个视频流、单线程测速仍是 300M。两台前置最后都从同一台落地出去，出口 IP 不变。
+每条新连接轮流走下一台前置，多线程下载、多个设备同时用时带宽相加（两台 300M 约 600M）。单条连接只能走一台前置，单线程下载、单个视频流、单线程测速仍是 300M。两台前置最后都从同一台落地出去，出口 IP 不变。落地开了「订阅里包含直连」时，直连只留在主选择器里，不进叠加组（它不经过前置，混进去反而拖慢）。
 
 前提：落地本身的带宽够（例子里要 600M 以上）；前置到落地的线路各自跑得满；前置一进一出都占带宽，商家若按双向合计限速或计流量，实际会打折扣。各家的写法：Clash 是 `load-balance` + `round-robin`，Surge 是 `load-balance`（每个请求随机挑一台），Loon 是 `load-balance` + `Round-Robin`，Quantumult X 是 `round-robin`，Shadowrocket 是 `random`（它的 load-balance 会把同一个域名固定在一台上，叠不起来）。sing-box 没有负载均衡出站，按「自动选最快」生成。
 

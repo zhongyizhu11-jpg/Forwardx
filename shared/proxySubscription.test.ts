@@ -260,7 +260,7 @@ test("Subscription-Userinfo clamps missing and negative values", () => {
   );
   assert.equal(
     formatProxySubscriptionUserInfo({ upload: -5, download: Number.NaN, total: 0, expire: 0 }),
-    "upload=0; download=0; total=0; expire=0",
+    "upload=0; download=0",
   );
 });
 

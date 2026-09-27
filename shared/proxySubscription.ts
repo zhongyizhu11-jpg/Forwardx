@@ -1180,10 +1180,9 @@ export type ProxySubscriptionUserInfo = {
  */
 export function formatProxySubscriptionUserInfo(info: ProxySubscriptionUserInfo): string {
   const safe = (value: unknown) => Math.max(0, Math.floor(Number(value) || 0));
-  return [
-    `upload=${safe(info.upload)}`,
-    `download=${safe(info.download)}`,
-    `total=${safe(info.total)}`,
-    `expire=${safe(info.expire)}`,
-  ].join("; ");
+  const parts = [`upload=${safe(info.upload)}`, `download=${safe(info.download)}`];
+  // 不限量、不到期时干脆不写：写成 0，Shadowrocket 会显示 TOT:0.00K、EXPIRES:1970-01-01。
+  if (safe(info.total) > 0) parts.push(`total=${safe(info.total)}`);
+  if (safe(info.expire) > 0) parts.push(`expire=${safe(info.expire)}`);
+  return parts.join("; ");
 }

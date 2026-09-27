@@ -614,20 +614,34 @@ export function buildProxySubscriptionDocument(
 
   // 去重后的名字按顺序对回各自的模板。
   const namesByTemplate = new Map<number, string[]>();
+  const relayNamesByTemplate = new Map<number, string[]>();
   plan.entries.forEach((entry, index) => {
     const name = nodes[index]?.name;
     if (!name) return;
     const list = namesByTemplate.get(entry.templateId) || [];
     list.push(name);
     namesByTemplate.set(entry.templateId, list);
+    if (entry.kind !== "direct") {
+      const relays = relayNamesByTemplate.get(entry.templateId) || [];
+      relays.push(name);
+      relayNamesByTemplate.set(entry.templateId, relays);
+    }
   });
 
   const autoGroups: ProxySubscriptionGroup[] = [];
-  for (const [templateId, memberNames] of namesByTemplate) {
-    if (memberNames.length < PROXY_AUTO_GROUP_MIN_MEMBERS) continue;
+  for (const [templateId, allNames] of namesByTemplate) {
     const template = templatesById.get(templateId);
     const mode = normalizeProxyNodeAutoGroup(template?.autoGroup);
     if (mode === "off") continue;
+    /**
+     * 带宽叠加只叠中转，不带落地直连。
+     *
+     * 直连是另一条完全不同的线路（从国内直连落地往往是最差的一条），混进轮询里
+     * 就是每几条连接有一条绕开前置 —— 用户看到的是组里多了个落地、速度忽高忽低。
+     * 择快与主备则照旧带上直连，让客户端自己比。
+     */
+    const memberNames = mode === "load-balance" ? relayNamesByTemplate.get(templateId) || [] : allNames;
+    if (memberNames.length < PROXY_AUTO_GROUP_MIN_MEMBERS) continue;
     autoGroups.push({
       name: autoGroupNameForTemplate(text(template?.name), mode),
       type: mode,

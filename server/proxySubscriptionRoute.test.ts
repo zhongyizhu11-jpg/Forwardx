@@ -79,7 +79,7 @@ test("订阅地址按 token 返回节点，并按客户端 UA 选择格式", () 
     assert.ok(links[0].includes("sni=hkt.example.com"), links[0]);
 
     // 流量信息头，客户端据此显示已用流量与到期。
-    assert.equal(base64.headers["subscription-userinfo"], "upload=0; download=12345; total=1000000; expire=0");
+    assert.equal(base64.headers["subscription-userinfo"], "upload=0; download=12345; total=1000000");
     assert.equal(base64.headers["cache-control"], "no-store");
 
     // UA 识别：Clash 拿到 YAML，sing-box 拿到 JSON，Loon 拿到节点行。
