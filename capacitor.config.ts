@@ -11,6 +11,10 @@ const config: CapacitorConfig = {
   android: {
     backgroundColor: '#f7f9fc',
   },
+  ios: {
+    // CSS already owns the safe-area insets; avoid applying them twice.
+    contentInset: 'never',
+  },
   plugins: {
     LocalNotifications: {
       smallIcon: 'ic_stat_forwardx',

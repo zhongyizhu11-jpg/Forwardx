@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { activeTabPath, type TabBarPlan } from "./tabBar";
+import { activeTabPath, type TabBarPlan } from "./tabBarModel";
 import { prefetchRoute } from "@/pages/routeChunks";
 
 /**

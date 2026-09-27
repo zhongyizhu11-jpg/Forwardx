@@ -68,7 +68,7 @@ import { App as CapacitorApp } from "@capacitor/app";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IosTabBar } from "@/components/ios/TabBar";
 import { MobileNavContext, type MobileNavEntry } from "@/components/ios/navigationContext";
-import { MORE_TAB_PATH, pickTabBarItems } from "@/components/ios/tabBar";
+import { MORE_TAB_PATH, pickTabBarItems } from "@/components/ios/tabBarModel";
 import { useLocation } from "wouter";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
