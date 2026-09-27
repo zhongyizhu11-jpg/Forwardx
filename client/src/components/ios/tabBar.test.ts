@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Circle } from "lucide-react";
 
-import { activeTabPath, MORE_TAB_PATH, pickTabBarItems } from "./tabBar";
+import { activeTabPath, MORE_TAB_PATH, pickTabBarItems } from "./tabBarModel";
 
 const dest = (path: string, label = path) => ({ path, label, icon: Circle });
 const more = dest(MORE_TAB_PATH, "更多");

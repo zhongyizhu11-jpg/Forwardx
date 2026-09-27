@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import config from '../capacitor.config';
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+
+test('client module names do not collide on case-insensitive macOS filesystems', () => {
+  const names = new Map<string, string>();
+  for (const path of readdirSync(new URL('../client/src', import.meta.url), { recursive: true })) {
+    const name = String(path);
+    if (!/\.tsx?$/.test(name)) continue;
+    const key = name.replace(/\.tsx?$/, '').toLowerCase();
+    assert.ok(!names.has(key), `${name} conflicts with ${names.get(key)}`);
+    names.set(key, name);
+  }
+});
 
 test('iOS and Android retain the same app identity and web assets', () => {
   assert.equal(config.appId, 'com.forwardx.app');
