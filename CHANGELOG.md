@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.3.381] - 2026-09-27
+
+### 发布摘要
+
+- **新增 iPhone / iPad 自签安装包**：提供 ARM64 真机未签名 IPA，使用自己的签名工具签名后安装；在 App 内连接已有的 ForwardX 面板，不包含服务器、Agent 或 VPN 功能。
+- 面板与 APK Release `2.3.381`，iOS APP `2.3.381`，Android APP `2.3.99`，Agent `2.2.199`，ForwardX FXP runtime `2.2.119`。数据库结构、服务端接口、Agent 和 FXP runtime 没有变化，不需要升级 Agent。
+
+### iOS
+
+- 新增 Capacitor iOS 工程、共享 Archive scheme 与 macOS 自动构建，输出未签名 IPA 和 SHA-256 校验文件；不需要向仓库提供 Apple ID、证书或私钥。
+- 适配安全区、原生网页前后导航手势、局域网访问说明及隐私清单；沿用现有登录、面板地址配置和界面。
+- 修复 macOS 大小写不敏感文件系统下的 TabBar 模块重名，保留现有移动端输入缩放行为，不改变 Android 逻辑。
+- 安装及限制说明见 [iOS 自签指南](docs/ios-self-sign.md)。建议连接 HTTPS 面板；HTTP 仅用于明确知情的自建环境。
+
+### 验证与限制
+
+- iOS ARM64 归档、IPA 完整性检查、TypeScript 检查和 2,043 项自动测试已在新增功能 PR 中通过。
+- 自签安装、登录、文件导出、键盘和通知仍需真机验收；不承诺常驻后台运行或 APNs 推送。
+
 ## [2.3.380] - 2026-09-27
 
 ### 发布摘要
