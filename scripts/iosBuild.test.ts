@@ -11,7 +11,7 @@ test('iOS and Android retain the same app identity and web assets', () => {
   assert.equal(config.webDir, 'client/dist');
   assert.equal(config.server?.androidScheme, 'http');
   assert.equal(config.ios?.contentInset, 'never');
-  assert.equal(config.ios?.allowsBackForwardNavigationGestures, true);
+  assert.match(read('ios/App/App/ForwardXViewController.swift'), /allowsBackForwardNavigationGestures = true/);
   assert.match(read('index.html'), /viewport-fit=cover/);
   assert.doesNotMatch(read('index.html'), /maximum-scale=1/);
 });

@@ -14,7 +14,6 @@ const config: CapacitorConfig = {
   ios: {
     // CSS already owns the safe-area insets; avoid applying them twice.
     contentInset: 'never',
-    allowsBackForwardNavigationGestures: true,
   },
   plugins: {
     LocalNotifications: {
