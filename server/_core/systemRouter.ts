@@ -91,6 +91,8 @@ import {
   clampBackgroundBlur,
   clampBackgroundOpacity,
   isBuiltinWallpaperId,
+  normalizePersonalizationCardStyle,
+  normalizePersonalizationPageTint,
   normalizePersonalizationThemePresetId,
   type PersonalizationBackgroundConfig,
 } from "../../shared/personalization";
@@ -1608,6 +1610,8 @@ function publicSystemSettings(all: Record<string, string | null>, activeProtocol
     siteTitle: all.siteTitle || "ForwardX",
     siteLogoDataUrl: all.siteLogoDataUrl || "",
     personalizationTheme: normalizePersonalizationThemePresetId(all.personalizationTheme),
+    personalizationPageTint: normalizePersonalizationPageTint(all.personalizationPageTint),
+    personalizationCardStyle: normalizePersonalizationCardStyle(all.personalizationCardStyle),
     personalizationBackground: publicPersonalizationBackground(all),
     panelPublicUrl: all.panelPublicUrl ?? "",
     panelSsl: {
@@ -1753,6 +1757,8 @@ export const systemRouter = router({
       siteTitle: all.siteTitle || "ForwardX",
       siteLogoDataUrl: all.siteLogoDataUrl || "",
       personalizationTheme: normalizePersonalizationThemePresetId(all.personalizationTheme),
+      personalizationPageTint: normalizePersonalizationPageTint(all.personalizationPageTint),
+      personalizationCardStyle: normalizePersonalizationCardStyle(all.personalizationCardStyle),
       personalizationBackground: publicPersonalizationBackground(all),
       registrationEnabled: all.registrationEnabled !== "false",
       twoFactorEnabled: all.twoFactorEnabled === "true",
@@ -2021,6 +2027,8 @@ export const systemRouter = router({
         siteTitle: siteTitleSchema.optional(),
         siteLogoDataUrl: brandLogoSchema.optional(),
         personalizationTheme: z.string().max(32).optional(),
+        personalizationPageTint: z.string().max(16).optional(),
+        personalizationCardStyle: z.string().max(16).optional(),
         registrationEnabled: z.boolean().optional(),
         twoFactorEnabled: z.boolean().optional(),
         lookingGlassUserEnabled: z.boolean().optional(),
@@ -2149,6 +2157,16 @@ export const systemRouter = router({
         const theme = normalizePersonalizationThemePresetId(input.personalizationTheme);
         await db.setSetting("personalizationTheme", theme);
         console.info(`[Settings] personalization theme updated theme=${theme}`);
+      }
+      if (input.personalizationPageTint !== undefined) {
+        const tint = normalizePersonalizationPageTint(input.personalizationPageTint);
+        await db.setSetting("personalizationPageTint", tint);
+        console.info(`[Settings] personalization page tint updated tint=${tint}`);
+      }
+      if (input.personalizationCardStyle !== undefined) {
+        const cardStyle = normalizePersonalizationCardStyle(input.personalizationCardStyle);
+        await db.setSetting("personalizationCardStyle", cardStyle);
+        console.info(`[Settings] personalization card style updated style=${cardStyle}`);
       }
       if (input.registrationEnabled !== undefined) {
         await db.setSetting("registrationEnabled", input.registrationEnabled ? "true" : "false");

@@ -43,7 +43,10 @@ function headline(health: SystemHealth) {
 }
 
 /**
- * 一行三个数（主机 / 线路 / 转发）加一行结论。
+ * 一张卡：一行三个数（主机 / 线路 / 转发）加一行结论。
+ *
+ * 2026-09-27 第三轮：用户说「主页大卡片还需要重构」。原来统计行是一张卡、结论又是一条带框的行，
+ * 两张卡说一件事；现在合成一张，结论靠一条弱线和读数分开，卡矮了一截。
  *
  * 上一版是「运行概况」标题 + 一句说明 + 三张带框的小卡 + 右边一块三色渐变的结论面板，
  * 手机上整块 250px，而它说的只有两件事：几个数、有没有事。现在数字走 SummaryStrip
@@ -107,8 +110,8 @@ export default function SystemStatusHeader({ health, loading, isAdmin, onRetry, 
     : null;
 
   return (
-    <section className="system-health flex min-w-0 flex-col gap-3" aria-label="运行状态">
-      <SummaryStrip items={items} loading={!!loading && !health} ariaLabel="主机、线路、转发数量" />
+    <section className="system-health fx-overview-card fx-card-face flex min-w-0 flex-col" aria-label="运行状态">
+      <SummaryStrip items={items} loading={!!loading && !health} ariaLabel="主机、线路、转发数量" embedded />
       <div
         className="system-health-verdict flex min-w-0 items-center gap-3 rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-weak)] px-3.5 py-2.5"
         data-tone={verdictTone}

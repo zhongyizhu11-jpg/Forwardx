@@ -1,4 +1,12 @@
-import { getPersonalizationThemePreset, linearGradient135, normalizePersonalizationThemePresetId, primaryGradientStops } from "@shared/personalization";
+import {
+  getPersonalizationThemePreset,
+  linearGradient135,
+  normalizePersonalizationCardStyle,
+  normalizePersonalizationPageTint,
+  normalizePersonalizationThemePresetId,
+  personalizationPageTintVars,
+  primaryGradientStops,
+} from "@shared/personalization";
 
 /*
   预设写到 <html> 上的变量。
@@ -107,4 +115,44 @@ export function clearPersonalizationTheme(root?: HTMLElement) {
   if (!target) return;
   clearThemeVariables(target);
   target.removeAttribute("data-personalization-theme");
+}
+
+/*
+  页面底色和卡片风格（设置 › 个性化）。
+
+  底色只在浅色下写：--fx-l0-page 是页面底，--fx-l3-control-fill 是坐在页面上的搜索框 / 分段
+  控件的槽。深色模式下两个都不写，让令牌里的炭灰生效 —— 内联在 <html> 上的变量会盖过
+  .dark 那一组，所以切到深色时要主动撤掉，PersonalizationLayer 在 class 变化时会再调一次。
+  卡片风格只是 <html> 上一个属性，四种画法都在 workspace.css 里按它选。
+*/
+const PAGE_TINT_VARS = ["--fx-l0-page", "--fx-l3-control-fill"] as const;
+
+export function applyPersonalizationSurface(
+  input: { pageTint?: unknown; cardStyle?: unknown },
+  root?: HTMLElement,
+) {
+  const target = root || (typeof document !== "undefined" ? document.documentElement : null);
+  const pageTint = normalizePersonalizationPageTint(input.pageTint);
+  const cardStyle = normalizePersonalizationCardStyle(input.cardStyle);
+  if (!target) return { pageTint, cardStyle };
+  target.setAttribute("data-card-style", cardStyle);
+  const dark = target.classList.contains("dark");
+  const vars = dark ? null : personalizationPageTintVars(pageTint);
+  if (vars) {
+    target.style.setProperty("--fx-l0-page", vars.page);
+    target.style.setProperty("--fx-l3-control-fill", vars.control);
+    target.setAttribute("data-page-tint", pageTint);
+  } else {
+    for (const cssVar of PAGE_TINT_VARS) target.style.removeProperty(cssVar);
+    target.removeAttribute("data-page-tint");
+  }
+  return { pageTint, cardStyle };
+}
+
+export function clearPersonalizationSurface(root?: HTMLElement) {
+  const target = root || (typeof document !== "undefined" ? document.documentElement : null);
+  if (!target) return;
+  for (const cssVar of PAGE_TINT_VARS) target.style.removeProperty(cssVar);
+  target.removeAttribute("data-page-tint");
+  target.removeAttribute("data-card-style");
 }

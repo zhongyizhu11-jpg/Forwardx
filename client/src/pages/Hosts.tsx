@@ -2,6 +2,8 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { FormField } from "@/components/ui/form-field";
 import EmptyState from "@/components/EmptyState";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
+import { HeaderSpark, HeaderStatusChips } from "@/components/HeaderStatusChips";
+import { useDailyTrafficSpark } from "@/features/traffic/useDailyTrafficSpark";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { renderHostMapTooltip } from "@/lib/hostMapTooltip";
 import { parseHostDateTime } from "@/components/hosts/HostCard";
@@ -1495,6 +1497,8 @@ function HostsContent() {
   });
   const effectiveHostSummary = hostSummary;
   const isEffectiveHostSummaryLoading = isHostSummaryLoading;
+  // 页头右上角那条近 24H 小走势（和首页图表同一条数据，服务端按用户缓存）
+  const dailySpark = useDailyTrafficSpark(activeManageTab === "hosts");
   const [tokenCreateSignal, setTokenCreateSignal] = useState(0);
   const [serviceCreateSignal, setServiceCreateSignal] = useState(0);
   const [checkingAgentUpdate, setCheckingAgentUpdate] = useState(false);
@@ -2152,12 +2156,13 @@ function HostsContent() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <WorkspaceHeader title={<>主机管理</>} status={<>
-          {/*
-            页头一行字（效果图）：几台在线、此刻进出多快；第二行是「N 台可升级」。原来是两枚
-            带图标的徽标加一条三格统计带（在线 / 瞬时 / 累计），第一屏为此让出 150px；
-            累计流量在详情里有，这里只留一眼要看的。
-          */}
+      <WorkspaceHeader title={<>主机管理</>} status={
+          /*
+            页头（第三轮样稿）：标题下一行「5 / 6 在线」，再一行状态点「● 在线 5 · ● 离线 1 · ● 可升级 1」；
+            标题右边一条近 24H 的小走势，走势下面是此刻的进出速率（一台都不在线时没有「此刻」
+            可言，改写这 24 小时的进出总数）。
+            「可升级」只给管理员看：升级是管理员专属的接口，租户看到这句既升不了、也不知道该做什么。
+          */
           <span className="text-meta tabular-nums text-muted-foreground">
             <span className={cn("font-medium", onlineCount > 0 ? "text-[var(--fx-healthy-text)]" : displayedHostTotal > 0 ? "text-[var(--fx-down-text)]" : "text-foreground")}>
               <AnimatedStatValue
@@ -2168,21 +2173,18 @@ function HostsContent() {
                 fallbackValue="0 / 0 在线"
               />
             </span>
-            {/* 一台都不在线时没有「此刻」可言，不写「↓ 0 · ↑ 0 B/s」 */}
-            {onlineCount > 0 ? <>{" · "}{formatHeaderRates(effectiveHostSummary?.currentTrafficIn, effectiveHostSummary?.currentTrafficOut)}</> : null}
-          </span>{/*
-            「N 台发现新版本」也只给管理员看。升级是管理员专属的接口，租户看到
-            这句黄字既升不了、也不知道该做什么 —— 一条看着要人动手却没有门的提示，
-            比不提示更让人不安。
-
-            它放在 status 而不是 actions：这是一条状态，点不了。放进 actions 之后
-            手机上会被传送到顶栏那一行，而顶栏只有 393px 宽 —— 实测它在那儿会
-            折成三行，把顶栏从 48px 顶到 63px，截断之后还两头缺字。状态就该跟
-            「0 / 4 在线」待在同一行。
-          */}
-          {updateCount > 0 && user?.role === "admin" && (
-            <span className="basis-full text-meta font-medium text-[var(--fx-warn-text)]">{updateCount} 台可升级</span>
-          )}</>} actions={<>
+          </span>
+      } chips={
+          <HeaderStatusChips items={[
+            { key: "online", label: "在线", count: onlineCount, tone: "healthy" },
+            { key: "offline", label: "离线", count: Math.max(0, displayedHostTotal - onlineCount), tone: "down" },
+            { key: "outdated", label: "可升级", count: user?.role === "admin" ? updateCount : 0, tone: "warn", onlyWhenPresent: true },
+          ]} />
+      } aside={
+          <HeaderSpark values={dailySpark.values} title="近 24 小时流量走势" caption={onlineCount > 0
+            ? formatHeaderRates(effectiveHostSummary?.currentTrafficIn, effectiveHostSummary?.currentTrafficOut)
+            : `近 24H ↓ ${formatBytes(dailySpark.bytesIn)} · ↑ ${formatBytes(dailySpark.bytesOut)}`} />
+      } actions={<>
           {/* 布局切换按钮 */}
           {activeManageTab === "hosts" && (
             <>

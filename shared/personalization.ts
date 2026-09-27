@@ -362,3 +362,81 @@ export function clampBackgroundBlur(value: unknown) {
   if (!Number.isFinite(num)) return DEFAULT_PERSONALIZATION_BACKGROUND.blur;
   return Math.min(32, Math.max(0, num));
 }
+
+/*
+  页面底色（设置 › 个性化 › 页面底色）。
+
+  白卡下面那一层的颜色。浅色模式下页面本来是 iOS 的 #f5f5f7 浅灰，这里给几种同样很淡的
+  冷暖底色、一种「跟随配色」（当前主色兑到近白），和一个自定义十六进制色。深色模式不受影响：
+  炭灰页面是成套设计的，换底色只会把卡片的层次弄乱。
+
+  存储值是预设 id，或一个小写的 #rrggbb（自定义）。`grey` 是出厂值，意思是「不覆盖令牌」。
+  和底色配套的还有一档「控件槽」色（搜索框、分段控件的槽）：白卡坐在底色上靠软影成形，
+  而搜索框直接坐在底色上，得比底色再深一档才成形，所以底色一换它也要换。
+*/
+export const PERSONALIZATION_PAGE_TINTS = [
+  { id: "grey", name: "浅灰", page: "#f5f5f7", control: "#e9e9e9", followsTokens: true },
+  { id: "cool", name: "冷白", page: "#f3f5f9", control: "#e4e8ef" },
+  { id: "warm", name: "暖米", page: "#f8f5ef", control: "#ebe6da" },
+  { id: "mist", name: "雾蓝", page: "#edf3fb", control: "#d9e5f2" },
+  { id: "lilac", name: "淡紫", page: "#f3f0fa", control: "#e3ddf0" },
+  { id: "mint", name: "薄荷", page: "#eef6f2", control: "#d9e9e1" },
+  { id: "accent", name: "跟随配色", page: "color-mix(in srgb, var(--fx-primary-fill) 8%, #f8f8f9)", control: "color-mix(in srgb, var(--fx-primary-fill) 16%, #ebebec)" },
+] as const;
+
+export type PersonalizationPageTintId = typeof PERSONALIZATION_PAGE_TINTS[number]["id"];
+
+const HEX_COLOR = /^#([0-9a-f]{6})$/i;
+
+export function isHexColor(value: unknown): value is string {
+  return typeof value === "string" && HEX_COLOR.test(value.trim());
+}
+
+/** 预设 id 或 #rrggbb；别的一律回到浅灰。 */
+export function normalizePersonalizationPageTint(value: unknown): PersonalizationPageTintId | `#${string}` {
+  const text = String(value || "").trim();
+  if (PERSONALIZATION_PAGE_TINTS.some((tint) => tint.id === text)) return text as PersonalizationPageTintId;
+  if (isHexColor(text)) return text.toLowerCase() as `#${string}`;
+  return "grey";
+}
+
+/**
+ * 这个底色要写到 <html> 上的两个变量；`grey` 返回 null（不写，令牌直接生效）。
+ * 自定义色的控件槽从底色兑 5% 黑推出来（#f5f5f7 → #e9e9e9 就是这个比例）。
+ */
+export function personalizationPageTintVars(value: unknown): { page: string; control: string } | null {
+  const tint = normalizePersonalizationPageTint(value);
+  if (tint.startsWith("#")) {
+    return { page: tint, control: `color-mix(in srgb, ${tint} 95%, black)` };
+  }
+  const preset = PERSONALIZATION_PAGE_TINTS.find((item) => item.id === tint) || PERSONALIZATION_PAGE_TINTS[0];
+  if ((preset as { followsTokens?: boolean }).followsTokens === true) return null;
+  return { page: preset.page, control: preset.control };
+}
+
+/*
+  卡片风格（设置 › 个性化 › 卡片风格）：卡上那一点颜色怎么给。
+
+  四种都由 workspace.css 按 <html data-card-style> 画，颜色跟卡的状态走（规则卡、链路卡
+  有状态色；别的卡用主色）：
+    glow  状态光 —— 左上角一抹状态色的光（2.3.379 规则卡那种）
+    edge  彩色描边 —— 1.5px 的渐变细边，卡身纯白
+    bar   渐变卡头 —— 顶上一条 3px 渐变线，卡身从上到下极淡的同色渐变
+    plain 纯白 —— 什么都不加
+  出厂值是 edge：最轻、最像 iOS，和可选底色一起用最协调。
+*/
+export const PERSONALIZATION_CARD_STYLES = [
+  { id: "edge", name: "彩色描边", description: "1.5px 渐变细边，卡身纯白，颜色跟状态走。" },
+  { id: "glow", name: "状态光", description: "左上角一抹状态色的光，卡身其余部分是白的。" },
+  { id: "bar", name: "渐变卡头", description: "顶上一条 3px 渐变线，卡身从上到下一层极淡的同色渐变。" },
+  { id: "plain", name: "纯白", description: "卡上不加任何颜色，只留状态点和标签。" },
+] as const;
+
+export type PersonalizationCardStyleId = typeof PERSONALIZATION_CARD_STYLES[number]["id"];
+
+export function normalizePersonalizationCardStyle(value: unknown): PersonalizationCardStyleId {
+  const text = String(value || "").trim();
+  return PERSONALIZATION_CARD_STYLES.some((style) => style.id === text)
+    ? text as PersonalizationCardStyleId
+    : "edge";
+}

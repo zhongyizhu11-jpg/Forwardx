@@ -10,10 +10,12 @@ import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth
  * 的连接，首页第一眼就该看到这张关系图，而不是四张写着数字的卡。
  *
  * 画法：
- *   节点   一个 13px 的圆环 + 中心一颗小点，环的颜色就是这台机器的状态（绿在线 / 红离线 /
- *          灰未接入），下面两行字：名字、一句状态（「46 ms」「离线 30 分钟」）。
- *   线     正常是一条天蓝渐变的实线，上面有几颗慢慢流动的小点（流量在跑）；降级是琥珀虚线；
- *          中断是红虚线；停用是灰虚线。多跳线路一段一段画，每段都弯一点，不和别的线叠成一根。
+ *   节点   一枚 13px 的白色圆盘 + 状态色的环 + 外面一圈很淡的同色光，盘里是这台机器的国旗
+ *          （没有就是一颗状态色的点），下面两行字：名字、一句「地区 · 状态」（「香港 · 2 条线路」）。
+ *   线     正常是一条天蓝渐变的实线，下面垫一层淡淡的光，上面有几颗慢慢流动的小点（流量在跑）；
+ *          降级是琥珀虚线；中断是红虚线；停用是灰虚线。多跳线路一段一段画，每段都弯一点，
+ *          不和别的线叠成一根；线中间一枚小白标签写延迟（「7 ms」），线多于 8 条就不挂。
+ *   底     左上角一团很淡的主色光，点阵往四边淡出。
  *   布局   八台以内从左到右摊开、一高一低错成一条折线（有经纬度的按经度排，西边的在左）；
  *          更多就排成一个椭圆。之后再互相推开几轮，免得两台叠在一起。
  *
@@ -29,6 +31,8 @@ export type NetworkMapNode = {
   note?: string | null;
   /** 有的话按它落位 */
   geo?: { lat: number; lng: number } | null;
+  /** 国旗（由国家码算出来），画在圆盘里；没有就画一颗状态色的点 */
+  emoji?: string | null;
 };
 
 export type NetworkMapLink = {
@@ -123,14 +127,25 @@ export function layoutNetworkMap(nodes: readonly NetworkMapNode[], width: number
   }));
 }
 
-/** 两点之间弯一点的线。同一对点之间第 k 条线往另一边弯，不叠成一根。 */
+/**
+ * 两点之间弯一点的线。同一对点之间第 k 条线往另一边弯，不叠成一根。
+ * mid 是挂延迟小标签的位置：不在正中间，而是偏向两点里靠下的那一个（t = 2/3）——
+ * 上排节点的名字和注脚往下伸 28px，正中间的标签会压在字上；往下挪三分之一正好落在两排之间的空带里。
+ */
 function curve(a: Placed, b: Placed, bend: number) {
   const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
   const dx = b.x - a.x, dy = b.y - a.y;
   const len = Math.hypot(dx, dy) || 1;
   const nx = -dy / len, ny = dx / len;
   const k = Math.min(40, len * 0.18) * bend;
-  return `M${a.x.toFixed(1)} ${a.y.toFixed(1)} Q${(mx + nx * k).toFixed(1)} ${(my + ny * k).toFixed(1)} ${b.x.toFixed(1)} ${b.y.toFixed(1)}`;
+  const cx = mx + nx * k, cy = my + ny * k;
+  const t = Math.abs(dy) < 20 ? 0.5 : a.y < b.y ? 0.66 : 0.34;
+  const u = 1 - t;
+  return {
+    d: `M${a.x.toFixed(1)} ${a.y.toFixed(1)} Q${cx.toFixed(1)} ${cy.toFixed(1)} ${b.x.toFixed(1)} ${b.y.toFixed(1)}`,
+    // 二次贝塞尔：(1-t)²·A + 2(1-t)t·C + t²·B
+    mid: { x: u * u * a.x + 2 * u * t * cx + t * t * b.x, y: u * u * a.y + 2 * u * t * cy + t * t * b.y },
+  };
 }
 
 function truncateLabel(text: string, max = 14) {
@@ -182,8 +197,9 @@ export function NetworkMap({
 }) {
   const { ref, width } = useMeasuredWidth<HTMLDivElement>(360);
   const reducedMotion = usePrefersReducedMotion();
-  // 手机上 360 宽画 220 高；桌面拉宽之后按比例长高一点，但封顶 300，别成一张海报。
-  const height = Math.round(Math.min(300, Math.max(210, width * 0.5)));
+  // 手机上 360 宽画 224 高：上下两排节点连名字各占 55px，中间那条带要留给延迟小标签，
+  // 再矮标签就压到上排的名字上（190 时实测压住）。桌面拉宽之后按比例长高一点，但封顶 270。
+  const height = Math.round(Math.min(270, Math.max(224, width * 0.5)));
   const placed = useMemo(() => layoutNetworkMap(nodes, width, height), [nodes, width, height]);
   // 名字能写多长跟着同一行相邻两台的间距走：八台挤在 360 宽里时名字短一点，别互相压着。
   const labelMax = nodes.length > 1
@@ -193,20 +209,24 @@ export function NetworkMap({
 
   const segments = useMemo(() => {
     const pairCount = new Map<string, number>();
-    const out: { key: string; d: string; link: NetworkMapLink; token: string; dashed: boolean }[] = [];
+    const out: { key: string; d: string; mid: { x: number; y: number } | null; link: NetworkMapLink; token: string; dashed: boolean }[] = [];
     for (const link of links) {
       const stops = link.path.map((id) => byId.get(id)).filter((node): node is Placed => !!node);
       if (stops.length < 2) continue;
       const descriptor = describeNetworkHealth(link.health);
+      // 延迟小标签挂在这条线路中间那一段上（多跳的挂在中间一跳）；线多于 8 条就不挂，免得糊成一片
+      const labelAt = links.length <= 8 && typeof link.latencyMs === "number" ? Math.floor((stops.length - 2) / 2) : -1;
       for (let i = 0; i < stops.length - 1; i += 1) {
         const a = stops[i], b = stops[i + 1];
         const pairKey = a.id < b.id ? `${a.id}-${b.id}` : `${b.id}-${a.id}`;
         const seen = pairCount.get(pairKey) || 0;
         pairCount.set(pairKey, seen + 1);
         const bend = (seen % 2 === 0 ? 1 : -1) * (1 + Math.floor(seen / 2) * 0.8);
+        const shape = curve(a, b, a.id < b.id ? bend : -bend);
         out.push({
           key: `${link.id}:${i}`,
-          d: curve(a, b, a.id < b.id ? bend : -bend),
+          d: shape.d,
+          mid: i === labelAt ? shape.mid : null,
           link,
           token: descriptor.token,
           dashed: descriptor.lineStyle !== "solid",
@@ -236,17 +256,44 @@ export function NetworkMap({
             <stop offset="0" stopColor="var(--fx-accent-strong)" stopOpacity="0.75" />
             <stop offset="1" stopColor="var(--fx-accent)" />
           </linearGradient>
+          {/* 底：左上角一团很淡的主色光，点阵往四边淡出 —— 不是一张平的方格纸 */}
+          <radialGradient id="fx-netmap-glow" cx="0.18" cy="0.1" r="0.9">
+            <stop offset="0" stopColor="var(--fx-primary-fill)" stopOpacity="0.13" />
+            <stop offset="0.55" stopColor="var(--fx-primary-fill)" stopOpacity="0.03" />
+            <stop offset="1" stopColor="var(--fx-primary-fill)" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="fx-netmap-fade" cx="0.5" cy="0.5" r="0.8">
+            <stop offset="0.45" stopColor="#fff" stopOpacity="1" />
+            <stop offset="1" stopColor="#fff" stopOpacity="0" />
+          </radialGradient>
+          <mask id="fx-netmap-dots-mask">
+            <rect x="0" y="0" width={width} height={height} fill="url(#fx-netmap-fade)" />
+          </mask>
         </defs>
-        <rect x="0" y="0" width={width} height={height} fill="url(#fx-netmap-dots)" />
+        <rect x="0" y="0" width={width} height={height} fill="url(#fx-netmap-glow)" />
+        <rect x="0" y="0" width={width} height={height} fill="url(#fx-netmap-dots)" mask="url(#fx-netmap-dots-mask)" />
 
         <g className="fx-netmap-wires">
+          {/* 每条线下面垫一条更粗、很淡的同色线：线像发着一点光，不是一根硬邦邦的细线 */}
+          {segments.map((segment) => (
+            <path
+              key={`halo:${segment.key}`}
+              d={segment.d}
+              fill="none"
+              stroke={`var(--fx-${segment.token})`}
+              strokeOpacity={segment.token === "standby" ? 0.08 : 0.14}
+              strokeWidth={7}
+              strokeLinecap="round"
+              aria-hidden="true"
+            />
+          ))}
           {segments.map((segment) => (
             <path
               key={segment.key}
               d={segment.d}
               fill="none"
               stroke={segment.token === "healthy" ? "url(#fx-netmap-wire)" : `var(--fx-${segment.token})`}
-              strokeWidth={2.5}
+              strokeWidth={2.2}
               strokeLinecap="round"
               strokeDasharray={segment.dashed ? "6 5" : undefined}
               className={onSelectLink ? "cursor-pointer" : undefined}
@@ -256,10 +303,24 @@ export function NetworkMap({
               <title>{`${segment.link.name}${typeof segment.link.latencyMs === "number" ? ` · ${Math.round(segment.link.latencyMs)} ms` : ""}`}</title>
             </path>
           ))}
-          {/* 透明的粗一点的一层，让 2.5px 的线也点得中 */}
+          {/* 透明的粗一点的一层，让 2px 的线也点得中 */}
           {onSelectLink ? segments.map((segment) => (
             <path key={`hit:${segment.key}`} d={segment.d} fill="none" stroke="transparent" strokeWidth={14} className="cursor-pointer" onClick={() => onSelectLink(segment.link)} />
           )) : null}
+        </g>
+
+        <g className="fx-netmap-pills" aria-hidden="true">
+          {/* 线中间一枚小白标签写这条线路的延迟（「7 ms」）：地图不用点开就知道哪条快哪条慢 */}
+          {segments.filter((segment) => segment.mid).map((segment) => {
+            const text = `${Math.round(Number(segment.link.latencyMs))} ms`;
+            const w = text.length * 5.6 + 12;
+            return (
+              <g key={`pill:${segment.key}`} transform={`translate(${segment.mid!.x.toFixed(1)} ${segment.mid!.y.toFixed(1)})`}>
+                <rect x={-w / 2} y={-8} width={w} height={16} rx={8} fill="var(--fx-l1-surface)" stroke={`var(--fx-${segment.token})`} strokeOpacity={0.35} />
+                <text y={3.5} textAnchor="middle" className="fx-netmap-pill" style={{ fill: `var(--fx-${segment.token === "healthy" ? "accent" : segment.token === "standby" ? "text-muted" : `${segment.token}-text`})` }}>{text}</text>
+              </g>
+            );
+          })}
         </g>
 
         <g className="fx-netmap-flow" aria-hidden="true">
@@ -285,8 +346,14 @@ export function NetworkMap({
                 onKeyDown={onSelectNode ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectNode(node); } } : undefined}
               >
                 <title>{`${node.name}${note ? ` · ${note}` : ""}`}</title>
-                <circle r={NODE_RADIUS} fill="var(--fx-l1-surface)" stroke={color} strokeWidth={3} />
-                <circle r={4} fill={color} />
+                {/* 一圈很淡的状态色光环，再一枚白色圆盘 + 状态色的环；盘里是这台机器的国旗，没有国旗就是一颗状态色的点 */}
+                <circle r={NODE_RADIUS + 6} fill={color} fillOpacity={node.health === "healthy" ? 0.12 : 0.09} />
+                <circle r={NODE_RADIUS} fill="var(--fx-l1-surface)" stroke={color} strokeWidth={2.5} />
+                {node.emoji ? (
+                  <text y={4.5} textAnchor="middle" className="fx-netmap-flag" opacity={node.health === "healthy" ? 1 : 0.55}>{node.emoji}</text>
+                ) : (
+                  <circle r={4} fill={color} />
+                )}
                 <text y={NODE_RADIUS + 15} textAnchor="middle" className="fx-netmap-label">{truncateLabel(node.name, labelMax)}</text>
                 {note ? <text y={NODE_RADIUS + 28} textAnchor="middle" className="fx-netmap-note">{truncateLabel(note, labelMax + 4)}</text> : null}
               </g>

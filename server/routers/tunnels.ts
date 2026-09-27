@@ -832,6 +832,27 @@ export const tunnelsRouter = router({
           () => db.getTunnelLatencySeries(input.tunnelId, { since }),
         );
       }),
+    /** 链路卡上那条近 24H 延迟小走势：这一页的隧道一次全拿。 */
+    latencySparkBatch: protectedProcedure
+      .input(z.object({
+        tunnelIds: z.array(z.number().int().positive()).max(200),
+        hours: z.number().min(1).max(24 * 3).default(24),
+        bucketMinutes: z.number().min(5).max(1440).default(60),
+      }))
+      .query(async ({ input, ctx }) => {
+        const ids = [...new Set(input.tunnelIds)].sort((a, b) => a - b);
+        if (ids.length === 0) return [];
+        const since = new Date(Date.now() - input.hours * 3600 * 1000);
+        return tunnelQueryCache.get(
+          `latencySpark:${ctx.user.id}:${input.hours}:${input.bucketMinutes}:${ids.join(",")}`,
+          { ttlMs: 30_000, staleMs: 120_000 },
+          () => db.getTunnelLatencySparkBatch(ids, {
+            since,
+            bucketMinutes: input.bucketMinutes,
+            userId: ctx.user.role === "admin" ? undefined : ctx.user.id,
+          }),
+        );
+      }),
     create: protectedProcedure
       .input(z.object({
         name: z.string().min(1).max(128),

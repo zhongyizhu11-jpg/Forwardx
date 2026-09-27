@@ -1,6 +1,10 @@
 import { FormField } from "@/components/ui/form-field";
 import EmptyState from "@/components/EmptyState";
 import WorkspaceHeader from "@/components/WorkspaceHeader";
+import { HeaderStatusChips } from "@/components/HeaderStatusChips";
+import { Sparkline } from "@/components/charts/Sparkline";
+import { hourlySlots } from "@/lib/hourlySlots";
+import { describeNetworkHealth } from "@shared/networkHealth";
 import ConnectionPath from "@/components/ConnectionPath";
 import { NetworkPath } from "@/components/network/NetworkPath";
 import { StatusDot } from "@/components/network/StatusDot";
@@ -21,7 +25,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { DiagnoseDialog } from "@/components/DiagnoseDialog";
 import { useAuth } from "@/_core/hooks/useAuth";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
-import { LatencyRating } from "@/components/LatencyRating";
+import { LatencyRating, getLatencyRating } from "@/components/LatencyRating";
 import { LatencyPeakCutToggle } from "@/components/LatencyPeakCutToggle";
 import { LatencyStabilityStats } from "@/components/LatencyStabilityStats";
 import {
@@ -110,7 +114,7 @@ import {
   XCircle,
 } from "lucide-react";
 import type { GlobeMethods } from "react-globe.gl";
-import { Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   FORWARD_PROTOCOL_LABELS,
@@ -2527,7 +2531,7 @@ function TunnelsContent() {
     const { health, message } = tunnelHealthOf(tunnel, supported);
     return <StatusDot health={health} size="large" label={message} />;
   };
-  const renderTunnelRoute = (tunnel: any, compact = false) => {
+  const renderTunnelRoute = (tunnel: any, compact = false, orientation?: "auto" | "horizontal" | "vertical", showVia = true) => {
     const entryGroup = Number(tunnel?.entryGroupId || 0) > 0 ? entryGroupById.get(Number(tunnel.entryGroupId)) : null;
     /*
       换成 Path 语言：位置本身说明谁是入口谁是出口，不再给每个节点贴
@@ -2546,11 +2550,12 @@ function TunnelsContent() {
         : [],
       health,
       latencyMs: typeof tunnel?.lastLatencyMs === "number" ? tunnel.lastLatencyMs : null,
-      via: getTunnelModeDisplay(tunnel?.mode, true, tunnel?.forwardxVersion),
+      // 链路卡的副标题已经写了模式（「GOST TLS · 直连」），线旁边不再重复一遍，路径就是一行
+      via: showVia ? getTunnelModeDisplay(tunnel?.mode, true, tunnel?.forwardxVersion) : undefined,
     });
     return (
       <div title={path.title}>
-        <NetworkPath nodes={path.nodes} edges={path.edges} orientation={compact ? "auto" : "vertical"} />
+        <NetworkPath nodes={path.nodes} edges={path.edges} orientation={orientation ?? (compact ? "auto" : "vertical")} />
       </div>
     );
   };
@@ -2806,6 +2811,51 @@ function TunnelsContent() {
     onError: (e) => toast.error(e.message || "排序保存失败"),
   });
   const tunnelReorderPending = reorderTunnelsMutation.isPending;
+  /*
+    链路卡上那条近 24H 延迟小走势：这一页的隧道一次全拿（每条每小时一行）。表格、地图视图不画它，就不请求。
+  */
+  const sparkTunnelIds = useMemo(
+    () => pagedTunnels.map((tunnel: any) => Number(tunnel.id)).filter((id: number) => Number.isFinite(id) && id > 0),
+    [pagedTunnels],
+  );
+  const { data: tunnelSparkRows } = trpc.tunnels.latencySparkBatch.useQuery(
+    { tunnelIds: sparkTunnelIds, hours: 24, bucketMinutes: 60 },
+    {
+      enabled: activeSection === "tunnels" && viewMode !== "globe" && sparkTunnelIds.length > 0,
+      refetchInterval: pollingInterval("slow"),
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+      placeholderData: (previousData) => previousData,
+    },
+  );
+  const sparkByTunnel = useMemo(() => {
+    const byId = new Map<number, { values: number[]; avgMs: number | null; maxMs: number | null }>();
+    if (!tunnelSparkRows) return byId;
+    const grouped = new Map<number, Array<{ bucket: string | Date; avgMs: number; maxMs: number; samples: number }>>();
+    for (const row of tunnelSparkRows as any[]) {
+      const id = Number(row.tunnelId);
+      const list = grouped.get(id) || [];
+      list.push(row);
+      grouped.set(id, list);
+    }
+    grouped.forEach((rows, id) => {
+      let weighted = 0;
+      let samples = 0;
+      let maxMs = 0;
+      for (const row of rows) {
+        const n = Math.max(1, Number(row.samples) || 1);
+        weighted += (Number(row.avgMs) || 0) * n;
+        samples += n;
+        maxMs = Math.max(maxMs, Number(row.maxMs) || 0);
+      }
+      byId.set(id, {
+        values: hourlySlots(rows, (row) => ({ at: row.bucket, value: Number(row.avgMs) || 0 })),
+        avgMs: samples > 0 ? Math.round(weighted / samples) : null,
+        maxMs: samples > 0 ? maxMs : null,
+      });
+    });
+    return byId;
+  }, [tunnelSparkRows]);
   const tunnelSortable = useSortableReorder({
     items: pagedTunnels,
     getId: (tunnel: any) => Number(tunnel.id),
@@ -3611,6 +3661,20 @@ function TunnelsContent() {
                 fallback: "0 / 0 可用",
                 iconClass: "text-chart-2",
               };
+  /*
+    页头标题下那行状态点用的数就是 headerStat 那句「n / m 可用」里的两个：隧道是「可用 / 中断」，
+    别的段落是「已启用 / 停用」。从那句里拆出来，两处不会各算各的。
+  */
+  const headerChipItems = (() => {
+    const match = /^(\d+) \/ (\d+) (可用|已启用)$/.exec(headerStat.value);
+    const good = match ? Number(match[1]) : 0;
+    const total = match ? Number(match[2]) : 0;
+    const isAvailability = !match || match[3] === "可用";
+    return [
+      { key: "good", label: isAvailability ? "可用" : "已启用", count: good, tone: "healthy" as const },
+      { key: "bad", label: isAvailability ? "中断" : "停用", count: Math.max(0, total - good), tone: isAvailability ? "down" as const : "off" as const },
+    ];
+  })();
   const linkSearchStats = activeSection === "ports"
     ? { filtered: Number(forwardGroupSummaryQuery.data?.totalItems || 0), total: Number(forwardGroupSummaryQuery.data?.scopeTotalItems || 0), unit: "条" }
     : activeSection === "chains"
@@ -3766,6 +3830,108 @@ function TunnelsContent() {
       </div>
     );
   };
+  /*
+    链路卡（第三轮样稿，和规则卡同一套骨架）：
+      卡头   状态点 + 名字；下面一行「模式 · 直连 / N 跳 · 状态」；右边 ··· 和开关
+      路径   入口 ── 7 ms ── 出口，每跳标 ms（NetworkPath，三个节点以内横排）
+      卡底   延迟大数字 + 评级标签 + 近 24H 延迟走势 + 「平均 / 最高」
+    上一版是「名字 / 状态 / 竖排路径 / 模式徽标 / 延迟明细列表」五段，一张卡 300px 还没有数字可看。
+    卡的状态色（--fx-rule-tone）跟隧道健康走：正常主色、部分可用琥珀、中断红、停用灰。
+  */
+  const TUNNEL_TONE_COLOR: Record<"ok" | "warn" | "down" | "off", string> = {
+    ok: "var(--fx-primary-fill)",
+    warn: "var(--fx-warn)",
+    down: "var(--fx-down)",
+    off: "var(--fx-text-muted)",
+  };
+  const renderTunnelCard = (
+    tunnel: any,
+    sortable: { itemProps: any; handleProps: any; isDragging: boolean; isDropTarget: boolean },
+  ) => {
+    const supported = isTunnelSupported(tunnel);
+    const protocolKey = getTunnelProtocolKey(tunnel);
+    const { health } = tunnelHealthOf(tunnel, supported);
+    const token = describeNetworkHealth(health).token;
+    const tone: "ok" | "warn" | "down" | "off" = token === "healthy" ? "ok" : token === "warn" ? "warn" : token === "down" ? "down" : "off";
+    const toneColor = TUNNEL_TONE_COLOR[tone];
+    const statusText = !supported
+      ? "协议未启用"
+      : ({ available: "运行正常", degraded: "部分可用", pending: "等待检测", unavailable: "连接异常", disabled: "已停用" } as Record<string, string>)[tunnelAvailabilityById.get(Number(tunnel.id))?.status || "disabled"];
+    const hopCount = getTunnelHopIds(tunnel).length;
+    const hasEntryGroup = Number(tunnel?.entryGroupId || 0) > 0;
+    const subtitle = [
+      getTunnelModeDisplay(tunnel.mode, nginxTunnelEnabled, tunnel.forwardxVersion),
+      hopCount > 2 ? `${hopCount - 1} 跳` : "直连",
+      statusText,
+    ].filter(Boolean).join(" · ");
+    const latencyMs = tunnelDisplayLatencyMs(tunnel);
+    const hasLatency = typeof latencyMs === "number" && Number.isFinite(latencyMs);
+    const timeout = !hasLatency && tunnelLatencyIsTimeout(tunnel);
+    const rating = hasLatency ? getLatencyRating(latencyMs) : null;
+    const ratingTone = !rating ? "off" : rating.label === "优秀" ? "healthy" : rating.label === "良好" ? "ok" : rating.label === "一般" ? "warn" : "down";
+    const spark = sparkByTunnel.get(Number(tunnel.id));
+    return (
+      <Card
+        {...sortable.itemProps}
+        className={cn(
+          "group/sortable relative fx-rule-card fx-tunnel-card action-card border-border bg-card transition-[box-shadow,opacity]",
+          !supported && "opacity-70",
+          sortable.isDragging && "opacity-55 ring-1 ring-primary/35",
+          sortable.isDropTarget && "ring-1 ring-primary/45",
+        )}
+        data-tone={tone}
+        style={{ ...(sortable.itemProps?.style || {}), "--fx-rule-tone": toneColor } as CSSProperties}
+        title={!supported ? unsupportedProtocolTitle : undefined}
+      >
+        <CardContent className="fx-rule-card-body action-card-content">
+          <div className="fx-rule-head">
+            <div className="fx-rule-title">
+              <div className="fx-rule-name">
+                <span className="fx-rule-dot">{renderTunnelStatusDot(tunnel, supported)}</span>
+                <span className="truncate">{tunnel.name}</span>
+              </div>
+              <div className="fx-rule-sub" title={subtitle}>{subtitle}</div>
+              {!supported && (
+                <p className="mt-1 text-[11px] text-destructive">{tunnelProtocolLabel(protocolKey)} 当前不支持</p>
+              )}
+            </div>
+            <div className="fx-rule-head-actions">
+              <SortableDragHandle
+                dragHandleProps={sortable.handleProps}
+                visible={sortable.isDragging}
+                busy={tunnelReorderPending}
+                className="bg-card/70"
+              />
+              {renderTunnelActions(tunnel, supported, true)}
+              {supported ? (
+                renderTunnelEnabledSwitch(tunnel)
+              ) : (
+                renderUnsupportedHint(<span className="inline-flex"><Switch aria-label="当前协议不支持" checked={false} disabled className="switch-compact" /></span>)
+              )}
+            </div>
+          </div>
+          <div className="fx-tunnel-route">
+            {renderTunnelRoute(tunnel, true, hopCount <= 3 && !hasEntryGroup ? "horizontal" : "auto", false)}
+          </div>
+          <div className="fx-tunnel-foot">
+            {hasLatency ? (
+              <div className="fx-rule-num"><b>{Math.round(latencyMs)}</b><small>ms</small></div>
+            ) : (
+              <span className="fx-tunnel-none">{timeout ? "超时" : "未测试"}</span>
+            )}
+            {rating ? <span className="fx-rule-tag" data-tone={ratingTone}>{rating.label}</span> : null}
+            <Sparkline values={spark?.values || []} width={96} height={26} stroke={toneColor} className="fx-rule-spark" title="近 24 小时延迟走势" />
+            <div className="fx-rule-day">
+              <span>近 24H</span>
+              <span className="fx-rule-day-val">
+                {spark?.avgMs != null ? `平均 ${spark.avgMs} · 最高 ${spark.maxMs} ms` : "还没有记录"}
+              </span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
   const tunnelTableRouteText = (tunnel: any) => {
     const route = getTunnelRouteText(tunnel, hosts);
     const entryGroup = Number(tunnel?.entryGroupId || 0) > 0 ? entryGroupById.get(Number(tunnel.entryGroupId)) : null;
@@ -3776,16 +3942,16 @@ function TunnelsContent() {
   return (
     <div className="space-y-6">
       <WorkspaceHeader title="链路管理" description="管理隧道、端口转发和多节点线路" status={
-          <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
-            <Activity className="h-3 w-3 text-current" />
+          <span className="text-meta tabular-nums text-muted-foreground">
             <AnimatedStatValue
+              as="span"
               value={headerStat.value}
               loading={headerStat.loading}
               cacheKey={headerStat.cacheKey}
               fallbackValue={headerStat.fallback}
             />
-          </Badge>
-      } actions={<>
+          </span>
+      } chips={<HeaderStatusChips items={headerChipItems} />} actions={<>
           <div className="hidden items-center overflow-hidden rounded-md border border-border/40 sm:flex">
             <Button
               variant={activeViewMode === "card" ? "secondary" : "ghost"}
@@ -3889,146 +4055,22 @@ function TunnelsContent() {
         {viewMode === "card" ? (
           <SortableReorderContext sortable={tunnelSortable} ids={pagedTunnels.map((tunnel: any) => Number(tunnel.id))} strategy="rect">
           <div className="standard-card-grid items-start gap-4">
-            {pagedTunnels.map((tunnel: any) => {
-              const supported = isTunnelSupported(tunnel);
-              const protocolKey = getTunnelProtocolKey(tunnel);
-              return (
-                <SortableItem key={tunnel.id} id={Number(tunnel.id)} disabled={tunnelSortable.disabled}>
-                {({ itemProps, handleProps, isDragging, isDropTarget }) => (
-                  <Card
-                    {...itemProps}
-                    className={cn(
-                      "group/sortable relative action-card border-border bg-card transition-[box-shadow,opacity]",
-                      !supported && "opacity-70",
-                      isDragging && "opacity-55 ring-1 ring-primary/35",
-                      isDropTarget && "ring-1 ring-primary/45",
-                    )}
-                    title={!supported ? unsupportedProtocolTitle : undefined}
-                  >
-                    <CardContent className="action-card-content space-y-3 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 items-start gap-2">
-                        <div className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center">
-                          {renderTunnelStatusDot(tunnel, supported)}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate font-semibold">{tunnel.name}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">{!supported ? "协议未启用" : ({ available: "运行正常", degraded: "部分可用", pending: "等待检测", unavailable: "连接异常", disabled: "已停用" } as Record<string, string>)[tunnelAvailabilityById.get(Number(tunnel.id))?.status || "disabled"]}</p>
-                          {!supported && (
-                            <p className="mt-1 text-[11px] text-destructive">
-                              {tunnelProtocolLabel(protocolKey)} 当前不支持
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <SortableDragHandle
-                          dragHandleProps={handleProps}
-                          visible={isDragging}
-                          busy={tunnelReorderPending}
-                          className="bg-card/70"
-                        />
-                        {renderTunnelActions(tunnel, supported, true)}
-                        {supported ? (
-                          renderTunnelEnabledSwitch(tunnel)
-                        ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch aria-label="当前协议不支持" checked={false} disabled className="switch-compact" /></span>)
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 text-xs">
-                      {renderTunnelRoute(tunnel, true)}
-                      <div className="flex flex-wrap gap-1.5">
-                        <Badge variant="outline" className="text-[10px]">
-                          {getTunnelModeDisplay(tunnel.mode, nginxTunnelEnabled, tunnel.forwardxVersion)}
-                        </Badge>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1 text-xs">
-                      <span className="text-muted-foreground">延迟</span>
-                      {renderTunnelLatencyBreakdown(tunnel, true)}
-                    </div>
-                    </CardContent>
-                  </Card>
-                )}
-                </SortableItem>
-              );
-            })}
+            {pagedTunnels.map((tunnel: any) => (
+              <SortableItem key={tunnel.id} id={Number(tunnel.id)} disabled={tunnelSortable.disabled}>
+                {(sortable) => renderTunnelCard(tunnel, sortable)}
+              </SortableItem>
+            ))}
           </div>
           </SortableReorderContext>
         ) : (
           <>
           <SortableReorderContext sortable={tunnelSortable} ids={pagedTunnels.map((tunnel: any) => Number(tunnel.id))} strategy="vertical" restrictToList>
           <div className="grid gap-3 sm:hidden">
-            {pagedTunnels.map((tunnel: any) => {
-              const supported = isTunnelSupported(tunnel);
-              const protocolKey = getTunnelProtocolKey(tunnel);
-              return (
-                <SortableItem key={tunnel.id} id={Number(tunnel.id)} disabled={tunnelSortable.disabled}>
-                {({ itemProps, handleProps, isDragging, isDropTarget }) => (
-                  <Card
-                    {...itemProps}
-                    className={cn(
-                      "group/sortable relative action-card border-border bg-card transition-[box-shadow,opacity]",
-                      !supported && "opacity-70",
-                      isDragging && "opacity-55 ring-1 ring-primary/35",
-                      isDropTarget && "ring-1 ring-primary/45",
-                    )}
-                    title={!supported ? unsupportedProtocolTitle : undefined}
-                  >
-                    <CardContent className="action-card-content space-y-3 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 items-start gap-2">
-                        <div className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center">
-                          {renderTunnelStatusDot(tunnel, supported)}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate font-semibold">{tunnel.name}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">{!supported ? "协议未启用" : ({ available: "运行正常", degraded: "部分可用", pending: "等待检测", unavailable: "连接异常", disabled: "已停用" } as Record<string, string>)[tunnelAvailabilityById.get(Number(tunnel.id))?.status || "disabled"]}</p>
-                          {!supported && (
-                            <p className="mt-1 text-[11px] text-destructive">
-                              {tunnelProtocolLabel(protocolKey)} 当前不支持
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <SortableDragHandle
-                          dragHandleProps={handleProps}
-                          visible={isDragging}
-                          busy={tunnelReorderPending}
-                          className="bg-card/70"
-                        />
-                        {renderTunnelActions(tunnel, supported, true)}
-                        {supported ? (
-                          renderTunnelEnabledSwitch(tunnel)
-                        ) : (
-                          renderUnsupportedHint(<span className="inline-flex"><Switch aria-label="当前协议不支持" checked={false} disabled className="switch-compact" /></span>)
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 text-xs">
-                      {renderTunnelRoute(tunnel, true)}
-                      <div className="flex flex-wrap gap-1.5">
-                        <Badge variant="outline" className="text-[10px]">
-                          {getTunnelModeDisplay(tunnel.mode, nginxTunnelEnabled, tunnel.forwardxVersion)}
-                        </Badge>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1 text-xs">
-                      <span className="text-muted-foreground">延迟</span>
-                      {renderTunnelLatencyBreakdown(tunnel, true)}
-                    </div>
-                    </CardContent>
-                  </Card>
-                )}
-                </SortableItem>
-              );
-            })}
+            {pagedTunnels.map((tunnel: any) => (
+              <SortableItem key={tunnel.id} id={Number(tunnel.id)} disabled={tunnelSortable.disabled}>
+                {(sortable) => renderTunnelCard(tunnel, sortable)}
+              </SortableItem>
+            ))}
           </div>
           </SortableReorderContext>
           <Card className="hidden border-border bg-card sm:block">

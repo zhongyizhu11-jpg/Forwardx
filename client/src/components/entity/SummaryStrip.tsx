@@ -58,12 +58,15 @@ export function SummaryStrip({
   loading = false,
   ariaLabel,
   className,
+  embedded = false,
 }: {
   /** 2–4 个。再多就不是「一眼看完」了，该拆成列表。 */
   items: SummaryItem[];
   loading?: boolean;
   ariaLabel?: string;
   className?: string;
+  /** 已经在一张卡里（首页运行状态卡）：不再自带卡壳。 */
+  embedded?: boolean;
 }) {
   const count = items.length;
   // 四个也排一行：一格只有标签、数、一行小字，90px 宽放得下；折成 2×2 就成了四张卡。
@@ -72,7 +75,7 @@ export function SummaryStrip({
     <div
       role="group"
       aria-label={ariaLabel}
-      className={cn("fx-summary grid", grid, className)}
+      className={cn("fx-summary grid", !embedded && "fx-card-face", grid, className)}
       data-testid="summary-strip"
     >
       {items.map((item) => {
