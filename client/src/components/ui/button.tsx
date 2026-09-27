@@ -11,7 +11,11 @@ import { cn } from "@/lib/utils"
 const buttonVariants = cva("inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-[13.5px] font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50", {
   variants: {
     variant: {
-      default: "border border-[var(--fx-primary-stroke)] bg-[var(--fx-primary-fill)] bg-[image:var(--fx-primary-gradient)] font-semibold text-[var(--fx-primary-text)] hover:bg-[image:var(--fx-primary-gradient-hover)]",
+      /*
+        禁用态不再是「渐变兑一半」—— 半透明的天蓝渐变上一行白字谁也读不清。
+        禁用就退成一块平的浅灰、灰字，和其它禁用控件一个样。
+      */
+      default: "border border-[var(--fx-primary-stroke)] bg-[var(--fx-primary-fill)] bg-[image:var(--fx-primary-gradient)] font-semibold text-[var(--fx-primary-text)] hover:bg-[image:var(--fx-primary-gradient-hover)] disabled:border-[var(--fx-stroke-weak)] disabled:bg-[var(--fx-l3-control-fill)] disabled:bg-[image:none] disabled:text-muted-foreground disabled:opacity-100",
       destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
       outline: "border border-[var(--fx-stroke-base)] bg-[var(--fx-l1-surface)] text-foreground hover:bg-[var(--fx-hover)]",
       secondary: "bg-[var(--fx-l3-control-fill)] text-foreground hover:bg-[var(--fx-hover)]",

@@ -736,7 +736,7 @@ function ProfileContent() {
             <CardDescription>结束当前浏览器或 APP 的登录会话。</CardDescription>
           </CardHeader>
           <CardContent>
-            <Button className="w-full gap-2 sm:w-auto" onClick={logout}>
+            <Button variant="outline" className="w-full gap-2 border-[color-mix(in_srgb,var(--fx-down)_35%,transparent)] text-[var(--fx-down-text,var(--fx-down))] hover:bg-[var(--fx-down-soft)] hover:text-[var(--fx-down-text,var(--fx-down))] sm:w-auto" onClick={logout}>
               <LogOut className="h-4 w-4" />
               退出登录
             </Button>

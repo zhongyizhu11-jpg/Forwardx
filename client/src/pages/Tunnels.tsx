@@ -150,7 +150,6 @@ import {
 import MultiHopEditor from "@/components/MultiHopEditor";
 import { ForwardGroupsContent } from "@/pages/ForwardGroups";
 import { EntityActions } from "@/components/entity/EntityActions";
-import { CardActions } from "@/components/entity/EntityCard";
 
 const ReactGlobe = lazy(loadReactGlobe) as typeof import("react-globe.gl").default;
 
@@ -437,7 +436,7 @@ function createTunnelGlobeHostPoint(host: any): TunnelGlobeHostPoint | null {
 function formatGlobeLatency(value: unknown, timeout?: unknown) {
   if (timeout) return "超时";
   const latency = Number(value);
-  return Number.isFinite(latency) && latency >= 0 ? `${Math.round(latency)}ms` : "未测试";
+  return Number.isFinite(latency) && latency >= 0 ? `${Math.round(latency)} ms` : "未测试";
 }
 
 function hasLatestTunnelLatency(tunnel: any) {
@@ -1694,7 +1693,7 @@ function TunnelSelfTestDialog({
               const failed = !pending && (detail ? detail.success === false : latestTimeout);
               const success = pending || !failed;
               const latency = typeof detail?.latencyMs === "number" && Number.isFinite(detail.latencyMs)
-                ? `${detail.latencyMs}ms`
+                ? `${detail.latencyMs} ms`
                 : pending
                   ? "诊断中"
                   : detail
@@ -3691,8 +3690,9 @@ function TunnelsContent() {
     删除永远在菜单最后、红色、隔一条线（顺序由 partitionEntityActions 保证）。
     协议被停用的隧道只剩删除。
   */
-  const renderTunnelActions = (tunnel: any, supported: boolean) => (
+  const renderTunnelActions = (tunnel: any, supported: boolean, menuOnly = false) => (
     <EntityActions
+      menuOnly={menuOnly}
       primary={supported ? [
         {
           key: "test",
@@ -3750,7 +3750,7 @@ function TunnelsContent() {
       <div className={cn("space-y-1", maxItems && "max-h-[2.35rem] overflow-hidden")}>
         {visibleItems.map((item) => (
           <div key={item.key} className="flex min-w-0 items-center justify-between gap-2 whitespace-nowrap text-xs">
-            <span className="min-w-0 truncate text-muted-foreground">{item.label}</span>
+            <span className="min-w-0 truncate text-muted-foreground">{String(item.label).replace(/ -> /g, " → ")}</span>
             <LatencyRating
               latencyMs={item.latencyMs}
               isTimeout={item.isTimeout}
@@ -3888,7 +3888,7 @@ function TunnelsContent() {
         <>
         {viewMode === "card" ? (
           <SortableReorderContext sortable={tunnelSortable} ids={pagedTunnels.map((tunnel: any) => Number(tunnel.id))} strategy="rect">
-          <div className="standard-card-grid gap-4">
+          <div className="standard-card-grid items-start gap-4">
             {pagedTunnels.map((tunnel: any) => {
               const supported = isTunnelSupported(tunnel);
               const protocolKey = getTunnelProtocolKey(tunnel);
@@ -3928,6 +3928,7 @@ function TunnelsContent() {
                           busy={tunnelReorderPending}
                           className="bg-card/70"
                         />
+                        {renderTunnelActions(tunnel, supported, true)}
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
@@ -3949,8 +3950,6 @@ function TunnelsContent() {
                       <span className="text-muted-foreground">延迟</span>
                       {renderTunnelLatencyBreakdown(tunnel, true)}
                     </div>
-
-                    <CardActions>{renderTunnelActions(tunnel, supported)}</CardActions>
                     </CardContent>
                   </Card>
                 )}
@@ -4002,6 +4001,7 @@ function TunnelsContent() {
                           busy={tunnelReorderPending}
                           className="bg-card/70"
                         />
+                        {renderTunnelActions(tunnel, supported, true)}
                         {supported ? (
                           renderTunnelEnabledSwitch(tunnel)
                         ) : (
@@ -4023,8 +4023,6 @@ function TunnelsContent() {
                       <span className="text-muted-foreground">延迟</span>
                       {renderTunnelLatencyBreakdown(tunnel, true)}
                     </div>
-
-                    <CardActions>{renderTunnelActions(tunnel, supported)}</CardActions>
                     </CardContent>
                   </Card>
                 )}

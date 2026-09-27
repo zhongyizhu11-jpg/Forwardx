@@ -12,6 +12,7 @@ import { trafficQuotaBreakdown } from "@/lib/trafficQuota";
 import { trpc } from "@/lib/trpc";
 import { AccountSection } from "@/features/dashboard/AccountSection";
 import { AttentionSection } from "@/features/dashboard/AttentionSection";
+import { NetworkMapSection } from "@/features/dashboard/NetworkMapSection";
 import { QuickStartSection } from "@/features/dashboard/QuickStartSection";
 import { TrafficSurface, type TrafficChartPoint } from "@/features/dashboard/TrafficSurface";
 import { useEffect, useMemo, useState } from "react";
@@ -205,7 +206,24 @@ function DashboardContent() {
   */
   return (
     <div className="space-y-6">
-      <WorkspaceHeader title="总览" description="查看运行状态、资源使用和流量趋势。" />
+      {/*
+        标题下面那一行是此刻的数（「4 台主机 · 19 条线路 · 19 条转发」），不是一句说明书。
+        「查看运行状态、资源使用和流量趋势」是在解释这一页叫总览 —— 它叫总览就够了。
+      */}
+      <WorkspaceHeader title="总览" status={health ? (
+        <span className="tabular-nums">
+          {[
+            isAdmin ? `${health.hosts.total} 台主机` : null,
+            `${health.links.total} 条线路`,
+            `${health.forwards.total} 条转发`,
+          ].filter(Boolean).join(" · ")}
+        </span>
+      ) : null} />
+      {/*
+        网络地图放在数字前面：这一页第一眼看到的是「谁连着谁、哪条断了」，数字是第二眼的事。
+        没有主机时它自己不出现。
+      */}
+      <NetworkMapSection enabled={!!health && health.hosts.total > 0} onOpen={setLocation} />
       <SystemStatusHeader
         health={health as SystemHealth | undefined}
         loading={healthLoading}

@@ -21,23 +21,28 @@
   .workspace-appbar, .fx-tabbar, .fx-glass { background: var(--fx-l1-surface); }
   .fx-glass-surface { background: var(--fx-l2-elevated, var(--fx-l1-surface)); }
 }
-.workspace-appbar-inner { display: flex; align-items: center; gap: 6px; height: var(--fx-header-height); padding-inline: 8px 10px; }
-.workspace-appbar-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; color: var(--fx-text-secondary); transition: background-color 120ms, color 120ms; }
+/*
+  顶栏上的控件只有一种尺寸：36×36、圆的、没有描边，悬停一层浅灰。上一版折叠键 32px 方角、
+  搜索 32px 带描边的胶囊、头像 32px 圆 —— 一行四个控件三种长相。
+*/
+.workspace-appbar-inner { display: flex; align-items: center; gap: 4px; height: var(--fx-header-height); padding-inline: 8px 10px; }
+.workspace-appbar-icon { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 999px; color: var(--fx-text-secondary); transition: background-color 120ms, color 120ms; }
 .workspace-appbar-icon:hover { background: var(--fx-hover); color: var(--fx-text); }
 .workspace-appbar-icon:focus-visible, .workspace-appbar-brand:focus-visible, .workspace-appbar-search:focus-visible, .workspace-appbar-account:focus-visible { outline: 0; box-shadow: var(--fx-focus-ring); }
-.workspace-appbar-brand { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 32px; padding: 0 6px; border-radius: 10px; }
+.workspace-appbar-brand { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 36px; padding: 0 8px; border-radius: 999px; }
 .workspace-appbar-brand img, .workspace-appbar-brand > div { width: 24px; height: 24px; }
 .workspace-appbar-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--fx-text); white-space: nowrap; }
 /* 版本号是一枚小胶囊，参考站品牌旁边就挂着它 */
 .workspace-appbar-version { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: var(--fx-radius-pill); background: var(--fx-l3-control-fill); color: var(--fx-text-muted); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.workspace-appbar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.workspace-appbar-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 /* 搜索：一枚描弱线的胶囊，参考站顶栏的 Search 就是这个形状 */
-.workspace-appbar-search { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-pill); background: var(--fx-l1-surface); color: var(--fx-text-muted); font-size: 13px; transition: color 120ms, border-color 120ms; }
-.workspace-appbar-search:hover { color: var(--fx-text); border-color: var(--fx-stroke-base); }
+.workspace-appbar-search { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 0; border-radius: var(--fx-radius-pill); background: var(--fx-l3-control-fill); color: var(--fx-text-muted); font-size: 13px; transition: color 120ms, background-color 120ms; }
+.workspace-appbar-search:hover { color: var(--fx-text); background: var(--fx-hover); }
 .workspace-appbar-kbd { font-family: inherit; font-size: 11px; color: var(--fx-text-muted); }
-.workspace-appbar-account { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 999px; }
+.workspace-appbar-account { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 999px; transition: background-color 120ms; }
+.workspace-appbar-account:hover { background: var(--fx-hover); }
 @media (max-width: 639px) {
-  .workspace-appbar-search { width: 32px; padding: 0; justify-content: center; }
+  .workspace-appbar-search { width: 36px; padding: 0; justify-content: center; background: transparent; color: var(--fx-text-secondary); }
   .workspace-appbar-search-label, .workspace-appbar-kbd { display: none; }
   .workspace-appbar-version { display: none; }
 }
@@ -46,7 +51,11 @@
 .workspace-sidebar { top: calc(var(--fx-header-height) + env(safe-area-inset-top, 0px)); bottom: 0; height: auto; background: var(--fx-sidebar); border-right: 1px solid var(--fx-stroke-weak); }
 .workspace-body > .peer > .relative.h-svh { height: auto; }
 .workspace-inset { min-height: calc(100svh - var(--fx-header-height)); }
-.workspace-main { width: 100%; max-width: 1440px; margin-inline: auto; min-width: 0; }
+/*
+  1440px 的屏上内容不再拉满：卡片栅格到 1280px 就停，两边留白。
+  拉到 1440 时四列卡每张 330px，里面的字只占一半，剩下一半是空 —— 留白放在两边比塞进每张卡里好看。
+*/
+.workspace-main { width: 100%; max-width: 1280px; margin-inline: auto; min-width: 0; }
 .workspace-main .route-content-enter > div { min-width: 0; }
 /*
   页面标题照参考站压紧：一行 20px 的粗标题，主操作在同一行右侧；说明和状态是下面一行
@@ -939,21 +948,32 @@
 html[data-personalization-background="image"] .auth-divider-label, html[data-personalization-background="video"] .auth-divider-label { background: var(--fx-surface); }
 .setup-shell { min-height: 100svh; background: var(--fx-canvas); }
 .setup-progress { border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-surface); padding: 16px; box-shadow: none; }
-/* 首页状态区：和全站卡片同一套 —— 白底、一圈弱线、不投影。 */
-.system-health { border: 1px solid var(--fx-stroke-weak); border-radius: var(--fx-radius-surface); background: var(--fx-l1-surface); box-shadow: none; }
-/* 结论那一块的底：三团很淡的图表色渐变（参考站首页右侧那块面板同款） */
-.system-health-verdict { background: linear-gradient(135deg, color-mix(in srgb, var(--fx-chart-2) 12%, var(--fx-l1-surface)) 0%, color-mix(in srgb, var(--fx-chart-5) 8%, var(--fx-l1-surface)) 48%, color-mix(in srgb, var(--fx-chart-1) 9%, var(--fx-l1-surface)) 100%); }
 /*
-  统计块里的大数：等宽字体、24px（参考站 StatCard 的 text-2xl），手机上 16px。
-  等宽不只是好看 —— 一排数上下对齐之后能直接比大小。
+  首页状态区：不再是一张卡。上面一行读数（SummaryStrip，只有上下两条线），下面一行结论。
+  结论那一行平时是白底一圈弱线；有事的时候底下铺一层很淡的琥珀→天蓝渐变 —— 整页唯一
+  一块有颜色的面，眼睛先落在这里。深色模式下同一套 color-mix，兑到表面色上自然就是平的。
 */
-.fx-summary-value { font-size: var(--fx-size-metric); line-height: var(--fx-line-metric); }
-/* 手机上格子只有 90px 宽，等宽字体的「↓ 12.49 MB/s」放不下：换回正文字体（等宽数字），15px。 */
-@media (max-width: 767px) { .fx-summary-value { font-family: var(--fx-font); font-size: 14px; line-height: 22px; letter-spacing: -0.01em; } }
+.system-health-verdict[data-tone="warn"] { background: linear-gradient(135deg, color-mix(in srgb, var(--fx-warn) 12%, var(--fx-l1-surface)) 0%, color-mix(in srgb, var(--fx-accent) 10%, var(--fx-l1-surface)) 100%); }
+/*
+  统计行里的大数：正文字体、等宽数字、24px；手机上 20px。
+  上一版桌面是等宽字体、手机 14px —— 同一个数在两台设备上不像同一个数。
+*/
+.fx-summary-value { font-size: var(--fx-size-metric); line-height: var(--fx-line-metric); font-variant-numeric: tabular-nums; }
+@media (max-width: 767px) { .fx-summary-value { font-size: 20px; line-height: 26px; letter-spacing: -0.02em; } }
 @media (max-width: 639px) {
   .workspace-header { flex-wrap: wrap; }
   .workspace-header > div:first-child { flex: 1 1 130px; }
   .workspace-header-actions { flex: 0 1 auto; max-width: 100%; }
+}
+/*
+  手机上页头右侧的按钮一个尺寸：40px 高、圆角 pill；只有图标的（「＋」「···」）是 40×40 的圆。
+  上一版 ··· 被触屏 44px 的最小高度顶成 36×44 的竖椭圆，旁边的「＋」是 34×44 —— 两个并排，
+  一个高一个瘦。
+*/
+@media (max-width: 767px) {
+  .workspace-header-actions > [data-slot="button"] { height: 40px; min-height: 40px; border-radius: 999px; }
+  .workspace-header-actions > [data-slot="button"][data-icon-button],
+  .workspace-header-actions > [data-slot="button"]:has(> .max-md\:sr-only) { width: 40px; padding: 0; }
 }
 @media (pointer: coarse) {
   [data-sidebar="menu-button"], [role="menuitem"], [role="option"] { min-height: 44px; }
@@ -1118,27 +1138,32 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
 */
 @media (max-width: 767px) {
   /* ── 底部标签栏 ─────────────────────────────────────── */
+  /*
+    底栏是一枚悬浮的玻璃胶囊（iOS 26 那种），不再是一条贴着屏幕底边、横跨全宽的带子：
+    离屏幕边 14px、离底 14px + 安全区，圆角走 pill 档，一圈弱线加一层弹层投影把它从
+    页面上托起来。选中的那一格是一颗天蓝渐变的药丸、白字 —— 和主按钮、分段控件的
+    选中项同一个渐变（走 --fx-primary-* 令牌，跟着「默认配色」换）。
+
+    标签栏仍是少数应该半透明的东西：内容从它底下滑过去时透出来的那点颜色就是
+    「下面还有，能继续滚」。模糊只在这一枚固定的胶囊上，滚动内容本身不模糊。
+  */
   .fx-tabbar {
     position: fixed;
-    inset-inline: 0;
-    bottom: 0;
+    inset-inline: 14px;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
     z-index: var(--fx-z-sticky); /* 和顶栏同一层：都是常驻外壳，都该被对话框盖住 */
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
-    /*
-      49px 是 iOS 标签栏的标准高度，下面再补一个 home indicator 的安全区。
-      写成 padding 而不是加高：内容要贴着 49px 那条线排，安全区是留白不是控件。
-    */
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    border-top: 1px solid var(--fx-stroke-weak);
-    /*
-      标签栏是少数应该半透明的东西：内容从它底下滑过去时透出来的那点颜色
-      就是「下面还有，能继续滚」。这是信息，不是装饰。
-    */
-    background: var(--fx-glass);
+    gap: 2px;
+    height: 62px;
+    padding: 6px;
+    border: 1px solid var(--fx-stroke-weak);
+    border-radius: var(--fx-radius-pill);
+    background: var(--fx-glass-strong);
     backdrop-filter: var(--fx-glass-blur);
     -webkit-backdrop-filter: var(--fx-glass-blur);
+    box-shadow: var(--fx-elevation-popover);
   }
 
   .fx-tabbar-item {
@@ -1147,34 +1172,40 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
     align-items: center;
     justify-content: center;
     gap: 2px;
-    height: 49px;
+    height: 48px;
     min-width: 0;
     padding: 0 2px;
+    border-radius: var(--fx-radius-pill);
     color: var(--fx-text-muted);
-    transition: color 120ms ease;
+    transition: color 120ms ease, background-color 160ms ease, box-shadow 160ms ease;
     -webkit-tap-highlight-color: transparent;
   }
-  /* 选中态走黑白，不引入第三种颜色去和状态语义色抢注意力 */
-  .fx-tabbar-item-active { color: var(--fx-accent); }
+  .fx-tabbar-item-active {
+    color: var(--fx-primary-text);
+    background: var(--fx-primary-fill);
+    background-image: var(--fx-primary-gradient);
+    box-shadow: var(--fx-primary-shadow);
+  }
   .fx-tabbar-label {
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 10px;
+    font-size: 10.5px;
     line-height: 12px;
     letter-spacing: 0.01em;
   }
   .fx-tabbar-item-active .fx-tabbar-label { font-weight: 600; }
 
   /*
-    有标签栏时，内容底部要让出 49px，否则最后一张卡有一半压在栏底下。
+    有标签栏时，内容底部要让出胶囊的高度（14 + 62 + 14 = 90px），否则最后一张卡
+    有一半压在栏底下。
 
     改的是变量不是 padding：index.css 里那条 [data-mobile-main] 带 !important，
     直接写 padding-bottom 压不过它（实测还是 12px）。自定义属性按正常层叠走，
     所以这里设一下变量就够了，安全区那一份由那条规则自己加。
   */
-  .workspace-has-tabbar { --forwardx-mobile-bottom-inset: calc(0.75rem + 49px); }
+  .workspace-has-tabbar { --forwardx-mobile-bottom-inset: 90px; }
 
   /* 有页面自己的导航栏时，顶部不再预留常驻顶栏的高度 */
   .workspace-has-iosnav { --forwardx-mobile-top-inset: 12px; }
@@ -1457,3 +1488,38 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
 */
 [data-slot="switch"][data-state="checked"] { background-image: var(--fx-primary-gradient); }
 [data-slot="checkbox"]:checked { background-image: var(--fx-primary-gradient); border-color: transparent; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   线路语言：首页网络地图、规则卡路径条、列表行里的一小段线
+   ═══════════════════════════════════════════════════════════════════════ */
+.fx-netmap-label { font-size: 11px; font-weight: 600; fill: var(--fx-text); font-family: var(--fx-font); }
+.fx-netmap-note { font-size: 9.5px; fill: var(--fx-text-muted); font-family: var(--fx-font); font-variant-numeric: tabular-nums; }
+.fx-netmap svg [role="button"]:focus-visible { outline: 0; }
+.fx-netmap svg [role="button"]:focus-visible > circle:first-of-type { stroke-width: 4; }
+
+/*
+  路径条：左节点 ─ 线 ─ 右节点。线用 background 画（虚线用 repeating-linear-gradient），
+  颜色由 --fx-pathstrip-color 给，是这条规则的状态色；正常那一档走天蓝渐变。
+*/
+.fx-pathstrip { display: grid; grid-template-columns: minmax(0, 1fr) minmax(64px, max-content) minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
+.fx-pathstrip-node { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.fx-pathstrip-node-end { align-items: flex-end; text-align: right; }
+.fx-pathstrip-node > b { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; line-height: 18px; color: var(--fx-text); }
+.fx-pathstrip-node > span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--fx-font-mono); font-size: 11px; line-height: 16px; color: var(--fx-text-muted); }
+.fx-pathstrip-node > span > button { max-width: 100%; }
+.fx-pathstrip-wire { position: relative; display: flex; align-items: center; justify-content: center; height: 28px; min-width: 0; padding-inline: 10px; box-sizing: border-box; }
+.fx-pathstrip-wire::before { content: ""; position: absolute; inset-inline: 0; top: 50%; height: 2px; margin-top: -1px; border-radius: 2px; background: var(--fx-pathstrip-color, var(--fx-accent)); }
+.fx-pathstrip[data-health="healthy"] .fx-pathstrip-wire::before { background: var(--fx-primary-gradient); }
+.fx-pathstrip-wire-dashed::before { background: repeating-linear-gradient(90deg, var(--fx-pathstrip-color, var(--fx-standby)) 0 6px, transparent 6px 10px) !important; }
+.fx-pathstrip-wire::after { content: ""; position: absolute; right: -1px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 999px; background: var(--fx-pathstrip-color, var(--fx-accent)); }
+.fx-pathstrip-hop { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 999px; background: var(--fx-l1-surface); border: 2px solid var(--fx-pathstrip-color, var(--fx-accent)); }
+.fx-pathstrip-label { position: relative; z-index: 1; display: inline-flex; max-width: 160px; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--fx-radius-pill); border: 1px solid var(--fx-stroke-weak); background: var(--fx-l1-surface); font-size: 11px; line-height: 14px; font-weight: 600; color: var(--fx-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-pathstrip-label > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fx-pathstrip-hops { color: var(--fx-text); }
+.fx-pathstrip-sep { color: var(--fx-text-muted); }
+
+/* 列表行里的一小段线：「HK entry 01 ──── SG relay 03」 */
+.fx-pathline { display: inline-flex; min-width: 0; align-items: center; gap: 6px; }
+.fx-pathline-ln { position: relative; flex: 1 1 18px; min-width: 18px; height: 2px; border-radius: 2px; background: var(--fx-pathline-color, var(--fx-accent)); }
+.fx-pathline-ln-dashed { background: repeating-linear-gradient(90deg, var(--fx-pathline-color, var(--fx-standby)) 0 5px, transparent 5px 9px); }
+.fx-pathline-ln::after { content: ""; position: absolute; right: -1px; top: -2px; width: 6px; height: 6px; border-radius: 999px; background: var(--fx-pathline-color, var(--fx-accent)); }

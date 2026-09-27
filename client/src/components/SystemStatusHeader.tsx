@@ -1,7 +1,7 @@
-import { AlertTriangle, ArrowRight, ArrowRightLeft, CheckCircle2, Layers, Route, Server, type LucideIcon } from "lucide-react";
+import { ArrowRight, ArrowRightLeft, Route, Server } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { IconBadge, type IconBadgeTone } from "@/components/ui/icon-badge";
+import { SummaryStrip, type SummaryItem } from "@/components/entity/SummaryStrip";
 import { countAttentionDegraded, type DashboardAttention } from "@shared/dashboardAttention";
 import { cn } from "@/lib/utils";
 
@@ -26,41 +26,15 @@ type Props = {
 };
 
 /**
- * 一格统计：图标底座 + 标签一行，下面等宽字体的大数，再下面一句从属说明。
- * 照参考站（New API / Vexo）首页的 StatCard 画。
- */
-function StatTile({ icon: Icon, tone, label, value, note, warn }: {
-  icon: LucideIcon;
-  tone: IconBadgeTone;
-  label: string;
-  value: string | number;
-  note?: string | null;
-  warn?: boolean;
-}) {
-  return (
-    <div className="fx-summary-cell flex min-w-0 flex-col gap-1 rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-weak)] bg-[var(--fx-l1-surface)] px-2 py-2 sm:gap-1.5 sm:p-3">
-      <div className="flex min-w-0 items-center gap-1.5 text-meta font-medium text-muted-foreground sm:gap-2">
-        <IconBadge tone={warn ? "warn" : tone}><Icon /></IconBadge>
-        <span className="truncate">{label}</span>
-      </div>
-      <div className="fx-summary-value truncate font-mono font-semibold tabular-nums tracking-tight">{value}</div>
-      {note ? (
-        <div className={cn("truncate text-meta", warn ? "text-[var(--fx-warn-text)]" : "text-muted-foreground")}>{note}</div>
-      ) : null}
-    </div>
-  );
-}
-
-/**
  * 首页最上面那一块：现在系统是否正常。
  *
- * 顶上一行的判定按「最该先看到哪个」退档：有异常说异常；没有异常但有降级，说
- * 降级 —— 不能在下面列表里挂着琥珀色的同时写「运行正常」；都没有才说正常。
+ * 结论按「最该先看到哪个」退档：有异常说异常；没有异常但有降级，说降级 ——
+ * 不能在下面列表里挂着琥珀色的同时写「运行正常」；都没有才说正常。
  * 「还没接入」的主机两边都不算：那是一步没做完，不是出了事，它只进下面的列表。
  */
 function headline(health: SystemHealth) {
   const issues = Math.max(0, Number(health.issues) || 0);
-  if (issues > 0) return { text: `${issues} 处异常`, tone: "warn" as const };
+  if (issues > 0) return { text: `${issues} 处需要关注`, tone: "warn" as const };
   const degraded = health.attention
     ? countAttentionDegraded(health.attention.totals)
     : Math.max(0, Number(health.links.degraded) || 0);
@@ -69,108 +43,94 @@ function headline(health: SystemHealth) {
 }
 
 /**
- * 照参考站（New API / Vexo）首页的 summary card 排：左边是「概况」—— 标题、一句说明、
- * 一排统计格；右边一块带淡淡渐变的面，写此刻的结论（运行正常 / N 处异常）和一个去
- * 处理的按钮。宽屏并排，手机上结论那块折到统计格上面 —— 手机上先看结论。
+ * 一行三个数（主机 / 线路 / 转发）加一行结论。
+ *
+ * 上一版是「运行概况」标题 + 一句说明 + 三张带框的小卡 + 右边一块三色渐变的结论面板，
+ * 手机上整块 250px，而它说的只有两件事：几个数、有没有事。现在数字走 SummaryStrip
+ * 那种不画框的统计行，结论是一行字：绿点「运行正常」，或者琥珀点「N 处需要关注」加
+ * 一个「查看」。哪几处出了事，下面「需要关注」逐条列，这里不再解释。
  */
 export default function SystemStatusHeader({ health, loading, isAdmin, onRetry, onOpenAttention }: Props) {
   const empty = !!health && health.hosts.total === 0 && health.links.total === 0 && health.forwards.total === 0;
   const verdict = health && !empty ? headline(health) : null;
   const linkDegraded = Math.max(0, Number(health?.links.degraded) || 0);
   const forwardPaused = Math.max(0, Number(health?.forwards.paused) || 0);
-  const issueCount = Math.max(0, Number(health?.issues) || 0);
 
+  const items: SummaryItem[] = [
+    ...(isAdmin ? [{
+      key: "hosts",
+      label: "主机",
+      icon: Server,
+      value: health?.hosts.total ?? "—",
+      hint: health ? (health.hosts.offline > 0 ? `${health.hosts.offline} 离线` : `${health.hosts.online} 在线`) : null,
+      hintTone: health ? (health.hosts.offline > 0 ? "warn" : "healthy") : undefined,
+    } satisfies SummaryItem] : []),
+    {
+      key: "links",
+      label: "线路",
+      icon: Route,
+      value: health?.links.total ?? "—",
+      hint: health
+        ? health.links.unhealthy > 0
+          ? `${health.links.unhealthy} 异常`
+          : linkDegraded > 0
+            ? `${linkDegraded} 降级`
+            : `${health.links.healthy} 正常`
+        : null,
+      hintTone: health ? (health.links.unhealthy > 0 ? "down" : linkDegraded > 0 ? "warn" : "healthy") : undefined,
+    },
+    {
+      key: "forwards",
+      label: "转发",
+      icon: ArrowRightLeft,
+      value: health?.forwards.total ?? "—",
+      hint: health
+        ? health.forwards.stalled > 0
+          ? `${health.forwards.stalled} 未运行`
+          : forwardPaused > 0 && !isAdmin
+            ? `${forwardPaused} 已暂停`
+            : `${health.forwards.running} 运行中`
+        : null,
+      hintTone: health
+        ? (health.forwards.stalled > 0 ? "warn" : forwardPaused > 0 && !isAdmin ? "warn" : "healthy")
+        : undefined,
+    },
+  ];
+
+  const verdictTone: "healthy" | "warn" | "muted" = loading && !health ? "muted" : !health ? "warn" : empty ? "muted" : verdict?.tone ?? "muted";
   const verdictTitle = loading && !health ? "检查中" : !health ? "暂时无法读取状态" : empty ? "准备好，开始你的第一条连接" : verdict?.text;
-  const verdictIcon = loading && !health ? (
-    <span className="h-2 w-2 shrink-0 rounded-full bg-muted" aria-hidden="true" />
-  ) : empty ? (
-    <Layers className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-  ) : verdict?.tone === "healthy" ? (
-    <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--fx-healthy-text)]" aria-hidden="true" />
-  ) : verdict ? (
-    <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--fx-warn-text)]" aria-hidden="true" />
-  ) : null;
+  const verdictDetail = empty
+    ? (isAdmin ? "先接入主机，再配置线路，最后创建转发规则。" : "获得可用线路后，就可以创建转发规则。需要资源权限时请联系管理员。")
+    : null;
 
   return (
-    <section className="system-health overflow-hidden">
-      <div className="grid xl:grid-cols-[minmax(0,1fr)_18rem]">
-        <div className="order-2 flex flex-col gap-2.5 p-3 sm:gap-3 sm:p-4 xl:order-1">
-          <div className="flex flex-col gap-0.5">
-            <h2 className="text-secondary-type font-semibold text-foreground">运行概况</h2>
-            <p className="text-meta text-muted-foreground">主机、线路和转发此刻的数量与状态。</p>
-          </div>
-          <div className={cn("grid gap-2 sm:gap-3", isAdmin ? "grid-cols-3" : "grid-cols-2")}>
-            {isAdmin ? (
-              <StatTile
-                icon={Server}
-                tone="chart-1"
-                label="主机"
-                value={health?.hosts.total ?? "—"}
-                note={health ? `${health.hosts.online} 在线` : null}
-                warn={!!health && health.hosts.offline > 0}
-              />
-            ) : null}
-            <StatTile
-              icon={Route}
-              tone="chart-2"
-              label="线路"
-              value={health?.links.total ?? "—"}
-              note={health
-                ? health.links.unhealthy > 0
-                  ? `${health.links.unhealthy} 异常`
-                  : linkDegraded > 0
-                    ? `${linkDegraded} 降级`
-                    : `${health.links.healthy} 正常`
-                : null}
-              warn={!!health && (health.links.unhealthy > 0 || linkDegraded > 0)}
-            />
-            <StatTile
-              icon={ArrowRightLeft}
-              tone="chart-3"
-              label="转发"
-              value={health?.forwards.total ?? "—"}
-              note={health
-                ? health.forwards.stalled > 0
-                  ? `${health.forwards.stalled} 未运行`
-                  : forwardPaused > 0 && !isAdmin
-                    ? `${forwardPaused} 已暂停`
-                    : `${health.forwards.running} 运行中`
-                : null}
-              warn={!!health && (health.forwards.stalled > 0 || (forwardPaused > 0 && !isAdmin))}
-            />
-          </div>
-        </div>
-
-        {/*
-          结论那一块：参考站右侧那块「余额」面板的位置。底是三团很淡的图表色渐变 ——
-          整张白纸上唯一一块有颜色的面，眼睛先落在这里。
-        */}
-        <div className="system-health-verdict order-1 flex flex-col justify-between gap-3 border-b border-[var(--fx-stroke-weak)] p-3 sm:p-4 xl:order-2 xl:border-b-0 xl:border-l">
-          <div className="flex flex-col gap-1.5">
-            <span className="text-meta font-medium text-muted-foreground">当前状态</span>
-            <div className="flex items-center gap-2">
-              {verdictIcon}
-              <span className="text-primary-type font-semibold tracking-tight text-foreground">{verdictTitle}</span>
-            </div>
-            {empty ? (
-              <p className="text-meta leading-relaxed text-muted-foreground">
-                {isAdmin ? "先接入主机，再配置链路，最后创建转发规则。" : "获得可用线路后，就可以创建转发规则。需要资源权限时请联系管理员。"}
-              </p>
-            ) : verdict && verdict.tone !== "healthy" ? (
-              <p className="text-meta leading-relaxed text-muted-foreground">具体是哪几处，下面「需要关注」逐条列出来了。</p>
-            ) : verdict ? (
-              <p className="text-meta leading-relaxed text-muted-foreground">主机在线、线路正常、转发都在跑。</p>
-            ) : null}
-          </div>
-          {!loading && !health && onRetry ? (
-            <Button variant="outline" size="sm" className="w-fit" onClick={onRetry}>重新读取</Button>
-          ) : verdict && verdict.tone !== "healthy" && onOpenAttention ? (
-            <Button size="sm" className="w-fit gap-1.5" onClick={onOpenAttention}>
-              查看 {issueCount > 0 ? `${issueCount} 处` : ""}需要关注
-              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-            </Button>
-          ) : null}
-        </div>
+    <section className="system-health flex min-w-0 flex-col gap-3" aria-label="运行状态">
+      <SummaryStrip items={items} loading={!!loading && !health} ariaLabel="主机、线路、转发数量" />
+      <div
+        className="system-health-verdict flex min-w-0 items-center gap-3 rounded-[var(--fx-radius-card)] border border-[var(--fx-stroke-weak)] px-3.5 py-2.5"
+        data-tone={verdictTone}
+        role="status"
+      >
+        <span
+          aria-hidden="true"
+          className={cn("h-2.5 w-2.5 shrink-0 rounded-full", verdictTone === "muted" && "bg-[var(--fx-standby)]")}
+          style={verdictTone === "muted" ? undefined : {
+            backgroundColor: `var(--fx-${verdictTone})`,
+            boxShadow: `0 0 0 3px var(--fx-${verdictTone}-soft)`,
+          }}
+        />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-primary-type font-semibold tracking-tight text-foreground">{verdictTitle}</span>
+          {verdictDetail ? <span className="text-meta text-muted-foreground">{verdictDetail}</span> : null}
+        </span>
+        {!loading && !health && onRetry ? (
+          <Button variant="outline" size="sm" className="shrink-0" onClick={onRetry}>重新读取</Button>
+        ) : verdict && verdict.tone !== "healthy" && onOpenAttention ? (
+          <Button variant="ghost" size="sm" className="shrink-0 gap-1 px-2 text-[var(--fx-accent)] hover:text-[var(--fx-accent)]" onClick={onOpenAttention}>
+            查看
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+        ) : null}
       </div>
     </section>
   );

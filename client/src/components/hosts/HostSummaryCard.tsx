@@ -5,7 +5,6 @@ import { EntityActions, type EntityAction } from "@/components/entity/EntityActi
 import {
   EntityBody,
   EntityCard,
-  EntityFooter,
   EntityHeader,
 } from "@/components/entity/EntityCard";
 import { HealthBadge } from "@/components/network/StatusDot";
@@ -26,13 +25,11 @@ import { deriveHostVitals, type HostVitals } from "./useHostVitals";
  *
  * 这张卡只留支撑「要不要点进去」这个决定所需的东西：
  *
- *   [图标] 名字      发行版图标（右下角挂状态点）+ 名字
+ *   [图标] 名字  ···  发行版图标（右下角挂状态点）+ 名字，右上角一个 ···（全部操作）
  *          Debian 12 · Agent v2.2.196   系统和版本号两枚标识
  *          地区 · IP  一行注脚
  *   CPU/RAM/Disk    三条细占用条
  *   ↓ / ↑ 速率      两个数
- *   已运行 12d 5h   一行
- *                   诊断  ···
  *
  * 其余全部进详情。
  *
@@ -279,13 +276,22 @@ export default function HostSummaryCard(props: HostSummaryCardProps) {
           /*
             离线才挂状态徽标。在线时那一列绿色徽标每行都有，说的全是同一件事，
             反而把真正异常的那几行淹掉了 —— 状态点已经说完了「正常」。
+
+            操作只有右上角这一个 ···（原来还在卡底再画一行「诊断 / 编辑 / ···」，
+            每张卡为此多 60px）。它的点击不能冒泡成「打开详情」—— 点「删除」结果
+            弹出详情页是最糟的那种意外，所以在这里截断。
           */
-          vitals.isOnline ? null : (
-            <HealthBadge
-              health={vitals.health}
-              text={vitals.health === "unknown" ? "未上报" : "离线"}
-            />
-          )
+          <>
+            {vitals.isOnline ? null : (
+              <HealthBadge
+                health={vitals.health}
+                text={vitals.health === "unknown" ? "未上报" : "离线"}
+              />
+            )}
+            <span className="-mr-1.5 -mt-1 inline-flex" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+              <EntityActions primary={primary} menu={menu} menuOnly menuLabel={`${name} 的更多操作`} />
+            </span>
+          </>
         }
       />
 
@@ -298,13 +304,6 @@ export default function HostSummaryCard(props: HostSummaryCardProps) {
         <SpeedRow vitals={vitals} />
       </EntityBody>
 
-      {/*
-        底栏的点击不能冒泡成「打开详情」—— 点「删除」结果弹出详情页是最糟的
-        那种意外。整卡可点带来的代价就是这一条，所以在这里截断。
-      */}
-      <EntityFooter onClick={(event) => event.stopPropagation()}>
-        <EntityActions primary={primary} menu={menu} />
-      </EntityFooter>
     </EntityCard>
   );
 }

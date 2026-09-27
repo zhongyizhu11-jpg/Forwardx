@@ -5,7 +5,6 @@ import WorkspaceHeader from "@/components/WorkspaceHeader";
 import { InlineLinkCreator } from "@/features/links/InlineLinkCreator";
 import { describeLinkKind, linkKindForRouteMode, linkKindRequiresAdmin } from "@/features/links/inlineLinkDraft";
 import FilterToolbar from "@/components/FilterToolbar";
-import ConnectionPath from "@/components/ConnectionPath";
 import TrafficOverview from "@/components/TrafficOverview";
 import { useAuth } from "@/_core/hooks/useAuth";
 import SectionTransition from "@/components/SectionTransition";
@@ -109,7 +108,6 @@ import {
 import { FAILOVER_TONE_CLASS, describeFailoverLineDisplay } from "@/lib/failoverLineDisplay";
 import { RouteGroupSheet } from "@/features/rules/RouteGroupSheet";
 import { EntityActions } from "@/components/entity/EntityActions";
-import { CardActions } from "@/components/entity/EntityCard";
 import { RouteGroupFields, routeGroupPayload, type RouteHostOption } from "@/features/rules/RouteGroupFields";
 import { docsUrl } from "@/lib/docsLinks";
 import { ROUTE_MODE_HINTS } from "@/features/rules/routeModeHints";
@@ -213,9 +211,9 @@ import {
   targetGeoNodeMeta,
 } from "@/lib/linkTestNodeMeta";
 import { getTunnelExitNames, getTunnelHopIds, getTunnelRouteText, tunnelHopHostName } from "@/lib/tunnelDisplay";
-import { NetworkPath } from "@/components/network/NetworkPath";
+import { StatusDot } from "@/components/network/StatusDot";
+import { PathStrip } from "@/components/network/PathStrip";
 import {
-  buildRuleFlow,
   decideRuleFlowLayout,
   ruleVisualStateToHealth,
 } from "@/features/rules/ruleFlow";
@@ -1537,7 +1535,7 @@ function buildRuleGlobeData(
     const bytesOut = Number(traffic?.bytesOut || 0);
     const routeWithTarget = [...routePoints, targetPoint];
     const exitPoint = routePoints[routePoints.length - 1];
-    const finalHopText = `${exitPoint.name} -> ${targetText}`;
+    const finalHopText = `${exitPoint.name} → ${targetText}`;
     rawRoutes.push({
       rule,
       color,
@@ -5766,18 +5764,17 @@ function RulesContent() {
     else toast.error("复制失败，请手动复制");
   };
 
-  const renderResolvedStatusDot = (visual: ReturnType<typeof resolveForwardRuleVisualStatus>) => {
-    if (visual.state === "running") {
-      return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" />;
-    }
-    if (visual.state === "error") {
-      return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-destructive/70 shadow-sm shadow-destructive/40" />;
-    }
-    if (visual.state === "pending") {
-      return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-[var(--fx-warn)] shadow-sm" />;
-    }
-    return <span title={visual.title} className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30" />;
-  };
+  /*
+    规则的状态点和主机、隧道、首页「需要关注」用同一枚 StatusDot：运行中是绿，不再是
+    一颗会呼吸的青色。上一版三页三种点（青色脉冲 / 红 70% / 灰 30%），同一个「正常」
+    在隧道页是绿、在规则页是青，眼睛每换一页要重新学一次。「待确认」走词汇表里的
+    unknown（灰）：还没等到 Agent 回话不等于出了问题，琥珀留给真的降级。
+  */
+  const renderResolvedStatusDot = (visual: ReturnType<typeof resolveForwardRuleVisualStatus>) => (
+    <span title={visual.title} className="inline-flex">
+      <StatusDot health={ruleVisualStateToHealth(visual.state)} size="large" label={visual.title} />
+    </span>
+  );
 
   const renderStatusDot = (rule: any) => {
     const visual = ruleVisualStatuses.get(Number(rule.id))?.display || resolveRuleVisualStatus(rule);
@@ -5824,10 +5821,6 @@ function RulesContent() {
     };
   };
 
-  /** 这条规则的紧凑卡是否已经画了 Flow —— 画了的话线路徽标就不要再写一遍路径。 */
-  const ruleDrawsFlow = (rule: any) =>
-    decideRuleFlowLayout(getRuleCategory(rule, forwardGroupById)) === "flow";
-
   /**
    * 这条规则中间经过哪些节点。直连返回空数组。
    *
@@ -5853,84 +5846,50 @@ function RulesContent() {
     return [String(group.name || "").trim()].filter(Boolean);
   };
 
-  const renderTransfer = (rule: any, compact = false) => {
-    const {
-      entryAddresses,
-      targetAddress,
-      entryTitle,
-      failoverCount,
-      failoverEnabled,
-      routeLabel,
-    } = getRuleTransferDisplay(rule);
-    const failoverBadge = failoverEnabled ? (
-      <Badge variant="outline" className="h-5 shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1.5 text-[10px] text-[var(--fx-warn-text)]">
-        {routeLabel} {failoverCount} 条
-      </Badge>
+  /*
+    卡片上的路径条：入口（资源名 + 地址）── 经过什么 ── 目标。
+
+    替掉原来那一行等宽字 `入口 ⧉ → 目标`：358px 的屏上两个地址各剩十来个字符，读不出
+    从哪到哪。现在两头各自一个节点，名字在上地址在下，中间那条线的颜色就是这条规则的
+    状态，线中间的小药丸写转发工具和协议；隧道 / 转发链的中继画成线上的小圆点，名字写在
+    药丸里。资源名从卡头的第二行挪到了这里 —— 它本来就是「入口」。
+  */
+  const renderPathStrip = (rule: any) => {
+    const { entryAddresses, targetAddress, entryTitle } = getRuleTransferDisplay(rule);
+    const category = getRuleCategory(rule, forwardGroupById);
+    const visual = ruleVisualStatuses.get(Number(rule.id))?.display || resolveRuleVisualStatus(rule);
+    const health = !isRuleSupported(rule) || rule.resourceAccessAllowed === false
+      ? "down"
+      : ruleVisualStateToHealth(visual?.state);
+    // 转发组规则的「中继」就是组本身，而组名已经是左端的名字，不重复画。
+    const hops = decideRuleFlowLayout(category) === "flow" && category !== "group" ? getRuleHopNames(rule) : [];
+    const primaryEntry = entryAddresses[0];
+    const extraEntries = Math.max(0, entryAddresses.length - 1);
+    const forwardLabel = FORWARD_TYPE_LABELS[rule?.forwardType as ForwardType] || "";
+    const via = [forwardLabel, formatForwardRuleProtocol(rule.protocol)].filter(Boolean).join(" · ");
+    const entryAddress = primaryEntry ? (
+      <button
+        type="button"
+        onClick={() => primaryEntry.copyable && copyEntryAddress(rule, primaryEntry.value)}
+        disabled={!primaryEntry.copyable}
+        className="group inline-flex min-w-0 max-w-full items-center gap-1 rounded text-left enabled:hover:text-primary disabled:cursor-default"
+        title={primaryEntry.copyable ? entryTitle : primaryEntry.text}
+      >
+        <span className="min-w-0 truncate">{primaryEntry.text}</span>
+        {extraEntries > 0 ? <span className="shrink-0 text-muted-foreground">+{extraEntries}</span> : null}
+        {primaryEntry.copyable ? <Copy className="h-3 w-3 shrink-0 text-muted-foreground opacity-60 group-hover:opacity-100" aria-hidden="true" /> : null}
+      </button>
     ) : null;
-
-    /*
-      紧凑卡里走一行：ConnectionPath 是竖排的，「入口 · 点击复制」和「目标出口」
-      两行标题加上中间那个箭头，要用 5 行去画 2 个地址 —— 在 390px 的屏幕上
-      光这一块就是 290px。一个 → 已经把方向说清楚了。
-    */
-    if (compact) {
-      /*
-        版式跟着数据走。
-
-        直连规则的入口和目标之间什么都没有，一行 `入口 ⧉ → 目标` 已经说完了；
-        画成竖排 Flow 只是用五行重复一个箭头。
-
-        隧道 / 转发链 / 转发组不一样：中间经过哪儿正是它和直连的唯一区别，
-        也是这条规则最要紧的信息，而一行的写法根本放不下。
-
-        两种版式不是折中，是同一条原则的两个结果 —— 让最重要的那件事最显眼。
-      */
-      if (decideRuleFlowLayout(getRuleCategory(rule, forwardGroupById)) === "flow") {
-        const flow = buildRuleFlow({
-          entry: entryAddresses[0]?.text || "",
-          target: targetAddress,
-          hops: getRuleHopNames(rule),
-          via: FORWARD_TYPE_LABELS[rule?.forwardType as ForwardType] || undefined,
-          latencyMs: typeof rule?.latestLatencyMs === "number" ? rule.latestLatencyMs : null,
-          health: ruleVisualStateToHealth(
-            (ruleVisualStatuses.get(Number(rule.id))?.display || resolveRuleVisualStatus(rule))?.state,
-          ),
-        });
-        return (
-          <div title={flow.title}>
-            <NetworkPath nodes={flow.nodes} edges={flow.edges} orientation="vertical" />
-          </div>
-        );
-      }
-      return (
-        <div className="flex min-w-0 items-center gap-1.5 font-mono text-[13px] leading-5">
-          {entryAddresses.map((entry) => (
-            <button key={`${entry.label}:${entry.value}`} type="button"
-              onClick={() => entry.copyable && copyEntryAddress(rule, entry.value)} disabled={!entry.copyable}
-              className="group inline-flex min-w-0 shrink items-center gap-1 rounded text-left enabled:hover:text-primary disabled:text-muted-foreground"
-              title={entry.copyable ? entryTitle : entry.text}>
-              <code className="min-w-0 truncate">{entry.text}</code>
-              {entry.copyable && <Copy className="h-3 w-3 shrink-0 text-muted-foreground opacity-60" />}
-            </button>
-          ))}
-          <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="转发到" />
-          <code className="min-w-0 shrink truncate text-muted-foreground" title={targetAddress}>{targetAddress}</code>
-        </div>
-      );
-    }
-
-    return <ConnectionPath steps={[
-      { label: "入口 · 点击复制", content: <div className="flex min-w-0 flex-col gap-1">{entryAddresses.map((entry) => (
-        <button key={`${entry.label}:${entry.value}`} type="button"
-          onClick={() => entry.copyable && copyEntryAddress(rule, entry.value)} disabled={!entry.copyable}
-          className="group flex min-h-8 w-full min-w-0 items-center justify-between gap-2 rounded text-left hover:text-primary disabled:text-muted-foreground"
-          title={entry.copyable ? entryTitle : entry.text}>
-          <code className="min-w-0 break-all text-xs">{entry.text}</code>
-          {entry.copyable && <Copy className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
-        </button>
-      ))}</div> },
-      { label: "目标出口", content: <div className="flex min-w-0 flex-wrap items-center gap-2"><code className="break-all text-xs">{targetAddress}</code>{failoverBadge}</div> },
-    ]} />;
+    return (
+      <PathStrip
+        entry={{ name: getRuleResourceName(rule), address: entryAddress }}
+        target={{ address: targetAddress, title: targetAddress }}
+        health={health}
+        via={via}
+        hops={hops}
+        title={`${entryAddresses.map((entry) => entry.text).join(" / ")} → ${targetAddress}`}
+      />
+    );
   };
 
   const renderTableTransferEntry = (rule: any) => {
@@ -6331,7 +6290,12 @@ function RulesContent() {
     就是六十个图标，而且得记住听诊器是「自测」、转圈的箭头是「重置统计」。常用的两个带字
     放外面，其余收进 ···；删除永远在菜单最后、红色、隔一条线。
   */
-  const renderRuleActions = (rule: any) => {
+  /*
+    卡片右上角只有一个 ···（menuOnly），表格行保留「诊断 / 编辑」常驻 + ···。
+    原来卡片底部还有一行「诊断 / 编辑 / ···」—— 和右上角的 ··· 是同一组操作画了两遍，
+    每张卡为此多 60px，十六条规则要翻九屏。
+  */
+  const renderRuleActions = (rule: any, menuOnly = false) => {
     const ruleCategory = getRuleCategory(rule, forwardGroupById);
     const isForwardChainRule = ruleCategory === "chain";
     const probeMethod = ruleLatencyProbeMethodForRule(rule);
@@ -6367,6 +6331,7 @@ function RulesContent() {
           { key: "delete", label: "删除", ariaLabel: `删除 ${rule.name}`, icon: <Trash2 className="h-3.5 w-3.5" />, destructive: true, onSelect: () => setDeleteRule(rule) },
         ]}
         menuLabel={`${rule.name} 的更多操作`}
+        menuOnly={menuOnly}
       />
     );
   };
@@ -6535,7 +6500,7 @@ function RulesContent() {
         )}
         <TableCell className="px-3 py-2">
           <div className="flex items-center justify-center">
-            {supported ? renderStatusDot(rule) : <span className="h-2.5 w-2.5 rounded-full bg-destructive/60" />}
+            {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
           </div>
         </TableCell>
         <TableCell className="px-3 py-2">
@@ -6608,13 +6573,10 @@ function RulesContent() {
             <div className="flex min-w-0 items-start justify-between gap-2">
               <div className="flex min-w-0 items-start gap-2">
                 <div className="mt-1.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                  {supported ? renderStatusDot(rule) : <span className="h-2.5 w-2.5 rounded-full bg-destructive/60" />}
+                  {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{rule.name}</div>
-                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                    {getRuleResourceName(rule)}
-                  </div>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
@@ -6626,26 +6588,31 @@ function RulesContent() {
                     className="bg-card/70"
                   />
                 )}
+                {renderRuleActions(rule, true)}
                 {renderRuleEnabledSwitch(rule)}
               </div>
             </div>
 
             <div className="min-w-0">
-              {renderTransfer(rule, true)}
+              {renderPathStrip(rule)}
             </div>
 
+            {/*
+              路径条上的小药丸已经写了转发工具和协议，这一行只留它说不了的：主备、内核转发的
+              提醒、订阅来源、协议不支持。没有就整行不出现。
+            */}
+            {(renderFailoverLineBadge(rule) || renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule)) || renderSubscriptionBadge(rule) || !supported) ? (
             <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
               {renderFailoverLineBadge(rule)}
-              {renderRouteBadge(rule, false, ruleDrawsFlow(rule))}
-              <Badge variant="secondary" className="h-5 whitespace-nowrap px-1.5 text-[10px]">
-                {formatForwardRuleProtocol(rule.protocol)}
-              </Badge>
+              {renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule))}
+              {renderSubscriptionBadge(rule)}
               {!supported && (
                 <Badge variant="outline" className="h-5 border-destructive/30 px-1.5 text-[10px] text-destructive">
                   {protocolUnsupportedLabel(protocolKey)} 不支持
                 </Badge>
               )}
             </div>
+            ) : null}
 
             {(rule.protocolBlockReason || rule.resourceAccessAllowed === false) && (
               <div className="line-clamp-2 text-[11px] leading-4 text-destructive">
@@ -6664,8 +6631,6 @@ function RulesContent() {
               {renderRuleDailyTrafficValue(rule, "in")}
               {renderRuleDailyTrafficValue(rule, "out")}
             </div>
-
-            <CardActions>{renderRuleActions(rule)}</CardActions>
           </CardContent>
         </Card>
       );
@@ -6686,16 +6651,13 @@ function RulesContent() {
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-start gap-2">
               <div className="mt-2 flex h-4 w-4 flex-shrink-0 items-center justify-center">
-                {supported ? renderStatusDot(rule) : <span className="h-2.5 w-2.5 rounded-full bg-destructive/60" />}
+                {supported ? renderStatusDot(rule) : <StatusDot health="down" size="large" label={unsupportedProtocolTitle} />}
               </div>
               <div className="min-w-0">
                 <div className="truncate font-medium">{rule.name}</div>
                 {user?.role === "admin" && (
                   <div className="mt-1 text-xs text-muted-foreground">用户: {getRuleOwnerName(rule)}</div>
                 )}
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {getRuleResourceName(rule)}
-                </div>
                 {!supported && (
                   <div className="mt-1 text-[11px] text-destructive">
                     {protocolUnsupportedLabel(protocolKey)} 当前不支持
@@ -6717,30 +6679,26 @@ function RulesContent() {
                   className="bg-card/70"
                 />
               )}
+              {renderRuleActions(rule, true)}
               {renderRuleEnabledSwitch(rule)}
             </div>
           </div>
 
           <div className="min-w-0">
-            {renderTransfer(rule, true)}
+            {renderPathStrip(rule)}
           </div>
-          <div className="grid grid-cols-2 gap-3 text-xs">
-            <div className="min-w-0">
-              <div className="mb-1 text-muted-foreground">链路</div>
-              {/*
-                2.3.366 只给紧凑卡加了主备标记，大卡和表格上看不出这条规则配了主备、
-                现在走哪条。三种布局都要有 —— 它也是主备策略面板的入口。
-              */}
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                {renderRouteBadge(rule, false, ruleDrawsFlow(rule))}
-                {renderFailoverLineBadge(rule)}
-              </div>
+          {/*
+            原来这里是「链路 / 协议」两格：转发工具的徽标和协议的徽标。路径条上的小药丸已经
+            写了这两样，这一行只留它说不了的：主备（它也是主备策略面板的入口）、内核转发的
+            提醒、订阅来源。没有就整行不出现。
+          */}
+          {(renderFailoverLineBadge(rule) || renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule)) || renderSubscriptionBadge(rule)) ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+              {renderFailoverLineBadge(rule)}
+              {renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule))}
+              {renderSubscriptionBadge(rule)}
             </div>
-            <div className="min-w-0">
-              <div className="mb-1 text-muted-foreground">协议</div>
-              <Badge variant="secondary" className="whitespace-nowrap text-[10px]">{formatForwardRuleProtocol(rule.protocol)}</Badge>
-            </div>
-          </div>
+          ) : null}
           <div className="grid grid-cols-2 gap-x-3 gap-y-2 border-t border-border/40 pt-2 text-xs">
             <div className="min-w-0">
               <div className="mb-1 text-muted-foreground">24H 入向</div>
@@ -6759,7 +6717,6 @@ function RulesContent() {
               {renderLatestLatency(rule)}
             </div>
           </div>
-          <CardActions>{renderRuleActions(rule)}</CardActions>
         </CardContent>
       </Card>
     );
@@ -6767,7 +6724,7 @@ function RulesContent() {
 
   return (
     <div className="space-y-6">
-      <WorkspaceHeader title="转发规则" description="管理转发规则和运行状态" status={
+      <WorkspaceHeader title="转发规则" status={
           <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
             <Zap className="h-3 w-3 text-chart-2" />
             <AnimatedStatValue
@@ -6825,12 +6782,33 @@ function RulesContent() {
               <DropdownMenuItem onSelect={() => setResetTrafficTarget({ scope: "all" })} disabled={visibleRuleIdsForMetrics.length === 0 || resetTrafficMutation.isPending}><RotateCcw className="h-4 w-4" />重置数据</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {/*
+            主操作回到页面标题这一行，和主机页、隧道页、公告页放在同一个位置：
+            每一页的「新建」都在右上角，手指不用每页重新找。手机上只留「＋」，
+            字留在 aria-label 里给读屏。
+          */}
           {rulePermissionLoading ? (
             <Button disabled className="gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
               权限加载中
             </Button>
-          ) : null}
+          ) : canAdd ? (
+            <Button
+              onClick={() => openCreate()}
+              className="gap-2 max-md:w-9 max-md:px-0"
+              disabled={!canCreateRule}
+              aria-label="新建规则"
+              title={!canCreateRule ? "暂无可用转发资源" : "新建规则"}
+            >
+              <Plus className="h-4 w-4" />
+              <span className="max-md:sr-only">新建规则</span>
+            </Button>
+          ) : (
+            <Button disabled className="gap-2 max-md:w-9 max-md:px-0" aria-label="新建规则" title="需要管理员授权后才能新建规则">
+              <Plus className="h-4 w-4" />
+              <span className="max-md:sr-only">新建规则</span>
+            </Button>
+          )}
       </>} />
 
       <FreezeWhile frozen={showDialog || showImportDialog || showCopyDialog} render={() => <>
@@ -6852,34 +6830,6 @@ function RulesContent() {
           </Tabs>
           <FilterToolbar
             activeCount={Number(hasActiveUserFilter) + Number(filterResource !== "all")}
-            action={
-              /*
-                主操作挪到筛选右边。原来在页面顶栏 —— 手机上顶栏只有 393px，
-                它要和页面标题、搜索、主题切换抢位置。筛选这一行本来就是
-                「对这个列表做事」的地方，新建和它并排才是同一类东西。
-              */
-              /*
-                手机上只留「＋」（和 iOS 列表右上角那个加号一个意思）：三样东西要挤一行，
-                字留在 aria-label 里给读屏。md 以上照旧写「新建规则」。
-              */
-              rulePermissionLoading ? null : canAdd ? (
-                <Button
-                  onClick={() => openCreate()}
-                  className="gap-2 max-md:w-[34px] max-md:px-0"
-                  disabled={!canCreateRule}
-                  aria-label="新建规则"
-                  title={!canCreateRule ? "暂无可用转发资源" : "新建规则"}
-                >
-                  <Plus className="h-4 w-4" />
-                  <span className="max-md:sr-only">新建规则</span>
-                </Button>
-              ) : (
-                <Button disabled className="gap-2 max-md:w-[34px] max-md:px-0" aria-label="新建规则" title="需要管理员授权后才能新建规则">
-                  <Plus className="h-4 w-4" />
-                  <span className="max-md:sr-only">新建规则</span>
-                </Button>
-              )
-            }
             search={
             <div className="relative w-full">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
