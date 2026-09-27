@@ -5155,7 +5155,13 @@ function SystemInfoSection() {
     : "";
   const canRunPanelRollback = rollbackType !== "panel" || (!!upgradeEnabled && !isDockerDeployment);
   const androidApkDownloadUrl = settings?.androidApkDownloadUrl || "";
-  const contactLinks = [
+  const contactLinks: Array<{
+    label: string;
+    url: string;
+    icon: typeof Github;
+    iconClassName: string;
+    description?: string;
+  }> = [
     {
       label: "GitHub 仓库",
       url: settings?.repoUrl || "#",
@@ -5174,6 +5180,14 @@ function SystemInfoSection() {
       icon: Download,
       iconClassName: "text-[var(--fx-healthy-text)]",
     }] : []),
+    {
+      label: "iOS IPA 下载",
+      // 固定到已发布的安装包，避免面板升级后链接指向尚未构建的 IPA。
+      url: "https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v2.3.381/forwardx-ios-v2.3.381-unsigned.ipa",
+      icon: Download,
+      iconClassName: "text-[var(--fx-healthy-text)]",
+      description: "iPhone / iPad · 需自行签名后安装",
+    },
   ];
   const isUpgradeRunning = upgradeStatus?.job.status === "running";
   const upgradeProgress = getPanelUpgradeProgress(upgradeStatus?.job);
@@ -6623,6 +6637,7 @@ function SystemInfoSection() {
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="truncate text-secondary-type font-medium text-foreground group-hover:underline">{item.label}</span>
                     <span className="truncate font-mono text-meta text-muted-foreground">{item.url}</span>
+                    {item.description && <span className="text-meta text-muted-foreground">{item.description}</span>}
                   </span>
                   <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </a>
