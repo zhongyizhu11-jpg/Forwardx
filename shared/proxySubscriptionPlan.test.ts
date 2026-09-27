@@ -454,6 +454,41 @@ test("直连与中转进同一个选路组，客户端能自己挑快的", () =>
   assert.equal(auto.members[0], plan.entries[0].node.name, "直连也是组员");
 });
 
+test("带宽叠加组不带落地直连，只叠中转", () => {
+  // 用户实测：开了直连的落地，叠加组里多出一个「HKT」，三条连接里有一条绕开前置。
+  const template = { ...DIRECT_TEMPLATE, includeDirect: true, autoGroup: "load-balance" };
+  const plan = buildProxySubscriptionPlan({
+    rules: [
+      { id: 1, hostId: 1, name: "前置A", sourcePort: 10001, proxyNodeId: 7, isEnabled: true },
+      { id: 2, hostId: 2, name: "前置B", sourcePort: 10002, proxyNodeId: 7, isEnabled: true },
+    ],
+    templates: [template],
+    hosts: [
+      { id: 1, name: "前置A", ipv4: "1.2.3.4" },
+      { id: 2, name: "前置B", ipv4: "5.6.7.8" },
+    ],
+  });
+  const document = buildProxySubscriptionDocument(plan, [template], { mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME });
+
+  const group = document.groups.find((item) => item.type === "load-balance");
+  assert.ok(group);
+  assert.equal(group.members.length, 2);
+  assert.ok(!group.members.includes(plan.entries[0].node.name), "直连不在叠加组里");
+  // 直连仍在主选择器里，想单独用还能选。
+  assert.ok(document.groups[0].members.includes(plan.entries[0].node.name));
+});
+
+test("只有一条中转时不生成叠加组（直连不算）", () => {
+  const template = { ...DIRECT_TEMPLATE, includeDirect: true, autoGroup: "load-balance" };
+  const plan = buildProxySubscriptionPlan({
+    rules: [{ id: 1, hostId: 1, name: "前置A", sourcePort: 10001, proxyNodeId: 7, isEnabled: true }],
+    templates: [template],
+    hosts: [{ id: 1, name: "前置A", ipv4: "1.2.3.4" }],
+  });
+  const document = buildProxySubscriptionDocument(plan, [template], { mainGroupName: PROXY_SUBSCRIPTION_GROUP_NAME });
+  assert.equal(document.groups.some((item) => item.type === "load-balance"), false);
+});
+
 // ==================== 前置代理 ====================
 
 const LINE_MACHINE = {
