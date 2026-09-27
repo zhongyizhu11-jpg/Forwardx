@@ -5156,6 +5156,7 @@ function SystemInfoSection() {
     : "";
   const canRunPanelRollback = rollbackType !== "panel" || (!!upgradeEnabled && !isDockerDeployment);
   const androidApkDownloadUrl = settings?.androidApkDownloadUrl || "";
+  const iosIpaDownloadUrl = (settings as any)?.iosIpaDownloadUrl || "";
   const contactLinks: Array<{
     label: string;
     url: string;
@@ -5181,14 +5182,14 @@ function SystemInfoSection() {
       icon: Download,
       iconClassName: "text-[var(--fx-healthy-text)]",
     }] : []),
-    {
+    ...(iosIpaDownloadUrl ? [{
       label: "iOS IPA 下载",
-      // 固定到已发布的安装包，避免面板升级后链接指向尚未构建的 IPA。
-      url: "https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v2.3.381/forwardx-ios-v2.3.381-unsigned.ipa",
+      // 和面板同一个 Release：面板升到哪一版，这里就是那一版构建的 NEX 安装包。
+      url: iosIpaDownloadUrl,
       icon: Download,
       iconClassName: "text-[var(--fx-healthy-text)]",
       description: "iPhone / iPad · 需自行签名后安装",
-    },
+    }] : []),
   ];
   const isUpgradeRunning = upgradeStatus?.job.status === "running";
   const upgradeProgress = getPanelUpgradeProgress(upgradeStatus?.job);
