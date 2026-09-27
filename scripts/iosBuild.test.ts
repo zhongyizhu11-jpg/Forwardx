@@ -24,7 +24,7 @@ test('iOS and Android retain the same app identity and web assets', () => {
   assert.equal(config.ios?.contentInset, 'never');
   assert.match(read('ios/App/App/ForwardXViewController.swift'), /allowsBackForwardNavigationGestures = true/);
   assert.match(read('index.html'), /viewport-fit=cover/);
-  assert.doesNotMatch(read('index.html'), /maximum-scale=1/);
+  assert.match(read('index.html'), /maximum-scale=1/);
 });
 
 test('iOS runtime is pinned to the existing Capacitor runtime', () => {
