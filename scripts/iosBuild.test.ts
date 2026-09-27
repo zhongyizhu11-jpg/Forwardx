@@ -40,7 +40,7 @@ test('IPA script archives a device app without credentials and validates its con
   const script = read('scripts/build-ios-unsigned.sh');
   assert.equal(spawnSync('bash', ['-n', 'scripts/build-ios-unsigned.sh']).status, 0);
   for (const expected of ['generic/platform=iOS', 'CODE_SIGNING_ALLOWED=NO',
-    'lipo -verify_arch arm64', 'CFBundleSupportedPlatforms:0', 'embedded.mobileprovision',
+    'lipo "$APP/$EXECUTABLE" -verify_arch arm64', 'CFBundleSupportedPlatforms:0', 'embedded.mobileprovision',
     'Payload/App.app', 'unzip -t', 'shasum -a 256']) {
     assert.ok(script.includes(expected), expected);
   }

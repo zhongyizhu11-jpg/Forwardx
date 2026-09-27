@@ -31,7 +31,7 @@ PLIST=/usr/libexec/PlistBuddy
 [[ "$("$PLIST" -c 'Print :CFBundleSupportedPlatforms:0' "$APP/Info.plist")" == iPhoneOS ]]
 [[ "$("$PLIST" -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" == "$VERSION" ]]
 EXECUTABLE="$("$PLIST" -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
-xcrun lipo -verify_arch arm64 "$APP/$EXECUTABLE"
+xcrun lipo "$APP/$EXECUTABLE" -verify_arch arm64
 test ! -f "$APP/embedded.mobileprovision"
 mkdir -p "$STAGING/Payload"
 ditto "$APP" "$STAGING/Payload/App.app"
