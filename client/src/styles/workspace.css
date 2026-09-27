@@ -965,6 +965,16 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
   .workspace-header > div:first-child { flex: 1 1 130px; }
   .workspace-header-actions { flex: 0 1 auto; max-width: 100%; }
 }
+/*
+  手机上页头右侧的按钮一个尺寸：40px 高、圆角 pill；只有图标的（「＋」「···」）是 40×40 的圆。
+  上一版 ··· 被触屏 44px 的最小高度顶成 36×44 的竖椭圆，旁边的「＋」是 34×44 —— 两个并排，
+  一个高一个瘦。
+*/
+@media (max-width: 767px) {
+  .workspace-header-actions > [data-slot="button"] { height: 40px; min-height: 40px; border-radius: 999px; }
+  .workspace-header-actions > [data-slot="button"][data-icon-button],
+  .workspace-header-actions > [data-slot="button"]:has(> .max-md\:sr-only) { width: 40px; padding: 0; }
+}
 @media (pointer: coarse) {
   [data-sidebar="menu-button"], [role="menuitem"], [role="option"] { min-height: 44px; }
   [data-slot="textarea"] { font-size: 15px; }  /* 和输入框同一档；为什么能低于 16px 见上面输入框那条 */
