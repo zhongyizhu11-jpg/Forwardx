@@ -64,3 +64,11 @@ test('network exception is WebView-only and Preferences privacy reason is includ
   assert.match(read('ios/App/App/PrivacyInfo.xcprivacy'), /CA92\.1/);
   assert.match(read('ios/App/App.xcodeproj/project.pbxproj'), /PrivacyInfo.xcprivacy in Resources/);
 });
+
+test('ProMotion: the app may draw above 60Hz and asks WebKit not to cap page updates at 60fps', () => {
+  assert.match(read('ios/App/App/Info.plist'), /<key>CADisableMinimumFrameDurationOnPhone<\/key>\s*<true\/>/);
+  const controller = read('ios/App/App/ForwardXViewController.swift');
+  assert.match(controller, /_setPreferPageRenderingUpdatesNear60FPSEnabled:/);
+  // private setter must be guarded so an older / newer WebKit without it cannot crash the app
+  assert.match(controller, /responds\(to: selector\)/);
+});

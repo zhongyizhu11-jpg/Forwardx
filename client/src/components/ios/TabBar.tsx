@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { activeTabPath, type TabBarPlan } from "./tabBarModel";
 import { prefetchRoute } from "@/pages/routeChunks";
@@ -38,8 +39,26 @@ export function IosTabBar({
   onNavigate: (path: string) => void;
   className?: string;
 }) {
+  /*
+    按下的那一格先亮，再换页。换页要把整页渲染一遍（转发规则页在慢手机上要一两百毫秒），
+    原来高亮跟着路由一起变，手指按下去要等整页画完药丸才挪过去，像没点中。现在药丸先挪、
+    浏览器先画出这一帧，下一轮再真正切路由 —— 按下即有反馈，和原生标签栏一个手感。
+  */
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  useEffect(() => { setPendingPath(null); }, [currentPath]);
+  // 路由没跟着变（被守卫拦下、同一页）时别一直亮着别的格子
+  useEffect(() => {
+    if (!pendingPath) return;
+    const timer = window.setTimeout(() => setPendingPath(null), 2000);
+    return () => window.clearTimeout(timer);
+  }, [pendingPath]);
   if (!plan.tabs.length) return null;
-  const active = activeTabPath(plan, currentPath);
+  const active = activeTabPath(plan, pendingPath ?? currentPath);
+  const press = (path: string) => {
+    if (path === pendingPath) return;
+    setPendingPath(path);
+    requestAnimationFrame(() => { window.setTimeout(() => onNavigate(path), 0); });
+  };
 
   return (
     <nav aria-label="主导航" className={cn("fx-tabbar", className)}>
@@ -54,7 +73,7 @@ export function IosTabBar({
               知道自己在哪一格，而这两个 24px 的图标之间只差一个填充度。
             */
             aria-current={selected ? "page" : undefined}
-            onClick={() => onNavigate(tab.path)}
+            onClick={() => press(tab.path)}
             onPointerDown={() => { void prefetchRoute(tab.path); }}
             className={cn(
               "fx-tabbar-item",

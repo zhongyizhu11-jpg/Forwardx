@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { cn } from "@/lib/utils";
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
@@ -323,14 +323,6 @@ export function NetworkMap({
           })}
         </g>
 
-        <g className="fx-netmap-flow" aria-hidden="true">
-          {flowing.map((segment, index) => (
-            <circle key={`flow:${segment.key}`} r={3} fill="var(--fx-l1-surface)" stroke="var(--fx-accent)" strokeWidth={2}>
-              <animateMotion dur={`${3.2 + (index % 3) * 0.6}s`} repeatCount="indefinite" path={segment.d} begin={`${-(index * 0.7)}s`} />
-            </circle>
-          ))}
-        </g>
-
         <g className="fx-netmap-nodes">
           {placed.map((node) => {
             const color = healthColor(node.health);
@@ -361,6 +353,27 @@ export function NetworkMap({
           })}
         </g>
       </svg>
+      {/*
+        线上流动的小点。原来用 SVG 的 <animateMotion>：浏览器每一帧都要重排整张图（实测空闲时
+        每秒 60 次布局），iPhone 上滑动首页会掉帧、也费电。换成 HTML 小点沿同一条 path 走
+        （CSS offset-path，动画只改 offset-distance 和透明度），交给合成层去动，不再逐帧重排。
+        SVG 是 1:1 像素画的（viewBox 等于实际宽高），所以同一个 d 在这一层上位置完全重合。
+        两头淡入淡出，不会盖在主机圆盘上。
+      */}
+      {flowing.length ? (
+        <div className="fx-netmap-flow" aria-hidden="true">
+          {flowing.map((segment, index) => (
+            <i
+              key={`flow:${segment.key}`}
+              style={{
+                offsetPath: `path("${segment.d}")`,
+                animationDuration: `${3.2 + (index % 3) * 0.6}s`,
+                animationDelay: `${-(index * 0.7)}s`,
+              } as CSSProperties}
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

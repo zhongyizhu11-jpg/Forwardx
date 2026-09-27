@@ -494,6 +494,18 @@
     background: var(--background);
   }
 
+  /*
+    iOS 上把竖向的回弹还回来。上面那条 overscroll-behavior: none 是给安卓的（拦下拉刷新和
+    边缘发光），放到 iPhone 上会把系统自带的橡皮筋回弹也关掉：滑到顶 / 底一下顿住，
+    一摸就是网页而不是 App。横向仍然锁住，页面不会左右晃。
+  */
+  html.capacitor-ios,
+  html.capacitor-ios body,
+  html.capacitor-ios #root {
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: auto;
+  }
+
   [data-mobile-header="true"] {
     min-height: calc(3.5rem + var(--forwardx-safe-area-top));
     padding-top: var(--forwardx-safe-area-top);
