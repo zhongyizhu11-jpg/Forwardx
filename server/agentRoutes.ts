@@ -463,45 +463,60 @@ agentApiRouter.post("/api/agent/migration-rollback", async (req: Request, res: R
 
 agentRouter.use(agentApiRouter);
 
+// 下面两个是不用登录就能访问的地址，而 Express 4 不接异步路由里抛出的异常：以前这里没有
+// try，数据库一抖（getAllSettings 查询失败）或缓存目录建不出来时，异常变成 unhandledRejection，
+// Node 直接退出整个面板进程 —— 一个来拉安装脚本的请求就能让所有 Agent 连接一起断。
 agentRouter.get("/api/agent/install.sh", async (req: Request, res: Response) => {
-  const panelUrl = await resolvePanelUrl(req);
-  const settings = await db.getAllSettings();
-  const panelMigration = await getPanelMigrationAgentDirective();
-  const abortedFallbackActive = panelMigration?.state === "aborted"
-    && !!panelMigration.startedAt
-    && Math.floor(Date.now() / 1000) - panelMigration.startedAt <= 60 * 60;
-  const migrationFallbackEnabled = panelMigration?.state === "preparing"
-    || panelMigration?.state === "committing"
-    || abortedFallbackActive;
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.send(generateInstallScript(panelUrl, {
-    githubAcceleratorEnabled: settings.githubAcceleratorEnabled === "true",
-    githubAcceleratorUrl: settings.githubAcceleratorUrl || "",
-    preferPanelInstall: settings.agentPreferPanelInstall === "true",
-    installNginx: isNginxForwardProtocolEnabled(parseForwardProtocolSettings(settings.forwardProtocols)),
-    migrationFallbackPanelUrl: migrationFallbackEnabled ? panelMigration?.fallbackPanelUrl : undefined,
-    panelMigrationId: migrationFallbackEnabled ? panelMigration?.id : undefined,
-    panelMigrationStartedAt: migrationFallbackEnabled ? panelMigration?.startedAt : undefined,
-  }));
+  try {
+    const panelUrl = await resolvePanelUrl(req);
+    const settings = await db.getAllSettings();
+    const panelMigration = await getPanelMigrationAgentDirective();
+    const abortedFallbackActive = panelMigration?.state === "aborted"
+      && !!panelMigration.startedAt
+      && Math.floor(Date.now() / 1000) - panelMigration.startedAt <= 60 * 60;
+    const migrationFallbackEnabled = panelMigration?.state === "preparing"
+      || panelMigration?.state === "committing"
+      || abortedFallbackActive;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.send(generateInstallScript(panelUrl, {
+      githubAcceleratorEnabled: settings.githubAcceleratorEnabled === "true",
+      githubAcceleratorUrl: settings.githubAcceleratorUrl || "",
+      preferPanelInstall: settings.agentPreferPanelInstall === "true",
+      installNginx: isNginxForwardProtocolEnabled(parseForwardProtocolSettings(settings.forwardProtocols)),
+      migrationFallbackPanelUrl: migrationFallbackEnabled ? panelMigration?.fallbackPanelUrl : undefined,
+      panelMigrationId: migrationFallbackEnabled ? panelMigration?.id : undefined,
+      panelMigrationStartedAt: migrationFallbackEnabled ? panelMigration?.startedAt : undefined,
+    }));
+  } catch (error) {
+    console.error("[Agent Install] Error:", error);
+    if (res.headersSent) return;
+    // 面板给的命令带 curl -f，503 时 curl 自己会报错；有人去掉 -f 直接喂给 bash，也只会看到一句提示并非零退出
+    res.status(503).type("text/plain; charset=utf-8").send("echo 'ForwardX 面板暂时不可用，请稍后重试安装' >&2\nexit 1\n");
+  }
 });
 
 agentRouter.get("/api/agent/assets/:version/:asset", async (req: Request, res: Response) => {
-  const version = String(req.params.version || "").trim().replace(/^v/i, "");
-  const asset = String(req.params.asset || "").trim();
-  if (!/^\d+\.\d+\.\d+$/.test(version) || !AGENT_ASSET_NAME_SET.has(asset)) {
-    res.status(404).send("Not found");
-    return;
-  }
+  try {
+    const version = String(req.params.version || "").trim().replace(/^v/i, "");
+    const asset = String(req.params.asset || "").trim();
+    if (!/^\d+\.\d+\.\d+$/.test(version) || !AGENT_ASSET_NAME_SET.has(asset)) {
+      res.status(404).send("Not found");
+      return;
+    }
 
-  const filePath = await getOrFetchAgentAssetPath(version, asset);
-  if (!filePath) {
-    res.status(503).send("Agent asset not available");
-    return;
+    const filePath = await getOrFetchAgentAssetPath(version, asset);
+    if (!filePath) {
+      res.status(503).send("Agent asset not available");
+      return;
+    }
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Disposition", `attachment; filename="${asset}"`);
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error("[Agent Assets] Error:", error);
+    if (!res.headersSent) res.status(503).send("Agent asset not available");
   }
-  res.setHeader("Content-Type", "application/octet-stream");
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Content-Disposition", `attachment; filename="${asset}"`);
-  res.sendFile(filePath);
 });
 
 export { agentRouter };

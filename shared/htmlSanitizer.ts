@@ -88,16 +88,40 @@ function sanitizeAttributes(rawAttrs: string, tagName: string) {
   return attrs.length ? ` ${attrs.join(" ")}` : "";
 }
 
-export function sanitizeHtml(input: string) {
-  const withoutDangerousBlocks = String(input || "")
-    .replace(/<\s*(script|style|iframe|object|embed|link|meta|base|form|input|button|textarea|select|option|svg|math)[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
-    .replace(/<\s*(script|style|iframe|object|embed|link|meta|base|form|input|button|textarea|select|option|svg|math)\b[^>]*\/?\s*>/gi, "");
+// `<` 后面紧跟字母（或 `/` 加字母）浏览器才当标签；`a < b 且 c > d` 这种是正文。以前这里
+// 允许 `<` 后带空格，服务端存纯文本公告时会把它改成 `a <b> d`，吞掉中间的字。
+function sanitizeOnce(input: string) {
+  const withoutDangerousBlocks = input
+    .replace(/<(script|style|iframe|object|embed|link|meta|base|form|input|button|textarea|select|option|svg|math)[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
+    .replace(/<(script|style|iframe|object|embed|link|meta|base|form|input|button|textarea|select|option|svg|math)\b[^>]*\/?\s*>/gi, "");
 
-  return withoutDangerousBlocks.replace(/<\s*(\/)?\s*([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>/g, (full, closing: string, rawName: string, rawAttrs: string) => {
+  return withoutDangerousBlocks.replace(/<(\/)?([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>/g, (full, closing: string, rawName: string, rawAttrs: string) => {
     const tagName = rawName.toLowerCase();
     if (!ALLOWED_TAGS.has(tagName)) return "";
     if (closing) return VOID_TAGS.has(tagName) ? "" : `</${tagName}>`;
     const attrs = sanitizeAttributes(rawAttrs || "", tagName);
     return VOID_TAGS.has(tagName) ? `<${tagName}${attrs}>` : `<${tagName}${attrs}>`;
   });
+}
+
+/*
+  删掉一个标签，两边剩下的字会拼成一个新标签：`<<x>img src=x onerror=…>` 里 `<x>` 被删，
+  剩下的正好是 `<img src=x onerror=…>`，而 replace 不会回头再扫刚拼出来的这段 —— 洗一遍
+  就放行了一个能跑脚本的标签。服务端存公告时洗一遍、前端显示前再洗一遍也挡不住，多套一层
+  `<<<x>x>` 就又多撑一遍。
+
+  所以反复洗到结果不再变化为止：每套一层只多洗一遍，正常内容两遍就稳定（第二遍只是确认），
+  输出和以前逐字相同。套得离谱、超过上限还在变的，整段按纯文本转义显示，不再冒险。
+*/
+const MAX_SANITIZE_PASSES = 16;
+
+export function sanitizeHtml(input: string) {
+  const original = String(input || "");
+  let current = original;
+  for (let pass = 0; pass < MAX_SANITIZE_PASSES; pass += 1) {
+    const next = sanitizeOnce(current);
+    if (next === current) return next;
+    current = next;
+  }
+  return escapeHtml(original);
 }
