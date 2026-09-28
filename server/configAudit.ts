@@ -4,6 +4,8 @@ import { and, desc, eq, inArray, like, max, ne, or } from "drizzle-orm";
 import { configAuditEvents } from "../drizzle/schema";
 import { getDb, insertAndGetId } from "./dbRuntime";
 import { invalidateAgentStableHeartbeatPlan } from "./agentHeartbeatGate";
+import { deleteExpiredHistoryRows } from "./repositories/historyRetention";
+import { quoteIdentifier } from "./dbCompat";
 
 export type ConfigAuditContext = {
   actorUserId?: number | null;
@@ -17,7 +19,9 @@ type AuditResourceType = "host" | "tunnel" | "forward_rule" | "runtime";
 type AuditAction = "create" | "update" | "delete" | "dispatch";
 
 const auditContext = new AsyncLocalStorage<ConfigAuditContext>();
-const SECRET_KEY = /(password|passwd|secret|token|private.?key|certificate|authorization|cookie|credential)/i;
+// certKeyPem（Nginx TLS 私钥）这类字段名里没有 private/secret，要单独列出 cert/pem/privkey 组合，
+// 否则私钥会原样写进审计的 before/after/diff。
+const SECRET_KEY = /(password|passwd|secret|token|private.?key|privkey|cert.?key|key.?pem|pem.?key|certificate|authorization|cookie|credential)/i;
 const VOLATILE_KEYS = new Set([
   "createdAt", "updatedAt", "lastHeartbeat", "isOnline", "isRunning", "lastLatencyMs",
   "lastTestAt", "lastTestStatus", "lastTestMessage", "lastError", "trafficUsed",
@@ -148,6 +152,26 @@ export async function listRecentConfigAuditEvents(limit = 500) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(configAuditEvents).orderBy(desc(configAuditEvents.id)).limit(Math.min(2000, Math.max(1, limit)));
+}
+
+/**
+ * 清掉 30 天前的「下发」审计行（action = 'dispatch'），其他种类一律不动。
+ *
+ * 每台机器的期望状态哈希一变就记一条 dispatch，量远大于真正的配置改动，而且从来不删。
+ * 读这张表的地方里，latestConfigRevision 明确排除了 dispatch；Mimic 生命周期签名只看
+ * forward_rule / tunnel 两种资源（dispatch 行的 resourceType 是 runtime）；只有
+ * listRecentConfigAuditEvents（支持包里的最近记录）会带上它们，30 天足够排查。
+ */
+export async function pruneDispatchConfigAuditEvents(retainDays = 30) {
+  const db = await getDb();
+  if (!db) return 0;
+  const cutoff = Math.floor((Date.now() - Math.max(1, retainDays) * 24 * 3600 * 1000) / 1000);
+  return deleteExpiredHistoryRows("config_audit_events", "createdAt", cutoff, {
+    // 标识符按方言加引号：MySQL 默认 sql_mode 下 "action" 会被当成字符串字面量。
+    whereSql: `${quoteIdentifier("action")} = ?`,
+    whereParams: ["dispatch"],
+    orderColumn: "id",
+  });
 }
 
 export type MimicLifecycleResource = {

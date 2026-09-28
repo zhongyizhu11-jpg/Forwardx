@@ -10,7 +10,7 @@ import { Loader2, Sun, Moon, RefreshCw, UserPlus, LogIn, Send, Settings as Setti
 import { AnimatePresence, m } from "motion/react";
 import { toast } from "sonner";
 import { useTheme } from "@/contexts/ThemeContext";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { mobileAuth } from "@/lib/mobileAuth";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { ACCOUNT_DISABLED_ERR_MSG } from "@shared/const";
@@ -73,6 +73,16 @@ function isTelegramWebAppRequested() {
   if (typeof window === "undefined") return false;
   const value = String(new URLSearchParams(window.location.search).get("tgWebApp") || "").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes";
+}
+
+// 把 ?tg= 从地址栏去掉（保留其它参数），刷新页面不会再次弹出确认框。
+function clearTelegramLinkFromUrl() {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("tg")) return;
+  params.delete("tg");
+  const query = params.toString();
+  window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
 }
 
 function captchaRetryAfterSeconds(message: string) {
@@ -282,10 +292,12 @@ function rememberLoginWelcome(user: any) {
 
 export default function Login() {
   const [location] = useLocation();
-  const initialMode = new URLSearchParams(location.split("?")[1] || "").get("mode") === "register" ? "register" : "login";
+  // wouter 的 useLocation() 只有路径，查询串要从 useSearch() 取。
+  const search = useSearch();
+  const initialMode = new URLSearchParams(search).get("mode") === "register" ? "register" : "login";
   const [mode, setMode] = useState<Mode>(initialMode);
   const [username, setUsername] = useState(() => mobileAuth.getUsername());
-  const [password, setPassword] = useState(() => mobileAuth.getPassword());
+  const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -303,6 +315,7 @@ export default function Login() {
   const [showPanelSettings, setShowPanelSettings] = useState(false);
   const { resolvedTheme, setTheme } = useTheme();
   const hasMobilePanelUrl = !mobileAuth.isNative || mobileAuth.hasPanelUrl();
+  const showInsecurePanelWarning = mobileAuth.isNative && mobileAuth.isInsecurePanelUrl(mobileAuth.getPanelUrl());
   const telegramWebAppAutoLoginTriedRef = useRef(false);
   const telegramWebAppChallengeRetriedRef = useRef(false);
   const captchaRequestIdRef = useRef(0);
@@ -320,9 +333,9 @@ export default function Login() {
   }, []);
 
   useEffect(() => {
-    const nextMode = new URLSearchParams(location.split("?")[1] || "").get("mode") === "register" ? "register" : "login";
+    const nextMode = new URLSearchParams(search).get("mode") === "register" ? "register" : "login";
     setMode(nextMode);
-  }, [location]);
+  }, [location, search]);
 
   const utils = trpc.useUtils();
   const { data: emailConfig } = trpc.auth.emailConfig.useQuery(undefined, {
@@ -431,7 +444,7 @@ export default function Login() {
         return;
       }
       if (mobileAuth.isNative) {
-        mobileAuth.setCredentials(username, password);
+        mobileAuth.setUsername(username);
         mobileAuth.setToken(data.mobileToken);
       }
       rememberLoginWelcome(data);
@@ -502,6 +515,47 @@ export default function Login() {
       toast.error(error.message || "Telegram 登录失败");
     },
   });
+
+  /*
+    /login?tg=CODE 是机器人「网页登录」发的一次性链接。打开就自动登录是登录 CSRF：
+    别人把**他自己**的链接发给你，你点开就在不知情时登进了他的账户，之后填的东西都进了他那边。
+    所以先只读地查出这个码对应哪个账户，弹框让用户确认，点「继续登录」才真正消费登录码。
+  */
+  const telegramLinkCode = getTelegramWebAppInitData()
+    ? ""
+    : String(new URLSearchParams(search).get("tg") || "").trim();
+  const telegramLinkActive = telegramLinkCode.length >= 8 && telegramLinkCode.length <= 64 && telegramLoginCode !== telegramLinkCode;
+  const telegramLoginPreviewQuery = trpc.telegram.previewLogin.useQuery({ code: telegramLinkCode }, {
+    enabled: telegramLinkActive && hasMobilePanelUrl,
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
+  });
+  const telegramLoginPreview = telegramLinkActive ? telegramLoginPreviewQuery.data : undefined;
+  const showTelegramLinkConfirm = telegramLinkActive && hasMobilePanelUrl && !telegramLoginPreviewQuery.error;
+
+  useEffect(() => {
+    const error = telegramLoginPreviewQuery.error;
+    if (!error || !telegramLinkActive) return;
+    setTelegramLoginCode(telegramLinkCode);
+    clearTelegramLinkFromUrl();
+    const msg = error.message || "";
+    const limited = /^TELEGRAM_LOGIN_RATE_LIMITED:(\d+)$/.exec(msg);
+    toast.error(limited ? `尝试过于频繁，请 ${limited[1]} 分钟后重试` : msg || "Telegram 登录码无效或已过期");
+  }, [telegramLinkActive, telegramLinkCode, telegramLoginPreviewQuery.error]);
+
+  const confirmTelegramLinkLogin = () => {
+    if (!telegramLinkActive || !telegramLoginPreview || telegramLoginMutation.isPending) return;
+    const code = telegramLinkCode;
+    setTelegramLoginCode(code);
+    clearTelegramLinkFromUrl();
+    telegramLoginMutation.mutate({ code, mobile: mobileAuth.isNative });
+  };
+
+  const cancelTelegramLinkLogin = () => {
+    setTelegramLoginCode(telegramLinkCode);
+    clearTelegramLinkFromUrl();
+  };
 
   const telegramWebAppLoginMutation = trpc.telegram.loginWithWebApp.useMutation({
     onSuccess: (data) => {
@@ -580,8 +634,8 @@ export default function Login() {
   const verifyTwoFactorLoginMutation = trpc.auth.verifyTwoFactorLogin.useMutation({
     onSuccess: (data) => {
       if (mobileAuth.isNative) {
-        // Telegram 登录进来的双重验证没有账号密码，别用空值覆盖掉 App 里记住的凭据。
-        if (password) mobileAuth.setCredentials(username, password);
+        // Telegram 登录进来的双重验证没有账号密码，别用空值覆盖掉 App 里记住的用户名。
+        if (password) mobileAuth.setUsername(username);
         mobileAuth.setToken(data.mobileToken);
       }
       rememberLoginWelcome(data);
@@ -716,14 +770,6 @@ export default function Login() {
       if (timeoutId) window.clearTimeout(timeoutId);
     };
   }, [telegramWebAppLoginMutation.isPending, telegramWebAppLoginMutation.mutate]);
-
-  useEffect(() => {
-    if (getTelegramWebAppInitData()) return;
-    const code = new URLSearchParams(location.split("?")[1] || "").get("tg");
-    if (!code || telegramLoginCode === code || telegramLoginMutation.isPending) return;
-    setTelegramLoginCode(code);
-    telegramLoginMutation.mutate({ code, mobile: mobileAuth.isNative });
-  }, [location, telegramLoginCode, telegramLoginMutation]);
 
   useEffect(() => {
     if (!mobileTelegramLogin) return;
@@ -993,6 +1039,11 @@ export default function Login() {
                 >
                   未添加服务器地址，请点击右上角设置按钮添加
                 </button>
+              )}
+              {showInsecurePanelWarning && (
+                <p className="rounded-md border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] px-3 py-2 text-sm text-[var(--fx-warn-text)]">
+                  当前面板地址使用 http://，密码和登录令牌会以明文传输，建议改用 https:// 地址。
+                </p>
               )}
               <div className="space-y-2">
                 <Label htmlFor="username">用户名或邮箱</Label>
@@ -1291,6 +1342,11 @@ export default function Login() {
                 autoComplete="url"
                 autoFocus
               />
+              {mobileAuth.isInsecurePanelUrl(panelUrlDraft) && (
+                <p className="text-xs text-[var(--fx-warn-text)]">
+                  http:// 地址不加密，密码和登录令牌会以明文传输，建议使用 https://。
+                </p>
+              )}
             </div>
             <DialogFooter className="gap-2">
               <Button className="w-full sm:w-auto" variant="outline" onClick={() => setShowPanelSettings(false)}>
@@ -1303,6 +1359,56 @@ export default function Login() {
           </DialogContent>
         </Dialog>
       )}
+
+      <Dialog
+        open={showTelegramLinkConfirm}
+        onOpenChange={(open) => {
+          if (!open) cancelTelegramLinkLogin();
+        }}
+      >
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-sm">
+          <DialogTitle>确认 Telegram 登录</DialogTitle>
+          {telegramLoginPreview ? (
+            <>
+              <DialogDescription>
+                {telegramLoginPreview.telegramUsername
+                  ? `以 Telegram 用户 @${telegramLoginPreview.telegramUsername} / 面板账户 ${telegramLoginPreview.username} 登录？`
+                  : `以面板账户 ${telegramLoginPreview.username} 登录？`}
+              </DialogDescription>
+              <div className="space-y-1 rounded-lg border border-border/50 bg-muted/20 p-3 text-sm">
+                {telegramLoginPreview.telegramUsername && (
+                  <p className="text-muted-foreground">Telegram：@{telegramLoginPreview.telegramUsername}</p>
+                )}
+                <p className="font-medium">面板账户：{telegramLoginPreview.username}</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                如果这个链接不是你刚在机器人里点「网页登录」获取的，请点取消：它可能会让你登录到别人的账户。
+              </p>
+            </>
+          ) : (
+            <>
+              <DialogDescription>正在读取登录链接...</DialogDescription>
+              <div className="flex justify-center py-4">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            </>
+          )}
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={cancelTelegramLinkLogin}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              className="w-full sm:w-auto"
+              onClick={confirmTelegramLinkLogin}
+              disabled={!telegramLoginPreview || telegramLoginMutation.isPending}
+            >
+              <LogIn className="mr-2 h-4 w-4" />
+              继续登录
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={!!twoFactorChallenge}

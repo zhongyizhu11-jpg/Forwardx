@@ -545,7 +545,7 @@ func TestPinnedIndexZeroValueIsNotAPin(t *testing.T) {
 	*/
 	spec := normalizeFailoverSpec(failoverSpec{
 		Enabled: true, ListenPort: 1, BindAddress: "127.0.0.1", Strategy: "fallback",
-		Targets: []failoverTarget{{TargetIP: "10.0.0.1", TargetPort: 80}, {TargetIP: "10.0.0.2", TargetPort: 80}},
+		Targets:  []failoverTarget{{TargetIP: "10.0.0.1", TargetPort: 80}, {TargetIP: "10.0.0.2", TargetPort: 80}},
 		Schedule: eveningSchedule(1),
 	})
 	if spec.PinnedIndex != nil {

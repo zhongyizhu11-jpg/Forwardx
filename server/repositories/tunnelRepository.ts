@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import {
   tunnels,
@@ -16,7 +17,7 @@ import {
   tunnelLatencyStats,
   users,
 } from "../../drizzle/schema";
-import { executeRaw, getDatabaseKind, getDb, insertAndGetId, nowDate, queryRaw, withDatabaseTransaction } from "../dbRuntime";
+import { afterDatabaseTransactionSettled, executeRaw, getDatabaseKind, getDb, insertAndGetId, isDatabaseTransactionActive, nowDate, queryRaw, withDatabaseTransaction } from "../dbRuntime";
 import { boolValue, quoteIdentifier, sqlCountAll } from "../dbCompat";
 import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, pickAvailablePort, portPolicyFrom } from "@shared/portPolicy";
 import { releaseHostPortReservations, reserveAvailableHostPort, reserveSpecificHostPort, type HostPortReservation } from "../portReservations";
@@ -462,6 +463,8 @@ export async function createTunnel(data: InsertTunnel) {
   if (payload.sortOrder === undefined) {
     payload.sortOrder = await nextTunnelSortOrder(Number(payload.userId || 0));
   }
+  // 隧道密钥永远不能为空：空值会让运行时退回到兜底推导。
+  if (!payload.secret) payload.secret = crypto.randomBytes(32).toString("hex");
   const id = await insertAndGetId("tunnels", payload);
   const created = await getTunnelById(id).catch(() => undefined);
   await recordConfigAuditEvent({ resourceType: "tunnel", resourceId: id, hostId: Number((created as any)?.entryHostId || 0), action: "create", after: created });
@@ -845,8 +848,10 @@ export async function forwardRuleOwnerAllowsRuntime(userId: unknown) {
     canAddRules: users.canAddRules,
     forwardAccessPauseReason: users.forwardAccessPauseReason,
   }).from(users).where(eq(users.id, id)).limit(1))[0] as any;
-  // 找不到主人时不在这里拦：改记成账户暂停它就永远恢复不了，下发时的授权闸会拦住它。
-  if (!owner || String(owner.role || "") === "admin") return true;
+  // 主人那一行已经没了（账号被删）：规则不能再跑，记成账户暂停也无妨 —— 这个人不会再回来。
+  // userId 为空/0 的系统规则在上面已经放行。
+  if (!owner) return false;
+  if (String(owner.role || "") === "admin") return true;
   return dbBool(owner.accountEnabled, true)
     && dbBool(owner.canAddRules)
     && !String(owner.forwardAccessPauseReason || "").trim();
@@ -905,9 +910,51 @@ async function canRestoreForwardRuleAfterTunnel(rule: any) {
   return true;
 }
 
+/**
+ * 恢复一条隧道规则前，重新预留它在出口 Agent 上的端口（tunnelExitPort）。
+ *
+ * 规则停着的时候这个端口不算占用（占用只数启用的规则），可能已经被别的规则或隧道拿走；
+ * 原样恢复会让两条启用的规则在出口 Agent 上抢同一个端口。能沿用就沿用，被占了或已不在
+ * 出口的端口策略里就另分一个。GOST / Nginx 共用监听的主规则（id 最小的启用规则）优先
+ * 用隧道自己的监听端口。分不到端口返回 null。预留由调用方在事务结束后释放。
+ */
+async function reserveRestoredRuleTunnelExitPort(rule: any, tunnel: any, reservedPorts: number[]) {
+  const exitHostId = Number(tunnel?.exitHostId || 0);
+  const ruleId = Number(rule?.id || 0);
+  if (exitHostId <= 0 || ruleId <= 0) return null;
+  const exit = await getHostById(exitHostId) as any;
+  let sharedPrimaryPort = 0;
+  const listenPort = Number(tunnel?.listenPort || 0);
+  if (usesSharedTunnelPrimaryListener(tunnel)
+    && listenPort > 0
+    && String(rule?.forwardType || "").trim().toLowerCase() === "gost") {
+    const others = (await getForwardRulesByTunnel(Number(tunnel.id)) as any[]).filter((candidate) => (
+      candidate
+      && Number(candidate.id) !== ruleId
+      && !dbBool(candidate.pendingDelete)
+      && !dbBool(candidate.isForwardGroupTemplate)
+      && dbBool(candidate.isEnabled)
+      && String(candidate.forwardType || "").trim().toLowerCase() === "gost"
+    ));
+    if (!others.some((candidate) => Number(candidate.id) < ruleId)) sharedPrimaryPort = listenPort;
+  }
+  return reserveTunnelExitPort({
+    hostId: exitHostId,
+    preferredStart: exit?.portRangeStart,
+    preferredEnd: exit?.portRangeEnd,
+    currentPort: sharedPrimaryPort || Number(rule?.tunnelExitPort || 0),
+    reservedPorts,
+    excludeRuleIds: [ruleId],
+    allowSameTunnelListener: sharedPrimaryPort > 0,
+    excludeTunnelId: Number(tunnel.id),
+    protocol: "both",
+  });
+}
+
 export async function restoreForwardRulesByTunnel(tunnelId: number) {
   const db = await getDb();
   if (!db) return;
+  const tunnel = await getTunnelById(tunnelId) as any;
   const rules = await db.select().from(forwardRules).where(and(
     eq(forwardRules.tunnelId, tunnelId),
     eq(forwardRules.pendingDelete, false),
@@ -920,21 +967,41 @@ export async function restoreForwardRulesByTunnel(tunnelId: number) {
     ),
   ));
   let restored = 0;
-  for (const rule of rules as any[]) {
-    const ownerAllowed = await forwardRuleOwnerAllowsRuntime(rule.userId);
-    const canEnable = ownerAllowed && await canRestoreForwardRuleAfterTunnel(rule);
-    const portConflict = canEnable ? await forwardRuleRestorePortConflict(rule) : null;
-    const isEnabled = canEnable && !portConflict;
-    if (isEnabled) restored += 1;
-    await db.update(forwardRules).set({
-      isEnabled,
-      disabledByTunnel: false,
-      // 主人暂停中：改记成「因账户暂停而停」，账户恢复时由那条路径自动拉起。
-      ...(ownerAllowed ? {} : { disabledByUser: true }),
-      ...(portConflict ? { protocolBlockReason: portConflict } : {}),
-      isRunning: false,
-      updatedAt: nowDate(),
-    } as any).where(eq(forwardRules.id, Number(rule.id)));
+  const heldReservations: HostPortReservation[] = [];
+  try {
+    // 按 id 从小到大恢复：共用监听的主规则是 id 最小的启用规则，先恢复它才能拿回隧道监听端口。
+    const orderedRules = [...(rules as any[])].sort((left, right) => Number(left.id) - Number(right.id));
+    for (const rule of orderedRules) {
+      const ownerAllowed = await forwardRuleOwnerAllowsRuntime(rule.userId);
+      const canEnable = ownerAllowed && await canRestoreForwardRuleAfterTunnel(rule);
+      let portConflict = canEnable ? await forwardRuleRestorePortConflict(rule) : null;
+      let tunnelExitPort: number | null = null;
+      const managedByOtherFlow = dbBool(rule.isForwardGroupTemplate) || Number(rule.forwardGroupRuleId || 0) > 0 || Number(rule.routeParentRuleId || 0) > 0;
+      if (canEnable && !portConflict && tunnel && !managedByOtherFlow) {
+        const reservation = await reserveRestoredRuleTunnelExitPort(rule, tunnel, heldReservations.map((item) => item.port));
+        if (reservation) {
+          heldReservations.push(reservation);
+          if (reservation.port !== Number(rule.tunnelExitPort || 0)) tunnelExitPort = reservation.port;
+        } else {
+          portConflict = "出口 Agent 上这条规则的隧道端口在停用期间已被占用，且已无可用隧道端口，请调整后再启用";
+        }
+      }
+      const isEnabled = canEnable && !portConflict;
+      if (isEnabled) restored += 1;
+      await db.update(forwardRules).set({
+        isEnabled,
+        disabledByTunnel: false,
+        // 主人暂停中：改记成「因账户暂停而停」，账户恢复时由那条路径自动拉起。
+        ...(ownerAllowed ? {} : { disabledByUser: true }),
+        ...(portConflict ? { protocolBlockReason: portConflict } : {}),
+        ...(isEnabled && tunnelExitPort ? { tunnelExitPort } : {}),
+        isRunning: false,
+        updatedAt: nowDate(),
+      } as any).where(eq(forwardRules.id, Number(rule.id)));
+    }
+  } finally {
+    // 在事务里恢复时（隧道重新启用），预留要占到事务结束，理由同其他分配。
+    await afterDatabaseTransactionSettled(() => releaseHostPortReservations(heldReservations));
   }
   if (restored > 0) appendPanelLog("info", `[RuleStop] tunnel=${tunnelId} resumed ${restored} rule(s)`);
   return restored;
@@ -1486,7 +1553,8 @@ export async function reconcileTunnelRulePrimaryExitPorts(
     }
     return { processed: rules.length, changed };
   } finally {
-    releaseHostPortReservations(heldReservations);
+    // 在事务里调用时，预留要占到事务结束：MySQL/PG 提交前别人看不到这里写的端口。
+    await afterDatabaseTransactionSettled(() => releaseHostPortReservations(heldReservations));
   }
 }
 
@@ -1551,8 +1619,12 @@ export async function ensureForwardXMimicPorts(tunnelInput: any, hopsInput: any[
   if (tunnelId <= 0) {
     return { tunnel: tunnelInput, hops: hopsInput, exitNodes: exitNodesInput, changed: false };
   }
+  // 事务里不能去等别人的分配：心跳那边的分配正在等 SQLite 连接锁，而这把锁就在
+  // 本事务手里，互相等下去整个面板卡死；它算的也是提交前的旧数据。事务里自己算一遍，
+  // 也不登记给别人复用（事务可能回滚）。
+  const inTransaction = isDatabaseTransactionActive();
   const existing = mimicPortAllocationLocks.get(tunnelId);
-  if (existing) return existing;
+  if (existing && !inTransaction) return existing;
   const work = (async () => {
     const db = await getDb();
     if (!db) return { tunnel: tunnelInput, hops: hopsInput, exitNodes: exitNodesInput, changed: false };
@@ -1701,9 +1773,11 @@ export async function ensureForwardXMimicPorts(tunnelInput: any, hopsInput: any[
     }
     return { tunnel, hops, exitNodes, changed };
     } finally {
-      releaseHostPortReservations(heldReservations);
+      // 在事务里调用时，预留要占到事务结束：MySQL/PG 提交前别人看不到这里写的端口。
+      await afterDatabaseTransactionSettled(() => releaseHostPortReservations(heldReservations));
     }
   })();
+  if (inTransaction) return work;
   mimicPortAllocationLocks.set(tunnelId, work);
   try {
     return await work;
@@ -1742,6 +1816,64 @@ function protocolConflictCondition(_protocol: unknown) {
   // one rule identity even when the operating system could bind TCP and UDP
   // separately, otherwise the two rules overwrite each other's local state.
   return null;
+}
+
+/**
+ * 挂了入口组的隧道：组里每台启用的主机成员都会替这条隧道的规则在 sourcePort 上监听
+ * （下发口径见 forwardRuleRepository 的 forwardRulesForAgentConditions）。这些规则的
+ * hostId 是隧道入口机，不是成员机，只按 hostId 查占用会漏掉它们 —— 成员机上就能再建
+ * 一条同端口的规则，Agent 上后起的那个 bind 失败。
+ */
+function tunnelRuleServedByEntryGroupHostCondition(hostId: number) {
+  return sql`${forwardRules.tunnelId} IN (
+    SELECT ${tunnels.id}
+    FROM ${tunnels}
+    WHERE ${tunnels.entryGroupId} IN (
+      SELECT ${forwardGroups.id}
+      FROM ${forwardGroups}
+      INNER JOIN ${forwardGroupMembers} ON ${forwardGroupMembers.groupId} = ${forwardGroups.id}
+      WHERE ${forwardGroups.groupMode} = 'entry'
+        AND ${forwardGroups.isEnabled} = ${sqlBool(true)}
+        AND ${forwardGroupMembers.memberType} = 'host'
+        AND ${forwardGroupMembers.hostId} = ${hostId}
+        AND ${forwardGroupMembers.isEnabled} = ${sqlBool(true)}
+    )
+  )`;
+}
+
+/**
+ * 把一批主机加进入口组（或把隧道挂到入口组）之前调用：这些隧道上启用的规则之后都要在
+ * 这些主机上监听，端口已被占用就直接拒绝，不要等到 Agent 上 bind 失败。
+ */
+export async function assertTunnelRulePortsFreeOnEntryHosts(tunnelIdsInput: number[], hostIdsInput: number[]) {
+  const tunnelIds = Array.from(new Set(tunnelIdsInput.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  const hostIds = Array.from(new Set(hostIdsInput.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (tunnelIds.length === 0 || hostIds.length === 0) return;
+  const db = await getDb();
+  if (!db) return;
+  const rules = await db.select({
+    id: forwardRules.id,
+    name: forwardRules.name,
+    hostId: forwardRules.hostId,
+    tunnelId: forwardRules.tunnelId,
+    sourcePort: forwardRules.sourcePort,
+    protocol: forwardRules.protocol,
+  }).from(forwardRules).where(and(
+    inArray(forwardRules.tunnelId, tunnelIds),
+    eq(forwardRules.isForwardGroupTemplate, false),
+    eq(forwardRules.isEnabled, true),
+    eq(forwardRules.pendingDelete, false),
+  ));
+  for (const hostId of hostIds) {
+    for (const rule of rules as any[]) {
+      const port = Number(rule.sourcePort || 0);
+      if (port <= 0) continue;
+      if (!(await isPortUsedOnHost(hostId, port, Number(rule.id), rule.protocol, undefined, false))) continue;
+      const host = await getHostById(hostId) as any;
+      const tunnel = await getTunnelById(Number(rule.tunnelId)) as any;
+      throw new Error(`主机「${host?.name || hostId}」上端口 ${port} 已被占用：隧道「${tunnel?.name || rule.tunnelId}」的规则「${rule.name || rule.id}」需要在入口组的每台主机上监听这个端口，请先更换端口或移除占用`);
+    }
+  }
 }
 
 export async function getUsedPortsOnHost(
@@ -1789,8 +1921,18 @@ export async function getUsedPortsOnHost(
   if (excludeRuleExitPorts && excludeMappingsSql) usedExitConds.push(excludeMappingsSql);
   if (protocolCond) usedExitConds.push(protocolCond);
 
+  const usedEntryGroupRuleConds: any[] = [
+    tunnelRuleServedByEntryGroupHostCondition(hostId),
+    eq(forwardRules.isForwardGroupTemplate, false),
+    eq(forwardRules.isEnabled, true),
+    eq(forwardRules.pendingDelete, false),
+  ];
+  if (excludeRulesSql) usedEntryGroupRuleConds.push(excludeRulesSql);
+  if (protocolCond) usedEntryGroupRuleConds.push(protocolCond);
+
   const [
     usedRules,
+    usedEntryGroupRules,
     usedPrimaryExits,
     usedMappedExits,
     usedTunnels,
@@ -1798,6 +1940,7 @@ export async function getUsedPortsOnHost(
     usedHops,
   ] = await Promise.all([
     db.select({ port: forwardRules.sourcePort }).from(forwardRules).where(and(...usedRuleConds)),
+    db.select({ port: forwardRules.sourcePort }).from(forwardRules).where(and(...usedEntryGroupRuleConds)),
     db.select({ port: forwardRules.tunnelExitPort })
       .from(forwardRules)
       .innerJoin(tunnels, eq(forwardRules.tunnelId, tunnels.id))
@@ -1823,6 +1966,7 @@ export async function getUsedPortsOnHost(
     if (Number.isInteger(port) && port >= 1 && port <= 65535) used.add(port);
   };
   usedRules.forEach((row: any) => addPort(row.port));
+  usedEntryGroupRules.forEach((row: any) => addPort(row.port));
   usedPrimaryExits.forEach((row: any) => addPort(row.port));
   usedMappedExits.forEach((row: any) => addPort(row.port));
   usedTunnels.forEach((row: any) => {
@@ -1857,16 +2001,19 @@ export async function getUsedPortsOnHost(
  *
  * 停用的入站不算：它没在听，挡着反而让人以为端口被莫名占了。
  */
-async function getProxyInboundPortsOnHost(hostId: number): Promise<number[]> {
+async function getProxyInboundPortsOnHost(hostId: number, excludeInboundId = 0): Promise<number[]> {
   const db = await getDb();
   if (!db) return [];
   // 动态导入：proxyInboundRepository 那边也会回头用这个文件里的函数，静态引会成环。
   const { proxyInbounds } = await import("../../drizzle/schema");
   const rows = await db
-    .select({ port: proxyInbounds.port })
+    .select({ id: proxyInbounds.id, port: proxyInbounds.port })
     .from(proxyInbounds)
     .where(and(eq(proxyInbounds.hostId, Number(hostId)), eq(proxyInbounds.isEnabled, true)));
-  return (rows as any[]).map((row) => Number(row.port)).filter((port) => port > 0);
+  return (rows as any[])
+    .filter((row) => !excludeInboundId || Number(row.id) !== Number(excludeInboundId))
+    .map((row) => Number(row.port))
+    .filter((port) => port > 0);
 }
 
 /** 检查某主机上的某端口是否已被占用 */
@@ -1878,6 +2025,8 @@ export async function isPortUsedOnHost(
   excludeTunnelId?: number,
   excludeRuleExitPorts = true,
   allowTunnelListener?: TunnelListenerExemptionInput,
+  /** 落地节点改端口时查冲突，把它自己排除掉。 */
+  excludeProxyInboundId?: number,
 ): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
@@ -1904,8 +2053,15 @@ export async function isPortUsedOnHost(
   }
   const r = await db.select({ count: sqlCountAll() }).from(forwardRules).where(and(...conds));
   if ((Number(r[0]?.count) || 0) > 0) return true;
+  // 入口组成员机也在替组里隧道的规则监听 sourcePort —— 见 tunnelRuleServedByEntryGroupHostCondition。
+  const entryGroupConds: any[] = [
+    tunnelRuleServedByEntryGroupHostCondition(hostId),
+    ...conds.slice(1),
+  ];
+  const entryGroupRows = await db.select({ count: sqlCountAll() }).from(forwardRules).where(and(...entryGroupConds));
+  if ((Number(entryGroupRows[0]?.count) || 0) > 0) return true;
   // 落地节点（sing-box 入站）也在这台机器上真实监听着 —— 见 getProxyInboundPortsOnHost。
-  if ((await getProxyInboundPortsOnHost(hostId)).includes(Number(sourcePort))) return true;
+  if ((await getProxyInboundPortsOnHost(hostId, Number(excludeProxyInboundId || 0))).includes(Number(sourcePort))) return true;
   const primaryExitConds: any[] = [
     eq(tunnels.exitHostId, hostId),
     eq(forwardRules.tunnelExitPort, sourcePort),
@@ -2537,7 +2693,13 @@ export async function reconcileForwardRuleTunnelExits(
   const ruleId = Number(rule?.id || 0);
   const tunnelId = Number(tunnel?.id || rule?.tunnelId || 0);
   if (!ruleId || !tunnelId) return [];
-  return withKeyedTaskLock(`rule-tunnel-exits:${ruleId}`, async () => {
+  // 已经在数据库事务里时不再等这把键锁：心跳会先拿键锁再查库，而 SQLite 事务占着
+  // 全局连接锁，事务这边再等键锁就互相等死（MySQL/PG 则卡到行锁超时）。事务本身
+  // 已把这条规则的读写串行化，锁外的并发校正提交后会按已写入的数据重新判断占用。
+  const runLocked = isDatabaseTransactionActive()
+    ? <T>(task: () => Promise<T>) => task()
+    : <T>(task: () => Promise<T>) => withKeyedTaskLock(`rule-tunnel-exits:${ruleId}`, task);
+  return runLocked(async () => {
   /*
    * The lowest-id active GOST rule is the primary route for every managed
    * GOST/Nginx tunnel (the same convention used by the Agent), so its
@@ -2655,7 +2817,8 @@ export async function reconcileForwardRuleTunnelExits(
   await replaceForwardRuleTunnelExits(ruleId, nextRows);
   return nextRows;
   } finally {
-    releaseHostPortReservations(heldReservations);
+    // 在事务里调用时，预留要占到事务结束：MySQL/PG 提交前别人看不到这里写的端口。
+    await afterDatabaseTransactionSettled(() => releaseHostPortReservations(heldReservations));
   }
   });
 }

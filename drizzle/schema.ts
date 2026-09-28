@@ -604,6 +604,14 @@ export const proxyInbounds = table("proxy_inbounds", {
    */
   clonedFromInboundId: int("clonedFromInboundId").notNull().default(0),
   /**
+   * 这个入站是不是普通用户靠「主机授权」开在别人机器上的。
+   *
+   * 是的话，授权收回之后这个端口就不该再下发（见 getEnabledProxyInboundsWithUsersByHost）。
+   * 管理员替租户开的（分租）、面板克隆的专属端口、开在自己机器上的都不是：那些不靠主机授权，
+   * 按授权去收会把管理员明确分出去的端口一起停掉。老数据一律是 false（维持原来的行为）。
+   */
+  hostGrantRequired: boolean("hostGrantRequired").notNull().default(false),
+  /**
    * 这个端口自己的额度与用量。
    *
    * 记在入站上而不是派生节点上：Agent 的计数链装在**监听端口**上，一个多用户入站

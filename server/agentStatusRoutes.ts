@@ -143,7 +143,34 @@ function safeStatusLogText(value: unknown, limit = 96) {
     .slice(0, limit) || "-";
 }
 
-async function applyAgentRuleStatus(host: any, payload: any): Promise<AgentStatusApplyResult> {
+/**
+ * rule-status-batch 一次最多 200 条，同一台机器上的规则大多挂在少数几条隧道上。
+ * 原来每条规则各查一遍隧道、入口组、额外落地节点 —— 同一条隧道要查几十遍。
+ * 这里按请求缓存（存 Promise，并发的几条也只查一次），只活在这一次请求里，
+ * 不跨请求，所以不会拿到别的请求之前的旧数据。只缓存授权判断用到的这几项，
+ * 规则本身每条照旧单独读。
+ */
+type AgentStatusLookupMemo = {
+  tunnels: Map<number, Promise<any>>;
+  entryHostIds: Map<number, Promise<number[]>>;
+  extraExitHostIds: Map<number, Promise<number[]>>;
+};
+
+function createAgentStatusLookupMemo(): AgentStatusLookupMemo {
+  return { tunnels: new Map(), entryHostIds: new Map(), extraExitHostIds: new Map() };
+}
+
+function memoizedLookup<T>(cache: Map<number, Promise<T>> | undefined, key: number, load: () => Promise<T>) {
+  if (!cache) return load();
+  let work = cache.get(key);
+  if (!work) {
+    work = load();
+    cache.set(key, work);
+  }
+  return work;
+}
+
+async function applyAgentRuleStatus(host: any, payload: any, lookups?: AgentStatusLookupMemo): Promise<AgentStatusApplyResult> {
   const { ruleId, tunnelId, statusType, isRunning } = payload || {};
   const rawMessage = typeof payload?.message === "string" ? payload.message.trim() : "";
   const message = rawMessage.length > 300 ? `${rawMessage.slice(0, 300)}...` : rawMessage;
@@ -268,10 +295,12 @@ async function applyAgentRuleStatus(host: any, payload: any): Promise<AgentStatu
   let ruleTunnelEntryHostIds: number[] = [];
   let allowed = Number((rule as any).hostId) === Number(host.id);
   if ((rule as any).tunnelId) {
-    ruleTunnel = await db.getTunnelById(Number((rule as any).tunnelId));
+    const ruleTunnelId = Number((rule as any).tunnelId);
+    ruleTunnel = await memoizedLookup(lookups?.tunnels, ruleTunnelId, () => db.getTunnelById(ruleTunnelId));
     if (ruleTunnel) {
-      ruleTunnelEntryHostIds = await getTunnelEntryHostIds(ruleTunnel);
-      const extraExitHostIds = await getTunnelExtraExitHostIds(Number(ruleTunnel.id));
+      const loadedTunnel = ruleTunnel;
+      ruleTunnelEntryHostIds = await memoizedLookup(lookups?.entryHostIds, Number(loadedTunnel.id), () => getTunnelEntryHostIds(loadedTunnel));
+      const extraExitHostIds = await memoizedLookup(lookups?.extraExitHostIds, Number(loadedTunnel.id), () => getTunnelExtraExitHostIds(Number(loadedTunnel.id)));
       allowed = allowed
         || ruleTunnelEntryHostIds.includes(Number(host.id))
         || Number((ruleTunnel as any).exitHostId) === Number(host.id)
@@ -331,7 +360,8 @@ async function applyAgentRuleStatus(host: any, payload: any): Promise<AgentStatu
   }
 
   const wasRunning = !!(rule as any).isRunning;
-  await db.updateRuleRunningStatus(ruleId, !!isRunning);
+  // 规则行在本函数开头刚读过（处在「本机 + 这条规则」的有序锁里），直接交给仓库，省掉它内部的再读一遍。
+  await db.updateRuleRunningStatus(ruleId, !!isRunning, rule);
   if (
     (wasRunning || !!message)
     && !isRunning
@@ -448,6 +478,7 @@ agentRouter.post("/api/agent/rule-status-batch", async (req: Request, res: Respo
       res.status(400).json({ error: `statuses must contain 1-${AGENT_STATUS_BATCH_MAX_SIZE} items` });
       return;
     }
+    const lookups = createAgentStatusLookupMemo();
     const outcomes = await mapWithConcurrency(statuses, 16, async (payload, index) => {
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
         return { index, result: { status: 400, body: { error: "invalid status payload" } } as AgentStatusApplyResult };
@@ -455,7 +486,7 @@ agentRouter.post("/api/agent/rule-status-batch", async (req: Request, res: Respo
       const statusPayload = payload as Record<string, any>;
       const result = await withKeyedTaskLock(
         agentStatusOrderingKey(host.id, statusPayload),
-        () => applyAgentRuleStatus(host, statusPayload),
+        () => applyAgentRuleStatus(host, statusPayload, lookups),
       );
       return { index, result };
     });

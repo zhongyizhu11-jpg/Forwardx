@@ -4,7 +4,11 @@ import * as db from "../db";
 import { lookupAddressGeo } from "../hostGeo";
 import { requireRuleAccess } from "./helpers";
 import { appendPanelLog } from "../_core/panelLogger";
-import { ruleTrafficQueryCache as trafficQueryCache } from "../ruleLatencyQueryCache";
+import {
+  clearRuleTrafficAndLatencyQueryCaches,
+  ruleLatencySeriesQueryCache as latencyQueryCache,
+  ruleTrafficQueryCache as trafficQueryCache,
+} from "../ruleLatencyQueryCache";
 
 const TRAFFIC_RETENTION_HOURS = 24 * 3;
 
@@ -53,7 +57,8 @@ export const trafficRulesRouter = router({
         `[RuleTraffic] reset scope=${input.scope} count=${targetRuleIds.length} rules=${rules.filter(Boolean).map(ruleResetLogItem).join(" | ") || "-"}${omitted > 0 ? ` omitted=${omitted}` : ""}`,
       );
       const result = await db.resetRuleTrafficStats(targetRuleIds);
-      trafficQueryCache.clear();
+      // 重置同时删了流量明细和 tcping_stats，两份缓存都得清。
+      clearRuleTrafficAndLatencyQueryCaches();
       return result;
     }),
   traffic: protectedProcedure
@@ -104,7 +109,10 @@ export const trafficRulesRouter = router({
         .filter((id) => Number.isInteger(id) && id > 0)))
         .sort((a, b) => a - b);
       const ruleKey = ruleIds.join(",");
-      return trafficQueryCache.get(
+      // 24h 汇总带着每条规则的最新延迟，TCPing 一写入就要失效，放在延迟缓存里；
+      // 累计（total）只有字节数，留在流量缓存，不被频繁的 TCPing 上报清掉。
+      const summaryCache = input.range === "total" ? trafficQueryCache : latencyQueryCache;
+      return summaryCache.get(
         `summary:${ctx.user.id}:${input.range}:${hours}:${input.hostId || 0}:${ruleKey}`,
         { ttlMs: 5_000, staleMs: 0 },
         () => input.range === "total"

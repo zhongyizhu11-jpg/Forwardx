@@ -5,7 +5,7 @@ import { adminProcedure, protectedProcedure, router } from "./_core/trpc";
 import { appendPanelLog } from "./_core/panelLogger";
 import { getConfiguredPanelUrl, resolvePanelUrl } from "./agentPanelUrl";
 import * as db from "./db";
-import { withTrafficBillingUserLock } from "./keyedTaskLock";
+import { withKeyedTaskLock, withTrafficBillingUserLock } from "./keyedTaskLock";
 import {
   parseEasyPayOrderQuery,
   parseStripeSessionQuery,
@@ -328,6 +328,36 @@ function createOutTradeNo() {
   return `FWX${Date.now()}${suffix}`.toUpperCase();
 }
 
+/**
+ * 把面板订单的过期时刻带给支付网关。
+ *
+ * 以前下单时不告诉网关什么时候过期：面板 30 分钟后把订单关掉，网关那边的收银台却还能付，
+ * 付完回调到了只看到一张已关闭的单 —— 钱扣了什么都没发。现在让网关和面板同时到期
+ * （向下取整到分钟，宁可网关先关）；个别网关有下限（Stripe 至少 30 分钟），过期后到账的钱
+ * 由 processPaidNotification 转入余额兜底。
+ */
+function remainingPaymentMinutes(expiresAt: Date, now = Date.now()) {
+  return Math.max(1, Math.floor((expiresAt.getTime() - now) / 60_000));
+}
+
+/** 微信支付 v3 的 time_expire：RFC3339，按北京时间给出。 */
+function wxpayTimeExpire(expiresAt: Date) {
+  return `${new Date(expiresAt.getTime() + 8 * 3600_000).toISOString().slice(0, 19)}+08:00`;
+}
+
+const STRIPE_CHECKOUT_MIN_EXPIRY_SECONDS = 30 * 60;
+const STRIPE_CHECKOUT_MAX_EXPIRY_SECONDS = 24 * 3600;
+
+/** Stripe Checkout 的 expires_at 只接受 30 分钟到 24 小时之间，超出范围就夹到边上。 */
+function stripeCheckoutExpiresAt(expiresAt: Date, now = Date.now()) {
+  const nowSec = Math.floor(now / 1000);
+  const wanted = Math.floor(expiresAt.getTime() / 1000);
+  // 下限多留一分钟，免得本机时钟稍慢时被 Stripe 以「不足 30 分钟」拒掉。
+  const min = nowSec + STRIPE_CHECKOUT_MIN_EXPIRY_SECONDS + 60;
+  const max = nowSec + STRIPE_CHECKOUT_MAX_EXPIRY_SECONDS - 60;
+  return Math.min(max, Math.max(min, wanted));
+}
+
 function getClientIp(req: express.Request) {
   return req.ip || req.socket.remoteAddress || "";
 }
@@ -388,6 +418,7 @@ async function createEasyPayOrder(config: PaymentConfig, order: {
   };
   const cid = order.paymentType === "alipay" ? ep.cidAlipay : ep.cidWxpay;
   if (cid) params.cid = cid;
+  // 易支付的 submit.php / mapi.php 没有订单过期参数，过期后到账的钱由回调那边转入余额兜底。
 
   params.sign = easyPaySign(params, ep.pkey);
   params.sign_type = "MD5";
@@ -494,6 +525,7 @@ async function createAlipayOrder(config: PaymentConfig, order: {
   amountCents: number;
   notifyUrl: string;
   returnUrl: string;
+  expiresAt: Date;
 }) {
   const alipay = config.alipay;
   const gateway = normalizeGateway(alipay.gateway, defaultPaymentConfig.alipay.gateway);
@@ -509,6 +541,8 @@ async function createAlipayOrder(config: PaymentConfig, order: {
         total_amount: amount,
         subject: order.subject,
         product_code: productCode,
+        // 支付宝三种下单接口都支持的相对超时，到点网关自己关单。
+        timeout_express: `${remainingPaymentMinutes(order.expiresAt)}m`,
       }),
     };
     params.sign = alipaySign(params, alipay.privateKey);
@@ -524,6 +558,7 @@ async function createAlipayOrder(config: PaymentConfig, order: {
     total_amount: amount,
     subject: order.subject,
     product_code: "FACE_TO_FACE_PAYMENT",
+    timeout_express: `${remainingPaymentMinutes(order.expiresAt)}m`,
   }, order);
   return {
     tradeNo: payload.trade_no || order.outTradeNo,
@@ -552,6 +587,7 @@ async function createStripeCheckoutOrder(config: PaymentConfig, order: {
   amountCents: number;
   returnUrl: string;
   cancelUrl: string;
+  expiresAt: Date;
 }) {
   const stripe = config.stripe;
   if (!stripe.enabled || !stripe.secretKey) throw new Error("Stripe 配置不完整");
@@ -566,6 +602,7 @@ async function createStripeCheckoutOrder(config: PaymentConfig, order: {
   params.set("line_items[0][quantity]", "1");
   params.set("metadata[outTradeNo]", order.outTradeNo);
   params.set("payment_intent_data[metadata][outTradeNo]", order.outTradeNo);
+  params.set("expires_at", String(stripeCheckoutExpiresAt(order.expiresAt)));
 
   const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
     method: "POST",
@@ -662,6 +699,7 @@ async function createWxpayOrder(config: PaymentConfig, order: {
   notifyUrl: string;
   returnUrl: string;
   clientIp: string;
+  expiresAt: Date;
 }) {
   const wxpay = config.wxpay;
   if (!wxpay.enabled || !wxpay.appId || !wxpay.mchId || !wxpay.privateKey || !wxpay.apiV3Key || !wxpay.certSerial || !wxpay.publicKey || !wxpay.publicKeyId) {
@@ -672,6 +710,7 @@ async function createWxpayOrder(config: PaymentConfig, order: {
     mchid: wxpay.mchId,
     description: order.subject.slice(0, 127),
     out_trade_no: order.outTradeNo,
+    time_expire: wxpayTimeExpire(order.expiresAt),
     notify_url: order.notifyUrl,
     amount: {
       total: order.amountCents,
@@ -800,6 +839,75 @@ function assertPaidNotificationMatchesOrder(order: any, notification: PaidNotifi
   }
 }
 
+/**
+ * 钱已经实收、却没法按订单交付时的兜底：把实付金额转入余额。
+ *
+ * 两种情况会走到这里：
+ * - 网关确认付款时订单已经被面板关掉（过期 / 取消 / 创建失败）—— 以前直接忽略，
+ *   网关那边却被告知成功，钱扣了什么都没发；
+ * - 发货遇到永久性错误（套餐停用、续费目标已取消、没有空闲端口段……）—— 以前订单
+ *   永远卡在 processing，维护任务每轮重试都一样失败。
+ *
+ * 以订单号为幂等键（balance_transactions.paymentOrderNo，和在线充值同一个判断），
+ * 回调重放、维护任务重试都只入账一次。订单记成 completed，标题后面注明已转入余额。
+ */
+async function creditPaidOrderToBalance(
+  outTradeNo: string,
+  input: {
+    reason: string;
+    fromStatuses: string[];
+    tradeNo?: string | null;
+    rawNotify?: string | null;
+  },
+) {
+  const order = await db.getPaymentOrderByOutTradeNo(outTradeNo);
+  if (!order) return { credited: false, completed: false };
+  let credited = false;
+  let completed = false;
+  const amountCents = Number(order.amountCents || 0);
+  await withTrafficBillingUserLock(order.userId, () => db.withDatabaseTransaction(async () => {
+    const latest = await db.getPaymentOrderByOutTradeNoForUpdate(outTradeNo);
+    if (!latest || !input.fromStatuses.includes(String(latest.status))) return;
+    // 测试单本来就不入余额（见 finalizePaidOrder 最后一支），这里也只关单不加钱。
+    if ((latest as any).orderType !== "test" && amountCents > 0) {
+      const existingTransaction = await db.getBalanceTransactionByPaymentOrderNo(outTradeNo);
+      if (!existingTransaction) {
+        await db.addUserBalance(latest.userId, amountCents, {
+          type: "payment",
+          description: `订单 ${outTradeNo} ${input.reason}，实付金额已转入余额`,
+          paymentOrderNo: outTradeNo,
+        } as any);
+        credited = true;
+      }
+    }
+    // 没发货，折扣码名额还回去（关单时已经还过的不会再还一次）。
+    if ((latest as any).discountCodeId && (latest as any).discountConsumed) {
+      await db.releaseDiscountCode(Number((latest as any).discountCodeId));
+    }
+    const note = "（已转入余额）";
+    const subject = String(latest.subject || "");
+    await db.updatePaymentOrder(outTradeNo, {
+      status: "completed",
+      discountConsumed: false,
+      subject: subject.endsWith(note) ? subject : `${subject}${note}`,
+      paidAt: (latest as any).paidAt || new Date(),
+      ...(input.tradeNo ? { tradeNo: input.tradeNo } : {}),
+      ...(input.rawNotify ? { rawNotify: input.rawNotify } : {}),
+    } as any);
+    completed = true;
+  }));
+  if (completed) {
+    appendPanelLog("warn", `[Payment] order=${outTradeNo} user=${order.userId} ${input.reason}; amount=${amountCents} ${credited ? "credited to balance" : "already credited"}`);
+    if (credited) {
+      // 余额回到正数，因余额不足停下的计费规则可以恢复（和在线充值一样）。
+      await db.recoverUserForwardAccessIfEligible(order.userId).catch((error: unknown) => {
+        appendPanelLog("warn", `[Payment] access recovery after balance credit failed order=${outTradeNo}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+  }
+  return { credited, completed };
+}
+
 async function finalizePaidOrder(outTradeNo: string) {
   let order = await db.claimPaidPaymentOrder(outTradeNo);
   if (!order) {
@@ -864,8 +972,18 @@ async function finalizePaidOrder(outTradeNo: string) {
       await db.updatePaymentOrder(outTradeNo, { status: "completed" } as any);
     }));
   } catch (error) {
+    if (db.isPermanentDeliveryError(error)) {
+      // 重试也不会成功（套餐停用、续费目标不能续、没有空闲端口段……）：钱转入余额、
+      // 订单结掉，不再让它永远卡在 processing。
+      appendPanelLog("error", `[Payment] finalize permanently failed order=${outTradeNo}: ${error.message}`);
+      await creditPaidOrderToBalance(outTradeNo, {
+        reason: `无法开通（${error.message}）`,
+        fromStatuses: ["processing"],
+      });
+      return;
+    }
     // Keep the order in processing so the maintenance worker can retry it;
-    // reverting to paid on every permanent error strands paid orders.
+    // transient errors (database, locks) succeed on a later pass.
     appendPanelLog("error", `[Payment] finalize failed order=${outTradeNo}: ${error instanceof Error ? error.message : String(error)}`);
     throw error;
   }
@@ -1010,12 +1128,28 @@ async function processPaidNotification(outTradeNo: string, notification: PaidNot
     } as any);
     return { ignored: true, reason: "completed" as const };
   }
-  if (order.status === "failed" || order.status === "expired" || order.status === "cancelled") {
-    return { ignored: true, reason: "closed" as const };
-  }
-  if (order.status === "pending" && order.expiresAt && new Date(order.expiresAt).getTime() <= Date.now()) {
-    await closePaymentOrderAndReleaseDiscount(outTradeNo, "expired", notification.rawNotify);
-    return { ignored: true, reason: "expired" as const };
+  const closedStatuses = ["failed", "expired", "cancelled"];
+  const pastExpiry = order.status === "pending" && order.expiresAt && new Date(order.expiresAt).getTime() <= Date.now();
+  if (closedStatuses.includes(String(order.status)) || pastExpiry) {
+    /*
+      网关验签通过、确认已付，订单却已经被面板关了（过期 / 取消 / 创建失败）。以前直接
+      忽略，而网关那边被告知成功 —— 客户扣了钱什么都拿不到。现在金额、币种、网关都对得上的，
+      把实付金额转入余额；对不上的照旧拒绝并记日志。
+    */
+    try {
+      assertPaidNotificationMatchesOrder(order, notification);
+    } catch (error: any) {
+      appendPanelLog("error", `[Payment] ${notification.provider} late notify rejected: ${error?.message || error}`);
+      return { ignored: true, reason: "closed" as const };
+    }
+    if (pastExpiry) await closePaymentOrderAndReleaseDiscount(outTradeNo, "expired", notification.rawNotify);
+    const credit = await creditPaidOrderToBalance(outTradeNo, {
+      reason: "付款到账时订单已关闭",
+      fromStatuses: closedStatuses,
+      tradeNo: notification.tradeNo,
+      rawNotify: notification.rawNotify,
+    });
+    return { ignored: !credit.completed, reason: "closed_credited" as const };
   }
   try {
     assertPaidNotificationMatchesOrder(order, notification);
@@ -1262,8 +1396,23 @@ export const paymentRouter = router({
       const returnUrl = buildPaymentProviderReturnUrl({ panelUrl, provider, returnPath, outTradeNo });
       const cancelUrl = buildPaymentProviderReturnUrl({ panelUrl, provider, returnPath, outTradeNo, cancelled: true });
 
-      const pendingOrder = await db.withDatabaseTransaction(async () => {
-        if (discountCodeId) await db.consumeDiscountCode(discountCodeId);
+      /*
+        折扣码在下单时就占掉一次名额，订单过期 / 关闭才还。不限制的话，一个人对着一张
+        限量码连下几笔不付的单，就能把名额全占住，别人用不了。同一个人、同一张码同时只
+        允许一笔待支付订单；检查和占名额放在同一把锁里，并发下单也只会成功一笔。
+      */
+      const pendingOrder = await withKeyedTaskLock(discountCodeId ? `payment-discount:${ctx.user.id}:${discountCodeId}` : "", () => db.withDatabaseTransaction(async () => {
+        if (discountCodeId) {
+          const existing = (await db.listPaymentOrders(200, ctx.user.id) as any[]).find((order) => (
+            order.status === "pending"
+            && Number(order.discountCodeId || 0) === Number(discountCodeId)
+            && (!order.expiresAt || new Date(order.expiresAt).getTime() > Date.now())
+          ));
+          if (existing) {
+            throw new Error(`该折扣码已有一笔待支付订单（${existing.outTradeNo}），请先完成支付或等待其过期后再下单`);
+          }
+          await db.consumeDiscountCode(discountCodeId);
+        }
         const created = await db.createPaymentOrder({
           outTradeNo,
           userId: ctx.user.id,
@@ -1286,17 +1435,17 @@ export const paymentRouter = router({
         } as any);
         if (!created) throw new Error("创建本地支付订单失败");
         return created;
-      });
+      }));
       if (!pendingOrder) throw new Error("创建本地支付订单失败");
 
       try {
         let paymentResult: { tradeNo: string | null; payUrl: string | null; qrCode: string | null };
         if (provider === "stripe") {
-          paymentResult = await createStripeCheckoutOrder(config, { outTradeNo, subject, amountCents, returnUrl, cancelUrl });
+          paymentResult = await createStripeCheckoutOrder(config, { outTradeNo, subject, amountCents, returnUrl, cancelUrl, expiresAt });
         } else if (provider === "alipay") {
-          paymentResult = await createAlipayOrder(config, { outTradeNo, subject, amountCents, notifyUrl, returnUrl });
+          paymentResult = await createAlipayOrder(config, { outTradeNo, subject, amountCents, notifyUrl, returnUrl, expiresAt });
         } else if (provider === "wxpay") {
-          paymentResult = await createWxpayOrder(config, { outTradeNo, subject, amountCents, notifyUrl, returnUrl, clientIp: getClientIp(ctx.req) });
+          paymentResult = await createWxpayOrder(config, { outTradeNo, subject, amountCents, notifyUrl, returnUrl, clientIp: getClientIp(ctx.req), expiresAt });
         } else if (provider === "gmpay") {
           const gmPayOrder = await createGmPayOrder(config.gmpay, { outTradeNo, subject, amountCents, notifyUrl, returnUrl });
           paymentResult = {
@@ -1484,6 +1633,14 @@ paymentCallbackRouter.post("/api/payment/webhook/alipay", express.raw({ type: "*
       res.status(400).send("failure");
       return;
     }
+    // 验签只证明这条通知出自支付宝，不证明是发给本商户应用的：同一个支付宝公钥下的其他
+    // 应用（或别的商户）的真通知也能验过。app_id 必须是面板配置的这个应用。
+    // （面板没有配置收款方 seller_id，所以这里不校验它。）
+    if (!config.alipay.appId || params.app_id !== config.alipay.appId) {
+      appendPanelLog("warn", `[Payment] Alipay notify app mismatch expected=${config.alipay.appId} got=${params.app_id || ""}`);
+      res.status(400).send("failure");
+      return;
+    }
     if (params.trade_status !== "TRADE_SUCCESS" && params.trade_status !== "TRADE_FINISHED") {
       res.send("success");
       return;
@@ -1568,7 +1725,9 @@ paymentCallbackRouter.post("/api/payment/webhook/stripe", express.raw({ type: "*
     const event = JSON.parse(raw);
     const object = event?.data?.object || {};
     const outTradeNo = object?.metadata?.outTradeNo || object?.metadata?.orderId;
-    if (event.type === "checkout.session.completed" && outTradeNo && object.payment_status === "paid") {
+    const isCheckoutPaidEvent = event.type === "checkout.session.completed"
+      || event.type === "checkout.session.async_payment_succeeded";
+    if (isCheckoutPaidEvent && outTradeNo && object.payment_status === "paid") {
       const currency = String(object.currency || config.stripe.currency).toUpperCase();
       await processPaidNotification(outTradeNo, {
         provider: "stripe",
@@ -1578,10 +1737,14 @@ paymentCallbackRouter.post("/api/payment/webhook/stripe", express.raw({ type: "*
         rawNotify: raw,
       });
       appendPanelLog("info", `[Payment] Stripe paid outTradeNo=${outTradeNo}`);
-    } else if (event.type === "checkout.session.expired" && outTradeNo) {
-      await closePaymentOrderAndReleaseDiscount(outTradeNo, "expired", raw);
+    } else if ((event.type === "checkout.session.expired" || event.type === "checkout.session.async_payment_failed") && outTradeNo) {
+      // 会话过期、或者延迟到账的付款方式（银行转账等）最终失败：这张 Checkout 会话付不成了。
+      await closePaymentOrderAndReleaseDiscount(outTradeNo, event.type === "checkout.session.expired" ? "expired" : "failed", raw);
     } else if (event.type === "payment_intent.payment_failed" && outTradeNo) {
-      await closePaymentOrderAndReleaseDiscount(outTradeNo, "failed", raw);
+      // 一次扣款失败（卡被拒等）不关单：客户还能在同一个 Checkout 页面换张卡重试。
+      // 以前这里直接关成 failed，随后重试成功的 checkout.session.completed 就被当成
+      // 已关闭订单忽略。会话真的作废时 Stripe 会发 checkout.session.expired。
+      appendPanelLog("info", `[Payment] Stripe payment attempt failed outTradeNo=${outTradeNo}; order stays open for retry`);
     }
     res.json({ received: true });
   } catch (error: any) {

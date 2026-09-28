@@ -17,6 +17,7 @@ import {
   proxyNodesFromInbound,
   proxyInboundTransports,
   proxyNodeFromInbound,
+  proxyInboundEnumFieldError,
   validateProxyInbound,
   type ProxyInbound,
 } from "./proxyInbound";
@@ -117,6 +118,31 @@ test("REALITY 的 short-id 必须是 0 到 8 字节的十六进制", () => {
 
 test("完整的配置校验通过", () => {
   assert.equal(validateProxyInbound(VLESS_REALITY), "");
+});
+
+test("原样写进 sing-box 的枚举字段只收已知取值", () => {
+  // 一个租户存进一个 sing-box 不认识的值，同机整份配置都会 check 失败。
+  assert.match(validateProxyInbound({ ...VLESS_REALITY, flow: "xtls-rprx-direct" }), /不支持的流控/);
+  assert.equal(validateProxyInbound({ ...VLESS_REALITY, flow: "" }), "");
+  const hy2 = inbound({
+    protocol: "hysteria2", port: 8443, security: "tls", certPath: "/c.pem", keyPath: "/k.pem",
+    users: [{ id: 1, name: "默认", uuid: "", password: "pw" }],
+  });
+  assert.equal(validateProxyInbound({ ...hy2, obfs: "salamander" }), "");
+  assert.match(validateProxyInbound({ ...hy2, obfs: "gecko\"}" }), /不支持的混淆方式/);
+  const tuic = inbound({
+    protocol: "tuic", port: 8443, security: "tls", certPath: "/c.pem", keyPath: "/k.pem",
+    users: [{ id: 1, name: "默认", uuid: "u", password: "pw" }],
+  });
+  assert.equal(validateProxyInbound({ ...tuic, congestionControl: "bbr" }), "");
+  assert.match(validateProxyInbound({ ...tuic, congestionControl: "reno" }), /不支持的拥塞控制/);
+  const snell = inbound({ protocol: "snell", port: 8000, security: "none", password: "psk" });
+  assert.equal(validateProxyInbound({ ...snell, snellVersion: 5, obfs: "http" }), "");
+  assert.match(validateProxyInbound({ ...snell, snellVersion: 5, obfs: "quic" }), /Snell 混淆方式/);
+  assert.equal(validateProxyInbound({ ...snell, snellVersion: 6, snellMode: "unshaped" }), "");
+  assert.match(validateProxyInbound({ ...snell, snellVersion: 6, snellMode: "turbo" }), /Snell v6 整形模式/);
+  // 协议用不到的字段不影响：从 VLESS 切到 Trojan 残留的 flow 不会写进配置。
+  assert.equal(proxyInboundEnumFieldError({ ...snell, snellVersion: 6, flow: "junk" }), "");
 });
 
 // ==================== sing-box 入站生成 ====================

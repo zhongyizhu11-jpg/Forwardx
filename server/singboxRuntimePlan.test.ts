@@ -172,3 +172,16 @@ test("服务单元指向下发的配置，并且会自己拉起来", () => {
   assert.ok(unit.includes("Restart=always"));
   assert.ok(unit.includes("[Install]"));
 });
+
+test("枚举字段不合法的入站被单独剔掉，不拖累同机其他入站", () => {
+  const plan = buildSingboxRuntimePlan({
+    inbounds: [
+      { inbound: VLESS_REALITY, tag: "in-1" },
+      { inbound: { ...VLESS_REALITY, port: 444, flow: "evil-flow" }, tag: "in-bad-flow" },
+      { inbound: inbound({ protocol: "tuic", port: 9443, congestionControl: "cubic2" }), tag: "in-bad-cc" },
+      { inbound: inbound({ protocol: "snell", port: 8000, password: "psk", snellVersion: 6, snellMode: "x" }), tag: "in-bad-snell" },
+    ],
+  });
+  const decoded = JSON.parse(Buffer.from(plan.managedConfigs[0].contentBase64, "base64").toString("utf-8"));
+  assert.deepEqual(decoded.inbounds.map((item: any) => item.tag), ["in-1"]);
+});

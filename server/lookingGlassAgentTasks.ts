@@ -182,6 +182,17 @@ export function hasQueuedLookingGlassAgentTasks(hostId: number) {
   return (queues.get(Number(hostId))?.length || 0) > 0;
 }
 
+// Agent 回报的输出原样留在内存里、再原样发给浏览器。上限按字节截断，
+// 否则一个异常（或被控制）的 Agent 回报几十 MB 就能把面板内存和前端都拖垮。
+export const LOOKING_GLASS_OUTPUT_MAX_BYTES = 256 * 1024;
+
+export function capLookingGlassOutput(value: unknown) {
+  const text = String(value ?? "");
+  if (Buffer.byteLength(text, "utf8") <= LOOKING_GLASS_OUTPUT_MAX_BYTES) return text;
+  const head = Buffer.from(text, "utf8").subarray(0, LOOKING_GLASS_OUTPUT_MAX_BYTES).toString("utf8").replace(/\uFFFD+$/, "");
+  return `${head}\n...（输出超过 ${LOOKING_GLASS_OUTPUT_MAX_BYTES / 1024} KiB，已截断）`;
+}
+
 export function updateLookingGlassAgentTaskProgress(
   hostId: number,
   result: Partial<LookingGlassAgentResult> & { taskId: string },
@@ -190,7 +201,7 @@ export function updateLookingGlassAgentTaskProgress(
   if (!state || state.hostId !== hostId || TERMINAL_STATES.has(state.status)) return false;
   const updatedAt = nowIso();
   state.status = "running";
-  state.output = String(result.output ?? state.output);
+  state.output = capLookingGlassOutput(result.output ?? state.output);
   state.durationMs = Number(result.durationMs ?? state.durationMs) || 0;
   state.startedAt = String(result.startedAt || state.startedAt || updatedAt);
   state.updatedAt = updatedAt;
@@ -204,7 +215,7 @@ export function completeLookingGlassAgentTask(hostId: number, result: LookingGla
   clearTimeout(state.timer);
   const updatedAt = nowIso();
   state.status = result.timedOut ? "timeout" : result.exitCode === 0 ? "success" : "error";
-  state.output = String(result.output || "");
+  state.output = capLookingGlassOutput(result.output || "");
   state.exitCode = result.exitCode === undefined ? null : result.exitCode;
   state.timedOut = !!result.timedOut;
   state.durationMs = Number(result.durationMs || 0);

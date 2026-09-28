@@ -7,7 +7,7 @@ import * as db from "../db";
 import { appendPanelLog } from "../_core/panelLogger";
 import { markHostMetricsWatching, pushAgentRefresh, pushAgentUpgrade } from "../agentEvents";
 import { AGENT_ASSET_NAMES, getMissingBundledAgentAssets } from "../agentAssets";
-import { pushTunnelEndpointRefresh, requireHostAccess } from "./helpers";
+import { pushTunnelEndpointRefresh, requireHostAccess, requireHostsAccess } from "./helpers";
 import { AGENT_VERSION, APP_VERSION, REPO_URL } from "../_core/systemRouter";
 import { isAgentUpgradeTargetSatisfied, isAgentVersionAtLeast } from "../agentRouteUtils";
 import { normalizeVersion } from "@shared/version";
@@ -433,8 +433,9 @@ import { canAddSelfServiceHost, selfServiceHostLimitForUser, selfServiceHostLimi
  */
 async function filterPublicMonitorHosts(rawHosts: any[]) {
   const ownerIds = Array.from(new Set(rawHosts.map((host) => Number(host?.userId || 0)).filter((id) => id > 0)));
-  const owners = await Promise.all(ownerIds.map(async (id) => [id, await db.getUserById(id)] as const));
-  const adminOwnerIds = new Set(owners.filter(([, user]) => String((user as any)?.role || "") === "admin").map(([id]) => id));
+  // 一次 IN 查询拿全部主人的角色，不再每个主人一次 getUserById（公开页每 3 秒轮询一次）。
+  const ownerRoles = await db.getUserRolesByIds(ownerIds);
+  const adminOwnerIds = new Set(ownerIds.filter((id) => ownerRoles.get(id) === "admin"));
   return rawHosts.filter((host) => {
     const ownerId = Number(host?.userId || 0);
     return ownerId <= 0 || adminOwnerIds.has(ownerId);
@@ -667,6 +668,87 @@ async function assertPublicHostMonitorRequest(path: unknown) {
   return { settings, configuredPath };
 }
 
+async function loadPublicMonitor(configuredPath: string) {
+  const hosts = (await filterPublicMonitorHosts(await db.getHosts() as any[])).map(compactPublicMonitorHost).filter((host) => host.id > 0);
+  const hostIds = hosts.map((host) => host.id);
+  const visibleHostIds = new Set(hostIds);
+  const [metricRows, trafficRows] = await Promise.all([
+    db.getLatestHostMetricRows(hostIds),
+    db.getHostTrafficSummary(hostIds),
+  ]);
+  const groups = ((await db.getHostGroups()) as any[])
+    .filter((group) => !!group?.isEnabled)
+    .map((group) => compactPublicMonitorGroup(group, visibleHostIds))
+    .filter((group) => group.id > 0 && group.name && group.hostIds.length > 0)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+  const compactMetrics = (metricRows as any[]).map(compactHostMetricSummary).filter((row) => row.hostId > 0);
+  const compactTraffic = (trafficRows as any[]).map(compactHostTrafficSummary).filter((row) => row.hostId > 0);
+  let currentTrafficIn = 0;
+  let currentTrafficOut = 0;
+  for (const row of compactMetrics) {
+    currentTrafficIn += Math.max(0, Number(row.networkSpeedIn) || 0);
+    currentTrafficOut += Math.max(0, Number(row.networkSpeedOut) || 0);
+  }
+  let totalTrafficIn = 0;
+  let totalTrafficOut = 0;
+  for (const row of compactTraffic) {
+    totalTrafficIn += Math.max(0, Number(row.bytesIn) || 0);
+    totalTrafficOut += Math.max(0, Number(row.bytesOut) || 0);
+  }
+  return {
+    path: configuredPath,
+    refreshedAt: new Date().toISOString(),
+    hosts,
+    groups,
+    metrics: compactMetrics,
+    traffic: compactTraffic,
+    summary: {
+      totalHosts: hosts.length,
+      onlineHosts: hosts.filter((host) => !!host.isOnline).length,
+      currentTrafficIn,
+      currentTrafficOut,
+      totalTrafficIn,
+      totalTrafficOut,
+    },
+  };
+}
+
+async function loadPublicMonitorHostDetail(configuredPath: string, hostId: number, hours: number) {
+  const rawHost = await db.getHostById(hostId) as any;
+  if (!rawHost || (await filterPublicMonitorHosts([rawHost])).length === 0) throw new TRPCError({ code: "NOT_FOUND", message: "主机不存在" });
+  const host = compactPublicMonitorHost(rawHost);
+  const [metricRows, trafficRows, allServices] = await Promise.all([
+    db.getLatestHostMetricRows([host.id]),
+    db.getHostTrafficSummary([host.id]),
+    db.getHostProbeServices(),
+  ]);
+  const services = (allServices as any[])
+    .filter((service) => publicProbeServiceAppliesToHost(service, host.id));
+  const serviceIds = services.map((service) => Number(service.id)).filter((id) => Number.isInteger(id) && id > 0);
+  let series: any[] = [];
+  let latestByService = new Map<number, any>();
+  if (serviceIds.length > 0) {
+    const [rawSeries, latest] = await Promise.all([
+      db.getHostProbeServiceSeries({ serviceIds, hostId: host.id, hours, limit: 20_000 }),
+      db.getLatestHostProbeServiceStats(serviceIds, host.id),
+    ]);
+    series = (rawSeries as any[])
+      .map(compactPublicProbeSeries)
+      .filter((row) => row.serviceId > 0 && row.hostId === host.id);
+    latestByService = latest as Map<number, any>;
+  }
+  return {
+    path: configuredPath,
+    refreshedAt: new Date().toISOString(),
+    host,
+    metric: (metricRows as any[]).map(compactHostMetricSummary).find((row) => row.hostId === host.id) || null,
+    traffic: (trafficRows as any[]).map(compactHostTrafficSummary).find((row) => row.hostId === host.id) || compactHostTrafficSummary({ hostId: host.id }),
+    services: services.map((service) => compactPublicProbeService(service, latestByService.get(Number(service.id))))
+      .filter((service) => service.id > 0 && service.name),
+    serviceSeries: series,
+  };
+}
+
 function scheduleStaleHostUpgradeCleanup() {
   const now = Date.now();
   if (hostUpgradeCleanupRunning || now - lastHostUpgradeCleanupAt < HOST_UPGRADE_CLEANUP_INTERVAL_MS) return;
@@ -702,49 +784,15 @@ export const hostsRouter = router({
     publicMonitor: publicProcedure
       .input(z.object({ path: z.string().max(128).optional() }).optional())
       .query(async ({ input }) => {
+        // 开关/路径校验留在缓存外面：面板关掉或改了路径要立刻生效，不能被缓存里的旧结果放行。
         const { configuredPath } = await assertPublicHostMonitorRequest(input?.path);
-        const hosts = (await filterPublicMonitorHosts(await db.getHosts() as any[])).map(compactPublicMonitorHost).filter((host) => host.id > 0);
-        const hostIds = hosts.map((host) => host.id);
-        const visibleHostIds = new Set(hostIds);
-        const [metricRows, trafficRows] = await Promise.all([
-          db.getLatestHostMetricRows(hostIds),
-          db.getHostTrafficSummary(hostIds),
-        ]);
-        const groups = ((await db.getHostGroups()) as any[])
-          .filter((group) => !!group?.isEnabled)
-          .map((group) => compactPublicMonitorGroup(group, visibleHostIds))
-          .filter((group) => group.id > 0 && group.name && group.hostIds.length > 0)
-          .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
-        const compactMetrics = (metricRows as any[]).map(compactHostMetricSummary).filter((row) => row.hostId > 0);
-        const compactTraffic = (trafficRows as any[]).map(compactHostTrafficSummary).filter((row) => row.hostId > 0);
-        let currentTrafficIn = 0;
-        let currentTrafficOut = 0;
-        for (const row of compactMetrics) {
-          currentTrafficIn += Math.max(0, Number(row.networkSpeedIn) || 0);
-          currentTrafficOut += Math.max(0, Number(row.networkSpeedOut) || 0);
-        }
-        let totalTrafficIn = 0;
-        let totalTrafficOut = 0;
-        for (const row of compactTraffic) {
-          totalTrafficIn += Math.max(0, Number(row.bytesIn) || 0);
-          totalTrafficOut += Math.max(0, Number(row.bytesOut) || 0);
-        }
-        return {
-          path: configuredPath,
-          refreshedAt: new Date().toISOString(),
-          hosts,
-          groups,
-          metrics: compactMetrics,
-          traffic: compactTraffic,
-          summary: {
-            totalHosts: hosts.length,
-            onlineHosts: hosts.filter((host) => !!host.isOnline).length,
-            currentTrafficIn,
-            currentTrafficOut,
-            totalTrafficIn,
-            totalTrafficOut,
-          },
-        };
+        // 这一页不登录、每个观看者每 3 秒轮询一次，N 个人开着就是 N 倍的整页查询。
+        // 结果与观看者无关，按配置的路径缓存 2 秒（过期后 5 秒内先回旧值、后台刷新）。
+        return hostQueryCache.get(
+          `publicMonitor:${configuredPath}`,
+          { ttlMs: 2_000, staleMs: 5_000 },
+          () => loadPublicMonitor(configuredPath),
+        );
       }),
     publicMonitorHostDetail: publicProcedure
       .input(z.object({
@@ -754,39 +802,12 @@ export const hostsRouter = router({
       }))
       .query(async ({ input }) => {
         const { configuredPath } = await assertPublicHostMonitorRequest(input.path);
-        const rawHost = await db.getHostById(input.hostId) as any;
-        if (!rawHost || (await filterPublicMonitorHosts([rawHost])).length === 0) throw new TRPCError({ code: "NOT_FOUND", message: "主机不存在" });
-        const host = compactPublicMonitorHost(rawHost);
-        const [metricRows, trafficRows, allServices] = await Promise.all([
-          db.getLatestHostMetricRows([host.id]),
-          db.getHostTrafficSummary([host.id]),
-          db.getHostProbeServices(),
-        ]);
-        const services = (allServices as any[])
-          .filter((service) => publicProbeServiceAppliesToHost(service, host.id));
-        const serviceIds = services.map((service) => Number(service.id)).filter((id) => Number.isInteger(id) && id > 0);
-        let series: any[] = [];
-        let latestByService = new Map<number, any>();
-        if (serviceIds.length > 0) {
-          const [rawSeries, latest] = await Promise.all([
-            db.getHostProbeServiceSeries({ serviceIds, hostId: host.id, hours: input.hours, limit: 20_000 }),
-            db.getLatestHostProbeServiceStats(serviceIds, host.id),
-          ]);
-          series = (rawSeries as any[])
-            .map(compactPublicProbeSeries)
-            .filter((row) => row.serviceId > 0 && row.hostId === host.id);
-          latestByService = latest as Map<number, any>;
-        }
-        return {
-          path: configuredPath,
-          refreshedAt: new Date().toISOString(),
-          host,
-          metric: (metricRows as any[]).map(compactHostMetricSummary).find((row) => row.hostId === host.id) || null,
-          traffic: (trafficRows as any[]).map(compactHostTrafficSummary).find((row) => row.hostId === host.id) || compactHostTrafficSummary({ hostId: host.id }),
-          services: services.map((service) => compactPublicProbeService(service, latestByService.get(Number(service.id))))
-            .filter((service) => service.id > 0 && service.name),
-          serviceSeries: series,
-        };
+        // 同上：校验在缓存外，结果按路径 + 主机 + 时间范围缓存。
+        return hostQueryCache.get(
+          `publicMonitorHostDetail:${configuredPath}:${input.hostId}:${input.hours}`,
+          { ttlMs: 2_000, staleMs: 5_000 },
+          () => loadPublicMonitorHostDetail(configuredPath, input.hostId, input.hours),
+        );
       }),
     list: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user.role === "admin") {
@@ -1551,6 +1572,11 @@ export const hostsRouter = router({
         if (blockers.managedRuleCount > 0) {
           throw new Error(`该主机仍被 ${blockers.managedRuleCount} 条转发组/转发链规则引用，请先在转发组中移除该主机或删除对应转发组`);
         }
+        // 隧道、转发组成员、套餐里还引用着它时不能删：这些行不会跟着主机删，会留下指向空主机的引用。
+        const references = await db.getHostDeleteReferenceLabels(input.id);
+        if (references.length > 0) {
+          throw new Error(`该主机仍被引用：${references.join("；")}。请先解除这些引用后再删除主机`);
+        }
         if (blockers.pendingCleanupCount > 0) {
           await db.releaseHostPendingRuleCleanup(input.id);
         }
@@ -1576,7 +1602,7 @@ export const hostsRouter = router({
           .map((id) => Number(id))
           .filter((id) => Number.isInteger(id) && id > 0)));
         if (hostIds.length === 0) return [];
-        for (const hostId of hostIds) await requireHostAccess(ctx, hostId);
+        await requireHostsAccess(ctx, hostIds);
         const rows = await db.getLatestHostMetricRows(hostIds);
         return (rows as any[]).map(compactHostMetricSummary).filter((row) => row.hostId > 0);
       }),
@@ -1594,7 +1620,7 @@ export const hostsRouter = router({
           .filter((id) => Number.isInteger(id) && id > 0)));
         if (ctx.user.role !== "admin" && hostIds.length === 0) return [];
         if (ctx.user.role !== "admin" || hostIds.length > 0) {
-          for (const hostId of hostIds) await requireHostAccess(ctx, hostId);
+          await requireHostsAccess(ctx, hostIds);
           const rows = await db.getHostTrafficSummary(hostIds);
           return (rows as any[]).map(compactHostTrafficSummary).filter((row) => row.hostId > 0);
         }
@@ -1627,11 +1653,9 @@ export const hostsRouter = router({
     watchMetrics: protectedProcedure
       .input(z.object({ hostIds: z.array(z.number()).max(200) }))
       .mutation(async ({ input, ctx }) => {
-        const allowed: number[] = [];
-        for (const hostId of input.hostIds) {
-          await requireHostAccess(ctx, hostId);
-          allowed.push(hostId);
-        }
+        // 批量校验：任何一台不通过就抛出与逐台校验相同的第一个错误，全部通过才继续。
+        await requireHostsAccess(ctx, input.hostIds);
+        const allowed: number[] = [...input.hostIds];
         const newlyWatched = markHostMetricsWatching(allowed);
         for (const hostId of newlyWatched) pushAgentRefresh(hostId, "metrics-watch");
         return { success: true, count: allowed.length };

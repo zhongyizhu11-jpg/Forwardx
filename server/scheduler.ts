@@ -17,9 +17,11 @@ import { recordTunnelHopTestResult } from "./tunnelHopTestState";
 import { recordHopTestResult } from "./hopTestState";
 import { primeHostStatusNotifier, sweepOfflineHostsAndNotify } from "./hostStatusNotifier";
 import { normalizeLinkProbeMethod } from "@shared/latencyProbe";
-import { clearRuleLatencyQueryCaches } from "./ruleLatencyQueryCache";
+import { clearRuleLatencyQueryCache } from "./ruleLatencyQueryCache";
 import { structuredLinkTestMessage, tunnelHopLatencyMode, tunnelHopModeText } from "./linkTestMessages";
 import { cleanOldAddressGeoCache } from "./hostGeo";
+import { pruneStaleAuthSessions } from "./repositories/sessionRepository";
+import { pruneDispatchConfigAuditEvents } from "./configAudit";
 import { reconcileHostDdnsRecords } from "./hostDdns";
 import { checkPanelUpdateTask } from "./_core/systemRouter";
 import { createNonOverlappingScheduledTask } from "./scheduledTask";
@@ -369,7 +371,7 @@ export async function runSelfTestTimeoutSweep() {
             latencyMs: null,
             isTimeout: true,
           });
-          clearRuleLatencyQueryCaches();
+          clearRuleLatencyQueryCache();
         }
         const targetPart = meta?.kind === "forward-chain"
           ? ` group=${meta.groupId}`
@@ -397,22 +399,37 @@ async function recoverPendingSelfTestSweep() {
   }
 }
 
+/**
+ * 每小时一次的历史清理。
+ *
+ * 逐张表顺序执行，不再 Promise.all 一起开跑：十几张表同时大批量 DELETE，
+ * MySQL/PostgreSQL 上会同时占住十几条连接和一大片行锁，正在上报的 Agent 全被堵住；
+ * SQLite 本来就只有一条写连接，并发也只是排队。某一张表失败只记日志，不影响后面的表
+ * （原来 Promise.all 里一张失败，其余的也照样在后台跑完）。
+ */
 export async function runTcpingCleanup() {
-  try {
-    await Promise.all([
-      db.cleanOldHostMetrics(72),
-      db.cleanOldTrafficStats(72),
-      db.cleanOldTrafficStatBuckets(72),
-      db.cleanOldTcpingStats(72),
-      db.cleanOldTunnelLatencyStats(72),
-      db.cleanOldForwardTests(72),
-      db.cleanOldForwardGroupEvents(72),
-      db.cleanOldForwardRuleRouteEvents(72),
-      db.cleanOldHostProbeServiceStats(72),
-      cleanOldAddressGeoCache(),
-    ]);
-  } catch (error) {
-    console.error("[Scheduler] TCPing cleanup error:", error);
+  const steps: Array<[string, () => Promise<unknown>]> = [
+    ["host_metrics", () => db.cleanOldHostMetrics(72)],
+    ["traffic_stats", () => db.cleanOldTrafficStats(72)],
+    ["traffic_stat_buckets", () => db.cleanOldTrafficStatBuckets(72)],
+    ["tcping_stats", () => db.cleanOldTcpingStats(72)],
+    ["tunnel_latency_stats", () => db.cleanOldTunnelLatencyStats(72)],
+    ["forward_tests", () => db.cleanOldForwardTests(72)],
+    ["forward_group_events", () => db.cleanOldForwardGroupEvents(72)],
+    ["forward_rule_route_events", () => db.cleanOldForwardRuleRouteEvents(72)],
+    ["host_probe_service_stats", () => db.cleanOldHostProbeServiceStats(72)],
+    ["address_geo_cache", () => cleanOldAddressGeoCache()],
+    // 失效超过 7 天的登录会话（过期或已撤销），只有「未撤销且未过期」的行会被读取。
+    ["auth_sessions", () => pruneStaleAuthSessions(7)],
+    // 只删 30 天前的 dispatch 审计行，配置改动（create/update/delete）一条不动。
+    ["config_audit_events:dispatch", () => pruneDispatchConfigAuditEvents(30)],
+  ];
+  for (const [name, run] of steps) {
+    try {
+      await run();
+    } catch (error) {
+      console.error(`[Scheduler] TCPing cleanup error (${name}):`, error);
+    }
   }
 }
 

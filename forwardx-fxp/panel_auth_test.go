@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -24,6 +25,24 @@ func fxpTestAgentAuthChallenge(marker byte) string {
 func writeFXPTestChallenge(w http.ResponseWriter, challenges ...string) {
 	w.Header().Set(fxpAgentAuthCapabilityHeader, fxpAgentAuthChallengeCapability)
 	_ = json.NewEncoder(w).Encode(map[string]any{"v": 2, "challenges": challenges})
+}
+
+// withFXPTestChallenges 让测试里的假面板支持挑战接口（challenge-v2），流量上报
+// 走 v2 凭据 —— http 面板上不再退回明文令牌。
+func withFXPTestChallenges(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/api/agent/auth-challenge" {
+			next.ServeHTTP(w, req)
+			return
+		}
+		challenges := make([]string, 0, 4)
+		for len(challenges) < cap(challenges) {
+			raw := make([]byte, 64)
+			_, _ = rand.Read(raw)
+			challenges = append(challenges, base64.RawURLEncoding.EncodeToString(raw))
+		}
+		writeFXPTestChallenge(w, challenges...)
+	})
 }
 
 func TestFXPAgentChallengeProofMatchesPanelVector(t *testing.T) {
@@ -259,13 +278,14 @@ func TestFXPPanelRequestDoesNotRetryAuthenticatedBusinessError(t *testing.T) {
 	}
 }
 
+// 旧面板（没有挑战接口）只在 https 上退回明文令牌。
 func TestFXPPanelRequestFallsBackToRawTokenForOlderPanel(t *testing.T) {
 	resetFXPAgentAuthCacheForTests()
 	t.Cleanup(resetFXPAgentAuthCacheForTests)
 	const token = "fxp-legacy-panel-token"
 	var challengeRequests atomic.Int32
 	var reportRequests atomic.Int32
-	panel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	panel := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/api/agent/auth-challenge" {
 			challengeRequests.Add(1)
 			http.NotFound(w, req)
@@ -292,5 +312,47 @@ func TestFXPPanelRequestFallsBackToRawTokenForOlderPanel(t *testing.T) {
 			"response=%+v challengeRequests=%d reportRequests=%d",
 			response, challengeRequests.Load(), reportRequests.Load(),
 		)
+	}
+}
+
+// http 面板上挑战拿不到（中间人把挑战接口改成 404、或者去掉能力头），不能把
+// 明文令牌发出去：请求直接失败，面板一个字节都收不到令牌。
+func TestFXPPanelRequestRefusesRawTokenOverPlainHTTP(t *testing.T) {
+	for name, challengeHandler := range map[string]http.HandlerFunc{
+		"not found": func(w http.ResponseWriter, req *http.Request) { http.NotFound(w, req) },
+		"no capability header": func(w http.ResponseWriter, req *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"v": 2, "challenges": []string{fxpTestAgentAuthChallenge(9)}})
+		},
+		"server error": func(w http.ResponseWriter, req *http.Request) { http.Error(w, "down", http.StatusBadGateway) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetFXPAgentAuthCacheForTests()
+			t.Cleanup(resetFXPAgentAuthCacheForTests)
+			const token = "fxp-plain-http-token"
+			var leaked atomic.Int32
+			var reportRequests atomic.Int32
+			panel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if strings.Contains(req.Header.Get("Authorization"), token) {
+					leaked.Add(1)
+				}
+				if req.URL.Path == "/api/agent/auth-challenge" {
+					challengeHandler(w, req)
+					return
+				}
+				reportRequests.Add(1)
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer panel.Close()
+			_, err := postFXPEncryptedPanelRequest(panel.Client(), panel.URL, token, "/api/agent/traffic", []byte(`{"v":1}`))
+			if err == nil {
+				t.Fatal("http 面板上拿不到挑战时请求应该失败")
+			}
+			if leaked.Load() != 0 || reportRequests.Load() != 0 {
+				t.Fatalf("明文令牌被发往 http 面板：leaked=%d reports=%d", leaked.Load(), reportRequests.Load())
+			}
+		})
+	}
+	if fxpPanelAllowsRawBearer("http://panel.example") || fxpPanelAllowsRawBearer("panel.example") || !fxpPanelAllowsRawBearer(" HTTPS://panel.example/ ") {
+		t.Fatal("raw bearer fallback must be limited to https panel URLs")
 	}
 }

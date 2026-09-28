@@ -245,8 +245,18 @@ test("revoked resource grants stop owned rules without hiding or deleting them",
       assert.equal(Number((await state(110)).isEnabled), 0, "re-enabling billing must immediately reconcile private resources");
 
       await adminUsers.setHostPermissions({ userId: 2, hostIds: [2] });
-      await memberRules.update({ id: 100, hostId: 2, forwardType: "iptables", tunnelId: null, forwardGroupId: null, isEnabled: true });
-      await memberRules.update({ id: 101, hostId: 2, forwardType: "iptables", tunnelId: null, forwardGroupId: null, isEnabled: true });
+      // 普通用户不能靠「编辑」把规则挪成一条普通的主机端口转发（和新建同一条规矩），挪要管理员来。
+      await assert.rejects(
+        () => memberRules.update({ id: 100, hostId: 2, forwardType: "iptables", tunnelId: null, forwardGroupId: null, isEnabled: true }),
+        /普通端口转发请先创建转发组或转发链/,
+      );
+      await assert.rejects(
+        () => memberRules.update({ id: 101, hostId: 2, forwardType: "iptables", tunnelId: null, forwardGroupId: null, isEnabled: true }),
+        /普通端口转发请先创建转发组或转发链/,
+      );
+      const adminRules = rulesRouter.createCaller(context(admin));
+      await adminRules.update({ id: 100, hostId: 2, forwardType: "iptables", tunnelId: null, forwardGroupId: null, isEnabled: true });
+      await adminRules.update({ id: 101, hostId: 2, forwardType: "iptables", tunnelId: null, forwardGroupId: null, isEnabled: true });
       assert.equal(Number((await state(100)).hostId), 2);
       assert.equal(Number((await state(100)).isEnabled), 1);
       assert.equal((await state(100)).protocolBlockReason, null);

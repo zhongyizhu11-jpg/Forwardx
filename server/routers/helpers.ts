@@ -5,6 +5,7 @@ import { clearTunnelRuntimeStatus } from "../tunnelRuntimeStatus";
 import { tunnelLatencyProbeSourceHostIds } from "../tunnelLatencyDetails";
 import { clearTunnelAutoHopLatencyState } from "../tunnelAutoLatencyState";
 import { clearTunnelMultiEntryLatencyState } from "../tunnelMultiEntryLatencyState";
+import { getLinkAccessScope } from "../linkAccessView";
 
 /**
  * 写进日志的账号名要打码，两处（登录审计和用户操作日志）原来各存一份一模一样的实现。
@@ -37,6 +38,37 @@ export async function requireHostAccess(ctx: { user: { id: number; role: string 
     if (!hasPermission) throw new Error("无权访问该主机");
   }
   return host;
+}
+
+/**
+ * requireHostAccess 的批量版：总共约 3 次查询（取主机、取直接授权、必要时取套餐），
+ * 而不是每台主机 1~3 次。
+ *
+ * 行为与逐个调用 requireHostAccess 完全一致：按入参顺序检查，遇到的第一台不存在 /
+ * 无权访问的主机就抛同样的错误（同样的文案）；全部通过时按入参顺序返回主机。
+ */
+export async function requireHostsAccess(ctx: { user: { id: number; role: string } }, hostIds: readonly number[]) {
+  if (hostIds.length === 0) return [];
+  const rows = await db.getHostsByIds(hostIds);
+  const hostById = new Map<number, (typeof rows)[number]>();
+  for (const row of rows as any[]) hostById.set(Number(row.id), row);
+  let permitted = new Set<number>();
+  if (ctx.user.role !== "admin") {
+    const needPermission = (rows as any[])
+      .filter((host) => host.userId !== ctx.user.id)
+      .map((host) => Number(host.id));
+    if (needPermission.length > 0) {
+      permitted = await db.getUserPermittedHostIdsAmong(ctx.user.id, needPermission);
+    }
+  }
+  return hostIds.map((hostId) => {
+    const host = hostById.get(hostId);
+    if (!host) throw new Error("主机不存在");
+    if (ctx.user.role !== "admin" && host.userId !== ctx.user.id && !permitted.has(Number(host.id))) {
+      throw new Error("无权访问该主机");
+    }
+    return host;
+  });
 }
 
 export async function requireRuleAccess(ctx: { user: { id: number; role: string } }, ruleId: number) {
@@ -87,6 +119,14 @@ export async function requireTunnelUseOrTrafficBillingAccess(ctx: { user: { id: 
   if (ctx.user.role !== "admin" && !isTrafficBillingResource && tunnel.userId !== ctx.user.id) {
     const hasPermission = await db.checkUserTunnelPermission(ctx.user.id, tunnel.id);
     if (!hasPermission) throw new Error("无权使用该隧道");
+  }
+  if (ctx.user.role !== "admin" && !isTrafficBillingResource && tunnel.userId === ctx.user.id) {
+    // 自己建的隧道也要看它经过的主机还能不能用：主机授权收回之后不能再拿它建 / 开规则。
+    // 口径和运行时的闸（gateForwardRulesForRuntime）是同一份，见 linkAccessView.restrictOwnedTunnelUse。
+    const scope = await getLinkAccessScope(ctx.user);
+    if (scope && !(scope.useTunnelIds || scope.tunnelIds).has(Number(tunnel.id))) {
+      throw new Error("该隧道经过的主机已不在您的授权范围内，暂时无法使用，请联系管理员恢复主机授权");
+    }
   }
   return { tunnel, isTrafficBillingResource };
 }

@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/table";
 import { mobileAuth } from "@/lib/mobileAuth";
 import { trpc } from "@/lib/trpc";
+import { pollingInterval } from "@/lib/polling";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -439,7 +440,9 @@ export default function AgentTokenManager({
     undefined,
     {
       enabled: user?.role === "admin" && !dialogOnly,
-      refetchInterval: !dialogOnly && pageVisible ? 2000 : false,
+      // 列表只是令牌和绑定主机的在线状态，不需要 2 秒一刷：增删改排序的 mutation
+      // 都会 invalidate 这条查询，自己的操作立刻可见；绑定主机上下线按常规节奏刷新即可。
+      refetchInterval: pollingInterval("normal", !dialogOnly && pageVisible),
       refetchOnWindowFocus: true,
     }
   );

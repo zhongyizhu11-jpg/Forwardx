@@ -167,6 +167,26 @@ export const usersRouter = router({
       .input(z.object({ userId: z.number() }))
       .mutation(async ({ input, ctx }) => {
         if (input.userId === ctx.user.id) throw new Error("不能删除当前登录账户");
+        const target = await db.getUserById(input.userId);
+        if (!target) throw new Error("用户不存在");
+        // 他名下的隧道、转发组、主机可能还承载着别人的规则，不能跟着人一起删，也不能留成无主的行。
+        const owned = await db.getUserOwnedInfrastructureCounts(input.userId);
+        const ownedParts = [
+          owned.tunnels > 0 ? `${owned.tunnels} 条隧道` : "",
+          owned.forwardGroups > 0 ? `${owned.forwardGroups} 个转发组` : "",
+          owned.hosts > 0 ? `${owned.hosts} 台主机` : "",
+        ].filter(Boolean);
+        if (ownedParts.length > 0) {
+          throw new Error(`该用户名下还有 ${ownedParts.join("、")}，请先转移给其他用户或删除后再删除该用户`);
+        }
+        // 他的规则走和手动删除一样的流程：先结算流量、标记待删除、通知 Agent 停掉。
+        // 直接删人的话这些规则会留在机器上没人管，端口也一直占着。
+        // 动态引入：rules.crud 和 rules 路由互相引用，静态引进来会改变模块初始化顺序。
+        const { deleteForwardRuleForActor } = await import("./rules.crud");
+        const adminActor = { id: ctx.user.id, role: "admin" };
+        for (const ruleId of await db.getUserTopLevelForwardRuleIds(input.userId)) {
+          await deleteForwardRuleForActor(adminActor, ruleId, { reasonPrefix: `user-${input.userId}-deleted` });
+        }
         await db.deleteUserPermissions(input.userId);
         clearLinkAccessScopeCache();
         // 收凭据、收专属端口这些都焊在 deleteUser 里了 —— 顺序不能反（凭据按

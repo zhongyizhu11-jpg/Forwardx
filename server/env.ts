@@ -2,13 +2,40 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 
-function readOrCreateCookieSecret() {
-  const envSecret = String(process.env.JWT_SECRET || "").trim();
-  if (envSecret) return envSecret;
+/*
+  旧版 docker-compose.yml / .env.example 把 JWT_SECRET 默认成了示例值，照抄部署的面板全都用同一把
+  公开的签名密钥，任何人都能伪造登录 Cookie。这些示例值一律当作「没配置」，改走下面自动生成并持久化
+  的密钥（用过示例值的部署升级后已登录会话会失效一次，需要重新登录）。
+*/
+const PLACEHOLDER_JWT_SECRETS = new Set([
+  "change-me-to-a-random-string",
+  "change-me",
+  "changeme",
+  "change_me",
+  "replace-me",
+  "your-secret",
+  "your-secret-key",
+  "your-jwt-secret",
+  "your_jwt_secret",
+  "jwt-secret",
+  "jwt_secret",
+  "secret",
+]);
 
-  const configuredPath = String(process.env.FORWARDX_JWT_SECRET_PATH || "").trim();
+export function isPlaceholderJwtSecret(value: unknown) {
+  return PLACEHOLDER_JWT_SECRETS.has(String(value ?? "").trim().toLowerCase());
+}
+
+export function readOrCreateCookieSecret(env: NodeJS.ProcessEnv = process.env) {
+  const envSecret = String(env.JWT_SECRET || "").trim();
+  if (envSecret && !isPlaceholderJwtSecret(envSecret)) return envSecret;
+  if (envSecret) {
+    console.warn("[Security] JWT_SECRET is set to a well-known placeholder value; ignoring it and using a generated persistent secret instead. Existing sessions signed with the placeholder must log in again.");
+  }
+
+  const configuredPath = String(env.FORWARDX_JWT_SECRET_PATH || "").trim();
   const defaultDataDir = process.platform === "win32" ? path.resolve(process.cwd(), "data") : "/data";
-  const sqliteDir = path.dirname(String(process.env.SQLITE_PATH || path.join(defaultDataDir, "forwardx.db")));
+  const sqliteDir = path.dirname(String(env.SQLITE_PATH || path.join(defaultDataDir, "forwardx.db")));
   const candidates = [
     configuredPath,
     path.join(sqliteDir, "jwt.secret"),

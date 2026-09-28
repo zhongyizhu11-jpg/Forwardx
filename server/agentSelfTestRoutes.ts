@@ -12,7 +12,7 @@ import {
   combineTunnelRuleLatencySample,
   tunnelRuleLatencySampleSucceeded,
 } from "./ruleLatency";
-import { clearRuleLatencyQueryCaches } from "./ruleLatencyQueryCache";
+import { clearRuleLatencyQueryCache } from "./ruleLatencyQueryCache";
 import { waitForTunnelLatencyRefresh } from "./tunnelLatencyRefresh";
 import { getTunnelAutoHopDetails } from "./tunnelAutoLatencyState";
 import { getTunnelMultiEntryHopDetails } from "./tunnelMultiEntryLatencyState";
@@ -398,7 +398,7 @@ agentRouter.post("/api/agent/selftest-result", async (req: Request, res: Respons
           latencyMs: combinedLatency.isTimeout ? null : combinedLatency.latencyMs,
           isTimeout: combinedLatency.isTimeout,
         });
-        clearRuleLatencyQueryCaches();
+        clearRuleLatencyQueryCache();
       }
       console.log(`[SelfTest] tunnel rule overall test=${testId} tunnel=${meta.tunnelId} success=${overallSuccess} targetLatency=${cleanLatency ?? "-"}ms tunnelLatency=${tunnelLatencyMs || "-"}ms total=${totalLatency ?? "-"}ms`);
     }
@@ -501,7 +501,7 @@ agentRouter.post("/api/agent/selftest-result", async (req: Request, res: Respons
         latencyMs: success && cleanLatency !== null ? cleanLatency : null,
         isTimeout: !success || cleanLatency === null,
       });
-      clearRuleLatencyQueryCaches();
+      clearRuleLatencyQueryCache();
       appendPanelLog(
         success ? "info" : "warn",
         `[SelfTest] rule=${t.ruleId} direct test=${testId} host=${host.id} success=${success} latency=${success && cleanLatency !== null ? `${cleanLatency}ms` : "-"}${cleanMessage ? ` message=${cleanMessage}` : ""}`,

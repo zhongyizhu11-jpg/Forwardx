@@ -10,7 +10,8 @@
  */
 
 import { githubDownloadCandidates, type GithubAcceleratorConfig } from "../shared/githubAccelerator";
-import { buildSingboxConfig, type ProxyInbound } from "../shared/proxyInbound";
+import { buildSingboxConfig, proxyInboundEnumFieldError, type ProxyInbound } from "../shared/proxyInbound";
+import { appendPanelLog } from "./_core/panelLogger";
 import {
   shQuote,
   startManagedServiceCmd,
@@ -184,6 +185,26 @@ export function singboxValidateCommand(): string {
   return `${SINGBOX_BIN} check -c {{path}}`;
 }
 
+const loggedInvalidSingboxInbounds = new Set<string>();
+
+/**
+ * 一台机器上所有租户的入站合成一份配置，sing-box check 只要有一个入站不认识就整份
+ * 拒绝，别人的入站也跟着冻结在旧配置上。输入校验之前存进去的坏行在这里单独剔掉，
+ * 只让它自己不生效；同一条原因只记一次日志，免得每次心跳都刷。
+ */
+function invalidSingboxInboundReason(entry: SingboxInboundEntry): string {
+  const reason = proxyInboundEnumFieldError(entry.inbound);
+  if (reason) {
+    const key = `${entry.tag}|${reason}`;
+    if (!loggedInvalidSingboxInbounds.has(key)) {
+      if (loggedInvalidSingboxInbounds.size > 4096) loggedInvalidSingboxInbounds.clear();
+      loggedInvalidSingboxInbounds.add(key);
+      appendPanelLog("warn", `[SingboxRuntime] skip invalid inbound tag=${entry.tag} reason=${reason}`);
+    }
+  }
+  return reason;
+}
+
 /**
  * 生成下发计划。inbounds 为空表示这台机器不再需要 sing-box。
  */
@@ -192,7 +213,7 @@ export function buildSingboxRuntimePlan(options: {
   version?: string;
   accelerator?: GithubAcceleratorConfig | null;
 }): SingboxRuntimePlan {
-  const entries = options.inbounds.filter((entry) => entry && entry.inbound);
+  const entries = options.inbounds.filter((entry) => entry && entry.inbound && !invalidSingboxInboundReason(entry));
   if (entries.length === 0) return buildSingboxRetirementPlan();
 
   const config = buildSingboxConfig(entries);

@@ -24,7 +24,26 @@ export async function getConfiguredPanelUrl(): Promise<string> {
   return configured && /^https?:\/\//i.test(configured) ? configured : "";
 }
 
-function forwardedProto(req: Request) {
+/*
+  X-Forwarded-* / cf-visitor 谁都能伪造。这里算出来的地址会用在支付回跳、Agent 安装脚本里的面板地址、
+  订阅 profile URL 上，直接信任就等于让任意客户端把这些链接指向自己的域名。
+  只有直连对端是受信代理（与 app 的 trust proxy 配置同一判定，Express 自己的 req.protocol/req.ip
+  也是这么判的）时才读转发头，否则只看直连的 Host。
+*/
+function isFromTrustedProxy(req: Request) {
+  const trust = (req as any).app?.get?.("trust proxy fn");
+  if (typeof trust !== "function") return false;
+  const remoteAddress = req.socket?.remoteAddress || (req as any).connection?.remoteAddress;
+  if (!remoteAddress) return false;
+  try {
+    return !!trust(remoteAddress, 0);
+  } catch {
+    return false;
+  }
+}
+
+function forwardedProto(req: Request, trusted: boolean) {
+  if (!trusted) return req.protocol === "https" ? "https" : "http";
   const cfVisitor = firstHeaderValue(req.headers["cf-visitor"]);
   if (cfVisitor) {
     try {
@@ -40,13 +59,14 @@ function forwardedProto(req: Request) {
   return req.protocol === "https" ? "https" : "http";
 }
 
-function forwardedHost(req: Request) {
-  const host = firstHeaderValue(req.headers["x-forwarded-host"]) || req.get("host") || "";
+function forwardedHost(req: Request, trusted: boolean) {
+  const host = (trusted ? firstHeaderValue(req.headers["x-forwarded-host"]) : "") || req.get("host") || "";
   if (!host || /[\s/?#\\@]/.test(host)) return "";
   return host;
 }
 
-function forwardedPrefix(req: Request) {
+function forwardedPrefix(req: Request, trusted: boolean) {
+  if (!trusted) return "";
   const prefix = firstHeaderValue(req.headers["x-forwarded-prefix"]);
   if (!prefix || prefix === "/") return "";
   if (!prefix.startsWith("/") || /[?#\\\s]/.test(prefix)) return "";
@@ -63,11 +83,12 @@ export function resolveRequestPanelUrl(req: Request, configuredPanelUrl = ""): s
   const configured = normalizePanelUrl(configuredPanelUrl);
   if (configured) return configured;
 
-  const proto = forwardedProto(req);
-  const host = forwardedHost(req);
+  const trusted = isFromTrustedProxy(req);
+  const proto = forwardedProto(req, trusted);
+  const host = forwardedHost(req, trusted);
   if (!host) return "";
 
-  const forwardedPort = firstHeaderValue(req.headers["x-forwarded-port"]);
+  const forwardedPort = trusted ? firstHeaderValue(req.headers["x-forwarded-port"]) : "";
   const validForwardedPort = /^\d{1,5}$/.test(forwardedPort) && Number(forwardedPort) > 0 && Number(forwardedPort) <= 65535
     ? forwardedPort
     : "";
@@ -76,7 +97,7 @@ export function resolveRequestPanelUrl(req: Request, configuredPanelUrl = ""): s
   const hostWithPort = !hasPort && validForwardedPort && !defaultPort ? `${host}:${validForwardedPort}` : host;
   try {
     const url = new URL(`${proto}://${hostWithPort}`);
-    url.pathname = forwardedPrefix(req) || "/";
+    url.pathname = forwardedPrefix(req, trusted) || "/";
     return normalizePanelUrl(url.toString());
   } catch {
     return "";

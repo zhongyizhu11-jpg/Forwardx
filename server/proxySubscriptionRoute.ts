@@ -1,7 +1,7 @@
 import express, { type Request, type Response } from "express";
 
 import * as db from "./db";
-import { resolveRequestPanelUrl } from "./agentPanelUrl";
+import { resolvePanelUrl } from "./agentPanelUrl";
 import {
   formatProxySubscriptionUserInfo,
   normalizeProxySubscriptionFormat,
@@ -122,7 +122,8 @@ proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Respons
     const document = await db.getProxySubscriptionDocumentForUser(Number(record.userId), { rulePreset });
     // 带 rules 参数就是规则订阅：Surge / Loon / QX / Shadowrocket 此时给完整配置。
     const profile = !!rulesParam && rulesParam !== "0" && rulesParam !== "false";
-    const panelUrl = resolveRequestPanelUrl(req);
+    // 后台配置了面板公网地址时以它为准，不从请求头推断。
+    const panelUrl = await resolvePanelUrl(req);
     const body = renderProxySubscription(document, format, {
       profile,
       profileUrl: panelUrl ? `${panelUrl.replace(/\/+$/, "")}${req.originalUrl}` : "",

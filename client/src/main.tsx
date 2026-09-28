@@ -1,6 +1,6 @@
 import { resolveSiteTitle } from "@shared/brand";
 import { trpc } from "@/lib/trpc";
-import { ACCOUNT_DISABLED_ERR_MSG, SESSION_REPLACED_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
+import { ACCOUNT_DISABLED_ERR_MSG, SESSION_REPLACED_ERR_MSG, TRPC_MAX_BATCH_SIZE, UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, httpLink, splitLink, TRPCClientError } from "@trpc/client";
 import { createRoot } from "react-dom/client";
@@ -137,6 +137,8 @@ const trpcClient = trpc.createClient({
         url: "/api/trpc",
         transformer: superjson,
         fetch: trpcFetch,
+        // 服务端对单个 batch 有上限，超出的调用由客户端自己拆成多个请求。
+        maxItems: TRPC_MAX_BATCH_SIZE,
       }),
     }),
   ],

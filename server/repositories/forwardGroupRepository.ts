@@ -33,6 +33,7 @@ import {
   getForwardGroupChildRulesForTemplate,
   getForwardGroupTemplateRules,
   getForwardRuleById,
+  finalizeForwardRuleDelete,
   getForwardRulesByTunnel,
   markForwardRulePendingDelete,
   updateForwardRule,
@@ -50,6 +51,7 @@ import {
 } from "../bandwidthAggregation";
 import { normalizeMemberBandwidthMbps, normalizeMemberWeight } from "../../shared/bandwidthAggregation";
 import {
+  assertTunnelRulePortsFreeOnEntryHosts,
   disableForwardRulesByTunnel,
   ensureTunnelListenerPortPolicy,
   findAvailablePort,
@@ -90,6 +92,7 @@ import {
   releaseHostPortReservations,
   reserveAvailableHostPort,
   reserveSpecificHostPort,
+  tryReserveHostPort,
   type HostPortReservation,
 } from "../portReservations";
 import { repairPortForwardRuleHostReferences } from "../portForwardRuleHosts";
@@ -2801,13 +2804,41 @@ async function ensureMemberRuleForTemplate(group: any, templateRule: any, member
   const hostId = await memberEntryHostId(member);
   if (!hostId) throw new Error("Forward group member has no valid entry agent");
   await assertEntryPortAllowed(member, Number(templateRule.sourcePort));
-  const used = await isPortUsedOnHostForGroupChild(
-    hostId,
-    Number(templateRule.sourcePort),
-    [Number(templateRule.id), Number(existing?.id || 0)].filter(Boolean),
-    templateRule.protocol,
-  );
-  if (used) throw new Error(`Entry agent port ${templateRule.sourcePort} is already used`);
+  // 新建子规则时先在进程内占住这个端口，直到子规则写进库：否则同一时刻在这台机器上
+  // 手动建规则（它也先预留再查库）和这里只查库的判断可能同时通过，两条规则抢一个端口。
+  // 占不到（多半是调用方——建/改模板的请求——已经替这些入口机占着）就退回原来只查库的判断，
+  // 不能因此把自己的子规则当成冲突跳过。
+  const childPortReservation = existing
+    ? null
+    : tryReserveHostPort(hostId, Number(templateRule.sourcePort), templateRule.protocol);
+  const releaseChildPortReservation = async () => {
+    if (childPortReservation) await afterDatabaseTransactionSettled(() => childPortReservation.release());
+  };
+  let used = false;
+  try {
+    used = await isPortUsedOnHostForGroupChild(
+      hostId,
+      Number(templateRule.sourcePort),
+      [Number(templateRule.id), Number(existing?.id || 0)].filter(Boolean),
+      templateRule.protocol,
+    );
+  } catch (error) {
+    await releaseChildPortReservation();
+    throw error;
+  }
+  if (used) {
+    await releaseChildPortReservation();
+    // 端口冲突只挡这一个成员：以前在这里抛错，整组同步（包括两分钟一次的自愈）每次都
+    // 中断在这里，后面的成员和模板全都同步不到。记日志、把已有的子规则停住，
+    // 端口空出来后下一次同步会自动恢复。
+    appendPanelLog("warn", `[ForwardGroup] group=${Number(group?.id || 0)} template=${Number(templateRule.id)} member=${Number(member.id)} host=${hostId} port=${Number(templateRule.sourcePort)} already used; child skipped`);
+    if (existing && dbBool(existing.isEnabled)) {
+      // 只关 isEnabled、保留 isRunning：心跳看到「停用但还在跑」才会让 Agent 把它撤掉。
+      await updateForwardRule(Number(existing.id), { isEnabled: false } as any);
+      await refreshRuleEndpoints(existing, "forward-group-child-port-conflict");
+    }
+    return null;
+  }
 
   let tunnelExitPortReservation: HostPortReservation | null = null;
   try {
@@ -3000,6 +3031,7 @@ async function ensureMemberRuleForTemplate(group: any, templateRule: any, member
   return ruleId;
   } finally {
     tunnelExitPortReservation?.release();
+    await releaseChildPortReservation();
   }
 }
 
@@ -3259,7 +3291,11 @@ async function syncForwardGroupRulesUnlocked(groupId: number, options: SyncForwa
   if (isCollectionGroupMode(groupMode)) {
     const childRules = await getForwardGroupChildRules(groupId);
     for (const child of childRules as any[]) await removeManagedRule(Number(child.id));
-    for (const template of templates as any[]) await markForwardRulePendingDelete(Number(template.id));
+    for (const template of templates as any[]) {
+      // 模板从不下发到 Agent，等不到停止确认：标成待删除后直接收掉，否则永远留在库里。
+      await markForwardRulePendingDelete(Number(template.id));
+      await finalizeForwardRuleDelete(Number(template.id));
+    }
     for (const member of members) {
       if (member.ruleId) {
         await removeManagedRule(Number(member.ruleId));
@@ -3598,6 +3634,53 @@ export async function replaceForwardGroupMembers(
     .map((member) => Number(member.hostId || 0))
     .filter((hostId) => Number.isFinite(hostId) && hostId > 0);
   const keepKeys = new Set(normalizedMembers.map((m) => `${m.memberType}:${m.memberType === "host" ? m.hostId : m.tunnelId}`));
+  if (groupMode === "entry" && dbBool((group as any)?.isEnabled)) {
+    // 新加入（或重新启用）的入口组主机会替组里所有隧道的规则监听 sourcePort，
+    // 写成员之前先查端口，冲突就整体拒绝，别写一半。
+    const previousEnabledHostIds = new Set((existing as any[])
+      .filter((member) => member.memberType === "host" && dbBool(member.isEnabled, true))
+      .map((member) => Number(member.hostId || 0)));
+    const addedHostIds = normalizedMembers
+      .filter((member) => member.memberType === "host" && dbBool(member.isEnabled, true))
+      .map((member) => Number(member.hostId || 0))
+      .filter((hostId) => hostId > 0 && !previousEnabledHostIds.has(hostId));
+    if (addedHostIds.length > 0) {
+      const tunnelRows = await db.select({ id: tunnels.id }).from(tunnels).where(eq(tunnels.entryGroupId, groupId));
+      await assertTunnelRulePortsFreeOnEntryHosts((tunnelRows as any[]).map((row) => Number(row.id)), addedHostIds);
+    }
+  }
+
+  if (groupMode !== "chain" && !isCollectionGroupMode(groupMode) && dbBool((group as any)?.isEnabled)) {
+    // 成员写进库之后，同步会给每个启用的成员按模板端口建子规则；端口被占就会在同步里
+    // 抛错 —— 那时成员已经写了一半，之后每次同步（含自愈）都会卡在同一个冲突上。
+    // 所以写之前先按新的成员集合把每个模板的端口查一遍，冲突就整体拒绝。
+    const templates = (await getForwardGroupTemplateRules(groupId) as any[]).filter((template) => dbBool(template?.isEnabled));
+    if (templates.length > 0) {
+      const memberKey = (member: any) => `${member.memberType}:${member.memberType === "host" ? member.hostId : member.tunnelId}`;
+      const removedChildIds: number[] = [];
+      for (const old of existing as any[]) {
+        if (keepKeys.has(memberKey(old))) continue;
+        for (const child of await getForwardGroupChildRulesForMember(Number(old.id)) as any[]) removedChildIds.push(Number(child.id));
+      }
+      for (const member of normalizedMembers) {
+        if (!dbBool(member.isEnabled, true)) continue;
+        if (member.memberType === "tunnel") {
+          const tunnel = await getTunnelById(Number(member.tunnelId));
+          if (!tunnel || !dbBool((tunnel as any).isEnabled)) continue;
+        }
+        const hostId = await targetHostIdForMember(member);
+        const found = (existing as any[]).find((row) => memberKey(row) === memberKey(member));
+        for (const template of templates) {
+          const child = found ? await existingChildRule(Number(template.id), Number(found.id)) : undefined;
+          const ignoreRuleIds = [Number(template.id), Number(child?.id || 0), ...removedChildIds].filter((id) => id > 0);
+          if (await isPortUsedOnHostForGroupChild(hostId, Number(template.sourcePort), ignoreRuleIds, template.protocol)) {
+            const host = await getHostById(hostId) as any;
+            throw new Error(`成员主机「${host?.name || hostId}」上端口 ${template.sourcePort} 已被占用，无法为规则「${template.name || template.id}」建立转发，请先更换端口或移除占用`);
+          }
+        }
+      }
+    }
+  }
 
   for (const old of existing as any[]) {
     const key = `${old.memberType}:${old.memberType === "host" ? old.hostId : old.tunnelId}`;
@@ -3679,6 +3762,8 @@ export async function deleteForwardGroup(id: number) {
     if (billed && Number(billed.balanceAfterCents) < 0) {
       await handleTrafficBillingShortfallLazily(Number((template as any).userId), "group-delete-settlement-negative");
     }
+    // 模板从不在 Agent 上运行，等不到停止确认；结算完直接收掉（同 deleteForwardRuleForActor）。
+    await finalizeForwardRuleDelete(Number(template.id));
   }
   const members = await db.select().from(forwardGroupMembers).where(eq(forwardGroupMembers.groupId, id));
   for (const member of members as any[]) {

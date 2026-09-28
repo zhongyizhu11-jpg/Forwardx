@@ -15,7 +15,7 @@ import { consumeTelegramWidgetLoginOnce } from "../telegramWidgetSecurity";
 import { consumeTelegramWebAppLoginChallenge } from "../telegramWebAppLogin";
 import { SESSION_TOKEN_TTL_MS, SESSION_TOKEN_TTL_SECONDS, stripSessionSensitiveFields, type SessionKind } from "../session";
 import { createLoginAuthSession } from "../loginSessionService";
-import { authRateLimitState, clearAuthAccountFailures, recordTwoFactorChallengeIssue, recordTwoFactorFailure, twoFactorChallengeIssueState } from "../authRateLimit";
+import { authRateLimitState, clearAuthAccountFailures, recordPasswordFailure, recordTwoFactorChallengeIssue, recordTwoFactorFailure, twoFactorChallengeIssueState } from "../authRateLimit";
 import { createTwoFactorChallenge } from "../twoFactorChallenges";
 
 const BIND_CODE_TTL_MS = 5 * 60 * 1000;
@@ -24,6 +24,8 @@ const TELEGRAM_WEBAPP_LOGIN_MAX_AGE_SECONDS = 5 * 60;
 const TELEGRAM_WEBAPP_REPLAY_TTL_MS = 10 * 60 * 1000;
 const usedTelegramWebAppLogins = new Map<string, number>();
 const TELEGRAM_WIDGET_LOGIN_MAX_AGE_SECONDS = 5 * 60;
+// 预览失败只按来源 IP 计数（recordPasswordFailure），不设全局账户维度，免得任何人刷几次就把所有人的预览锁住。
+const TELEGRAM_LOGIN_PREVIEW_SCOPE = "telegram-login-preview";
 
 function randomCode(length = 24) {
   let out = "";
@@ -354,6 +356,34 @@ export const telegramRouter = router({
       if (!user) return { status: "pending" as const };
       takeMobileTelegramLoginChallenge(code);
       return { status: "success" as const, ...await issueTelegramSession(ctx, user, "telegram", true) };
+    }),
+
+  /**
+   * 预览一次性登录码对应的账户（只读，不消费）。
+   * 登录页不再自动消费 /login?tg=CODE：先展示要登录的账户，用户点「继续登录」才调用 login。
+   * 只返回用户名和 Telegram 用户名；查不到的码计入来源 IP 的失败次数，防止拿它批量试码。
+   */
+  previewLogin: publicProcedure
+    .input(z.object({ code: z.string().min(8).max(64) }))
+    .query(async ({ input, ctx }) => {
+      const ip = String(ctx.req.ip || ctx.req.socket.remoteAddress || "unknown");
+      const limited = authRateLimitState(ip, TELEGRAM_LOGIN_PREVIEW_SCOPE);
+      if (limited.limited) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: `TELEGRAM_LOGIN_RATE_LIMITED:${Math.ceil(limited.retryAfterSeconds / 60)}`,
+        });
+      }
+      const code = input.code.trim().toUpperCase();
+      const user = isMobileLoginCode(code) ? null : await db.peekTelegramLoginCode(code);
+      if (!user) {
+        recordPasswordFailure(ip, TELEGRAM_LOGIN_PREVIEW_SCOPE);
+        throw new Error("Telegram 登录码无效或已过期");
+      }
+      return {
+        username: String(user.username || ""),
+        telegramUsername: user.telegramUsername ? String(user.telegramUsername) : null,
+      };
     }),
 
   login: publicProcedure

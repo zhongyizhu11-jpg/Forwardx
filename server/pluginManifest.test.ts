@@ -6,6 +6,7 @@ import zlib from "node:zlib";
 import {
   buildPluginDirectorySwapCommand,
   buildPluginTextFileCommands,
+  normalizePluginLinkUrl,
   normalizePluginManifest,
   normalizePluginStoreCatalog,
   pluginManifestRequiresTrust,
@@ -426,4 +427,40 @@ test("plugin update comparison only accepts a newer version", () => {
   assert.equal(pluginVersionHasUpdate("v2.0.0", "2.0.0"), false);
   assert.equal(pluginVersionHasUpdate("2.1.0", "2.0.9"), false);
   assert.equal(pluginVersionHasUpdate("2.1.0", ""), false);
+});
+
+test("plugin homepage and repository links only keep http/https URLs", () => {
+  for (const value of ["javascript:alert(1)", " JavaScript:alert(1)", "data:text/html,<script>alert(1)</script>", "vbscript:msgbox(1)", "not a url"]) {
+    assert.equal(normalizePluginLinkUrl(value), undefined, value);
+  }
+  assert.equal(normalizePluginLinkUrl(" https://github.com/example/demo "), "https://github.com/example/demo");
+  assert.equal(normalizePluginLinkUrl("http://plugins.example.com/demo"), "http://plugins.example.com/demo");
+
+  const manifest = normalizePluginManifest({
+    id: "link-demo",
+    name: "Link demo",
+    version: "1.0.0",
+    homepage: "javascript:alert(document.cookie)",
+    repository: "data:text/html,<script>alert(1)</script>",
+  });
+  assert.equal(manifest.homepage, undefined);
+  assert.equal(manifest.repository, undefined);
+
+  const catalog = normalizePluginStoreCatalog({
+    name: "Community Store",
+    plugins: [{ id: "link-demo", name: "Link demo", homepage: "javascript:alert(1)", permissions: [], extensionPoints: [] }],
+  }, {
+    id: 8,
+    repository: "https://github.com/example/community-store",
+    branch: "main",
+    catalogPath: "forwardx-store.json",
+  });
+  assert.equal(catalog.items[0]?.homepage, "https://github.com/example/community-store");
+});
+
+test("plugin GitHub install schema rejects non-http repository URLs", async () => {
+  const { pluginRepositoryUrlSchema } = await import("./routers/plugins");
+  assert.equal(pluginRepositoryUrlSchema.safeParse("javascript:alert(1)").success, false);
+  assert.equal(pluginRepositoryUrlSchema.safeParse("data:text/html,x").success, false);
+  assert.equal(pluginRepositoryUrlSchema.safeParse("https://github.com/example/demo").success, true);
 });

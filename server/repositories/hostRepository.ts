@@ -4,6 +4,7 @@ export { isFreshHostHeartbeat } from "../hostHeartbeatPolicy";
 import {
   agentTokens,
   forwardGroupMembers,
+  forwardGroups,
   forwardRuleTunnelExits,
   forwardRules,
   hostGroupMembers,
@@ -15,6 +16,7 @@ import {
   hostTrafficCounters,
   InsertHost,
   subscriptionPlanHosts,
+  subscriptionPlans,
   trafficBillingConfigs,
   trafficStats,
   trafficStatBuckets,
@@ -736,6 +738,55 @@ export async function deleteHost(id: number) {
   invalidateAgentAuthTokenCandidates();
   if (before) await recordConfigAuditEvent({ resourceType: "host", resourceId: id, hostId: id, action: "delete", before });
   await refreshDatabasePoolSettings().catch(() => undefined);
+}
+
+/**
+ * 手动删主机前，列出还有哪些东西在用这台机器。
+ *
+ * deleteHost 只清规则、权限、套餐关联这些「挂在主机下面」的行，不动隧道、跃点、额外出口、
+ * 转发组成员 —— 这些行删了主机后还留着，指向一个不存在的 hostId：隧道下发时找不到入口/出口，
+ * 转发组 DDNS 解析到空地址，套餐继续卖一台已经没有的机器。所以要求先解除引用再删。
+ * Agent 令牌不算：它就是这台机器自己的，deleteHost 会一起删。
+ */
+export async function getHostDeleteReferenceLabels(hostId: number): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const [tunnelRows, hopRows, extraExitRows, groupRows, planRows] = await Promise.all([
+    db.select({ id: tunnels.id, name: tunnels.name, entryHostId: tunnels.entryHostId, exitHostId: tunnels.exitHostId })
+      .from(tunnels)
+      .where(sql`${tunnels.entryHostId} = ${hostId} OR ${tunnels.exitHostId} = ${hostId}`),
+    db.select({ id: tunnels.id, name: tunnels.name })
+      .from(tunnelHops)
+      .innerJoin(tunnels, eq(tunnelHops.tunnelId, tunnels.id))
+      .where(eq(tunnelHops.hostId, hostId)),
+    db.select({ id: tunnels.id, name: tunnels.name })
+      .from(tunnelExitNodes)
+      .innerJoin(tunnels, eq(tunnelExitNodes.tunnelId, tunnels.id))
+      .where(eq(tunnelExitNodes.hostId, hostId)),
+    db.select({ id: forwardGroups.id, name: forwardGroups.name })
+      .from(forwardGroupMembers)
+      .innerJoin(forwardGroups, eq(forwardGroupMembers.groupId, forwardGroups.id))
+      .where(and(eq(forwardGroupMembers.memberType, "host"), eq(forwardGroupMembers.hostId, hostId))),
+    db.select({ id: subscriptionPlans.id, name: subscriptionPlans.name })
+      .from(subscriptionPlanHosts)
+      .innerJoin(subscriptionPlans, eq(subscriptionPlanHosts.planId, subscriptionPlans.id))
+      .where(eq(subscriptionPlanHosts.hostId, hostId)),
+  ]);
+  const names = (rows: any[]) => {
+    const unique = Array.from(new Map(rows.map((row) => [Number(row.id), String(row.name || `#${row.id}`)])).values());
+    const shown = unique.slice(0, 5).map((name) => `「${name}」`).join("、");
+    return unique.length > 5 ? `${shown} 等 ${unique.length} 个` : shown;
+  };
+  const labels: string[] = [];
+  const entryTunnels = (tunnelRows as any[]).filter((row) => Number(row.entryHostId) === hostId);
+  const exitTunnels = (tunnelRows as any[]).filter((row) => Number(row.exitHostId) === hostId);
+  if (entryTunnels.length > 0) labels.push(`隧道入口 ${names(entryTunnels)}`);
+  if (exitTunnels.length > 0) labels.push(`隧道出口 ${names(exitTunnels)}`);
+  if (hopRows.length > 0) labels.push(`隧道中转 ${names(hopRows as any[])}`);
+  if (extraExitRows.length > 0) labels.push(`隧道额外出口 ${names(extraExitRows as any[])}`);
+  if (groupRows.length > 0) labels.push(`转发组成员 ${names(groupRows as any[])}`);
+  if (planRows.length > 0) labels.push(`套餐 ${names(planRows as any[])}`);
+  return labels;
 }
 
 async function hostHasLiveReferences(hostId: number) {

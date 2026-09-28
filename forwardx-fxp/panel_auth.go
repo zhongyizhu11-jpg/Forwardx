@@ -33,6 +33,18 @@ const (
 
 var errFXPAgentAuthChallengeUnsupported = errors.New("agent auth challenge unsupported")
 
+// errFXPRawBearerRefused：拿不到挑战、面板又不是 https，不发明文令牌。
+var errFXPRawBearerRefused = errors.New("agent auth challenge unavailable; refusing to send the raw agent token over a non-https panel URL")
+
+// fxpPanelAllowsRawBearer 只在 https 面板上允许退回明文 `Bearer <令牌>`。
+// http 面板上，中间人只要让挑战接口失败（返回 404、或者不带能力头），就能
+// 逼进程把令牌原样发出来、直接偷走；https 下中间人做不到这一步，保留旧面板
+// 的兼容。
+func fxpPanelAllowsRawBearer(panelURL string) bool {
+	parsed, err := url.Parse(normalizeFXPPanelURL(panelURL))
+	return err == nil && strings.EqualFold(parsed.Scheme, "https")
+}
+
 type fxpAgentAuthPanelState struct {
 	advertised       bool
 	challenges       []string
@@ -328,6 +340,9 @@ func newFXPPanelRequestAuth(
 ) (fxpPanelRequestAuth, error) {
 	challenge, generation, ok := takeFXPAgentAuthChallenge(ctx, client, panelURL, token)
 	if !ok {
+		if !fxpPanelAllowsRawBearer(panelURL) {
+			return fxpPanelRequestAuth{}, errFXPRawBearerRefused
+		}
 		return fxpPanelRequestAuth{credential: token, version: "raw"}, nil
 	}
 	nonce, err := newFXPAgentAuthNonce()

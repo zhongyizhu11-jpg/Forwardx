@@ -55,6 +55,7 @@ import {
 } from "./helpers";
 import { requireRuleProtocolEnabled } from "../forwardProtocolSettings";
 import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "@shared/portPolicy";
+import { assertTenantListenPortAllowed, assertTenantListenPortAllowedOnHosts } from "../tenantListenPortGuard";
 import { isTelegramBotReady } from "../telegramReady";
 import { resolveForwardRuleName } from "@shared/forwardRuleName";
 import {
@@ -69,6 +70,7 @@ import { ensureTunnelListenerPortPolicy, reserveTunnelExitPort, usesSharedTunnel
 import { trafficBillingUserLockKey, withKeyedTaskLock, withTrafficBillingUserLock } from "../keyedTaskLock";
 import { mapWithConcurrency } from "../asyncPool";
 import { reserveRuleCreateQuota, type RuleQuotaReservation } from "../ruleQuotaReservations";
+import { assertRuleTargetsAllowedForActor } from "../ruleTargetPolicy";
 
 /**
  * 规则行上的协议封禁三列永远写 false。
@@ -951,6 +953,46 @@ async function requireForwardAccessReady(userId: number, options?: { allowTraffi
 }
 
 /**
+ * 编辑之后规则是启用的、操作者又不是管理员：和开关那条路（toggleForwardRuleForActor）同一套检查。
+ * 不查的话，被暂停或已到期的用户把「启用」塞进一次编辑里提交，规则就又跑起来了。
+ */
+async function requireForwardAccessForEnabledRule(userId: number, isTrafficBillingResource: boolean) {
+  const owner = await requireForwardAccessReady(userId, { allowTrafficBillingRecovery: isTrafficBillingResource });
+  if (owner?.expiresAt && new Date(owner.expiresAt) <= new Date()) {
+    throw new Error("套餐已到期，请续费后再启用规则");
+  }
+}
+
+/**
+ * 线路组的中转要在每台中转机上占一个端口（一跳一条中继规则），这些端口算进用户的端口配额
+ * （maxPorts），不算规则数。以前完全不算：一条规则最多能在别人的中转机上开出几十个监听。
+ *
+ * 只在这次要**多开**中继时才拦：已经超额的老规则改个名字不该被卡住。
+ */
+export async function assertRouteRelayPortQuota(
+  actor: { id: number; role: string },
+  routePaths: unknown,
+  ruleId: number | null,
+) {
+  if (actor.role === "admin") return;
+  const hopCount = parseRoutePaths(routePaths).reduce((sum, path) => sum + path.hops.length, 0);
+  if (hopCount === 0) return;
+  const user = await db.getUserById(actor.id);
+  const maxPorts = Number((user as any)?.maxPorts || 0);
+  if (maxPorts <= 0) return;
+  const existing = ruleId
+    ? (await db.getRouteRelayRules(ruleId) as any[]).filter((row) => !dbBool(row?.pendingDelete)).length
+    : 0;
+  const extra = Math.max(0, hopCount - existing);
+  if (extra === 0) return;
+  const used = await db.getUserPortCount(actor.id);
+  const selfPort = ruleId ? 0 : 1;
+  if (used + selfPort + extra > maxPorts) {
+    throw new Error(`线路组的中转要在中转机上各占一个端口（这次还需要 ${extra} 个），超出了您的端口配额：已用 ${used}/${maxPorts}`);
+  }
+}
+
+/**
  * 走计费资源的规则，余额不足不许启用 / 新建。
  *
  * ruleShape 传入时按上报流量时计费用的同一套规则判断（转发组 → 隧道 → 入口主机）。
@@ -1026,7 +1068,9 @@ async function prepareDirectRuleRouteForActor(
   if (actor.role !== "admin") {
     currentUser = await requireForwardAccessReady(actor.id, { allowTrafficBillingRecovery: isTrafficBillingRule });
     await requireTrafficBillingBalanceForRule(actor.id, isTrafficBillingRule, undefined, { tunnelId, hostId });
-    if (String(selectedTunnelForRule?.mode || "").toLowerCase() === "forwardx" && !(currentUser as any)?.canAddRules) {
+    // 走计费隧道时权限来自余额（上面两步已确认）：套餐超额暂停期间账户 canAddRules 为 false，
+    // 但计费操作仍然放行。
+    if (String(selectedTunnelForRule?.mode || "").toLowerCase() === "forwardx" && !(currentUser as any)?.canAddRules && !isTrafficBillingRule) {
       throw new Error("无权使用 NEX 加密隧道");
     }
     if (currentUser?.expiresAt && new Date(currentUser.expiresAt) <= new Date()) {
@@ -1103,13 +1147,16 @@ async function assertRulePortWithinEntryPolicy(options: {
   sourcePort: number;
   tunnelId?: number | null;
   tunnel?: any;
+  actor?: { id: number; role?: string | null };
 }) {
   const port = Number(options.sourcePort || 0);
   if (!port) return;
   let policy = portPolicyFrom(null);
+  let listenHost: any = null;
   if (Number(options.tunnelId || 0) > 0) {
     const tunnel = options.tunnel || await db.getTunnelById(Number(options.tunnelId));
     const entryHost = await db.getHostById(Number((tunnel as any)?.entryHostId || options.hostId));
+    listenHost = entryHost;
     policy = combineHostPortPolicyWithRange(
       entryHost as any,
       (tunnel as any)?.portRangeStart,
@@ -1117,11 +1164,14 @@ async function assertRulePortWithinEntryPolicy(options: {
     );
   } else {
     const host = await db.getHostById(Number(options.hostId));
+    listenHost = host;
     policy = portPolicyFrom(host as any);
   }
   if (!isPortAllowedByPolicy(port, policy)) {
     throw new Error(portPolicyErrorMessage(policy, "入口端口"));
   }
+  // 端口策略默认不限制，普通用户在共享主机上仍不能占系统端口/面板端口。
+  if (options.actor) assertTenantListenPortAllowed({ actor: options.actor, host: listenHost, port, label: "入口端口" });
 }
 
 async function assertRulePortWithinUserPlanRange(options: {
@@ -1378,9 +1428,11 @@ export async function toggleForwardRuleForActor(
 ) {
   return withKeyedTaskLock(`rule:${ruleId}`, async () => {
     let sourcePortReservation: HostPortReservation | null = null;
+    let tunnelExitPortReservation: HostPortReservation | null = null;
     try {
       const rule = await db.getForwardRuleById(ruleId);
-      if (!rule) throw new Error("规则不存在");
+      // 待删除的规则只等 Agent 确认停掉后清理，不能再被打开。
+      if (!rule || dbBool((rule as any).pendingDelete)) throw new Error("规则不存在");
       if (actor.role !== "admin" && rule.userId !== actor.id) throw new Error("无权操作此规则");
       if ((rule as any).forwardGroupRuleId) throw new Error("转发组成员规则由系统维护，不能直接开关");
       if (Number((rule as any).routeParentRuleId || 0) > 0) throw new Error("线路组的中转规则由面板维护，不能直接开关");
@@ -1399,6 +1451,12 @@ export async function toggleForwardRuleForActor(
               userId: actor.id,
               forwardGroupId: groupId,
               sourcePort: Number(rule.sourcePort),
+            });
+            await assertTenantListenPortAllowedOnHosts({
+              actor,
+              hostIds: await db.getForwardGroupRuleEntryHostIds(groupId),
+              port: Number(rule.sourcePort),
+              label: "入口端口",
             });
           }
         }
@@ -1436,7 +1494,6 @@ export async function toggleForwardRuleForActor(
       if ((rule as any).tunnelId) {
         toggleTunnelForRule = await db.getTunnelById((rule as any).tunnelId);
         await db.updateTunnel((rule as any).tunnelId, { isRunning: false } as any);
-        if (toggleTunnelForRule) await pushTunnelEndpointRefresh(toggleTunnelForRule, `${reasonPrefix}-toggled`);
       }
       if (isEnabled) {
         requireMainBackupAllowed({
@@ -1451,6 +1508,7 @@ export async function toggleForwardRuleForActor(
           hostId: Number(rule.hostId),
           sourcePort: Number(rule.sourcePort),
           tunnelId: Number((rule as any).tunnelId || 0) || null,
+          actor,
         });
         if (actor.role !== "admin") {
           await assertRulePortWithinUserPlanRange({
@@ -1480,16 +1538,71 @@ export async function toggleForwardRuleForActor(
           isUsed: (port) => db.isPortUsedOnHost(Number(rule.hostId), port, Number(rule.id), (rule as any).protocol, undefined, false),
         });
         if (!sourcePortReservation) throw new Error(`端口 ${rule.sourcePort} 已被占用，请更换端口后再启用`);
-        await db.updateForwardRule(ruleId, { isEnabled: true, isRunning: false, disabledByUser: false, disabledByTunnel: false, disabledByGroup: false, protocolBlockReason: null } as any);
+        // 出口端口同理：停用期间它不算占用，可能已被别的规则/隧道拿走。重新预留一次，
+        // 端口变了就写回（和 rules.update 的启用路径一致）。
+        let nextTunnelExitPort: number | null = null;
+        if (toggleTunnelForRule) {
+          const exit = await db.getHostById(Number(toggleTunnelForRule.exitHostId)) as any;
+          const listenerRepair = usesSharedTunnelPrimaryListener(toggleTunnelForRule)
+            ? await ensureTunnelListenerPortPolicy(toggleTunnelForRule, {
+              hostId: Number(toggleTunnelForRule.exitHostId),
+              syncSharedPrimaryRule: true,
+            })
+            : null;
+          if (usesSharedTunnelPrimaryListener(toggleTunnelForRule) && !listenerRepair) {
+            throw new Error("出口 Agent 已无可用隧道监听端口");
+          }
+          const sharedListenPort = await preferredSharedTunnelListenPort(toggleTunnelForRule, Number(rule.id), true);
+          if (listenerRepair?.reservation && Number(sharedListenPort || 0) === listenerRepair.port) {
+            tunnelExitPortReservation = listenerRepair.reservation;
+          } else {
+            listenerRepair?.reservation.release();
+          }
+          if (!tunnelExitPortReservation) {
+            tunnelExitPortReservation = await reserveTunnelExitPort({
+              hostId: Number(toggleTunnelForRule.exitHostId),
+              preferredStart: exit?.portRangeStart,
+              preferredEnd: exit?.portRangeEnd,
+              currentPort: sharedListenPort ?? Number((rule as any).tunnelExitPort || 0),
+              excludeRuleIds: [Number(rule.id)],
+              allowSameTunnelListener: Number(sharedListenPort || 0) > 0,
+              excludeTunnelId: Number(toggleTunnelForRule.id),
+              protocol: "both",
+            });
+          }
+          if (!tunnelExitPortReservation) throw new Error("出口 Agent 已无可用隧道端口");
+          nextTunnelExitPort = tunnelExitPortReservation.port;
+        }
+        await db.updateForwardRule(ruleId, {
+          isEnabled: true,
+          isRunning: false,
+          disabledByUser: false,
+          disabledByTunnel: false,
+          disabledByGroup: false,
+          protocolBlockReason: null,
+          ...(nextTunnelExitPort && nextTunnelExitPort !== Number((rule as any).tunnelExitPort || 0) ? { tunnelExitPort: nextTunnelExitPort } : {}),
+        } as any);
+        if (toggleTunnelForRule && String((rule as any).forwardType || "") === "gost") {
+          // 映射校正自己按出口逐个预留；主端口的预留先放掉，免得同端口的映射被当成别人在用。
+          tunnelExitPortReservation?.release();
+          tunnelExitPortReservation = null;
+          await db.reconcileForwardRuleTunnelExits(
+            { ...rule, isEnabled: true, tunnelExitPort: nextTunnelExitPort ?? (rule as any).tunnelExitPort },
+            toggleTunnelForRule,
+          );
+        }
       } else {
         await db.toggleForwardRule(ruleId, false);
       }
+      // 写库之后再通知隧道各端：先推的话 Agent 可能拉到开关之前的配置。
+      if (toggleTunnelForRule) await pushTunnelEndpointRefresh(toggleTunnelForRule, `${reasonPrefix}-toggled`);
       pushAgentRefresh(Number(rule.hostId), `${reasonPrefix}-${isEnabled ? "enabled" : "disabled"}`);
       // 中转机上的中继规则跟着入口这条开关。
       await syncRouteGroupAfterSave(ruleId, `${reasonPrefix}-${isEnabled ? "enabled" : "disabled"}`);
       return { success: true, rule };
     } finally {
       sourcePortReservation?.release();
+      tunnelExitPortReservation?.release();
     }
   });
 }
@@ -1572,6 +1685,7 @@ export async function createDirectForwardRuleForActor(
       sourcePort = sourcePortReservation.port;
     } else {
       if (!isPortAllowedByPolicy(sourcePort, effectivePolicy)) throw new Error(portPolicyErrorMessage(effectivePolicy, "源端口"));
+      assertTenantListenPortAllowed({ actor, host, port: sourcePort, label: "源端口" });
       sourcePortReservation = tryReserveHostPort(hostId, sourcePort, input.protocol);
       if (!sourcePortReservation) throw new Error(`端口 ${sourcePort} 正在被其他请求分配，请稍后重试`);
       const used = await db.isPortUsedOnHost(hostId, sourcePort, undefined, input.protocol);
@@ -1643,6 +1757,8 @@ export async function createDirectForwardRuleForActor(
       targetIp: input.targetIp,
       targetPort: input.targetPort,
     });
+    await assertRuleTargetsAllowedForActor(actor, { targetIp: input.targetIp, ...failoverColumns }, { hostId, tunnel: selectedTunnelForRule });
+    await assertRouteRelayPortQuota(actor, failoverColumns.routePaths, null);
     const { routeGroup: _routeGroupInput, ...ruleInput } = input;
     const id = await db.createForwardRule({
       ...ruleInput,
@@ -1759,6 +1875,9 @@ export const crudRulesRouter = router({
           }
         }
         const entryHostIds = await db.getForwardGroupRuleEntryHostIds(forwardGroupId);
+        if (!randomSourcePort) {
+          await assertTenantListenPortAllowedOnHosts({ actor: ctx.user, hostIds: entryHostIds, port: sourcePort, label: "入口端口" });
+        }
         const reserveEntryPort = async (port: number) => {
           const reservations: HostPortReservation[] = [];
           try {
@@ -1846,6 +1965,19 @@ export const crudRulesRouter = router({
           });
         }
         await requireRuleProtocolEnabled({ forwardType, tunnelId: null });
+        const templateFailoverColumns = normalizeFailoverInput({
+          ...input,
+          failoverEnabled: createFailoverEnabled,
+          failoverTargets: createFailoverEnabled ? input.failoverTargets : [],
+          failoverProbeTarget: createFailoverEnabled ? input.failoverProbeTarget : null,
+          failoverSchedule: createFailoverEnabled ? input.failoverSchedule : null,
+          failoverMinHoldSeconds: createFailoverEnabled ? input.failoverMinHoldSeconds : 0,
+          failoverPinnedIndex: createFailoverEnabled ? input.failoverPinnedIndex : null,
+          failoverPinnedUntil: createFailoverEnabled ? input.failoverPinnedUntil : null,
+          failoverPreferFastest: createFailoverEnabled ? input.failoverPreferFastest : false,
+          routeGroup: createFailoverEnabled ? input.routeGroup : null,
+        }, input.protocol, { allowHops: false, targetIp: input.targetIp, targetPort: input.targetPort });
+        await assertRuleTargetsAllowedForActor(ctx.user, { targetIp: input.targetIp, ...templateFailoverColumns }, { forwardGroupId });
         const createTemplateRule = () => db.createForwardRule({
           hostId,
           name: ruleName,
@@ -1880,18 +2012,7 @@ export const crudRulesRouter = router({
             isForwardChain,
             { tunnelRoute: !isForwardChain && (group as any).groupType === "tunnel", forwardxTunnel: false, clearUnsupported: true },
           ),
-          ...normalizeFailoverInput({
-            ...input,
-            failoverEnabled: createFailoverEnabled,
-            failoverTargets: createFailoverEnabled ? input.failoverTargets : [],
-            failoverProbeTarget: createFailoverEnabled ? input.failoverProbeTarget : null,
-            failoverSchedule: createFailoverEnabled ? input.failoverSchedule : null,
-            failoverMinHoldSeconds: createFailoverEnabled ? input.failoverMinHoldSeconds : 0,
-            failoverPinnedIndex: createFailoverEnabled ? input.failoverPinnedIndex : null,
-            failoverPinnedUntil: createFailoverEnabled ? input.failoverPinnedUntil : null,
-            failoverPreferFastest: createFailoverEnabled ? input.failoverPreferFastest : false,
-            routeGroup: createFailoverEnabled ? input.routeGroup : null,
-          }, input.protocol, { allowHops: false, targetIp: input.targetIp, targetPort: input.targetPort }),
+          ...templateFailoverColumns,
           isRunning: false,
           userId: ctx.user.id,
         } as any);
@@ -1983,7 +2104,8 @@ export const crudRulesRouter = router({
       };
       try {
       const rule = await db.getForwardRuleById(input.id);
-      if (!rule) throw new Error("规则不存在");
+      // 待删除的规则只等 Agent 确认停掉后清理；改它（尤其是 isEnabled 等字段）会让它复活。
+      if (!rule || dbBool((rule as any).pendingDelete)) throw new Error("规则不存在");
       if (ctx.user.role !== "admin" && rule.userId !== ctx.user.id) throw new Error("无权操作此规则");
       if ((rule as any).forwardGroupRuleId) throw new Error("转发组成员规则由系统维护，不能直接修改");
       if (Number((rule as any).routeParentRuleId || 0) > 0) throw new Error("线路组的中转规则由面板维护，不能直接修改");
@@ -2143,6 +2265,7 @@ export const crudRulesRouter = router({
             sourcePort: nextSourcePort,
             tunnelId: nextTunnelId,
             tunnel: selectedTunnelForRule,
+            actor: ctx.user,
           });
           if (ctx.user.role !== "admin") {
             const planRange = await db.getUserPlanPortRange(ctx.user.id, nextHostId, nextTunnelId || undefined);
@@ -2247,6 +2370,7 @@ export const crudRulesRouter = router({
             data.disabledByGroup = false;
             data.protocolBlockReason = null;
           }
+          await assertRuleTargetsAllowedForActor(ctx.user, data, { hostId: nextHostId, tunnel: nextTunnelId ? selectedTunnelForRule : null });
 
           await db.updateForwardRule(input.id, data);
           // Let the mapping reconciler acquire endpoint reservations itself;
@@ -2281,6 +2405,9 @@ export const crudRulesRouter = router({
         let groupAccess = { isTrafficBillingResource: false };
         if (ctx.user.role !== "admin") {
           groupAccess = await requireForwardGroupUseAccess(ctx, activeGroupId);
+          if (input.isEnabled !== undefined ? input.isEnabled : dbBool((rule as any).isEnabled)) {
+            await requireForwardAccessForEnabledRule(ctx.user.id, groupAccess.isTrafficBillingResource);
+          }
           const nextSourcePort = input.sourcePort ?? rule.sourcePort;
           const planRange = await db.getUserForwardGroupPlanPortRange(ctx.user.id, activeGroupId);
           if (planRange && !db.isPortAllowedByUserPlanRange(nextSourcePort, planRange)) {
@@ -2409,6 +2536,7 @@ export const crudRulesRouter = router({
           data.protocolBlockReason = null;
         }
         if (keyFieldChanged || groupChanged || data.isEnabled !== undefined) data.isRunning = false;
+        await assertRuleTargetsAllowedForActor(ctx.user, { ...rule, ...data }, { forwardGroupId: activeGroupId });
         if (!groupChanged && isForwardChain) {
           await db.withForwardGroupSyncTransaction(
             activeGroupId,
@@ -2434,11 +2562,20 @@ export const crudRulesRouter = router({
         let groupAccess = { isTrafficBillingResource: false };
         if (ctx.user.role !== "admin") {
           groupAccess = await requireForwardGroupUseAccess(ctx, groupId);
+          if (input.isEnabled !== undefined ? input.isEnabled : dbBool((rule as any).isEnabled)) {
+            await requireForwardAccessForEnabledRule(ctx.user.id, groupAccess.isTrafficBillingResource);
+          }
           const planRange = await db.getUserForwardGroupPlanPortRange(ctx.user.id, groupId);
           if (planRange && !db.isPortAllowedByUserPlanRange(sourcePort, planRange)) {
             const ranges = planRange.ranges.map((range) => `${range.start}-${range.end}`).join(",");
             throw new Error(`套餐端口必须在 ${ranges} 内`);
           }
+          await assertTenantListenPortAllowedOnHosts({
+            actor: ctx.user,
+            hostIds: await db.getForwardGroupRuleEntryHostIds(groupId),
+            port: sourcePort,
+            label: "入口端口",
+          });
         }
         const group = await db.validateForwardGroupRuleConfig(groupId, {
           sourcePort,
@@ -2521,6 +2658,7 @@ export const crudRulesRouter = router({
           data.disabledByGroup = false;
           data.protocolBlockReason = null;
         }
+        await assertRuleTargetsAllowedForActor(ctx.user, data, { forwardGroupId: groupId });
         await db.updateForwardRule(input.id, data);
         await db.clearForwardRuleTunnelExits(input.id);
         // 变成转发组模板之后没有线路组了：中转机上的中继规则收回。
@@ -2555,7 +2693,7 @@ export const crudRulesRouter = router({
           if (ctx.user.role !== "admin" && String(selectedTunnelForRule.mode).toLowerCase() === "forwardx") {
             const owner = await requireForwardAccessReady(ctx.user.id, { allowTrafficBillingRecovery: !!access.isTrafficBillingResource });
             await requireTrafficBillingBalanceForRule(ctx.user.id, !!access.isTrafficBillingResource);
-            if (!(owner as any)?.canAddRules) {
+            if (!(owner as any)?.canAddRules && !access.isTrafficBillingResource) {
               throw new Error("No permission to use custom encrypted tunnels");
             }
           }
@@ -2584,6 +2722,11 @@ export const crudRulesRouter = router({
          : dbBool((rule as any).isEnabled);
       if (!nextTunnelIdForRule) {
         const access = await requireHostUseAccess(ctx, nextHostIdForRule);
+        // 和新建（prepareDirectRuleRouteForActor）同一条：普通用户不能直接在主机上开普通端口转发。
+        // 只在换了主机 / 转发方式 / 从隧道改成直连时拦，原样留着的老规则改目标、改名字不受影响。
+        if (ctx.user.role !== "admin" && !access.isTrafficBillingResource && directRouteChanged) {
+          throw new Error("普通端口转发请先创建转发组或转发链后再新增规则。");
+        }
         if (ctx.user.role !== "admin" && nextRuleEnabled) {
           await requireTrafficBillingBalanceForRule(ctx.user.id, !!access.isTrafficBillingResource);
         }
@@ -2632,6 +2775,7 @@ export const crudRulesRouter = router({
           if (!isPortAllowedByPolicy(nextSourcePortForRule, effectivePolicy)) {
             throw new Error(portPolicyErrorMessage(effectivePolicy, "源端口"));
           }
+          assertTenantListenPortAllowed({ actor: ctx.user, host, port: nextSourcePortForRule, label: "源端口" });
           if (ctx.user.role !== "admin") {
             const planRange = await db.getUserPlanPortRange(ctx.user.id, nextHostIdForRule, nextTunnelIdForRule || undefined);
             if (planRange) {
@@ -2837,6 +2981,7 @@ export const crudRulesRouter = router({
           sourcePort,
           tunnelId: nextTunnelIdForRule,
           tunnel: selectedTunnelForRule,
+          actor: ctx.user,
         });
         if (ctx.user.role !== "admin") {
           await assertRulePortWithinUserPlanRange({
@@ -2853,6 +2998,11 @@ export const crudRulesRouter = router({
         (data as any).disabledByGroup = false;
         (data as any).protocolBlockReason = null;
       }
+      await assertRuleTargetsAllowedForActor(ctx.user, { ...rule, ...data }, {
+        hostId: nextHostIdForRule,
+        tunnel: nextTunnelIdForRule ? selectedTunnelForRule : null,
+      });
+      await assertRouteRelayPortQuota(ctx.user, (data as any).routePaths !== undefined ? (data as any).routePaths : (rule as any).routePaths, Number(rule.id));
       // 关键字段变更时重置 isRunning
       const watchedFields: string[] = [
         "sourcePort",
@@ -2903,15 +3053,13 @@ export const crudRulesRouter = router({
         && isFailoverHotUpdate(data as any, rule as any, nextHostIdForRule, nextTunnelIdForRule);
       const oldHostIdForRule = Number(rule.hostId);
       const hostChanged = Number(oldHostIdForRule) !== Number(nextHostIdForRule);
+      const affectedTunnelIds = new Set<number>();
       if (keyFieldChanged && !failoverHotUpdate) {
         (data as any).isRunning = false;
-        const affectedTunnelIds = new Set<number>();
         if ((rule as any).tunnelId) affectedTunnelIds.add((rule as any).tunnelId);
         if ((data as any).tunnelId) affectedTunnelIds.add((data as any).tunnelId);
         for (const affectedTunnelId of affectedTunnelIds) {
-          const affectedTunnel = await db.getTunnelById(affectedTunnelId);
           await db.updateTunnel(affectedTunnelId, { isRunning: false } as any);
-          if (affectedTunnel) await pushTunnelEndpointRefresh(affectedTunnel, "forward-rule-updated");
         }
       }
       await db.updateForwardRule(id, data);
@@ -2953,6 +3101,12 @@ export const crudRulesRouter = router({
         }
       } else {
         await db.clearForwardRuleTunnelExits(id);
+      }
+      // 规则和出口映射都写完之后再通知隧道各端（推送会顺带作废出口机缓存的稳定心跳计划）：
+      // 先推的话，Agent 或心跳缓存可能在写入前就按旧规则算好配置，出口机之后不会再被提醒。
+      for (const affectedTunnelId of affectedTunnelIds) {
+        const affectedTunnel = await db.getTunnelById(affectedTunnelId);
+        if (affectedTunnel) await pushTunnelEndpointRefresh(affectedTunnel, "forward-rule-updated");
       }
       if (keyFieldChanged) {
         if (hostChanged) {

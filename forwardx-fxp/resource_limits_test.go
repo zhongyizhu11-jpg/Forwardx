@@ -119,10 +119,30 @@ func TestListenerConnGatesHaveDefaultsAndReleasePendingAfterHello(t *testing.T) 
 		t.Fatalf("unexpected pending defaults: total=%d perIP=%d", gates.pending.maxConnections, gates.pending.maxPerIP)
 	}
 
+	if gates.handshake.maxConnections != fxpListenerMaxPendingConnections || gates.handshake.maxPerIP != fxpListenerMaxHandshakePerIP {
+		t.Fatalf("unexpected handshake defaults: total=%d perIP=%d", gates.handshake.maxConnections, gates.handshake.maxPerIP)
+	}
+
 	addr := &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 50000}
-	startupComplete, release, ok, reason := gates.acquire(addr)
+	admission, ok, reason := gates.admit(addr)
 	if !ok {
 		t.Fatalf("listener gate rejected first connection: %s", reason)
+	}
+	// 握手之前只占握手闸，不占 pending 和 active。
+	if handshake, _ := gates.handshake.stats(); handshake != 1 {
+		t.Fatalf("handshake=%d, want 1", handshake)
+	}
+	if pending, _ := gates.pending.stats(); pending != 0 {
+		t.Fatalf("unauthenticated connection took a pending lease: %d", pending)
+	}
+	if active, _ := gates.active.stats(); active != 0 {
+		t.Fatalf("unauthenticated connection took an active lease: %d", active)
+	}
+	if ok, reason := admission.authenticated(); !ok {
+		t.Fatalf("authenticated connection rejected: %s", reason)
+	}
+	if handshake, _ := gates.handshake.stats(); handshake != 0 {
+		t.Fatalf("handshake lease remained after authentication: %d", handshake)
 	}
 	if pending, _ := gates.pending.stats(); pending != 1 {
 		t.Fatalf("pending=%d, want 1", pending)
@@ -131,8 +151,8 @@ func TestListenerConnGatesHaveDefaultsAndReleasePendingAfterHello(t *testing.T) 
 		t.Fatalf("active=%d, want 1", active)
 	}
 
-	startupComplete()
-	startupComplete()
+	admission.helloReceived()
+	admission.helloReceived()
 	if pending, _ := gates.pending.stats(); pending != 0 {
 		t.Fatalf("pending remained after hello: %d", pending)
 	}
@@ -140,8 +160,8 @@ func TestListenerConnGatesHaveDefaultsAndReleasePendingAfterHello(t *testing.T) 
 		t.Fatalf("active lease was released with pending lease: %d", active)
 	}
 
-	release()
-	release()
+	admission.release()
+	admission.release()
 	if active, ips := gates.active.stats(); active != 0 || ips != 0 {
 		t.Fatalf("active gate did not drain: active=%d ips=%d", active, ips)
 	}
@@ -167,22 +187,88 @@ func TestListenerConnGatesDoNotTreatAnEntryAgentAsOneUser(t *testing.T) {
 	gates := newListenerConnGates(config{MaxConnections: 2})
 	addr := &net.TCPAddr{IP: net.ParseIP("203.0.113.9"), Port: 50000}
 
-	startupFirst, releaseFirst, ok, reason := gates.acquire(addr)
+	first := mustAuthenticate(t, gates, addr)
+	second := mustAuthenticate(t, gates, addr)
+	first.helloReceived()
+	second.helloReceived()
+	third, ok, reason := gates.admit(addr)
 	if !ok {
-		t.Fatalf("first upstream connection rejected: %s", reason)
+		t.Fatalf("third connection should pass the handshake gate: %s", reason)
 	}
-	startupSecond, releaseSecond, ok, reason := gates.acquire(addr)
-	if !ok {
-		releaseFirst()
-		t.Fatalf("second upstream connection rejected: %s", reason)
-	}
-	startupFirst()
-	startupSecond()
-	if _, _, ok, reason := gates.acquire(addr); ok || reason != "active/maxConnections" {
+	if ok, reason := third.authenticated(); ok || reason != "active/maxConnections" {
 		t.Fatalf("third connection should hit the global limit, got ok=%v reason=%q", ok, reason)
 	}
-	releaseSecond()
-	releaseFirst()
+	third.release()
+	second.release()
+	first.release()
+}
+
+func mustAuthenticate(t *testing.T, gates *listenerConnGates, addr net.Addr) *listenerAdmission {
+	t.Helper()
+	admission, ok, reason := gates.admit(addr)
+	if !ok {
+		t.Fatalf("connection rejected at handshake gate: %s", reason)
+	}
+	if ok, reason := admission.authenticated(); !ok {
+		admission.release()
+		t.Fatalf("authenticated connection rejected: %s", reason)
+	}
+	return admission
+}
+
+// 慢速连接：握手之前不说话的连接每个 IP 只能占 fxpListenerMaxHandshakePerIP 条，
+// 占满了也不影响别的 IP，更不影响已经握过手、在等 hello 的池连接。
+func TestListenerHandshakeGateBoundsSilentConnectionsPerIP(t *testing.T) {
+	gates := newListenerConnGates(config{})
+	attacker := &net.TCPAddr{IP: net.ParseIP("198.51.100.66"), Port: 40000}
+	var held []*listenerAdmission
+	for i := 0; i < fxpListenerMaxHandshakePerIP; i++ {
+		admission, ok, reason := gates.admit(attacker)
+		if !ok {
+			t.Fatalf("silent connection %d rejected early: %s", i+1, reason)
+		}
+		held = append(held, admission)
+	}
+	if _, ok, reason := gates.admit(attacker); ok || reason != "handshake/maxIPs" {
+		t.Fatalf("attacker exceeded the per-IP handshake cap: ok=%v reason=%q", ok, reason)
+	}
+	entry := &net.TCPAddr{IP: net.ParseIP("198.51.100.7"), Port: 40001}
+	// 合法入口的连接池：握手通过后在等 hello 的连接可以远超握手份额。
+	var pooled []*listenerAdmission
+	for i := 0; i < fxpListenerMaxHandshakePerIP*4; i++ {
+		pooled = append(pooled, mustAuthenticate(t, gates, entry))
+	}
+	if pending, _ := gates.pending.stats(); pending != int64(len(pooled)) {
+		t.Fatalf("pending=%d, want %d", pending, len(pooled))
+	}
+	for _, admission := range append(held, pooled...) {
+		admission.release()
+	}
+	for name, gate := range map[string]*connGate{"handshake": gates.handshake, "pending": gates.pending, "active": gates.active} {
+		if n, ips := gate.stats(); n != 0 || ips != 0 {
+			t.Fatalf("%s gate did not drain: n=%d ips=%d", name, n, ips)
+		}
+	}
+}
+
+// 不说话的连接在 fxpServerHandshakeTimeout 内被出口关掉，不会一直占着握手份额。
+func TestExitClosesSilentPreHandshakeConnection(t *testing.T) {
+	if fxpServerHandshakeTimeout >= fxpHandshakeTimeout {
+		t.Fatalf("server handshake timeout %s should be shorter than %s", fxpServerHandshakeTimeout, fxpHandshakeTimeout)
+	}
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+	started := time.Now()
+	done := make(chan error, 1)
+	go func() { done <- handleExitSession(serverConn, config{Role: "exit", TunnelID: 1, Key: "k"}) }()
+	select {
+	case <-done:
+		if elapsed := time.Since(started); elapsed < fxpServerHandshakeTimeout-100*time.Millisecond {
+			t.Fatalf("silent connection closed too early: %s", elapsed)
+		}
+	case <-time.After(fxpServerHandshakeTimeout + 3*time.Second):
+		t.Fatal("silent pre-handshake connection was not closed")
+	}
 }
 
 func TestListenerConnGatesAllowMoreThanLegacyPerIPLimitFromOneEntry(t *testing.T) {
@@ -191,7 +277,10 @@ func TestListenerConnGatesAllowMoreThanLegacyPerIPLimitFromOneEntry(t *testing.T
 	addr := &net.TCPAddr{IP: net.ParseIP("203.0.113.10"), Port: 50001}
 	releases := make([]func(), 0, admitted)
 	for i := 0; i < admitted; i++ {
-		startupComplete, release, ok, reason := gates.acquire(addr)
+		admission, ok, reason := gates.admit(addr)
+		if ok {
+			ok, reason = admission.authenticated()
+		}
 		if !ok {
 			for _, cleanup := range releases {
 				cleanup()
@@ -200,8 +289,8 @@ func TestListenerConnGatesAllowMoreThanLegacyPerIPLimitFromOneEntry(t *testing.T
 		}
 		// Handshake completion releases the stricter pending per-IP lease;
 		// active connections remain protected by the listener-wide limit.
-		startupComplete()
-		releases = append(releases, release)
+		admission.helloReceived()
+		releases = append(releases, admission.release)
 	}
 	if active, _ := gates.active.stats(); active != admitted {
 		t.Fatalf("active=%d, want %d", active, admitted)

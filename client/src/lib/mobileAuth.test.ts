@@ -52,3 +52,47 @@ test('links handed to other apps use the panel address, never capacitor://localh
     else Reflect.deleteProperty(globalThis, 'window');
   }
 });
+
+test('passwords are never persisted; legacy plaintext passwords are purged on start and logout', async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const values = new Map<string, string>([
+    ['forwardx.mobile.password', 'hunter2'],
+    ['forwardx.mobile.username', 'alice'],
+  ]);
+  const localStorage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, String(value)); },
+    removeItem: (key: string) => { values.delete(key); },
+  };
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { localStorage } });
+  try {
+    await mobileAuth.hydrateNative();
+    assert.equal(values.has('forwardx.mobile.password'), false, 'startup migration removes the stored password');
+    assert.equal(mobileAuth.getUsername(), 'alice');
+
+    mobileAuth.setUsername(' bob ');
+    mobileAuth.setToken('session-token');
+    assert.equal(mobileAuth.getUsername(), 'bob');
+    assert.equal(mobileAuth.getToken(), 'session-token');
+    assert.equal('getPassword' in mobileAuth, false);
+    assert.equal([...values.values()].includes('hunter2'), false);
+
+    values.set('forwardx.mobile.password', 'hunter2');
+    mobileAuth.clear();
+    assert.equal(mobileAuth.getToken(), '');
+    assert.equal(values.has('forwardx.mobile.password'), false, 'logout removes token and any stored password');
+    assert.equal(mobileAuth.wasLoggedOut(), true);
+    assert.equal(mobileAuth.getUsername(), 'bob', 'the remembered username survives logout');
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'window', original);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+});
+
+test('plain http panel addresses are flagged as insecure', () => {
+  assert.equal(mobileAuth.isInsecurePanelUrl('http://192.168.1.2:9810'), true);
+  assert.equal(mobileAuth.isInsecurePanelUrl(' HTTP://panel.example/ '), true);
+  assert.equal(mobileAuth.isInsecurePanelUrl('https://panel.example'), false);
+  assert.equal(mobileAuth.isInsecurePanelUrl(''), false);
+  assert.equal(mobileAuth.isInsecurePanelUrl('javascript:alert(1)'), false);
+});

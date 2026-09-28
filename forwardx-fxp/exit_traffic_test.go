@@ -41,7 +41,7 @@ type trafficPanel struct {
 func newTrafficPanel(t *testing.T, token string) *trafficPanel {
 	t.Helper()
 	panel := &trafficPanel{token: token}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withFXPTestChallenges(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/agent/traffic" {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -70,7 +70,7 @@ func newTrafficPanel(t *testing.T, token string) *trafficPanel {
 		panel.reports = append(panel.reports, report)
 		panel.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
-	}))
+	})))
 	t.Cleanup(server.Close)
 	panel.url = server.URL
 	return panel

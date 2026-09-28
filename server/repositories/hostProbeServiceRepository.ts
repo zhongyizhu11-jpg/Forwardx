@@ -145,22 +145,44 @@ export async function reorderHostProbeServices(ids: number[], userId?: number) {
   });
 }
 
-function serviceAppliesToHost(service: any, hostId: number) {
+function serviceAppliesToHost(service: any, hostId: number, hostOwnedByAdmin: () => boolean) {
   const id = Number(hostId);
   if (!id || !service?.isEnabled) return false;
   const scope = String(service.hostScope || "all");
   if (scope === "specific") return parseIds(service.hostIds).includes(id);
+  /*
+    「全部 / 排除」范围只覆盖管理员（或系统）的主机。租户自己的主机上 Agent 归租户控制，
+    它回报的结果能被随意伪造；让它参与进来，服务的全局状态就可能显示租户那台机器
+    报上来的「最新结果」。确实要用租户主机测，管理员可以在「指定主机」里点名。
+  */
+  if (!hostOwnedByAdmin()) return false;
   if (scope === "exclude") return !parseIds(service.excludeHostIds).includes(id);
   return true;
+}
+
+async function isHostOwnedByAdmin(hostId: number) {
+  const q = quoteIdentifier;
+  const [row] = await queryRaw<any>(
+    `SELECT h.${q("userId")} AS ${q("userId")}, u.${q("role")} AS ${q("role")}
+       FROM ${q("hosts")} h
+       LEFT JOIN ${q("users")} u ON u.${q("id")} = h.${q("userId")}
+      WHERE h.${q("id")} = ?`,
+    [hostId],
+  );
+  if (!row) return false;
+  // 没有归属的主机是面板自己加的系统主机，按管理员主机处理。
+  return Number(row.userId || 0) <= 0 || String(row.role || "") === "admin";
 }
 
 export async function getHostProbeTasksForHost(hostId: number) {
   const db = await getDb();
   if (!db) return [];
   const rows = await db.select().from(hostProbeServices).where(eq(hostProbeServices.isEnabled, true)).orderBy(asc(hostProbeServices.sortOrder), desc(hostProbeServices.createdAt), desc(hostProbeServices.id));
-  return rows
-    .map(mapHostProbeService)
-    .filter((service: any) => serviceAppliesToHost(service, hostId))
+  const services = rows.map(mapHostProbeService);
+  const needsOwner = services.some((service: any) => String(service.hostScope || "all") !== "specific");
+  const ownedByAdmin = needsOwner ? await isHostOwnedByAdmin(Number(hostId)) : false;
+  return services
+    .filter((service: any) => serviceAppliesToHost(service, hostId, () => ownedByAdmin))
     .map((service: any) => ({
       serviceId: service.id,
       method: service.method === "ping" ? "ping" : "tcping",

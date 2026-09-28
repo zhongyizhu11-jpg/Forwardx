@@ -326,6 +326,9 @@ export const rulesRouter = router({
             userId: ctx.user.role === "admin" ? undefined : ctx.user.id,
             ruleIds: selection.ruleIds,
             since: new Date(Date.now() - 24 * 60 * 60 * 1000),
+            // 这里只累加字节数和连接数，不需要每条规则的最新延迟 ——
+            // 延迟那一段要再查 forward_rules / tcping_stats / forward_tests 好几次。
+            includeLatency: false,
           }),
         ])
         : [[], []];

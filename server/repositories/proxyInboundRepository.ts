@@ -24,6 +24,7 @@ import {
   type InsertProxyInboundUser,
 } from "../../drizzle/schema";
 import { getDb, insertAndGetId, nowDate } from "../dbRuntime";
+import { dbBool } from "./repositoryUtils";
 import { getHostEntryAddress } from "../../shared/hostEntryAddress";
 import {
   createEmptyProxyInbound,
@@ -342,6 +343,7 @@ export async function getEnabledProxyInboundsWithUsersByHost(
    */
   const ownerIds = Array.from(new Set((rows as any[]).map((row) => Number(row.userId || 0)).filter((id) => id > 0)));
   const blockedOwners = new Set<number>();
+  const ownerRoles = new Map<number, string>();
   if (ownerIds.length > 0) {
     const owners = await db
       .select({
@@ -356,11 +358,38 @@ export async function getEnabledProxyInboundsWithUsersByHost(
     const found = new Set<number>();
     for (const row of owners as any[]) {
       found.add(Number(row.id));
+      ownerRoles.set(Number(row.id), String(row.role || "user"));
       if (!proxyCredentialRecipientActive(row)) blockedOwners.add(Number(row.id));
     }
     for (const id of ownerIds) if (!found.has(id)) blockedOwners.add(id);
   }
-  const activeRows = (rows as any[]).filter((row) => !blockedOwners.has(Number(row.userId || 0)));
+  /*
+    普通用户靠主机授权开在别人机器上的入站（hostGrantRequired）：授权收回了，端口也要跟着停。
+    以前只在「新建 / 换主机」那一刻查过一次授权，之后管理员收回主机，租户的节点照样在那台
+    机器上监听、照样能连。管理员替租户开的、面板克隆的专属端口不带这个标记，不受影响。
+  */
+  const revokedInboundIds = new Set<number>();
+  const grantRows = (rows as any[]).filter((row) => {
+    const ownerId = Number(row.userId || 0);
+    return dbBool(row.hostGrantRequired) && !blockedOwners.has(ownerId) && ownerRoles.get(ownerId) !== "admin";
+  });
+  if (grantRows.length > 0) {
+    const [hostRow] = await db.select({ userId: hosts.userId }).from(hosts).where(eq(hosts.id, Number(hostId))).limit(1);
+    const { getUserEffectiveAllowedHostIds } = await import("./permissionRepository");
+    const allowedByOwner = new Map<number, boolean>();
+    for (const row of grantRows) {
+      const ownerId = Number(row.userId || 0);
+      if (Number((hostRow as any)?.userId || 0) === ownerId) continue;
+      if (!allowedByOwner.has(ownerId)) {
+        const allowed = (await getUserEffectiveAllowedHostIds(ownerId)).map(Number).includes(Number(hostId));
+        allowedByOwner.set(ownerId, allowed);
+      }
+      if (!allowedByOwner.get(ownerId)) revokedInboundIds.add(Number(row.id));
+    }
+  }
+  const activeRows = (rows as any[]).filter((row) => (
+    !blockedOwners.has(Number(row.userId || 0)) && !revokedInboundIds.has(Number(row.id))
+  ));
   if (activeRows.length === 0) return [];
 
   const ids = activeRows.map((row) => Number(row.id));
@@ -638,6 +667,8 @@ export async function ensureDedicatedInboundForUser(
   clone.userId = Number(userId);
   clone.port = port;
   clone.clonedFromInboundId = Number(sourceInboundId);
+  // 面板托管的专属端口不靠租户的主机授权，不跟着授权收回。
+  clone.hostGrantRequired = false;
   clone.name = `${String((source as any).name || "落地")} · ${label}`;
   clone.sortOrder = 0;
 

@@ -54,6 +54,7 @@ import { getAgentPluginInventory, updateAgentPluginInventory } from "./agentPlug
 import { getAgentHostFromRequest, getAgentPresenceHostFromRequest, getResolvedAgentToken } from "./agentAuth";
 import { normalizeAgentText, normalizeNetworkInterface } from "./agentInputValidation";
 import { pruneMapEntries, setBoundedMapValue } from "./boundedCache";
+import { isValidTlsServerName } from "./nginxTlsInput";
 import { mergeAgentReportedAddress } from "./agentAddressState";
 import {
   gostTunnelTransportType,
@@ -144,6 +145,7 @@ import { buildTunnelRuleLatencyProbe } from "./ruleLatency";
 import { selectTunnelDialAddress, selectTunnelHopDialAddress } from "./tunnelAddressSelection";
 import { DnsRuntimeGenerationTracker } from "./dnsRuntimeGeneration";
 import { selectResolvedTargetIp } from "./dnsTargetResolution";
+import { createResolvedTargetGate } from "./ruleTargetPolicy";
 import { buildForwardXMimicConfig } from "./mimicConfig";
 import { gateForwardRulesForRuntime } from "./linkAccessView";
 import { runAgentRuntimeRecovery } from "./agentRuntimeRecovery";
@@ -367,7 +369,9 @@ export function buildNginxStreamServerBlock(options: NginxStreamServerOptions) {
       "    proxy_ssl_verify off;",
     );
     const serverName = String(options.sslClient.serverName || "").trim();
-    if (serverName) {
+    // nginxConfigQuote 只转义不加引号，挡不住 ; { } $ 与换行；旧数据里这样的域名直接不写，
+    // 免得一条隧道改写或弄坏整台主机的 nginx 配置。合法主机名原样写出，配置文本不变。
+    if (serverName && isValidTlsServerName(serverName)) {
       lines.push(
         "    proxy_ssl_server_name on;",
         `    proxy_ssl_name ${nginxConfigQuote(serverName)};`,
@@ -1994,6 +1998,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     // DNS 预解析：将域名转换为 IP，缓存中比较检测变更
     const dnsChangedRuleIds = new Set<number>();
     const dnsPreviousIpByRuleId = new Map<number, string>();
+    const resolvedTargetGate = createResolvedTargetGate(host as any);
     const resolvedHostRuleTargets = await mapWithConcurrency(agentHostRules as any[], 32, async (rule: any) => {
       if (!rule.targetIp) return null;
       addDnsWatch(dnsWatches, rule.targetIp, "forward-rule-target", Number(rule.id));
@@ -2016,6 +2021,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       // 保存原始值（域名），将 rule.targetIp 替换为解析后的 IP
       (rule as any)._originalTargetIp = rule.targetIp;
       rule.targetIp = resolved;
+      // 域名解析到了内网 / 环回，而这台机器不是规则主人的：不下发（见 ruleTargetPolicy）。
+      if (await resolvedTargetGate(rule, rawTargetIp, resolved)) {
+        rule.isEnabled = false;
+        (rule as any).resourceAccessDenied = true;
+      }
     }
 
     // DNS 变更的规则：生成清理旧 IP 规则的动作
@@ -2252,6 +2262,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       const resolved = forcedResolved || await resolveTargetIpCached(Number(rule.id), rawTargetIp);
       if (forcedResolved) expireSharedResolvedIp(Number(rule.id));
       rule.targetIp = resolved;
+      if (await resolvedTargetGate(rule, rawTargetIp, resolved)) {
+        rule.isEnabled = false;
+        (rule as any).resourceAccessDenied = true;
+      }
     };
     await mapWithConcurrency(agentAllRules as any[], 32, (rule: any) => hydrateRuntimeTarget(rule));
     const tunnelById = new Map((hostTunnels as any[]).map((t: any) => [t.id, t]));

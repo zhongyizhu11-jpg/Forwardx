@@ -22,7 +22,12 @@ type SupportTask = {
 const tasks = new Map<string, SupportTask>();
 const SUPPORT_TIMEOUT_MS = 45_000;
 const SUPPORT_RETENTION_MS = 30 * 60_000;
-const SECRET_KEY = /(password|passwd|secret|token|private.?key|certificate|authorization|cookie|credential)/i;
+// 与 configAudit 保持一致：certKeyPem 等 TLS 私钥字段也按密钥处理。
+const SECRET_KEY = /(password|passwd|secret|token|private.?key|privkey|cert.?key|key.?pem|pem.?key|certificate|authorization|cookie|credential)/i;
+// 字段名认不出来时（日志文本、旧审计行里的 JSON 字符串、Agent 诊断输出），按 PEM 私钥块本身兜底；
+// 没有 END 行的截断块一直抹到字符串末尾，宁可多抹不漏。
+const PEM_PRIVATE_KEY_BLOCK = /-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g;
+const AUDIT_JSON_FIELDS = ["beforeJson", "afterJson", "diffJson"] as const;
 
 export function redactSupportValue(value: any, key = ""): any {
   if (SECRET_KEY.test(key)) return "[REDACTED]";
@@ -31,6 +36,7 @@ export function redactSupportValue(value: any, key = ""): any {
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "string") {
     return value
+      .replace(PEM_PRIVATE_KEY_BLOCK, "-----BEGIN $1PRIVATE KEY-----[REDACTED]-----END $1PRIVATE KEY-----")
       .replace(/(authorization:\s*(?:bearer\s+)?)[^\s]+/gi, "$1[REDACTED]")
       .replace(/((?:password|passwd|secret|token|private.?key)\s*[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]");
   }
@@ -39,6 +45,25 @@ export function redactSupportValue(value: any, key = ""): any {
     return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, redactSupportValue(child, childKey)]));
   }
   return value;
+}
+
+/*
+  审计表里已经存下的行是旧规则脱敏的（升级前 certKeyPem 会原样入库），导出时不能直接信任：
+  把 before/after/diff 的 JSON 解析出来按当前规则再脱敏一遍，解析不了的按字符串兜底。
+*/
+export function redactConfigAuditEventForSupport(event: any) {
+  if (!event || typeof event !== "object") return redactSupportValue(event);
+  const result: Record<string, any> = { ...event };
+  for (const field of AUDIT_JSON_FIELDS) {
+    const raw = result[field];
+    if (typeof raw !== "string" || !raw) continue;
+    try {
+      result[field] = JSON.stringify(redactSupportValue(JSON.parse(raw)));
+    } catch {
+      result[field] = redactSupportValue(raw);
+    }
+  }
+  return redactSupportValue(result);
 }
 
 function pruneTasks(now = Date.now()) {
@@ -137,7 +162,7 @@ export async function getSupportBundleTask(taskId: string) {
       format: "forwardx-support-bundle-v1",
       generatedAt: new Date().toISOString(),
       panelLogs: panelLogs.content,
-      configAuditEvents: audits,
+      configAuditEvents: audits.map(redactConfigAuditEventForSupport),
       panelHosts: task.panelHosts,
       agentDiagnostics: hosts,
     });

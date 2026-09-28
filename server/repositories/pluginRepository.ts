@@ -574,6 +574,29 @@ function normalizeOptionalText(value: unknown, maxLength: number) {
   return String(value || "").trim().slice(0, maxLength) || undefined;
 }
 
+/**
+ * 插件清单 / 商店条目里的主页、仓库地址会原样渲染成 <a href>。
+ * 只放行 http/https，javascript:、data: 这类链接在服务端就丢掉，不靠前端框架兜底。
+ */
+export function normalizePluginLinkUrl(value: unknown, maxLength = 512) {
+  const text = String(value || "").trim().slice(0, maxLength);
+  if (!text) return undefined;
+  try {
+    const parsed = new URL(text);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? text : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// 已入库的旧记录：带了非 http(s) 协议的链接读出来时置空；内置插件的相对路径等不带协议的值保持原样。
+function stripUnsafePluginLink(value: unknown) {
+  if (value === null || value === undefined) return value;
+  const text = String(value).trim();
+  if (/^[a-z][a-z0-9+.-]*:/i.test(text) && !normalizePluginLinkUrl(text)) return null;
+  return value;
+}
+
 function normalizeDateText(value: unknown) {
   const text = String(value || "").trim().slice(0, 32);
   if (!text) return undefined;
@@ -1374,7 +1397,7 @@ function normalizeStoreItem(input: any, options: {
       repository,
       branch: String(input?.branch || "main").trim().slice(0, 128) || "main",
       manifestPath: String(input?.manifestPath || "forwardx-plugin.json").trim().slice(0, 256) || "forwardx-plugin.json",
-      homepage: String(input?.homepage || repository).trim().slice(0, 512) || repository,
+      homepage: normalizePluginLinkUrl(input?.homepage) || repository,
       author: String(input?.author || "NEX").trim().slice(0, 120) || "NEX",
       logo: normalizeOptionalLogo(input?.logo),
       packageRepository,
@@ -1421,8 +1444,8 @@ function normalizeManifest(input: any, fallback?: Partial<ForwardxPluginManifest
     changelog: normalizeOptionalText(merged.changelog, 2000),
     tags: normalizeTags(merged.tags),
     license: normalizeOptionalText(merged.license, 64),
-    homepage: String(merged.homepage || "").trim().slice(0, 512) || undefined,
-    repository: String(merged.repository || "").trim().slice(0, 512) || undefined,
+    homepage: normalizePluginLinkUrl(merged.homepage),
+    repository: normalizePluginLinkUrl(merged.repository),
     minPanelVersion: String(merged.minPanelVersion || "").trim().slice(0, 64) || undefined,
     permissions,
     extensionPoints: uniqueValidExtensionPoints(merged.extensionPoints),
@@ -2195,10 +2218,37 @@ async function upsertPlugin(manifest: ForwardxPluginManifest, source: {
 }
 
 /**
- * 已信任插件的 Agent 入口脚本内容一变，信任就撤掉，要管理员重新确认。
+ * 资产是否落在某个 Agent 入口脚本的信任范围里：入口本身，以及入口所在目录下的所有文件。
+ *
+ * 只看入口文件本身不够：入口在 Agent 上的工作目录里执行，可以 source / 调用同目录的
+ * 其他脚本。把入口留着不动、只改它调用的 lib.sh，照样能带着信任以 root 跑新代码。
+ */
+const PLUGIN_BOOKKEEPING_ASSETS = new Set(["source.json", "package.json", "uploaded.json"]);
+
+export function pluginAssetInAgentTrustScope(assetPath: string, entries: Iterable<string>) {
+  // 面板自己写的安装记录（带安装时间，每次都变）和同步不到主机上的文件，入口脚本都执行不到。
+  // data/ 下的数据文件按设计由「数据刷新」定期更新、不需要信任，入口只把它们当数据读；
+  // 算进来的话白名单这类插件每刷新一次数据就要重新信任一次。
+  const reachableFromAgent = !PLUGIN_BOOKKEEPING_ASSETS.has(assetPath.toLowerCase())
+    && isHostSyncAssetCandidate(assetPath)
+    && !isDataAssetCandidate(assetPath);
+  for (const entry of entries) {
+    if (!entry) continue;
+    if (assetPath === entry) return true;
+    if (!reachableFromAgent) continue;
+    const slash = entry.lastIndexOf("/");
+    const entryDir = slash >= 0 ? entry.slice(0, slash) : "";
+    if (!entryDir || assetPath.startsWith(`${entryDir}/`)) return true;
+  }
+  return false;
+}
+
+/**
+ * 已信任插件的 Agent 入口脚本（及其目录下的文件）内容一变，信任就撤掉，要管理员重新确认。
  *
  * 信任范围以前只比较「有哪些操作、入口是哪个文件」：插件更新、或者不需要信任就能跑的
  * 资产刷新，只要把入口脚本的内容换掉、文件名不变，就继续带着信任以 root 跑到各台主机上。
+ * 范围内新增的文件同样算变化。
  */
 async function revokeTrustWhenAgentEntryChanges(pluginId: string, assetPath: string, nextHash: string) {
   const db = await getDb();
@@ -2210,12 +2260,13 @@ async function revokeTrustWhenAgentEntryChanges(pluginId: string, assetPath: str
   const entries = new Set((Array.isArray(manifest?.actions) ? manifest.actions : [])
     .filter((action: any) => action?.type === "agent.request" && action?.agent?.entry)
     .map((action: any) => normalizeAssetPath(String(action.agent.entry))));
-  if (!entries.has(assetPath)) return;
+  if (!pluginAssetInAgentTrustScope(assetPath, entries)) return;
   const [existing] = await db.select({ sha256: pluginAssets.sha256 }).from(pluginAssets)
     .where(and(eq(pluginAssets.pluginId, pluginId), eq(pluginAssets.path, assetPath))).limit(1) as any[];
-  if (!existing || String(existing.sha256 || "") === nextHash) return;
+  if (existing && String(existing.sha256 || "") === nextHash) return;
   await db.update(plugins).set({ trusted: false, updatedAt: nowDate() } as any).where(eq(plugins.pluginId, pluginId));
-  appendPanelLog("warn", `[PluginAudit] plugin=${pluginId} operation=trust.revoked reason=agent-entry-changed path=${assetPath}`);
+  const reason = entries.has(assetPath) ? "agent-entry-changed" : existing ? "agent-entry-dependency-changed" : "agent-entry-dependency-added";
+  appendPanelLog("warn", `[PluginAudit] plugin=${pluginId} operation=trust.revoked reason=${reason} path=${assetPath}`);
 }
 
 async function upsertPluginAsset(pluginId: string, assetPath: string, content: string, contentType = "text/plain;charset=utf-8") {
@@ -2520,6 +2571,8 @@ function normalizePluginRow(row: any) {
   const trustRequired = pluginManifestRequiresTrust(manifest);
   const normalized = {
     ...row,
+    homepage: stripUnsafePluginLink(row?.homepage),
+    repository: stripUnsafePluginLink(row?.repository),
     hasUpdate: pluginVersionHasUpdate(row?.version, row?.latestVersion),
     trusted: trustRequired && (row?.trusted === true || Number(row?.trusted || 0) === 1),
     trustRequired,

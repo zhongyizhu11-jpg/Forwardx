@@ -38,6 +38,7 @@ import { panelCryptoNowMs } from "./panelClock";
 import { runAgentRuntimeRecovery } from "./agentRuntimeRecovery";
 import { observePresenceCapableHostActivity } from "./agentFastLiveness";
 import { pruneMapEntries, setBoundedMapValue } from "./boundedCache";
+import { AGENT_INSTALL_SCRIPT_SIGNATURE_HEADER, installScriptSignatureForRequest } from "./agentInstallScriptSignature";
 
 const agentRouter = Router();
 const agentApiRouter = Router();
@@ -488,8 +489,7 @@ agentRouter.get("/api/agent/install.sh", async (req: Request, res: Response) => 
   const migrationFallbackEnabled = panelMigration?.state === "preparing"
     || panelMigration?.state === "committing"
     || abortedFallbackActive;
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.send(generateInstallScript(panelUrl, {
+  const script = generateInstallScript(panelUrl, {
     githubAcceleratorEnabled: settings.githubAcceleratorEnabled === "true",
     githubAcceleratorUrl: settings.githubAcceleratorUrl || "",
     preferPanelInstall: settings.agentPreferPanelInstall === "true",
@@ -498,7 +498,15 @@ agentRouter.get("/api/agent/install.sh", async (req: Request, res: Response) => 
     panelMigrationId: migrationFallbackEnabled ? panelMigration?.id : undefined,
     panelMigrationStartedAt: migrationFallbackEnabled ? panelMigration?.startedAt : undefined,
     releaseChecksums: { [APP_VERSION]: await getAgentReleaseChecksums(APP_VERSION).catch(() => null) },
-  }));
+  });
+  // Agent 自升级时带认证头来取脚本：用它的 token 签名，Agent 验签后才以 root 执行。
+  const signature = await installScriptSignatureForRequest(req, script);
+  if (signature) {
+    res.setHeader(AGENT_INSTALL_SCRIPT_SIGNATURE_HEADER, signature);
+    res.setHeader("Cache-Control", "no-store");
+  }
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.send(script);
 });
 
 agentRouter.get("/api/agent/assets/:version/:asset", async (req: Request, res: Response) => {

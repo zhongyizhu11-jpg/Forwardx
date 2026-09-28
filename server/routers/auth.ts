@@ -26,6 +26,8 @@ import {
   twoFactorChallengeIssueState,
 } from "../authRateLimit";
 import { pruneMapEntries, setBoundedMapValue } from "../boundedCache";
+import { withKeyedTaskLock } from "../keyedTaskLock";
+import { ipRateLimitScope } from "../ipRateLimitScope";
 
 const emailCodeStore = new Map<string, { code: string; expiresAt: number; lastSentAt: number; attempts: number }>();
 const emailSendIpStore = new Map<string, LoginFailEntry>();
@@ -92,6 +94,23 @@ function normalizeEmail(email: string) {
 export function pruneEmailAuthStores(now = Date.now()) {
   pruneMapEntries(emailCodeStore, (entry) => entry.expiresAt <= now);
   pruneMapEntries(emailSendIpStore, (entry) => now - entry.lastFailAt >= EMAIL_CODE_IP_WINDOW_MS);
+}
+
+/*
+  限流计数都在内存里，而且是「先同步检查、中间 await（查库/校验密码/发邮件）、最后才记失败」。
+  tRPC 批量请求会把一批调用并发执行：N 个 login 同时通过检查、同时 await，谁也看不到别人的
+  失败，验证码和封禁门槛就被一次 batch 绕过去了。这里把「检查 → 尝试 → 记账」按限流键串行化，
+  保证下一次尝试被判定之前，上一次的结果已经记进计数器。
+
+  固定先拿来源（IP/64 段）锁、再拿账号锁，所有调用顺序一致，不会互相等成死锁；锁不可重入，
+  所以两个键带不同前缀，调用内部也不再嵌套同一个键。
+*/
+function withAuthThrottleLock<T>(ip: string, account: string | null | undefined, task: () => Promise<T>): Promise<T> {
+  const ipKey = `auth-throttle-ip:${ipRateLimitScope(ip)}`;
+  const accountName = String(account || "").trim().toLowerCase();
+  return withKeyedTaskLock(ipKey, () => (
+    accountName ? withKeyedTaskLock(`auth-throttle-account:${accountName}`, task) : task()
+  ));
 }
 
 function getRequestIp(ctx: { req: { ip?: string; socket: { remoteAddress?: string } } }) {
@@ -222,27 +241,30 @@ export const authRouter = router({
         return { skipped: true };
       }
       const ip = getRequestIp(ctx);
-      if (isEmailSendRateLimited(ip)) {
-        console.warn(`[Auth] Email verification rate limited target=${maskIdentifier(input.email)} ip=${ip}`);
-        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "EMAIL_RATE_LIMITED" });
-      }
-      const email = ensureAllowedEmail(input.email, config);
-      const existing = emailCodeStore.get(email);
-      if (existing?.lastSentAt && Date.now() - existing.lastSentAt < EMAIL_CODE_COOLDOWN_MS) {
-        throw new Error("验证码发送过于频繁，请稍后再试");
-      }
-      const code = generateEmailCode();
-      await sendVerificationCode(email, code);
-      recordEmailSend(ip);
-      const issuedAt = Date.now();
-      setBoundedMapValue(emailCodeStore, email, {
-        code,
-        expiresAt: issuedAt + EMAIL_CODE_TTL_MS,
-        lastSentAt: issuedAt,
-        attempts: 0,
-      }, EMAIL_AUTH_STORE_MAX_KEYS);
-      console.info(`[Auth] Verification email sent target=${maskIdentifier(email)} ip=${ip}`);
-      return { success: true, expiresInSeconds: 300 };
+      // 按来源 IP 与目标邮箱串行化：计数和冷却都在发信成功后才写入，并发批量调用否则会一起通过检查。
+      return withAuthThrottleLock(ip, `email:${normalizeEmail(input.email)}`, async () => {
+        if (isEmailSendRateLimited(ip)) {
+          console.warn(`[Auth] Email verification rate limited target=${maskIdentifier(input.email)} ip=${ip}`);
+          throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "EMAIL_RATE_LIMITED" });
+        }
+        const email = ensureAllowedEmail(input.email, config);
+        const existing = emailCodeStore.get(email);
+        if (existing?.lastSentAt && Date.now() - existing.lastSentAt < EMAIL_CODE_COOLDOWN_MS) {
+          throw new Error("验证码发送过于频繁，请稍后再试");
+        }
+        const code = generateEmailCode();
+        await sendVerificationCode(email, code);
+        recordEmailSend(ip);
+        const issuedAt = Date.now();
+        setBoundedMapValue(emailCodeStore, email, {
+          code,
+          expiresAt: issuedAt + EMAIL_CODE_TTL_MS,
+          lastSentAt: issuedAt,
+          attempts: 0,
+        }, EMAIL_AUTH_STORE_MAX_KEYS);
+        console.info(`[Auth] Verification email sent target=${maskIdentifier(email)} ip=${ip}`);
+        return { success: true, expiresInSeconds: 300 };
+      });
     }),
 
   needsCaptcha: publicProcedure
@@ -264,88 +286,90 @@ export const authRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const ip = ctx.req.ip || ctx.req.socket.remoteAddress || "unknown";
-      const limited = loginRateLimitState(ip, input.username);
-      if (limited.limited) {
-        console.warn(`[Auth] Login rate limited username=${maskIdentifier(input.username)} ip=${ip} retryAfter=${limited.retryAfterSeconds}s`);
-        throw new TRPCError({
-          code: "TOO_MANY_REQUESTS",
-          message: `LOGIN_RATE_LIMITED:${Math.ceil(limited.retryAfterSeconds / 60)}`,
-        });
-      }
+      return withAuthThrottleLock(ip, input.username, async () => {
+        const limited = loginRateLimitState(ip, input.username);
+        if (limited.limited) {
+          console.warn(`[Auth] Login rate limited username=${maskIdentifier(input.username)} ip=${ip} retryAfter=${limited.retryAfterSeconds}s`);
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: `LOGIN_RATE_LIMITED:${Math.ceil(limited.retryAfterSeconds / 60)}`,
+          });
+        }
 
-      if (needsCaptcha(ip, input.username)) {
-        let captchaValid = false;
-        if (input.capToken) {
-          captchaValid = await authCaptcha.verifyCapToken(ip, "login", input.capToken);
-        } else if (input.captchaId && input.captchaAnswer) {
-          // Keep accepting the image challenge for older clients during the
-          // rollout. New clients use Cap's server-verifiable PoW token.
-          captchaValid = authCaptcha.verifyChallenge(input.captchaId, input.captchaAnswer, ip, "login");
-        }
-        if (!input.capToken && !input.captchaId && !input.captchaAnswer) {
-          console.warn(`[Auth] Login requires captcha username=${maskIdentifier(input.username)} ip=${ip}`);
-          throw new Error("CAPTCHA_REQUIRED");
-        }
-        if (!captchaValid) {
-          recordPasswordFail(ip, input.username);
-          console.warn(`[Auth] Login captcha failed username=${maskIdentifier(input.username)} ip=${ip}`);
-          throw new Error("CAPTCHA_INVALID");
-        }
-      }
-
-      const user = await db.authenticateUser(input.username, input.password);
-      if (!user) {
-        recordPasswordFail(ip, input.username);
-        console.warn(`[Auth] Login failed username=${maskIdentifier(input.username)} ip=${ip}`);
         if (needsCaptcha(ip, input.username)) {
-          throw new Error("CAPTCHA_REQUIRED_AFTER_FAIL");
-        }
-        throw new Error("用户名或密码错误");
-      }
-      if ((user as any).accountEnabled === false) {
-        console.warn(`[Auth] Login rejected disabled userId=${user.id} username=${maskIdentifier(user.username)} ip=${ip}`);
-        throw new TRPCError({ code: "UNAUTHORIZED", message: ACCOUNT_DISABLED_ERR_MSG });
-      }
-
-      // authenticateUser accepts a unique email alias as well as username.
-      // Recheck with the canonical account identifier so an alias cannot
-      // bypass an account-wide 2FA block established by earlier attempts.
-      const canonicalLimit = authRateLimitState(ip, user.username);
-      if (canonicalLimit.limited) {
-        console.warn(`[Auth] Login rate limited userId=${user.id} ip=${ip} retryAfter=${canonicalLimit.retryAfterSeconds}s`);
-        throw new TRPCError({
-          code: "TOO_MANY_REQUESTS",
-          message: `LOGIN_RATE_LIMITED:${Math.ceil(canonicalLimit.retryAfterSeconds / 60)}`,
-        });
-      }
-
-      const twoFactorEnabled = (await db.getSetting("twoFactorEnabled")) === "true";
-      if (twoFactorEnabled && user.twoFactorEnabled && user.twoFactorSecret) {
-        if (!input.twoFactorCode?.trim()) {
-          const challengeLimit = twoFactorChallengeIssueState(ip, user.username);
-          if (challengeLimit.limited) {
-            console.warn(`[Auth] 2FA challenge issue rate limited userId=${user.id} ip=${ip} retryAfter=${challengeLimit.retryAfterSeconds}s`);
-            throw new TRPCError({
-              code: "TOO_MANY_REQUESTS",
-              message: `TWO_FACTOR_CHALLENGE_RATE_LIMITED:${Math.ceil(challengeLimit.retryAfterSeconds / 60)}`,
-            });
+          let captchaValid = false;
+          if (input.capToken) {
+            captchaValid = await authCaptcha.verifyCapToken(ip, "login", input.capToken);
+          } else if (input.captchaId && input.captchaAnswer) {
+            // Keep accepting the image challenge for older clients during the
+            // rollout. New clients use Cap's server-verifiable PoW token.
+            captchaValid = authCaptcha.verifyChallenge(input.captchaId, input.captchaAnswer, ip, "login");
           }
-          const challenge = createTwoFactorChallenge({ userId: user.id, username: user.username, mobile: input.mobile, ip });
-          recordTwoFactorChallengeIssue(ip, user.username);
-          return { twoFactorRequired: true as const, username: user.username, ...challenge };
+          if (!input.capToken && !input.captchaId && !input.captchaAnswer) {
+            console.warn(`[Auth] Login requires captcha username=${maskIdentifier(input.username)} ip=${ip}`);
+            throw new Error("CAPTCHA_REQUIRED");
+          }
+          if (!captchaValid) {
+            recordPasswordFail(ip, input.username);
+            console.warn(`[Auth] Login captcha failed username=${maskIdentifier(input.username)} ip=${ip}`);
+            throw new Error("CAPTCHA_INVALID");
+          }
         }
-        if (!verifyTotpToken(user.twoFactorSecret, input.twoFactorCode)) {
-          // Use the canonical account identifier after the password lookup so
-          // email/username aliases cannot bypass the 2FA failure budget.
-          recordTwoFactorFail(ip, user.username);
-          console.warn(`[Auth] Login 2FA failed userId=${user.id} username=${maskIdentifier(user.username)} ip=${ip}`);
-          throw new Error("双重验证验证码错误或已过期");
-        }
-      }
 
-      clearLoginFail(ip, user.username);
-      console.info(`[Auth] Login success userId=${user.id} username=${maskIdentifier(user.username)} ip=${ip}`);
-      return createLoginSession(ctx, user, input.mobile);
+        const user = await db.authenticateUser(input.username, input.password);
+        if (!user) {
+          recordPasswordFail(ip, input.username);
+          console.warn(`[Auth] Login failed username=${maskIdentifier(input.username)} ip=${ip}`);
+          if (needsCaptcha(ip, input.username)) {
+            throw new Error("CAPTCHA_REQUIRED_AFTER_FAIL");
+          }
+          throw new Error("用户名或密码错误");
+        }
+        if ((user as any).accountEnabled === false) {
+          console.warn(`[Auth] Login rejected disabled userId=${user.id} username=${maskIdentifier(user.username)} ip=${ip}`);
+          throw new TRPCError({ code: "UNAUTHORIZED", message: ACCOUNT_DISABLED_ERR_MSG });
+        }
+
+        // authenticateUser accepts a unique email alias as well as username.
+        // Recheck with the canonical account identifier so an alias cannot
+        // bypass an account-wide 2FA block established by earlier attempts.
+        const canonicalLimit = authRateLimitState(ip, user.username);
+        if (canonicalLimit.limited) {
+          console.warn(`[Auth] Login rate limited userId=${user.id} ip=${ip} retryAfter=${canonicalLimit.retryAfterSeconds}s`);
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: `LOGIN_RATE_LIMITED:${Math.ceil(canonicalLimit.retryAfterSeconds / 60)}`,
+          });
+        }
+
+        const twoFactorEnabled = (await db.getSetting("twoFactorEnabled")) === "true";
+        if (twoFactorEnabled && user.twoFactorEnabled && user.twoFactorSecret) {
+          if (!input.twoFactorCode?.trim()) {
+            const challengeLimit = twoFactorChallengeIssueState(ip, user.username);
+            if (challengeLimit.limited) {
+              console.warn(`[Auth] 2FA challenge issue rate limited userId=${user.id} ip=${ip} retryAfter=${challengeLimit.retryAfterSeconds}s`);
+              throw new TRPCError({
+                code: "TOO_MANY_REQUESTS",
+                message: `TWO_FACTOR_CHALLENGE_RATE_LIMITED:${Math.ceil(challengeLimit.retryAfterSeconds / 60)}`,
+              });
+            }
+            const challenge = createTwoFactorChallenge({ userId: user.id, username: user.username, mobile: input.mobile, ip });
+            recordTwoFactorChallengeIssue(ip, user.username);
+            return { twoFactorRequired: true as const, username: user.username, ...challenge };
+          }
+          if (!verifyTotpToken(user.twoFactorSecret, input.twoFactorCode)) {
+            // Use the canonical account identifier after the password lookup so
+            // email/username aliases cannot bypass the 2FA failure budget.
+            recordTwoFactorFail(ip, user.username);
+            console.warn(`[Auth] Login 2FA failed userId=${user.id} username=${maskIdentifier(user.username)} ip=${ip}`);
+            throw new Error("双重验证验证码错误或已过期");
+          }
+        }
+
+        clearLoginFail(ip, user.username);
+        console.info(`[Auth] Login success userId=${user.id} username=${maskIdentifier(user.username)} ip=${ip}`);
+        return createLoginSession(ctx, user, input.mobile);
+      });
     }),
 
   verifyTwoFactorLogin: publicProcedure
@@ -356,33 +380,37 @@ export const authRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const ip = getRequestIp(ctx);
-      const challenge = getTwoFactorChallenge(input.challengeId, ip);
-      const limited = challenge ? authRateLimitState(ip, challenge.username) : null;
-      if (limited?.limited) {
-        console.warn(`[Auth] 2FA verification rate limited userId=${challenge?.userId} ip=${ip} retryAfter=${limited.retryAfterSeconds}s`);
-        throw new TRPCError({
-          code: "TOO_MANY_REQUESTS",
-          message: `TWO_FACTOR_RATE_LIMITED:${Math.ceil(limited.retryAfterSeconds / 60)}`,
-        });
-      }
-      if (!challenge) throw new Error("双重验证已过期，请重新登录");
-      const user = await db.getUserById(challenge.userId);
-      if (!user?.twoFactorEnabled || !user.twoFactorSecret) {
-        throw new Error("当前账户未启用双重验证");
-      }
-      if ((user as any).accountEnabled === false) {
-        throw new TRPCError({ code: "UNAUTHORIZED", message: ACCOUNT_DISABLED_ERR_MSG });
-      }
-      if (!verifyTotpToken(user.twoFactorSecret, input.code)) {
-        console.warn(`[Auth] 2FA challenge failed userId=${user.id} ip=${ip}`);
-        recordTwoFactorFail(ip, challenge.username);
-        recordTwoFactorChallengeFailure(input.challengeId);
-        throw new Error("双重验证验证码错误或已过期");
-      }
-      clearTwoFactorChallenge(input.challengeId);
-      clearLoginFail(ip, challenge.username);
-      console.info(`[Auth] 2FA login success userId=${user.id} username=${maskIdentifier(user.username)} ip=${ip}`);
-      return createLoginSession(ctx, user, input.mobile ?? challenge.mobile);
+      const peekedChallenge = getTwoFactorChallenge(input.challengeId, ip);
+      return withAuthThrottleLock(ip, peekedChallenge?.username, async () => {
+        // 拿到锁后重新读一次：排队期间 challenge 可能已因失败次数用尽或被成功登录清掉。
+        const challenge = getTwoFactorChallenge(input.challengeId, ip);
+        const limited = challenge ? authRateLimitState(ip, challenge.username) : null;
+        if (limited?.limited) {
+          console.warn(`[Auth] 2FA verification rate limited userId=${challenge?.userId} ip=${ip} retryAfter=${limited.retryAfterSeconds}s`);
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: `TWO_FACTOR_RATE_LIMITED:${Math.ceil(limited.retryAfterSeconds / 60)}`,
+          });
+        }
+        if (!challenge) throw new Error("双重验证已过期，请重新登录");
+        const user = await db.getUserById(challenge.userId);
+        if (!user?.twoFactorEnabled || !user.twoFactorSecret) {
+          throw new Error("当前账户未启用双重验证");
+        }
+        if ((user as any).accountEnabled === false) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: ACCOUNT_DISABLED_ERR_MSG });
+        }
+        if (!verifyTotpToken(user.twoFactorSecret, input.code)) {
+          console.warn(`[Auth] 2FA challenge failed userId=${user.id} ip=${ip}`);
+          recordTwoFactorFail(ip, challenge.username);
+          recordTwoFactorChallengeFailure(input.challengeId);
+          throw new Error("双重验证验证码错误或已过期");
+        }
+        clearTwoFactorChallenge(input.challengeId);
+        clearLoginFail(ip, challenge.username);
+        console.info(`[Auth] 2FA login success userId=${user.id} username=${maskIdentifier(user.username)} ip=${ip}`);
+        return createLoginSession(ctx, user, input.mobile ?? challenge.mobile);
+      });
     }),
 
   register: publicProcedure

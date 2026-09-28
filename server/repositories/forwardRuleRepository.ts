@@ -1549,10 +1549,14 @@ export async function toggleForwardRule(id: number, isEnabled: boolean) {
   }
 }
 
-export async function updateRuleRunningStatus(id: number, isRunning: boolean) {
+/**
+ * loadedRule：调用方刚读过的同一条规则（Agent 状态上报那条路在同一次处理里已经读过）。
+ * 传了就不再读一遍，只用它的 pendingDelete 决定是收尾删除还是更新运行状态。
+ */
+export async function updateRuleRunningStatus(id: number, isRunning: boolean, loadedRule?: { pendingDelete?: unknown } | null) {
   const db = await getDb();
   if (!db) return;
-  const rule = await getForwardRuleById(id);
+  const rule = loadedRule ?? await getForwardRuleById(id);
   if (rule && (rule as any).pendingDelete && !isRunning) {
     await finalizeForwardRuleDelete(id);
     return;

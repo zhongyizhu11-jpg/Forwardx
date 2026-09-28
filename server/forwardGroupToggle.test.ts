@@ -30,6 +30,8 @@ test("forward group and tunnel controlled toggles preserve independent restore c
       );
     };
 
+    // 规则的主人得真实存在：主人行没了的规则按删除遗留处理，不会被恢复。
+    await insert("users", ["id", "username", "password", "role"], [1, "admin", "x", "admin"]);
     await insert("hosts", ["id", "name", "ip", "userId"], [1, "entry", "10.0.0.1", 1]);
     await insert("hosts", ["id", "name", "ip", "userId"], [2, "exit", "10.0.0.2", 1]);
     await insert(
