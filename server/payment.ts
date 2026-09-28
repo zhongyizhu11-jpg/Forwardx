@@ -895,7 +895,13 @@ async function queryPaymentOrderAtGateway(
   const outTradeNo = String(order.outTradeNo || "");
   if (!outTradeNo) return null;
 
-  if (provider === "easypay" || provider === "alipay" || provider === "wxpay") {
+  /*
+    只有真正走易支付下的单才去易支付查。provider 为 alipay / wxpay 的是官方网关的单
+    （config.routes 把支付宝/微信路由到了官方），易支付根本不认识它，会回「查无此单」，
+    以前这里就据此把单关掉 —— 用户随后付款，回调看到订单已关闭，钱扣了却不到账。
+    官方网关暂时没接查单接口：不查，等回调或过期。
+  */
+  if (provider === "easypay") {
     const ep = config.easypay;
     const apiBase = normalizeEasyPayBase(ep.apiBase);
     if (!ep.enabled || !apiBase || !ep.pid || !ep.pkey) return null;
@@ -907,7 +913,11 @@ async function queryPaymentOrderAtGateway(
     }).toString()}`;
     const res = await fetch(url, { method: "GET" });
     if (!res.ok) return null;
-    return parseEasyPayOrderQuery(await res.json().catch(() => null));
+    const parsed = parseEasyPayOrderQuery(await res.json().catch(() => null));
+    // 「查无此单」不等于「这单作废了」：跳转模式下，用户打开收银页之前易支付那边
+    // 根本没有这单，他随后照样能付。这里关单的话，付款回调到了只会看到已关闭 ——
+    // 钱扣了却不到账。没付的单交给过期清理。
+    return { ...parsed, closed: false };
   }
 
   if (provider === "stripe") {
