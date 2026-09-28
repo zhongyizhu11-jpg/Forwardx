@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -32,9 +33,78 @@ import (
 */
 
 type tcpHandler struct {
-	sig     string
-	serve   func(conn net.Conn)
+	sig string
+	// cfg 是这个处理器对应的配置。出口/中转收到 hello 时按当前处理器的 cfg
+	// 重新核对（见 fxpInbound.currentConfig），不再用接受连接那一刻的旧配置。
+	cfg     config
+	serve   func(conn net.Conn, tracked *trackedConn)
 	release func()
+}
+
+// trackedConn 是监听上登记的一条连接。出口读到 hello 就记下来（见
+// fxpInbound.recordHello），重载时拿新的目标表再核一遍，不再放行的会话直接断开。
+type trackedConn struct {
+	slot  *tcpListenerSlot
+	hello atomic.Pointer[helloFrame]
+}
+
+// fxpInbound 是出口/中转处理一条入站连接时用到的监听侧状态：连接闸的租约、
+// 进程退出信号、监听上的登记。方法对 nil 安全，直接调 handleExitSession 的
+// 测试不需要这些。
+type fxpInbound struct {
+	role      string
+	admission *listenerAdmission
+	stopping  <-chan struct{}
+	tracked   *trackedConn
+}
+
+func (in *fxpInbound) stop() <-chan struct{} {
+	if in == nil {
+		return nil
+	}
+	return in.stopping
+}
+
+// authenticated：握手通过，把握手闸换成 pending + active。
+func (in *fxpInbound) authenticated(cfg config) bool {
+	if in == nil {
+		return true
+	}
+	ok, reason := in.admission.authenticated()
+	if !ok {
+		in.admission.logRejection(in.role, cfg, reason)
+	}
+	return ok
+}
+
+func (in *fxpInbound) helloReceived() {
+	if in != nil {
+		in.admission.helloReceived()
+	}
+}
+
+// currentConfig 返回监听当前处理器的配置。握手用的密钥已经被重载换掉（连接在
+// 换之前就被接受了，或者是上一跳池子里空等了一阵的连接），这条连接就不再认。
+func (in *fxpInbound) currentConfig(handshakeCfg config) (config, error) {
+	if in == nil || in.tracked == nil || in.tracked.slot == nil {
+		return handshakeCfg, nil
+	}
+	handler := in.tracked.slot.handler.Load()
+	if handler == nil {
+		return handshakeCfg, errors.New("fxp listener closed")
+	}
+	if handler.cfg.Key != handshakeCfg.Key {
+		return handshakeCfg, errors.New("fxp tunnel key changed by reload")
+	}
+	return handler.cfg, nil
+}
+
+// recordHello 在核对目标之前记下 hello：先记、后读当前配置，重载要么被这里
+// 读到，要么重载那边扫登记时能看到这个 hello，不会两头都漏掉。
+func (in *fxpInbound) recordHello(hello helloFrame) {
+	if in != nil && in.tracked != nil {
+		in.tracked.hello.Store(&hello)
+	}
 }
 
 type tcpListenerSlot struct {
@@ -45,7 +115,7 @@ type tcpListenerSlot struct {
 	ln       net.Listener
 	handler  atomic.Pointer[tcpHandler]
 	connsMu  sync.Mutex
-	conns    map[net.Conn]struct{}
+	conns    map[net.Conn]*trackedConn
 	loopDone chan struct{}
 }
 
@@ -194,7 +264,8 @@ func buildEntryPlans(entries []config, grouped bool) ([]tcpListenPlan, []udpServ
 					}
 					return &tcpHandler{
 						sig:     fxpComponentSignature(entry, nil),
-						serve:   func(conn net.Conn) { serveEntryConn(conn, res) },
+						cfg:     entry,
+						serve:   func(conn net.Conn, _ *trackedConn) { serveEntryConn(conn, res) },
 						release: release,
 					}
 				},
@@ -236,6 +307,14 @@ func serveEntryConn(client net.Conn, res *entryResources) {
 	}
 }
 
+// stripExitTCPFields：出口 TCP 监听的指纹。走 TCP 流的 UDP 会话按 udpTargets
+// 核对目标，所以 udpTargets 变了也要换处理器，重载时据此重新核对已有会话。
+func stripExitTCPFields(cfg *config) {
+	targets := cfg.UDPTargets
+	stripUDPOnlyFields(cfg)
+	cfg.UDPTargets = targets
+}
+
 func buildExitPlans(cfg config) ([]tcpListenPlan, []udpServePlan, error) {
 	var tcpPlans []tcpListenPlan
 	var udpPlans []udpServePlan
@@ -247,22 +326,24 @@ func buildExitPlans(cfg config) ([]tcpListenPlan, []udpServePlan, error) {
 			host:     cfg.ListenHost,
 			port:     cfg.ListenPort,
 			fastOpen: cfg.TCPFastOpen,
-			sig:      fxpComponentSignature(cfg, stripUDPOnlyFields),
+			sig:      fxpComponentSignature(cfg, stripExitTCPFields),
 			cfg:      cfg,
 			handler: func(m *fxpRuntimeManager) *tcpHandler {
 				gates := newListenerConnGates(cfg)
 				return &tcpHandler{
-					sig: fxpComponentSignature(cfg, stripUDPOnlyFields),
-					serve: func(conn net.Conn) {
-						startupComplete, release, ok, reason := gates.acquire(conn.RemoteAddr())
+					sig: fxpComponentSignature(cfg, stripExitTCPFields),
+					cfg: cfg,
+					serve: func(conn net.Conn, tracked *trackedConn) {
+						admission, ok, reason := gates.admit(conn.RemoteAddr())
 						if !ok {
 							logListenerConnGateRejection("exit", cfg, conn.RemoteAddr(), gates, reason)
 							_ = conn.Close()
 							return
 						}
-						defer release()
+						defer admission.release()
+						in := &fxpInbound{role: "exit", admission: admission, stopping: m.stopping, tracked: tracked}
 						err := catchPanic("exit session", func() error {
-							return handleExitSessionWithStartup(conn, cfg, startupComplete, m.stopping)
+							return handleExitSessionWithStartup(conn, cfg, in)
 						})
 						if err != nil && !isClosedErr(err) {
 							log.Printf("exit session error: %v", err)
@@ -317,16 +398,18 @@ func buildRelayPlans(cfg config) ([]tcpListenPlan, []udpServePlan, error) {
 				gates := newListenerConnGates(cfg)
 				return &tcpHandler{
 					sig: fxpComponentSignature(cfg, stripUDPOnlyFields),
-					serve: func(conn net.Conn) {
-						startupComplete, releaseGate, ok, reason := gates.acquire(conn.RemoteAddr())
+					cfg: cfg,
+					serve: func(conn net.Conn, tracked *trackedConn) {
+						admission, ok, reason := gates.admit(conn.RemoteAddr())
 						if !ok {
 							logListenerConnGateRejection("relay", cfg, conn.RemoteAddr(), gates, reason)
 							_ = conn.Close()
 							return
 						}
-						defer releaseGate()
+						defer admission.release()
+						in := &fxpInbound{role: "relay", admission: admission, stopping: m.stopping, tracked: tracked}
 						err := catchPanic("relay session", func() error {
-							return handleRelaySessionWithStartup(conn, cfg, selector, startupComplete, m.stopping)
+							return handleRelaySessionWithStartup(conn, cfg, selector, in)
 						})
 						if err != nil && !isClosedErr(err) {
 							log.Printf("relay session error: %v", err)
@@ -447,7 +530,7 @@ func (m *fxpRuntimeManager) apply(cfg config) error {
 	// 3. 提交：新 TCP 监听开始 accept；已有的按需换处理器；UDP 登记。
 	for _, plan := range tcpPlans {
 		if ln, ok := opened[plan.key]; ok {
-			slot := &tcpListenerSlot{key: plan.key, label: plan.label, host: plan.host, port: plan.port, ln: ln, conns: map[net.Conn]struct{}{}, loopDone: make(chan struct{})}
+			slot := &tcpListenerSlot{key: plan.key, label: plan.label, host: plan.host, port: plan.port, ln: ln, conns: map[net.Conn]*trackedConn{}, loopDone: make(chan struct{})}
 			slot.handler.Store(plan.handler(m))
 			m.tcp[plan.key] = slot
 			log.Printf("%s tcp listening on :%d tunnel=%d rule=%d", plan.role, plan.port, plan.cfg.TunnelID, plan.cfg.RuleID)
@@ -464,7 +547,8 @@ func (m *fxpRuntimeManager) apply(cfg config) error {
 		if previous != nil && previous.release != nil {
 			previous.release()
 		}
-		log.Printf("%s tcp handler reloaded on :%d tunnel=%d rule=%d (existing connections keep running)", plan.role, plan.port, plan.cfg.TunnelID, plan.cfg.RuleID)
+		revoked := slot.revokeAfterReload(plan.role, previous, replacement)
+		log.Printf("%s tcp handler reloaded on :%d tunnel=%d rule=%d (existing connections keep running, revoked=%d)", plan.role, plan.port, plan.cfg.TunnelID, plan.cfg.RuleID, revoked)
 	}
 	for key, slot := range startedUDP {
 		m.udp[key] = slot
@@ -521,20 +605,60 @@ func (s *tcpListenerSlot) acceptLoop(m *fxpRuntimeManager, role string, cfg conf
 			_ = conn.Close()
 			continue
 		}
-		s.track(conn)
+		tracked := s.track(conn)
 		m.sessions.Add(1)
 		go func() {
 			defer m.sessions.Done()
 			defer s.untrack(conn)
-			handler.serve(conn)
+			handler.serve(conn, tracked)
 		}()
 	}
 }
 
-func (s *tcpListenerSlot) track(conn net.Conn) {
+func (s *tcpListenerSlot) track(conn net.Conn) *trackedConn {
+	tracked := &trackedConn{slot: s}
 	s.connsMu.Lock()
-	s.conns[conn] = struct{}{}
+	s.conns[conn] = tracked
 	s.connsMu.Unlock()
+	return tracked
+}
+
+// revokeAfterReload 在出口/中转换处理器之后收回旧配置放行的连接：
+//   - 隧道密钥变了：这个监听上的连接全是用旧密钥握的手（包括上一跳池子里等
+//     hello 的），全部断开；
+//   - 出口的目标表变了：已经在跑的会话按新表再核一遍 (规则, 目标)，不再放行
+//     的断开。
+//
+// 入口不在这里处理：用户侧连接不涉及隧道密钥，出口那边会按自己的新配置收回。
+func (s *tcpListenerSlot) revokeAfterReload(role string, previous, current *tcpHandler) int {
+	if previous == nil || current == nil || (role != "exit" && role != "relay") {
+		return 0
+	}
+	keyChanged := previous.cfg.Key != current.cfg.Key
+	var victims []net.Conn
+	s.connsMu.Lock()
+	for conn, tracked := range s.conns {
+		if keyChanged {
+			victims = append(victims, conn)
+			continue
+		}
+		if role != "exit" || tracked == nil {
+			continue
+		}
+		hello := tracked.hello.Load()
+		if hello == nil {
+			continue
+		}
+		check := *hello
+		if authorizeExitTarget(current.cfg, &check) != nil {
+			victims = append(victims, conn)
+		}
+	}
+	s.connsMu.Unlock()
+	for _, conn := range victims {
+		_ = conn.Close()
+	}
+	return len(victims)
 }
 
 func (s *tcpListenerSlot) untrack(conn net.Conn) {

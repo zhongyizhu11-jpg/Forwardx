@@ -28,13 +28,13 @@ func TestTrafficBatchRetainsFailedReportsAndAcknowledgesSuccess(t *testing.T) {
 	resetTrafficBatchesForTest()
 	var fail atomic.Bool
 	fail.Store(true)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(withFXPTestChallenges(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if fail.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-	}))
+	})))
 	defer server.Close()
 
 	cfg := config{PanelURL: server.URL, Token: "traffic-test-token", RuleID: 42}
@@ -152,9 +152,9 @@ func TestTrafficReportFailureDiagnosticsAreRateLimitedAndRedacted(t *testing.T) 
 	if got := safeTrafficReportError(errors.New("request rejected token="+secret), secret); strings.Contains(got, secret) || !strings.Contains(got, "[redacted]") {
 		t.Fatalf("traffic report error was not redacted: %q", got)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(withFXPTestChallenges(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
+	})))
 	defer server.Close()
 
 	cfg := config{PanelURL: server.URL, Token: secret, RuleID: 42}
@@ -191,14 +191,14 @@ func TestTrafficRequestFailureRetainsBatchAndIsRateLimited(t *testing.T) {
 	log.SetOutput(&output)
 	t.Cleanup(func() { log.SetOutput(previousWriter) })
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(withFXPTestChallenges(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		conn, _, err := w.(http.Hijacker).Hijack()
 		if err != nil {
 			t.Errorf("hijack traffic request: %v", err)
 			return
 		}
 		_ = conn.Close()
-	}))
+	})))
 	defer server.Close()
 
 	const secret = "traffic-request-secret"
@@ -261,9 +261,9 @@ func TestTrafficBatchKeepsConnectionOnlyDelta(t *testing.T) {
 func TestTrafficReporterCountsSessionOnceWithoutChangingBytes(t *testing.T) {
 	resetTrafficBatchesForTest()
 	t.Cleanup(resetTrafficBatchesForTest)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(withFXPTestChallenges(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
+	})))
 	defer server.Close()
 
 	cfg := config{PanelURL: server.URL, Token: "traffic-test-token", RuleID: 42}
@@ -303,11 +303,11 @@ func TestStopTrafficReporterDoesNotWaitForPanel(t *testing.T) {
 	requestStarted := make(chan struct{})
 	releaseRequest := make(chan struct{})
 	var startedOnce sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(withFXPTestChallenges(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		startedOnce.Do(func() { close(requestStarted) })
 		<-releaseRequest
 		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
+	})))
 	defer server.Close()
 
 	counter := &trafficCounter{}

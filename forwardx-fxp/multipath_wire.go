@@ -93,6 +93,10 @@ func multipathLegCandidates(cfg config) []int {
 			candidates = append(candidates, index)
 		}
 	}
+	// 出口一个会话最多收 multipathMaxLegs 条腿，多拨的只会被拒。
+	if len(candidates) > multipathMaxLegs {
+		candidates = candidates[:multipathMaxLegs]
+	}
 	return candidates
 }
 
@@ -151,7 +155,14 @@ func closeMultipathLegs(legs []*multipathLegConn) {
 	}
 }
 
-// multipathExitRegistry groups arriving legs by session id.
+// multipathExitSessionKey 是出口登记会话用的键：隧道号 + 会话号。会话号是入口
+// 随机生成的，但出口进程里的登记表是全局的，不带隧道号的话，别的隧道上一个
+// 知道（或撞上）这个会话号的腿也能挂进来。
+func multipathExitSessionKey(tunnelID int, sessionID string) string {
+	return fmt.Sprintf("%d/%s", tunnelID, sessionID)
+}
+
+// multipathExitRegistry groups arriving legs by session key (tunnel + session id).
 type multipathExitRegistry struct {
 	mu       sync.Mutex
 	sessions map[string]*multipathSession
@@ -179,7 +190,7 @@ func (r *multipathExitRegistry) join(sessionID string, leg *multipathLegConn, ma
 	}
 	if session, ok := r.sessions[sessionID]; ok {
 		if !session.addLeg(leg) {
-			return nil, false, fmt.Errorf("multipath leg %d refused: session over or leg already joined", leg.index)
+			return nil, false, fmt.Errorf("multipath leg %d refused: session over, leg already joined or leg limit reached", leg.index)
 		}
 		return session, false, nil
 	}
@@ -224,8 +235,12 @@ func handleExitMultipath(sec *secureConn, hello helloFrame, cfg config) error {
 	if sessionID == "" {
 		return errors.New("multipath leg is missing its session id")
 	}
+	if hello.MultipathLegIndex < 0 || hello.MultipathLegIndex > multipathMaxLegIndex {
+		return fmt.Errorf("multipath leg index %d out of range", hello.MultipathLegIndex)
+	}
+	sessionKey := multipathExitSessionKey(cfg.TunnelID, sessionID)
 	leg := newMultipathLeg(hello.MultipathLegIndex, sec, fmt.Sprintf("peer-%s", sec.conn.RemoteAddr()))
-	session, leader, err := exitMultipathSessions.join(sessionID, leg, multipathPendingLimit(cfg))
+	session, leader, err := exitMultipathSessions.join(sessionKey, leg, multipathPendingLimit(cfg))
 	if err != nil {
 		return err
 	}
@@ -233,7 +248,7 @@ func handleExitMultipath(sec *secureConn, hello helloFrame, cfg config) error {
 		<-leg.dead
 		return nil
 	}
-	defer exitMultipathSessions.finish(sessionID)
+	defer exitMultipathSessions.finish(sessionKey)
 	defer session.closeTransport()
 	fxpVerbosef(
 		"exit multipath session=%s first-leg=%d configured=%d target=%s:%d",

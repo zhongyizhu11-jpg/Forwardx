@@ -207,9 +207,21 @@ const (
 	// limits only cover the short handshake/hello phase.
 	fxpListenerMaxConnections = 8192
 	// 待定连接里包括上一跳连接池预热、正在等 hello 的连接（每个上一跳进程每个
-	// 端点最多 fxpPoolMaxSize 条），所以比单纯的握手阶段放宽一些。
+	// 端点最多 fxpPoolMaxSize 条），所以比单纯的握手阶段放宽一些。只有握手
+	// 通过（证明知道隧道密钥）的连接才占这份额度。
 	fxpListenerMaxPendingConnections = 2048
 	fxpListenerMaxPendingPerIP       = 1024
+	// 握手阶段（还没证明知道密钥）单独一道闸，每个来源 IP 只给很小的份额：
+	// 以前握手和等 hello 共用上面那份 1024/IP，两个 IP 各挂 1024 条不说话的
+	// 连接就能把出口/中转的待定额度占满，合法的入口、中转一条都进不来。正常
+	// 的上一跳连上就立刻发握手（流水线握手随 hello 一起写，预热连接也是连上
+	// 就握手），同一 IP 同时停在这个阶段的连接只有几条。
+	fxpListenerMaxHandshakePerIP = 64
+	// 服务端读完初始握手字节的时限。比 fxpHandshakeTimeout 短：不说话的连接
+	// 早点让位。留到 5 秒是为了照顾 2.2.121 及更早的入口 —— 它们在
+	// proxyProtocolReceive 规则上先拨出口、再最多等 5 秒客户端的 PROXY 头，
+	// 然后才把握手写出去。
+	fxpServerHandshakeTimeout = 5 * time.Second
 )
 
 var (
@@ -238,9 +250,28 @@ type connGate struct {
 	ips            map[string]int
 }
 
+// listenerConnGates 是出口/中转监听的三道闸：
+//   - handshake：接受之后到握手读完。未认证的连接只能占这一道，每 IP 份额很小；
+//   - pending：握手通过之后到 hello 读完（含上一跳连接池里空等 hello 的连接）；
+//   - active：握手通过之后整个会话期间，全局上限。
+//
+// 未认证的连接不再占 pending 和 active：慢速连接攻击最多把 handshake 这道闸
+// 占满，已经握过手的连接池和会话不受影响。
 type listenerConnGates struct {
-	pending *connGate
-	active  *connGate
+	handshake *connGate
+	pending   *connGate
+	active    *connGate
+}
+
+// listenerAdmission 是一条连接在三道闸上的租约。方法对 nil 安全：直接调用
+// handleExitSession 之类（测试）时不走闸。
+type listenerAdmission struct {
+	gates            *listenerConnGates
+	remote           net.Addr
+	mu               sync.Mutex
+	releaseHandshake func()
+	releasePending   func()
+	releaseActive    func()
 }
 
 type exitEndpointSelector struct {
@@ -293,9 +324,11 @@ func newListenerConnGates(cfg config) *listenerConnGates {
 	maxPerIP := 0
 	pendingConnections := minInt(maxConnections, fxpListenerMaxPendingConnections)
 	pendingPerIP := minInt(pendingConnections, fxpListenerMaxPendingPerIP)
+	handshakePerIP := minInt(pendingConnections, fxpListenerMaxHandshakePerIP)
 	return &listenerConnGates{
-		pending: newConnGate(pendingConnections, pendingPerIP),
-		active:  newConnGate(maxConnections, maxPerIP),
+		handshake: newConnGate(pendingConnections, handshakePerIP),
+		pending:   newConnGate(pendingConnections, pendingPerIP),
+		active:    newConnGate(maxConnections, maxPerIP),
 	}
 }
 
@@ -642,26 +675,82 @@ func (g *connGate) statsFor(remoteAddr net.Addr) (int64, int, int) {
 	return g.active, len(g.ips), g.ips[ip]
 }
 
-func (g *listenerConnGates) acquire(remoteAddr net.Addr) (func(), func(), bool, string) {
-	releasePending, ok, reason := g.pending.acquire(remoteAddr)
+// admit 在接受连接时调用，只占握手这道闸。
+func (g *listenerConnGates) admit(remoteAddr net.Addr) (*listenerAdmission, bool, string) {
+	releaseHandshake, ok, reason := g.handshake.acquire(remoteAddr)
 	if !ok {
-		return func() {}, func() {}, false, "pending/" + reason
+		return nil, false, "handshake/" + reason
 	}
-	releaseActive, ok, reason := g.active.acquire(remoteAddr)
+	return &listenerAdmission{gates: g, remote: remoteAddr, releaseHandshake: releaseHandshake}, true, ""
+}
+
+// authenticated 在握手通过后调用：让出握手闸，换成 pending + active。
+func (a *listenerAdmission) authenticated() (bool, string) {
+	if a == nil {
+		return true, ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.releaseHandshake != nil {
+		a.releaseHandshake()
+		a.releaseHandshake = nil
+	}
+	if a.releaseActive != nil {
+		return true, ""
+	}
+	releasePending, ok, reason := a.gates.pending.acquire(a.remote)
+	if !ok {
+		return false, "pending/" + reason
+	}
+	releaseActive, ok, reason := a.gates.active.acquire(a.remote)
 	if !ok {
 		releasePending()
-		return func() {}, func() {}, false, "active/" + reason
+		return false, "active/" + reason
 	}
-	return releasePending, func() {
-		releasePending()
-		releaseActive()
-	}, true, ""
+	a.releasePending, a.releaseActive = releasePending, releaseActive
+	return true, ""
+}
+
+// helloReceived 在读到 hello 后调用：让出 pending，只留 active。
+func (a *listenerAdmission) helloReceived() {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.releasePending != nil {
+		a.releasePending()
+		a.releasePending = nil
+	}
+}
+
+// release 在连接结束时调用，归还还占着的所有份额。可重复调用。
+func (a *listenerAdmission) release() {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, release := range []*func(){&a.releaseHandshake, &a.releasePending, &a.releaseActive} {
+		if *release != nil {
+			(*release)()
+			*release = nil
+		}
+	}
+}
+
+func (a *listenerAdmission) logRejection(role string, cfg config, reason string) {
+	if a == nil {
+		return
+	}
+	logListenerConnGateRejection(role, cfg, a.remote, a.gates, reason)
 }
 
 func logListenerConnGateRejection(role string, cfg config, remoteAddr net.Addr, gates *listenerConnGates, reason string) {
+	handshake, handshakeIPs, handshakeForIP := gates.handshake.statsFor(remoteAddr)
 	pending, pendingIPs, pendingForIP := gates.pending.statsFor(remoteAddr)
 	active, activeIPs, activeForIP := gates.active.statsFor(remoteAddr)
-	log.Printf("%s tcp rejected by connection gate tunnel=%d client=%s reason=%s pending=%d/%d pendingIPs=%d pendingForIP=%d/%d active=%d/%d activeIPs=%d activeForIP=%d/%d", role, cfg.TunnelID, remoteAddr, reason, pending, gates.pending.maxConnections, pendingIPs, pendingForIP, gates.pending.maxPerIP, active, gates.active.maxConnections, activeIPs, activeForIP, gates.active.maxPerIP)
+	log.Printf("%s tcp rejected by connection gate tunnel=%d client=%s reason=%s handshake=%d/%d handshakeIPs=%d handshakeForIP=%d/%d pending=%d/%d pendingIPs=%d pendingForIP=%d/%d active=%d/%d activeIPs=%d activeForIP=%d/%d", role, cfg.TunnelID, remoteAddr, reason, handshake, gates.handshake.maxConnections, handshakeIPs, handshakeForIP, gates.handshake.maxPerIP, pending, gates.pending.maxConnections, pendingIPs, pendingForIP, gates.pending.maxPerIP, active, gates.active.maxConnections, activeIPs, activeForIP, gates.active.maxPerIP)
 }
 
 func main() {
@@ -907,10 +996,20 @@ func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector,
 	// 协议每条连接白等 150ms，客户端先说话的也要把「读」和「拨」串起来。
 	var selected *selectedTransport
 	var connectDone chan error
-	if !multipathEnabled(cfg) {
+	startConnect := func() {
+		if multipathEnabled(cfg) {
+			return
+		}
 		selected = newSelectedTransport(selector, cfg, selectionKey)
 		connectDone = make(chan error, 1)
 		go func() { connectDone <- selected.connect() }()
+	}
+	// 要收 PROXY 头的规则等头读完再拨：现拨的连接在 hello 写出之前一直停在
+	// 出口的握手阶段，而出口按来源 IP 只给握手阶段很小的份额。先拨再等头，
+	// 外面随便开几十条不说话的连接，就能让这台入口占满出口给它的握手份额，
+	// 其它规则跟着连不上。PROXY 头是负载均衡器连上就发的，先读它几乎不花时间。
+	if !cfg.ProxyProtocolReceive {
+		startConnect()
 	}
 	started := false
 	defer func() {
@@ -943,6 +1042,7 @@ func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector,
 		}
 		proxyInfo = parsed
 		first = remaining
+		startConnect()
 	}
 	if cfg.ProxyProtocolReceive || cfg.ProxyProtocolSend {
 		fxpVerbosef(
@@ -1673,17 +1773,20 @@ func runExit(done <-chan struct{}, cfg config) error {
 }
 
 func handleExitSession(conn net.Conn, cfg config) error {
-	return handleExitSessionWithStartup(conn, cfg, nil, nil)
+	return handleExitSessionWithStartup(conn, cfg, nil)
 }
 
-func handleExitSessionWithStartup(conn net.Conn, cfg config, startupComplete func(), stopping <-chan struct{}) error {
+func handleExitSessionWithStartup(conn net.Conn, cfg config, in *fxpInbound) error {
 	defer conn.Close()
 	sec, err := newExitSecureConn(conn, cfg)
 	if err != nil {
 		probeDelay()
 		return err
 	}
-	frame, err := awaitSecureHello(sec, stopping)
+	if !in.authenticated(cfg) {
+		return nil
+	}
+	frame, err := awaitSecureHello(sec, in.stop())
 	if err != nil {
 		return quietHelloError(err)
 	}
@@ -1692,9 +1795,7 @@ func handleExitSessionWithStartup(conn net.Conn, cfg config, startupComplete fun
 		probeDelay()
 		return err
 	}
-	if startupComplete != nil {
-		startupComplete()
-	}
+	in.helloReceived()
 	if hello.Network == "probe" {
 		return nil
 	}
@@ -1703,6 +1804,12 @@ func handleExitSessionWithStartup(conn net.Conn, cfg config, startupComplete fun
 	}
 	if hello.TargetPort <= 0 {
 		hello.TargetPort = cfg.TargetPort
+	}
+	// 连接可能是重载之前接受的（上一跳池子里的连接最多空等 fxpServerHelloWait），
+	// 按监听当前的配置核对，不用接受那一刻的旧配置。
+	in.recordHello(hello)
+	if cfg, err = in.currentConfig(cfg); err != nil {
+		return err
 	}
 	// 出口只拨面板给它的目标表里的目标（见 exit_targets.go）。多路径的每条腿
 	// 都走到这里，领头那条拨目标之前已经核对过。
@@ -1861,10 +1968,10 @@ func runRelay(done <-chan struct{}, cfg config) error {
 }
 
 func handleRelaySession(upConn net.Conn, cfg config, selector *exitEndpointSelector) error {
-	return handleRelaySessionWithStartup(upConn, cfg, selector, nil, nil)
+	return handleRelaySessionWithStartup(upConn, cfg, selector, nil)
 }
 
-func handleRelaySessionWithStartup(upConn net.Conn, cfg config, selector *exitEndpointSelector, startupComplete func(), stopping <-chan struct{}) error {
+func handleRelaySessionWithStartup(upConn net.Conn, cfg config, selector *exitEndpointSelector, in *fxpInbound) error {
 	defer upConn.Close()
 	// Accept upstream encrypted connection (like exit)
 	upSec, err := newExitSecureConn(upConn, cfg)
@@ -1872,7 +1979,10 @@ func handleRelaySessionWithStartup(upConn net.Conn, cfg config, selector *exitEn
 		probeDelay()
 		return err
 	}
-	frame, err := awaitSecureHello(upSec, stopping)
+	if !in.authenticated(cfg) {
+		return nil
+	}
+	frame, err := awaitSecureHello(upSec, in.stop())
 	if err != nil {
 		return quietHelloError(err)
 	}
@@ -1881,12 +1991,15 @@ func handleRelaySessionWithStartup(upConn net.Conn, cfg config, selector *exitEn
 		probeDelay()
 		return err
 	}
-	if startupComplete != nil {
-		startupComplete()
-	}
+	in.helloReceived()
 	if hello.Network == "probe" {
 		// 上一跳在探这台中转本身活没活，不往下传。
 		return nil
+	}
+	// 握手用的密钥被重载换掉了（连接在重载之前接受，或在上一跳池子里空等了
+	// 一阵），不再往下传。中转不核对目标，下游选择器沿用这条连接的处理器。
+	if _, err := in.currentConfig(cfg); err != nil {
+		return err
 	}
 	fxpVerbosef(
 		"relay proxy protocol tunnel=%d rule=%d upstream=%s downstream=%s:%d hasProxy=%v source=%s:%d dest=%s:%d",
@@ -2032,6 +2145,7 @@ func copyPlainToSecureWithPolicy(dst frameConn, src net.Conn, limiter *limiter, 
 	buf := getFXPByteBuffer(32 * 1024)
 	defer putFXPByteBuffer(buf)
 	sample := make([]byte, 0, fxpProtocolSampleMax)
+	initialSample = trimLeadingHTTPBlankLines(initialSample)
 	if len(initialSample) > 0 {
 		n := len(initialSample)
 		if n > fxpProtocolSampleMax {
@@ -2041,6 +2155,11 @@ func copyPlainToSecureWithPolicy(dst frameConn, src net.Conn, limiter *limiter, 
 	}
 	policyEnabled := policy.BlockHTTP || policy.BlockSocks || policy.BlockTLS
 	inspect := func(chunk []byte) (string, bool) {
+		if len(sample) == 0 {
+			// 请求行前面的空行不占采样额度：HTTP 服务端会跳过它们（RFC 9112
+			// 2.2），不跳的话先发几百字节 CRLF 就能把采样撑满、绕过拦截。
+			chunk = trimLeadingHTTPBlankLines(chunk)
+		}
 		if !policyEnabled || len(chunk) == 0 || len(sample) >= fxpProtocolSampleMax {
 			return "", false
 		}
@@ -2339,7 +2458,7 @@ func newServerSecureConn(conn net.Conn, cfg config) (*secureConn, error) {
 }
 
 func newServerSecureConnWithWires(conn net.Conn, cfg config, wires []fxpWireContext) (*secureConn, error) {
-	if err := setFXPConnDeadline(conn, fxpHandshakeTimeout); err != nil {
+	if err := setFXPConnDeadline(conn, fxpServerHandshakeTimeout); err != nil {
 		return nil, err
 	}
 	salt := make([]byte, fxpSaltSize)
@@ -2882,7 +3001,15 @@ func detectBlockedProtocol(data []byte, policy protocolPolicy) string {
 	return ""
 }
 
+// trimLeadingHTTPBlankLines 去掉开头的 CR/LF。只用于协议识别的采样，转发的
+// 数据原样不动。TLS、SOCKS 的首字节不会是 CR/LF，去掉不影响它们的识别。
+func trimLeadingHTTPBlankLines(data []byte) []byte {
+	return bytes.TrimLeft(data, "\r\n")
+}
+
 func detectHTTPProtocol(data []byte) bool {
+	// 服务端会跳过请求行之前的空行，这里也跳过，免得前面垫一个 CRLF 就绕过拦截。
+	data = trimLeadingHTTPBlankLines(data)
 	if bytes.HasPrefix(data, []byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")) {
 		return true
 	}
@@ -2894,11 +3021,13 @@ func detectHTTPProtocol(data []byte) bool {
 	if lineEnd < 0 {
 		return false
 	}
-	parts := bytes.Split(data[:lineEnd], []byte{' '})
+	// 连续多个空格按一个算：nginx 之类的服务端容忍请求行里的多余空格。
+	parts := bytes.FieldsFunc(data[:lineEnd], func(r rune) bool { return r == ' ' })
 	if len(parts) != 3 {
 		return false
 	}
-	method := string(parts[0])
+	// 方法不分大小写：有的服务端和代理照收小写方法，大小写一换就绕过去了。
+	method := strings.ToUpper(string(parts[0]))
 	switch method {
 	case "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT", "TRACE":
 	default:

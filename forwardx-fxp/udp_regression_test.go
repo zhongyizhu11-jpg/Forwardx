@@ -157,13 +157,13 @@ func TestFXPUDPSessionWorkerDrainPreservesFinalTrafficDelta(t *testing.T) {
 	resetTrafficBatchesForTest()
 	t.Cleanup(resetTrafficBatchesForTest)
 	reportStarted := make(chan struct{}, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(withFXPTestChallenges(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		select {
 		case reportStarted <- struct{}{}:
 		default:
 		}
 		w.WriteHeader(http.StatusNoContent)
-	}))
+	})))
 	defer server.Close()
 
 	cfg := config{PanelURL: server.URL, Token: "udp-worker-drain-token", RuleID: 701}

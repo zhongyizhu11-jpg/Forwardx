@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,7 +28,71 @@ const (
 	fxpUDPTypeReturn = byte(2)
 	fxpUDPHeaderSize = 32
 	fxpUDPReplayBits = 64
+	// 回程地址迁移：新地址要在这个时间内连着送来 fxpUDPPeerMigratePackets 个
+	// 认证过、序号递增的最新包，才把回程挪过去（见 udpPeerMigration）。
+	fxpUDPPeerMigrateWindow  = 10 * time.Second
+	fxpUDPPeerMigratePackets = 2
 )
+
+/*
+udpPeerMigration 决定出口/中转什么时候把会话的回程挪到新的来源地址。
+
+以前一个认证过的最新包从新地址来就立刻挪。能看到流量的人把截到的包抢先从
+自己的地址转发一份（包是真的，序号也是最新的），回程就整个被拐走了。现在
+要求同一个新地址在短时间内连着送来至少两个不同的、序号递增的最新包；期间
+旧地址又送来最新包就作废。NAT 重新映射后入口的包全从新地址来，第二个包就会
+挪过去（中间最多有一个回包还发往旧地址）；抢发要连着赢两次才行。
+不改协议，两边版本不同也照常工作。
+
+会话是被第一个认证过的包建起来的，那个包未必过得了重放窗口（比如出口重启
+监听后、有人把录下的旧包换个地址重放）。所以会话收下的第一个包直接定下回程
+地址，不受上面的限制 —— 建会话那个地址本身还没被任何收下的包证实过。
+*/
+type udpPeerMigration struct {
+	mu        sync.Mutex
+	confirmed bool
+	candidate *net.UDPAddr
+	lastSeq   uint64
+	firstSeen time.Time
+	count     int
+}
+
+// observe 在一个包过了认证、时间窗和重放窗口之后调用。highest 表示它是这个
+// 会话目前序号最高的包。返回 true 时回程应该改到 addr。
+func (m *udpPeerMigration) observe(addr, current *net.UDPAddr, sequence uint64, highest bool, now time.Time) bool {
+	if addr == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.confirmed {
+		m.confirmed = true
+		return !udpAddrEqual(addr, current)
+	}
+	if !highest {
+		return false
+	}
+	if udpAddrEqual(addr, current) {
+		m.candidate = nil
+		m.count = 0
+		return false
+	}
+	if m.candidate != nil && udpAddrEqual(addr, m.candidate) && sequence > m.lastSeq && now.Sub(m.firstSeen) <= fxpUDPPeerMigrateWindow {
+		m.count++
+		m.lastSeq = sequence
+		if m.count >= fxpUDPPeerMigratePackets {
+			m.candidate = nil
+			m.count = 0
+			return true
+		}
+		return false
+	}
+	m.candidate = addr
+	m.lastSeq = sequence
+	m.firstSeen = now
+	m.count = 1
+	return false
+}
 
 type fxpUDPPacket struct {
 	packetType byte
@@ -125,12 +190,16 @@ type udpDirectEntrySession struct {
 	dataSealer      *fxpUDPCodec
 	returnOpener    *fxpUDPCodec
 	remove          func(*udpDirectEntrySession)
+	// releaseGate 归还这条会话在规则连接闸（maxConnections / maxIPs）上的份额。
+	// 只在会话登记表的锁里读写。
+	releaseGate func()
 }
 
 type udpDirectExitSession struct {
 	key           string
 	sessionID     uint64
 	peerAddrRef   atomic.Pointer[net.UDPAddr]
+	peerMigration udpPeerMigration
 	conn          *net.UDPConn
 	target        *net.UDPConn
 	send          *fxpUDPQueue
@@ -157,6 +226,7 @@ type udpDirectRelaySession struct {
 	key                    string
 	sessionID              uint64
 	upstreamAddrRef        atomic.Pointer[net.UDPAddr]
+	upstreamMigration      udpPeerMigration
 	downstreamAddr         *net.UDPAddr
 	conn                   *net.UDPConn
 	cfg                    config
@@ -240,6 +310,10 @@ func serveEntryUDPDirect(conn *net.UDPConn, cfg config, selector *exitEndpointSe
 	sessionsByID := map[uint64]*udpDirectEntrySession{}
 	sessionsPerIP := map[string]int{}
 	policy := defaultFXPUDPSessionPolicy()
+	// 规则自己的连接上限，和 TCP 入口用同一套闸（newConnGate）：maxConnections
+	// 管同时在跑的会话数，maxIPs 和 TCP 一样按来源 IP 限。以前 UDP 只受全局的
+	// 会话上限约束，套餐里给规则设的限制对 UDP 不起作用。
+	ruleGate := newConnGate(cfg.MaxConnections, cfg.MaxIPs)
 	var sessionsMu sync.Mutex
 	var workerWG sync.WaitGroup
 	counter := &trafficCounter{}
@@ -249,6 +323,10 @@ func serveEntryUDPDirect(conn *net.UDPConn, cfg config, selector *exitEndpointSe
 	detachSessionLocked := func(session *udpDirectEntrySession) bool {
 		if session == nil || sessionsByClient[session.key] != session {
 			return false
+		}
+		if session.releaseGate != nil {
+			session.releaseGate()
+			session.releaseGate = nil
 		}
 		delete(sessionsByClient, session.key)
 		if sessionsByID[session.sessionID] == session {
@@ -364,9 +442,18 @@ func serveEntryUDPDirect(conn *net.UDPConn, cfg config, selector *exitEndpointSe
 		}
 		startSession := false
 		if session == nil {
+			releaseGate, ok, reason := ruleGate.acquire(addr)
+			if !ok {
+				active, ips, forIP := ruleGate.statsFor(addr)
+				fxpUDPDropLog.Printf("entry udp direct rejected by connection gate tunnel=%d rule=%d client=%s reason=%s active=%d maxConnections=%d distinctIPs=%d sessionsForIP=%d maxIPs=%d", cfg.TunnelID, cfg.RuleID, addr, reason, active, cfg.MaxConnections, ips, forIP, cfg.MaxIPs)
+				continue
+			}
 			created, err := newUDPDirectEntrySession(conn, addr, cfg, selector, inLimiter, outLimiter, counter, queueBudget, removeSession)
 			if err != nil {
-				if !isClosedErr(err) {
+				releaseGate()
+				if errors.Is(err, errHopResolvePending) {
+					fxpUDPDropLog.Printf("entry udp direct waiting for exit address tunnel=%d rule=%d client=%s: %v", cfg.TunnelID, cfg.RuleID, addr, err)
+				} else if !isClosedErr(err) {
 					log.Printf("entry udp direct session create failed tunnel=%d rule=%d client=%s: %v", cfg.TunnelID, cfg.RuleID, addr, err)
 				}
 				continue
@@ -376,6 +463,7 @@ func serveEntryUDPDirect(conn *net.UDPConn, cfg config, selector *exitEndpointSe
 			rejected := false
 			collision := false
 			pressure := false
+			adopted := false
 			sessionsMu.Lock()
 			if existing := sessionsByClient[key]; existing != nil {
 				session = existing
@@ -390,6 +478,8 @@ func serveEntryUDPDirect(conn *net.UDPConn, cfg config, selector *exitEndpointSe
 					closeCreated = created
 					rejected = true
 				} else {
+					created.releaseGate = releaseGate
+					adopted = true
 					sessionsByClient[key] = created
 					sessionsByID[created.sessionID] = created
 					sessionsPerIP[sourceIP]++
@@ -399,6 +489,9 @@ func serveEntryUDPDirect(conn *net.UDPConn, cfg config, selector *exitEndpointSe
 				}
 			}
 			sessionsMu.Unlock()
+			if !adopted {
+				releaseGate()
+			}
 			if closeCreated != nil {
 				closeCreated.close()
 			}
@@ -621,6 +714,8 @@ func serveExitUDPDirect(conn *net.UDPConn, cfg config) error {
 	for _, target := range cfg.UDPTargets {
 		if _, exists := targetsByRule[target.RuleID]; !exists {
 			targetsByRule[target.RuleID] = target
+			// 写的是域名的目标先在后台解析一次，第一个会话进来时缓存里已经有了。
+			_, _ = resolveHopAddressNonBlocking(target.TargetIP, target.TargetPort)
 		}
 	}
 	targetForRule := func(ruleID int) (udpTarget, bool) {
@@ -792,7 +887,11 @@ func serveExitUDPDirect(conn *net.UDPConn, cfg config) error {
 				created.counter = trafficCounterForRule(packet.ruleID)
 			}
 			if err != nil {
-				log.Printf("exit udp direct session create failed tunnel=%d rule=%d peer=%s target=%s:%d: %v", cfg.TunnelID, packet.ruleID, peerAddr, target.TargetIP, target.TargetPort, err)
+				if errors.Is(err, errHopResolvePending) {
+					fxpUDPDropLog.Printf("exit udp direct waiting for target address tunnel=%d rule=%d peer=%s target=%s:%d", cfg.TunnelID, packet.ruleID, peerAddr, target.TargetIP, target.TargetPort)
+				} else {
+					log.Printf("exit udp direct session create failed tunnel=%d rule=%d peer=%s target=%s:%d: %v", cfg.TunnelID, packet.ruleID, peerAddr, target.TargetIP, target.TargetPort, err)
+				}
 				continue
 			}
 			var closeCreated *udpDirectExitSession
@@ -864,7 +963,7 @@ func newUDPDirectExitSession(conn *net.UDPConn, peerAddr *net.UDPAddr, cfg confi
 	if err != nil {
 		return nil, err
 	}
-	targetAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(targetIP, strconv.Itoa(targetPort)))
+	targetAddr, err := resolveExitUDPDirectTarget(ruleID, targetIP, targetPort)
 	if err != nil {
 		return nil, err
 	}
@@ -903,6 +1002,27 @@ func newUDPDirectExitSession(conn *net.UDPConn, peerAddr *net.UDPAddr, cfg confi
 	return session, nil
 }
 
+// resolveExitUDPDirectTarget 解析 UDP 直连出口的目标，规则和走 TCP 流的一样
+// （checkResolvedExitTarget）：写死的 IP 照拨，域名解析到环回、链路本地、未指定、
+// 组播地址的不拨。解析走下一跳的缓存、不在读循环里等 DNS，见
+// resolveHopAddressNonBlocking。
+func resolveExitUDPDirectTarget(ruleID int, targetIP string, targetPort int) (*net.UDPAddr, error) {
+	host := strings.Trim(strings.TrimSpace(targetIP), "[]")
+	address, err := resolveHopAddressNonBlocking(host, targetPort)
+	if err != nil {
+		return nil, err
+	}
+	addr, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		return nil, err
+	}
+	hello := helloFrame{RuleID: ruleID, TargetIP: host, TargetPort: targetPort, targetLiteral: net.ParseIP(host) != nil}
+	if err := checkResolvedExitTarget(hello, addr.IP); err != nil {
+		return nil, err
+	}
+	return addr, nil
+}
+
 func (s *udpDirectExitSession) touch() {
 	s.lastActivity.Store(time.Now().UnixNano())
 }
@@ -916,7 +1036,8 @@ func (s *udpDirectExitSession) peer() *net.UDPAddr {
 // 重放的旧包过不了窗口，走不到这里。
 func (s *udpDirectExitSession) acceptedFrom(addr *net.UDPAddr, packet fxpUDPPacket) {
 	s.replay.observe(packet.sentAt)
-	if addr == nil || udpAddrEqual(addr, s.peer()) || s.replay.window.highestSequence() != packet.sequence {
+	highest := s.replay.window.highestSequence() == packet.sequence
+	if !s.peerMigration.observe(addr, s.peer(), packet.sequence, highest, time.Now()) {
 		return
 	}
 	previous := s.peerAddrRef.Swap(addr)
@@ -1189,7 +1310,11 @@ func serveRelayUDPDirect(conn *net.UDPConn, cfg config, selector *exitEndpointSe
 		if session == nil {
 			created, err := newUDPDirectRelaySession(conn, addr, cfg, selector, packet.ruleID, packet.sessionID, queueBudget, removeSession)
 			if err != nil {
-				log.Printf("relay udp direct session create failed tunnel=%d rule=%d upstream=%s: %v", cfg.TunnelID, packet.ruleID, addr, err)
+				if errors.Is(err, errHopResolvePending) {
+					fxpUDPDropLog.Printf("relay udp direct waiting for downstream address tunnel=%d rule=%d upstream=%s: %v", cfg.TunnelID, packet.ruleID, addr, err)
+				} else {
+					log.Printf("relay udp direct session create failed tunnel=%d rule=%d upstream=%s: %v", cfg.TunnelID, packet.ruleID, addr, err)
+				}
 				continue
 			}
 			var closeCreated *udpDirectRelaySession
@@ -1347,7 +1472,8 @@ func (s *udpDirectRelaySession) forwardToDownstream(from *net.UDPAddr, packet fx
 	}
 	// 回程地址跟着上一跳走，规则同出口（udpDirectExitSession.acceptedFrom）。
 	s.replay.observe(packet.sentAt)
-	if from != nil && !udpAddrEqual(from, s.upstream()) && s.replay.window.highestSequence() == packet.sequence {
+	highest := s.replay.window.highestSequence() == packet.sequence
+	if s.upstreamMigration.observe(from, s.upstream(), packet.sequence, highest, time.Now()) {
 		previous := s.upstreamAddrRef.Swap(from)
 		fxpVerbosef("relay udp direct session upstream moved tunnel=%d rule=%d session=%d from=%s to=%s", s.cfg.TunnelID, s.ruleID, s.sessionID, previous, from)
 	}
@@ -1490,10 +1616,18 @@ func pickUDPDirectEndpoint(selector *exitEndpointSelector, cfg config, selection
 		if udpPort <= 0 {
 			udpPort = endpoint.Port
 		}
-		address, err := resolveHopAddress(endpoint.Host, udpPort)
+		// 这里在 UDP 读循环里：不等 DNS。还没解析好的端点先跳过（不记失败），
+		// 有别的端点就用别的，都没有就丢掉这个包，等后台解析完。
+		address, err := resolveHopAddressNonBlocking(endpoint.Host, udpPort)
 		var addr *net.UDPAddr
 		if err == nil {
 			addr, err = net.ResolveUDPAddr("udp", address)
+		}
+		if errors.Is(err, errHopResolvePending) {
+			if lastErr == nil {
+				lastErr = err
+			}
+			continue
 		}
 		if err != nil {
 			lastErr = err

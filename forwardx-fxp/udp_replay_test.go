@@ -169,7 +169,8 @@ func TestUDPDirectReplayFromAnotherSourceIsDropped(t *testing.T) {
 	}
 }
 
-// 入口的来源地址变了（NAT 重新映射）：新地址来的新包照收，回程跟着挪过去。
+// 入口的来源地址变了（NAT 重新映射）：新地址来的新包照收；新地址连着送来两个
+// 最新包之后，回程跟着挪过去（只凭一个包不挪，见 udpPeerMigration）。
 func TestUDPDirectSessionFollowsNewSourceAddress(t *testing.T) {
 	targetPort, got := udpEchoRecorder(t)
 	const (
@@ -206,7 +207,14 @@ func TestUDPDirectSessionFollowsNewSourceAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectUDPPayload(t, got, "two")
-	if packet, ok := readUDPReturn(t, after, tunnelID, key, 2*time.Second); !ok || string(packet.payload) != "two" {
+	if packet, ok := readUDPReturn(t, before, tunnelID, key, 2*time.Second); !ok || string(packet.payload) != "two" {
+		t.Fatalf("新地址只来了一个包，回程不该这么快挪走：%q %v", packet.payload, ok)
+	}
+	if _, err := after.Write(sealTestUDPData(t, tunnelID, ruleID, sessionID, key, &sequence, "three")); err != nil {
+		t.Fatal(err)
+	}
+	expectUDPPayload(t, got, "three")
+	if packet, ok := readUDPReturn(t, after, tunnelID, key, 2*time.Second); !ok || string(packet.payload) != "three" {
 		t.Fatalf("回程没有跟到新地址：%q %v", packet.payload, ok)
 	}
 	if _, ok := readUDPReturn(t, before, tunnelID, key, 100*time.Millisecond); ok {

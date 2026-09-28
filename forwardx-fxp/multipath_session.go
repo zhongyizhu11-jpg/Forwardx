@@ -204,6 +204,10 @@ func (s *multipathSession) addLeg(leg *multipathLegConn) bool {
 		s.mu.Unlock()
 		return false
 	}
+	if len(s.legs) >= multipathMaxLegs {
+		s.mu.Unlock()
+		return false
+	}
 	for _, existing := range s.legs {
 		if existing.index == leg.index {
 			s.mu.Unlock()
@@ -543,6 +547,12 @@ func (s *multipathSession) legReader(leg *multipathLegConn) {
 			}
 			s.onAck(ack)
 			continue
+		}
+		if len(decoded.payload) > multipathMaxChunkPayload {
+			err := fmt.Errorf("%w: %d bytes", errMultipathChunkLarge, len(decoded.payload))
+			s.setErr(err)
+			s.closeWith(err)
+			return
 		}
 		size := uint64(len(decoded.payload))
 		leg.recvBytes.Add(size)

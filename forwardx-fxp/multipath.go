@@ -150,12 +150,29 @@ const multipathBusyTick = 50 * time.Millisecond
 // multipath. A single leg is just an ordinary session.
 const multipathMinLegs = 2
 
+// multipathMaxLegs 是一个会话最多挂几条腿。腿号是对端在 hello 里自己报的，
+// 出口不知道入口实际配了几条；不设上限的话，一个拿到隧道密钥的对端可以换着
+// 腿号往同一个会话里不停加连接（每条腿两个协程外加重传状态）。面板按中转
+// 路数给腿，正常远用不到这么多；入口也只拨前这么多条。
+const multipathMaxLegs = 16
+
+// multipathMaxLegIndex：确认帧里按一个字节记腿号（encodeMultipathAck），超出
+// 这个范围的腿号对不上账，出口直接不收。
+const multipathMaxLegIndex = 255
+
+// multipathMaxChunkPayload 是收端接受的单个数据块上限。发端的数据块来自复制
+// 循环一次读到的内容（copyPlainToSecureWithPolicy 的读缓冲是 32 KiB），这里
+// 留 8 倍余量。只靠 fxpMaxFrame（16 MiB）限的话，重排缓冲（上千块）能被对端
+// 用大块撑到几十 GB。
+const multipathMaxChunkPayload = 256 * 1024
+
 var (
 	errMultipathClosed     = errors.New("multipath session closed")
 	errMultipathNoLegs     = errors.New("multipath session has no usable leg")
 	errMultipathShortFrame = errors.New("multipath frame too short")
 	errMultipathBadKind    = errors.New("multipath frame has unknown kind")
 	errMultipathReorderGap = errors.New("multipath leg stopped delivering and the stream cannot be reassembled")
+	errMultipathChunkLarge = errors.New("multipath data chunk exceeds the size limit")
 )
 
 // encodeMultipathFrame builds the on-wire representation of one chunk.

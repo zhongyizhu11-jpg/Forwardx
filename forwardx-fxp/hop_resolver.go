@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -77,6 +79,57 @@ func lookupHopIP(host string) (net.IP, error) {
 	}
 	storeHopIPs(host, ips)
 	return ips[0], nil
+}
+
+// errHopResolvePending：域名还没有可用的解析结果，已经在后台去查了。
+var errHopResolvePending = errors.New("hop address resolution pending")
+
+// resolveHopAddressNonBlocking 和 resolveHopAddress 一样，但绝不在调用方这里
+// 等 DNS：缓存里有（哪怕过期不超过 fxpHopResolveStaleMax）就用，没有就在后台
+// 查、先返回 errHopResolvePending。UDP 的读循环一个监听只有一个协程，在里面
+// 现查一次慢 DNS（最长 fxpHopResolveTimeout）会让这个监听上所有 UDP 会话一起
+// 停摆；丢掉新会话的头一两个包、等后台查完再建，代价小得多。
+func resolveHopAddressNonBlocking(host string, port int) (string, error) {
+	host = strings.TrimSpace(host)
+	portText := strconv.Itoa(port)
+	if host == "" || net.ParseIP(strings.Trim(host, "[]")) != nil {
+		return net.JoinHostPort(strings.Trim(host, "[]"), portText), nil
+	}
+	ip, ok := lookupHopIPNonBlocking(host)
+	if !ok {
+		return "", fmt.Errorf("%w: %s", errHopResolvePending, host)
+	}
+	return net.JoinHostPort(ip.String(), portText), nil
+}
+
+func lookupHopIPNonBlocking(host string) (net.IP, bool) {
+	now := time.Now()
+	fxpHopResolver.mu.Lock()
+	defer fxpHopResolver.mu.Unlock()
+	entry := fxpHopResolver.entries[host]
+	if entry != nil && len(entry.ips) > 0 {
+		age := now.Sub(entry.resolvedAt)
+		if age < fxpHopResolveTTL {
+			return entry.ips[0], true
+		}
+		if age < fxpHopResolveStaleMax {
+			if !entry.refreshing {
+				entry.refreshing = true
+				go refreshHopIP(host)
+			}
+			return entry.ips[0], true
+		}
+	}
+	if entry == nil {
+		entry = &hopResolveEntry{}
+		fxpHopResolver.entries[host] = entry
+	}
+	// 同一个域名同时只查一次；查失败了下一个包再触发一次。
+	if !entry.refreshing {
+		entry.refreshing = true
+		go refreshHopIP(host)
+	}
+	return nil, false
 }
 
 func refreshHopIP(host string) {
