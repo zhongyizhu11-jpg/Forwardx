@@ -2,11 +2,13 @@ import { Preferences } from "@capacitor/preferences";
 
 const PANEL_URL_KEY = "forwardx.mobile.panelUrl";
 const USERNAME_KEY = "forwardx.mobile.username";
-const PASSWORD_KEY = "forwardx.mobile.password";
+// 旧版本把明文密码存在这里（localStorage + Capacitor Preferences）。现在只记用户名和会话令牌，
+// 这个 key 只用于启动/退出时清掉残留。
+const LEGACY_PASSWORD_KEY = "forwardx.mobile.password";
 const TOKEN_KEY = "forwardx.mobile.token";
 const LOGGED_OUT_KEY = "forwardx.mobile.loggedOut";
 
-const PERSISTED_KEYS = [PANEL_URL_KEY, USERNAME_KEY, PASSWORD_KEY, TOKEN_KEY, LOGGED_OUT_KEY];
+const PERSISTED_KEYS = [PANEL_URL_KEY, USERNAME_KEY, TOKEN_KEY, LOGGED_OUT_KEY];
 
 function isCapacitorRuntime() {
   if (typeof window === "undefined") return false;
@@ -43,6 +45,23 @@ function setValue(key: string, value?: string | null) {
   persistNative(key, value);
 }
 
+function removeLegacyPassword() {
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.removeItem(LEGACY_PASSWORD_KEY);
+    } catch {
+      // 存储不可用时没有可清的内容。
+    }
+  }
+  if (isCapacitorRuntime()) {
+    try {
+      Preferences.remove({ key: LEGACY_PASSWORD_KEY }).catch(() => undefined);
+    } catch {
+      // 原生插件不可用时忽略。
+    }
+  }
+}
+
 function normalizePanelUrl(url: string) {
   return url.trim().replace(/\/+$/, "");
 }
@@ -58,6 +77,13 @@ function isValidPanelUrl(url: string) {
   }
 }
 
+/** 明文 http 面板：密码和会话令牌都会以明文传输。 */
+function isInsecurePanelUrl(url: string) {
+  const normalized = normalizePanelUrl(url);
+  if (!isValidPanelUrl(normalized)) return false;
+  return new URL(normalized).protocol === "http:";
+}
+
 export const mobileAuth = {
   get isNative() {
     return isCapacitorRuntime();
@@ -71,7 +97,11 @@ export const mobileAuth = {
 
   isValidPanelUrl,
 
+  isInsecurePanelUrl,
+
   async hydrateNative() {
+    // 迁移：旧版本存过的明文密码，启动时一律删掉。
+    removeLegacyPassword();
     if (!isCapacitorRuntime() || typeof window === "undefined") return;
     const syncFromNative = Promise.all(
       PERSISTED_KEYS.map(async (key) => {
@@ -104,13 +134,9 @@ export const mobileAuth = {
     return getLocalValue(USERNAME_KEY);
   },
 
-  getPassword() {
-    return getLocalValue(PASSWORD_KEY);
-  },
-
-  setCredentials(username: string, password: string) {
+  /** 只记住用户名；密码不落盘，「记住登录」靠会话令牌。 */
+  setUsername(username: string) {
     setValue(USERNAME_KEY, username.trim());
-    setValue(PASSWORD_KEY, password);
     setValue(LOGGED_OUT_KEY, "");
   },
 
@@ -125,6 +151,7 @@ export const mobileAuth = {
 
   clear() {
     setValue(TOKEN_KEY, "");
+    removeLegacyPassword();
     setValue(LOGGED_OUT_KEY, "1");
   },
 

@@ -306,6 +306,20 @@ export async function createTelegramLoginCode(userId: number, code: string, expi
   }).where(eq(users.id, userId));
 }
 
+/**
+ * 只读地查看一次性登录码指向的账户，不消费、不改库。
+ * 登录页据此先让用户确认「要登录的是哪个账户」，防止别人把自己的登录链接发过来实现登录 CSRF。
+ */
+export async function peekTelegramLoginCode(code: string) {
+  const normalized = String(code || "").trim().toUpperCase();
+  if (!normalized) return null;
+  const user = await getUserByTelegramLoginCode(normalized);
+  if (!user) return null;
+  const expiresAt = user.telegramLoginCodeExpiresAt ? new Date(user.telegramLoginCodeExpiresAt).getTime() : 0;
+  if (!expiresAt || expiresAt <= Date.now()) return null;
+  return user;
+}
+
 export async function consumeTelegramLoginCode(code: string) {
   const normalized = String(code || "").trim().toUpperCase();
   if (!normalized) return null;

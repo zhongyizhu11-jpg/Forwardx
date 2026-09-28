@@ -574,6 +574,29 @@ function normalizeOptionalText(value: unknown, maxLength: number) {
   return String(value || "").trim().slice(0, maxLength) || undefined;
 }
 
+/**
+ * 插件清单 / 商店条目里的主页、仓库地址会原样渲染成 <a href>。
+ * 只放行 http/https，javascript:、data: 这类链接在服务端就丢掉，不靠前端框架兜底。
+ */
+export function normalizePluginLinkUrl(value: unknown, maxLength = 512) {
+  const text = String(value || "").trim().slice(0, maxLength);
+  if (!text) return undefined;
+  try {
+    const parsed = new URL(text);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? text : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// 已入库的旧记录：带了非 http(s) 协议的链接读出来时置空；内置插件的相对路径等不带协议的值保持原样。
+function stripUnsafePluginLink(value: unknown) {
+  if (value === null || value === undefined) return value;
+  const text = String(value).trim();
+  if (/^[a-z][a-z0-9+.-]*:/i.test(text) && !normalizePluginLinkUrl(text)) return null;
+  return value;
+}
+
 function normalizeDateText(value: unknown) {
   const text = String(value || "").trim().slice(0, 32);
   if (!text) return undefined;
@@ -1374,7 +1397,7 @@ function normalizeStoreItem(input: any, options: {
       repository,
       branch: String(input?.branch || "main").trim().slice(0, 128) || "main",
       manifestPath: String(input?.manifestPath || "forwardx-plugin.json").trim().slice(0, 256) || "forwardx-plugin.json",
-      homepage: String(input?.homepage || repository).trim().slice(0, 512) || repository,
+      homepage: normalizePluginLinkUrl(input?.homepage) || repository,
       author: String(input?.author || "NEX").trim().slice(0, 120) || "NEX",
       logo: normalizeOptionalLogo(input?.logo),
       packageRepository,
@@ -1421,8 +1444,8 @@ function normalizeManifest(input: any, fallback?: Partial<ForwardxPluginManifest
     changelog: normalizeOptionalText(merged.changelog, 2000),
     tags: normalizeTags(merged.tags),
     license: normalizeOptionalText(merged.license, 64),
-    homepage: String(merged.homepage || "").trim().slice(0, 512) || undefined,
-    repository: String(merged.repository || "").trim().slice(0, 512) || undefined,
+    homepage: normalizePluginLinkUrl(merged.homepage),
+    repository: normalizePluginLinkUrl(merged.repository),
     minPanelVersion: String(merged.minPanelVersion || "").trim().slice(0, 64) || undefined,
     permissions,
     extensionPoints: uniqueValidExtensionPoints(merged.extensionPoints),
@@ -2548,6 +2571,8 @@ function normalizePluginRow(row: any) {
   const trustRequired = pluginManifestRequiresTrust(manifest);
   const normalized = {
     ...row,
+    homepage: stripUnsafePluginLink(row?.homepage),
+    repository: stripUnsafePluginLink(row?.repository),
     hasUpdate: pluginVersionHasUpdate(row?.version, row?.latestVersion),
     trusted: trustRequired && (row?.trusted === true || Number(row?.trusted || 0) === 1),
     trustRequired,

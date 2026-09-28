@@ -2,8 +2,12 @@ import { z } from "zod";
 import { adminProcedure, publicProcedure, router } from "../_core/trpc";
 import * as pluginRepo from "../repositories/pluginRepository";
 
+// zod 的 .url() 只看能不能被 URL 解析，javascript: 也算合法；仓库地址只收 http/https。
+export const pluginRepositoryUrlSchema = z.string().trim().url().max(512)
+  .refine((value) => !!pluginRepo.normalizePluginLinkUrl(value), "仓库地址只支持 http/https");
+
 const githubInstallSchema = z.object({
-  repository: z.string().trim().url().max(512),
+  repository: pluginRepositoryUrlSchema,
   branch: z.string().trim().max(128).optional(),
   manifestPath: z.string().trim().max(256).optional(),
   fallbackStoreId: z.string().trim().max(128).optional(),
