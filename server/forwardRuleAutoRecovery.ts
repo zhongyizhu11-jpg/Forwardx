@@ -18,6 +18,8 @@ import { reconcileReauthorizedRulesForAllUsers } from "./ruleResourceAuthorizati
  * 隧道的规则就停在那里，只能一条条手动打开。
  */
 export async function healAutoStoppedRules(reason = "auto-heal") {
+  // 管理员不该被系统暂停；旧版本留下的这类暂停先撤掉，下面的账户恢复就会把他的规则拉回来。
+  await db.releaseAutomaticAdminForwardPauses();
   const linkResult = await db.healAutoStoppedForwardRules(reason);
 
   let userRules = 0;

@@ -764,9 +764,52 @@ async function logUserRuleStop(userId: number, reason: string) {
   if (count > 0) appendPanelLog("warn", `[RuleStop] user=${userId} stopped ${count} rule(s) reason=${reason}; they resume automatically when the account's forwarding access is restored`);
 }
 
+/**
+ * 管理员不会被系统自动暂停转发。
+ *
+ * 到期、超流量、流量计费余额不足这些都是「租户用资源要付费」的规则，套到管理员头上
+ * 只会把整个面板的规则一起停掉：管理员余额是 0，一条走计费资源的规则一有流量，
+ * 他名下所有规则就全停了，而且之后每次有流量都会再停一次。
+ */
+async function isAdminUser(userId: number) {
+  const db = await getDb();
+  if (!db) return false;
+  const [row] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+  return String((row as any)?.role || "") === "admin";
+}
+
+/**
+ * 旧版本会把管理员也自动暂停（流量计费余额为 0 时最常见），暂停标记一直留着。
+ * 这里把这类自动暂停撤掉；管理员手动设置的暂停（manual）不动。返回解除了几个。
+ */
+export async function releaseAutomaticAdminForwardPauses() {
+  const db = await getDb();
+  if (!db) return 0;
+  const paused = await db.select({ id: users.id, reason: users.forwardAccessPauseReason }).from(users).where(and(
+    eq(users.role, "admin"),
+    sql`${users.forwardAccessPauseReason} IS NOT NULL`,
+    ne(users.forwardAccessPauseReason, "manual"),
+  ));
+  for (const row of paused as any[]) {
+    await db.update(users).set({
+      canAddRules: true,
+      allowForwardXTunnel: true,
+      allowProxySubscription: true,
+      forwardAccessPauseReason: null,
+      updatedAt: nowDate(),
+    }).where(eq(users.id, Number(row.id)));
+    appendPanelLog("info", `[RuleRecovery] released automatic pause of admin user=${row.id} reason=${row.reason}`);
+  }
+  return paused.length;
+}
+
 export async function setUserForwardAccess(userId: number, enabled: boolean, reason?: ForwardAccessPauseReason) {
   const db = await getDb();
   if (!db) return;
+  if (!enabled && (reason ?? "manual") !== "manual" && await isAdminUser(userId)) {
+    appendPanelLog("warn", `[RuleStop] skipped automatic pause of admin user=${userId} reason=${reason}; admins are never paused automatically`);
+    return;
+  }
   const now = nowDate();
   await db.update(users).set({
     canAddRules: enabled,
@@ -935,9 +978,13 @@ export async function getExpiredUsers() {
 }
 
 /** 禁用某用户的所有转发规则（到期/超额时调用） */
-export async function disableAllUserRules(userId: number) {
+export async function disableAllUserRules(userId: number, options: { manual?: boolean } = {}) {
   const db = await getDb();
   if (!db) return;
+  if (!options.manual && await isAdminUser(userId)) {
+    appendPanelLog("warn", `[RuleStop] skipped automatic stop of admin user=${userId} rules; admins are never paused automatically`);
+    return;
+  }
   await logUserRuleStop(userId, "entitlement-lost (plan expired, traffic used up or access removed)");
   await db.update(forwardRules).set({
     isEnabled: false,

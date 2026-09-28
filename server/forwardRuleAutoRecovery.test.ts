@@ -87,6 +87,26 @@ test("rules stopped by the system resume once their cause clears; manually stopp
       await healAutoStoppedRules("test-renewed");
       assert.equal(bool((await rule(203)).isEnabled), true, "a renewed owner's rules must resume without manual work");
 
+      // 管理员余额为 0、规则走了计费资源：不能被自动暂停。
+      const users = await import(moduleUrl("server/repositories/userRepository.ts"));
+      await insert("users", ["id", "username", "password", "role", "canAddRules", "allowForwardXTunnel", "accountEnabled", "balanceCents"], [1, "admin", "x", "admin", 1, 1, 1, 0]);
+      await insert("forward_rules", columns, [210, 1, "admin-rule", "gost", "tcp", 30, 11010, "203.0.113.10", 80, 1, 1, 0, 0, null]);
+      await users.setUserForwardAccess(1, false, "traffic_billing_balance");
+      await users.disableAllUserRules(1);
+      assert.equal(bool((await rule(210)).isEnabled), true, "an admin's rules must never be stopped by billing or entitlement checks");
+      const [adminAfterBilling] = await runtime.queryRaw('SELECT "canAddRules", "forwardAccessPauseReason" FROM "users" WHERE "id" = 1');
+      assert.equal(bool(adminAfterBilling.canAddRules), true);
+      assert.equal(adminAfterBilling.forwardAccessPauseReason, null);
+
+      // 旧版本留下的管理员自动暂停：扫描撤掉暂停并把规则拉回来。
+      await runtime.executeRaw('UPDATE "users" SET "canAddRules" = 0, "forwardAccessPauseReason" = ? WHERE "id" = 1', ["traffic_billing_balance"]);
+      await runtime.executeRaw('UPDATE "forward_rules" SET "isEnabled" = 0, "disabledByUser" = 1 WHERE "id" = 210');
+      await healAutoStoppedRules("test-admin");
+      assert.equal(bool((await rule(210)).isEnabled), true, "an admin paused by an older version must get the rules back automatically");
+      const [adminAfterHeal] = await runtime.queryRaw('SELECT "canAddRules", "forwardAccessPauseReason" FROM "users" WHERE "id" = 1');
+      assert.equal(bool(adminAfterHeal.canAddRules), true);
+      assert.equal(adminAfterHeal.forwardAccessPauseReason, null);
+
       // 什么都不需要恢复时，扫描是空操作。
       const idle = await healAutoStoppedRules("test-idle");
       assert.deepEqual(idle, { tunnels: 0, tunnelRules: 0, groupRules: 0, userRules: 0, authorizationRules: 0 });
