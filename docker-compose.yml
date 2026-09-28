@@ -22,7 +22,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_DATABASE: ${POSTGRES_DATABASE:-}
       POSTGRES_SSL: ${POSTGRES_SSL:-false}
-      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-random-string}
+      # 留空时面板自动生成随机密钥并持久化到 /data/jwt.secret；如需固定，请在 .env 里填 `openssl rand -hex 32` 的结果。
+      JWT_SECRET: ${JWT_SECRET:-}
     volumes:
       - forwardx-data:/data
     logging:

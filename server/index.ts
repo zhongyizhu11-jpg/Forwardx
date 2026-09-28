@@ -21,8 +21,10 @@ import { loadPanelSslRuntimeConfig } from "./panelSsl";
 import { startBackgroundServices } from "./backgroundServices";
 import { initializePanelClock } from "./panelClock";
 import { ENV } from "./env";
+import { TRPC_MAX_BATCH_SIZE } from "../shared/const";
 import { resolveTrustProxySetting } from "./trustProxy";
 import { authCapRouter } from "./authCaptcha";
+import { isAllowedMobileCorsOrigin } from "./mobileCors";
 
 installPanelLogger();
 
@@ -93,16 +95,10 @@ function installCompression(app: express.Express) {
 }
 
 function installMobileCors(app: express.Express) {
-  const allowedOrigins = new Set([
-    "capacitor://localhost",
-    "ionic://localhost",
-    "http://localhost",
-    "https://localhost",
-  ]);
-
   app.use((req, res, next) => {
     const origin = String(req.headers.origin || "");
-    const allowed = allowedOrigins.has(origin) || /^https?:\/\/localhost:\d+$/i.test(origin);
+    // 只放行 App 的固定源；带端口的 localhost 仅开发环境放行，见 mobileCors.ts。
+    const allowed = isAllowedMobileCorsOrigin(origin);
     if (allowed) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -183,6 +179,8 @@ async function startServer() {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      // batch 内的调用并发执行，不设上限一个 HTTP 请求就能塞进成千上万次登录/验证码尝试。
+      maxBatchSize: TRPC_MAX_BATCH_SIZE,
     }),
   );
   serveStatic(app);

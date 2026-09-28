@@ -82,6 +82,21 @@ test("SQLite schema records a redacted monotonic configuration audit", () => {
         await audit.getMimicLifecycleRevisionSignature([{ resourceType: "tunnel", resourceId: 91 }]),
         "tunnel:91:" + enabledRevision,
       );
+
+      // Nginx TLS 私钥字段 certKeyPem 的名字里没有 private/secret，也必须脱敏，改动后仍要能进 diff。
+      const pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----";
+      await audit.recordConfigAuditEvent({
+        resourceType: "tunnel",
+        resourceId: 92,
+        hostId: 1,
+        action: "update",
+        before: { id: 92, name: "nginx", certPem: "public-cert", certKeyPem: null },
+        after: { id: 92, name: "nginx", certPem: "public-cert", certKeyPem: pem },
+      });
+      const [certRow] = await runtime.queryRaw('SELECT "afterJson", "diffJson" FROM "config_audit_events" WHERE "resourceId" = 92');
+      assert.doesNotMatch(certRow.afterJson + certRow.diffJson, /MIIEvQIBADANBgkqhkiG9w0BAQEFAASC|BEGIN PRIVATE KEY/);
+      assert.match(certRow.afterJson, /"certKeyPem":"\[REDACTED\]"/);
+      assert.match(certRow.diffJson, /"certKeyPem"/);
     } finally {
       await runtime.closeDatabase();
     }

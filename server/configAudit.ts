@@ -17,7 +17,9 @@ type AuditResourceType = "host" | "tunnel" | "forward_rule" | "runtime";
 type AuditAction = "create" | "update" | "delete" | "dispatch";
 
 const auditContext = new AsyncLocalStorage<ConfigAuditContext>();
-const SECRET_KEY = /(password|passwd|secret|token|private.?key|certificate|authorization|cookie|credential)/i;
+// certKeyPem（Nginx TLS 私钥）这类字段名里没有 private/secret，要单独列出 cert/pem/privkey 组合，
+// 否则私钥会原样写进审计的 before/after/diff。
+const SECRET_KEY = /(password|passwd|secret|token|private.?key|privkey|cert.?key|key.?pem|pem.?key|certificate|authorization|cookie|credential)/i;
 const VOLATILE_KEYS = new Set([
   "createdAt", "updatedAt", "lastHeartbeat", "isOnline", "isRunning", "lastLatencyMs",
   "lastTestAt", "lastTestStatus", "lastTestMessage", "lastError", "trafficUsed",

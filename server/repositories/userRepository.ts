@@ -701,9 +701,17 @@ export async function getUsersPage(input: PageRequest) {
 }
 
 export async function updateUserRole(userId: number, role: "user" | "admin") {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(users).set({ role, updatedAt: nowDate() }).where(eq(users.id, userId));
+  return withDatabaseTransaction(async () => {
+    const db = await getDb();
+    if (!db) return;
+    const current = await getUserById(userId);
+    // 角色变了就是权限边界变了：旧会话是按旧身份签发的，一律作废让对方重新登录。
+    // 角色没变（重复提交同一个值）不踢人。锁顺序与禁用账号一致：先会话表、再用户行。
+    if (current && current.role !== role) {
+      await revokeUserAuthSessions(userId, { reason: "role_changed" });
+    }
+    await db.update(users).set({ role, updatedAt: nowDate() }).where(eq(users.id, userId));
+  });
 }
 
 /**
