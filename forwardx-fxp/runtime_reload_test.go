@@ -190,7 +190,9 @@ func TestEntryGroupReloadRollsBackWhenANewPortIsTaken(t *testing.T) {
 	done := make(chan struct{})
 	defer close(done)
 	reloads := make(chan fxpReloadRequest)
-	go func() { _ = runManaged(done, config{Role: "entry-group", TunnelID: 121, Entries: []config{entry(1, portA)}}, reloads) }()
+	go func() {
+		_ = runManaged(done, config{Role: "entry-group", TunnelID: 121, Entries: []config{entry(1, portA)}}, reloads)
+	}()
 	waitForTCP(t, portA)
 
 	answer := make(chan error, 1)

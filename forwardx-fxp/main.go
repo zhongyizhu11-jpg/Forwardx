@@ -1958,6 +1958,8 @@ func waitBidirectionalWithLinger(errCh <-chan error, closeAll func(), halfCloseL
 	}
 }
 
+var errSecurePeerVanished = errors.New("fxp peer closed without end-of-stream")
+
 func copyPlainToSecure(dst frameConn, src net.Conn, limiter *limiter, counter *atomic.Uint64) error {
 	return copyPlainToSecureWithPolicy(dst, src, limiter, counter, protocolPolicy{}, nil, nil)
 }
@@ -2018,7 +2020,10 @@ func copySecureToPlain(dst net.Conn, src frameConn, limiter *limiter, counter *a
 		frame, err := src.readFrame()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return nil
+				// 正常结束是一个空帧（下面那个分支）。没等到空帧就读到 EOF，是上一跳
+				// 直接断了（进程崩溃、连接被掐）：整条会话一起收掉。以前当成正常结束，
+				// 另一个方向就一直挂在目标连接上，直到目标自己关。
+				return errSecurePeerVanished
 			}
 			return err
 		}

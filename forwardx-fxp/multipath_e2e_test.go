@@ -281,6 +281,10 @@ func TestMultipathEntryStillWorksWithASingleReachableLeg(t *testing.T) {
 }
 
 func TestMultipathExitRegistryReleasesFinishedSessions(t *testing.T) {
+	// 注册表是整个进程共享的：前面用例里故意卡住的腿，要等停滞超时才让它们的
+	// 会话退出。只看本用例新建的会话，别把别人的余波算进来（慢的 CI 机器上
+	// 这正好卡在 5 秒边上）。
+	before := exitMultipathSessionIDs()
 	topology := startMultipathTopology(t, 2)
 	payload := bytes.Repeat([]byte("registry;"), 1024)
 	if got := echoThroughEntry(t, topology.entryPort, payload); !bytes.Equal(got, payload) {
@@ -288,12 +292,31 @@ func TestMultipathExitRegistryReleasesFinishedSessions(t *testing.T) {
 	}
 	// The leading leg removes its session once the stream finishes, so nothing
 	// should accumulate in the registry across sessions.
+	leftover := func() []string {
+		var ids []string
+		for id := range exitMultipathSessionIDs() {
+			if !before[id] {
+				ids = append(ids, id)
+			}
+		}
+		return ids
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if exitMultipathSessions.pendingCount() == 0 {
+		if len(leftover()) == 0 {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("exit registry still holds %d session(s)", exitMultipathSessions.pendingCount())
+	t.Fatalf("exit registry still holds this test's session(s): %v", leftover())
+}
+
+func exitMultipathSessionIDs() map[string]bool {
+	exitMultipathSessions.mu.Lock()
+	defer exitMultipathSessions.mu.Unlock()
+	ids := make(map[string]bool, len(exitMultipathSessions.sessions))
+	for id := range exitMultipathSessions.sessions {
+		ids[id] = true
+	}
+	return ids
 }
