@@ -10207,6 +10207,11 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 		}
 		return true
 	}
+	// 配置变了、进程还活着：先试着原地热更新，连接一条不断；不行再走下面的重建。
+	if existingActive && existing.signature != signature &&
+		reloadFXPRuntimeLocked(cfg, existing, id, spec, signature, configPath, expectedCredentialDigest, persistenceEnabled) {
+		return true
+	}
 	if existingActive && existing.signature == signature {
 		logf("fxp dependency or listener drift detected; rebuilding role=%s version=%s tunnel=%d rule=%d", spec.Role, spec.TransportVersion, spec.TunnelID, spec.RuleID)
 	}
@@ -10273,15 +10278,7 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 		actionMessage.set("fxp create runtime dir failed: %v", err)
 		return false
 	}
-	if spec.Role == "entry" {
-		spec.PanelURL = currentPanelURL(cfg)
-		spec.Token = cfg.Token
-	} else if isFXPEntryGroup(spec) {
-		for index := range spec.Entries {
-			spec.Entries[index].PanelURL = currentPanelURL(cfg)
-			spec.Entries[index].Token = cfg.Token
-		}
-	}
+	spec = fxpSpecWithPanelCredentials(cfg, spec)
 	logf(
 		"proxy-debug fxp config role=%s tunnel=%d rule=%d listen=%d udpListen=%d protocol=%s exitStrategy=%s proxyReceive=%v proxySend=%v proxyExitReceive=%v proxyExitSend=%v tcpFastOpen=%v exit=%s:%d udpExit=%d relayNext=%s:%d udpRelayNext=%d target=%s:%d udpTargets=%d",
 		spec.Role,
@@ -10500,6 +10497,7 @@ func stopFXPRuntime(spec fxpSpec) {
 	}
 	if s.configPath != "" {
 		_ = os.Remove(s.configPath)
+		_ = os.Remove(fxpReloadAckPath(s.configPath))
 	}
 }
 
