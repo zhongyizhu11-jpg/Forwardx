@@ -1017,7 +1017,7 @@ func runEntryGroup(done <-chan struct{}, cfg config) error {
 
 func acceptEntryTCP(ln net.Listener, cfg config, gate *connGate, selector *exitEndpointSelector, inLimiter, outLimiter *limiter, sessionWG *sync.WaitGroup) error {
 	for {
-		client, err := ln.Accept()
+		client, err := acceptWithRetry(ln, "entry", cfg)
 		if err != nil {
 			return err
 		}
@@ -1033,7 +1033,10 @@ func acceptEntryTCP(ln net.Listener, cfg config, gate *connGate, selector *exitE
 		go func() {
 			defer sessionWG.Done()
 			defer release()
-			if err := handleEntryTCP(client, cfg, selector, inLimiter, outLimiter); err != nil && !isClosedErr(err) {
+			err := catchPanic("entry tcp session", func() error {
+				return handleEntryTCP(client, cfg, selector, inLimiter, outLimiter)
+			})
+			if err != nil && !isClosedErr(err) {
 				log.Printf("entry tcp session error: %v", err)
 			}
 		}()
@@ -1845,12 +1848,9 @@ func runExit(done <-chan struct{}, cfg config) error {
 
 func acceptExitTCP(ln net.Listener, cfg config, gates *listenerConnGates, sessionWG *sync.WaitGroup) error {
 	for {
-		conn, err := ln.Accept()
+		conn, err := acceptWithRetry(ln, "exit", cfg)
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			return err
+			return nil
 		}
 		enableTCPKeepAlive(conn)
 		startupComplete, release, ok, reason := gates.acquire(conn.RemoteAddr())
@@ -1863,7 +1863,10 @@ func acceptExitTCP(ln net.Listener, cfg config, gates *listenerConnGates, sessio
 		go func(conn net.Conn) {
 			defer sessionWG.Done()
 			defer release()
-			if err := handleExitSessionWithStartup(conn, cfg, startupComplete); err != nil && !isClosedErr(err) {
+			err := catchPanic("exit session", func() error {
+				return handleExitSessionWithStartup(conn, cfg, startupComplete)
+			})
+			if err != nil && !isClosedErr(err) {
 				log.Printf("exit session error: %v", err)
 			}
 		}(conn)
@@ -2102,12 +2105,9 @@ func runRelay(done <-chan struct{}, cfg config) error {
 
 func acceptRelayTCP(ln net.Listener, cfg config, selector *exitEndpointSelector, gates *listenerConnGates, sessionWG *sync.WaitGroup) error {
 	for {
-		upConn, err := ln.Accept()
+		upConn, err := acceptWithRetry(ln, "relay", cfg)
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			return err
+			return nil
 		}
 		enableTCPKeepAlive(upConn)
 		startupComplete, release, ok, reason := gates.acquire(upConn.RemoteAddr())
@@ -2120,7 +2120,10 @@ func acceptRelayTCP(ln net.Listener, cfg config, selector *exitEndpointSelector,
 		go func(upConn net.Conn) {
 			defer sessionWG.Done()
 			defer release()
-			if err := handleRelaySessionWithStartup(upConn, cfg, selector, startupComplete); err != nil && !isClosedErr(err) {
+			err := catchPanic("relay session", func() error {
+				return handleRelaySessionWithStartup(upConn, cfg, selector, startupComplete)
+			})
+			if err != nil && !isClosedErr(err) {
 				log.Printf("relay session error: %v", err)
 			}
 		}(upConn)
@@ -2193,8 +2196,8 @@ func handleRelaySessionWithStartup(upConn net.Conn, cfg config, selector *exitEn
 
 func relayBidir(up *secureConn, down *secureConn) error {
 	errCh := make(chan error, 2)
-	go func() { errCh <- relayCopy(up, down) }()
-	go func() { errCh <- relayCopy(down, up) }()
+	go func() { errCh <- catchPanic("relay upstream copy", func() error { return relayCopy(up, down) }) }()
+	go func() { errCh <- catchPanic("relay downstream copy", func() error { return relayCopy(down, up) }) }()
 	return waitBidirectional(errCh, func() {
 		_ = up.conn.Close()
 		_ = down.conn.Close()
@@ -2228,9 +2231,13 @@ func proxyPlainSecureWithPolicy(plain net.Conn, sec frameConn, inLimiter, outLim
 		outCounter = &counter.out
 	}
 	go func() {
-		errCh <- copyPlainToSecureWithPolicy(sec, plain, inLimiter, inCounter, policy, onBlock, initialSample)
+		errCh <- catchPanic("plain to secure copy", func() error {
+			return copyPlainToSecureWithPolicy(sec, plain, inLimiter, inCounter, policy, onBlock, initialSample)
+		})
 	}()
-	go func() { errCh <- copySecureToPlain(plain, sec, outLimiter, outCounter) }()
+	go func() {
+		errCh <- catchPanic("secure to plain copy", func() error { return copySecureToPlain(plain, sec, outLimiter, outCounter) })
+	}()
 	return waitBidirectional(errCh, func() {
 		_ = plain.Close()
 		sec.closeTransport()
