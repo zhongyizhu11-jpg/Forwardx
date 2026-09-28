@@ -1206,7 +1206,11 @@ export const paymentRouter = router({
         let amountCentsForPlan = Number(pricing.option.priceCents || 0);
         if (input.discountCode) {
           if ((await db.getSetting("discountEnabled")) === "false") throw new Error("折扣码功能已关闭");
-          const discount = await db.previewDiscount(input.discountCode, amountCentsForPlan, input.planId);
+          // 和 billing.previewDiscount 一样按人和 IP 限流，下单不能成为无限猜码的口子。
+          const discount = await db.previewDiscount(input.discountCode, amountCentsForPlan, input.planId, {
+            userId: ctx.user.id,
+            attemptScope: String((ctx.req as any)?.ip || (ctx.req as any)?.socket?.remoteAddress || ""),
+          });
           discountCodeId = discount.discountCodeId;
           discountAmountCents = discount.discountAmountCents;
           amountCentsForPlan = discount.finalAmountCents;

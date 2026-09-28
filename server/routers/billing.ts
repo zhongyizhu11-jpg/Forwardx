@@ -115,6 +115,8 @@ export const billingRouter = router({
       durationDays: z.number().int().positive().max(3650).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      // 和在线支付下单同一个开关：商店关了，余额也不能买 / 续。
+      if ((await db.getSetting("storeEnabled")) !== "true") throw new Error("商店功能未开启");
       const plan = await db.getSubscriptionPlanById(input.planId);
       if (!plan || !plan.isActive || !plan.isStoreVisible) throw new Error("套餐不可购买");
       // 折扣按**选中那一档**的价格预览，否则年付的单会按月付价算折扣。
@@ -122,7 +124,12 @@ export const billingRouter = router({
       let discountCodeId: number | null = null;
       if (input.discountCode) {
         if ((await db.getSetting("discountEnabled")) === "false") throw new Error("折扣码功能已关闭");
-        const preview = await db.previewDiscount(input.discountCode, Number(option.priceCents || 0), input.planId);
+        // 带上人和 IP 一起限流：否则余额 0 的人拿「折扣码不存在 / 余额不足」两种报错当
+        // 判断码对不对的依据，可以无限次地猜。
+        const preview = await db.previewDiscount(input.discountCode, Number(option.priceCents || 0), input.planId, {
+          userId: ctx.user.id,
+          attemptScope: getRequestIp(ctx),
+        });
         discountCodeId = preview.discountCodeId;
       }
       const result = await db.purchasePlanWithBalance(
