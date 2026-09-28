@@ -9,7 +9,7 @@ import { registerAgentEventClient, unregisterAgentEventClient } from "./agentEve
 import { agentEncryptionMiddleware, getAgentTunneledPath } from "./agentEncryptionMiddleware";
 import { AGENT_PANEL_MIGRATION_VERSION, hasAgentVersionChanged, isAgentUpgradeTargetSatisfied, isAgentVersionAtLeast } from "./agentRouteUtils";
 import { resolvePanelUrl } from "./agentPanelUrl";
-import { decryptPayload, decryptPayloadWithCandidates, encryptPayload, isEncryptedEnvelope, rememberEncryptedEnvelope } from "./agentCrypto";
+import { decryptPayload, encryptPayload, isEncryptedEnvelope } from "./agentCrypto";
 import {
   AGENT_AUTH_RESULT_ACCEPTED,
   AGENT_AUTH_RESULT_HEADER,
@@ -76,7 +76,7 @@ function agentErrorMessage(error: unknown) {
 
 function isAgentStreamAuthFailure(error: unknown, message = agentErrorMessage(error)) {
   if (error instanceof SyntaxError) return true;
-  return /invalid agent auth proof|mac verification failed|request timestamp out of window|encrypted request replay detected|no token candidates available|invalid iv length/i.test(message);
+  return /invalid agent auth proof|agent auth proof required|mac verification failed|request timestamp out of window|encrypted request replay detected|no token candidates available|invalid iv length/i.test(message);
 }
 
 function shouldLogAgentStreamAuthFailure(message: string) {
@@ -276,15 +276,8 @@ agentRouter.get("/api/stream", async (req: Request, res: Response) => {
     } else if (hasSignedAgentAuthAttempt(req)) {
       throw new Error("Invalid Agent auth proof");
     } else {
-      let resolved;
-      try {
-        resolved = decryptPayloadWithCandidates(envelope, await db.getAgentAuthTokenCandidates(), { nowMs: protocolNowMs });
-      } catch {
-        resolved = decryptPayloadWithCandidates(envelope, await db.getAgentAuthTokenCandidates({ force: true }), { nowMs: protocolNowMs });
-      }
-      token = resolved.token;
-      payload = resolved.payload;
-      rememberEncryptedEnvelope(envelope);
+      // 和加密中间件一样：不带签名认证头的不再挨个 token 去试（未认证的 CPU 消耗）。
+      throw new Error("Agent auth proof required");
     }
     res.setHeader(AGENT_AUTH_RESULT_HEADER, AGENT_AUTH_RESULT_ACCEPTED);
     await openAgentEventStream({

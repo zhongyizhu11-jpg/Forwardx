@@ -106,5 +106,17 @@ export async function resolveAgentTokenFromAuthorization(
   };
   const token = verify(await getCandidateAgentTokens());
   if (token) return token;
+  // 缓存里没有：可能是刚建的 token，重载一次数据库再验。未认证请求能反复触发这里，
+  // 所以全局限频，别让它每次都去查库。
+  if (!shouldForceReloadAgentTokenCandidates()) return null;
   return verify(await db.getAgentAuthTokenCandidates({ force: true }));
+}
+
+const AGENT_TOKEN_FORCED_RELOAD_INTERVAL_MS = 2_000;
+let lastForcedAgentTokenReloadAt = 0;
+
+function shouldForceReloadAgentTokenCandidates(now = Date.now()) {
+  if (now - lastForcedAgentTokenReloadAt < AGENT_TOKEN_FORCED_RELOAD_INTERVAL_MS) return false;
+  lastForcedAgentTokenReloadAt = now;
+  return true;
 }
