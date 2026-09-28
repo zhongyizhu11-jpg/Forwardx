@@ -39,6 +39,37 @@ export async function requireHostAccess(ctx: { user: { id: number; role: string 
   return host;
 }
 
+/**
+ * requireHostAccess 的批量版：总共约 3 次查询（取主机、取直接授权、必要时取套餐），
+ * 而不是每台主机 1~3 次。
+ *
+ * 行为与逐个调用 requireHostAccess 完全一致：按入参顺序检查，遇到的第一台不存在 /
+ * 无权访问的主机就抛同样的错误（同样的文案）；全部通过时按入参顺序返回主机。
+ */
+export async function requireHostsAccess(ctx: { user: { id: number; role: string } }, hostIds: readonly number[]) {
+  if (hostIds.length === 0) return [];
+  const rows = await db.getHostsByIds(hostIds);
+  const hostById = new Map<number, (typeof rows)[number]>();
+  for (const row of rows as any[]) hostById.set(Number(row.id), row);
+  let permitted = new Set<number>();
+  if (ctx.user.role !== "admin") {
+    const needPermission = (rows as any[])
+      .filter((host) => host.userId !== ctx.user.id)
+      .map((host) => Number(host.id));
+    if (needPermission.length > 0) {
+      permitted = await db.getUserPermittedHostIdsAmong(ctx.user.id, needPermission);
+    }
+  }
+  return hostIds.map((hostId) => {
+    const host = hostById.get(hostId);
+    if (!host) throw new Error("主机不存在");
+    if (ctx.user.role !== "admin" && host.userId !== ctx.user.id && !permitted.has(Number(host.id))) {
+      throw new Error("无权访问该主机");
+    }
+    return host;
+  });
+}
+
 export async function requireRuleAccess(ctx: { user: { id: number; role: string } }, ruleId: number) {
   const rule = await db.getForwardRuleById(ruleId);
   if (!rule) throw new Error("规则不存在");

@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   forwardRules,
   forwardGroups,
@@ -103,6 +103,30 @@ export async function checkUserHostPermission(userId: number, hostId: number): P
   if (rows.length > 0) return true;
   const planHostIds = await _getActiveSubscriptionHostIds(userId);
   return planHostIds.includes(hostId);
+}
+
+/**
+ * checkUserHostPermission 的批量版：这批主机里哪些该用户有使用权限（直接授权或有效套餐附带）。
+ *
+ * 口径与单个版本一致：先看 user_host_permissions，没有的再看有效套餐。单个版本在
+ * 列表接口里被逐台调用，一次 500 台就是上千次查询；这里是一次 IN 查询，外加至多一次套餐查询。
+ */
+export async function getUserPermittedHostIdsAmong(userId: number, hostIds: readonly number[]): Promise<Set<number>> {
+  const permitted = new Set<number>();
+  const wanted = Array.from(new Set(hostIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return permitted;
+  const db = await getDb();
+  if (!db) return permitted;
+  const rows = await db.select({ hostId: userHostPermissions.hostId }).from(userHostPermissions).where(
+    and(eq(userHostPermissions.userId, userId), inArray(userHostPermissions.hostId, wanted))
+  );
+  for (const row of rows as any[]) permitted.add(Number(row.hostId));
+  if (wanted.every((id) => permitted.has(id))) return permitted;
+  const planHostIds = await _getActiveSubscriptionHostIds(userId);
+  for (const id of planHostIds) {
+    if (wanted.includes(id)) permitted.add(id);
+  }
+  return permitted;
 }
 
 /** 删除主机时清理相关权限 */

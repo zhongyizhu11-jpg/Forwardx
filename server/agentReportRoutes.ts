@@ -42,7 +42,7 @@ import {
   combineTunnelRuleLatencySample,
   validateTunnelRuleLatencyReport,
 } from "./ruleLatency";
-import { clearRuleLatencyQueryCaches } from "./ruleLatencyQueryCache";
+import { clearRuleLatencyQueryCache } from "./ruleLatencyQueryCache";
 import { agentTcpingReportGate } from "./agentTcpingReportGate";
 import { selectAgentTrafficReportInterval } from "./agentHeartbeatGate";
 import { pruneMapEntries, setBoundedMapValue } from "./boundedCache";
@@ -326,8 +326,17 @@ function compactTrafficStats(value: unknown): AgentTrafficStat[] {
   return stats;
 }
 
-async function tunnelEntryHostIds(tunnel: any) {
-  return (await tunnelEntryHostScope(tunnel)).active;
+/**
+ * 一次上报内按 entryGroupId 复用入口组的查询结果。
+ *
+ * 一次流量 / TCPing 上报里往往有很多条隧道共用同一个入口组，原来每条隧道各查一遍
+ * getForwardGroupById（连成员一起）。存的是 Promise，并发的几条隧道也只会查一次。
+ * 只在单次请求内有效，不跨请求缓存，所以不会读到别的请求之前的旧数据。
+ */
+type EntryGroupMemo = Map<number, Promise<any>>;
+
+async function tunnelEntryHostIds(tunnel: any, entryGroupMemo?: EntryGroupMemo) {
+  return (await tunnelEntryHostScope(tunnel, entryGroupMemo)).active;
 }
 
 /**
@@ -335,7 +344,7 @@ async function tunnelEntryHostIds(tunnel: any) {
  * all：判断入口可不可信时要看的机器，入口组里停用的机器也算上 —— 停用的成员
  * 手里还有隧道密钥，它要是租户的机器，照样能往出口送流量。
  */
-async function tunnelEntryHostScope(tunnel: any) {
+async function tunnelEntryHostScope(tunnel: any, entryGroupMemo?: EntryGroupMemo) {
   const active = new Set<number>();
   const all = new Set<number>();
   const primary = Number(tunnel?.entryHostId || 0);
@@ -345,7 +354,12 @@ async function tunnelEntryHostScope(tunnel: any) {
   }
   const entryGroupId = Number(tunnel?.entryGroupId || 0);
   if (entryGroupId > 0) {
-    const group = await db.getForwardGroupById(entryGroupId) as any;
+    let groupPromise = entryGroupMemo?.get(entryGroupId);
+    if (!groupPromise) {
+      groupPromise = db.getForwardGroupById(entryGroupId);
+      entryGroupMemo?.set(entryGroupId, groupPromise);
+    }
+    const group = await groupPromise as any;
     const groupActive = !!group?.isEnabled && String(group?.groupMode || "") === "entry";
     for (const member of group?.members || []) {
       const hostId = member?.memberType === "host" ? Number(member.hostId || 0) : 0;
@@ -837,8 +851,9 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     }
     const tunnelContexts = Array.from(tunnelContextsById.values());
     const tunnelIds = Array.from(tunnelContextsById.keys());
+    const entryGroupMemo: EntryGroupMemo = new Map();
     const [entryHostScopePairs, tunnelExitNodes] = await Promise.all([
-      Promise.all(tunnelContexts.map(async (tunnel) => [Number(tunnel.id), await tunnelEntryHostScope(tunnel)] as const)),
+      Promise.all(tunnelContexts.map(async (tunnel) => [Number(tunnel.id), await tunnelEntryHostScope(tunnel, entryGroupMemo)] as const)),
       tunnelIds.length > 0
         ? db.getTunnelExitNodesByTunnelIds(tunnelIds)
         : Promise.resolve([]),
@@ -1067,9 +1082,17 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
 
     // 一次上报里同一个人的多条计费规则只处理一次余额不足。
     const shortfallUserIds = new Set<number>();
+    // 同一次上报里同一个人只读一次用户行：一台机器上几十条计费规则往往属于同一个人，
+    // 原来每条都 getUserById 一次。这些用户的行已在本事务开头锁住，其间只有下面的
+    // 计费会改余额 —— 扣费后把返回的余额写回这份缓存，后面几条读到的与重新查询一致。
+    const billingUserById = new Map<number, Awaited<ReturnType<typeof db.getUserById>>>();
+    const getBillingUser = async (userId: number) => {
+      if (!billingUserById.has(userId)) billingUserById.set(userId, await db.getUserById(userId));
+      return billingUserById.get(userId);
+    };
     for (const { rule, ruleBytes, billingResource } of billingEntries) {
       strictTrafficAccounting = true;
-      const user = await db.getUserById(Number(rule.userId));
+      const user = await getBillingUser(Number(rule.userId));
       if (String((user as any)?.role || "") === "admin") {
         // 管理员用自己的资源不计费，也不会因为余额为 0 被停转发；流量照常记进配额统计。
         const context = contextsByRuleId.get(Number(rule.id)) as any;
@@ -1079,13 +1102,20 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       }
       // 已经跑出来的流量先照常计费（余额可以扣成负数），再看要不要停。以前余额为 0 时
       // 这段流量直接丢掉：既不扣费也不计配额，规则被停后再手动打开就能白跑一段。
+      // 计费开关、计费配置都是本事务里刚读过的，用户行也已在开头 lockTrafficBillingUserRows
+      // 锁过（billingEntries 只来自 isAccountingHostFor 通过的规则，其主人都在 accountingUserIds 里）。
       const billed = await db.billTrafficUsage({
         userId: Number(rule.userId),
         ruleId: Number(rule.id),
         bytes: ruleBytes,
         resourceType: billingResource.resourceType,
         resourceId: billingResource.resourceId,
+      }, {
+        config: billingResource.config,
+        billingEnabled: trafficBillingEnabled,
+        alreadyLocked: accountingUserIds.includes(Number(rule.userId)),
       });
+      if (billed && user) billingUserById.set(Number(rule.userId), { ...user, balanceCents: Number(billed.balanceAfterCents) } as any);
       const balanceAfterCents = billed ? Number(billed.balanceAfterCents) : Number((user as any)?.balanceCents || 0);
       if (user && balanceAfterCents <= 0 && !shortfallUserIds.has(Number(rule.userId))) {
         shortfallUserIds.add(Number(rule.userId));
@@ -1242,6 +1272,7 @@ agentRouter.post("/api/agent/tcping", async (req: Request, res: Response) => {
       rows.push(report);
       tunnelResultsById.set(tunnelId, rows);
     }
+    const entryGroupMemo: EntryGroupMemo = new Map();
     await mapWithConcurrency(Array.from(tunnelResultsById.entries()), 12, async ([tunnelId, reports]) => withKeyedTaskLock(`tunnel-latency:${tunnelId}`, async () => {
       const [tunnel, hops, exitNodes] = await Promise.all([
         db.getTunnelById(tunnelId),
@@ -1249,7 +1280,7 @@ agentRouter.post("/api/agent/tcping", async (req: Request, res: Response) => {
         db.getTunnelExitNodes(tunnelId),
       ]) as [any, any[], any[]];
       if (!tunnel) return;
-      const entryHostIds = await tunnelEntryHostIds(tunnel);
+      const entryHostIds = await tunnelEntryHostIds(tunnel, entryGroupMemo);
       const topologyKey = tunnelProbeTopologyKey(tunnel, hops, exitNodes);
       const orderedEntryHostIds = Array.from(entryHostIds).sort((left, right) => left - right);
       const multiEntry = orderedEntryHostIds.length > 1;
@@ -1711,7 +1742,7 @@ agentRouter.post("/api/agent/tcping", async (req: Request, res: Response) => {
 
     if (stats.length > 0) {
       await db.insertTcpingStats(stats);
-      clearRuleLatencyQueryCaches();
+      clearRuleLatencyQueryCache();
       db.scheduleForwardGroupFailover(Array.from(new Set(stats
         .filter((stat) => ruleGatePlan.transitionRuleIds.has(Number(stat.ruleId)))
         .map((stat) => Number(reportedRuleById.get(stat.ruleId)?.forwardGroupId || 0))

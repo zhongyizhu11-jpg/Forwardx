@@ -809,24 +809,42 @@ async function insertTrafficBillingCharge(input: {
   });
 }
 
+/**
+ * precomputed：调用方在**同一个事务**里已经拿到的东西，用来跳过重复的查询和加锁。
+ * 流量上报那条路在事务开头已经读过计费开关、按规则批量取过计费配置，并按顺序锁住了
+ * 这些用户的行；逐条计费时再各查一遍、再锁一遍纯属重复。
+ *
+ * - config：该资源的已启用计费配置（与 findTrafficBillingConfig 读的是同一行）。
+ * - billingEnabled：同一事务里 getTrafficBillingEnabledForWrite 的结果。
+ * - alreadyLocked：调用方已在同一事务里对 input.userId 调过 lockTrafficBillingUserRows。
+ *
+ * 不传时行为与原来完全一样；其他调用方不用改。
+ */
 export async function billTrafficUsage(input: {
   userId: number;
   ruleId: number;
   bytes: number;
   resourceType: TrafficBillingResourceType;
   resourceId: number;
-}) {
+}, precomputed: {
+  config?: any;
+  billingEnabled?: boolean;
+  alreadyLocked?: boolean;
+} = {}) {
   return withDatabaseTransaction(async () => {
   if (input.bytes <= 0) return null;
-  if (!(await getTrafficBillingEnabledForWrite())) return null;
-  const config = await findTrafficBillingConfig(input.resourceType, input.resourceId);
+  const billingEnabled = precomputed.billingEnabled ?? await getTrafficBillingEnabledForWrite();
+  if (!billingEnabled) return null;
+  const config = precomputed.config !== undefined
+    ? precomputed.config
+    : await findTrafficBillingConfig(input.resourceType, input.resourceId);
   const pricePerGbMilliCents = configPriceMilliCents(config);
   if (!config || pricePerGbMilliCents <= 0) return null;
   const db = await getDb();
   if (!db) return null;
   // Lock the owning user before reading usage counters. This keeps the
   // read/compute/write sequence atomic across multiple panel instances.
-  await lockTrafficBillingUserRows(input.userId);
+  if (!precomputed.alreadyLocked) await lockTrafficBillingUserRows(input.userId);
   const [usageRows, ruleUsageRows] = await Promise.all([
     db.select().from(trafficBillingUsage).where(and(
       eq(trafficBillingUsage.userId, input.userId),

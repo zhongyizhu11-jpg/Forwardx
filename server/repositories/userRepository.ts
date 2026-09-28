@@ -649,6 +649,28 @@ export async function getUserDisplayNamesByIds(ids: readonly number[]): Promise<
   return result;
 }
 
+/**
+ * 按 id 取一批用户的角色（id → role）。
+ *
+ * 给公开监控页判断「机器主人是不是管理员」用：原来是每个主人一次 getUserById，
+ * 而那一页不登录、每个观看者每 3 秒轮询一次。只取 role 一列，查不到的 id 不出现在结果里。
+ */
+export async function getUserRolesByIds(ids: readonly number[]): Promise<Map<number, string>> {
+  const result = new Map<number, string>();
+  const wanted = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return result;
+  const db = await getDb();
+  if (!db) return result;
+  const rows = await db
+    .select({ id: users.id, role: users.role })
+    .from(users)
+    .where(inArray(users.id, wanted));
+  for (const row of rows as any[]) {
+    result.set(Number(row.id), String(row.role || ""));
+  }
+  return result;
+}
+
 export async function getUserOptions() {
   const db = await getDb();
   if (!db) return [];

@@ -16,6 +16,7 @@ import {
 import { executeRaw, getDb, getDatabaseKind, nowDate, queryRaw, rawAffectedRows, withDatabaseTransaction } from "../dbRuntime";
 import { boolLiteral, bucketExpression, limitOffset, quoteIdentifier } from "../dbCompat";
 import { clampPositiveInt, epochSeconds, sqlBool } from "./repositoryUtils";
+import { deleteExpiredHistoryRows } from "./historyRetention";
 import { getSetting, setSetting } from "./settingsRepository";
 import { appendPanelLog } from "../_core/panelLogger";
 import { notifyTunnelLatencyRefresh } from "../tunnelLatencyRefresh";
@@ -31,8 +32,7 @@ const TRAFFIC_BUCKET_SECONDS = TRAFFIC_BUCKET_MINUTES * 60;
  */
 export const TRAFFIC_BUCKET_RETENTION_HOURS = 72;
 const LEGACY_TRAFFIC_REPORT_RETENTION_HOURS = 7 * 24;
-const SQLITE_HISTORY_DELETE_BATCH_SIZE = 2_000;
-const SQLITE_LATEST_METRIC_HOST_BATCH_SIZE = 100;
+const LATEST_METRIC_HOST_BATCH_SIZE = 100;
 // v3 repairs bucket gaps left by older best-effort writes. Current traffic
 // writes update raw rows, counters and buckets in one transaction.
 const TRAFFIC_BUCKET_BACKFILL_MARKER = "v3";
@@ -126,81 +126,23 @@ function mappedProbeCounts(row: { isTimeout?: unknown; probeCount?: unknown; pro
   return normalizeAgentProbeCounts({ ...row, isTimeout: rowBool(row.isTimeout) });
 }
 
-async function yieldToEventLoop() {
-  await new Promise<void>((resolve) => setImmediate(resolve));
-}
-
-async function deleteExpiredHistoryRows(
-  tableName: string,
-  timeColumn: string,
-  cutoff: number,
-  options: { whereSql?: string; whereParams?: unknown[] } = {},
-) {
-  const q = quoteIdentifier;
-  const whereSql = String(options.whereSql || "").trim();
-  const prefix = whereSql ? `${whereSql} AND ` : "";
-  const whereParams = options.whereParams || [];
-
-  if (getDatabaseKind() !== "sqlite") {
-    return executeRaw(
-      `DELETE FROM ${q(tableName)} WHERE ${prefix}${q(timeColumn)} < ?`,
-      [...whereParams, cutoff],
-    );
-  }
-
-  let deleted = 0;
-  while (true) {
-    const result = await executeRaw(
-      `DELETE FROM ${q(tableName)}
-        WHERE ${q("id")} IN (
-          SELECT ${q("id")}
-            FROM ${q(tableName)}
-           WHERE ${prefix}${q(timeColumn)} < ?
-           ORDER BY ${q(timeColumn)} ASC, ${q("id")} ASC
-           LIMIT ?
-        )`,
-      [...whereParams, cutoff, SQLITE_HISTORY_DELETE_BATCH_SIZE],
-    );
-    const affected = rawAffectedRows(result);
-    deleted += affected;
-    if (affected < SQLITE_HISTORY_DELETE_BATCH_SIZE) return deleted;
-    // better-sqlite3 is synchronous. Releasing the connection lock between
-    // bounded batches lets heartbeats and panel reads run during cleanup.
-    await yieldToEventLoop();
-  }
-}
-
 async function queryLatestHostMetricRows(
   hostIds: number[],
   columns: readonly string[],
 ) {
   const q = quoteIdentifier;
 
-  if (getDatabaseKind() !== "sqlite") {
-    const placeholders = hostIds.map(() => "?").join(",");
-    const selected = columns.map((column) => `hm.${q(column)}`).join(",\n                  ");
-    return queryRaw<any>(
-      `SELECT ${columns.map((column) => `ranked.${q(column)}`).join(",\n              ")},
-              ranked.rn
-         FROM (
-           SELECT ${selected},
-                  ROW_NUMBER() OVER (
-                    PARTITION BY hm.${q("hostId")}
-                    ORDER BY hm.${q("recordedAt")} DESC, hm.${q("id")} DESC
-                  ) AS rn
-             FROM ${q("host_metrics")} hm
-            WHERE hm.${q("hostId")} IN (${placeholders})
-         ) ranked
-        WHERE ranked.rn <= 2
-        ORDER BY ranked.${q("hostId")} ASC, ranked.rn ASC`,
-      hostIds,
-    );
-  }
-
+  // 三种方言统一走「每台主机 ORDER BY ... LIMIT 2，再 UNION ALL」：
+  // 原来 MySQL/PostgreSQL 用 ROW_NUMBER() OVER (PARTITION BY hostId)，窗口函数
+  // 要先把这些主机在 host_metrics 里保留期内的**全部**明细读出来再排名，
+  // 主机多、上报频繁时一次就是几十万行；而每台主机取最新两条正好能被
+  // (hostId, recordedAt) 索引倒序扫两行就停。派生表都带别名（recent / combined），
+  // MySQL 8 和 PostgreSQL 都要求这一点。rn 在下面按同样的排序键
+  // (hostId ASC, recordedAt DESC, id DESC) 在内存里重新编号，和窗口函数给的一致。
   const sortedHostIds = [...hostIds].sort((a, b) => a - b);
   const rows: any[] = [];
-  for (let offset = 0; offset < sortedHostIds.length; offset += SQLITE_LATEST_METRIC_HOST_BATCH_SIZE) {
-    const batch = sortedHostIds.slice(offset, offset + SQLITE_LATEST_METRIC_HOST_BATCH_SIZE);
+  for (let offset = 0; offset < sortedHostIds.length; offset += LATEST_METRIC_HOST_BATCH_SIZE) {
+    const batch = sortedHostIds.slice(offset, offset + LATEST_METRIC_HOST_BATCH_SIZE);
     const innerColumns = columns.map((column) => q(column)).join(", ");
     const outerColumns = columns.map((column) => `recent.${q(column)}`).join(", ");
     const perHostQueries = batch.map(() => (
