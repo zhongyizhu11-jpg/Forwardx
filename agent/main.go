@@ -12509,23 +12509,8 @@ func (p *failoverProxy) handleConn(client net.Conn) {
 			return
 		}
 	}
-	defer upstream.Close()
-	copyDone := make(chan struct{}, 2)
-	go func() {
-		_, _ = io.Copy(upstream, client)
-		if c, ok := upstream.(*net.TCPConn); ok {
-			_ = c.CloseWrite()
-		}
-		copyDone <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(client, upstream)
-		if c, ok := client.(*net.TCPConn); ok {
-			_ = c.CloseWrite()
-		}
-		copyDone <- struct{}{}
-	}()
-	<-copyDone
+	// 等两个方向都结束（带半关闭 linger），客户端半关闭后仍能收完响应。
+	relayTCPBidirectional(client, upstream, tcpRelayHalfCloseLinger)
 }
 
 func guardID(rule guardRule) string {
