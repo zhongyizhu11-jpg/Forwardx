@@ -3,6 +3,7 @@ import { dbBool } from "./repositories/repositoryUtils";
 import {
   forwardGroups,
   forwardGroupMembers,
+  forwardRules,
   hosts,
   tunnelExitNodes,
   tunnelHops,
@@ -371,7 +372,35 @@ export async function gateForwardRulesForRuntime<T extends Record<string, any>>(
   }));
   const scopeByUserId = new Map(scopeEntries);
 
+  /*
+    线路组中继规则只在父规则跑着的时候才该跑。中继的开关以前只在手动开关 / 保存父规则
+    时同步；父规则被系统连带停掉（隧道停用、余额不足、授权失效……）时中继还开着 ——
+    中转机上的端口一直通，用户直接连中转机的地址就能继续用，而且这段流量不计费。
+  */
+  const parentIds = Array.from(new Set(rules
+    .map((rule) => positiveId(rule?.routeParentRuleId))
+    .filter((id) => id > 0)));
+  const parentRunnable = new Map<number, boolean>();
+  if (parentIds.length > 0) {
+    const parents = await db
+      .select({ id: forwardRules.id, isEnabled: forwardRules.isEnabled, pendingDelete: forwardRules.pendingDelete })
+      .from(forwardRules)
+      .where(inArray(forwardRules.id, parentIds));
+    for (const parent of parents as any[]) {
+      parentRunnable.set(positiveId(parent.id), dbBool(parent.isEnabled) && !dbBool(parent.pendingDelete));
+    }
+  }
+
   return rules.map((rule) => {
+    const gated = gateRuleByResourceAccess(rule);
+    const parentId = positiveId(rule?.routeParentRuleId);
+    if (gated === rule && parentId > 0 && parentRunnable.get(parentId) !== true) {
+      return { ...rule, isEnabled: false };
+    }
+    return gated;
+  });
+
+  function gateRuleByResourceAccess(rule: T): T {
     /*
       线路组的中继规则跑在中转机上，主人是线路组那条规则的主人。保存时 validateRouteGroup
       已经按他当时的主机范围校验过每一跳，但权限会变：套餐到期、管理员收回一台中转之后，
@@ -384,7 +413,7 @@ export async function gateForwardRulesForRuntime<T extends Record<string, any>>(
     const allowed = scope !== undefined && canUseForwardRuleResource(rule, scope);
     if (allowed) return rule;
     return { ...rule, isEnabled: false, resourceAccessDenied: true };
-  });
+  }
 }
 
 function allowedHost(scope: LinkAccessScope, hostId: unknown) {

@@ -150,6 +150,10 @@ test("runtime gate disables revoked root resources without promoting expanded to
         [2, 1],
       );
       access.clearLinkAccessScopeCache();
+      // 中继规则只在父规则跑着时才跑：父规则 101 要真的在库里。
+      await runtime.executeRaw(
+        'INSERT INTO "forward_rules" ("id", "hostId", "name", "forwardType", "protocol", "tunnelId", "sourcePort", "targetIp", "targetPort", "userId", "isEnabled") VALUES (101, 1, \'relay-parent\', \'gost\', \'tcp\', 10, 12001, \'203.0.113.1\', 80, 2, 1)',
+      );
 
       const revoked = { id: 100, userId: 2, hostId: 1, tunnelId: null, forwardGroupId: null, isEnabled: true };
       const allowedTunnel = { id: 101, userId: 2, hostId: 1, tunnelId: 10, forwardGroupId: null, isEnabled: true };
