@@ -8,6 +8,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,15 +23,35 @@ type frameConn interface {
 	closeTransport()
 }
 
+var (
+	errMultipathLegSilent    = errors.New("multipath leg stopped delivering while its siblings kept going")
+	errMultipathDuplicateLeg = errors.New("multipath session already has a leg with this id")
+)
+
 // multipathLegConn is one secure link of a multipath session.
 type multipathLegConn struct {
+	// index identifies the leg to both ends: it is the leg's position in the
+	// entry's configuration, carried to the exit in the hello. The per-leg
+	// counts in an acknowledgement are keyed by it.
 	index int
 	sec   *secureConn
 	// label identifies the leg in logs, e.g. "direct" or a relay address.
 	label string
+	// healthKey is the endpoint this leg was dialled at, on the entry side,
+	// so its fate feeds multipathLegHealthMemory. Empty at the exit.
+	healthKey string
 	// failed guards the alive-leg count: a leg's reader and its writer both
 	// notice the same breakage, and only the first may retire the leg.
 	failed atomic.Bool
+	// dead is closed once the leg is retired or its session ends.
+	dead     chan struct{}
+	deadOnce sync.Once
+
+	// recvBytes counts the data bytes read off this leg, duplicates included:
+	// it has to match what the far side counts as written.
+	recvBytes atomic.Uint64
+	// pace is the sending side's view of this leg. Guarded by the session lock.
+	pace legPacing
 
 	// writeStartedAt is when this leg's writer entered its current write, in
 	// unix nanoseconds, or zero when it is not writing. progressAtWrite is the
@@ -44,11 +65,18 @@ type multipathLegConn struct {
 	// write that was already finishing and a leftover deadline would then fail
 	// the following write on a leg that is perfectly healthy.
 	deadlineArmed atomic.Bool
-	// writeMu keeps the bookkeeping above matched to one write at a time. The
-	// secure connection serializes the writes themselves anyway; without this,
-	// two writers on one leg would overwrite each other's start time and the
-	// watchdog could lose sight of the one that is actually stuck.
+	// writeMu keeps the bookkeeping above matched to one write at a time.
 	writeMu sync.Mutex
+}
+
+// newMultipathLeg wraps one handshaked connection as a leg.
+func newMultipathLeg(index int, sec *secureConn, label string) *multipathLegConn {
+	return &multipathLegConn{index: index, sec: sec, label: label, dead: make(chan struct{})}
+}
+
+// retire marks the leg as finished for anyone waiting on it.
+func (leg *multipathLegConn) retire() {
+	leg.deadOnce.Do(func() { close(leg.dead) })
 }
 
 // clearStaleDeadline undoes a write deadline the watchdog set on a write that
@@ -60,99 +88,145 @@ func (leg *multipathLegConn) clearStaleDeadline() {
 	}
 }
 
-// mpChunk is one unit of work handed to whichever leg writer claims it.
-type mpChunk struct {
-	seq  uint64
-	data []byte
-}
-
 type multipathSession struct {
-	legs    []*multipathLegConn
 	reorder *reorderBuffer
 
-	// sendCh carries fresh chunks; retryCh carries chunks a failed leg gave
-	// back. Writers drain retryCh first so a retry cannot be starved.
-	sendCh  chan mpChunk
-	retryCh chan mpChunk
+	// mu guards the sending side, the leg list and every leg's pace. changed
+	// is closed and replaced on every change a waiter may care about, so
+	// waiters can select on it alongside a timer or the session closing.
+	mu       sync.Mutex
+	changed  chan struct{}
+	legs     []*multipathLegConn
+	isClosed bool
 
-	// controlQueue carries the tiny protocol frames — ready and ack — that
-	// must not queue behind bulk data. Writers take them before anything else.
-	controlMu    sync.Mutex
-	controlQueue [][]byte
-	controlReady chan struct{}
+	// The retransmit buffer: out[i] is chunk outBase+i, and it holds every
+	// chunk from the first one the far side has not confirmed up to sendSeq.
+	// Chunks from nextFresh on have never been claimed by a leg; retry lists,
+	// in order, the ones handed back by a leg that failed to deliver them.
+	sendSeq   uint64
+	nextFresh uint64
+	outBase   uint64
+	out       []*mpOut
+	retry     []uint64
 
-	// sendWin holds this side back from running further ahead than the far
-	// side can buffer. peerExtended is whether that side has proved it speaks
-	// the extended frame kinds, which is what allows sending them at all.
-	sendWin      *sendWindow
-	peerExtended atomic.Bool
-	ackedSeq     atomic.Uint64
+	// peerDelivered and peerWindow are the far side's flow control: this side
+	// may not run more than peerWindow chunks past peerDelivered.
+	peerDelivered uint64
+	peerWindow    uint64
+
+	// lastAckAt is when the far side last said anything; lastProgressAt when a
+	// write last completed; lastLegProgressAt when any leg last showed the far
+	// side receiving from it.
+	lastAckAt         time.Time
+	lastProgressAt    time.Time
+	lastLegProgressAt time.Time
+
+	// ackWanted asks the next free writer to send an acknowledgement; control
+	// holds the other protocol frames waiting for one.
+	ackWanted bool
+	control   [][]byte
+
+	// The end of the stream: finSeq is the total chunk count, and the fin is
+	// repeated until the far side acknowledges it along with every chunk.
+	finQueued bool
+	finAcked  bool
+	finSeq    uint64
+	finSentAt time.Time
+
+	// Receiving side bookkeeping for acknowledgements (multipath_flow.go).
+	recvTotal      atomic.Uint64
+	ackedRecvTotal atomic.Uint64
+	ackedDelivered atomic.Uint64
+	lastRecvAt     atomic.Int64
+	lastAckSentAt  atomic.Int64
+	ackTimerArmed  atomic.Bool
 
 	// writeProgress counts frames successfully written on any leg. The
 	// watchdog compares it against a leg's own snapshot to tell "this leg has
 	// stopped" from "every leg is held up by the same backpressure".
 	writeProgress atomic.Uint64
 
-	// legStallTimeout and legStallCheck hold the watchdog's two constants, in
-	// nanoseconds. They are fields rather than constants so the tests can reach
-	// the edge in milliseconds instead of seconds; production never moves them.
-	legStallTimeout atomic.Int64
-	legStallCheck   atomic.Int64
-
-	sendSeq uint64
+	// legStallTimeout, legStallCheck and sendStallTimeout hold the watchdog's
+	// constants, in nanoseconds. They are fields rather than constants so the
+	// tests can reach the edge in milliseconds; production never moves them.
+	legStallTimeout  atomic.Int64
+	legStallCheck    atomic.Int64
+	sendStallTimeout atomic.Int64
 
 	// aliveLegs drops as legs fail; reaching zero fails the session.
 	aliveLegs atomic.Int64
 
-	writerWG sync.WaitGroup
-	readerWG sync.WaitGroup
-	// inFlight counts chunks queued but not yet written to a leg, so the
-	// end-of-stream marker can wait for them without polling.
-	inFlight sync.WaitGroup
-
 	closeOnce sync.Once
 	closed    chan struct{}
-	// finOnce guards the single broadcast of the end-of-stream marker.
-	finOnce sync.Once
+	finOnce   sync.Once
 
 	errMu    sync.Mutex
 	firstErr error
-
-	// bytesPerLeg records how much each leg carried, for logging.
-	bytesPerLeg []atomic.Uint64
 }
 
 // newMultipathSession starts the writer and reader goroutines for the legs.
+// More legs can join later through addLeg.
 //
 // The caller keeps ownership of the underlying connections only for closing;
 // all reads and writes go through the session from here on.
 func newMultipathSession(legs []*multipathLegConn, maxPending int) *multipathSession {
+	now := time.Now()
 	session := &multipathSession{
-		legs:         legs,
-		reorder:      newReorderBuffer(maxPending),
-		sendCh:       make(chan mpChunk, len(legs)*2),
-		retryCh:      make(chan mpChunk, len(legs)+1),
-		controlReady: make(chan struct{}, 1),
-		sendWin:      newSendWindow(),
-		closed:       make(chan struct{}),
-		bytesPerLeg:  make([]atomic.Uint64, len(legs)),
+		reorder:    newReorderBuffer(maxPending),
+		changed:    make(chan struct{}),
+		closed:     make(chan struct{}),
+		peerWindow: multipathInitialWindow,
+		lastAckAt:  now,
 	}
 	session.legStallTimeout.Store(int64(multipathLegStallTimeout))
 	session.legStallCheck.Store(int64(multipathLegStallCheck))
-	session.aliveLegs.Store(int64(len(legs)))
-	for _, leg := range legs {
-		session.writerWG.Add(1)
-		go session.legWriter(leg)
-		session.readerWG.Add(1)
-		go session.legReader(leg)
-	}
+	session.sendStallTimeout.Store(int64(multipathSendStallTimeout))
+	session.lastAckSentAt.Store(now.UnixNano())
 	session.reorder.onDeliver = session.ackDelivery
+	for _, leg := range legs {
+		if !session.addLeg(leg) {
+			_ = leg.sec.conn.Close()
+		}
+	}
+	// 窗口必须**先**报出去：对端还没收到回执的时候只敢按起步窗口写，等到
+	// 第一次交付再报就晚了。
+	session.queueAck()
 	go session.housekeeping()
 	return session
 }
 
-// legCount reports how many legs the session was built with.
+// addLeg attaches one more leg to a running session, reporting false if the
+// session is already over or has a leg with that id. The caller closes a leg
+// that was refused.
+func (s *multipathSession) addLeg(leg *multipathLegConn) bool {
+	s.mu.Lock()
+	if s.closedLocked() {
+		s.mu.Unlock()
+		return false
+	}
+	for _, existing := range s.legs {
+		if existing.index == leg.index {
+			s.mu.Unlock()
+			return false
+		}
+	}
+	if leg.dead == nil {
+		leg.dead = make(chan struct{})
+	}
+	leg.pace.progressAt = time.Now()
+	s.legs = append(s.legs, leg)
+	s.aliveLegs.Add(1)
+	s.signalLocked()
+	s.mu.Unlock()
+	go s.legWriter(leg)
+	go s.legReader(leg)
+	return true
+}
+
+// legCount reports how many legs have joined the session.
 func (s *multipathSession) legCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return len(s.legs)
 }
 
@@ -165,14 +239,55 @@ func (s *multipathSession) aliveLegCount() int {
 	return int(count)
 }
 
-// legBytes reports the bytes each leg has carried outbound, for logging the
-// realised split.
+// legSnapshot copies the current leg list.
+func (s *multipathSession) legSnapshot() []*multipathLegConn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	legs := make([]*multipathLegConn, len(s.legs))
+	copy(legs, s.legs)
+	return legs
+}
+
+func (s *multipathSession) legByIDLocked(id int) *multipathLegConn {
+	for _, leg := range s.legs {
+		if leg.index == id {
+			return leg
+		}
+	}
+	return nil
+}
+
+// legBytes reports the data bytes each leg has carried outbound, for logging
+// the realised split.
 func (s *multipathSession) legBytes() []uint64 {
-	out := make([]uint64, len(s.bytesPerLeg))
-	for i := range s.bytesPerLeg {
-		out[i] = s.bytesPerLeg[i].Load()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]uint64, len(s.legs))
+	for i, leg := range s.legs {
+		out[i] = leg.pace.sentBytes
 	}
 	return out
+}
+
+func (s *multipathSession) closedLocked() bool {
+	return s.isClosed
+}
+
+// signalLocked wakes everything waiting on the session's state.
+func (s *multipathSession) signalLocked() {
+	close(s.changed)
+	s.changed = make(chan struct{})
+}
+
+// maxQueuedLocked bounds the chunks accepted from the local reader that no leg
+// has claimed yet. Beyond it writeFrame blocks, which is how backpressure
+// reaches the connection being relayed.
+func (s *multipathSession) maxQueuedLocked() uint64 {
+	limit := uint64(2 * s.aliveLegCount())
+	if limit < 4 {
+		limit = 4
+	}
+	return limit
 }
 
 func (s *multipathSession) setErr(err error) {
@@ -192,39 +307,38 @@ func (s *multipathSession) err() error {
 	return s.firstErr
 }
 
-// legWriter claims chunks and writes them to one leg.
-//
-// Because every leg writer competes for the same queue, a fast leg claims more
-// chunks than a slow one without any configured weighting: the split tracks the
-// bandwidth each path actually delivers.
+// legWriter sends whatever claim hands this leg until the leg or the session
+// is done.
 func (s *multipathSession) legWriter(leg *multipathLegConn) {
-	defer s.writerWG.Done()
 	for {
-		work := s.nextWork()
-		if work.stop {
+		work := s.claim(leg)
+		switch {
+		case work.stop:
 			return
-		}
-		if work.control != nil {
+		case work.ack:
+			if err := s.writeLegFrame(leg, s.buildAck()); err != nil {
+				s.queueAck()
+				s.legFailed(leg, err)
+				return
+			}
+		case work.control != nil:
 			if err := s.writeLegFrame(leg, work.control); err != nil {
-				// 回执/握手帧不重传，所以先还回队列让别的腿带走。
+				// 协议帧还回队列让别的腿带走。
 				s.sendControl(work.control)
 				s.legFailed(leg, err)
 				return
 			}
-			continue
+		default:
+			out := work.out
+			err := s.writeLegFrame(leg, encodeMultipathFrame(multipathKindData, out.seq, out.data))
+			s.wrote(leg, out, err)
+			if err != nil {
+				// 这一片连同这条腿上所有没确认送到的，都会在 legFailed 里交给
+				// 别的腿。接收端按序号去重，写了一半的那份也无妨。
+				s.legFailed(leg, err)
+				return
+			}
 		}
-		chunk := work.chunk
-		frame := encodeMultipathFrame(multipathKindData, chunk.seq, chunk.data)
-		if err := s.writeLegFrame(leg, frame); err != nil {
-			// Hand the chunk back so another leg carries it. The receiver drops
-			// duplicates by sequence number, so a write that partially landed
-			// is harmless.
-			s.requeue(chunk)
-			s.legFailed(leg, err)
-			return
-		}
-		s.bytesPerLeg[leg.index].Add(uint64(len(chunk.data)))
-		s.inFlight.Done()
 	}
 }
 
@@ -250,15 +364,13 @@ func (s *multipathSession) writeLegFrame(leg *multipathLegConn, frame []byte) er
 // watchStalledLegs retires any leg whose write has stopped moving while the
 // other legs carry on. It is one pass; housekeeping calls it on every tick.
 //
-// 一条腿「还连着但对端不再读」的时候，它的写入者会永远卡在 Write 里，手上那片
-// 也就永远交不出去 —— 而接收端要的往往正是那一片。两端都不报错，连接就这么挂着。
-//
+// 一条腿「还连着但对端不再读」的时候，它的写入者会永远卡在 Write 里。
 // 判据是**不对称**：所有腿一起堵着是正常的背压，谁都不该动；只有别的腿还在往前
-// 走、就这一条一动不动，才说明它已经废了。掐断那次写，它手上那片就退回队列，
-// 由别的腿接着送 —— 整条流不用重来。
+// 走、就这一条一动不动，才说明它已经废了。掐断那次写，写入者拿到超时错误，
+// 走正常的下线流程 —— 它名下没送到的分片全部交给别的腿。
 func (s *multipathSession) watchStalledLegs() {
 	limit := time.Duration(s.legStallTimeout.Load())
-	for _, leg := range s.legs {
+	for _, leg := range s.legSnapshot() {
 		startedAt := leg.writeStartedAt.Load()
 		if startedAt == 0 || leg.failed.Load() {
 			continue
@@ -270,21 +382,32 @@ func (s *multipathSession) watchStalledLegs() {
 			continue // 大家都没动：这是背压，不是这条腿坏了
 		}
 		fxpVerbosef("multipath leg %d (%s) stopped draining, retiring it", leg.index, leg.label)
-		// 掐断这次写；写入者会拿到超时错误，走正常的退回与下线流程。
 		leg.deadlineArmed.Store(true)
 		_ = leg.sec.conn.SetWriteDeadline(time.Now())
 	}
 }
 
-// housekeeping runs the session's two periodic jobs on one timer.
+// busy reports whether anything is outstanding in either direction, which is
+// when housekeeping needs its fine clock.
+func (s *multipathSession) busy(now time.Time) bool {
+	if now.Sub(time.Unix(0, s.lastRecvAt.Load())) < multipathAckHot {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.outBase < s.sendSeq || (s.finQueued && !s.finAcked)
+}
+
+// housekeeping runs the session's periodic jobs on one timer.
 //
 // 一个会话对应一条客户端连接，出口上可能同时有成千上万条 —— 每条多开一个协程
-// 加一个定时器都是要算的，所以这两件事合在一个节拍里做。
+// 加一个定时器都是要算的，所以这几件事合在一个节拍里做；没有在途数据的时候
+// 节拍自动放慢。
 func (s *multipathSession) housekeeping() {
 	for {
 		tick := time.Duration(s.legStallCheck.Load())
-		if ack := multipathAckInterval; ack < tick {
-			tick = ack
+		if s.busy(time.Now()) && multipathBusyTick < tick {
+			tick = multipathBusyTick
 		}
 		timer := time.NewTimer(tick)
 		select {
@@ -293,147 +416,95 @@ func (s *multipathSession) housekeeping() {
 			return
 		case <-timer.C:
 		}
+		now := time.Now()
 		s.watchStalledLegs()
-		s.reportProgress()
+		s.maintainSender(now)
+		s.refreshAcks(now)
 	}
 }
 
-// mpWork is one thing for a leg writer to do: a protocol frame, a data chunk,
-// or nothing because the session is over.
-type mpWork struct {
-	control []byte
-	chunk   mpChunk
-	stop    bool
+// maintainSender makes the sending side's timed decisions: retiring legs that
+// went silent, resending what sat unconfirmed too long, and repeating an
+// unacknowledged fin.
+func (s *multipathSession) maintainSender(now time.Time) {
+	s.mu.Lock()
+	silent := s.silentLegsLocked(now)
+	s.reinjectOverdueLocked(now)
+	if s.finQueued && !s.finAcked && !s.closedLocked() && now.Sub(s.finSentAt) >= s.finRetryLocked() {
+		s.queueFinLocked(now)
+	}
+	s.mu.Unlock()
+	for _, leg := range silent {
+		fxpVerbosef("multipath leg %d (%s) has delivered nothing while its siblings did, retiring it", leg.index, leg.label)
+		s.legFailed(leg, errMultipathLegSilent)
+	}
 }
 
-// nextWork claims the next thing for a leg writer, in priority order: protocol
-// frames first because they are tiny and time critical, then chunks handed back
-// by a failed leg so the stream cannot stall at that sequence number, then
-// fresh chunks.
-func (s *multipathSession) nextWork() mpWork {
-	for {
-		if frame, ok := s.popControl(); ok {
-			return mpWork{control: frame}
+// finRetryLocked is how long an unacknowledged fin waits before it is sent
+// again: long enough for the fastest live leg to have answered.
+func (s *multipathSession) finRetryLocked() time.Duration {
+	var fastest time.Duration
+	for _, leg := range s.legs {
+		if leg.failed.Load() || leg.pace.srtt <= 0 {
+			continue
 		}
-		select {
-		case chunk := <-s.retryCh:
-			return mpWork{chunk: chunk}
-		default:
-		}
-		select {
-		case <-s.closed:
-			return mpWork{stop: true}
-		case <-s.controlReady:
-			continue // 队列里有东西了，回去取
-		case chunk := <-s.retryCh:
-			return mpWork{chunk: chunk}
-		case chunk := <-s.sendCh:
-			return mpWork{chunk: chunk}
+		if fastest == 0 || leg.pace.srtt < fastest {
+			fastest = leg.pace.srtt
 		}
 	}
+	if fastest == 0 {
+		return multipathReinjectUnmeasured
+	}
+	if wait := 3 * fastest; wait > multipathReinjectMin {
+		return wait
+	}
+	return multipathReinjectMin
+}
+
+func (s *multipathSession) queueFinLocked(now time.Time) {
+	s.control = append(s.control, encodeMultipathFrame(multipathKindFin, s.finSeq, nil))
+	s.finSentAt = now
+	s.signalLocked()
 }
 
 // sendControl queues a protocol frame for whichever leg writer is free first.
 func (s *multipathSession) sendControl(frame []byte) {
-	s.controlMu.Lock()
-	s.controlQueue = append(s.controlQueue, frame)
-	s.controlMu.Unlock()
-	select {
-	case s.controlReady <- struct{}{}:
-	default:
-	}
-}
-
-func (s *multipathSession) popControl() ([]byte, bool) {
-	s.controlMu.Lock()
-	defer s.controlMu.Unlock()
-	if len(s.controlQueue) == 0 {
-		return nil, false
-	}
-	frame := s.controlQueue[0]
-	s.controlQueue[0] = nil
-	s.controlQueue = s.controlQueue[1:]
-	if len(s.controlQueue) > 0 {
-		select {
-		case s.controlReady <- struct{}{}:
-		default:
-		}
-	}
-	return frame, true
-}
-
-// enableExtended is the exit's side of the capability check: the entry said in
-// its hello that it understands the extended frame kinds, so this side may use
-// them and tells the entry that it may too.
-func (s *multipathSession) enableExtended() {
-	s.peerExtended.Store(true)
-	s.sendControl(encodeMultipathFrame(multipathKindReady, 0, nil))
-	// 窗口必须**先**报出去。等到第一次交付再报就晚了：对端还没开始消费的时候
-	// 正是它最容易写过头的时候，而那时这边一片都还没交付，也就一声都不会吭。
-	s.sendAck()
-}
-
-// sendAck reports where this side has got to and how much more it can hold.
-func (s *multipathSession) sendAck() {
-	delivered := s.reorder.delivered()
-	s.ackedSeq.Store(delivered)
-	s.sendControl(encodeMultipathAck(delivered, uint64(s.reorder.maxItems)))
-}
-
-// ackDelivery is called after every chunk handed to the target.
-//
-// 攒一点再回，别一片一回：窗口走掉四分之一就报一次，够让发送端一直有活干。
-// 另外，缓冲一空就立刻报 —— 那说明这边已经追平了，而发送端很可能正卡在窗口上
-// 等这一声。
-func (s *multipathSession) ackDelivery(delivered uint64, window int, pending int) {
-	if !s.peerExtended.Load() || window <= 0 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closedLocked() {
 		return
 	}
-	last := s.ackedSeq.Load()
-	if delivered <= last {
-		return
-	}
-	if pending > 0 && delivered-last < uint64(window)/4 {
-		return
-	}
-	if s.ackedSeq.CompareAndSwap(last, delivered) {
-		s.sendControl(encodeMultipathAck(delivered, uint64(window)))
-	}
-}
-
-// reportProgress re-reports what the inline thresholds did not.
-//
-// 这是给「回执丢了」和「安静下来了」兜底的：回执自己不重传，丢一次就可能让
-// 发送端一直卡在窗口上。定时补一声，代价是每秒最多两帧。
-func (s *multipathSession) reportProgress() {
-	if !s.peerExtended.Load() {
-		return
-	}
-	if s.reorder.delivered() <= s.ackedSeq.Load() {
-		return
-	}
-	s.sendAck()
-}
-
-// requeue returns a chunk to the queue for another leg to carry.
-func (s *multipathSession) requeue(chunk mpChunk) {
-	select {
-	case s.retryCh <- chunk:
-	case <-s.closed:
-	}
+	s.control = append(s.control, frame)
+	s.signalLocked()
 }
 
 // legFailed retires one leg, failing the whole session once none are left.
 //
 // A broken leg surfaces to both its reader and its writer, so the count is only
-// adjusted by whichever notices first.
+// adjusted by whichever notices first. Whatever the leg had not delivered goes
+// back to the queue at once, for the surviving legs to carry.
 func (s *multipathSession) legFailed(leg *multipathLegConn, err error) {
 	_ = leg.sec.conn.Close()
 	if !leg.failed.CompareAndSwap(false, true) {
 		return
 	}
-	if s.aliveLegs.Add(-1) > 0 {
-		fxpVerbosef("multipath leg %d (%s) lost, %d remaining: %v", leg.index, leg.label, s.aliveLegCount(), err)
+	leg.retire()
+	s.mu.Lock()
+	requeued := s.requeueLegLocked(leg)
+	closing := s.closedLocked()
+	s.signalLocked()
+	s.mu.Unlock()
+	alive := s.aliveLegs.Add(-1)
+	if closing {
+		return // 会话自己在收场，腿是它关的
+	}
+	// 对端已经把流发完了，它那边收场关掉腿是正常的，不记账。
+	if leg.healthKey != "" && !s.reorder.finished() {
+		multipathLegHealthMemory.failed(leg.healthKey)
+	}
+	if alive > 0 {
+		fxpVerbosef("multipath leg %d (%s) lost, %d remaining, %d chunks handed to them: %v",
+			leg.index, leg.label, s.aliveLegCount(), requeued, err)
 		return
 	}
 	s.setErr(err)
@@ -442,7 +513,6 @@ func (s *multipathSession) legFailed(leg *multipathLegConn, err error) {
 
 // legReader feeds everything arriving on one leg into the reorder buffer.
 func (s *multipathSession) legReader(leg *multipathLegConn) {
-	defer s.readerWG.Done()
 	for {
 		frame, err := leg.sec.readFrame()
 		if err != nil {
@@ -457,25 +527,26 @@ func (s *multipathSession) legReader(leg *multipathLegConn) {
 		}
 		switch decoded.kind {
 		case multipathKindFin:
-			// Every leg carries the same fin, so the first one to arrive ends
-			// the stream and the rest are redundant.
+			// The fin may arrive on several legs and more than once; the first
+			// one ends the stream and the rest are redundant. The ack that
+			// confirms it goes back straight away, because the far side is
+			// waiting on exactly that before it can let go of the session.
 			s.reorder.setFinal(decoded.seq)
-			continue
-		case multipathKindReady:
-			// 对端听得懂扩展帧 —— 从现在起这边也可以发回执了，而且要先把
-			// 自己的窗口报过去，对端才知道该压着点写。
-			if !s.peerExtended.Swap(true) {
-				s.sendAck()
-			}
+			s.requestAck(true)
 			continue
 		case multipathKindAck:
-			window, ok := decodeMultipathAckWindow(decoded.payload)
-			if !ok {
-				continue
+			ack, ackErr := decodeMultipathAck(decoded.seq, decoded.payload)
+			if ackErr != nil {
+				s.setErr(ackErr)
+				s.closeWith(ackErr)
+				return
 			}
-			s.sendWin.update(decoded.seq, window)
+			s.onAck(ack)
 			continue
 		}
+		size := uint64(len(decoded.payload))
+		leg.recvBytes.Add(size)
+		total := s.recvTotal.Add(size)
 		if err := s.reorder.push(decoded.seq, decoded.payload); err != nil {
 			if errors.Is(err, errMultipathReorderGap) {
 				// 重排缓冲放弃等那一片了。整条会话跟着带原因收掉，上层重连，
@@ -484,106 +555,77 @@ func (s *multipathSession) legReader(leg *multipathLegConn) {
 			}
 			return
 		}
+		s.noteReceived(total)
 	}
 }
 
 // writeFrame queues one outbound chunk, or ends the stream when given no data.
 //
-// It blocks while every leg is busy, which is how backpressure reaches the
-// reader on the other side of the proxy.
+// It blocks while the far side's window is closed or every leg is busy, which
+// is how backpressure reaches the reader on the other side of the proxy.
 func (s *multipathSession) writeFrame(plain []byte) error {
 	if len(plain) == 0 {
 		return s.writeFin()
 	}
-	// 先问窗口要位置：对端能缓下多少，这边才写多少。老版本对端从不发回执，
-	// 窗口就一直不生效，行为和以前一模一样。
-	if err := s.sendWin.reserve(s.sendSeq, s.closed, multipathSendStallTimeout); err != nil {
+	// The copy loops reuse their read buffer, so the chunk must be copied
+	// before it is handed to a leg writer running on another goroutine.
+	data := make([]byte, len(plain))
+	copy(data, plain)
+	err := s.lockWhen(func() bool {
+		return s.sendSeq < s.peerDelivered+s.peerWindow && s.sendSeq-s.nextFresh < s.maxQueuedLocked()
+	})
+	if err != nil {
 		s.setErr(err)
 		if !errors.Is(err, errMultipathClosed) {
 			s.closeWith(err)
 		}
 		return s.closedErr()
 	}
-	// The copy loops reuse their read buffer, so the chunk must be copied
-	// before it is handed to a leg writer running on another goroutine.
-	data := make([]byte, len(plain))
-	copy(data, plain)
-	chunk := mpChunk{seq: s.sendSeq, data: data}
+	defer s.mu.Unlock()
+	if s.finQueued {
+		return errors.New("multipath write after end of stream")
+	}
+	s.out = append(s.out, &mpOut{seq: s.sendSeq, data: data})
 	s.sendSeq++
-	s.inFlight.Add(1)
-	select {
-	case s.sendCh <- chunk:
-		return nil
-	case <-s.closed:
-		s.inFlight.Done()
-		return s.closedErr()
-	}
+	s.signalLocked()
+	return nil
 }
 
-// writeFin announces the total chunk count on every leg, so the far side knows
-// where the stream ends regardless of which legs survived.
+// writeFin announces the total chunk count and waits until the far side has
+// acknowledged it along with every chunk before it.
+//
+// 结束标记本身不占任何腿：它排进协议帧队列，哪条腿先空就由哪条腿带走，一条腿
+// 还连着但对端不再读的时候也挡不住它。丢了就按最快那条腿的往返时间重发，
+// 直到对端回执说「全收到了」—— 在那之前会话不能关，重传缓冲里的东西还要用。
 func (s *multipathSession) writeFin() error {
-	var err error
 	s.finOnce.Do(func() {
-		// Let the queued data chunks reach their legs before the marker, or the
-		// far side could end the stream early.
-		s.drainQueued()
-		frame := encodeMultipathFrame(multipathKindFin, s.sendSeq, nil)
-		// 每条腿都发一份，但**同时**发，而且只要有一条送到就算数。
-		//
-		// 原来是挨个腿串行写的：一条腿要是还连着但对端不再读，这次写就永远
-		// 回不来，后面的腿根本轮不到 —— 结束标记发不出去，整条会话就挂在
-		// 这里。看门狗也救不了：它判「这条腿卡住了」靠的是别的腿还在往前走，
-		// 而串行的写法根本不给别的腿走的机会。
-		//
-		// 接收端本来就是「第一份 fin 说了算」，所以一条送到就可以返回；
-		// 剩下的腿写完或者被会话关闭掐断，都不影响结果。
-		var delivered atomic.Bool
-		landed := make(chan struct{})
-		var pending sync.WaitGroup
-		for _, leg := range s.legs {
-			pending.Add(1)
-			go func(leg *multipathLegConn) {
-				defer pending.Done()
-				if writeErr := s.writeLegFrame(leg, frame); writeErr != nil {
-					return
-				}
-				if delivered.CompareAndSwap(false, true) {
-					close(landed)
-				}
-			}(leg)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.closedLocked() {
+			return
 		}
-		exhausted := make(chan struct{})
-		go func() {
-			pending.Wait()
-			close(exhausted)
-		}()
-		select {
-		case <-landed:
-		case <-exhausted:
-		case <-s.closed:
-		}
-		if !delivered.Load() {
-			err = errors.New("multipath fin could not be delivered on any leg")
-			s.setErr(err)
-		}
+		s.finQueued = true
+		s.finSeq = s.sendSeq
+		s.queueFinLocked(time.Now())
 	})
-	return err
-}
-
-// drainQueued blocks until every queued chunk has reached a leg, or the session
-// is torn down. Without it a session closed right after end of stream could
-// strand chunks that were still waiting for a writer.
-func (s *multipathSession) drainQueued() {
-	done := make(chan struct{})
-	go func() {
-		s.inFlight.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-s.closed:
+	err := s.lockWhen(func() bool { return s.finAcked })
+	if err == nil {
+		s.mu.Unlock()
+		return nil
 	}
+	s.mu.Lock()
+	delivered := s.finQueued && s.outBase >= s.finSeq
+	s.mu.Unlock()
+	if delivered {
+		// 数据对端全收到了，只是最后那声回执没赶上会话收场。
+		return nil
+	}
+	if errors.Is(err, errMultipathSendStalled) {
+		s.setErr(err)
+		s.closeWith(err)
+		return err
+	}
+	return s.closedErr()
 }
 
 // readFrame returns the next chunk in sequence order across all legs. It
@@ -603,18 +645,28 @@ func (s *multipathSession) closedErr() error {
 func (s *multipathSession) closeWith(reason error) {
 	s.closeOnce.Do(func() {
 		s.setErr(reason)
+		s.mu.Lock()
+		s.isClosed = true
 		close(s.closed)
-		s.sendWin.close()
+		s.signalLocked()
+		legs := make([]*multipathLegConn, len(s.legs))
+		copy(legs, s.legs)
+		s.mu.Unlock()
+		alive := s.aliveLegCount()
 		s.reorder.close(reason)
-		for _, leg := range s.legs {
+		for _, leg := range legs {
+			// 正常收场时还活着的腿，说明它这一整个会话都好好的。
+			if reason == nil && leg.healthKey != "" && !leg.failed.Load() {
+				multipathLegHealthMemory.healthy(leg.healthKey)
+			}
 			_ = leg.sec.conn.Close()
+			leg.retire()
 		}
 		// 收场时把实际跑出来的分流记一笔。overdrafts 非零说明各条腿的到达
-		// 顺序比重排上限能容下的还散 —— 这是调 multipathMaxPending 唯一的
-		// 现场依据，不记下来就只能靠猜。
+		// 顺序比重排上限能容下的还散。
 		fxpVerbosef(
 			"multipath session closed: legs=%d/%d bytes=%v overdrafts=%d reason=%v",
-			s.aliveLegCount(), s.legCount(), s.legBytes(), s.reorder.overdraftCount(), reason,
+			alive, len(legs), s.legBytes(), s.reorder.overdraftCount(), reason,
 		)
 	})
 }
@@ -629,15 +681,16 @@ func (c *secureConn) closeTransport() {
 	_ = c.conn.Close()
 }
 
-// multipathLegsFromSecureConns builds legs from already handshaked connections.
+// multipathLegsFromSecureConns builds legs from already handshaked connections,
+// numbering them by position.
 func multipathLegsFromSecureConns(conns []*secureConn, labels []string) []*multipathLegConn {
 	legs := make([]*multipathLegConn, 0, len(conns))
 	for i, sec := range conns {
-		label := ""
+		label := fmt.Sprintf("leg-%d", i)
 		if i < len(labels) {
 			label = labels[i]
 		}
-		legs = append(legs, &multipathLegConn{index: i, sec: sec, label: label})
+		legs = append(legs, newMultipathLeg(i, sec, label))
 	}
 	return legs
 }
