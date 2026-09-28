@@ -210,7 +210,7 @@ func TestRuntimeProtocolOverlap(t *testing.T) {
 }
 
 func TestIptablesTargetCleanupUsesStoredProtocol(t *testing.T) {
-	commands := strings.Join(iptablesAgentTargetCleanupCmds("12004", "192.0.2.20", 8080, "tcp"), "\n")
+	commands := strings.Join(iptablesAgentTargetCleanupCmds(0, "12004", "192.0.2.20", 8080, "tcp"), "\n")
 	if !strings.Contains(commands, "-p tcp") {
 		t.Fatal("TCP cleanup commands are missing")
 	}

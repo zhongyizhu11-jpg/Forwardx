@@ -1,6 +1,11 @@
 package main
 
 import (
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -53,7 +58,7 @@ func fxpLocalRestartDelay(attempt int) time.Duration {
 func noteFXPUnexpectedExit(id string, ranFor time.Duration) {
 	fxpLocalRestart.mu.Lock()
 	if ranFor >= fxpLocalRestartStable {
-		fxpLocalRestart.attempts[id] = 0
+		delete(fxpLocalRestart.attempts, id)
 	}
 	if fxpLocalRestart.scheduled[id] {
 		fxpLocalRestart.mu.Unlock()
@@ -97,6 +102,8 @@ func restartFXPLocally(id string) {
 		}
 	}
 	if desired == nil {
+		// 不再期望的进程不会再重启，退避计数随之清掉，免得 attempts 随规则增删无限增长。
+		forgetFXPLocalRestartAttempts(id)
 		logf("fxp local restart skipped id=%s: no longer desired", id)
 		return
 	}
@@ -125,6 +132,21 @@ func watchAdoptedFXPProcess(id, configPath string) {
 	fxpLocalRestart.watched[configPath] = true
 	fxpLocalRestart.mu.Unlock()
 	adoptedAt := time.Now()
+	// 接管来的进程的输出还写在它自己的日志文件里（见 fxp_log_file.go），继续跟读，
+	// 端点健康事件在 Agent 重启后不会断。只看接管之后新写的内容。
+	logPath := fxpRuntimeLogPath(configPath)
+	logOffset := int64(0)
+	if info, err := os.Stat(logPath); err == nil {
+		logOffset = info.Size()
+	}
+	logTail := newFXPLogTail(logPath, logOffset, func() io.Writer {
+		fxpMu.Lock()
+		defer fxpMu.Unlock()
+		if current := fxpServers[id]; current != nil && current.cmd == nil && current.configPath == configPath {
+			return fxpLogWriter{spec: current.spec}
+		}
+		return nil
+	})
 	go func() {
 		defer func() {
 			fxpLocalRestart.mu.Lock()
@@ -145,7 +167,8 @@ func watchAdoptedFXPProcess(id, configPath string) {
 				// 被主动停掉，或者已经换成了本 Agent 启动的进程。
 				return
 			}
-			if err := syscall.Kill(pid, 0); err != syscall.ESRCH {
+			logTail.poll()
+			if fxpAdoptedPIDAlive(pid, configPath) {
 				continue
 			}
 			fxpMu.Lock()
@@ -160,4 +183,45 @@ func watchAdoptedFXPProcess(id, configPath string) {
 			return
 		}
 	}()
+}
+
+func forgetFXPLocalRestartAttempts(id string) {
+	fxpLocalRestart.mu.Lock()
+	delete(fxpLocalRestart.attempts, id)
+	fxpLocalRestart.mu.Unlock()
+}
+
+// fxpProcCmdlineReader 读取 /proc/<pid>/cmdline；测试里替换。
+var fxpProcCmdlineReader = func(pid int) ([]byte, error) {
+	return os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+}
+
+// fxpAdoptedPIDAlive 判断接管来的 FXP 进程是否还活着。
+//
+// 只看 kill(pid, 0) 不够：进程退出后 PID 可能被别的进程复用，看护协程就会一直以为它还在，
+// 这条隧道再也不会被本地重启。所以在有 /proc 的系统上还要核对命令行确实是 forwardx-fxp
+// 且带着这份配置（与 fxpRuntimePIDs 用 pgrep 找进程时的条件一致）。
+func fxpAdoptedPIDAlive(pid int, configPath string) bool {
+	if pid <= 0 {
+		return false
+	}
+	if err := syscall.Kill(pid, 0); err == syscall.ESRCH {
+		return false
+	}
+	raw, err := fxpProcCmdlineReader(pid)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if _, procErr := os.Stat("/proc/self/cmdline"); procErr == nil {
+				return false
+			}
+		}
+		// 没有 /proc（非 Linux）或读不了：退回只看 kill 的结果。
+		return true
+	}
+	cmdline := strings.ReplaceAll(string(raw), "\x00", " ")
+	if !strings.Contains(cmdline, "forwardx-fxp") {
+		return false
+	}
+	configPath = strings.TrimSpace(configPath)
+	return configPath == "" || strings.Contains(cmdline, configPath) || strings.Contains(cmdline, filepath.Base(configPath))
 }

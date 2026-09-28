@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -118,19 +120,30 @@ func (p *failoverProxy) serveUDP() {
 	defer close(stopReaper)
 	go p.reapUDPSessions(stopReaper)
 	buf := make([]byte, failoverUDPBufferSize)
+	var backoff serveLoopBackoff
 	for {
 		n, client, err := p.udp.ReadFrom(buf)
 		if err != nil {
-			if p.retired() || errors.Is(err, net.ErrClosed) {
+			if p.retired() {
 				return
 			}
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
 				continue
 			}
-			logf("failover udp read failed rule=%d source=%d: %v", p.ruleID, p.sourcePort, err)
-			return
+			// 临时错误退避重试；监听意外关闭则摘掉整个代理等对账重建（以前直接退出，UDP 从此没人收）。
+			exit, fatal := serveLoopHandleError(p.done, &backoff, err, func(err error, suppressed int) {
+				logf("failover udp read failed rule=%d source=%d suppressed=%d: %v", p.ruleID, p.sourcePort, suppressed, err)
+			})
+			if fatal {
+				p.abandonAfterServeFailure("udp read", err)
+			}
+			if exit {
+				return
+			}
+			continue
 		}
+		backoff.success()
 		if n <= 0 || client == nil {
 			continue
 		}
@@ -202,6 +215,9 @@ func (p *failoverProxy) udpSessionFor(key string, client net.Addr) *failoverUDPS
 	return session
 }
 
+// oldestUDPSessionLocked 线性扫描找最久没动静的会话。只在会话数顶到上限（4096）、又来了新来源时
+// 才走到这里，一次最多扫 4096 个原子量（微秒级）；换成 LRU 链表要在每个包的热路径上加锁挪节点，
+// 代价反而更大，所以保持现状。
 func (p *failoverProxy) oldestUDPSessionLocked() *failoverUDPSession {
 	var oldest *failoverUDPSession
 	var oldestAt int64
@@ -225,7 +241,17 @@ func (p *failoverProxy) dialUDPPath(key string) (net.Conn, int) {
 			}
 			return nil, -1
 		}
-		upstream, err := net.DialTimeout("udp", net.JoinHostPort(target.TargetIP, strconv.Itoa(target.TargetPort)), failoverUDPDialTimeout)
+		addr, pending, resolveErr := failoverUDPResolve(target.TargetIP, target.TargetPort)
+		if pending {
+			// 域名还在后台解析：这条先跳过但不记失败，解析完成后下一个包就能走它。
+			attempted[index] = true
+			continue
+		}
+		var upstream net.Conn
+		err := resolveErr
+		if err == nil {
+			upstream, err = net.DialUDP("udp", nil, addr)
+		}
 		if err == nil {
 			return upstream, index
 		}
@@ -410,4 +436,96 @@ func readFailoverProxyHeader(conn net.Conn, timeout time.Duration) ([]byte, int,
 		return raw, 0, ""
 	}
 	return raw, headerLen, strings.TrimSpace(info.SourceIP)
+}
+
+/*
+UDP 路径的目标地址解析。
+
+新会话是在 serveUDP 的读循环里拨出去的；目标写的是域名时，net.DialTimeout 会在读循环里同步做 DNS 查询，
+DNS 慢的时候整条规则的所有 UDP 包都跟着卡住。这里改成：IP 直接用；域名查一个小缓存，没命中就在后台解析，
+这一次先跳过这条路径（UDP 丢一个包可以接受），解析好之后后面的包直接用缓存。
+*/
+const (
+	failoverUDPResolveTTL        = 30 * time.Second
+	failoverUDPResolveFailureTTL = 5 * time.Second
+	failoverUDPResolveTimeout    = 5 * time.Second
+	failoverUDPResolveCacheLimit = 256
+)
+
+type failoverUDPResolveEntry struct {
+	addr    *net.UDPAddr
+	err     error
+	expires time.Time
+}
+
+var (
+	failoverUDPResolveMu       sync.Mutex
+	failoverUDPResolveCache    = map[string]failoverUDPResolveEntry{}
+	failoverUDPResolveInflight = map[string]bool{}
+	// 测试里替换。
+	failoverUDPLookup = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		return net.DefaultResolver.LookupIPAddr(ctx, host)
+	}
+)
+
+// failoverUDPResolve 返回可直接拨号的地址；pending 为 true 表示正在后台解析。
+func failoverUDPResolve(host string, port int) (*net.UDPAddr, bool, error) {
+	clean := strings.Trim(strings.TrimSpace(host), "[]")
+	if ip := net.ParseIP(clean); ip != nil {
+		return &net.UDPAddr{IP: ip, Port: port}, false, nil
+	}
+	key := net.JoinHostPort(clean, strconv.Itoa(port))
+	now := time.Now()
+	failoverUDPResolveMu.Lock()
+	defer failoverUDPResolveMu.Unlock()
+	if entry, ok := failoverUDPResolveCache[key]; ok && now.Before(entry.expires) {
+		return entry.addr, false, entry.err
+	}
+	if !failoverUDPResolveInflight[key] {
+		failoverUDPResolveInflight[key] = true
+		go failoverUDPResolveInBackground(key, clean, port)
+	}
+	return nil, true, nil
+}
+
+func failoverUDPResolveInBackground(key string, host string, port int) {
+	ctx, cancel := context.WithTimeout(context.Background(), failoverUDPResolveTimeout)
+	addrs, err := failoverUDPLookup(ctx, host)
+	cancel()
+	entry := failoverUDPResolveEntry{err: err, expires: time.Now().Add(failoverUDPResolveFailureTTL)}
+	if err == nil {
+		// 和 net.Dial("udp", ...) 一样优先 IPv4。
+		var chosen net.IP
+		for _, addr := range addrs {
+			if addr.IP.To4() != nil {
+				chosen = addr.IP
+				break
+			}
+		}
+		if chosen == nil && len(addrs) > 0 {
+			chosen = addrs[0].IP
+		}
+		if chosen == nil {
+			entry.err = fmt.Errorf("no address for %s", host)
+		} else {
+			entry.addr = &net.UDPAddr{IP: chosen, Port: port}
+			entry.err = nil
+			entry.expires = time.Now().Add(failoverUDPResolveTTL)
+		}
+	}
+	failoverUDPResolveMu.Lock()
+	defer failoverUDPResolveMu.Unlock()
+	delete(failoverUDPResolveInflight, key)
+	if len(failoverUDPResolveCache) >= failoverUDPResolveCacheLimit {
+		now := time.Now()
+		for cachedKey, cached := range failoverUDPResolveCache {
+			if !now.Before(cached.expires) {
+				delete(failoverUDPResolveCache, cachedKey)
+			}
+		}
+		if len(failoverUDPResolveCache) >= failoverUDPResolveCacheLimit {
+			failoverUDPResolveCache = map[string]failoverUDPResolveEntry{}
+		}
+	}
+	failoverUDPResolveCache[key] = entry
 }

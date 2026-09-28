@@ -17,6 +17,11 @@ const (
 	dnsRollbackHoldDown         = 5 * time.Minute
 	dnsWatchIdlePollInterval    = 30 * time.Second
 	dnsWatchConfirmPollInterval = 2 * time.Second
+	// 轮换型 DNS（每次返回池子里不同的子集）永远凑不齐 3 次相同答案，以前会一直停在
+	// “待确认”并每 2 秒全量查询一次。同一主机连续变化这么多次仍不稳定，就在确认窗口过后直接上报。
+	dnsChangeMaxConfirmationAttempts = 5
+	// 并发解析的上限：主机多时逐个串行查询，一轮扫描可能远超轮询间隔。
+	dnsWatchLookupConcurrency = 8
 )
 
 var dnsWatchScanMu sync.Mutex
@@ -26,6 +31,9 @@ type dnsWatchCandidate struct {
 	IPs           []string
 	Confirmations int
 	FirstSeen     time.Time
+	// 与当前快照不同的连续答案次数（不要求彼此相同）及其起点，用于给轮换型 DNS 设上限。
+	Attempts      int
+	DeviatedSince time.Time
 }
 
 type dnsWatchRetiredSnapshot struct {
@@ -161,12 +169,7 @@ func updateDNSWatchWithLookupAt(items []dnsWatchItem, lookup func(string) []stri
 		watchedItems[key] = append(watchedItems[key], item)
 	}
 
-	resolved := map[string][]string{}
-	for key, host := range watched {
-		if ips := lookup(host); len(ips) > 0 {
-			resolved[key] = ips
-		}
-	}
+	resolved := resolveDNSWatchHosts(watched, lookup)
 
 	dnsWatchMu.Lock()
 	defer dnsWatchMu.Unlock()
@@ -200,7 +203,8 @@ func updateDNSWatchWithLookupAt(items []dnsWatchItem, lookup func(string) []stri
 			nextSnapshot[key] = append([]string(nil), ips...)
 			continue
 		}
-		if sameStringSlice(oldIPs, ips) {
+		// 与快照在每个地址族上都有交集，视为同一组地址的轮换（负载均衡池每次返回不同子集），不算变化。
+		if sameStringSlice(oldIPs, ips) || dnsAnswerSetsOverlap(oldIPs, ips) {
 			nextSnapshot[key] = append([]string(nil), oldIPs...)
 			continue
 		}
@@ -212,19 +216,37 @@ func updateDNSWatchWithLookupAt(items []dnsWatchItem, lookup func(string) []stri
 		// Recursive DNS caches can briefly alternate between the retired and
 		// current DDNS value. Keep serving the stable snapshot until the new
 		// answer has remained consistent across both polls and elapsed time.
-		candidate := dnsWatchCandidates[key]
-		if sameStringSlice(candidate.IPs, ips) {
+		candidate, hadCandidate := dnsWatchCandidates[key]
+		if hadCandidate && (sameStringSlice(candidate.IPs, ips) || dnsAnswerSetsOverlap(candidate.IPs, ips)) {
+			// 与候选相同或同属一组轮换地址：算一次确认，候选更新为最新答案。
 			candidate.Confirmations++
+			candidate.Attempts++
+			candidate.IPs = append([]string(nil), ips...)
+		} else if hadCandidate {
+			candidate = dnsWatchCandidate{
+				IPs:           append([]string(nil), ips...),
+				Confirmations: 1,
+				FirstSeen:     now,
+				Attempts:      candidate.Attempts + 1,
+				DeviatedSince: candidate.DeviatedSince,
+			}
 		} else {
 			candidate = dnsWatchCandidate{
 				IPs:           append([]string(nil), ips...),
 				Confirmations: 1,
 				FirstSeen:     now,
+				Attempts:      1,
+				DeviatedSince: now,
 			}
 		}
-		if candidate.Confirmations < dnsChangeConfirmations || now.Sub(candidate.FirstSeen) < dnsChangeConfirmationWindow {
+		confirmed := candidate.Confirmations >= dnsChangeConfirmations && now.Sub(candidate.FirstSeen) >= dnsChangeConfirmationWindow
+		capped := candidate.Attempts >= dnsChangeMaxConfirmationAttempts && now.Sub(candidate.DeviatedSince) >= dnsChangeConfirmationWindow
+		if !confirmed && !capped {
 			nextCandidates[key] = candidate
-			pendingConfirmation = true
+			// 达到尝试上限后只等确认窗口过去，按常规节奏轮询即可，不再每 2 秒查一次。
+			if candidate.Attempts < dnsChangeMaxConfirmationAttempts {
+				pendingConfirmation = true
+			}
 			nextSnapshot[key] = append([]string(nil), oldIPs...)
 			continue
 		}
@@ -256,6 +278,73 @@ func updateDNSWatchWithLookupAt(items []dnsWatchItem, lookup func(string) []stri
 		appendPendingDNSChangesLocked(reports)
 	}
 	return pendingConfirmation || len(reports) > 0
+}
+
+// resolveDNSWatchHosts 以有限并发解析所有主机，解析失败的主机不出现在结果里。
+func resolveDNSWatchHosts(watched map[string]string, lookup func(string) []string) map[string][]string {
+	resolved := make(map[string][]string, len(watched))
+	if len(watched) == 0 {
+		return resolved
+	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, dnsWatchLookupConcurrency)
+	for key, host := range watched {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func(key string, host string) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			ips := lookup(host)
+			if len(ips) == 0 {
+				return
+			}
+			mu.Lock()
+			resolved[key] = ips
+			mu.Unlock()
+		}(key, host)
+	}
+	wg.Wait()
+	return resolved
+}
+
+// dnsAnswerSetsOverlap 判断两组答案是否属于同一组轮换地址：两边都有的每个地址族（IPv4 / IPv6）
+// 至少共享一个地址。按地址族分别判断，是为了双栈 DDNS 只换了 IPv6 前缀时仍能识别为变化。
+func dnsAnswerSetsOverlap(a []string, b []string) bool {
+	familyOf := func(value string) string {
+		if strings.Contains(value, ":") {
+			return "6"
+		}
+		return "4"
+	}
+	aByFamily := map[string]map[string]bool{}
+	for _, ip := range a {
+		family := familyOf(ip)
+		if aByFamily[family] == nil {
+			aByFamily[family] = map[string]bool{}
+		}
+		aByFamily[family][ip] = true
+	}
+	bFamilies := map[string]bool{}
+	shared := map[string]bool{}
+	for _, ip := range b {
+		family := familyOf(ip)
+		bFamilies[family] = true
+		if aByFamily[family][ip] {
+			shared[family] = true
+		}
+	}
+	compared := 0
+	for family := range bFamilies {
+		if aByFamily[family] == nil {
+			continue
+		}
+		compared++
+		if !shared[family] {
+			return false
+		}
+	}
+	return compared > 0
 }
 
 func appendPendingDNSChangesLocked(changes []dnsChangeReport) {

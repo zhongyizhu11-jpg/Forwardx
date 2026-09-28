@@ -36,19 +36,39 @@ function nftCommentLiteral(comment: string) {
 }
 
 
+/**
+ * iptables 调用前缀。`$FWX_IPT_WAIT` 由 Agent 执行命令时注入（按主机上 iptables 版本给出
+ * `-w 5`、`-w` 或空）：不带 -w 时 xtables 锁被别的进程占着会立刻以退出码 4 失败，
+ * `-C || -A` 会把“锁忙”误当成“规则不存在”而重复追加（计数规则重复 = 流量数两遍），
+ * 删除循环也会提前退出留下残留。旧 Agent 不注入这个变量，展开为空，行为与以前一致。
+ */
+export const IPTABLES_WAIT_ARG = "$FWX_IPT_WAIT";
+
+function iptablesBin(binary: IptablesBinary) {
+  return `${binary} ${IPTABLES_WAIT_ARG}`;
+}
+
 function iptablesCommand(binary: IptablesBinary, args: string, optional = false) {
   if (binary === "ip6tables") {
     return optional
-      ? `if command -v ip6tables >/dev/null 2>&1; then ip6tables ${args}; fi; true`
-      : `if command -v ip6tables >/dev/null 2>&1; then ip6tables ${args}; else exit 1; fi`;
+      ? `if command -v ip6tables >/dev/null 2>&1; then ${iptablesBin("ip6tables")} ${args}; fi; true`
+      : `if command -v ip6tables >/dev/null 2>&1; then ${iptablesBin("ip6tables")} ${args}; else exit 1; fi`;
   }
-  const command = `iptables ${args}`;
+  const command = `${iptablesBin("iptables")} ${args}`;
   return optional ? ignoreShellFailure(command) : command;
+}
+
+/**
+ * 只有 -C 明确返回 1（规则不存在）才追加；锁忙(4)、参数/模块错误(2)等不代表不存在，
+ * 这时追加只会造出重复规则，所以直接失败交给下一轮重试。
+ */
+export function iptablesEnsureShell(bin: string, tableArg: string, rule: string, appendFlag: "-A" | "-I" = "-A") {
+  return `${bin} ${tableArg}-C ${rule} 2>/dev/null; __fwx_rc=$?; if [ "$__fwx_rc" -eq 1 ]; then ${bin} ${tableArg}${appendFlag} ${rule}; elif [ "$__fwx_rc" -ne 0 ]; then echo "[iptables] check failed rc=$__fwx_rc, skip append" >&2; false; fi`;
 }
 
 function iptablesEnsure(binary: IptablesBinary, table: string | null, rule: string, optional = false) {
   const tableArg = table ? `-t ${table} ` : "";
-  const command = `if ${binary} ${tableArg}-C ${rule} 2>/dev/null; then :; else ${binary} ${tableArg}-A ${rule}; fi`;
+  const command = iptablesEnsureShell(iptablesBin(binary), tableArg, rule);
   if (binary === "ip6tables") {
     return optional
       ? `if command -v ip6tables >/dev/null 2>&1; then ${command}; fi; true`
@@ -59,7 +79,40 @@ function iptablesEnsure(binary: IptablesBinary, table: string | null, rule: stri
 
 function iptablesDelete(binary: IptablesBinary, table: string | null, rule: string) {
   const tableArg = table ? `-t ${table} ` : "";
-  const command = `while ${binary} ${tableArg}-C ${rule} 2>/dev/null; do if ${binary} ${tableArg}-D ${rule} 2>/dev/null; then :; else break; fi; done`;
+  const bin = iptablesBin(binary);
+  const command = `while ${bin} ${tableArg}-C ${rule} 2>/dev/null; do if ${bin} ${tableArg}-D ${rule} 2>/dev/null; then :; else break; fi; done`;
+  if (binary === "ip6tables") {
+    return `if command -v ip6tables >/dev/null 2>&1; then ${command}; fi; true`;
+  }
+  return ignoreShellFailure(command);
+}
+
+/** 每条规则自己的 MASQUERADE / FORWARD 放行带的标记，与 nftables 路径的 comment 一致。 */
+function iptablesRuleTag(rule: any) {
+  const ruleId = Number(rule?.id) || 0;
+  return ruleId > 0 ? `fwx-rule-${ruleId}` : "";
+}
+
+/** 按 `--comment fwx-rule-<id>` 精确删除（不会误删 fwx-rule-<id>0），只动这条规则自己的那份。 */
+function iptablesDeleteByRuleTag(binary: IptablesBinary, table: string | null, chain: string, tag: string) {
+  const tableArg = table ? `-t ${table} ` : "";
+  const bin = iptablesBin(binary);
+  const command = `${bin} ${tableArg}-S ${chain} 2>/dev/null | awk -v tag=${shellQuote(tag)} '/^-A / {position++; for (i=1; i<NF; i++) if ($i=="--comment") {c=$(i+1); gsub(/"/, "", c); if (c==tag) {count++; numbers[count]=position; break}}} END {for (i=count; i>=1; i--) print numbers[i]}' | while read -r number; do [ -n "$number" ] && ${bin} ${tableArg}-D ${chain} "$number" 2>/dev/null || true; done`;
+  if (binary === "ip6tables") {
+    return `if command -v ip6tables >/dev/null 2>&1; then ${command}; fi; true`;
+  }
+  return ignoreShellFailure(command);
+}
+
+/**
+ * 旧版本下发的 MASQUERADE / FORWARD 放行不带标记、只按目标匹配，转发到同一目标的多条规则共用一份。
+ * 只有 nat PREROUTING 里已经没有别的端口 DNAT 到这个目标时才删它们；读 PREROUTING 失败时
+ * 按“仍被引用”处理（宁可留一条无害的放行，也不能把另一条规则弄断）。
+ */
+function iptablesUnreferencedTargetGuard(binary: IptablesBinary, proto: string, port: number, dnatTarget: string, deletes: string[]) {
+  const bin = iptablesBin(binary);
+  const check = `printf '%s\\n' "$__fwx_nat" | awk -v proto=${shellQuote(proto)} -v port=${shellQuote(String(port))} -v target=${shellQuote(dnatTarget)} '/^-A PREROUTING / && / -j DNAT / {p=""; d=""; t=""; for (i=1; i<NF; i++) {if ($i=="-p") p=$(i+1); else if ($i=="--dport") d=$(i+1); else if ($i=="--to-destination") t=$(i+1)} if (p==proto && d!=port && tolower(t)==tolower(target)) found=1} END {exit found ? 0 : 1}'`;
+  const command = `if __fwx_nat=$(${bin} -t nat -S PREROUTING 2>/dev/null); then if ${check}; then :; else ${deletes.join("; ")}; fi; fi`;
   if (binary === "ip6tables") {
     return `if command -v ip6tables >/dev/null 2>&1; then ${command}; fi; true`;
   }
@@ -84,7 +137,8 @@ function iptablesDeleteDnatRulesForPort(binary: IptablesBinary, port: number, pr
   const body = protos
     .map((proto) => {
       const awk = `awk '/^-A PREROUTING / && / -p ${proto} / && /--dport ${port}( |$)/ && / -j DNAT / {sub(/^-A/, "-D"); print}'`;
-      return `while rule=$(${binary} -t nat -S PREROUTING 2>/dev/null | ${awk} | head -n 1) && [ -n "$rule" ]; do ${binary} -t nat $rule 2>/dev/null || break; done`;
+      const bin = iptablesBin(binary);
+      return `while rule=$(${bin} -t nat -S PREROUTING 2>/dev/null | ${awk} | head -n 1) && [ -n "$rule" ]; do ${bin} -t nat $rule 2>/dev/null || break; done`;
     })
     .join("; ");
   if (binary === "ip6tables") {
@@ -115,7 +169,8 @@ function iptablesDeleteCountingRules(binary: IptablesBinary, port: number) {
   const marker = `fwx-stat-${port}:`;
   const inChain = `FWX_IN_${port}`;
   const outChain = `FWX_OUT_${port}`;
-  const command = `${binary} ${tableArg}-S 2>/dev/null | awk -v marker=${shellQuote(marker)} -v in_chain=${shellQuote(inChain)} -v out_chain=${shellQuote(outChain)} '/^-A / {chain=$2; position[chain]++; matched=index($0, marker)>0; if (!matched) for (i=1; i<=NF; i++) if ($i==in_chain || $i==out_chain) {matched=1; break} if (matched) {count++; chains[count]=chain; numbers[count]=position[chain]}} END {for (i=count; i>=1; i--) print chains[i], numbers[i]}' | while read -r chain number; do [ -n "$chain" ] && [ -n "$number" ] && ${binary} ${tableArg}-D "$chain" "$number" 2>/dev/null || true; done`;
+  const bin = iptablesBin(binary);
+  const command = `${bin} ${tableArg}-S 2>/dev/null | awk -v marker=${shellQuote(marker)} -v in_chain=${shellQuote(inChain)} -v out_chain=${shellQuote(outChain)} '/^-A / {chain=$2; position[chain]++; matched=index($0, marker)>0; if (!matched) for (i=1; i<=NF; i++) if ($i==in_chain || $i==out_chain) {matched=1; break} if (matched) {count++; chains[count]=chain; numbers[count]=position[chain]}} END {for (i=count; i>=1; i--) print chains[i], numbers[i]}' | while read -r chain number; do [ -n "$chain" ] && [ -n "$number" ] && ${bin} ${tableArg}-D "$chain" "$number" 2>/dev/null || true; done`;
   if (binary === "ip6tables") {
     return `if command -v ip6tables >/dev/null 2>&1; then ${command}; fi; true`;
   }
@@ -471,16 +526,33 @@ export function buildManagedPortCleanupCmds(port: number, targetIp?: string, tar
   ];
 }
 
+/**
+ * 清理一条 iptables 规则。
+ *
+ * DNAT 按监听端口删（每条规则独占）。MASQUERADE / FORWARD 放行现在带 `fwx-rule-<id>` 标记、
+ * 按标记删，转发到同一目标的其它规则各有各的一份，不受影响；旧版本留下的无标记副本
+ * 由 iptablesUnreferencedTargetGuard 做引用检查后再删（先删了自己的 DNAT，剩下的 DNAT 都属于别的规则）。
+ */
 export function buildIptablesForwardCleanupCmds(rule: any): string[] {
   const targetIp = cleanAddress(rule.targetIp);
   const binary = iptablesBinaryForTarget(targetIp);
   const protos = forwardRuleProtocols(rule.protocol);
+  const tag = iptablesRuleTag(rule);
   const cmds: string[] = buildIptablesForwardPortCleanupCmds(Number(rule.sourcePort), rule.protocol);
+  if (tag) {
+    cmds.push(
+      iptablesDeleteByRuleTag(binary, "nat", "POSTROUTING", tag),
+      iptablesDeleteByRuleTag(binary, null, "FORWARD", tag),
+    );
+  }
   for (const proto of protos) {
-    cmds.push(iptablesDelete(binary, "nat", `PREROUTING -p ${proto} --dport ${rule.sourcePort} -j DNAT --to-destination ${iptablesDnatTarget(targetIp, rule.targetPort)}`));
-    cmds.push(iptablesDelete(binary, "nat", `POSTROUTING -p ${proto} -d ${targetIp} --dport ${rule.targetPort} -j MASQUERADE`));
-    cmds.push(iptablesDelete(binary, null, `FORWARD -p ${proto} -d ${targetIp} --dport ${rule.targetPort} -j ACCEPT`));
-    cmds.push(iptablesDelete(binary, null, `FORWARD -p ${proto} -s ${targetIp} --sport ${rule.targetPort} ${proto === "tcp" ? "-m state --state ESTABLISHED,RELATED " : ""}-j ACCEPT`));
+    const dnatTarget = iptablesDnatTarget(targetIp, rule.targetPort);
+    cmds.push(iptablesDelete(binary, "nat", `PREROUTING -p ${proto} --dport ${rule.sourcePort} -j DNAT --to-destination ${dnatTarget}`));
+    cmds.push(iptablesUnreferencedTargetGuard(binary, proto, Number(rule.sourcePort), dnatTarget, [
+      iptablesDelete(binary, "nat", `POSTROUTING -p ${proto} -d ${targetIp} --dport ${rule.targetPort} -j MASQUERADE`),
+      iptablesDelete(binary, null, `FORWARD -p ${proto} -d ${targetIp} --dport ${rule.targetPort} -j ACCEPT`),
+      iptablesDelete(binary, null, `FORWARD -p ${proto} -s ${targetIp} --sport ${rule.targetPort} ${proto === "tcp" ? "-m state --state ESTABLISHED,RELATED " : ""}-j ACCEPT`),
+    ]));
   }
   return cmds;
 }
@@ -489,6 +561,9 @@ export function buildIptablesForwardCmds(rule: any): string[] {
   const targetIp = cleanAddress(rule.targetIp);
   const binary = iptablesBinaryForTarget(targetIp);
   const protos = forwardRuleProtocols(rule.protocol);
+  const tag = iptablesRuleTag(rule);
+  // 没有规则 ID（隧道/孤儿快照）时退回旧的无标记写法。
+  const tagMatch = tag ? `-m comment --comment ${tag} ` : "";
   const cmds = [
     binary === "ip6tables"
       ? `sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null`
@@ -497,9 +572,9 @@ export function buildIptablesForwardCmds(rule: any): string[] {
   ];
   for (const proto of protos) {
     cmds.push(iptablesEnsure(binary, "nat", `PREROUTING -p ${proto} --dport ${rule.sourcePort} -j DNAT --to-destination ${iptablesDnatTarget(targetIp, rule.targetPort)}`));
-    cmds.push(iptablesEnsure(binary, "nat", `POSTROUTING -p ${proto} -d ${targetIp} --dport ${rule.targetPort} -j MASQUERADE`));
-    cmds.push(iptablesEnsure(binary, null, `FORWARD -p ${proto} -d ${targetIp} --dport ${rule.targetPort} -j ACCEPT`));
-    cmds.push(iptablesEnsure(binary, null, `FORWARD -p ${proto} -s ${targetIp} --sport ${rule.targetPort} ${proto === "tcp" ? "-m state --state ESTABLISHED,RELATED " : ""}-j ACCEPT`));
+    cmds.push(iptablesEnsure(binary, "nat", `POSTROUTING -p ${proto} -d ${targetIp} --dport ${rule.targetPort} ${tagMatch}-j MASQUERADE`));
+    cmds.push(iptablesEnsure(binary, null, `FORWARD -p ${proto} -d ${targetIp} --dport ${rule.targetPort} ${tagMatch}-j ACCEPT`));
+    cmds.push(iptablesEnsure(binary, null, `FORWARD -p ${proto} -s ${targetIp} --sport ${rule.targetPort} ${proto === "tcp" ? "-m state --state ESTABLISHED,RELATED " : ""}${tagMatch}-j ACCEPT`));
   }
   return cmds;
 }

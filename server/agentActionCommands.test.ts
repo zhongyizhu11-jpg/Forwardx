@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   buildCountingChainCmds,
+  buildIptablesForwardCleanupCmds,
+  buildIptablesForwardCmds,
   buildIptablesTransitionCleanupCmds,
   buildKernelForwardTransitionCleanupCmds,
   buildNftCleanupCmds,
@@ -97,7 +103,7 @@ test("kernel transition cleanup removes both nftables and iptables state", () =>
 
   // A process-backed replacement must clean a previous kernel backend even
   // when the Agent's per-port owner marker is missing or stale.
-  assert.match(commands, /iptables -t nat -S PREROUTING/);
+  assert.match(commands, /iptables \$FWX_IPT_WAIT -t nat -S PREROUTING/);
   assert.match(commands, /nft list table inet forwardx/);
   assert.match(commands, /fwx-rule-42/);
   // Transition cleanup must not remove the state marker before the new action
@@ -117,8 +123,8 @@ test("native backend transitions clean only the opposite backend", () => {
   const iptablesCleanup = buildIptablesTransitionCleanupCmds(rule).join("\n");
 
   assert.match(nftCleanup, /nft list table inet forwardx/);
-  assert.doesNotMatch(nftCleanup, /iptables -t nat/);
-  assert.match(iptablesCleanup, /iptables -t nat/);
+  assert.doesNotMatch(nftCleanup, /iptables(?: \$FWX_IPT_WAIT)? -t nat/);
+  assert.match(iptablesCleanup, /iptables \$FWX_IPT_WAIT -t nat/);
   assert.doesNotMatch(iptablesCleanup, /nft list table inet forwardx/);
 });
 
@@ -240,4 +246,135 @@ test("内核态转发：nftables 不下 iptables 计数链，iptables 要下", (
   /** 访问限制由调用方传进来，传什么就该原样出现在末尾。 */
   const withLimits = buildKernelForwardCmds({ ...rule, forwardType: "nftables" }, "nftables", ["LIMIT-A", "LIMIT-B"]);
   assert.deepEqual(withLimits.slice(-2), ["LIMIT-A", "LIMIT-B"], "访问限制要接在最后");
+});
+
+/**
+ * 用一个假的 iptables（规则存成文本文件）真跑一遍生成的 shell，
+ * 验证共享目标的 MASQUERADE / FORWARD 不会被另一条规则的清理带走。
+ */
+const FAKE_IPTABLES = String.raw`#!/bin/sh
+table=filter
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -w) shift; case "$1" in [0-9]*) shift ;; esac ;;
+    -t) table=$2; shift 2 ;;
+    *) break ;;
+  esac
+done
+f="$FAKE_IPT_DIR/$table"; touch "$f"
+op=$1; shift
+case "$op" in
+  -S) if [ -n "$1" ]; then grep "^-A $1 " "$f"; else cat "$f"; fi; exit 0 ;;
+  -C) [ -n "$FAKE_IPT_CHECK_RC" ] && exit "$FAKE_IPT_CHECK_RC"; chain=$1; shift; grep -qxF -- "-A $chain $*" "$f" && exit 0; exit 1 ;;
+  -A) chain=$1; shift; echo "-A $chain $*" >> "$f" ;;
+  -I) chain=$1; shift; { echo "-A $chain $*"; cat "$f"; } > "$f.tmp"; mv "$f.tmp" "$f" ;;
+  -D) chain=$1; shift
+      if [ $# -eq 1 ] && echo "$1" | grep -qE '^[0-9]+$'; then
+        awk -v c="-A $chain " -v n="$1" 'index($0, c) == 1 {k++; if (k == n) next} {print}' "$f" > "$f.tmp"
+      else
+        grep -qxF -- "-A $chain $*" "$f" || exit 1
+        awk -v l="-A $chain $*" '!done && $0 == l {done = 1; next} {print}' "$f" > "$f.tmp"
+      fi
+      mv "$f.tmp" "$f" ;;
+esac
+exit 0
+`;
+
+function withFakeIptables(run: (exec: (commands: string[], env?: Record<string, string>) => void, state: string) => void) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-fake-ipt-"));
+  const bin = path.join(dir, "bin");
+  const state = path.join(dir, "state");
+  fs.mkdirSync(bin);
+  fs.mkdirSync(state);
+  fs.writeFileSync(path.join(bin, "iptables"), FAKE_IPTABLES, { mode: 0o755 });
+  const exec = (commands: string[], env: Record<string, string> = {}) => {
+    for (const command of commands) {
+      if (/^sysctl /.test(command)) continue;
+      spawnSync("sh", ["-c", command], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_IPT_DIR: state, FWX_IPT_WAIT: "-w 5", ...env },
+        encoding: "utf8",
+      });
+    }
+  };
+  try {
+    run(exec, state);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const readTable = (state: string, table: string) => {
+  const file = path.join(state, table);
+  return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+};
+
+const sharedTargetRule = (id: number, sourcePort: number) => ({
+  id, sourcePort, targetIp: "10.0.0.9", targetPort: 80, protocol: "tcp",
+});
+
+test("iptables：删掉一条规则不会带走共享同一目标的另一条规则的 MASQUERADE / FORWARD", () => {
+  withFakeIptables((exec, state) => {
+    exec(buildIptablesForwardCmds(sharedTargetRule(1, 1001)));
+    exec(buildIptablesForwardCmds(sharedTargetRule(2, 1002)));
+    assert.match(readTable(state, "nat"), /--comment fwx-rule-1 -j MASQUERADE/);
+    assert.match(readTable(state, "nat"), /--comment fwx-rule-2 -j MASQUERADE/);
+
+    exec(buildIptablesForwardCleanupCmds(sharedTargetRule(1, 1001)));
+    const nat = readTable(state, "nat");
+    const filter = readTable(state, "filter");
+    assert.doesNotMatch(nat, /--dport 1001 -j DNAT/);
+    assert.doesNotMatch(nat, /fwx-rule-1 /);
+    assert.match(nat, /--dport 1002 -j DNAT/);
+    assert.match(nat, /--comment fwx-rule-2 -j MASQUERADE/);
+    assert.equal((filter.match(/fwx-rule-2 -j ACCEPT/g) || []).length, 2, filter);
+    assert.doesNotMatch(filter, /fwx-rule-1 /);
+  });
+});
+
+test("iptables：旧版无标记的共享副本只在没有别的规则引用时才删", () => {
+  withFakeIptables((exec, state) => {
+    // 旧 Agent/面板留下的布局：两条规则的 DNAT + 一份共享、无标记的 MASQUERADE/FORWARD。
+    fs.writeFileSync(path.join(state, "nat"), [
+      "-A PREROUTING -p tcp --dport 1001 -j DNAT --to-destination 10.0.0.9:80",
+      "-A PREROUTING -p tcp --dport 1002 -j DNAT --to-destination 10.0.0.9:80",
+      "-A POSTROUTING -p tcp -d 10.0.0.9 --dport 80 -j MASQUERADE",
+      "",
+    ].join("\n"));
+    fs.writeFileSync(path.join(state, "filter"), [
+      "-A FORWARD -p tcp -d 10.0.0.9 --dport 80 -j ACCEPT",
+      "-A FORWARD -p tcp -s 10.0.0.9 --sport 80 -m state --state ESTABLISHED,RELATED -j ACCEPT",
+      "",
+    ].join("\n"));
+
+    exec(buildIptablesForwardCleanupCmds(sharedTargetRule(1, 1001)));
+    assert.match(readTable(state, "nat"), /^-A POSTROUTING -p tcp -d 10\.0\.0\.9 --dport 80 -j MASQUERADE$/m, "规则 2 还在用，无标记的 MASQUERADE 必须保留");
+    assert.match(readTable(state, "filter"), /^-A FORWARD -p tcp -d 10\.0\.0\.9 --dport 80 -j ACCEPT$/m);
+
+    // 规则 2 被新面板重下发：迁移成带标记的规则，无标记副本已无人引用，被收掉。
+    exec(buildIptablesForwardCmds(sharedTargetRule(2, 1002)));
+    const nat = readTable(state, "nat");
+    assert.doesNotMatch(nat, /^-A POSTROUTING -p tcp -d 10\.0\.0\.9 --dport 80 -j MASQUERADE$/m);
+    assert.match(nat, /--comment fwx-rule-2 -j MASQUERADE/);
+    assert.doesNotMatch(readTable(state, "filter"), /--dport 80 -j ACCEPT$/m);
+  });
+});
+
+test("iptables：-C 因锁忙等原因失败（非 1）时不追加，避免重复规则", () => {
+  withFakeIptables((exec, state) => {
+    exec(buildCountingChainCmds(22022, "203.0.113.10", 443, "tcp", "iptables"), { FAKE_IPT_CHECK_RC: "4" });
+    assert.equal(readTable(state, "mangle").trim(), "");
+    exec(buildCountingChainCmds(22022, "203.0.113.10", 443, "tcp", "iptables"));
+    exec(buildCountingChainCmds(22022, "203.0.113.10", 443, "tcp", "iptables").slice(-2));
+    assert.equal((readTable(state, "mangle").match(/fwx-stat-22022:in/g) || []).length, 1);
+  });
+});
+
+test("iptables 命令都带锁等待占位", () => {
+  const commands = [
+    ...buildIptablesForwardCmds(sharedTargetRule(7, 1007)),
+    ...buildCountingChainCmds(1007, "10.0.0.9", 80, "tcp", "iptables"),
+  ].join("\n");
+  const bare = (commands.match(/\bip6?tables [^\n;]{0,16}/g) || [])
+    .filter((item) => !item.includes("$FWX_IPT_WAIT") && !/^ip6?tables >/.test(item));
+  assert.deepEqual(bare, []);
 });

@@ -1278,11 +1278,19 @@ func (runtime *wireGuardRuntime) ensureOutboundProxy(refID string, peerID string
 
 func (runtime *wireGuardRuntime) serveOutboundTCP(proxy *wireGuardOutboundProxy) {
 	defer proxy.close()
+	var backoff serveLoopBackoff
 	for {
 		client, err := proxy.tcpLn.Accept()
 		if err != nil {
-			return
+			// 临时错误退避重试，只在 proxy 关闭或监听失效时退出（退出时 defer 关闭 proxy，下次取用会重建）。
+			if exit, _ := serveLoopHandleError(proxy.done, &backoff, err, func(err error, suppressed int) {
+				logf("wireguard proxy tcp accept failed tunnel=%d suppressed=%d: %v", runtime.spec.TunnelID, suppressed, err)
+			}); exit {
+				return
+			}
+			continue
 		}
+		backoff.success()
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), wireGuardProxyDialTimeout)
 			remote, err := runtime.dialPeerTCP(ctx, proxy.peerID, proxy.tcpPort)
@@ -1300,11 +1308,19 @@ func (runtime *wireGuardRuntime) serveOutboundTCP(proxy *wireGuardOutboundProxy)
 func (runtime *wireGuardRuntime) serveOutboundUDP(proxy *wireGuardOutboundProxy) {
 	defer proxy.close()
 	buf := make([]byte, 65535)
+	var backoff serveLoopBackoff
 	for {
 		n, clientAddr, err := proxy.udpConn.ReadFrom(buf)
 		if err != nil {
-			return
+			// 临时错误退避重试，只在 proxy 关闭或监听失效时退出（退出时 defer 关闭 proxy，下次取用会重建）。
+			if exit, _ := serveLoopHandleError(proxy.done, &backoff, err, func(err error, suppressed int) {
+				logf("wireguard proxy udp read failed tunnel=%d suppressed=%d: %v", runtime.spec.TunnelID, suppressed, err)
+			}); exit {
+				return
+			}
+			continue
 		}
+		backoff.success()
 		key := clientAddr.String()
 		var evicted *wireGuardUDPProxySession
 		proxy.sessionsMu.Lock()
@@ -1422,11 +1438,19 @@ func (runtime *wireGuardRuntime) ensureInboundProxy(refID string, tcpPort, udpPo
 
 func (runtime *wireGuardRuntime) serveInboundTCP(proxy *wireGuardInboundProxy) {
 	defer proxy.close()
+	var backoff serveLoopBackoff
 	for {
 		client, err := proxy.tcpLn.Accept()
 		if err != nil {
-			return
+			// 临时错误退避重试，只在 proxy 关闭或监听失效时退出（退出时 defer 关闭 proxy，下次取用会重建）。
+			if exit, _ := serveLoopHandleError(proxy.done, &backoff, err, func(err error, suppressed int) {
+				logf("wireguard proxy tcp accept failed tunnel=%d suppressed=%d: %v", runtime.spec.TunnelID, suppressed, err)
+			}); exit {
+				return
+			}
+			continue
 		}
+		backoff.success()
 		go func() {
 			backend, err := net.DialTimeout("tcp", net.JoinHostPort(proxy.backendHost, strconv.Itoa(proxy.backendTCP)), wireGuardProxyDialTimeout)
 			if err != nil {
@@ -1442,11 +1466,19 @@ func (runtime *wireGuardRuntime) serveInboundTCP(proxy *wireGuardInboundProxy) {
 func (runtime *wireGuardRuntime) serveInboundUDP(proxy *wireGuardInboundProxy) {
 	defer proxy.close()
 	buf := make([]byte, 65535)
+	var backoff serveLoopBackoff
 	for {
 		n, peerAddr, err := proxy.udpConn.ReadFrom(buf)
 		if err != nil {
-			return
+			// 临时错误退避重试，只在 proxy 关闭或监听失效时退出（退出时 defer 关闭 proxy，下次取用会重建）。
+			if exit, _ := serveLoopHandleError(proxy.done, &backoff, err, func(err error, suppressed int) {
+				logf("wireguard proxy udp read failed tunnel=%d suppressed=%d: %v", runtime.spec.TunnelID, suppressed, err)
+			}); exit {
+				return
+			}
+			continue
 		}
+		backoff.success()
 		key := peerAddr.String()
 		var evicted *wireGuardUDPProxySession
 		proxy.sessionsMu.Lock()

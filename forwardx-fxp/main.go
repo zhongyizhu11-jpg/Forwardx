@@ -754,6 +754,7 @@ func logListenerConnGateRejection(role string, cfg config, remoteAddr net.Addr, 
 }
 
 func main() {
+	ignoreBrokenPipeSignal()
 	configureFXPLogging()
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	configPath := flag.String("config", "", "config file")

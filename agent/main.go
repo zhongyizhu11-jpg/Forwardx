@@ -83,6 +83,13 @@ const agentHeartbeatSummaryLogInterval = 5 * time.Minute
 const agentEventStreamReconnectMinDelay = 3 * time.Second
 const agentEventStreamReconnectMaxDelay = 30 * time.Second
 const agentEventStreamStableResetInterval = 5 * time.Minute
+
+// agentEventStreamReconnectJitterFloor 是 SSE 重连随机等待的下限。
+const agentEventStreamReconnectJitterFloor = time.Second
+
+// agentEventStreamReconnectHeartbeatMaxDelay：SSE 连上后补做的那次完整心跳随机推迟 0~10 秒，
+// 面板重启后成百上千个 Agent 几乎同时重连，不推迟就会同时来一轮完整对账。
+const agentEventStreamReconnectHeartbeatMaxDelay = 10 * time.Second
 const agentEventStreamInactivityTimeout = 75 * time.Second
 const agentEventStreamMaxTokenBytes = 8 * 1024 * 1024
 const actionBacklogKeepaliveInterval = 10 * time.Second
@@ -1563,9 +1570,12 @@ func (s *kernelForwardSnapshot) actionApplyReady(a action) bool {
 	return s.kernelRuleApplyPresent(a.ForwardType, a.RuleID, a.SourcePort, a.TargetIP, a.TargetPort, a.Protocol)
 }
 
-var accessLimitRejectPattern = regexp.MustCompile(`(?i)(iptables|ip6tables) -A (FWX_LIMIT_[A-Za-z0-9_]+) -p tcp -m connlimit --connlimit-above ([0-9]+) --connlimit-mask ([0-9]+) -j REJECT --reject-with tcp-reset`)
-var accessLimitReturnPattern = regexp.MustCompile(`(?i)(iptables|ip6tables) -A (FWX_LIMIT_[A-Za-z0-9_]+) -j RETURN`)
-var accessLimitJumpPattern = regexp.MustCompile(`(?i)(iptables|ip6tables) -C (INPUT|FORWARD) -p tcp --dport ([0-9]+) -j (FWX_LIMIT_[A-Za-z0-9_]+)`)
+// accessLimitWaitArg 容忍面板在二进制名后面插入的锁等待参数（`$FWX_IPT_WAIT`、`-w`、`-w 5`）。
+const accessLimitWaitArg = `(?:\s+(?:\$\{?FWX_IPT_WAIT\}?|-w(?:\s+[0-9]+)?))?`
+
+var accessLimitRejectPattern = regexp.MustCompile(`(?i)(iptables|ip6tables)` + accessLimitWaitArg + ` -A (FWX_LIMIT_[A-Za-z0-9_]+) -p tcp -m connlimit --connlimit-above ([0-9]+) --connlimit-mask ([0-9]+) -j REJECT --reject-with tcp-reset`)
+var accessLimitReturnPattern = regexp.MustCompile(`(?i)(iptables|ip6tables)` + accessLimitWaitArg + ` -A (FWX_LIMIT_[A-Za-z0-9_]+) -j RETURN`)
+var accessLimitJumpPattern = regexp.MustCompile(`(?i)(iptables|ip6tables)` + accessLimitWaitArg + ` -C (INPUT|FORWARD) -p tcp --dport ([0-9]+) -j (FWX_LIMIT_[A-Za-z0-9_]+)`)
 var accessLimitChainPattern = regexp.MustCompile(`\bFWX_LIMIT_[A-Za-z0-9_]+\b`)
 
 type accessLimitRuleExpectation struct {
@@ -1582,6 +1592,9 @@ type accessLimitJumpExpectation struct {
 }
 
 const accessLimitMaintenanceInterval = 30 * time.Minute
+
+// accessLimitMaintenanceWaitTimeout 是访问限制维护等待本批动作完成的上限（单条 shell 最长 90 秒）。
+const accessLimitMaintenanceWaitTimeout = 10 * time.Minute
 
 var (
 	accessLimitMaintenanceMu    sync.Mutex
@@ -1684,9 +1697,21 @@ func scheduleAccessLimitMaintenance(actions []action, completed []<-chan struct{
 	}
 	waits := append([]<-chan struct{}(nil), completed...)
 	go func() {
+		// 等本批动作跑完再做维护；某个动作卡死（done 永远不关）时以前这个协程会永久泄漏，
+		// 现在最多等 accessLimitMaintenanceWaitTimeout，超时就放弃这一轮（下一批动作会再安排）。
+		deadline := time.NewTimer(accessLimitMaintenanceWaitTimeout)
+		defer deadline.Stop()
 		for _, done := range waits {
-			if done != nil {
-				<-done
+			if done == nil {
+				continue
+			}
+			select {
+			case <-done:
+			case <-deadline.C:
+				if shouldLogAgentReport("access-limit-maintenance-wait-timeout", accessLimitMaintenanceInterval) {
+					logf("optional access limit maintenance skipped: actions still running after %s", accessLimitMaintenanceWaitTimeout)
+				}
+				return
 			}
 		}
 		accessLimitMaintenanceRunMu.Lock()
@@ -1749,7 +1774,7 @@ func accessLimitActionReady(a action) bool {
 		if !commandExists(expectation.binary) {
 			continue
 		}
-		if !runShellQuiet(expectation.binary + " -C " + expectation.chain + " " + expectation.args + " 2>/dev/null") {
+		if !runIptablesShellQuiet(iptablesAgentBin(expectation.binary) + " -C " + expectation.chain + " " + expectation.args + " 2>/dev/null") {
 			return false
 		}
 	}
@@ -1757,8 +1782,8 @@ func accessLimitActionReady(a action) bool {
 		if !commandExists(expectation.binary) {
 			continue
 		}
-		command := expectation.binary + " -C " + expectation.base + " -p tcp --dport " + expectation.port + " -j " + expectation.chain + " 2>/dev/null"
-		hasJump := runShellQuiet(command)
+		command := iptablesAgentBin(expectation.binary) + " -C " + expectation.base + " -p tcp --dport " + expectation.port + " -j " + expectation.chain + " 2>/dev/null"
+		hasJump := runIptablesShellQuiet(command)
 		if len(ruleExpectations) > 0 {
 			if !hasJump {
 				return false
@@ -1940,6 +1965,11 @@ func (s *kernelForwardSnapshot) nftTableText() string {
 }
 
 func (s *kernelForwardSnapshot) iptablesNatPreroutingText(binary string) string {
+	return s.iptablesChainText(binary, "nat", "PREROUTING")
+}
+
+// iptablesChainText 读取并缓存一个表/链的 `-S` 输出；读取失败返回空串（按“未就绪”处理）。
+func (s *kernelForwardSnapshot) iptablesChainText(binary string, table string, chain string) string {
 	if s == nil || strings.TrimSpace(binary) == "" {
 		return ""
 	}
@@ -1949,19 +1979,24 @@ func (s *kernelForwardSnapshot) iptablesNatPreroutingText(binary string) string 
 	if s.iptablesNatRule == nil {
 		s.iptablesNatRule = map[string]string{}
 	}
-	if s.iptablesLoaded[binary] {
-		return s.iptablesNatRule[binary]
+	key := binary + "|" + table + "|" + chain
+	if s.iptablesLoaded[key] {
+		return s.iptablesNatRule[key]
 	}
-	s.iptablesLoaded[binary] = true
+	s.iptablesLoaded[key] = true
 	if binary == "ip6tables" && !commandExists("ip6tables") {
 		return ""
 	}
-	raw, err := commandOutputWithTimeout(5*time.Second, binary, "-t", "nat", "-S", "PREROUTING")
+	args := []string{"-S", chain}
+	if table != "" {
+		args = append([]string{"-t", table}, args...)
+	}
+	raw, err := iptablesCommandOutput(binary, args...)
 	if err != nil {
 		return ""
 	}
-	s.iptablesNatRule[binary] = string(raw)
-	return s.iptablesNatRule[binary]
+	s.iptablesNatRule[key] = string(raw)
+	return s.iptablesNatRule[key]
 }
 
 func (s *kernelForwardSnapshot) nftForwardRulePresent(ruleID int, sourcePort int, targetIP string, targetPort int, protocol string) bool {
@@ -2028,12 +2063,65 @@ func nftDnatLinePresent(text string, ruleID int, proto string, sourcePort int, t
 
 func (s *kernelForwardSnapshot) iptablesForwardRulePresent(sourcePort int, targetIP string, targetPort int, protocol string) bool {
 	target := kernelCleanAddress(targetIP)
+	binary := iptablesAgentBinaryForTarget(target)
 	for _, proto := range runtimeProtocols(protocol) {
-		if !iptablesDnatLinePresent(s.iptablesNatPreroutingText(iptablesAgentBinaryForTarget(target)), proto, sourcePort, target, targetPort) {
+		if !iptablesDnatLinePresent(s.iptablesNatPreroutingText(binary), proto, sourcePort, target, targetPort) {
+			return false
+		}
+		// 只有 DNAT 没有 MASQUERADE / FORWARD 放行时流量同样不通：共享目标的规则被删、
+		// 或用户防火墙脚本清掉了这两段，都要让就绪检查失败以触发重下发。
+		// 目标不是 IP（尚未解析）时无法按目标匹配，保持只看 DNAT 的旧行为。
+		if net.ParseIP(target) == nil || targetPort <= 0 {
+			continue
+		}
+		if !iptablesTargetRuleLinePresent(s.iptablesChainText(binary, "nat", "POSTROUTING"), "POSTROUTING", "MASQUERADE", proto, target, targetPort) {
+			return false
+		}
+		if !iptablesTargetRuleLinePresent(s.iptablesChainText(binary, "", "FORWARD"), "FORWARD", "ACCEPT", proto, target, targetPort) {
 			return false
 		}
 	}
 	return true
+}
+
+// iptablesTargetRuleLinePresent 在 `-S` 输出里找 `-A <chain> -d <target> -p <proto> --dport <port> ... -j <jump>`，
+// 带不带 fwx-rule-<id> 注释都算（兼容旧 Agent/面板留下的无标记规则）。
+func iptablesTargetRuleLinePresent(text string, chain string, jump string, proto string, targetIP string, targetPort int) bool {
+	want := net.ParseIP(kernelCleanAddress(targetIP))
+	if want == nil || targetPort <= 0 {
+		return false
+	}
+	for _, rawLine := range strings.Split(text, "\n") {
+		fields := strings.Fields(rawLine)
+		if len(fields) < 2 || fields[0] != "-A" || fields[1] != chain {
+			continue
+		}
+		var dest net.IP
+		protoOK, portOK, jumpOK := false, false, false
+		for i := 2; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "-d":
+				addr := fields[i+1]
+				if slash := strings.IndexByte(addr, '/'); slash >= 0 {
+					if mask := addr[slash+1:]; mask != "32" && mask != "128" {
+						continue
+					}
+					addr = addr[:slash]
+				}
+				dest = net.ParseIP(kernelCleanAddress(addr))
+			case "-p":
+				protoOK = strings.EqualFold(fields[i+1], proto)
+			case "--dport":
+				portOK = fields[i+1] == strconv.Itoa(targetPort)
+			case "-j":
+				jumpOK = fields[i+1] == jump
+			}
+		}
+		if dest != nil && dest.Equal(want) && protoOK && portOK && jumpOK {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *kernelForwardSnapshot) iptablesForwardRuleResiduePresent(sourcePort int, protocol string) bool {
@@ -2177,7 +2265,7 @@ func (s *kernelForwardSnapshot) iptablesForwardxMarkerSeenForPort(port int) bool
 			if binary == "ip6tables" && !commandExists("ip6tables") {
 				continue
 			}
-			raw, err := commandOutputWithTimeout(5*time.Second, binary, "-t", "mangle", "-S")
+			raw, err := iptablesCommandOutput(binary, "-t", "mangle", "-S")
 			if err != nil {
 				continue
 			}
@@ -2972,7 +3060,8 @@ func main() {
 			if requestSkipped {
 				nextInterval = int(agentPresenceInterval / time.Second)
 			} else if err != nil {
-				nextInterval = cfg.Interval
+				// 失败重试加随机抖动，避免面板恢复时所有 Agent 同一秒一起打过来。
+				nextInterval = fullJitterSeconds(cfg.Interval, 2)
 			} else if nextInterval < 2 {
 				nextInterval = cfg.Interval
 			}
@@ -3007,7 +3096,7 @@ func main() {
 			if requestSkipped {
 				nextInterval = int(agentPresenceInterval / time.Second)
 			} else if err != nil {
-				nextInterval = cfg.Interval
+				nextInterval = fullJitterSeconds(cfg.Interval, 2)
 			} else if result.ReconciliationCoalesced {
 				nextInterval = 5
 			} else {
@@ -3330,6 +3419,8 @@ func agentPresenceLoop(cfg Config) {
 			}
 			var retrying bool
 			delay, retrying = retries.failure(err)
+			// 重试节奏（指数退避与冷却）不变，只把每次的等待在 [最小间隔, delay] 里随机化。
+			delay = fullJitterDelay(delay, agentPresenceMinInterval)
 			retryGeneration = currentGeneration
 			if !retrying && shouldLogAgentReport("presence-retry-paused", agentReportLogInterval) {
 				logf("presence retry burst stopped; next scheduled attempt in %s: %v", delay, err)
@@ -3513,13 +3604,21 @@ func writeConfigFileAtomic(path string, raw []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".forwardx-agent-config-*")
+	return writeFileAtomicDurable(path, raw, 0600)
+}
+
+// writeFileAtomicDurable 用唯一的临时文件写入、fsync、rename，再 fsync 目录。
+// 掉电或崩溃后文件要么是旧内容、要么是完整的新内容，不会是空文件或半截；
+// 也不会像固定的 path+".tmp" 那样被两个并发写入者互相覆盖。
+func writeFileAtomicDurable(path string, raw []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".forwardx-agent-write-*")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0600); err != nil {
+	if err := tmp.Chmod(perm); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -3534,7 +3633,15 @@ func writeConfigFileAtomic(path string, raw []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	// 目录项落盘是尽力而为：个别文件系统不支持对目录 fsync，此时 rename 本身已经完成。
+	if directory, err := os.Open(dir); err == nil {
+		_ = directory.Sync()
+		_ = directory.Close()
+	}
+	return nil
 }
 
 func normalizePanelURL(raw string) string {
@@ -3598,16 +3705,8 @@ func persistPanelURL(panelURL string) error {
 		return err
 	}
 	next = append(next, '\n')
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, next, 0600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	_ = os.Chmod(path, 0600)
-	return nil
+	// 配置文件里有 token，写坏了 Agent 下次启动就连不上面板：必须原子且落盘。
+	return writeConfigFileAtomic(path, next)
 }
 
 func syncPanelURLFromResponse(panelURL string) {
@@ -4837,7 +4936,8 @@ func agentEventStream(cfg Config) {
 			if challengeAuthKnown {
 				delay = agentEventStreamReconnectMinDelay
 			}
-			time.Sleep(delay)
+			// full jitter：面板重启后所有 Agent 的 SSE 同时断开，固定退避会让它们同一时刻重连。
+			time.Sleep(fullJitterDelay(delay, agentEventStreamReconnectJitterFloor))
 			if challengeAuthKnown {
 				continue
 			}
@@ -4912,7 +5012,10 @@ func runAgentEventStream(cfg Config) error {
 	// A reconnect may have happened after a self-test was queued while the
 	// stream was unavailable. Reconcile once so SSE-connected Agents do not
 	// wait for the fallback self-test poller.
-	wakeHeartbeatFromSSE(true)
+	// 随机推迟 0~10 秒再唤醒，把面板重启后的集中重连摊开。
+	time.AfterFunc(randomDelayUpTo(agentEventStreamReconnectHeartbeatMaxDelay), func() {
+		wakeHeartbeatFromSSE(true)
+	})
 
 	scanner := newAgentEventStreamScanner(resp.Body)
 	var inactivityExpired atomic.Bool
@@ -5663,9 +5766,7 @@ func cleanupKernelForwardPortBeforeApply(a action) {
 		cleanupProtocol = normalizeRuntimeProtocol(localProtocol)
 		switch localForwardType {
 		case "iptables":
-			for _, command := range iptablesAgentTargetCleanupCmds(port, localTargetIP, localTargetPort, cleanupProtocol) {
-				_ = runShell(command)
-			}
+			_ = runIptablesShellBatch(iptablesAgentTargetCleanupCmds(localRuleID, port, localTargetIP, localTargetPort, cleanupProtocol))
 		case "nftables":
 			_ = runShell(nftRuleCleanupCmd(localRuleID))
 		}
@@ -7563,7 +7664,9 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) (bool, error
 		_ = os.Chmod(path, perm)
 		return false, nil
 	}
-	if err := os.WriteFile(path, data, perm); err != nil {
+	// 服务单元/启动脚本：掉电后留下空文件或半截文件，开机时服务就起不来，
+	// 要等 Agent 连上面板重新下发才恢复。只在内容变化时写，原子 + 落盘的开销可以接受。
+	if err := writeFileAtomicDurable(path, data, perm); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -8217,18 +8320,30 @@ func iptablesAgentCountingForwardTargetRule(proto, port, target, targetPort stri
 	return fmt.Sprintf("FORWARD -p %s -m conntrack --ctorigdstport %s %s", proto, port, match)
 }
 
+// iptablesAgentBin 返回带锁等待参数占位的 iptables 调用前缀，见 iptables_wait.go。
+func iptablesAgentBin(binary string) string {
+	return binary + " " + iptablesWaitShellArg
+}
+
 func iptablesAgentCommand(binary string, args string, optional bool) string {
 	if binary == "ip6tables" {
 		if optional {
-			return "if command -v ip6tables >/dev/null 2>&1; then ip6tables " + args + "; fi; true"
+			return "if command -v ip6tables >/dev/null 2>&1; then " + iptablesAgentBin("ip6tables") + " " + args + "; fi; true"
 		}
-		return "if command -v ip6tables >/dev/null 2>&1; then ip6tables " + args + "; else exit 1; fi"
+		return "if command -v ip6tables >/dev/null 2>&1; then " + iptablesAgentBin("ip6tables") + " " + args + "; else exit 1; fi"
 	}
-	cmd := "iptables " + args
+	cmd := iptablesAgentBin("iptables") + " " + args
 	if optional {
 		return cmd + "; true"
 	}
 	return cmd
+}
+
+// iptablesAgentEnsureShell 只在 -C 明确返回 1（规则不存在）时才追加。
+// 退出码 4（xtables 锁忙）、2（参数/模块问题）等都不代表“不存在”，此时追加只会造出重复规则
+// ——计数规则重复就是流量被数两遍——所以直接失败，交给下一轮重试。
+func iptablesAgentEnsureShell(bin string, tableArg string, rule string, appendFlag string) string {
+	return bin + " " + tableArg + "-C " + rule + " 2>/dev/null; __fwx_rc=$?; if [ \"$__fwx_rc\" -eq 1 ]; then " + bin + " " + tableArg + appendFlag + " " + rule + "; elif [ \"$__fwx_rc\" -ne 0 ]; then echo \"[iptables] check failed rc=$__fwx_rc, skip append\" >&2; false; fi"
 }
 
 func iptablesAgentEnsure(binary string, table string, rule string) string {
@@ -8236,7 +8351,7 @@ func iptablesAgentEnsure(binary string, table string, rule string) string {
 	if table != "" {
 		tableArg = "-t " + table + " "
 	}
-	cmd := "if " + binary + " " + tableArg + "-C " + rule + " 2>/dev/null; then :; else " + binary + " " + tableArg + "-A " + rule + "; fi"
+	cmd := iptablesAgentEnsureShell(iptablesAgentBin(binary), tableArg, rule, "-A")
 	if binary == "ip6tables" {
 		return "if command -v ip6tables >/dev/null 2>&1; then " + cmd + "; fi"
 	}
@@ -8248,7 +8363,8 @@ func iptablesAgentDelete(binary string, table string, rule string) string {
 	if table != "" {
 		tableArg = "-t " + table + " "
 	}
-	cmd := "while " + binary + " " + tableArg + "-C " + rule + " 2>/dev/null; do if " + binary + " " + tableArg + "-D " + rule + " 2>/dev/null; then :; else break; fi; done"
+	bin := iptablesAgentBin(binary)
+	cmd := "while " + bin + " " + tableArg + "-C " + rule + " 2>/dev/null; do if " + bin + " " + tableArg + "-D " + rule + " 2>/dev/null; then :; else break; fi; done"
 	if binary == "ip6tables" {
 		return "if command -v ip6tables >/dev/null 2>&1; then " + cmd + "; fi; true"
 	}
@@ -8260,18 +8376,55 @@ func iptablesAgentDeleteByComment(binary string, table string, marker string) st
 	if table != "" {
 		tableArg = "-t " + table + " "
 	}
-	cmd := fmt.Sprintf(`%s %s-S 2>/dev/null | awk -v marker=%s '/^-A / {chain=$2; position[chain]++; if (index($0, marker)) {count++; chains[count]=chain; numbers[count]=position[chain]}} END {for (i=count; i>=1; i--) print chains[i], numbers[i]}' | while read -r chain number; do [ -n "$chain" ] && [ -n "$number" ] && %s %s-D "$chain" "$number" 2>/dev/null || true; done`, binary, tableArg, shellQuote(marker), binary, tableArg)
+	bin := iptablesAgentBin(binary)
+	cmd := fmt.Sprintf(`%s %s-S 2>/dev/null | awk -v marker=%s '/^-A / {chain=$2; position[chain]++; if (index($0, marker)) {count++; chains[count]=chain; numbers[count]=position[chain]}} END {for (i=count; i>=1; i--) print chains[i], numbers[i]}' | while read -r chain number; do [ -n "$chain" ] && [ -n "$number" ] && %s %s-D "$chain" "$number" 2>/dev/null || true; done`, bin, tableArg, shellQuote(marker), bin, tableArg)
 	if binary == "ip6tables" {
 		return "if command -v ip6tables >/dev/null 2>&1; then " + cmd + "; fi; true"
 	}
 	return cmd + "; true"
 }
 
+// iptablesAgentDeleteByRuleTag 按 `--comment fwx-rule-<id>` 精确删除（不会误删 fwx-rule-<id>0）。
+// 每条规则自己的 MASQUERADE / FORWARD 放行都带这个标记，删一条规则不会动到共享同一目标的其它规则。
+func iptablesAgentDeleteByRuleTag(binary string, table string, chain string, ruleID int) string {
+	if ruleID <= 0 {
+		return ""
+	}
+	tableArg := ""
+	if table != "" {
+		tableArg = "-t " + table + " "
+	}
+	bin := iptablesAgentBin(binary)
+	tag := iptablesRuleTag(ruleID)
+	cmd := fmt.Sprintf(`%s %s-S %s 2>/dev/null | awk -v tag=%s '/^-A / {position++; for (i=1; i<NF; i++) if ($i=="--comment") {c=$(i+1); gsub(/"/, "", c); if (c==tag) {count++; numbers[count]=position; break}}} END {for (i=count; i>=1; i--) print numbers[i]}' | while read -r number; do [ -n "$number" ] && %s %s-D %s "$number" 2>/dev/null || true; done`, bin, tableArg, chain, shellQuote(tag), bin, tableArg, chain)
+	if binary == "ip6tables" {
+		return "if command -v ip6tables >/dev/null 2>&1; then " + cmd + "; fi; true"
+	}
+	return cmd + "; true"
+}
+
+func iptablesRuleTag(ruleID int) string {
+	return "fwx-rule-" + strconv.Itoa(ruleID)
+}
+
 func iptablesAgentDeleteCountingRules(binary string, port string) string {
 	marker := "fwx-stat-" + port + ":"
 	inChain := "FWX_IN_" + port
 	outChain := "FWX_OUT_" + port
-	cmd := fmt.Sprintf(`%s -t mangle -S 2>/dev/null | awk -v marker=%s -v in_chain=%s -v out_chain=%s '/^-A / {chain=$2; position[chain]++; matched=index($0, marker)>0; if (!matched) for (i=1; i<=NF; i++) if ($i==in_chain || $i==out_chain) {matched=1; break} if (matched) {count++; chains[count]=chain; numbers[count]=position[chain]}} END {for (i=count; i>=1; i--) print chains[i], numbers[i]}' | while read -r chain number; do [ -n "$chain" ] && [ -n "$number" ] && %s -t mangle -D "$chain" "$number" 2>/dev/null || true; done`, binary, shellQuote(marker), shellQuote(inChain), shellQuote(outChain), binary)
+	bin := iptablesAgentBin(binary)
+	cmd := fmt.Sprintf(`%s -t mangle -S 2>/dev/null | awk -v marker=%s -v in_chain=%s -v out_chain=%s '/^-A / {chain=$2; position[chain]++; matched=index($0, marker)>0; if (!matched) for (i=1; i<=NF; i++) if ($i==in_chain || $i==out_chain) {matched=1; break} if (matched) {count++; chains[count]=chain; numbers[count]=position[chain]}} END {for (i=count; i>=1; i--) print chains[i], numbers[i]}' | while read -r chain number; do [ -n "$chain" ] && [ -n "$number" ] && %s -t mangle -D "$chain" "$number" 2>/dev/null || true; done`, bin, shellQuote(marker), shellQuote(inChain), shellQuote(outChain), bin)
+	if binary == "ip6tables" {
+		return "if command -v ip6tables >/dev/null 2>&1; then " + cmd + "; fi; true"
+	}
+	return cmd + "; true"
+}
+
+// iptablesAgentDedupeCountingRules 删掉同一链里逐字相同的重复计数规则，只保留第一条
+// （保留下来的那条计数器不动）。重复来自旧版本 `-C || -A` 在 xtables 锁忙时的重复追加。
+func iptablesAgentDedupeCountingRules(binary string, port string) string {
+	marker := "fwx-stat-" + port + ":"
+	bin := iptablesAgentBin(binary)
+	cmd := fmt.Sprintf(`%s -t mangle -S 2>/dev/null | awk -v marker=%s '/^-A / {chain=$2; position[chain]++; if (index($0, marker) && seen[$0]++) {count++; chains[count]=chain; numbers[count]=position[chain]}} END {for (i=count; i>=1; i--) print chains[i], numbers[i]}' | while read -r chain number; do [ -n "$chain" ] && [ -n "$number" ] && %s -t mangle -D "$chain" "$number" 2>/dev/null || true; done`, bin, shellQuote(marker), bin)
 	if binary == "ip6tables" {
 		return "if command -v ip6tables >/dev/null 2>&1; then " + cmd + "; fi; true"
 	}
@@ -8303,7 +8456,8 @@ func iptablesAgentDeleteDnatRulesForPort(binary string, port string, protocol st
 	parts := make([]string, 0, len(protos))
 	for _, proto := range protos {
 		awk := fmt.Sprintf(`awk '/^-A PREROUTING / && / -p %s / && /--dport %s( |$)/ && / -j DNAT / {sub(/^-A/, "-D"); print}'`, proto, port)
-		parts = append(parts, fmt.Sprintf(`while rule=$(%s -t nat -S PREROUTING 2>/dev/null | %s | head -n 1) && [ -n "$rule" ]; do %s -t nat $rule 2>/dev/null || break; done`, binary, awk, binary))
+		bin := iptablesAgentBin(binary)
+		parts = append(parts, fmt.Sprintf(`while rule=$(%s -t nat -S PREROUTING 2>/dev/null | %s | head -n 1) && [ -n "$rule" ]; do %s -t nat $rule 2>/dev/null || break; done`, bin, awk, bin))
 	}
 	cmd := strings.Join(parts, "; ")
 	if binary == "ip6tables" {
@@ -8312,30 +8466,54 @@ func iptablesAgentDeleteDnatRulesForPort(binary string, port string, protocol st
 	return cmd + "; true"
 }
 
-func iptablesAgentTargetCleanupCmds(port string, targetIP string, targetPort int, protocol string) []string {
+// iptablesAgentTargetCleanupCmds 清理一条 iptables 规则在目标侧留下的 DNAT / SNAT / FORWARD / 计数规则。
+//
+// MASQUERADE 与 FORWARD 放行只按目标（-d target --dport tport）匹配，多条规则转发到同一个目标时
+// 旧版本共用同一份：删掉其中一条规则会把共享的那份一起删掉，另一条规则随即断流。
+// 现在每条规则的这两段都带 `-m comment --comment fwx-rule-<id>`，按标记删除只动自己那份；
+// 旧 Agent/面板留下的无标记副本，只有在本机没有别的规则还在用同一目标时才删：
+//   - Agent 期望状态里没有其它 iptables 规则指向这个目标；
+//   - 内核 nat PREROUTING 里也没有别的端口 DNAT 到这个目标（面板直接下发、期望状态尚未同步时的兜底）。
+//
+// 读取 PREROUTING 失败时宁可保留无标记副本（最多留一条无害的放行/伪装），也不误删。
+func iptablesAgentTargetCleanupCmds(ruleID int, port string, targetIP string, targetPort int, protocol string) []string {
 	if strings.TrimSpace(port) == "" || !iptablesAgentIsIPAddress(targetIP) || targetPort <= 0 {
 		return nil
 	}
 	target := iptablesAgentAddress(targetIP)
+	if parsed := net.ParseIP(target); parsed != nil {
+		target = parsed.String()
+	}
 	targetPortText := strconv.Itoa(targetPort)
 	binary := iptablesAgentBinaryForTarget(target)
 	dnatTarget := iptablesAgentDnatTarget(target, targetPort)
 	inMarker := "fwx-stat-" + port + ":in"
 	outMarker := "fwx-stat-" + port + ":out"
 	commands := []string{}
+	if ruleID > 0 {
+		commands = append(commands,
+			iptablesAgentDeleteByRuleTag(binary, "nat", "POSTROUTING", ruleID),
+			iptablesAgentDeleteByRuleTag(binary, "", "FORWARD", ruleID),
+		)
+	}
 	for _, proto := range runtimeProtocols(protocol) {
 		stateMatch := ""
 		if proto == "tcp" {
 			stateMatch = "-m state --state ESTABLISHED,RELATED "
 		}
+		commands = append(commands, iptablesAgentDelete(binary, "nat", fmt.Sprintf(`PREROUTING -p %s --dport %s -j DNAT --to-destination %s`, proto, port, dnatTarget)))
+		if !iptablesTargetSharedByOtherDesiredRule(ruleID, atoi(port), target, targetPort, proto) {
+			legacy := []string{
+				iptablesAgentDelete(binary, "nat", fmt.Sprintf(`POSTROUTING -p %s -d %s --dport %s -j MASQUERADE`, proto, target, targetPortText)),
+				iptablesAgentDelete(binary, "", fmt.Sprintf(`FORWARD -p %s -d %s --dport %s -j ACCEPT`, proto, target, targetPortText)),
+				iptablesAgentDelete(binary, "", fmt.Sprintf(`FORWARD -p %s -s %s --sport %s %s-j ACCEPT`, proto, target, targetPortText, stateMatch)),
+			}
+			commands = append(commands, iptablesAgentUnreferencedTargetGuard(binary, proto, port, dnatTarget, legacy))
+		}
 		rules := []struct {
 			table string
 			rule  string
 		}{
-			{"nat", fmt.Sprintf(`PREROUTING -p %s --dport %s -j DNAT --to-destination %s`, proto, port, dnatTarget)},
-			{"nat", fmt.Sprintf(`POSTROUTING -p %s -d %s --dport %s -j MASQUERADE`, proto, target, targetPortText)},
-			{"", fmt.Sprintf(`FORWARD -p %s -d %s --dport %s -j ACCEPT`, proto, target, targetPortText)},
-			{"", fmt.Sprintf(`FORWARD -p %s -s %s --sport %s %s-j ACCEPT`, proto, target, targetPortText, stateMatch)},
 			{"mangle", fmt.Sprintf(`FORWARD -p %s -d %s --dport %s -m comment --comment %q`, proto, target, targetPortText, inMarker)},
 			{"mangle", fmt.Sprintf(`OUTPUT -p %s -d %s --dport %s -m comment --comment %q`, proto, target, targetPortText, inMarker)},
 			{"mangle", fmt.Sprintf(`POSTROUTING -p %s -d %s --dport %s -m comment --comment %q`, proto, target, targetPortText, inMarker)},
@@ -8350,6 +8528,43 @@ func iptablesAgentTargetCleanupCmds(port string, targetIP string, targetPort int
 		}
 	}
 	return commands
+}
+
+// iptablesAgentUnreferencedTargetGuard 只有在 nat PREROUTING 里没有其它端口 DNAT 到同一目标时
+// 才执行 deletes（删除旧版无标记的共享 MASQUERADE/FORWARD）。读取失败按“仍被引用”处理。
+func iptablesAgentUnreferencedTargetGuard(binary string, proto string, port string, dnatTarget string, deletes []string) string {
+	bin := iptablesAgentBin(binary)
+	check := fmt.Sprintf(`printf '%%s\n' "$__fwx_nat" | awk -v proto=%s -v port=%s -v target=%s '/^-A PREROUTING / && / -j DNAT / {p=""; d=""; t=""; for (i=1; i<NF; i++) {if ($i=="-p") p=$(i+1); else if ($i=="--dport") d=$(i+1); else if ($i=="--to-destination") t=$(i+1)} if (p==proto && d!=port && tolower(t)==tolower(target)) found=1} END {exit found ? 0 : 1}'`, shellQuote(proto), shellQuote(port), shellQuote(dnatTarget))
+	cmd := "if __fwx_nat=$(" + bin + " -t nat -S PREROUTING 2>/dev/null); then if " + check + "; then :; else " + strings.Join(deletes, "; ") + "; fi; fi"
+	if binary == "ip6tables" {
+		return "if command -v ip6tables >/dev/null 2>&1; then " + cmd + "; fi; true"
+	}
+	return cmd + "; true"
+}
+
+// iptablesTargetSharedByOtherDesiredRule 查 Agent 的期望状态：是否还有别的 iptables 规则转发到同一目标。
+func iptablesTargetSharedByOtherDesiredRule(ruleID int, port int, targetIP string, targetPort int, proto string) bool {
+	want := net.ParseIP(iptablesAgentAddress(targetIP))
+	if want == nil || targetPort <= 0 {
+		return false
+	}
+	desiredRunningRuleMu.Lock()
+	defer desiredRunningRuleMu.Unlock()
+	for _, r := range desiredRunningRulesByRulePort {
+		if strings.TrimSpace(r.ForwardType) != "iptables" || r.TargetPort != targetPort {
+			continue
+		}
+		if r.SourcePort == port && (ruleID <= 0 || r.RuleID == ruleID) {
+			continue
+		}
+		if !runtimeProtocolsOverlap(r.Protocol, proto) {
+			continue
+		}
+		if got := net.ParseIP(iptablesAgentAddress(r.TargetIP)); got != nil && got.Equal(want) {
+			return true
+		}
+	}
+	return false
 }
 
 func managedPortCleanupCmds(port string) []string {
@@ -8418,7 +8633,7 @@ func managedPortCleanupCmdsWithNginx(port string, cleanupNginx bool) []string {
 	}
 	cmds = append(cmds, "rm -f /var/lib/forwardx-agent/traffic_"+port+".prev /var/lib/forwardx-agent/port_"+port+".rule /var/lib/forwardx-agent/port_"+port+".fwtype /var/lib/forwardx-agent/port_"+port+".tunnel /var/lib/forwardx-agent/target_"+port+".info 2>/dev/null || true")
 	if targetIP, targetPort, protocol, ok := readTargetInfo(port); ok {
-		cmds = append(iptablesAgentTargetCleanupCmds(port, targetIP, targetPort, protocol), cmds...)
+		cmds = append(iptablesAgentTargetCleanupCmds(readRuleIDByPort(port), port, targetIP, targetPort, protocol), cmds...)
 	}
 	return cmds
 }
@@ -8578,7 +8793,7 @@ func iptablesProcessConnectionLayoutPresent(port int, protocol string) bool {
 		}
 		complete := true
 		for _, proto := range runtimeProtocols(protocol) {
-			if !runShellQuiet(binary + " -t mangle -C " + iptablesProcessConnectionRule(port, proto) + " 2>/dev/null") {
+			if !runIptablesShellQuiet(iptablesAgentBin(binary) + " -t mangle -C " + iptablesProcessConnectionRule(port, proto) + " 2>/dev/null") {
 				complete = false
 				break
 			}
@@ -8703,7 +8918,7 @@ func ensureCountingChainsWithCleanup(rule runningRule, cleanup bool) bool {
 		return ensureCountingChainsNonDestructive(rule, mode)
 	}
 
-	cleanupOK := runShellBatch(countingRuleCleanupCmds(rule.SourcePort))
+	cleanupOK := runIptablesShellBatch(countingRuleCleanupCmds(rule.SourcePort))
 	installOK := false
 	backend := string(mode)
 	if cleanupOK {
@@ -8712,7 +8927,7 @@ func ensureCountingChainsWithCleanup(rule runningRule, cleanup bool) bool {
 			installOK = true
 		case countingRuleKernel:
 			backend = iptablesAgentBinaryForTarget(rule.TargetIP)
-			installOK = runShellQuiet("command -v "+backend+" >/dev/null 2>&1") && runShellBatch(countingRuleInstallCmds(rule))
+			installOK = runShellQuiet("command -v "+backend+" >/dev/null 2>&1") && runIptablesShellBatch(countingRuleInstallCmds(rule))
 		case countingRuleProcess:
 			if runShellQuiet("command -v nft >/dev/null 2>&1") && runShellBatch(nftProcessCountingCmds(rule.SourcePort, rule.Protocol)) {
 				backend = "nft"
@@ -8720,9 +8935,9 @@ func ensureCountingChainsWithCleanup(rule runningRule, cleanup bool) bool {
 			} else {
 				// Remove a partially installed nft layout before selecting the
 				// iptables listener hooks as the sole authoritative backend.
-				fallbackCleanupOK := runShellBatch(countingRuleCleanupCmds(rule.SourcePort))
+				fallbackCleanupOK := runIptablesShellBatch(countingRuleCleanupCmds(rule.SourcePort))
 				backend = "iptables"
-				installOK = fallbackCleanupOK && runShellQuiet("command -v iptables >/dev/null 2>&1") && runShellBatch(iptablesProcessCountingCmds(rule.SourcePort, rule.Protocol))
+				installOK = fallbackCleanupOK && runShellQuiet("command -v iptables >/dev/null 2>&1") && runIptablesShellBatch(iptablesProcessCountingCmds(rule.SourcePort, rule.Protocol))
 			}
 		}
 	}
@@ -8746,7 +8961,9 @@ func ensureCountingChainsNonDestructive(rule runningRule, mode countingRuleMode)
 	if mode == countingRuleKernel {
 		target := iptablesAgentAddress(rule.TargetIP)
 		binary := iptablesAgentBinaryForTarget(target)
-		return runShellQuiet("command -v "+binary+" >/dev/null 2>&1") && runShellBatch(countingRuleInstallCmds(rule))
+		// 先删掉逐字重复的计数规则（保留第一条及其计数器），再补缺失的规则。
+		commands := append([]string{iptablesAgentDedupeCountingRules(binary, strconv.Itoa(rule.SourcePort))}, countingRuleInstallCmds(rule)...)
+		return runShellQuiet("command -v "+binary+" >/dev/null 2>&1") && runIptablesShellBatch(commands)
 	}
 	nftAvailable := runShellQuiet("command -v nft >/dev/null 2>&1")
 	nftConnectionLayoutPresent := nftAvailable && nftProcessConnectionLayoutPresent(rule.SourcePort, rule.Protocol)
@@ -8759,7 +8976,12 @@ func ensureCountingChainsNonDestructive(rule runningRule, mode countingRuleMode)
 		return true
 	}
 	iptablesConnectionLayoutPresent := iptablesProcessConnectionLayoutPresent(rule.SourcePort, rule.Protocol)
-	ok := runShellQuiet("command -v iptables >/dev/null 2>&1") && runShellBatch(iptablesProcessCountingCmds(rule.SourcePort, rule.Protocol))
+	processCommands := []string{}
+	for _, binary := range iptablesAgentBinaries() {
+		processCommands = append(processCommands, iptablesAgentDedupeCountingRules(binary, strconv.Itoa(rule.SourcePort)))
+	}
+	processCommands = append(processCommands, iptablesProcessCountingCmds(rule.SourcePort, rule.Protocol)...)
+	ok := runShellQuiet("command -v iptables >/dev/null 2>&1") && runIptablesShellBatch(processCommands)
 	if ok {
 		if iptablesConnectionLayoutPresent {
 			clearFreshProcessConnectionCounter(strconv.Itoa(rule.SourcePort), rule.RuleID)
@@ -10392,13 +10614,39 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 		return false
 	}
 	cmd := exec.Command(runtimePath, "-config", configPath)
-	cmd.Stdout = fxpLogWriter{message: actionMessage, spec: originalSpec}
-	cmd.Stderr = fxpLogWriter{message: actionMessage, spec: originalSpec}
-	if err := cmd.Start(); err != nil {
+	logWriter := fxpLogWriter{message: actionMessage, spec: originalSpec}
+	// 标准输出/错误接到日志文件而不是管道：Agent 重启（KillMode=process）后 FXP 仍在跑，
+	// 管道读端没了它会在下一次写日志时死于 SIGPIPE。见 fxp_log_file.go。
+	var logTail *fxpLogTail
+	logPath := fxpRuntimeLogPath(configPath)
+	logFile, logOffset, logErr := openFXPRuntimeLogFile(logPath)
+	if logErr == nil {
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		logTail = newFXPLogTail(logPath, logOffset, func() io.Writer { return logWriter })
+	} else {
+		logf("fxp runtime log file unavailable path=%s, falling back to pipe: %v", logPath, logErr)
+		cmd.Stdout = logWriter
+		cmd.Stderr = logWriter
+	}
+	startErr := cmd.Start()
+	if logFile != nil {
+		// 子进程已经继承了描述符，父进程这份用不着了。
+		_ = logFile.Close()
+	}
+	if startErr != nil {
 		releaseWireGuardRef()
 		_ = os.Remove(configPath)
-		actionMessage.set("fxp runtime start failed: %v", err)
+		actionMessage.set("fxp runtime start failed: %v", startErr)
 		return false
+	}
+	logTailStop := make(chan struct{})
+	var logTailStopOnce sync.Once
+	stopLogTail := func() {
+		logTailStopOnce.Do(func() { close(logTailStop) })
+	}
+	if logTail != nil {
+		go logTail.run(logTailStop)
 	}
 
 	exited := make(chan error, 1)
@@ -10407,6 +10655,9 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 	}()
 	select {
 	case err := <-exited:
+		// 先同步读完它退出前写的日志，启动失败的原因要进这次动作的消息里。
+		logTail.poll()
+		stopLogTail()
 		releaseWireGuardRef()
 		_ = os.Remove(configPath)
 		if err != nil {
@@ -10422,6 +10673,7 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 	}
 	if isFXPEntryGroup(originalSpec) && !waitForFXPListenEndpointsReady(originalSpec, 3*time.Second) {
 		_ = cmd.Process.Kill()
+		stopLogTail()
 		releaseWireGuardRef()
 		_ = os.Remove(configPath)
 		actionMessage.set("fxp entry group listeners not ready tunnel=%d entries=%d", originalSpec.TunnelID, len(originalSpec.Entries))
@@ -10432,6 +10684,7 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 		if err := persistFXPSpec(originalSpec); err != nil {
 			logf("fxp persistent snapshot write failed tunnel=%d rule=%d port=%d: %v", originalSpec.TunnelID, originalSpec.RuleID, originalSpec.ListenPort, err)
 			_ = cmd.Process.Kill()
+			stopLogTail()
 			releaseWireGuardRef()
 			_ = os.Remove(configPath)
 			actionMessage.set("fxp persistent snapshot write failed tunnel=%d", originalSpec.TunnelID)
@@ -10454,6 +10707,7 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 	startedAt := time.Now()
 	go func() {
 		err := <-exited
+		stopLogTail()
 		fxpMu.Lock()
 		current := fxpServers[id]
 		// 记录还指着这个进程，说明不是 Agent 主动停的（主动停会先删记录）。
@@ -11994,6 +12248,10 @@ type failoverProxy struct {
 	// UDP 会话：按来源地址记，一个会话一直走它挑中的那条路径，空闲够久回收（route_group_udp.go）。
 	udpMu       sync.Mutex
 	udpSessions map[string]*failoverUDPSession
+	// 进行中的一轮健康检查：所有目标都拨不通时，每个新连接都会要求立即检查一次，
+	// 同一时刻只跑一轮，其余连接等它的结果（见 checkHealthShared）。
+	healthFlightMu sync.Mutex
+	healthFlight   chan struct{}
 }
 
 func failoverID(ruleID int, sourcePort int) string {
@@ -12772,9 +13030,34 @@ func (p *failoverProxy) healthLoop() {
 		case <-p.done:
 			return
 		case <-ticker.C:
-			p.checkHealth()
+			p.checkHealthShared()
 		}
 	}
+}
+
+// checkHealthShared 单飞版的 checkHealth：已有一轮在跑就等它跑完直接用结果。
+// 所有目标都不通时大量客户端同时进来，以前每个连接都同步探测全部目标一遍，
+// 探测本身把机器和目标都压住了。
+func (p *failoverProxy) checkHealthShared() {
+	p.healthFlightMu.Lock()
+	if flight := p.healthFlight; flight != nil {
+		p.healthFlightMu.Unlock()
+		select {
+		case <-flight:
+		case <-p.done:
+		}
+		return
+	}
+	flight := make(chan struct{})
+	p.healthFlight = flight
+	p.healthFlightMu.Unlock()
+	defer func() {
+		p.healthFlightMu.Lock()
+		p.healthFlight = nil
+		p.healthFlightMu.Unlock()
+		close(flight)
+	}()
+	p.checkHealth()
 }
 
 func (p *failoverProxy) checkHealth() {
@@ -12849,18 +13132,41 @@ func (p *failoverProxy) checkHealth() {
 }
 
 func (p *failoverProxy) acceptLoop() {
+	var backoff serveLoopBackoff
 	for {
 		client, err := p.ln.Accept()
 		if err != nil {
-			select {
-			case <-p.done:
-				return
-			default:
-				logf("failover accept failed rule=%d: %v", p.ruleID, err)
-				continue
+			// 以前临时错误（如 EMFILE）会在这里零间隔空转并每次刷一条日志。
+			exit, fatal := serveLoopHandleError(p.done, &backoff, err, func(err error, suppressed int) {
+				logf("failover accept failed rule=%d source=%d suppressed=%d: %v", p.ruleID, p.sourcePort, suppressed, err)
+			})
+			if fatal {
+				p.abandonAfterServeFailure("tcp accept", err)
 			}
+			if exit {
+				return
+			}
+			continue
 		}
+		backoff.success()
 		go p.handleConn(client)
+	}
+}
+
+// abandonAfterServeFailure 监听意外失效时把代理从运行表里摘掉并收尾，
+// 下一轮对账看到它不在了就会重建；不摘掉的话规格签名没变，对账会一直认为它还在跑。
+func (p *failoverProxy) abandonAfterServeFailure(what string, err error) {
+	id := failoverID(p.ruleID, p.sourcePort)
+	failoverMu.Lock()
+	current := failoverProxies[id] == p
+	if current {
+		delete(failoverProxies, id)
+	}
+	failoverMu.Unlock()
+	p.retire()
+	if current {
+		logf("failover proxy %s stopped unexpectedly rule=%d source=%d; it will be rebuilt: %v", what, p.ruleID, p.sourcePort, err)
+		wakeHeartbeat()
 	}
 }
 
@@ -12889,7 +13195,7 @@ func (p *failoverProxy) handleConn(client net.Conn) {
 		}
 	}
 	if err != nil {
-		p.checkHealth()
+		p.checkHealthShared()
 		target, index = p.pickTargetForKey(visitor, attempted)
 		if index >= 0 {
 			upstream, err = net.DialTimeout("tcp", net.JoinHostPort(target.TargetIP, strconv.Itoa(target.TargetPort)), 10*time.Second)
@@ -13285,18 +13591,41 @@ func (s *protocolGuardServer) close() {
 }
 
 func (s *protocolGuardServer) serveTCP(cfg Config) {
+	var backoff serveLoopBackoff
 	for {
 		conn, err := s.tcpLn.Accept()
 		if err != nil {
-			select {
-			case <-s.done:
-				return
-			default:
-				logf("protocol guard accept rule=%d: %v", s.rule.RuleID, err)
+			// 以前第一次出错就悄悄退出，而 done 没关，就绪检查一直报“就绪”，端口却没人接。
+			exit, fatal := serveLoopHandleError(s.done, &backoff, err, func(err error, suppressed int) {
+				logf("protocol guard accept rule=%d suppressed=%d: %v", s.rule.RuleID, suppressed, err)
+			})
+			if fatal {
+				s.abandonAfterServeFailure("tcp accept", err)
+			}
+			if exit {
 				return
 			}
+			continue
 		}
+		backoff.success()
 		go s.handleConn(cfg, conn)
+	}
+}
+
+// abandonAfterServeFailure 监听意外失效时摘掉并关闭这个守护，done 关闭后就绪检查随即失败，
+// 下一轮对账（签名相同但已不在表里）会重新启动它。
+func (s *protocolGuardServer) abandonAfterServeFailure(what string, err error) {
+	id := guardID(s.rule)
+	protocolGuardMu.Lock()
+	current := protocolGuards[id] == s
+	if current {
+		delete(protocolGuards, id)
+	}
+	protocolGuardMu.Unlock()
+	s.close()
+	if current {
+		logf("protocol guard %s stopped unexpectedly rule=%d port=%d; it will be rebuilt: %v", what, s.rule.RuleID, s.rule.ListenPort, err)
+		wakeHeartbeat()
 	}
 }
 
@@ -13520,17 +13849,22 @@ func (s *protocolGuardServer) serveUDP() {
 	}()
 
 	buf := make([]byte, 65535)
+	var backoff serveLoopBackoff
 	for {
 		n, clientAddr, err := s.udpConn.ReadFrom(buf)
 		if err != nil {
-			select {
-			case <-s.done:
-				return
-			default:
-				logf("protocol guard udp read rule=%d: %v", s.rule.RuleID, err)
+			exit, fatal := serveLoopHandleError(s.done, &backoff, err, func(err error, suppressed int) {
+				logf("protocol guard udp read rule=%d suppressed=%d: %v", s.rule.RuleID, suppressed, err)
+			})
+			if fatal {
+				s.abandonAfterServeFailure("udp read", err)
+			}
+			if exit {
 				return
 			}
+			continue
 		}
+		backoff.success()
 		if n <= 0 || clientAddr == nil {
 			continue
 		}
@@ -14935,9 +15269,62 @@ func shellCommandLogSummary(cmd string) string {
 
 func shellCommand(ctx context.Context, cmd string) (*exec.Cmd, func(), bool, error) {
 	if len(cmd) <= shellInlineMaxBytes {
-		return exec.CommandContext(ctx, "sh", "-lc", cmd), func() {}, false, nil
+		c := exec.CommandContext(ctx, "sh", "-c", cmd)
+		prepareShellCommand(c)
+		return c, func() {}, false, nil
 	}
 	return shellCommandTempScript(ctx, cmd)
+}
+
+// shellCommandWaitDelay：sh 退出（或超时被杀）后，最多再等这么久让输出管道关闭。
+// 命令里后台起的孙进程如果继承了 stdout/stderr，不设这个值 Wait 会一直阻塞，
+// 进而让 actionPendingCount 永远降不下来、流量采集再也不跑。
+var shellCommandWaitDelay = 5 * time.Second
+
+// shellStandardPath 是 systemd 默认的 PATH。改用 `sh -c`（不再 `-l` 读 /etc/profile，
+// 那里的脚本可能很慢甚至卡住）之后，用它补齐 Agent 进程 PATH 里缺的标准目录，
+// 保证 iptables/nft/systemctl 以及装在 /usr/local/bin 下的转发程序都能找到。
+const shellStandardPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+func prepareShellCommand(c *exec.Cmd) {
+	// 单独的进程组 + 超时时杀整个组：只杀 sh 会留下卡住的孙进程继续占着管道。
+	configureShellProcessGroup(c)
+	c.WaitDelay = shellCommandWaitDelay
+	c.Env = shellCommandEnv(os.Environ())
+}
+
+func shellCommandEnv(base []string) []string {
+	env := make([]string, 0, len(base)+2)
+	pathValue := ""
+	for _, item := range base {
+		if strings.HasPrefix(item, "PATH=") {
+			pathValue = strings.TrimPrefix(item, "PATH=")
+			continue
+		}
+		if strings.HasPrefix(item, iptablesWaitEnvName+"=") {
+			continue
+		}
+		env = append(env, item)
+	}
+	env = append(env, "PATH="+mergeShellPath(pathValue, shellStandardPath))
+	env = append(env, iptablesWaitEnvName+"="+iptablesWaitFlag())
+	return env
+}
+
+func mergeShellPath(current string, required string) string {
+	parts := []string{}
+	seen := map[string]bool{}
+	for _, list := range []string{current, required} {
+		for _, dir := range strings.Split(list, ":") {
+			dir = strings.TrimSpace(dir)
+			if dir == "" || seen[dir] {
+				continue
+			}
+			seen[dir] = true
+			parts = append(parts, dir)
+		}
+	}
+	return strings.Join(parts, ":")
 }
 
 func shellCommandTempScript(ctx context.Context, cmd string) (*exec.Cmd, func(), bool, error) {
@@ -14966,7 +15353,9 @@ func shellCommandTempScript(ctx context.Context, cmd string) (*exec.Cmd, func(),
 		cleanup()
 		return nil, func() {}, true, err
 	}
-	return exec.CommandContext(ctx, "sh", path), cleanup, true, nil
+	c := exec.CommandContext(ctx, "sh", path)
+	prepareShellCommand(c)
+	return c, cleanup, true, nil
 }
 
 func listenPortOwnerSummary(port int) string {
@@ -15490,7 +15879,7 @@ func netBytes(idx int) uint64 {
 }
 
 func diskStats() (usage int, used uint64, total uint64) {
-	out, err := commandOutputWithTimeout(3*time.Second, "sh", "-lc", `df -P -B1 / | awk 'NR==2 {gsub("%","",$5); print $5, $3, $2}'`)
+	out, err := commandOutputWithTimeout(3*time.Second, "sh", "-c", `df -P -B1 / | awk 'NR==2 {gsub("%","",$5); print $5, $3, $2}'`)
 	if err != nil {
 		return 0, 0, 0
 	}
