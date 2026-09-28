@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { forwardGroupMembers, forwardGroups, forwardRules } from "../../drizzle/schema";
 import { pushAgentRefresh } from "../agentEvents";
 import { afterDatabaseCommit, getDb, nowDate } from "../dbRuntime";
-import { keyedTaskDepth, trafficBillingUserLockKey, withKeyedTaskLock } from "../keyedTaskLock";
+import { keyedTaskDepth, runWithTrafficBillingUserLockHeld, trafficBillingUserLockKey, withKeyedTaskLock } from "../keyedTaskLock";
 import { getForwardRulesForUserSync } from "./forwardRuleRepository";
 import { runForwardGroupFailover, syncForwardGroupRules } from "./forwardGroupRepository";
 import { getTunnelById, getTunnelExitNodes, getTunnelHops, updateTunnel } from "./tunnelRepository";
@@ -283,7 +283,9 @@ export async function scheduleUserForwardRulesAfterAccessRecovery(
     // Queue behind the active billing operation without polling. The callback
     // must not await this task because the current keyed task cannot release
     // until its transaction's after-commit callbacks have returned.
-    void withKeyedTaskLock(lockKey, run)
+    // 拿到锁之后把「已持有」记进上下文：恢复会同步转发组，同步里结算删除的子规则
+    // 还要这把锁，不记的话自己等自己。
+    void withKeyedTaskLock(lockKey, () => runWithTrafficBillingUserLockHeld(userId, run))
       .finally(() => queuedRecoveryUsers.delete(userId));
   });
   return result as UserForwardRuleRecoveryResult | null;

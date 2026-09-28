@@ -2,7 +2,7 @@ import * as db from "./db";
 import { appendPanelLog } from "./_core/panelLogger";
 import { afterDatabaseCommit } from "./dbRuntime";
 import { dbBool } from "./repositories/repositoryUtils";
-import { trafficBillingUserLockKey, withKeyedTaskLock } from "./keyedTaskLock";
+import { withTrafficBillingUserLock } from "./keyedTaskLock";
 import { refreshBlockedRuleRuntime, resumeBlockedRules } from "./ruleBlockRecovery";
 
 /**
@@ -125,8 +125,8 @@ export async function reconcileTrafficBillingRuleBlocksForAllUsers() {
   }
   for (const userId of await db.getUserIdsWithRuleBlockReason(TRAFFIC_BILLING_BALANCE_BLOCK_REASON)) {
     try {
-      const resumed = await withKeyedTaskLock(
-        trafficBillingUserLockKey(userId),
+      const resumed = await withTrafficBillingUserLock(
+        userId,
         () => resumeTrafficBillingRulesForUser(userId),
       );
       restored += resumed.length;

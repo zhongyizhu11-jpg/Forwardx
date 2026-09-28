@@ -1,6 +1,6 @@
 import * as db from "./db";
 import { appendPanelLog } from "./_core/panelLogger";
-import { trafficBillingUserLockKey, withKeyedTaskLock } from "./keyedTaskLock";
+import { withTrafficBillingUserLock } from "./keyedTaskLock";
 import { restoreUserForwardRulesAfterAccessRecovery } from "./repositories/userForwardAccessRecovery";
 import { reconcileReauthorizedRulesForAllUsers } from "./ruleResourceAuthorization";
 import { reconcileTrafficBillingRuleBlocksForAllUsers } from "./trafficBillingRuleBlock";
@@ -27,8 +27,8 @@ export async function healAutoStoppedRules(reason = "auto-heal") {
   for (const userId of await db.getUserIdsWithAccessPausedRules()) {
     try {
       // 和计费/套餐变更走同一把锁：不会跟一次正在进行的暂停抢着写。
-      const result = await withKeyedTaskLock(
-        trafficBillingUserLockKey(userId),
+      const result = await withTrafficBillingUserLock(
+        userId,
         () => restoreUserForwardRulesAfterAccessRecovery(userId),
       );
       userRules += result.enabledRuleIds.length;

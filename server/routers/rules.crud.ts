@@ -66,7 +66,7 @@ import {
   type HostPortReservation,
 } from "../portReservations";
 import { ensureTunnelListenerPortPolicy, reserveTunnelExitPort, usesSharedTunnelPrimaryListener } from "../repositories/tunnelRepository";
-import { trafficBillingUserLockKey, withKeyedTaskLock } from "../keyedTaskLock";
+import { trafficBillingUserLockKey, withKeyedTaskLock, withTrafficBillingUserLock } from "../keyedTaskLock";
 import { mapWithConcurrency } from "../asyncPool";
 import { reserveRuleCreateQuota, type RuleQuotaReservation } from "../ruleQuotaReservations";
 
@@ -1142,7 +1142,7 @@ async function assertForwardGroupPortWithinUserPlanRange(options: {
 }
 
 async function settleTrafficBillingForDeletedRule(rule: any) {
-  const billed = await withKeyedTaskLock(trafficBillingUserLockKey(rule.userId), async () => {
+  const billed = await withTrafficBillingUserLock(rule.userId, async () => {
     const billingResource = await db.findTrafficBillingResourceForRule(rule);
     const fallback = db.trafficBillingResourceCandidatesForRule(rule)[0];
     const resource = billingResource || fallback;

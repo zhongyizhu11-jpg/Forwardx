@@ -10,7 +10,7 @@ import {
   withDatabaseTransaction,
 } from "./dbRuntime";
 import { recordConfigAuditEvent } from "./configAudit";
-import { trafficBillingUserLockKey, withKeyedTaskLock } from "./keyedTaskLock";
+import { trafficBillingUserLockKey, withKeyedTaskLock, withTrafficBillingUserLock } from "./keyedTaskLock";
 import {
   getForwardRuleById,
   markOrphanedForwardGroupTemplatesPendingDelete,
@@ -263,7 +263,7 @@ async function retireRuleIf(
     let before: any = null;
     let billed: any = null;
     let claimed = false;
-    await withKeyedTaskLock(trafficBillingUserLockKey((preview as any).userId), async () => {
+    await withTrafficBillingUserLock((preview as any).userId, async () => {
       await withDatabaseTransaction(async () => {
         const current = await getForwardRuleById(ruleId);
         if (!current || databaseBoolean((current as any).pendingDelete) || !(await stillManagedAndInvalid())) return;
