@@ -62,6 +62,18 @@ func normalizeConfig(cfg config) config {
 	}
 	sort.Slice(udpTargets, func(i, j int) bool { return udpTargets[i].RuleID < udpTargets[j].RuleID })
 	cfg.UDPTargets = udpTargets
+	streamTargets := make([]streamTarget, 0, len(cfg.StreamTargets))
+	seenStreamTargets := make(map[streamTarget]bool)
+	for _, target := range cfg.StreamTargets {
+		target.TargetIP = strings.TrimSpace(target.TargetIP)
+		if target.RuleID <= 0 || target.TargetIP == "" || target.TargetPort <= 0 || target.TargetPort > 65535 || seenStreamTargets[target] {
+			continue
+		}
+		seenStreamTargets[target] = true
+		streamTargets = append(streamTargets, target)
+	}
+	sort.SliceStable(streamTargets, func(i, j int) bool { return streamTargets[i].RuleID < streamTargets[j].RuleID })
+	cfg.StreamTargets = streamTargets
 	for i := range cfg.Entries {
 		cfg.Entries[i] = normalizeConfig(cfg.Entries[i])
 	}

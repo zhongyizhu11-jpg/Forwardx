@@ -155,6 +155,18 @@ import { recordAuthenticatedAgentActivity } from "./agentActivity";
 const AGENT_DNS_RESOLVE_TTL_MS = 5 * 60 * 1000;
 const resolvedIpCache = new Map<number, { raw: string; ip: string }>();
 const resolvedIpCheckedAt = new Map<number, number>();
+
+/**
+ * Agent 报上来的 DNS 变化只用于这台 Agent 自己这一次的下发，不写进全面板共享的解析缓存。
+ *
+ * 这个缓存按规则 id 存，同一条规则的其他入口 / 跳点 / 出口（包括负载均衡的其他出口）都会
+ * 复用它。以前直接把 Agent 给的 IP 写进去、还顺手刷新时间：多出口隧道里租户自己的那台
+ * 出口报一个假解析，所有出口都会把明文流量转去它指定的 IP。现在只让缓存过期，由面板
+ * 自己重新解析。
+ */
+function expireSharedResolvedIp(ruleId: number) {
+  resolvedIpCheckedAt.delete(ruleId);
+}
 const resolvedIpInflight = new Map<string, Promise<string>>();
 const tunnelRouteLogCache = new Map<string, string>();
 const nginxRuntimeLogCache = new Map<number, string>();
@@ -1466,7 +1478,14 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         return;
       }
     }
-    const heartbeatMetric = (key: string, index: number) => req.body?.[key] ?? compactMetrics[index];
+    // 指标一律转成有限的非负数：Agent 在租户手里，传一段几 MB 的字符串进来，SQLite 会
+    // 原样存成 TEXT，每次心跳都往 host_metrics 里塞，主机列表每次也要把它读出来。
+    const heartbeatMetric = (key: string, index: number) => {
+      const raw = req.body?.[key] ?? compactMetrics[index];
+      if (raw === undefined || raw === null) return raw;
+      const value = Number(raw);
+      return Number.isFinite(value) && value >= 0 ? Math.min(value, Number.MAX_SAFE_INTEGER) : undefined;
+    };
     const cpuUsage = heartbeatMetric("cpuUsage", 0);
     const memoryUsage = heartbeatMetric("memoryUsage", 1);
     const memoryUsed = heartbeatMetric("memoryUsed", 2);
@@ -1987,13 +2006,13 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     for (const target of resolvedHostRuleTargets) {
       if (!target) continue;
       const { rule, rawTargetIp, previous, forcedResolved, resolved } = target;
-      if (forcedResolved) setBoundedMapValue(resolvedIpCheckedAt, Number(rule.id), Date.now(), AGENT_DYNAMIC_CACHE_MAX);
+      if (forcedResolved) expireSharedResolvedIp(Number(rule.id));
       if (dnsChangedFor("forward-rule-target", Number(rule.id)) && previous && previous.raw === rawTargetIp && previous.ip !== resolved) {
         // IP 变更：标记为需要重新下发
         dnsChangedRuleIds.add(rule.id);
         dnsPreviousIpByRuleId.set(rule.id, previous.ip);
       }
-      setBoundedMapValue(resolvedIpCache, rule.id, { raw: rawTargetIp, ip: resolved }, AGENT_DYNAMIC_CACHE_MAX);
+      if (!forcedResolved) setBoundedMapValue(resolvedIpCache, rule.id, { raw: rawTargetIp, ip: resolved }, AGENT_DYNAMIC_CACHE_MAX);
       // 保存原始值（域名），将 rule.targetIp 替换为解析后的 IP
       (rule as any)._originalTargetIp = rule.targetIp;
       rule.targetIp = resolved;
@@ -2100,8 +2119,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         if (!targetIp || targetPort <= 0) return null;
         const forcedResolved = dnsChangedIpByHost.get(String(targetIp).toLowerCase());
         const resolvedTargetIp = forcedResolved || await resolveTargetIpCached(Number(rule.id), targetIp);
-        if (forcedResolved) setBoundedMapValue(resolvedIpCheckedAt, Number(rule.id), Date.now(), AGENT_DYNAMIC_CACHE_MAX);
-        setBoundedMapValue(resolvedIpCache, Number(rule.id), { raw: targetIp, ip: resolvedTargetIp }, AGENT_DYNAMIC_CACHE_MAX);
+        if (forcedResolved) expireSharedResolvedIp(Number(rule.id));
+        if (!forcedResolved) setBoundedMapValue(resolvedIpCache, Number(rule.id), { raw: targetIp, ip: resolvedTargetIp }, AGENT_DYNAMIC_CACHE_MAX);
         return { targetIp: resolvedTargetIp, targetPort, originalTargetIp: targetIp };
       }
       if (memberIdx >= members.length - 1) return null;
@@ -2120,8 +2139,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       if (!targetIp || targetPort <= 0) return null;
       const forcedResolved = dnsChangedIpByHost.get(String(targetIp).toLowerCase());
       const resolvedTargetIp = forcedResolved || await resolveTargetIpCached(Number(rule.id), targetIp);
-      if (forcedResolved) setBoundedMapValue(resolvedIpCheckedAt, Number(rule.id), Date.now(), AGENT_DYNAMIC_CACHE_MAX);
-      setBoundedMapValue(resolvedIpCache, Number(rule.id), { raw: targetIp, ip: resolvedTargetIp }, AGENT_DYNAMIC_CACHE_MAX);
+      if (forcedResolved) expireSharedResolvedIp(Number(rule.id));
+      if (!forcedResolved) setBoundedMapValue(resolvedIpCache, Number(rule.id), { raw: targetIp, ip: resolvedTargetIp }, AGENT_DYNAMIC_CACHE_MAX);
       return { targetIp: resolvedTargetIp, targetPort, originalTargetIp: targetIp };
     };
 
@@ -2231,7 +2250,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       if (!rawTargetIp) return;
       const forcedResolved = dnsChangedIpByHost.get(rawTargetIp.toLowerCase());
       const resolved = forcedResolved || await resolveTargetIpCached(Number(rule.id), rawTargetIp);
-      if (forcedResolved) setBoundedMapValue(resolvedIpCheckedAt, Number(rule.id), Date.now(), AGENT_DYNAMIC_CACHE_MAX);
+      if (forcedResolved) expireSharedResolvedIp(Number(rule.id));
       rule.targetIp = resolved;
     };
     await mapWithConcurrency(agentAllRules as any[], 32, (rule: any) => hydrateRuntimeTarget(rule));
@@ -2454,7 +2473,43 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       }
       return Array.from(targets.values()).sort((a, b) => a.ruleId - b.ruleId);
     };
-    const forwardXUDPTargetsChanged = (tunnel: any, targets: Array<{ ruleId: number; targetIp: string; targetPort: number }>) => {
+    /*
+      出口的 TCP 目标表（streamTargets）：FXP 出口只拨表里的目标，hello 里别的一律拒（见
+      forwardx-fxp/exit_targets.go），免得拿到隧道密钥的人把出口当开放代理。和入口写进 hello 的
+      一个口径（tunnelExitSchedulerEndpoint）：规则目标（域名原样、解析出的 IP 都放）、线路组的
+      路径 A，这台出口跑着调度器时再加本机调度器。走 TCP 的 UDP（UDP over TCP）拨的也是这个目标，
+      所以不按协议筛。
+    */
+    const forwardXStreamTargets = (tunnel: any) => {
+      type StreamTarget = { ruleId: number; targetIp: string; targetPort: number };
+      if (!tunnel || !isForwardXTunnel(tunnel) || !runtimeBool(tunnel.isEnabled) || !isTunnelProtocolEnabled(forwardProtocolSettings, tunnel)) {
+        return [] as StreamTarget[];
+      }
+      const targets = new Map<string, StreamTarget>();
+      const add = (ruleId: number, targetIp: unknown, targetPort: unknown) => {
+        const ip = String(targetIp || "").trim();
+        const port = Number(targetPort || 0);
+        if (!ip || !Number.isInteger(port) || port <= 0 || port > 65535) return;
+        targets.set(`${ruleId}|${ip}|${port}`, { ruleId, targetIp: ip, targetPort: port });
+      };
+      for (const rule of agentAllRules as any[]) {
+        if (!rule || runtimeBool(rule.pendingDelete) || !runtimeBool(rule.isEnabled) || rule.forwardType !== "gost") continue;
+        if (Number(rule.tunnelId || 0) !== Number(tunnel.id || 0)) continue;
+        if (!isRuleProtocolEnabled(forwardProtocolSettings, rule, tunnel)) continue;
+        const ruleId = Number(rule.id || 0);
+        if (!Number.isInteger(ruleId) || ruleId <= 0) continue;
+        add(ruleId, processTarget(rule), rule.targetPort);
+        add(ruleId, rule.targetIp, rule.targetPort);
+        const primary = routePrimaryEndpoint(rule);
+        add(ruleId, primary.targetIp, primary.targetPort);
+        const scheduler = forwardXSchedulerFailover(rule, tunnel);
+        if (scheduler) add(ruleId, "127.0.0.1", scheduler.listenPort);
+      }
+      return Array.from(targets.values()).sort((a, b) => a.ruleId - b.ruleId
+        || a.targetIp.localeCompare(b.targetIp)
+        || a.targetPort - b.targetPort);
+    };
+    const forwardXUDPTargetsChanged = (tunnel: any, targets: unknown) => {
       const key = `${Number(host.id)}:${Number(tunnel?.id || 0)}`;
       const signature = stableStateSignature(targets);
       if (fxpUdpTargetSignatureCache.get(key) === signature) return false;
@@ -4900,10 +4955,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       const tunnelProtocolEnabled = isTunnelProtocolEnabled(forwardProtocolSettings, tunnel);
       const endpointEnabled = runtimeBool(tunnel.isEnabled) && tunnelProtocolEnabled && isCurrentHostActiveExit;
       const udpTargets = fxpTunnel ? forwardXUDPTargets(tunnel) : [];
+      const streamTargets = fxpTunnel ? forwardXStreamTargets(tunnel) : [];
       const shouldSyncUDPTargets = fxpTunnel
         && runtimeBool(tunnel.isEnabled)
         && tunnelProtocolEnabled
-        && forwardXUDPTargetsChanged(tunnel, udpTargets);
+        && forwardXUDPTargetsChanged(tunnel, { udpTargets, streamTargets });
       const shouldRefreshExit = fxpTunnel
         ? (!runtimeReady || shouldSyncUDPTargets)
         : (!runtimeBool(tunnel.isRunning) || pendingTunnelExitRuleIds.has(Number(tunnel.id)) || (isCurrentHostSharedRuntimeExtraExit && !runtimeReady));
@@ -4933,6 +4989,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         protocol: "both",
         key: tunnelSecretSeed(tunnel),
         udpTargets,
+        streamTargets,
         dnsGeneration: tunnelDnsGeneration(tunnel),
       } : null;
       const exitFXPSpec = baseExitFXPSpec ? await applyForwardXTransport(baseExitFXPSpec, tunnel) : undefined;
@@ -4985,10 +5042,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         const isLastHop = hostIdx === hops.length - 1;
         const isFirst = hostIdx === 0;
         const udpTargets = isFXP && isLastHop ? forwardXUDPTargets(tunnel) : [];
+        const streamTargets = isFXP && isLastHop ? forwardXStreamTargets(tunnel) : [];
         const shouldSyncUDPTargets = isFXP
           && isLastHop
           && runtimeBool(tunnel.isEnabled)
-          && forwardXUDPTargetsChanged(tunnel, udpTargets);
+          && forwardXUDPTargetsChanged(tunnel, { udpTargets, streamTargets });
         if (runtimeBool(tunnel.isEnabled) && listenPortValue > 0) {
           expectedTunnelPorts.add(listenPortValue);
         }
@@ -5030,7 +5088,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           }
           const fxpSpec = await buildForwardXHopSpec(tunnel, hops, hostIdx, op);
           if (!fxpSpec) continue;
-          if (isLastHop) fxpSpec.udpTargets = udpTargets;
+          if (isLastHop) {
+            fxpSpec.udpTargets = udpTargets;
+            fxpSpec.streamTargets = streamTargets;
+          }
 
           actions.push({
             tunnelId: tunnel.id,

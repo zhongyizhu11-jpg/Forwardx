@@ -16,6 +16,16 @@ type udpTarget struct {
 	TargetPort int    `json:"targetPort"`
 }
 
+// streamTarget 是出口允许按 hello 拨出去的一个目标（TCP，以及走 TCP 流的
+// UDP）。hello 里的目标是入口写的，出口只认面板给它的这张表：握手只证明对端
+// 知道隧道密钥，不能让它把出口当成随便拨哪儿的跳板。一条规则可以有几项
+// （规则目标的域名和解析出的 IP、线路组的路径 A、出口本机的调度器）。
+type streamTarget struct {
+	RuleID     int    `json:"ruleId"`
+	TargetIP   string `json:"targetIp"`
+	TargetPort int    `json:"targetPort"`
+}
+
 // multipathLeg is one parallel path from the entry to the exit: either a direct
 // dial to the exit, or a dial to a relay front that forwards on to it.
 type multipathLeg struct {
@@ -43,6 +53,7 @@ type config struct {
 	TargetIP                 string         `json:"targetIp"`
 	TargetPort               int            `json:"targetPort"`
 	UDPTargets               []udpTarget    `json:"udpTargets,omitempty"`
+	StreamTargets            []streamTarget `json:"streamTargets,omitempty"`
 	Key                      string         `json:"key"`
 	LimitIn                  int64          `json:"limitIn"`
 	LimitOut                 int64          `json:"limitOut"`

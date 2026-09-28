@@ -301,7 +301,9 @@ func TestMultipathExitRegistryReleasesFinishedSessions(t *testing.T) {
 		}
 		return ids
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	// 一条腿卡住时，会话要等腿停滞超时、再加一轮看门狗检查才退出；负载高的机器上
+	// 正好会碰到这种情况，所以截止时间按这两个常量算，而不是写死 5 秒。
+	deadline := time.Now().Add(multipathLegStallTimeout + 2*multipathLegStallCheck)
 	for time.Now().Before(deadline) {
 		if len(leftover()) == 0 {
 			return

@@ -474,8 +474,22 @@ export default function Login() {
     },
   });
 
+  // Telegram 登录的账户开了双重验证时，服务端返回挑战而不是会话：和密码登录一样弹出验证码输入。
+  const startTwoFactorFromTelegram = (data: any) => {
+    if (!data?.twoFactorRequired) return false;
+    setTwoFactorChallenge({
+      challengeId: data.challengeId,
+      username: data.username,
+      expiresAt: Date.now() + data.expiresInSeconds * 1000,
+    });
+    setTwoFactorCode("");
+    toast.info("请输入双重验证验证码");
+    return true;
+  };
+
   const telegramLoginMutation = trpc.telegram.login.useMutation({
     onSuccess: (data) => {
+      if (startTwoFactorFromTelegram(data)) return;
       if (mobileAuth.isNative) {
         mobileAuth.setToken(data.mobileToken);
       }
@@ -491,6 +505,7 @@ export default function Login() {
 
   const telegramWebAppLoginMutation = trpc.telegram.loginWithWebApp.useMutation({
     onSuccess: (data) => {
+      if (startTwoFactorFromTelegram(data)) return;
       if (mobileAuth.isNative) {
         mobileAuth.setToken(data.mobileToken);
       }
@@ -542,6 +557,10 @@ export default function Login() {
   const mobileTelegramStatusMutation = trpc.telegram.mobileLoginStatus.useMutation({
     onSuccess: (data) => {
       if (data.status !== "success") return;
+      if (startTwoFactorFromTelegram(data)) {
+        setMobileTelegramLogin(null);
+        return;
+      }
       mobileAuth.setToken(data.mobileToken);
       setMobileTelegramLogin(null);
       rememberLoginWelcome(data);
@@ -561,7 +580,8 @@ export default function Login() {
   const verifyTwoFactorLoginMutation = trpc.auth.verifyTwoFactorLogin.useMutation({
     onSuccess: (data) => {
       if (mobileAuth.isNative) {
-        mobileAuth.setCredentials(username, password);
+        // Telegram 登录进来的双重验证没有账号密码，别用空值覆盖掉 App 里记住的凭据。
+        if (password) mobileAuth.setCredentials(username, password);
         mobileAuth.setToken(data.mobileToken);
       }
       rememberLoginWelcome(data);

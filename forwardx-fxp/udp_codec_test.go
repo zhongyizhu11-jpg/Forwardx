@@ -40,7 +40,7 @@ func TestFXPUDPCodecIsWireCompatibleAndRejectsTampering(t *testing.T) {
 		t.Fatal("cached codec changed the FXP UDP wire format")
 	}
 
-	statelessPacket, err := openFXPUDPPacket(cachedWire, key)
+	statelessPacket, err := openFXPUDPPacket(cachedWire, packet.tunnelID, key)
 	if err != nil || !bytes.Equal(statelessPacket.payload, packet.payload) {
 		t.Fatalf("stateless opener rejected cached wire packet: payload=%q err=%v", statelessPacket.payload, err)
 	}
@@ -152,7 +152,7 @@ func TestFXPUDPCodecReducesPerPacketAllocations(t *testing.T) {
 		fxpUDPCodecPacketSink, _ = codec.openPacket(wire)
 	})
 	statelessOpen := testing.AllocsPerRun(1000, func() {
-		fxpUDPCodecPacketSink, _ = openFXPUDPPacket(wire, key)
+		fxpUDPCodecPacketSink, _ = openFXPUDPPacket(wire, packet.tunnelID, key)
 	})
 	t.Logf("allocations per packet: seal cached=%.1f stateless=%.1f, open cached=%.1f stateless=%.1f", cachedSeal, statelessSeal, cachedOpen, statelessOpen)
 	if cachedSeal >= statelessSeal {

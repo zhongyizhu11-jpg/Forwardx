@@ -427,7 +427,7 @@ func TestExitUDPDirectSameSessionIDDifferentRulesPreservesOldSession(t *testing.
 	if err != nil {
 		t.Fatalf("old rule session no longer returned traffic after rule collision: %v", err)
 	}
-	packet, err := openFXPUDPPacket(buf[:n], key)
+	packet, err := openFXPUDPPacket(buf[:n], tunnelID, key)
 	if err != nil {
 		t.Fatal(err)
 	}

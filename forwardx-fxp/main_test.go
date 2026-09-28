@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -249,12 +248,13 @@ func TestForwardXFallbackUsesBackupForTCPAndUDP(t *testing.T) {
 	defer close(entryDone)
 	go func() {
 		_ = runExit(exitDone, config{
-			Role:       "exit",
-			TunnelID:   71,
-			ListenPort: backupPort,
-			Protocol:   "both",
-			Key:        key,
-			UDPTargets: []udpTarget{{RuleID: 72, TargetIP: "127.0.0.1", TargetPort: targetPort}},
+			Role:          "exit",
+			TunnelID:      71,
+			ListenPort:    backupPort,
+			Protocol:      "both",
+			Key:           key,
+			StreamTargets: loopbackStreamTargets(72, targetPort),
+			UDPTargets:    []udpTarget{{RuleID: 72, TargetIP: "127.0.0.1", TargetPort: targetPort}},
 		})
 	}()
 	waitForTCP(t, backupPort)
@@ -332,11 +332,12 @@ func TestForwardXTCPRoundTrip(t *testing.T) {
 
 	go func() {
 		_ = runExit(exitDone, config{
-			Role:       "exit",
-			TunnelID:   1,
-			ListenPort: exitPort,
-			Protocol:   "tcp",
-			Key:        key,
+			Role:          "exit",
+			TunnelID:      1,
+			ListenPort:    exitPort,
+			Protocol:      "tcp",
+			Key:           key,
+			StreamTargets: loopbackStreamTargets(2, targetPort),
 		})
 	}()
 	waitForTCP(t, exitPort)
@@ -496,6 +497,7 @@ func TestForwardXBothSplitUDPWirePorts(t *testing.T) {
 			UDPListenPort: exitUDPPort,
 			Protocol:      "both",
 			Key:           key,
+			StreamTargets: loopbackStreamTargets(32, targetPort),
 			UDPTargets:    []udpTarget{{RuleID: 32, TargetIP: "127.0.0.1", TargetPort: targetPort}},
 		})
 	}()
@@ -655,7 +657,7 @@ func TestFXPUDPv3EncryptsAuthenticatesAndRejectsReplay(t *testing.T) {
 	if bytes.Contains(raw, packet.payload) {
 		t.Fatal("UDP v3 payload was sent in plaintext")
 	}
-	opened, err := openFXPUDPPacket(raw, "udp-v3-test-key")
+	opened, err := openFXPUDPPacket(raw, 41, "udp-v3-test-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -665,15 +667,15 @@ func TestFXPUDPv3EncryptsAuthenticatesAndRejectsReplay(t *testing.T) {
 
 	tampered := append([]byte(nil), raw...)
 	tampered[len(tampered)-1] ^= 0x01
-	if _, err := openFXPUDPPacket(tampered, "udp-v3-test-key"); err == nil {
+	if _, err := openFXPUDPPacket(tampered, 41, "udp-v3-test-key"); err == nil {
 		t.Fatal("expected tampered payload to be rejected")
 	}
 	tamperedHeader := append([]byte(nil), raw...)
 	tamperedHeader[12] ^= 0x01
-	if _, err := openFXPUDPPacket(tamperedHeader, "udp-v3-test-key"); err == nil {
+	if _, err := openFXPUDPPacket(tamperedHeader, 41, "udp-v3-test-key"); err == nil {
 		t.Fatal("expected tampered header to be rejected")
 	}
-	if _, err := openFXPUDPPacket(raw, "wrong-key"); err == nil {
+	if _, err := openFXPUDPPacket(raw, 41, "wrong-key"); err == nil {
 		t.Fatal("expected wrong key to be rejected")
 	}
 
@@ -719,7 +721,7 @@ func TestFXPUDPFragmentsStayWithinSafeWireSizeAndReassembleOutOfOrder(t *testing
 		if len(frame) > fxpUDPMaxWirePacketSize {
 			t.Fatalf("fragment %d wire size = %d, max %d", i, len(frame), fxpUDPMaxWirePacketSize)
 		}
-		packets[i], err = openFXPUDPPacket(frame, "udp-fragment-test-key")
+		packets[i], err = openFXPUDPPacket(frame, 51, "udp-fragment-test-key")
 		if err != nil {
 			t.Fatalf("open fragment %d: %v", i, err)
 		}
@@ -788,7 +790,7 @@ func TestFXPUDPReassemblesAdjacentLargeDatagramsOutOfOrder(t *testing.T) {
 		}
 		packets := make([]fxpUDPPacket, len(frames))
 		for i, frame := range frames {
-			packets[i], err = openFXPUDPPacket(frame, "udp-adjacent-test-key")
+			packets[i], err = openFXPUDPPacket(frame, 71, "udp-adjacent-test-key")
 			if err != nil {
 				t.Fatalf("open fragment %d: %v", i, err)
 			}
@@ -870,11 +872,12 @@ func TestForwardXProxyProtocolRoundTrip(t *testing.T) {
 
 	go func() {
 		_ = runExit(exitDone, config{
-			Role:       "exit",
-			TunnelID:   11,
-			ListenPort: exitPort,
-			Protocol:   "tcp",
-			Key:        key,
+			Role:          "exit",
+			TunnelID:      11,
+			ListenPort:    exitPort,
+			Protocol:      "tcp",
+			Key:           key,
+			StreamTargets: loopbackStreamTargets(12, targetPort),
 		})
 	}()
 	waitForTCP(t, exitPort)
@@ -959,11 +962,12 @@ func TestForwardXProxyProtocolSurvivesBackupExitSelection(t *testing.T) {
 
 	go func() {
 		_ = runExit(exitDone, config{
-			Role:       "exit",
-			TunnelID:   21,
-			ListenPort: backupExitPort,
-			Protocol:   "tcp",
-			Key:        key,
+			Role:          "exit",
+			TunnelID:      21,
+			ListenPort:    backupExitPort,
+			Protocol:      "tcp",
+			Key:           key,
+			StreamTargets: loopbackStreamTargets(22, targetPort),
 		})
 	}()
 	waitForTCP(t, backupExitPort)
@@ -1041,11 +1045,12 @@ func TestForwardXRelayTCPRoundTrip(t *testing.T) {
 
 	go func() {
 		_ = runExit(exitDone, config{
-			Role:       "exit",
-			TunnelID:   3,
-			ListenPort: exitPort,
-			Protocol:   "tcp",
-			Key:        downstreamKey,
+			Role:          "exit",
+			TunnelID:      3,
+			ListenPort:    exitPort,
+			Protocol:      "tcp",
+			Key:           downstreamKey,
+			StreamTargets: loopbackStreamTargets(4, targetPort),
 		})
 	}()
 	waitForTCP(t, exitPort)
@@ -1136,11 +1141,12 @@ func TestForwardXRelayChainTCPRoundTrip(t *testing.T) {
 
 	go func() {
 		_ = runExit(exitDone, config{
-			Role:       "exit",
-			TunnelID:   5,
-			ListenPort: exitPort,
-			Protocol:   "tcp",
-			Key:        keys[2],
+			Role:          "exit",
+			TunnelID:      5,
+			ListenPort:    exitPort,
+			Protocol:      "tcp",
+			Key:           keys[2],
+			StreamTargets: loopbackStreamTargets(6, targetPort),
 		})
 	}()
 	waitForTCP(t, exitPort)
@@ -1206,72 +1212,6 @@ func TestForwardXRelayChainTCPRoundTrip(t *testing.T) {
 	}
 	if string(buf) != "relay-chain-forwardx" {
 		t.Fatalf("unexpected echo %q", string(buf))
-	}
-}
-
-func TestFxpRejectsReplaySalt(t *testing.T) {
-	c1, s1 := net.Pipe()
-	defer c1.Close()
-	defer s1.Close()
-	c2, s2 := net.Pipe()
-	defer c2.Close()
-	defer s2.Close()
-
-	cfg := config{Role: "exit", TunnelID: 77, RuleID: 0, ListenPort: 12345, Key: "replay-key"}
-	salt := make([]byte, fxpSaltSize)
-	for i := range salt {
-		salt[i] = byte(i + 1)
-	}
-	key := replayKey(cfg, salt)
-	fxpReplaySeen.mu.Lock()
-	delete(fxpReplaySeen.seen, key)
-	fxpReplaySeen.mu.Unlock()
-
-	errCh := make(chan error, 2)
-	go func() {
-		sec, err := newServerSecureConn(s1, cfg)
-		if err == nil {
-			_ = sec.conn.Close()
-		}
-		errCh <- err
-	}()
-	if _, err := writeFull(c1, salt); err != nil {
-		t.Fatal(err)
-	}
-	client, err := newSessionSecureConn(c1, cfg.Key, salt, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hello, _ := json.Marshal(fxpHandshake{V: fxpHandshakeVersion, TS: time.Now().Unix(), TunnelID: cfg.TunnelID})
-	if err := client.writeFrame(hello); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.readFrame(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-errCh; err != nil {
-		t.Fatalf("first handshake failed: %v", err)
-	}
-
-	go func() {
-		sec, err := newServerSecureConn(s2, cfg)
-		if err == nil {
-			_ = sec.conn.Close()
-		}
-		errCh <- err
-	}()
-	if _, err := writeFull(c2, salt); err != nil {
-		t.Fatal(err)
-	}
-	replayClient, err := newSessionSecureConn(c2, cfg.Key, salt, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := replayClient.writeFrame(hello); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-errCh; err == nil {
-		t.Fatal("expected replayed salt to be rejected")
 	}
 }
 

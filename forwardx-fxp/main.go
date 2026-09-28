@@ -55,6 +55,14 @@ type helloFrame struct {
 	// sends one, and neither side uses anything the other cannot parse.
 	// Relays forward the hello verbatim, so this reaches the exit end to end.
 	MultipathExtended bool `json:"multipathExtended,omitempty"`
+	// targetLiteral 不上线：出口核对过目标之后记下「配置里写的就是这个 IP」。
+	// 写死的 IP 是面板明确配的（比如出口本机调度器的 127.0.0.1），照拨；写的是
+	// 域名时，解析出来落到环回、链路本地这些地址上就不拨（见 dialExitTarget）。
+	targetLiteral bool
+	// accountingRuleID 也不上线：出口核对目标时记下「这趟是替哪条规则拨的」，
+	// 出口按它记流量。只有目标表里那条规则的目标对上了才有值；hello 里写的
+	// 规则号是入口说的，不能拿来直接记账（见 exit_traffic.go）。
+	accountingRuleID int
 }
 
 type protocolPolicy struct {
@@ -71,9 +79,12 @@ type envelope struct {
 	TS  int64  `json:"ts"`
 }
 
+// fxpHandshake 是握手帧和握手确认的内容。TSMilli 是发出时刻（Unix 毫秒）：
+// 服务端只收 ±fxpHandshakeWindow 以内的握手，重放缓存记 2 倍窗口就够；用毫秒是
+// 为了进程刚启动时「启动前生成的握手一律不收」这条线划得准（见 fxpReplaySeen）。
 type fxpHandshake struct {
 	V        int   `json:"v"`
-	TS       int64 `json:"ts"`
+	TSMilli  int64 `json:"tsMs"`
 	TunnelID int   `json:"tunnelId"`
 }
 
@@ -102,6 +113,16 @@ type secureConn struct {
 	ackTimeout    time.Duration
 	// onAck 报告握手确认的结果，出口择优靠它更新健康状态。
 	onAck func(error)
+	// 客户端在收到确认之前留着派生会话密钥的材料：确认里带着服务端的 salt，
+	// 两边的 salt 合起来才得到这条连接真正的会话密钥（见 finishServerHandshake）。
+	handshakeMaster []byte
+	handshakeSalt   []byte
+	handshakeWire   fxpWireContext
+	// 服务端：客户端在见到确认之前写的帧（握手帧之后的 hello、首包）只能用
+	// 客户端 salt 派生的「首轮密钥」。读到第一帧会话密钥的帧之后就把它丢掉，
+	// 之后再出现首轮密钥的帧一律当作伪造。
+	earlyLenReadAEAD  cipher.AEAD
+	earlyDataReadAEAD cipher.AEAD
 }
 
 // fxpAckError 表示对端没有确认握手：连不通的黑洞、拒绝了密钥、半路断开。
@@ -128,11 +149,16 @@ type replayCache struct {
 	mu     sync.Mutex
 	seen   map[string]time.Time
 	expiry replayExpiryHeap
+	// floor 只对带时间戳的记录（addStampedAt）生效：时间戳不大于它的一律当重放。
+	// 它从创建时给的下限（进程启动时刻）开始，容量满了挤掉旧记录时抬到被挤掉
+	// 那条的时间戳 —— 被挤掉的记录再来一次，缓存已经认不出了，只能靠这条线挡住。
+	floor int64
 }
 
 type replayExpiry struct {
 	key       string
 	expiresAt time.Time
+	stamp     int64
 }
 
 type replayExpiryHeap []replayExpiry
@@ -151,7 +177,10 @@ func (h *replayExpiryHeap) Pop() any {
 }
 
 const (
-	fxpHandshakeVersion  = 2
+	// 3：服务端在确认里带回自己的 salt，会话密钥由两边的 salt 一起派生；握手
+	// 时间戳改成毫秒并强制检查。和 2 不互通，版本号不同直接拒绝，免得混跑时
+	// 解密失败得莫名其妙。
+	fxpHandshakeVersion  = 3
 	fxpSaltSize          = 32
 	fxpMaxFrame          = 16 * 1024 * 1024
 	fxpEntryToExit       = uint32(1)
@@ -164,7 +193,7 @@ const (
 	fxpUDPIdleTimeout    = 5 * time.Minute
 	fxpProtocolSampleMax = 512
 	fxpMasterContext     = "forwardx-fxp-v2 master"
-	fxpRuntimeVersion    = "2.2.120"
+	fxpRuntimeVersion    = "2.2.121"
 	fxpFallbackRetry     = 5 * time.Second
 	// A node that stays down is re-probed on a growing delay, because probing a
 	// peer that accepts but never answers costs a whole handshake timeout.
@@ -193,7 +222,12 @@ var (
 	fxpWireCurrent       = fxpWireContext{name: "current", sessionInfo: fxpSessionInfo, lengthAD: fxpLengthAD, payloadAD: fxpPayloadAD, masterContext: fxpMasterContext}
 	fxpWireCompat2390    = fxpWireContext{name: "2.3.90-compat", sessionInfo: fxpCompatSessionInfo, lengthAD: fxpCompatLengthAD, payloadAD: fxpCompatPayloadAD, masterContext: "forwardx-fxp master", compat: true}
 	fxpWireContexts      = []fxpWireContext{fxpWireCurrent, fxpWireCompat2390}
-	fxpReplaySeen        = newReplayCache(fxpHandshakeWindow, 100000)
+	// 握手重放缓存。时间窗是 ±fxpHandshakeWindow，一个握手从被接受起最多还能
+	// 在窗口里待 2 倍窗口长（对端时钟快一个窗口时），所以记 2 倍窗口。
+	// 初始下限是进程启动时刻：缓存在内存里，重启后是空的，启动前生成的握手
+	// 这个进程不可能见过、也就判断不了是不是重放，干脆不收。时钟比本机慢的
+	// 对端因此在重启后的头几秒（慢多少就是多少）会被拒，重试即可。
+	fxpReplaySeen = newStampedReplayCache(2*fxpHandshakeWindow, 100000, time.Now().UnixMilli()-1)
 )
 
 type connGate struct {
@@ -1670,6 +1704,11 @@ func handleExitSessionWithStartup(conn net.Conn, cfg config, startupComplete fun
 	if hello.TargetPort <= 0 {
 		hello.TargetPort = cfg.TargetPort
 	}
+	// 出口只拨面板给它的目标表里的目标（见 exit_targets.go）。多路径的每条腿
+	// 都走到这里，领头那条拨目标之前已经核对过。
+	if err := authorizeExitTarget(cfg, &hello); err != nil {
+		return err
+	}
 	if !hello.ProxyProtocolExitReceive {
 		hello.ProxySourceIP = ""
 		hello.ProxySourcePort = 0
@@ -1678,30 +1717,39 @@ func handleExitSessionWithStartup(conn net.Conn, cfg config, startupComplete fun
 	}
 	switch strings.ToLower(hello.Network) {
 	case "udp":
-		return handleExitUDP(sec, hello)
+		return handleExitUDP(sec, hello, cfg)
 	default:
 		// Legs sharing a multipath session id are reassembled into one stream
 		// before the target is dialled, so only the leading leg connects out.
 		if strings.TrimSpace(hello.MultipathSessionID) != "" {
 			return handleExitMultipath(sec, hello, cfg)
 		}
-		return handleExitTCP(sec, hello)
+		return handleExitTCP(sec, hello, cfg)
 	}
 }
 
-func handleExitTCP(sec *secureConn, hello helloFrame) error {
-	return relayExitTCPToTarget(sec, hello)
+func handleExitTCP(sec *secureConn, hello helloFrame, cfg config) error {
+	return relayExitTCPToTarget(sec, hello, cfg)
 }
 
 // relayExitTCPToTarget connects to the target and relays one exit session over
 // the given transport, which is a single secure connection for an ordinary
 // session and a multipath session when the entry striped it over several legs.
-func relayExitTCPToTarget(sec frameConn, hello helloFrame) error {
-	target, err := dialTCP(hello.TargetIP, hello.TargetPort, 10*time.Second)
+func relayExitTCPToTarget(sec frameConn, hello helloFrame, cfg config) error {
+	target, err := dialExitTarget(hello, 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("dial target: %w", err)
 	}
 	defer target.Close()
+	// 出口按放行的规则记一份流量（见 exit_traffic.go）。多路径会话只有领头那条腿
+	// 走到这里，一个会话只记一次。
+	counter, stopReporting := startExitTrafficReporter(cfg, hello.accountingRuleID)
+	defer stopReporting()
+	var toTarget, fromTarget *atomic.Uint64
+	if counter != nil {
+		counter.connections.Store(1)
+		toTarget, fromTarget = &counter.in, &counter.out
+	}
 	if hello.ProxyProtocolExitSend && hello.ProxySourceIP != "" && hello.ProxySourcePort > 0 {
 		fxpVerbosef(
 			"exit proxy protocol send tunnel=%d rule=%d source=%s:%d dest=%s:%d target=%s:%d",
@@ -1721,11 +1769,12 @@ func relayExitTCPToTarget(sec frameConn, hello helloFrame) error {
 		fxpVerbosef("exit proxy protocol skipped tunnel=%d rule=%d target=%s:%d missingSource=%v", hello.TunnelID, hello.RuleID, hello.TargetIP, hello.TargetPort, hello.ProxySourceIP == "" || hello.ProxySourcePort <= 0)
 	}
 	fxpVerbosef("exit tcp routed tunnel=%d rule=%d target=%s:%d", hello.TunnelID, hello.RuleID, hello.TargetIP, hello.TargetPort)
-	return proxyPlainSecure(target, sec, nil, nil, nil)
+	// 出口这边 plain 是目标：目标 → 入口是 out，入口 → 目标是 in，和入口的记法一样。
+	return proxyPlainSecureCounted(target, sec, nil, nil, fromTarget, toTarget, protocolPolicy{}, nil, nil)
 }
 
-func handleExitUDP(sec *secureConn, hello helloFrame) error {
-	targetAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(hello.TargetIP, strconv.Itoa(hello.TargetPort)))
+func handleExitUDP(sec *secureConn, hello helloFrame, cfg config) error {
+	targetAddr, err := resolveExitUDPTarget(hello)
 	if err != nil {
 		return err
 	}
@@ -1735,6 +1784,12 @@ func handleExitUDP(sec *secureConn, hello helloFrame) error {
 	}
 	tuneUDPConn(target, "exit target", fxpUDPSessionBufferBytes)
 	defer target.Close()
+	counter, stopReporting := startExitTrafficReporter(cfg, hello.accountingRuleID)
+	defer stopReporting()
+	if counter == nil {
+		counter = &trafficCounter{}
+	}
+	counter.connections.Store(1)
 	fxpVerbosef("exit udp session routed tunnel=%d rule=%d peer=%s target=%s:%d", hello.TunnelID, hello.RuleID, sec.conn.RemoteAddr(), hello.TargetIP, hello.TargetPort)
 	var lastActivity atomic.Int64
 	lastActivity.Store(time.Now().UnixNano())
@@ -1755,6 +1810,7 @@ func handleExitUDP(sec *secureConn, hello helloFrame) error {
 				errCh <- err
 				return
 			}
+			counter.in.Add(uint64(len(frame)))
 			touch()
 		}
 	}()
@@ -1783,6 +1839,7 @@ func handleExitUDP(sec *secureConn, hello helloFrame) error {
 				errCh <- err
 				return
 			}
+			counter.out.Add(uint64(n))
 			touch()
 		}
 	}()
@@ -1902,12 +1959,19 @@ func proxyPlainSecure(plain net.Conn, sec frameConn, inLimiter, outLimiter *limi
 }
 
 func proxyPlainSecureWithPolicy(plain net.Conn, sec frameConn, inLimiter, outLimiter *limiter, counter *trafficCounter, policy protocolPolicy, onBlock func(string), initialSample []byte) error {
-	errCh := make(chan error, 2)
 	var inCounter, outCounter *atomic.Uint64
 	if counter != nil {
 		inCounter = &counter.in
 		outCounter = &counter.out
 	}
+	return proxyPlainSecureCounted(plain, sec, inLimiter, outLimiter, inCounter, outCounter, policy, onBlock, initialSample)
+}
+
+// proxyPlainSecureCounted 在明文连接和加密帧之间双向转发。inCounter 记 plain → 加密
+// 的字节，outCounter 记加密 → plain 的；入口的 plain 是客户端，出口的 plain 是目标，
+// 方向正好相反，由调用方决定哪个算 in。
+func proxyPlainSecureCounted(plain net.Conn, sec frameConn, inLimiter, outLimiter *limiter, inCounter, outCounter *atomic.Uint64, policy protocolPolicy, onBlock func(string), initialSample []byte) error {
+	errCh := make(chan error, 2)
 	go func() {
 		errCh <- catchPanic("plain to secure copy", func() error {
 			return copyPlainToSecureWithPolicy(sec, plain, inLimiter, inCounter, policy, onBlock, initialSample)
@@ -2181,7 +2245,7 @@ func newPipelinedClientSecureConn(conn net.Conn, cfg config, wire fxpWireContext
 	if err != nil {
 		return nil, err
 	}
-	hs, _ := json.Marshal(fxpHandshake{V: fxpHandshakeVersion, TS: time.Now().Unix(), TunnelID: cfg.TunnelID})
+	hs, _ := json.Marshal(fxpHandshake{V: fxpHandshakeVersion, TSMilli: time.Now().UnixMilli(), TunnelID: cfg.TunnelID})
 	prefix := make([]byte, 0, fxpSaltSize+4+sec.lenWriteAEAD.Overhead()+len(hs)+sec.dataWriteAEAD.Overhead())
 	prefix = append(prefix, salt...)
 	prefix = sec.appendSealedFrameLocked(prefix, hs)
@@ -2189,6 +2253,10 @@ func newPipelinedClientSecureConn(conn net.Conn, cfg config, wire fxpWireContext
 	sec.ackPending = true
 	sec.ackTunnelID = cfg.TunnelID
 	sec.ackTimeout = fxpHandshakeTimeout
+	master := sha256.Sum256([]byte(cfg.Key))
+	sec.handshakeMaster = master[:]
+	sec.handshakeSalt = salt
+	sec.handshakeWire = wire
 	return sec, nil
 }
 
@@ -2205,7 +2273,17 @@ func (c *secureConn) consumeHandshakeAck() error {
 		}
 		err = c.conn.SetReadDeadline(time.Now().Add(timeout))
 	}
+	// 确认 = 服务端 salt（明文）+ 用会话密钥加密的确认帧。先派生会话密钥装到读
+	// 方向，确认帧能解开就说明对端确实持有隧道密钥、而且是这次新握的手。
+	var final fxpSessionAEADs
 	if err == nil {
+		serverSalt := make([]byte, fxpSaltSize)
+		if _, err = io.ReadFull(c.conn, serverSalt); err == nil {
+			final, err = deriveFXPSessionAEADs(c.handshakeMaster, fxpFinalSessionSalt(c.handshakeSalt, serverSalt), fxpFinalSessionInfo(c.handshakeWire), c.handshakeWire)
+		}
+	}
+	if err == nil {
+		c.lenReadAEAD, c.dataReadAEAD = final.s2cLen, final.s2cData
 		ack, err = c.readEncryptedFrame()
 	}
 	if err == nil {
@@ -2214,6 +2292,14 @@ func (c *secureConn) consumeHandshakeAck() error {
 			err = errors.New("fxp handshake rejected")
 		}
 	}
+	if err == nil {
+		// 从这里起客户端往服务端写的帧也换成会话密钥（计数接着往下走）。确认之前
+		// 已经写出去的那些用的是首轮密钥，服务端两把都认，见 openFrameLength。
+		c.writeMu.Lock()
+		c.lenWriteAEAD, c.dataWriteAEAD = final.c2sLen, final.c2sData
+		c.writeMu.Unlock()
+	}
+	c.handshakeMaster, c.handshakeSalt = nil, nil
 	if err == nil {
 		if clearErr := c.conn.SetReadDeadline(time.Time{}); clearErr != nil && !isClosedErr(clearErr) {
 			err = clearErr
@@ -2287,14 +2373,18 @@ func newServerSecureConnWithWires(conn net.Conn, cfg config, wires []fxpWireCont
 		if err != nil {
 			return nil, err
 		}
+		hs, err := validateServerHandshake(cfg, ack, time.Now())
+		if err != nil {
+			return nil, err
+		}
 		// Do not let unauthenticated connections populate the replay cache.
 		// The AEAD-authenticated first frame proves knowledge of the tunnel key;
 		// Add remains atomic, so concurrent replays still admit only one request.
-		if !fxpReplaySeen.Add(replayKey(cfg, salt)) {
+		if !fxpReplaySeen.AddStamped(replayKey(cfg, salt), hs.TSMilli) {
 			return nil, errors.New("fxp replay detected")
 		}
 		sec.readCounter = 1
-		sec, err = finishServerHandshake(sec, cfg, ack, wire)
+		sec, err = finishServerHandshake(sec, cfg, salt, wire)
 		if err != nil {
 			return nil, err
 		}
@@ -2402,21 +2492,62 @@ func readSecureHelloWithin(sec *secureConn, timeout time.Duration) ([]byte, erro
 	return hello, nil
 }
 
-func finishServerHandshake(sec *secureConn, cfg config, ack []byte, wire fxpWireContext) (*secureConn, error) {
+// validateServerHandshake 检查握手帧：版本、隧道、发出时间在 ±fxpHandshakeWindow
+// 以内。时间窗配合重放缓存（记 2 倍窗口）才能挡住重放：窗口外的旧握手靠时间
+// 戳拒，窗口内的靠缓存拒。以前只记日志不拒，缓存一过期、进程一重启，录下来的
+// 握手就又能用了。
+func validateServerHandshake(cfg config, frame []byte, now time.Time) (fxpHandshake, error) {
 	var hs fxpHandshake
-	if err := json.Unmarshal(ack, &hs); err != nil || hs.V != fxpHandshakeVersion || hs.TunnelID != cfg.TunnelID {
-		return nil, errors.New("fxp handshake rejected")
+	if err := json.Unmarshal(frame, &hs); err != nil || hs.V != fxpHandshakeVersion || hs.TunnelID != cfg.TunnelID || hs.TSMilli <= 0 {
+		return hs, errors.New("fxp handshake rejected")
 	}
-	if hs.TS <= 0 {
-		return nil, errors.New("fxp handshake rejected")
+	skew := time.Duration(now.UnixMilli()-hs.TSMilli) * time.Millisecond
+	if skew > fxpHandshakeWindow || skew < -fxpHandshakeWindow {
+		log.Printf("fxp handshake rejected tunnel=%d clock skew=%s exceeds %s; check NTP on both nodes", cfg.TunnelID, skew, fxpHandshakeWindow)
+		return hs, errors.New("fxp handshake timestamp outside window")
 	}
-	if ts := time.Unix(hs.TS, 0); time.Since(ts) > fxpHandshakeWindow || time.Until(ts) > fxpHandshakeWindow {
-		log.Printf("fxp handshake clock skew tunnel=%d skew=%s; accepting because salt replay protection is independent of wall-clock sync", cfg.TunnelID, time.Since(ts))
-	}
+	return hs, nil
+}
+
+// finishServerHandshake 生成服务端自己的 salt，和客户端的 salt 一起派生这条
+// 连接的会话密钥，把 salt 和确认帧回给客户端。
+//
+// 为什么要服务端出一份随机数：以前会话密钥只由客户端 salt 决定，录下一条会话
+// 原样重放，服务端派生出一模一样的密钥，回给「客户端」的数据又用同样的密钥和
+// 计数（nonce）加密一遍 —— AES-GCM 的 nonce 重用，两份密文一异或就漏明文，还能
+// 算出认证密钥。现在服务端每次都换新 salt，重放得到的是另一套密钥：回程密文和
+// 原会话毫无关系，录下来的、确认之后的客户端帧在新密钥下也解不开。
+//
+// 流水线握手（客户端不等确认就把 hello 和首包跟在握手后面发出来）因此分两段：
+//   - 客户端 → 服务端，见到确认之前写的帧（首轮）：只能用客户端 salt 派生的
+//     首轮密钥，服务端这时还没开口；
+//   - 服务端 → 客户端的全部帧，以及客户端见到确认之后写的帧：用两边 salt 派生
+//     的会话密钥，计数不重置、接着往下走。
+//
+// 首轮帧能被重放，这是省掉一个往返的代价：挡它靠 validateServerHandshake 的
+// 时间窗 + 重放缓存（进程重启后，启动前的握手一律不收）。窗口之内换一台共用
+// 隧道密钥的出口去重放首轮，那台出口会照 hello 再拨一次目标、再发一遍首包，
+// 但回程用的是它自己新派生的密钥，攻击者什么也读不到，首轮之后录下的数据也
+// 放不进去。
+func finishServerHandshake(sec *secureConn, cfg config, clientSalt []byte, wire fxpWireContext) (*secureConn, error) {
 	if wire.compat {
 		log.Printf("fxp accepted compatibility wire context=%s tunnel=%d", wire.name, cfg.TunnelID)
 	}
-	reply, _ := json.Marshal(fxpHandshake{V: fxpHandshakeVersion, TS: time.Now().Unix(), TunnelID: cfg.TunnelID})
+	serverSalt := make([]byte, fxpSaltSize)
+	if _, err := rand.Read(serverSalt); err != nil {
+		return nil, err
+	}
+	master := sha256.Sum256([]byte(cfg.Key))
+	final, err := deriveFXPSessionAEADs(master[:], fxpFinalSessionSalt(clientSalt, serverSalt), fxpFinalSessionInfo(wire), wire)
+	if err != nil {
+		return nil, err
+	}
+	sec.earlyLenReadAEAD, sec.earlyDataReadAEAD = sec.lenReadAEAD, sec.dataReadAEAD
+	sec.lenReadAEAD, sec.dataReadAEAD = final.c2sLen, final.c2sData
+	sec.lenWriteAEAD, sec.dataWriteAEAD = final.s2cLen, final.s2cData
+	reply, _ := json.Marshal(fxpHandshake{V: fxpHandshakeVersion, TSMilli: time.Now().UnixMilli(), TunnelID: cfg.TunnelID})
+	// 服务端 salt 挂在 pendingPrefix 上，和确认帧一次写出。
+	sec.pendingPrefix = serverSalt
 	if err := sec.writeFrame(reply); err != nil {
 		return nil, err
 	}
@@ -2427,33 +2558,53 @@ func newSessionSecureConn(conn net.Conn, key string, salt []byte, client bool) (
 	return newSessionSecureConnWithWire(conn, key, salt, client, fxpWireCurrent)
 }
 
+// fxpSessionAEADs 是两个方向各一套的帧长度 / 帧内容密钥。
+type fxpSessionAEADs struct {
+	c2sLen, c2sData, s2cLen, s2cData cipher.AEAD
+}
+
+func deriveFXPSessionAEADs(master, salt, info []byte, wire fxpWireContext) (fxpSessionAEADs, error) {
+	material := blake3Derive(master, salt, info, wire.masterContext, 128)
+	var out fxpSessionAEADs
+	var err error
+	for index, dst := range []*cipher.AEAD{&out.c2sLen, &out.c2sData, &out.s2cLen, &out.s2cData} {
+		if *dst, err = newAEAD(material[index*32 : (index+1)*32]); err != nil {
+			return fxpSessionAEADs{}, err
+		}
+	}
+	return out, nil
+}
+
+// fxpFinalSessionSalt 把两边的 salt 接起来，作为会话密钥的 salt。
+func fxpFinalSessionSalt(clientSalt, serverSalt []byte) []byte {
+	out := make([]byte, 0, len(clientSalt)+len(serverSalt))
+	out = append(out, clientSalt...)
+	return append(out, serverSalt...)
+}
+
+// fxpFinalSessionInfo 给会话密钥一个和首轮密钥不同的派生上下文，两者从结构上
+// 就分开。
+func fxpFinalSessionInfo(wire fxpWireContext) []byte {
+	const suffix = " +server-salt"
+	info := make([]byte, 0, len(wire.sessionInfo)+len(suffix))
+	info = append(info, wire.sessionInfo...)
+	return append(info, suffix...)
+}
+
 func newSessionSecureConnWithWire(conn net.Conn, key string, salt []byte, client bool, wire fxpWireContext) (*secureConn, error) {
 	master := sha256.Sum256([]byte(key))
-	material := blake3Derive(master[:], salt, wire.sessionInfo, wire.masterContext, 128)
-	c2sLen, err := newAEAD(material[0:32])
-	if err != nil {
-		return nil, err
-	}
-	c2sData, err := newAEAD(material[32:64])
-	if err != nil {
-		return nil, err
-	}
-	s2cLen, err := newAEAD(material[64:96])
-	if err != nil {
-		return nil, err
-	}
-	s2cData, err := newAEAD(material[96:128])
+	keys, err := deriveFXPSessionAEADs(master[:], salt, wire.sessionInfo, wire)
 	if err != nil {
 		return nil, err
 	}
 	sec := &secureConn{conn: conn, lengthAD: wire.lengthAD, payloadAD: wire.payloadAD}
 	if client {
-		sec.lenWriteAEAD, sec.dataWriteAEAD = c2sLen, c2sData
-		sec.lenReadAEAD, sec.dataReadAEAD = s2cLen, s2cData
+		sec.lenWriteAEAD, sec.dataWriteAEAD = keys.c2sLen, keys.c2sData
+		sec.lenReadAEAD, sec.dataReadAEAD = keys.s2cLen, keys.s2cData
 		sec.writeDir, sec.readDir = fxpEntryToExit, fxpExitToEntry
 	} else {
-		sec.lenWriteAEAD, sec.dataWriteAEAD = s2cLen, s2cData
-		sec.lenReadAEAD, sec.dataReadAEAD = c2sLen, c2sData
+		sec.lenWriteAEAD, sec.dataWriteAEAD = keys.s2cLen, keys.s2cData
+		sec.lenReadAEAD, sec.dataReadAEAD = keys.c2sLen, keys.c2sData
 		sec.writeDir, sec.readDir = fxpExitToEntry, fxpEntryToExit
 	}
 	return sec, nil
@@ -2551,23 +2702,48 @@ func (c *secureConn) readEncryptedFrame() ([]byte, error) {
 	if _, err := io.ReadFull(c.conn, lenCipher[:lenSize]); err != nil {
 		return nil, err
 	}
-	n, err := c.decryptFrameLength(counter, lenCipher[:lenSize])
+	n, dataAEAD, err := c.openFrameLength(counter, lenCipher[:lenSize])
 	if err != nil {
 		return nil, err
 	}
-	dataCipher := getFXPByteBuffer(int(n) + c.dataReadAEAD.Overhead())
+	dataCipher := getFXPByteBuffer(int(n) + dataAEAD.Overhead())
 	defer putFXPByteBuffer(dataCipher)
 	if _, err := io.ReadFull(c.conn, dataCipher); err != nil {
 		return nil, err
 	}
-	return c.decryptFrameData(counter, dataCipher)
+	var nonce [12]byte
+	fillFXPNonce(nonce[:], c.readDir, counter, 1)
+	return dataAEAD.Open(nil, nonce[:], dataCipher, c.payloadAD)
+}
+
+// openFrameLength 解开帧长度，并告诉调用方这一帧的内容该用哪把密钥。服务端在
+// 客户端切到会话密钥之前两把都认：会话密钥解得开，说明客户端已经切过去了，
+// 首轮密钥从此作废；只有首轮密钥解得开的，是客户端见到确认之前写的帧。
+func (c *secureConn) openFrameLength(counter uint64, lenCipher []byte) (uint32, cipher.AEAD, error) {
+	n, err := c.decryptFrameLength(counter, lenCipher)
+	if err == nil {
+		c.earlyLenReadAEAD, c.earlyDataReadAEAD = nil, nil
+		return n, c.dataReadAEAD, nil
+	}
+	if c.earlyLenReadAEAD == nil {
+		return 0, nil, err
+	}
+	n, earlyErr := decryptFXPFrameLength(c.earlyLenReadAEAD, c.readDir, counter, lenCipher, c.lengthAD)
+	if earlyErr != nil {
+		return 0, nil, err
+	}
+	return n, c.earlyDataReadAEAD, nil
 }
 
 func (c *secureConn) decryptFrameLength(counter uint64, lenCipher []byte) (uint32, error) {
+	return decryptFXPFrameLength(c.lenReadAEAD, c.readDir, counter, lenCipher, c.lengthAD)
+}
+
+func decryptFXPFrameLength(aead cipher.AEAD, direction uint32, counter uint64, lenCipher, lengthAD []byte) (uint32, error) {
 	var nonce [12]byte
 	var plain [4]byte
-	fillFXPNonce(nonce[:], c.readDir, counter, 0)
-	lenPlain, err := c.lenReadAEAD.Open(plain[:0], nonce[:], lenCipher, c.lengthAD)
+	fillFXPNonce(nonce[:], direction, counter, 0)
+	lenPlain, err := aead.Open(plain[:0], nonce[:], lenCipher, lengthAD)
 	if err != nil {
 		return 0, err
 	}
@@ -2611,20 +2787,40 @@ func newReplayCache(ttl time.Duration, max int) *replayCache {
 	return &replayCache{ttl: ttl, max: max, seen: make(map[string]time.Time)}
 }
 
+// newStampedReplayCache 建一个带时间戳下限的缓存，floor 以下（含）的时间戳一律拒收。
+func newStampedReplayCache(ttl time.Duration, max int, floor int64) *replayCache {
+	cache := newReplayCache(ttl, max)
+	cache.floor = floor
+	return cache
+}
+
 func (c *replayCache) Add(key string) bool {
 	return c.addAt(key, time.Now())
 }
 
 func (c *replayCache) addAt(key string, now time.Time) bool {
+	return c.addStampedAt(key, 0, now, false)
+}
+
+// AddStamped 记下一条带发出时间戳的记录；时间戳落在下限以下或者记录已经在，
+// 都返回 false。
+func (c *replayCache) AddStamped(key string, stamp int64) bool {
+	return c.addStampedAt(key, stamp, time.Now(), true)
+}
+
+func (c *replayCache) addStampedAt(key string, stamp int64, now time.Time, stamped bool) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sweepLocked(now)
+	if stamped && stamp <= c.floor {
+		return false
+	}
 	if expiresAt, ok := c.seen[key]; ok && expiresAt.After(now) {
 		return false
 	}
 	expiresAt := now.Add(c.ttl)
 	c.seen[key] = expiresAt
-	heap.Push(&c.expiry, replayExpiry{key: key, expiresAt: expiresAt})
+	heap.Push(&c.expiry, replayExpiry{key: key, expiresAt: expiresAt, stamp: stamp})
 	for len(c.seen) > c.max {
 		if !c.evictOldestLocked() {
 			break
@@ -2647,6 +2843,9 @@ func (c *replayCache) evictOldestLocked() bool {
 		entry := heap.Pop(&c.expiry).(replayExpiry)
 		if expiresAt, ok := c.seen[entry.key]; ok && expiresAt.Equal(entry.expiresAt) {
 			delete(c.seen, entry.key)
+			if entry.stamp > c.floor {
+				c.floor = entry.stamp
+			}
 			return true
 		}
 	}

@@ -26,6 +26,9 @@ type trafficBatchKey struct {
 	panelURL   string
 	token      string
 	producerID string
+	// side 是空（入口）或 trafficReportSideExit（出口按规则记的那份）。面板按它
+	// 决定这份上报算不算：同一条规则只按一边记（见 exit_traffic.go）。
+	side string
 }
 
 type trafficBatchValue struct {
@@ -53,6 +56,10 @@ var trafficDiagnostics = struct {
 }{last: make(map[string]time.Time)}
 
 func enqueueTraffic(cfg config, bytesIn, bytesOut uint64, connectionDeltas ...uint64) {
+	enqueueTrafficForSide(cfg, "", bytesIn, bytesOut, connectionDeltas...)
+}
+
+func enqueueTrafficForSide(cfg config, side string, bytesIn, bytesOut uint64, connectionDeltas ...uint64) {
 	panelURL := strings.TrimRight(strings.TrimSpace(cfg.PanelURL), "/")
 	token := strings.TrimSpace(cfg.Token)
 	connections := uint64(0)
@@ -84,7 +91,11 @@ func enqueueTraffic(cfg config, bytesIn, bytesOut uint64, connectionDeltas ...ui
 		)
 		return
 	}
-	key := trafficBatchKey{panelURL: panelURL, token: token, producerID: fxpTrafficProducerID(cfg)}
+	producerID := fxpTrafficProducerID(cfg)
+	if side == trafficReportSideExit {
+		producerID = fxpExitTrafficProducerID(cfg)
+	}
+	key := trafficBatchKey{panelURL: panelURL, token: token, producerID: producerID, side: side}
 	trafficBatchMu.Lock()
 	byRule := trafficBatches[key]
 	if byRule == nil {
@@ -278,11 +289,15 @@ func postTrafficBatch(key trafficBatchKey, pending pendingTrafficBatch) bool {
 			"ruleId": ruleID, "bytesIn": value.bytesIn, "bytesOut": value.bytesOut, "connections": value.connections,
 		})
 	}
-	env, err := encryptEnvelope(map[string]any{
+	payload := map[string]any{
 		"stats":            stats,
 		"reportId":         pending.reportID,
 		"reportProducerId": key.producerID,
-	}, key.token)
+	}
+	if key.side != "" {
+		payload["reportSide"] = key.side
+	}
+	env, err := encryptEnvelope(payload, key.token)
 	if err != nil {
 		logTrafficDiagnostic(
 			"encrypt:"+key.producerID,
@@ -381,6 +396,13 @@ func trafficBatchPendingSnapshot() map[trafficBatchKey]pendingTrafficBatch {
 }
 
 func startTrafficReporter(cfg config, counter *trafficCounter) func() {
+	return startTrafficReporterWith(counter, func(bytesIn, bytesOut, connections uint64) {
+		enqueueTraffic(cfg, bytesIn, bytesOut, connections)
+	})
+}
+
+// startTrafficReporterWith 每 10 秒把计数器的增量交给 report，停的时候再交最后一次。
+func startTrafficReporterWith(counter *trafficCounter, report func(bytesIn, bytesOut, connections uint64)) func() {
 	done := make(chan struct{})
 	var reportMu sync.Mutex
 	var lastIn, lastOut, lastConnections uint64
@@ -394,7 +416,7 @@ func startTrafficReporter(cfg config, counter *trafficCounter) func() {
 		curConnections := counter.connections.Load()
 		deltaConnections := curConnections - lastConnections
 		if deltaIn > 0 || deltaOut > 0 || deltaConnections > 0 {
-			enqueueTraffic(cfg, deltaIn, deltaOut, deltaConnections)
+			report(deltaIn, deltaOut, deltaConnections)
 			lastIn = curIn
 			lastOut = curOut
 			lastConnections = curConnections

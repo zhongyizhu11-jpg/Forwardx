@@ -401,6 +401,20 @@ export async function deleteForwardGroupWithImpact(id: number, confirmRules?: bo
   if (impact.forwardRuleCount > 0 && !confirmRules) {
     throw new Error(`此转发组仍有关联转发规则 ${impact.forwardRuleCount} 条，请确认后再删除`);
   }
+  /*
+    入口组 / 出口组还被隧道或转发链引用时不许删。删了之后那些隧道、转发链的 entryGroupId /
+    exitGroupId 还指着一个不存在的组：下发时回落到隧道自己的入口机照常跑，而恢复规则时
+    又把「组不存在」当成「组已停用」—— 规则被打上隧道停用、自愈永远清不掉。先让人把
+    引用改掉，比留一堆两边说法不一的隧道好。
+  */
+  const references = await db.getForwardGroupEndpointReferences(id);
+  if (references.tunnels.length > 0 || references.chains.length > 0) {
+    const names = [
+      ...references.tunnels.map((tunnel: any) => `隧道「${tunnel.name || `#${tunnel.id}`}」`),
+      ...references.chains.map((chain: any) => `转发链「${chain.name || `#${chain.id}`}」`),
+    ];
+    throw new Error(`还有 ${names.length} 处在用这个组：${names.slice(0, 5).join("、")}${names.length > 5 ? " 等" : ""}。请先把它们改用别的组或删除，再删这个组`);
+  }
   await db.deleteForwardGroup(id);
   return { success: true };
 }

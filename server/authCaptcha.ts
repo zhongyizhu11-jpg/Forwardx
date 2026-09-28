@@ -4,8 +4,17 @@ import * as svgCaptcha from "svg-captcha";
 import Cap from "@cap.js/server";
 import { Router, type Request, type Response } from "express";
 import { setBoundedMapValue } from "./boundedCache";
+import { ipRateLimitScope } from "./ipRateLimitScope";
 
 export const LOGIN_CAPTCHA_FAILURE_THRESHOLD = 3;
+/**
+ * 同一个账户不管从哪来，累计失败到这个数就要验证码。
+ *
+ * 按「IP + 账户」计数时，换一个来源地址就是新的额度：有一段 /64 或者一堆肉鸡的人可以
+ * 对管理员账户无限次免验证码地猜密码。这里只强制验证码、不锁账户 —— 锁账户会被别人
+ * 拿来把真正的主人锁在门外。
+ */
+export const LOGIN_CAPTCHA_ACCOUNT_FAILURE_THRESHOLD = 10;
 export const LOGIN_CAPTCHA_REQUIREMENT_TTL_MS = 15 * 60 * 1000;
 export const CAPTCHA_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 export const CAPTCHA_REFRESH_WINDOW_MS = 60 * 1000;
@@ -66,7 +75,8 @@ export class CaptchaRefreshRateLimitError extends Error {
 }
 
 function normalizeIp(ip: string) {
-  return String(ip || "unknown").trim().toLowerCase() || "unknown";
+  // IPv6 按 /64 归并，见 ipRateLimitScope。
+  return ipRateLimitScope(ip);
 }
 
 function normalizeUsername(username: string) {
@@ -88,6 +98,7 @@ export class AuthCaptchaService {
   private readonly capChallenges = new Map<string, CapChallengeEntry>();
   private readonly capTokens = new Map<string, CapTokenEntry>();
   private readonly loginFailures = new Map<string, FailureEntry>();
+  private readonly accountLoginFailures = new Map<string, FailureEntry>();
   private readonly refreshTimestamps = new Map<string, number[]>();
   private readonly challengeTtlMs: number;
   private readonly requirementTtlMs: number;
@@ -281,39 +292,53 @@ export class AuthCaptchaService {
     return answersEqual(challenge.answer, normalizeAnswer(answer));
   }
 
-  recordLoginFailure(ip: string, username: string, now = Date.now()) {
-    const key = this.loginKey(ip, username);
-    const entry = this.loginFailures.get(key);
+  private bumpFailure(store: Map<string, FailureEntry>, key: string, now: number) {
+    const entry = store.get(key);
     if (!entry || now - entry.lastFailureAt >= this.requirementTtlMs) {
-      setBoundedMapValue(this.loginFailures, key, { count: 1, lastFailureAt: now }, this.maxRateLimitKeys);
+      setBoundedMapValue(store, key, { count: 1, lastFailureAt: now }, this.maxRateLimitKeys);
       return;
     }
     entry.count += 1;
     entry.lastFailureAt = now;
-    setBoundedMapValue(this.loginFailures, key, entry, this.maxRateLimitKeys);
+    setBoundedMapValue(store, key, entry, this.maxRateLimitKeys);
+  }
+
+  private activeFailureCount(store: Map<string, FailureEntry>, key: string, now: number) {
+    const entry = store.get(key);
+    if (!entry) return 0;
+    if (now - entry.lastFailureAt >= this.requirementTtlMs) {
+      store.delete(key);
+      return 0;
+    }
+    return entry.count;
+  }
+
+  recordLoginFailure(ip: string, username: string, now = Date.now()) {
+    this.bumpFailure(this.loginFailures, this.loginKey(ip, username), now);
+    const account = normalizeUsername(username);
+    if (account) this.bumpFailure(this.accountLoginFailures, account, now);
   }
 
   requiresLoginCaptcha(ip: string, username: string, now = Date.now()) {
-    const key = this.loginKey(ip, username);
-    const entry = this.loginFailures.get(key);
-    if (!entry) return false;
-    if (now - entry.lastFailureAt >= this.requirementTtlMs) {
-      this.loginFailures.delete(key);
-      return false;
-    }
-    return entry.count >= this.failureThreshold;
+    if (this.activeFailureCount(this.loginFailures, this.loginKey(ip, username), now) >= this.failureThreshold) return true;
+    const account = normalizeUsername(username);
+    return !!account && this.activeFailureCount(this.accountLoginFailures, account, now) >= LOGIN_CAPTCHA_ACCOUNT_FAILURE_THRESHOLD;
   }
 
   clearLoginCaptchaRequirement(ip: string, username: string) {
     this.loginFailures.delete(this.loginKey(ip, username));
+    // 登录成功才会走到这里：账户确实是本人在用，账户级的计数一并清掉。
+    this.accountLoginFailures.delete(normalizeUsername(username));
   }
 
   pruneExpired(now = Date.now()) {
     for (const [id, challenge] of this.challenges) {
       if (challenge.expiresAt <= now) this.challenges.delete(id);
     }
-    for (const [key, entry] of this.loginFailures) {
-      if (now - entry.lastFailureAt >= this.requirementTtlMs) this.loginFailures.delete(key);
+    for (const store of [this.loginFailures, this.accountLoginFailures]) {
+      for (const [key, entry] of store) {
+        if (now - entry.lastFailureAt >= this.requirementTtlMs) store.delete(key);
+      }
     }
     const cutoff = now - this.refreshWindowMs;
     for (const [key, timestamps] of this.refreshTimestamps) {
@@ -337,6 +362,7 @@ export class AuthCaptchaService {
   clearForTest() {
     this.challenges.clear();
     this.loginFailures.clear();
+    this.accountLoginFailures.clear();
     this.refreshTimestamps.clear();
     this.capChallenges.clear();
     this.capTokens.clear();

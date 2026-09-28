@@ -425,6 +425,22 @@ export {
 } from "../selfServiceHostLimit";
 import { canAddSelfServiceHost, selfServiceHostLimitForUser, selfServiceHostLimitFrom } from "../selfServiceHostLimit";
 
+/**
+ * 公开监控页只展示管理员的机器（以及没有主人的机器）。
+ *
+ * 这个页面不需要登录。租户自助添加的机器是他自己的，名字、所在地、负载和流量不该被
+ * 管理员打开的公开页一起挂出去。
+ */
+async function filterPublicMonitorHosts(rawHosts: any[]) {
+  const ownerIds = Array.from(new Set(rawHosts.map((host) => Number(host?.userId || 0)).filter((id) => id > 0)));
+  const owners = await Promise.all(ownerIds.map(async (id) => [id, await db.getUserById(id)] as const));
+  const adminOwnerIds = new Set(owners.filter(([, user]) => String((user as any)?.role || "") === "admin").map(([id]) => id));
+  return rawHosts.filter((host) => {
+    const ownerId = Number(host?.userId || 0);
+    return ownerId <= 0 || adminOwnerIds.has(ownerId);
+  });
+}
+
 export function canReadHostInstallCommand(
   user: { id: number; role: string },
   host: { userId?: unknown } | null | undefined,
@@ -687,7 +703,7 @@ export const hostsRouter = router({
       .input(z.object({ path: z.string().max(128).optional() }).optional())
       .query(async ({ input }) => {
         const { configuredPath } = await assertPublicHostMonitorRequest(input?.path);
-        const hosts = (await db.getHosts() as any[]).map(compactPublicMonitorHost).filter((host) => host.id > 0);
+        const hosts = (await filterPublicMonitorHosts(await db.getHosts() as any[])).map(compactPublicMonitorHost).filter((host) => host.id > 0);
         const hostIds = hosts.map((host) => host.id);
         const visibleHostIds = new Set(hostIds);
         const [metricRows, trafficRows] = await Promise.all([
@@ -739,7 +755,7 @@ export const hostsRouter = router({
       .query(async ({ input }) => {
         const { configuredPath } = await assertPublicHostMonitorRequest(input.path);
         const rawHost = await db.getHostById(input.hostId) as any;
-        if (!rawHost) throw new TRPCError({ code: "NOT_FOUND", message: "主机不存在" });
+        if (!rawHost || (await filterPublicMonitorHosts([rawHost])).length === 0) throw new TRPCError({ code: "NOT_FOUND", message: "主机不存在" });
         const host = compactPublicMonitorHost(rawHost);
         const [metricRows, trafficRows, allServices] = await Promise.all([
           db.getLatestHostMetricRows([host.id]),

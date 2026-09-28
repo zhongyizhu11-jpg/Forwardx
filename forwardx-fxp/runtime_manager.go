@@ -125,6 +125,8 @@ func stripUDPOnlyFields(cfg *config) {
 
 func stripTCPOnlyFields(cfg *config) {
 	cfg.TCPFastOpen = false
+	// UDP 直连只看 udpTargets；TCP 目标表变了不该把 UDP 监听连同会话一起重启。
+	cfg.StreamTargets = nil
 }
 
 func listenSlotKey(network, host string, port int) string {

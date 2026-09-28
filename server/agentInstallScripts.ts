@@ -25,7 +25,71 @@ type AgentInstallScriptOptions = {
   migrationFallbackPanelUrl?: string | null;
   panelMigrationId?: string | null;
   panelMigrationStartedAt?: number | null;
+  /** 版本 → 资产名 → SHA-256。面板嵌进脚本，下载的二进制按它校验。 */
+  releaseChecksums?: Record<string, Record<string, string> | null | undefined>;
 };
+
+/**
+ * 下载完的 Agent / FXP / runtime 二进制按 SHA-256 校验。
+ *
+ * 期望值优先用面板嵌进脚本的（脚本从面板来，面板是 https 时它和面板一样可信），没有
+ * 再直连 GitHub 取 SHA256SUMS。二进制可能来自加速镜像或面板缓存，被换了就过不去。
+ * 两处都拿不到期望值时给个警告继续装（国内机器连不上 GitHub 很常见），设了
+ * FORWARDX_REQUIRE_CHECKSUM=1 则直接失败。
+ */
+function releaseChecksumShellLines(checksums: AgentInstallScriptOptions["releaseChecksums"]) {
+  const cases: string[] = [];
+  for (const [version, sums] of Object.entries(checksums || {})) {
+    if (!/^\d+\.\d+\.\d+$/.test(version) || !sums) continue;
+    for (const [asset, hash] of Object.entries(sums)) {
+      if (!/^[a-z0-9-]+$/.test(asset) || !/^[0-9a-f]{64}$/.test(hash)) continue;
+      cases.push(`    ${version}/${asset}) echo ${hash} ;;`);
+    }
+  }
+  return [
+    "expected_release_sha256() {",
+    '  case "$1/$2" in',
+    ...cases,
+    "    *) echo \"\" ;;",
+    "  esac",
+    "}",
+    "",
+    "file_sha256() {",
+    "  if command -v sha256sum >/dev/null 2>&1; then sha256sum \"$1\" | awk '{print tolower($1)}'; return; fi",
+    "  if command -v shasum >/dev/null 2>&1; then shasum -a 256 \"$1\" | awk '{print tolower($1)}'; return; fi",
+    "  openssl dgst -sha256 \"$1\" 2>/dev/null | awk '{print tolower($NF)}'",
+    "}",
+    "",
+    "verify_release_checksum() {",
+    '  local ASSET="$1" DST="$2" VERSION="$3" LABEL="$4" EXPECTED="" ACTUAL="" SUMS=""',
+    '  EXPECTED="$(expected_release_sha256 "$VERSION" "$ASSET")"',
+    '  if [ -z "$EXPECTED" ] && [ -n "$VERSION" ]; then',
+    '    SUMS="$(curl -fsSL --connect-timeout "$FORWARDX_CURL_CONNECT_TIMEOUT" --max-time 20 "https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v${VERSION}/SHA256SUMS" 2>/dev/null || true)"',
+    "    EXPECTED=\"$(printf '%s\\n' \"$SUMS\" | awk -v a=\"$ASSET\" '$2==a || $2==(\"*\" a) {print tolower($1); exit}')\"",
+    "  fi",
+    '  if [ -z "$EXPECTED" ]; then',
+    '    if is_enabled_value "${FORWARDX_REQUIRE_CHECKSUM:-}"; then',
+    '      echo "[错误] 拿不到 $LABEL v${VERSION} 的校验值，已设置 FORWARDX_REQUIRE_CHECKSUM，停止安装"',
+    '      rm -f "$DST"',
+    "      return 1",
+    "    fi",
+    '    echo "[警告] 拿不到 $LABEL v${VERSION} 的校验值（连不上 GitHub？），跳过校验"',
+    "    return 0",
+    "  fi",
+    '  ACTUAL="$(file_sha256 "$DST")"',
+    '  if [ "$ACTUAL" != "$EXPECTED" ]; then',
+    '    echo "[错误] $LABEL 校验失败：下载到的文件和发布版本不一致（可能被镜像或中间人替换），已删除"',
+    '    echo "       期望 $EXPECTED"',
+    '    echo "       实际 ${ACTUAL:-无法计算}"',
+    '    rm -f "$DST"',
+    "    return 1",
+    "  fi",
+    '  echo "[信息] $LABEL 校验通过"',
+    "  return 0",
+    "}",
+    "",
+  ];
+}
 
 function shellQuote(value: string) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
@@ -881,7 +945,14 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '  return 0',
     '}',
     '',
+    ...releaseChecksumShellLines(options.releaseChecksums),
     'download_release_binary() {',
+    '  local ASSET="$1" DST="$2" LABEL="$3"',
+    '  download_release_binary_unverified "$@" || return 1',
+    '  verify_release_checksum "$ASSET" "$DST" "$DOWNLOADED_RELEASE_VERSION" "$LABEL"',
+    '}',
+    '',
+    'download_release_binary_unverified() {',
     '  local ASSET="$1" DST="$2" LABEL="$3" ALLOW_FALLBACK="${4:-0}"',
     '  local CURRENT_RC=1 URL',
     '  DOWNLOADED_RELEASE_VERSION=""',

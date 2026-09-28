@@ -2194,6 +2194,30 @@ async function upsertPlugin(manifest: ForwardxPluginManifest, source: {
   return await insertAndGetId("plugins", payload);
 }
 
+/**
+ * 已信任插件的 Agent 入口脚本内容一变，信任就撤掉，要管理员重新确认。
+ *
+ * 信任范围以前只比较「有哪些操作、入口是哪个文件」：插件更新、或者不需要信任就能跑的
+ * 资产刷新，只要把入口脚本的内容换掉、文件名不变，就继续带着信任以 root 跑到各台主机上。
+ */
+async function revokeTrustWhenAgentEntryChanges(pluginId: string, assetPath: string, nextHash: string) {
+  const db = await getDb();
+  if (!db) return;
+  const [plugin] = await db.select({ trusted: plugins.trusted, manifestJson: plugins.manifestJson })
+    .from(plugins).where(eq(plugins.pluginId, pluginId)).limit(1) as any[];
+  if (!plugin || !(plugin.trusted === true || plugin.trusted === 1 || plugin.trusted === "1")) return;
+  const manifest = parseJson<ForwardxPluginManifest>(plugin.manifestJson, {} as ForwardxPluginManifest);
+  const entries = new Set((Array.isArray(manifest?.actions) ? manifest.actions : [])
+    .filter((action: any) => action?.type === "agent.request" && action?.agent?.entry)
+    .map((action: any) => normalizeAssetPath(String(action.agent.entry))));
+  if (!entries.has(assetPath)) return;
+  const [existing] = await db.select({ sha256: pluginAssets.sha256 }).from(pluginAssets)
+    .where(and(eq(pluginAssets.pluginId, pluginId), eq(pluginAssets.path, assetPath))).limit(1) as any[];
+  if (!existing || String(existing.sha256 || "") === nextHash) return;
+  await db.update(plugins).set({ trusted: false, updatedAt: nowDate() } as any).where(eq(plugins.pluginId, pluginId));
+  appendPanelLog("warn", `[PluginAudit] plugin=${pluginId} operation=trust.revoked reason=agent-entry-changed path=${assetPath}`);
+}
+
 async function upsertPluginAsset(pluginId: string, assetPath: string, content: string, contentType = "text/plain;charset=utf-8") {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -2204,6 +2228,7 @@ async function upsertPluginAsset(pluginId: string, assetPath: string, content: s
     throw new Error(`插件资产 ${cleanPath} 不能超过 ${Math.floor(MAX_PLUGIN_ASSET_BYTES / 1024)}KB`);
   }
   const hash = sha256(content);
+  await revokeTrustWhenAgentEntryChanges(pluginId, cleanPath, hash);
   if (getDatabaseKind() === "sqlite") {
     await executeRaw(
       "INSERT INTO plugin_assets (pluginId, path, contentType, size, sha256, content, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(pluginId, path) DO UPDATE SET contentType=excluded.contentType, size=excluded.size, sha256=excluded.sha256, content=excluded.content, updatedAt=excluded.updatedAt",

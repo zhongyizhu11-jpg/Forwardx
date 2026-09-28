@@ -434,7 +434,7 @@ export async function reconcileProxyNodeSharesForUser(
     planNodeIds?: readonly (number | { nodeId: number; dedicated?: boolean })[];
     label?: string;
   },
-): Promise<{ hostIds: number[]; skipped: ProxyNodeShareSkip[] }> {
+): Promise<{ hostIds: number[]; skipped: ProxyNodeShareSkip[]; sharedOwnerCredential?: Array<{ nodeId: number; name: string }> }> {
   const db = await getDb();
   if (!db) return { hostIds: [], skipped: [] };
   const recipient = Number(userId);
@@ -474,6 +474,7 @@ export async function reconcileProxyNodeSharesForUser(
     releaseSharedInboundCredential,
   } = await import("./proxyInboundRepository");
   const resolved = new Map<number, "manual" | "plan">();
+  const sharedOwnerCredential: Array<{ nodeId: number; name: string }> = [];
   const keepInboundIds = new Set<number>();
   const keepDedicatedSourceIds = new Set<number>();
   for (const item of wanted) {
@@ -511,6 +512,9 @@ export async function reconcileProxyNodeSharesForUser(
     }
 
     let targetNodeId = scope.kind === "node" ? scope.nodeId : 0;
+    // 这类节点给出去的是主人自己的真实凭据（粘贴的节点、不支持多用户的入站）：
+    // 取消分享或对方到期后，他手上那份照样能连，只能靠主人换密码收回。
+    if (scope.kind === "node") sharedOwnerCredential.push({ nodeId: item.nodeId, name: String((node as any).name || "") });
     if (scope.kind === "inbound") {
       keepInboundIds.add(scope.inboundId);
       const provisioned = await ensureSharedInboundCredential(scope.inboundId, recipient, label);
@@ -548,7 +552,7 @@ export async function reconcileProxyNodeSharesForUser(
   await db.delete(proxyNodeShares).where(eq(proxyNodeShares.userId, recipient));
   const values = Array.from(resolved.entries()).map(([nodeId, source]) => ({ nodeId, userId: recipient, source }));
   if (values.length > 0) await db.insert(proxyNodeShares).values(values as any);
-  return { hostIds: Array.from(hostIds).filter((hostId) => hostId > 0), skipped };
+  return { hostIds: Array.from(hostIds).filter((hostId) => hostId > 0), skipped, sharedOwnerCredential };
 }
 
 /**
@@ -578,7 +582,7 @@ export async function setProxyNodeSharesForUser(
   userId: number,
   nodeIds: readonly number[],
   options: { label?: string } = {},
-): Promise<{ hostIds: number[]; skipped: ProxyNodeShareSkip[] }> {
+): Promise<{ hostIds: number[]; skipped: ProxyNodeShareSkip[]; sharedOwnerCredential?: Array<{ nodeId: number; name: string }> }> {
   // 手工那一路走同一个对账函数，套餐带的那些原样留着。
   return reconcileProxyNodeSharesForUser(userId, { manualNodeIds: nodeIds, label: options.label });
 }

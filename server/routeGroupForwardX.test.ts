@@ -28,6 +28,7 @@ type Scheduler = { sourcePort: number; forwardType: string; failover: any };
 type Beat = {
   entry: Record<string, EntryTarget>;
   exitUdpTargets: Record<string, Array<{ ruleId: number; targetIp: string; targetPort: number }>>;
+  exitStreamTargets: Record<string, Array<{ ruleId: number; targetIp: string; targetPort: number }>>;
   schedulers: Record<string, Scheduler>;
   runningFailover: Record<string, any>;
 };
@@ -139,13 +140,17 @@ function run(): Outcome {
       const actions = (body.desiredState && body.desiredState.actions) || [];
       const entry = {};
       const exitUdpTargets = {};
+      const exitStreamTargets = {};
       for (const action of actions) {
         const fxp = action && action.fxp;
         if (!fxp || action.op !== "apply") continue;
         if (fxp.role === "entry") {
           entry[String(action.ruleId)] = { targetIp: String(fxp.targetIp), targetPort: Number(fxp.targetPort), failover: !!action.failover };
         }
-        if (fxp.role === "exit") exitUdpTargets[String(action.tunnelId)] = fxp.udpTargets || [];
+        if (fxp.role === "exit") {
+          exitUdpTargets[String(action.tunnelId)] = fxp.udpTargets || [];
+          exitStreamTargets[String(action.tunnelId)] = fxp.streamTargets || [];
+        }
       }
       // runningRules 在心跳回复的顶层（Agent 的 heartbeatResponse），不在 desiredState 里。
       const schedulers = {};
@@ -157,7 +162,7 @@ function run(): Outcome {
           runningFailover[String(rule.ruleId)] = rule.failover;
         }
       }
-      return { entry, exitUdpTargets, schedulers, runningFailover };
+      return { entry, exitUdpTargets, exitStreamTargets, schedulers, runningFailover };
     };
     const setVersion = (hostId, version) => exec('UPDATE hosts SET "agentVersion" = ? WHERE id = ?', [version, hostId]);
 
@@ -271,6 +276,25 @@ test("出口 FXP 的 UDP 目标表：线路组规则交给调度器，别的规�
   assert.ok(targets, "出口没收到 FXP 规格");
   assert.deepEqual(targets.find((item) => item.ruleId === 1), { ruleId: 1, targetIp: "127.0.0.1", targetPort: port });
   assert.deepEqual(targets.find((item) => item.ruleId === 2), { ruleId: 2, targetIp: "198.51.100.7", targetPort: 443 });
+});
+
+test("出口 FXP 的 TCP 目标表包含入口写进 hello 的目标，出口只拨表里的", () => {
+  const tunnelOfRule: Record<string, string> = { "1": "1", "2": "1", "3": "2", "4": "3" };
+  for (const [label, entryBeat, exitBeat] of [["新", outcome.entryNew, outcome.exitNew], ["老", outcome.entryOld, outcome.exitOld]] as const) {
+    assert.ok(Object.keys(entryBeat.entry).length >= 3, `${label}入口的规则太少，这个测试没测到东西`);
+    for (const [ruleId, target] of Object.entries(entryBeat.entry)) {
+      const targets = exitBeat.exitStreamTargets[tunnelOfRule[ruleId]];
+      assert.ok(targets, `${label}出口没收到隧道 ${tunnelOfRule[ruleId]} 的 FXP 规格`);
+      assert.ok(
+        targets.some((item) => item.ruleId === Number(ruleId) && item.targetIp === target.targetIp && item.targetPort === target.targetPort),
+        `${label}出口的目标表里没有规则 ${ruleId} 的 ${target.targetIp}:${target.targetPort}：${JSON.stringify(targets)}`,
+      );
+    }
+  }
+  assert.ok(
+    outcome.exitNew.exitStreamTargets["1"].every((item) => [1, 2].includes(item.ruleId)),
+    "别的隧道的规则不该出现在这条隧道出口的目标表里",
+  );
 });
 
 test("不开线路组的规则：入口照旧把规则目标给出口，出口没有调度器", () => {

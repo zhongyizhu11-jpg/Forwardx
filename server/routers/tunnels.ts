@@ -1716,9 +1716,24 @@ export const tunnelsRouter = router({
         if (impact.forwardRuleCount > 0 && !input.confirmRules) {
           throw new Error(`此链路仍有关联转发规则 ${impact.forwardRuleCount} 条，请确认后再删除`);
         }
-        clearTunnelRuntimeStatus(input.id);
-        await pushTunnelEndpointRefresh(tunnel, "tunnel-deleted", { urgent: true });
+        /*
+          先把要通知的主机算好，删完再推送。以前先推送再删：Agent 的心跳要是赶在删除提交
+          之前来，就把旧配置又缓存了回去，出口 / 跳点那一侧最多还会继续转发 5 分钟。
+        */
+        const [entryHostIds, hops, extraExits] = await Promise.all([
+          getTunnelEntryTestHostIds(tunnel),
+          hopRepo.getTunnelHops(Number(tunnel.id)),
+          hopRepo.getTunnelExitNodes(Number(tunnel.id)),
+        ]);
+        const affectedHostIds = [
+          ...entryHostIds,
+          Number((tunnel as any).entryHostId),
+          Number((tunnel as any).exitHostId),
+          ...(hops as any[]).map((hop) => Number(hop.hostId)),
+          ...(extraExits as any[]).map((exit) => Number(exit.hostId)),
+        ];
         await db.deleteTunnel(input.id);
+        await refreshTunnelRuntimeHosts(input.id, affectedHostIds, "tunnel-deleted", { urgent: true });
         return { success: true };
       })),
     test: protectedProcedure

@@ -85,7 +85,7 @@ func TestEntryGroupReloadKeepsUnchangedRulesAndLiveConnections(t *testing.T) {
 	key := "reload-key"
 	targetOne := startTaggedTarget(t, "T1")
 	targetTwo := startTaggedTarget(t, "T2")
-	exitPort := startTestExit(t, 120, key)
+	exitPort := startTestExit(t, 120, key, loopbackStreamTargetMatrix([]int{1, 2, 3}, targetOne, targetTwo)...)
 	ports, release := reserveFreeTCPPorts(t, 3)
 	portA, portB, portC := ports[0], ports[1], ports[2]
 	release()
@@ -172,7 +172,7 @@ func TestEntryGroupReloadRollsBackWhenANewPortIsTaken(t *testing.T) {
 	resetFXPEndpointRegistry()
 	key := "reload-rollback-key"
 	target := startTaggedTarget(t, "T1")
-	exitPort := startTestExit(t, 121, key)
+	exitPort := startTestExit(t, 121, key, loopbackStreamTargetMatrix([]int{1, 2, 3}, target)...)
 	portA := freeTCPPort(t)
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -219,7 +219,7 @@ func TestSIGHUPReloadWritesAppliedAck(t *testing.T) {
 	resetFXPEndpointRegistry()
 	key := "sighup-key"
 	target := startTaggedTarget(t, "T1")
-	exitPort := startTestExit(t, 122, key)
+	exitPort := startTestExit(t, 122, key, loopbackStreamTargetMatrix([]int{1, 2, 3}, target)...)
 	portA := freeTCPPort(t)
 	portB := freeTCPPort(t)
 	path := filepath.Join(t.TempDir(), "fxp-entry-group.json")

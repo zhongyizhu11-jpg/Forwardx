@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   combineTunnelRuleProbeCounts,
   readyTunnelRelayAggregates,
+  forwardXTrafficAccountedAtExit,
+  isTrafficAccountingReport,
   shouldAccountForwardRuleTraffic,
   summarizeTunnelBranches,
   trafficAccountingHostIds,
@@ -75,6 +77,7 @@ test("traffic accounting accepts every ForwardX entry-group host", () => {
     { id: 7, mode: "forwardx", entryHostId: 5, exitHostId: 9 },
     new Set([5, 6, 7]),
     undefined,
+    true,
   );
   assert.deepEqual([...hosts].sort((left, right) => left - right), [5, 6, 7]);
   assert.equal(hosts.has(9), false);
@@ -93,6 +96,7 @@ test("traffic accounting accepts enabled load-balanced exit hosts", () => {
     },
     undefined,
     new Set([10, 11]),
+    true,
   );
   assert.deepEqual([...hosts].sort((left, right) => left - right), [9, 10, 11]);
 });
@@ -110,8 +114,65 @@ test("traffic accounting ignores extra exits when load balancing is disabled", (
     },
     undefined,
     new Set([10, 11]),
+    true,
   );
   assert.deepEqual([...hosts], [9]);
+});
+
+test("ForwardX traffic moves to the exit side when an entry host is not admin-owned", () => {
+  const tunnel = {
+    id: 12,
+    mode: "forwardx",
+    entryHostId: 5,
+    exitHostId: 9,
+    loadBalanceEnabled: true,
+    loadBalanceStrategy: "round_robin",
+  };
+  const entryHosts = new Set([5, 6]);
+  const extraExits = new Set([10]);
+  const untrusted = trafficAccountingHostIds({ id: 44, hostId: 5 }, tunnel, entryHosts, extraExits, false);
+  assert.deepEqual([...untrusted].sort((left, right) => left - right), [9, 10]);
+  assert.equal(forwardXTrafficAccountedAtExit(tunnel, false), true);
+  assert.equal(forwardXTrafficAccountedAtExit(tunnel, true), false);
+  // 别的隧道本来就按出口记，入口可不可信都一样，也不认出口 FXP 那一份。
+  assert.equal(forwardXTrafficAccountedAtExit({ ...tunnel, mode: "gost" }, false), false);
+
+  const report = (hostId: number, entryTrusted: boolean, fromForwardXExit: boolean) => isTrafficAccountingReport({
+    rule: { id: 44, hostId: 5 },
+    tunnel,
+    entryHostIds: entryHosts,
+    extraExitHostIds: extraExits,
+    entryTrusted,
+    hostId,
+    fromForwardXExit,
+  });
+  for (const entryTrusted of [true, false]) {
+    // 每台机器、每一边：同一条规则只有一边会被认。
+    for (const hostId of [5, 6, 9, 10]) {
+      const entrySide = report(hostId, entryTrusted, false);
+      const exitSide = report(hostId, entryTrusted, true);
+      assert.equal(entrySide && exitSide, false, "host " + hostId + " must not be counted on both sides");
+    }
+  }
+  assert.equal(report(5, true, false), true);
+  assert.equal(report(6, true, false), true);
+  assert.equal(report(9, true, true), false, "trusted entry: exit report is routed away");
+  assert.equal(report(9, false, true), true);
+  assert.equal(report(10, false, true), true);
+  assert.equal(report(5, false, false), false, "untrusted entry: entry report is routed away");
+  assert.equal(report(9, false, false), false, "untrusted entry: only the exit FXP's own report counts");
+  // 同一台机器既在入口组里又是出口：按入口记时只认入口那份。
+  const overlap = (fromForwardXExit: boolean) => isTrafficAccountingReport({
+    rule: { id: 45, hostId: 5 },
+    tunnel,
+    entryHostIds: new Set([5, 9]),
+    extraExitHostIds: extraExits,
+    entryTrusted: true,
+    hostId: 9,
+    fromForwardXExit,
+  });
+  assert.equal(overlap(false), true);
+  assert.equal(overlap(true), false);
 });
 
 test("tunnel hop aggregation never mixes topology generations", () => {

@@ -243,7 +243,7 @@ func handleExitMultipath(sec *secureConn, hello helloFrame, cfg config) error {
 		hello.TargetIP,
 		hello.TargetPort,
 	)
-	return relayExitTCPToTarget(session, hello)
+	return relayExitTCPToTarget(session, hello, cfg)
 }
 
 // dialEntryMultipath brings up the legs for one client connection and wraps

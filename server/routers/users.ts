@@ -233,9 +233,11 @@ export const usersRouter = router({
         const target = await db.getUserById(input.userId);
         const label = String((target as any)?.username || (target as any)?.name || "").trim();
         let skipped: Awaited<ReturnType<typeof db.setProxyNodeSharesForUser>>["skipped"] = [];
+        let sharedOwnerCredential: Array<{ nodeId: number; name: string }> = [];
         await withKeyedTaskLock(`user-resource-permissions:${input.userId}`, async () => {
           const result = await db.setProxyNodeSharesForUser(input.userId, input.nodeIds, { label });
           skipped = result.skipped;
+          sharedOwnerCredential = result.sharedOwnerCredential || [];
           // 多凭据入站上分享/取消分享都改了那个端口的用户表，要重下发。
           for (const hostId of result.hostIds) pushAgentRefresh(hostId, `proxy-node-share-user-${input.userId}`, { urgent: true });
         });
@@ -247,7 +249,7 @@ export const usersRouter = router({
          */
         const recipientCanUse = !!(target as any)?.allowProxySubscription || (target as any)?.role === "admin";
         console.info(`[Users] Updated proxy node shares userId=${input.userId} count=${input.nodeIds.length} skipped=${skipped.length} ${actorLabel(ctx)}`);
-        return { success: true, skipped, recipientCanUse };
+        return { success: true, skipped, recipientCanUse, sharedOwnerCredential };
       }),
     /** 可分享的节点清单。不含凭据，只够在选择框里认出是哪个节点。 */
     proxyNodeShareOptions: adminProcedure.query(async () => {
