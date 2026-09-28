@@ -203,7 +203,9 @@ export async function runExpirationCheck() {
   try {
     const expiredUsers = await db.getExpiredUsers();
     for (const user of expiredUsers) {
-      await db.setUserForwardAccess(user.id, false, "expired");
+      // 真有东西变了（权限被收、规则被停）才去推 Agent：什么都没变还推一遍，
+      // 就是每小时一次白白的全量刷新。
+      if (!await db.setUserForwardAccess(user.id, false, "expired")) continue;
       await refreshUserRuleAgents(user.id, "user-expired");
       console.log(`[Scheduler] User ${user.id} (${user.username}) expired, disabled all rules`);
     }
@@ -438,6 +440,18 @@ function dayKey(prefix: string, userId: number) {
 }
 
 /**
+ * 到期类提醒（套餐到期、主机续费）的去重键：按「这一次到期 + 这一档天数」记，不带日期。
+ *
+ * daysLeft 是从到期时刻往回按整天向上取整的，「还剩 7 天」这一档是到期前 7 天到 6 天
+ * 之间的那 24 小时 —— 只要到期时间不是正好 UTC 零点，这 24 小时就横跨两个日历日，
+ * 带日期的日标记会让同一档在两天里各发一次。键里带到期时间戳，续了一期之后新周期
+ * 的每一档还能再发。没有日期的键由 pruneEphemeralSettings 按写入时间清理。
+ */
+function expiryThresholdKey(prefix: string, userId: number, expiresAtMs: number, daysLeft: number) {
+  return `${prefix}:${userId}:${Math.floor(expiresAtMs / 1000)}:${daysLeft}`;
+}
+
+/**
  * 用户自己的两条提醒：套餐快到期、流量快用完。
  *
  * 只算「该发什么」，不发 —— 发不发由 dispatchReminders 按当天的去重键统一决定。
@@ -457,7 +471,7 @@ function planUserEmailReminders(
       const daysLeft = Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000));
       if (shouldSendExpiryReminder(daysLeft, reminderDays)) {
         pending.push({
-          key: dayKey(`emailReminder:expiry:${daysLeft}`, user.id),
+          key: expiryThresholdKey("emailReminder:expiry", user.id, expiresAt, daysLeft),
           send: async () => {
             await sendMail({
               to: user.email,
@@ -567,11 +581,9 @@ async function planHostEmailReminders(users: any[], now: number): Promise<Pendin
     const renewal = planHostRenewalReminder(host, now);
     if (!renewal.due) continue;
     pending.push({
-      // 带上到期时间戳：续了一期之后同样的提醒要能对新周期再发一次。
-      key: dayKey(
-        `emailReminder:hostRenewal:${host.id}:${Math.floor(renewal.stoppedAtMs / 1000)}:${renewal.daysLeft}`,
-        owner.id,
-      ),
+      // 带上到期时间戳：续了一期之后同样的提醒要能对新周期再发一次；不带日期，
+      // 同一档不会因为横跨两个日历日发两次（见 expiryThresholdKey）。
+      key: expiryThresholdKey(`emailReminder:hostRenewal:${host.id}`, owner.id, renewal.stoppedAtMs, renewal.daysLeft),
       send: async () => {
         await sendMail({
           to: owner.email,
@@ -641,7 +653,17 @@ export async function runTelegramReminders() {
     const hostRows = await db.getHosts();
     const hostTrafficAlertHosts = (hostRows as any[]).filter((host) => !!host.telegramTrafficAlertEnabled && Number(host.trafficLimit || 0) > 0);
     const hostRenewalReminderHosts = (hostRows as any[]).filter((host) => !!host.telegramRenewalReminderEnabled && !!host.stoppedAt);
-    if (!expiryReminder && !trafficReminder && hostTrafficAlertHosts.length === 0 && hostRenewalReminderHosts.length === 0) return;
+    // 落地节点/落地端口的流量提醒不看上面几个开关（邮件那一路也一样），所以要先把
+    // 它们算出来再决定能不能提前收工 —— 原来在这之前就 return 了，没开用户到期/流量
+    // 提醒、也没有主机开告警的面板，落地流量提醒在 Telegram 这一路永远不发。
+    const proxyTrafficSubjects = await collectDueProxyTrafficReminders();
+    if (
+      !expiryReminder
+      && !trafficReminder
+      && hostTrafficAlertHosts.length === 0
+      && hostRenewalReminderHosts.length === 0
+      && proxyTrafficSubjects.length === 0
+    ) return;
 
     const users = await db.getUserTrafficSummaries();
     const usersById = new Map((users as any[]).map((user) => [Number(user.id), user]));
@@ -657,7 +679,7 @@ export async function runTelegramReminders() {
         const daysLeft = Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000));
         if (shouldSendExpiryReminder(daysLeft, reminderDays)) {
           pending.push({
-            key: dayKey(`telegramReminder:expiry:${daysLeft}`, user.id),
+            key: expiryThresholdKey("telegramReminder:expiry", user.id, expiresAt, daysLeft),
             send: async () => {
               await sendTelegramMessage(
                 user.telegramId,
@@ -737,7 +759,7 @@ export async function runTelegramReminders() {
      * 落地节点与落地端口的流量提醒。清单与邮件那一路共用
      * server/proxyTrafficReminders，日标记前缀不同，所以两个渠道各发一次。
      */
-    for (const subject of await collectDueProxyTrafficReminders()) {
+    for (const subject of proxyTrafficSubjects) {
       const owner = usersById.get(subject.userId);
       if (!owner?.telegramId) continue;
       const { plan } = subject;
@@ -766,11 +788,9 @@ export async function runTelegramReminders() {
       if (!renewal.due) continue;
       const stoppedAt = renewal.stoppedAtMs;
       const daysLeft = renewal.daysLeft;
-      // Include the expiry timestamp so a cycle extension can send the same
-      // configured reminder again for the new billing period.
-      const expiryKey = Math.floor(stoppedAt / 1000);
+      // 键里带到期时间戳、不带日期：续期后新周期能再发，同一档不会跨日重发。
       pending.push({
-        key: dayKey(`telegramReminder:hostRenewal:${host.id}:${expiryKey}:${daysLeft}`, owner.id),
+        key: expiryThresholdKey(`telegramReminder:hostRenewal:${host.id}`, owner.id, stoppedAt, daysLeft),
         send: async () => {
           await sendTelegramMessage(
             owner.telegramId,

@@ -4,13 +4,28 @@ import superjson from "superjson";
 import type { TrpcContext } from "./context";
 import { getSessionCookieOptions } from "./cookies";
 import { runWithConfigAuditContext } from "../configAudit";
+import { DATABASE_MAINTENANCE_MESSAGE, isDatabaseMaintenanceActive } from "../databaseMaintenance";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
 });
 
 export const router = t.router;
-export const publicProcedure = t.procedure;
+
+/**
+ * 切换数据库期间拒绝所有写操作（mutation），查询照常 —— 管理员要能看切换进度。
+ * 见 server/databaseMaintenance.ts。
+ */
+const rejectMutationsDuringDatabaseMaintenance = t.middleware(opts => {
+  if (opts.type === "mutation" && isDatabaseMaintenanceActive()) {
+    throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: DATABASE_MAINTENANCE_MESSAGE });
+  }
+  return opts.next();
+});
+
+const baseProcedure = t.procedure.use(rejectMutationsDuringDatabaseMaintenance);
+
+export const publicProcedure = baseProcedure;
 
 const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
@@ -37,9 +52,9 @@ const requireUser = t.middleware(async opts => {
   }, () => next({ ctx: { ...ctx, user: ctx.user } }));
 });
 
-export const protectedProcedure = t.procedure.use(requireUser);
+export const protectedProcedure = baseProcedure.use(requireUser);
 
-export const adminProcedure = t.procedure.use(
+export const adminProcedure = baseProcedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 

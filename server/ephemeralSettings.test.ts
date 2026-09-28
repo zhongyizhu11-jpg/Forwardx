@@ -104,3 +104,33 @@ test("日标记不进 getAllSettings —— 那份映射每几秒就要重建一
     assert.equal(await settings.getSetting("emailReminder:expiry:7:42:" + dayString(0)), "sent");
   `);
 });
+
+test("写日标记不作废整份设置缓存；写真设置才作废", () => {
+  runInDatabase(String.raw`
+    await settings.setSetting("panelPublicUrl", "https://a.example.com");
+    assert.equal((await settings.getAllSettings()).panelPublicUrl, "https://a.example.com");
+    // 绕过 setSetting 直接改库：缓存还在的话，读到的应当仍是旧值。
+    await runtime.executeRaw("UPDATE system_settings SET value = ? WHERE key = ?", ["https://b.example.com", "panelPublicUrl"]);
+    await settings.setSetting("telegramReminder:traffic:42:" + dayString(0), "sent");
+    await settings.setSetting("runtimeCache:exitPorts", "{}");
+    assert.equal(
+      (await settings.getAllSettings()).panelPublicUrl,
+      "https://a.example.com",
+      "发一条提醒就把整份设置缓存作废，一轮提醒就是上千次整表重读",
+    );
+    await settings.setSetting("storeEnabled", "true");
+    assert.equal((await settings.getAllSettings()).panelPublicUrl, "https://b.example.com", "真设置变了必须立刻看得到");
+  `);
+});
+
+test("不带日期的日标记按写入时间清：过期的清掉，新的留着", () => {
+  runInDatabase(String.raw`
+    const oldSec = Math.floor((Date.now() - 10 * 24 * 3600 * 1000) / 1000);
+    await settings.setSetting("emailReminder:expiry:42:1700000000:7", "sent");
+    await settings.setSetting("telegramReminder:hostRenewal:3:42:1700000000:1", "sent");
+    await runtime.executeRaw('UPDATE system_settings SET "updatedAt" = ? WHERE key = ?', [oldSec, "emailReminder:expiry:42:1700000000:7"]);
+    assert.equal(await settings.pruneEphemeralSettings(7), 1);
+    assert.equal(await settings.getSetting("emailReminder:expiry:42:1700000000:7"), null);
+    assert.equal(await settings.getSetting("telegramReminder:hostRenewal:3:42:1700000000:1"), "sent");
+  `);
+});

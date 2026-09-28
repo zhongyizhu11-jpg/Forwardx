@@ -238,3 +238,127 @@ export async function loadPanelSslRuntimeConfig(): Promise<PanelSslRuntimeConfig
     return { enabled: false, settings, error: message };
   }
 }
+
+/** 证书文件多久检查一次变动（只 stat，不读内容）。 */
+export const PANEL_SSL_RELOAD_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+/** 文件没变也至少多久重读一次。 */
+export const PANEL_SSL_FORCE_RELOAD_INTERVAL_MS = 60 * 60 * 1000;
+/** 证书剩这么多天就开始在日志里提醒。 */
+export const PANEL_SSL_EXPIRY_WARNING_DAYS = 14;
+const PANEL_SSL_EXPIRY_WARNING_REPEAT_MS = 24 * 60 * 60 * 1000;
+
+type SecureContextTarget = { setSecureContext(options: tls.SecureContextOptions): void };
+
+/** 证书链里第一张证书的到期时间（毫秒）；解析不出来返回 null。 */
+export function panelSslCertificateExpiresAt(cert: unknown): number | null {
+  if (typeof cert !== "string" && !Buffer.isBuffer(cert)) return null;
+  try {
+    const expiresAt = Date.parse(new crypto.X509Certificate(cert).validTo);
+    return Number.isFinite(expiresAt) ? expiresAt : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 面板 HTTPS 证书热更新。
+ *
+ * 原来证书文件只在启动时读一次：certbot / acme.sh 按时把新证书写到同一个路径，
+ * 面板却一直拿着内存里那份旧的，直到某天旧证书过期、浏览器和 Agent 一起连不上，
+ * 而重启一下又「好了」—— 典型的查不出原因。
+ *
+ * 做法：每 5 分钟 stat 一次证书和私钥，mtime/大小变了就重读；没变也每小时重读一次
+ * （防某些部署方式改了内容却不改 mtime）。新文件读不出来、或证书和私钥对不上时
+ * **继续用旧的**，只记警告 —— 续签写到一半（证书写了、私钥还没写）时正好撞上检查
+ * 是常有的事，这时候换上去就是把面板自己弄挂。证书剩 14 天以内每天在日志里提醒一次。
+ *
+ * 只处理「文件路径」模式；「粘贴 PEM」模式的内容存在设置里，改它要走设置页，
+ * 这里只做到期提醒。
+ */
+export function createPanelSslReloader(
+  target: SecureContextTarget,
+  settings: PanelSslSettings,
+  initial: ServerOptions | undefined,
+  options: { now?: () => number; logger?: Pick<typeof console, "info" | "warn"> } = {},
+) {
+  const now = options.now ?? Date.now;
+  const logger = options.logger ?? console;
+  const watchFiles = settings.mode === "path" && !!settings.certPath && !!settings.keyPath;
+  let lastSignature = "";
+  let lastLoadedAt = now();
+  let lastExpiryWarningAt = Number.NEGATIVE_INFINITY;
+  let certExpiresAt = panelSslCertificateExpiresAt(initial?.cert);
+
+  const fileSignature = async () => {
+    const [cert, key] = await Promise.all([
+      fs.promises.stat(settings.certPath),
+      fs.promises.stat(settings.keyPath),
+    ]);
+    return `${cert.mtimeMs}:${cert.size}:${key.mtimeMs}:${key.size}`;
+  };
+
+  const warnIfExpiringSoon = () => {
+    if (certExpiresAt === null) return;
+    const current = now();
+    const daysLeft = (certExpiresAt - current) / (24 * 60 * 60 * 1000);
+    if (daysLeft > PANEL_SSL_EXPIRY_WARNING_DAYS) return;
+    if (current - lastExpiryWarningAt < PANEL_SSL_EXPIRY_WARNING_REPEAT_MS) return;
+    lastExpiryWarningAt = current;
+    const when = new Date(certExpiresAt).toISOString();
+    logger.warn(daysLeft <= 0
+      ? `[PanelSSL] 面板 HTTPS 证书已于 ${when} 过期，请尽快续签（续签后无需重启，面板会自动加载新证书）`
+      : `[PanelSSL] 面板 HTTPS 证书将在 ${Math.ceil(daysLeft)} 天后（${when}）过期，请检查自动续签`);
+  };
+
+  /** 检查一次；返回这次做了什么，便于测试和排查。 */
+  const check = async (): Promise<"reloaded" | "unchanged" | "failed"> => {
+    if (!watchFiles) {
+      warnIfExpiringSoon();
+      return "unchanged";
+    }
+    let signature: string;
+    try {
+      signature = await fileSignature();
+    } catch (error) {
+      logger.warn(`[PanelSSL] 证书文件检查失败，继续使用当前证书：${error instanceof Error ? error.message : String(error)}`);
+      warnIfExpiringSoon();
+      return "failed";
+    }
+    if (!lastSignature) lastSignature = signature;
+    const due = signature !== lastSignature || now() - lastLoadedAt >= PANEL_SSL_FORCE_RELOAD_INTERVAL_MS;
+    if (!due) {
+      warnIfExpiringSoon();
+      return "unchanged";
+    }
+    try {
+      const next = await validatePanelSslConfig(settings);
+      if (!next) return "unchanged";
+      target.setSecureContext({ cert: next.cert, key: next.key } as tls.SecureContextOptions);
+      const changed = signature !== lastSignature;
+      lastSignature = signature;
+      lastLoadedAt = now();
+      certExpiresAt = panelSslCertificateExpiresAt(next.cert);
+      if (changed) logger.info("[PanelSSL] 证书文件已更新，已加载新证书");
+      warnIfExpiringSoon();
+      return "reloaded";
+    } catch (error) {
+      // 不更新 lastSignature：下一次检查还会再试，直到新文件完整可用。
+      logger.warn(`[PanelSSL] 新证书加载失败，继续使用当前证书：${error instanceof Error ? error.message : String(error)}`);
+      warnIfExpiringSoon();
+      return "failed";
+    }
+  };
+
+  return { check };
+}
+
+/** 启动证书热更新定时器（index.ts 在创建 HTTPS 服务后调用）。 */
+export function startPanelSslAutoReload(target: SecureContextTarget, config: PanelSslRuntimeConfig) {
+  if (!config.enabled || !config.options) return null;
+  const reloader = createPanelSslReloader(target, config.settings, config.options);
+  // 先查一次：启动时就快过期的证书，立刻在日志里说出来。
+  void reloader.check();
+  const timer = setInterval(() => { void reloader.check(); }, PANEL_SSL_RELOAD_CHECK_INTERVAL_MS);
+  timer.unref?.();
+  return { check: reloader.check, stop: () => clearInterval(timer) };
+}

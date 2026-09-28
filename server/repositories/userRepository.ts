@@ -852,7 +852,7 @@ export async function updateUserTrafficSettings(userId: number, data: {
 /** 账户级暂停会一次停掉这个人名下所有规则，写一行面板日志，事后能查到是哪一步停的。 */
 async function logUserRuleStop(userId: number, reason: string) {
   const db = await getDb();
-  if (!db) return;
+  if (!db) return 0;
   const [row] = await db.select({ count: sql<number>`count(*)` }).from(forwardRules).where(and(
     eq(forwardRules.userId, userId),
     eq(forwardRules.isEnabled, true),
@@ -860,6 +860,7 @@ async function logUserRuleStop(userId: number, reason: string) {
   ));
   const count = Number((row as any)?.count || 0);
   if (count > 0) appendPanelLog("warn", `[RuleStop] user=${userId} stopped ${count} rule(s) reason=${reason}; they resume automatically when the account's forwarding access is restored`);
+  return count;
 }
 
 /**
@@ -912,23 +913,41 @@ export async function releaseAutomaticAdminForwardPauses() {
   return paused.length;
 }
 
-export async function setUserForwardAccess(userId: number, enabled: boolean, reason?: ForwardAccessPauseReason) {
+/**
+ * 打开/暂停某用户的转发权限。返回这一次有没有真的改动什么（权限字段变了，或者停掉了
+ * 至少一条规则）—— 调用方靠它决定要不要去推 Agent 刷新：什么都没变还推一遍，就是
+ * 每小时一次白白的全量刷新（到期扫描里曾经就是这样，见 scheduler.runExpirationCheck）。
+ */
+export async function setUserForwardAccess(userId: number, enabled: boolean, reason?: ForwardAccessPauseReason): Promise<boolean> {
   const db = await getDb();
-  if (!db) return;
-  if (!enabled && (reason ?? "manual") !== "manual" && await isAdminUser(userId)) {
+  if (!db) return false;
+  const [current] = await db.select({
+    role: users.role,
+    canAddRules: users.canAddRules,
+    allowForwardXTunnel: users.allowForwardXTunnel,
+    allowProxySubscription: users.allowProxySubscription,
+    forwardAccessPauseReason: users.forwardAccessPauseReason,
+  }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!enabled && (reason ?? "manual") !== "manual" && String((current as any)?.role || "") === "admin") {
     appendPanelLog("warn", `[RuleStop] skipped automatic pause of admin user=${userId} reason=${reason}; admins are never paused automatically`);
-    return;
+    return false;
   }
+  const nextPauseReason = enabled ? null : (reason ?? "manual");
+  const accessChanged = !current
+    || !!(current as any).canAddRules !== enabled
+    || !!(current as any).allowForwardXTunnel !== enabled
+    || !!(current as any).allowProxySubscription !== enabled
+    || ((current as any).forwardAccessPauseReason ?? null) !== nextPauseReason;
   const now = nowDate();
   await db.update(users).set({
     canAddRules: enabled,
     allowForwardXTunnel: enabled,
     allowProxySubscription: enabled,
-    forwardAccessPauseReason: enabled ? null : (reason ?? "manual"),
+    forwardAccessPauseReason: nextPauseReason,
     updatedAt: now,
   }).where(eq(users.id, userId));
   if (!enabled) {
-    await logUserRuleStop(userId, `access-paused:${reason ?? "manual"}`);
+    const stoppedRules = await logUserRuleStop(userId, `access-paused:${reason ?? "manual"}`);
     await db.update(forwardRules).set({
       isEnabled: false,
       disabledByUser: true,
@@ -938,7 +957,9 @@ export async function setUserForwardAccess(userId: number, enabled: boolean, rea
       eq(forwardRules.isEnabled, true),
       eq(forwardRules.pendingDelete, false),
     ));
+    return accessChanged || stoppedRules > 0;
   }
+  return accessChanged;
 }
 
 export async function setUserAccountEnabled(userId: number, enabled: boolean) {
@@ -1080,11 +1101,14 @@ export async function getExpiredUsers() {
   const db = await getDb();
   if (!db) return [];
   const nowSec = Math.floor(Date.now() / 1000);
+  // 管理员不参与：setUserForwardAccess 本来就不会自动暂停管理员，他的 canAddRules 一直是
+  // true，于是一个设了到期时间的管理员每小时都会被扫出来、再触发一次全量 Agent 刷新。
   return db.select().from(users).where(
     and(
       sql`${users.expiresAt} IS NOT NULL`,
       sql`${users.expiresAt} <= ${nowSec}`,
-      eq(users.canAddRules, true)
+      eq(users.canAddRules, true),
+      ne(users.role, "admin"),
     )
   );
 }

@@ -12,14 +12,52 @@
  * 键一次问清，最后只发没发过的。消息正文留在各自的 send 闭包里 —— 邮件和 Telegram
  * 的正文本来就不一样，硬凑成一个模板只会让两边互相迁就。
  *
- * 发送失败仍然向上抛：和原来一样，SMTP 挂了就整轮停下，而不是对着一千个地址挨个
- * 超时重试一遍。
+ * 发送失败分三种（见 classifyReminderFailure）：
+ *
+ * - 通道故障（SMTP 超时/登录失败/连不上、Telegram Token 失效/限流/5xx，以及认不出来的错误）：
+ *   仍然向上抛、整轮停下 —— SMTP 挂了就别对着一千个地址挨个超时重试一遍。
+ * - 收件人永久不可达（Telegram 403 拉黑/没和机器人说过话、chat not found；SMTP 在
+ *   RCPT 阶段 5xx 拒收）：记日志、照样写标记、接着发下一条。原来这种错误也会抛出去，
+ *   而且标记没写 —— 清单顺序每轮都一样，于是**这一个人后面的所有提醒永远发不出去**。
+ * - 单条消息本身的问题（Telegram 其它 400）：记日志、不写标记（下轮再试）、接着发。
  */
 
 import * as db from "./db";
+import { isPermanentTelegramRecipientError, TelegramApiError } from "./telegramApiError";
+
+export type ReminderFailureKind = "recipient" | "item" | "transport";
+
+/**
+ * 一次发送失败，是这个收件人的问题、这一条的问题，还是整个通道的问题。
+ *
+ * SMTP 只认 RCPT 阶段的拒收：MAIL FROM 被拒同样报 EENVELOPE，但那是发件人配置错了，
+ * 对谁发都一样，按「这个人收不到」处理会把所有人的提醒一起吞掉。
+ * 认不出来的错误一律按通道故障算 —— 宁可这一轮停下，也不能把提醒标成「已发」。
+ */
+export function classifyReminderFailure(error: unknown): ReminderFailureKind {
+  if (isPermanentTelegramRecipientError(error)) return "recipient";
+  if (error instanceof TelegramApiError) {
+    return error.errorCode === 400 ? "item" : "transport";
+  }
+  const smtp = (error && typeof error === "object" ? error : {}) as { code?: unknown; responseCode?: unknown; command?: unknown };
+  const code = String(smtp.code || "").toUpperCase();
+  const responseCode = Number(smtp.responseCode || 0);
+  const command = String(smtp.command || "").trim().toUpperCase();
+  if (command.startsWith("RCPT") && (code === "EENVELOPE" || responseCode >= 550)) return "recipient";
+  // nodemailer 解析不出收件地址时报「No recipients defined」（command=API）：地址本身是坏的。
+  if (code === "EENVELOPE" && command === "API") return "recipient";
+  return "transport";
+}
+
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export type PendingReminder = {
-  /** 当天的去重键，`<渠道>:<类别>:<...>:<YYYY-MM-DD>`。 */
+  /**
+   * 去重键，`<渠道>:<类别>:<...>`：按天去重的带 `:<YYYY-MM-DD>` 结尾，
+   * 到期类（按「这一次到期 + 这一档」去重）不带日期。
+   */
   key: string;
   send: () => Promise<void>;
 };
@@ -36,7 +74,21 @@ export async function dispatchReminders(pending: PendingReminder[]): Promise<num
   let delivered = 0;
   for (const item of pending) {
     if (sent.has(item.key)) continue;
-    await item.send();
+    try {
+      await item.send();
+    } catch (error) {
+      const kind = classifyReminderFailure(error);
+      if (kind === "transport") throw error;
+      if (kind === "recipient") {
+        // 照样写标记：这个人今天/这一档收不到了，别每轮都拿他去撞一次。
+        console.warn(`[Reminder] recipient unreachable, skipped key=${item.key}: ${errorText(error)}`);
+        await db.setSetting(item.key, "undeliverable");
+        sent.add(item.key);
+      } else {
+        console.warn(`[Reminder] send failed, will retry next round key=${item.key}: ${errorText(error)}`);
+      }
+      continue;
+    }
     await db.setSetting(item.key, "sent");
     sent.add(item.key);
     delivered += 1;

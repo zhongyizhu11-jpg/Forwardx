@@ -603,10 +603,20 @@ export function summarizeMigrationSnapshot(snapshot: MigrationSnapshot): Migrati
   for (const table of MIGRATION_TABLES) {
     tableCounts[table] = Array.isArray(snapshot.tables?.[table]) ? snapshot.tables[table].length : 0;
   }
+  return summarizeMigrationTableCounts(tableCounts, snapshot);
+}
+
+/** 只有每张表的行数时（数据库切换是边读边写，不把整份快照攒在内存里）也能出同一份摘要。 */
+export function summarizeMigrationTableCounts(
+  counts: Record<string, number>,
+  meta: { exportedAt?: number; sourcePanelUrl?: string; appVersion?: string } = {},
+): MigrationSnapshotSummary {
+  const tableCounts: Record<string, number> = {};
+  for (const table of MIGRATION_TABLES) tableCounts[table] = Number(counts[table] || 0);
   return {
-    exportedAt: snapshot.exportedAt || Date.now(),
-    sourcePanelUrl: snapshot.sourcePanelUrl,
-    appVersion: snapshot.appVersion,
+    exportedAt: meta.exportedAt || Date.now(),
+    sourcePanelUrl: meta.sourcePanelUrl,
+    appVersion: meta.appVersion,
     userCount: tableCounts.users || 0,
     hostCount: tableCounts.hosts || 0,
     ruleCount: tableCounts.forward_rules || 0,

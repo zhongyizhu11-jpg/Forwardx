@@ -1,3 +1,5 @@
+import { isDatabaseMaintenanceActive } from "./databaseMaintenance";
+
 type ScheduledTaskLogger = Pick<typeof console, "warn" | "error">;
 
 export function createNonOverlappingScheduledTask(
@@ -18,6 +20,9 @@ export function createNonOverlappingScheduledTask(
   let lastSkipLogAt = Number.NEGATIVE_INFINITY;
 
   return async () => {
+    // 切换数据库期间整轮跳过：定时任务几乎都在写库（扣费、重置流量、写提醒标记），
+    // 写进正在被复制的旧库只会丢失或新旧两边对不上。下一个周期再跑。
+    if (isDatabaseMaintenanceActive()) return false;
     if (running) {
       const skippedAt = now();
       if (skippedAt - lastSkipLogAt >= skipLogIntervalMs) {

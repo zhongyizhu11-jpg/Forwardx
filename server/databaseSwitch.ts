@@ -11,17 +11,24 @@ import {
   type DatabaseConfig,
   type DatabaseKind,
   defaultSqlitePath,
+  executeRaw,
   getDatabaseKind,
   getDatabasePoolSettings,
   getSchemaDialect,
   maskDatabaseConfig,
+  queryRaw,
+  quoteDbIdentifier,
   readDatabaseConfig,
   reconnectDatabase,
   testDatabaseConnection,
+  withDatabaseTransaction,
   writeDatabaseConfig,
 } from "./dbRuntime";
 import { ENV } from "./env";
-import { exportMigrationSnapshot, summarizeMigrationSnapshot, type MigrationSnapshotSummary } from "./migration";
+import { summarizeMigrationTableCounts, type MigrationSnapshotSummary } from "./migration";
+import { RUNTIME_CACHE_SETTING_PREFIX } from "./repositories/settingsRepository";
+import { beginDatabaseMaintenance, endDatabaseMaintenance } from "./databaseMaintenance";
+import { APP_VERSION } from "../shared/versions";
 import { maintainPostgresqlDatabase } from "./postgresqlMaintenance";
 
 export type DatabaseSwitchJobStatus = "pending" | "running" | "success" | "failed";
@@ -95,8 +102,8 @@ const databaseSwitchStages: Record<DatabaseSwitchStage, { label: string; detail:
   permissions: { label: "验证目标数据库权限", detail: "验证建表、写入、修改结构、创建索引和清理权限" },
   schema: { label: "初始化目标数据库结构", detail: `创建或校验 ${MIGRATION_TABLES.length} 张数据表及索引` },
   "target-check": { label: "检查目标数据库内容", detail: "确认目标数据库没有需要保留的业务数据" },
-  export: { label: "读取当前面板数据", detail: "正在逐表读取源数据库" },
-  transfer: { label: "写入目标数据库", detail: "正在按表写入并保留原始数据 ID" },
+  export: { label: "读取当前面板数据", detail: "已暂停面板写入，正在逐表统计源数据库" },
+  transfer: { label: "写入目标数据库", detail: "正在按主键分批读取、写入并保留原始数据 ID" },
   optimize: { label: "优化 PostgreSQL 查询性能", detail: "同步序列并更新查询统计信息" },
   switch: { label: "保存数据库切换配置", detail: "写入新连接配置并准备重启或刷新连接" },
 };
@@ -610,6 +617,71 @@ async function syncTargetPostgresqlSequences(session: TargetSession) {
   }
 }
 
+/** 从源库一批读多少行。 */
+export const DATABASE_SWITCH_COPY_BATCH_ROWS = 1000;
+/** 打开写冻结之后等多久再开始读：让已经在路上的写请求落完。 */
+const DATABASE_SWITCH_WRITE_DRAIN_MS = 2_000;
+
+/** 按哪一列分页读：自增 id；没有 id 的表（system_settings）用唯一键。 */
+function sourcePagingColumn(table: string) {
+  const tableDef = tableDefs.get(table);
+  return tableDef?.columns.find((column) => column.type === "id")?.name
+    ?? tableDef?.unique?.[0]?.[0]
+    ?? null;
+}
+
+/**
+ * 按主键顺序一批一批读源表（keyset 分页：WHERE pk > 上一批最后一个 ORDER BY pk LIMIT n）。
+ *
+ * 原来是每张表一句 SELECT *，整个库读成一个大对象攒在内存里再往新库写：
+ * 几百万行流量统计的面板，切换一次就是几个 G 的常驻内存，容器直接被 OOM 杀掉，
+ * 而切换进行到一半被杀是最糟的结果。keyset 比 OFFSET 好在越往后不会越慢。
+ */
+async function* readSourceTableBatches(table: string, batchSize = DATABASE_SWITCH_COPY_BATCH_ROWS) {
+  const tableSql = quoteDbIdentifier(table);
+  const column = sourcePagingColumn(table);
+  if (!column) {
+    yield await queryRaw<Record<string, any>>(`SELECT * FROM ${tableSql}`);
+    return;
+  }
+  const columnSql = quoteDbIdentifier(column);
+  let last: unknown;
+  for (;;) {
+    const rows = await queryRaw<Record<string, any>>(
+      last === undefined
+        ? `SELECT * FROM ${tableSql} ORDER BY ${columnSql} LIMIT ${batchSize}`
+        : `SELECT * FROM ${tableSql} WHERE ${columnSql} > ? ORDER BY ${columnSql} LIMIT ${batchSize}`,
+      last === undefined ? [] : [last],
+    );
+    if (rows.length === 0) return;
+    yield rows;
+    if (rows.length < batchSize) return;
+    last = rows[rows.length - 1][column];
+  }
+}
+
+/**
+ * 在一个一致的读快照里跑整个源库读取 —— 只在便宜的方言上做。
+ *
+ * - PostgreSQL：独占一条连接开 REPEATABLE READ 只读事务，MVCC 快照，不挡任何写。
+ * - MySQL（InnoDB）：独占一条连接开事务；默认隔离级别 REPEATABLE READ 下，第一次读
+ *   就建立一致性快照（事务开始后没法再改隔离级别，服务器若被改成 READ COMMITTED，
+ *   就只剩下面的写冻结兜底）。
+ * - SQLite：整个面板只有一条连接，读事务要在这条连接上一直占着，等于切换期间面板
+ *   所有查询（包括管理员看进度、登录校验）全部排队 —— 不做。靠写冻结保证一致：
+ *   冻结后面板自己的写入入口（tRPC mutation、Agent 上报、调度器）都停了。
+ */
+async function withSourceReadSnapshot<T>(work: () => Promise<T>): Promise<T> {
+  const kind = getDatabaseKind();
+  if (kind !== "postgresql" && kind !== "mysql") return work();
+  return withDatabaseTransaction(async () => {
+    if (kind === "postgresql") {
+      await executeRaw("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
+    }
+    return work();
+  });
+}
+
 async function copySnapshotIntoTarget(
   session: TargetSession,
   target: DatabaseConfig,
@@ -623,48 +695,58 @@ async function copySnapshotIntoTarget(
     processedTables: 0,
     totalTables: MIGRATION_TABLES.length,
   });
-  const snapshot = await exportMigrationSnapshot(undefined, {
-    onProgress: ({ table, tableIndex, tableTotal, status, rowCount }) => {
+  return withSourceReadSnapshot(async () => {
+    // 先数一遍每张表多少行（只为进度条），真正的读写在下面边读边写。
+    const sourceCounts: Record<string, number> = {};
+    for (let index = 0; index < MIGRATION_TABLES.length; index += 1) {
+      const table = MIGRATION_TABLES[index];
+      const rows = await queryRaw<{ count: number | string }>(
+        `SELECT COUNT(*) AS ${quoteDbIdentifier("count")} FROM ${quoteDbIdentifier(table)}`,
+      );
+      sourceCounts[table] = Number(rows[0]?.count || 0);
       setJobStage(job, "export", {
-        progress: 34 + Math.floor((tableIndex / Math.max(1, tableTotal)) * 10),
+        progress: 34 + Math.floor(((index + 1) / MIGRATION_TABLES.length) * 10),
         currentTable: table,
-        processedTables: status === "complete" ? tableIndex : tableIndex - 1,
-        totalTables: tableTotal,
-        detail: status === "complete"
-          ? `已读取源表 ${table}（${tableIndex}/${tableTotal}，${rowCount || 0} 行）`
-          : `正在读取源表 ${table}（${tableIndex}/${tableTotal}）`,
+        processedTables: index + 1,
+        totalTables: MIGRATION_TABLES.length,
+        detail: `已统计源表 ${table}（${index + 1}/${MIGRATION_TABLES.length}，${sourceCounts[table]} 行）`,
       });
-    },
-  });
-  const summary = summarizeMigrationSnapshot(snapshot);
-  const inserted: Record<string, number> = {};
-  const totalRows = MIGRATION_TABLES.reduce((sum, table) => sum + (snapshot.tables?.[table]?.length || 0), 0);
-  const populatedTables = MIGRATION_TABLES.filter((table) => (snapshot.tables?.[table]?.length || 0) > 0);
-  let processed = 0;
-  let processedTables = 0;
+    }
 
-  setJobStage(job, "transfer", {
-    progress: 45,
-    detail: `准备写入 ${totalRows} 行数据，涉及 ${populatedTables.length} 张表`,
-    currentTable: undefined,
-    processedRows: 0,
-    totalRows,
-    processedTables: 0,
-    totalTables: populatedTables.length,
-  });
-  for (const table of MIGRATION_TABLES) {
-    const rows = snapshot.tables?.[table] || [];
-    if (rows.length === 0) continue;
-    for (let tableRowIndex = 0; tableRowIndex < rows.length; tableRowIndex += 1) {
-      const row = rows[tableRowIndex];
-      if (await insertTargetRow(session, table, row)) {
-        inserted[table] = (inserted[table] || 0) + 1;
-      }
-      processed += 1;
-      if (processed === totalRows || processed % 10 === 0 || tableRowIndex === rows.length - 1) {
+    const inserted: Record<string, number> = {};
+    const exportedCounts: Record<string, number> = {};
+    const totalRows = MIGRATION_TABLES.reduce((sum, table) => sum + sourceCounts[table], 0);
+    const populatedTables = MIGRATION_TABLES.filter((table) => sourceCounts[table] > 0);
+    let processed = 0;
+    let processedTables = 0;
+
+    setJobStage(job, "transfer", {
+      progress: 45,
+      detail: `准备写入 ${totalRows} 行数据，涉及 ${populatedTables.length} 张表`,
+      currentTable: undefined,
+      processedRows: 0,
+      totalRows,
+      processedTables: 0,
+      totalTables: populatedTables.length,
+    });
+    for (const table of populatedTables) {
+      let tableRows = 0;
+      for await (const batch of readSourceTableBatches(table)) {
+        // 设置表里的运行时缓存（出口报的端口等）按这个面板的主机、规则 ID 记，不带走（与导出快照一致）。
+        const rows = table === "system_settings"
+          ? batch.filter((row) => !String(row?.key || "").startsWith(RUNTIME_CACHE_SETTING_PREFIX))
+          : batch;
+        for (const row of rows) {
+          if (await insertTargetRow(session, table, row)) {
+            inserted[table] = (inserted[table] || 0) + 1;
+          }
+        }
+        exportedCounts[table] = (exportedCounts[table] || 0) + rows.length;
+        tableRows += batch.length;
+        processed += batch.length;
         setJobStage(job, "transfer", {
-          progress: 45 + Math.floor((processed / Math.max(1, totalRows)) * 46),
-          detail: `正在写入 ${table}（本表 ${tableRowIndex + 1}/${rows.length}，总计 ${processed}/${totalRows} 行）`,
+          progress: 45 + Math.floor((Math.min(processed, totalRows) / Math.max(1, totalRows)) * 46),
+          detail: `正在写入 ${table}（本表 ${tableRows}/${sourceCounts[table]}，总计 ${processed}/${totalRows} 行）`,
           currentTable: table,
           processedRows: processed,
           totalRows,
@@ -672,28 +754,29 @@ async function copySnapshotIntoTarget(
           totalTables: populatedTables.length,
         });
       }
+      processedTables += 1;
+      setJobStage(job, "transfer", {
+        processedTables,
+        detail: `已完成 ${table}（${processedTables}/${populatedTables.length} 张表，总计 ${processed}/${totalRows} 行）`,
+      });
     }
-    processedTables += 1;
-    setJobStage(job, "transfer", {
-      processedTables,
-      detail: `已完成 ${table}（${processedTables}/${populatedTables.length} 张表，总计 ${processed}/${totalRows} 行）`,
-    });
-  }
 
-  setJobStage(job, "transfer", {
-    progress: 92,
-    detail: "数据写入完成，正在同步数据库切换标记和序列",
-    currentTable: "system_settings",
-    processedRows: processed,
-    totalRows,
-    processedTables,
-    totalTables: populatedTables.length,
+    setJobStage(job, "transfer", {
+      progress: 92,
+      detail: "数据写入完成，正在同步数据库切换标记和序列",
+      currentTable: "system_settings",
+      processedRows: processed,
+      totalRows,
+      processedTables,
+      totalTables: populatedTables.length,
+    });
+    for (const [key, value] of Object.entries(databaseSettingsForTarget(target))) {
+      await upsertTargetSetting(session, key, value);
+    }
+    await syncTargetPostgresqlSequences(session);
+    const summary = summarizeMigrationTableCounts(exportedCounts, { appVersion: APP_VERSION });
+    return { summary, inserted };
   });
-  for (const [key, value] of Object.entries(databaseSettingsForTarget(target))) {
-    await upsertTargetSetting(session, key, value);
-  }
-  await syncTargetPostgresqlSequences(session);
-  return { summary, inserted };
 }
 
 async function runTargetTransaction<T>(handle: TargetHandle, action: (session: TargetSession) => Promise<T>) {
@@ -786,6 +869,7 @@ export function startDatabaseSwitch(target: DatabaseConfig) {
 
   void (async () => {
     let handle: TargetHandle | null = null;
+    let keepWritesFrozen = false;
     try {
       setJobStage(job, "connection", { status: "running", progress: 5 });
       await testDatabaseConnection(target);
@@ -801,6 +885,9 @@ export function startDatabaseSwitch(target: DatabaseConfig) {
       else if (handle.kind === "postgresql") await ensureDatabaseSchema(handle.pool);
       else await ensureDatabaseSchema(handle.sqlite);
 
+      // 从这里开始冻结面板的写入，直到切换结束（需要重启时一直冻到进程退出）。
+      beginDatabaseMaintenance(`database-switch:${job.id}`);
+      await new Promise<void>((resolve) => setTimeout(resolve, DATABASE_SWITCH_WRITE_DRAIN_MS));
       const result = await runTargetTransaction(handle, async (session) => {
         setJobStage(job, "target-check", { progress: 32 });
         await assertTargetHasNoBusinessData(session);
@@ -817,6 +904,8 @@ export function startDatabaseSwitch(target: DatabaseConfig) {
 
       setJobStage(job, "switch", { progress: 97 });
       const restartRequired = await finalizeDatabaseSwitch(target);
+      // 要重启的话，旧库此刻已经不会再被迁走：别让任何写入再落进去。
+      keepWritesFrozen = restartRequired;
 
       setJob(job, {
         status: "success",
@@ -851,6 +940,7 @@ export function startDatabaseSwitch(target: DatabaseConfig) {
         finishedAt: Date.now(),
       });
     } finally {
+      if (!keepWritesFrozen) endDatabaseMaintenance();
       await closeTarget(handle);
       const latest = activeJobId ? getDatabaseSwitchJob(activeJobId) : null;
       if (latest && latest.id === job.id && latest.status !== "pending" && latest.status !== "running") {
