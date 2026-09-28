@@ -10,6 +10,7 @@ import { agentEncryptionMiddleware, getAgentTunneledPath } from "./agentEncrypti
 import { AGENT_PANEL_MIGRATION_VERSION, hasAgentVersionChanged, isAgentUpgradeTargetSatisfied, isAgentVersionAtLeast } from "./agentRouteUtils";
 import { resolvePanelUrl } from "./agentPanelUrl";
 import { decryptPayload, encryptPayload, isEncryptedEnvelope } from "./agentCrypto";
+import { assertCanAddSelfServiceHost } from "./selfServiceHostLimit";
 import {
   AGENT_AUTH_RESULT_ACCEPTED,
   AGENT_AUTH_RESULT_HEADER,
@@ -407,6 +408,20 @@ agentApiRouter.post("/api/agent/register", async (req: Request, res: Response) =
     }
 
     const tokenDescription = String(agentToken.description || "").trim();
+
+    // 普通用户的 token 注册新机器也要过自助上限：以前这里不查，建一堆 token 各注册一次就绕过了。
+    const tokenOwner = agentToken.userId ? await db.getUserById(Number(agentToken.userId)) : null;
+    if (tokenOwner) {
+      try {
+        await assertCanAddSelfServiceHost(tokenOwner as any, {
+          getGlobalLimitRaw: () => db.getSetting("selfServiceHostLimit"),
+          countOwnedHosts: (userId) => db.countHostsByUserId(userId),
+        });
+      } catch (error) {
+        res.status(403).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+    }
 
     // 创建新主机
     const hostId = await db.createHost({
