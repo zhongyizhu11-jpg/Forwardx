@@ -44,7 +44,7 @@ import {
   updateUserTrafficSettings,
   type ForwardAccessPauseReason,
 } from "./userRepository";
-import { sqlBool } from "./repositoryUtils";
+import { dbBool, sqlBool } from "./repositoryUtils";
 import { pushAgentRefresh } from "../agentEvents";
 import { getUserUsableTrafficBillingResourceIds } from "./trafficBillingRepository";
 import { getSetting, setSetting } from "./settingsRepository";
@@ -2185,19 +2185,17 @@ async function recoverUserForwardAccessIfEligibleUnlocked(
   if (effectiveLimits.canAddRules) {
     if (isTrafficLimitExceeded((user as any).trafficUsed, effectiveLimits.trafficLimit)) {
       if (options.allowTrafficBillingRecovery && hasTrafficBillingResource && hasTrafficBillingBalance) {
-        let restored = !(user as any).canAddRules || !!pauseReason;
-        await updateUserTrafficSettings(userId, {
-          ...effectiveLimits,
-          canAddRules: true,
-          allowForwardXTunnel: true,
-          forwardAccessPauseReason: null,
-        });
-        const ruleRecovery = await restoreUserForwardRulesIfEligible(userId);
-        restored = restored || ruleRecovery.affectedRuleIds.length > 0;
+        // 套餐流量已经用完，这次操作走的是按流量计费的资源：只放行这一次计费操作。
+        // 以前这里会撤掉「超额」暂停并恢复所有因超额停下的规则 —— 包括不计费、吃套餐
+        // 额度的规则，等于有一点余额就能把用完的套餐额度继续白跑。套餐规则要一直停到
+        // 额度重置 / 换套餐 / 买流量包；账户上的超额暂停也留着（还没暂停的这里补上，
+        // 与下面不走计费的分支一致），计费规则的流量本来就不记进套餐额度，不受这个暂停影响。
+        if ((user as any).canAddRules || pauseReason !== "traffic_limit") {
+          await setUserForwardAccess(userId, false, "traffic_limit");
+        }
         return {
           allowed: true,
-          restored,
-          restoredRuleIds: ruleRecovery.restoredRuleIds,
+          restored: false,
           user: await getUserById(userId) ?? user,
         };
       }
@@ -2490,6 +2488,21 @@ export async function repairSubscriptionBillingStateOnce() {
   return { users: userIds.length, resets };
 }
 
+/** 账户级流量计数器跟随的主订阅：生效、有限额、开通最早（同时开通取 id 小的）。 */
+function primaryTrafficCycleSubscriptionId(rows: any[]) {
+  let primary: { id: number; startedAt: number } | null = null;
+  for (const row of rows) {
+    if (subscriptionTrafficLimit(row) <= 0) continue;
+    const id = Number(row.id || 0);
+    if (id <= 0) continue;
+    const startedAt = validDate(row.startedAt)?.getTime() ?? Number.POSITIVE_INFINITY;
+    if (!primary || startedAt < primary.startedAt || (startedAt === primary.startedAt && id < primary.id)) {
+      primary = { id, startedAt };
+    }
+  }
+  return primary?.id ?? 0;
+}
+
 async function rechargeSubscriptionTrafficCyclesForUserUnlocked(userId: number, now: Date) {
   const db = await getDb();
   if (!db) return { resetCount: 0, settled: false };
@@ -2511,6 +2524,17 @@ async function rechargeSubscriptionTrafficCyclesForUserUnlocked(userId: number, 
     sql`${userSubscriptions.nextTrafficResetAt} <= ${nowSec}`,
     sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${nowSec})`,
   ));
+  /*
+    用户已用流量只有一个计数器（users.trafficUsed），额度却是所有生效订阅相加。
+    按各自开通日锚定（trafficAutoReset 关）时，以前每份订阅的锚点到了都会把这个共用
+    计数器清零 —— 错开日子买几份便宜的附加套餐，一个月就能清好几次，额度成倍放大。
+    现在账户级计数器只跟一个锚点走：当前生效、有限额的订阅里开通最早的那份（主订阅）。
+    其余订阅的周期照常推进（自己的加油包照常按周期到期），只是不再清共用计数器。
+    trafficAutoReset 开时所有订阅共用用户设置的重置日，本来就只清一次，行为不变。
+  */
+  const primarySubscriptionId = primaryTrafficCycleSubscriptionId(
+    await subscriptionCycleRows({ userId }),
+  );
   let dueBoundary = Number.NEGATIVE_INFINITY;
   const cycleUpdates: Array<{ id: number; dueBoundary: Date; nextTrafficResetAt: Date | null }> = [];
   for (const sub of due as any[]) {
@@ -2534,10 +2558,14 @@ async function rechargeSubscriptionTrafficCyclesForUserUnlocked(userId: number, 
       dueBoundary: new Date(subscriptionDueBoundary),
       nextTrafficResetAt: boundedNext,
     });
-    dueBoundary = Math.max(dueBoundary, subscriptionDueBoundary);
+    if (sub.trafficAutoReset || Number(sub.id) === primarySubscriptionId) {
+      dueBoundary = Math.max(dueBoundary, subscriptionDueBoundary);
+    }
   }
   if (cycleUpdates.length === 0) return { resetCount: 0, settled: false };
-  const reset = await resetUserTrafficForCycle(userId, new Date(dueBoundary), now);
+  const reset = Number.isFinite(dueBoundary)
+    ? await resetUserTrafficForCycle(userId, new Date(dueBoundary), now)
+    : false;
   await expireTrafficAddonsForSubscriptionCycles(cycleUpdates);
   for (const cycle of cycleUpdates) {
     await updateUserSubscription(cycle.id, {
@@ -2653,10 +2681,19 @@ export function isPortAllowedByUserPlanRange(port: number, range: UserPlanPortRa
   return range.ranges.some((item) => candidate >= item.start && candidate <= item.end);
 }
 
-export async function findAvailableSubscriptionPortBlock(portCount: number, hostIds: number[], tunnelIds: number[], forwardGroupIds: number[] = []) {
+/**
+ * 套餐端口段分配时看到的「可分配范围 + 已占用端口」。
+ *
+ * exclude 用于续费时复核旧端口段：这份订阅自己的段、以及它主人自己的规则不算占用。
+ */
+async function subscriptionPortAllocationState(
+  hostIds: number[],
+  tunnelIds: number[],
+  forwardGroupIds: number[],
+  exclude: { subscriptionId?: number; ruleUserId?: number } = {},
+) {
   const db = await getDb();
   if (!db) return null;
-  const count = Math.max(1, portCount);
   const ranges: Array<{ start: number; end: number }> = [];
   for (const hostId of hostIds) {
     const host = await getHostById(hostId);
@@ -2679,15 +2716,19 @@ export async function findAvailableSubscriptionPortBlock(portCount: number, host
   }
   const start = ranges.length ? Math.max(...ranges.map((r) => r.start)) : 10000;
   const end = ranges.length ? Math.min(...ranges.map((r) => r.end)) : 65535;
-  if (start <= 0 || end < start || end - start + 1 < count) return null;
+  if (start <= 0 || end < start) return null;
 
   const used = new Set<number>();
-  const ruleRows = await db.select({ port: forwardRules.sourcePort }).from(forwardRules).where(and(
+  const ruleRows = await db.select({ port: forwardRules.sourcePort, userId: forwardRules.userId }).from(forwardRules).where(and(
     eq(forwardRules.isEnabled, true),
     eq(forwardRules.pendingDelete, false),
   ));
-  (ruleRows as any[]).forEach((row: any) => used.add(Number(row.port)));
+  (ruleRows as any[]).forEach((row: any) => {
+    if (exclude.ruleUserId && Number(row.userId) === exclude.ruleUserId) return;
+    used.add(Number(row.port));
+  });
   const subRows = await db.select({
+    id: userSubscriptions.id,
     portRangeStart: userSubscriptions.portRangeStart,
     portRangeEnd: userSubscriptions.portRangeEnd,
   }).from(userSubscriptions).where(and(
@@ -2695,10 +2736,44 @@ export async function findAvailableSubscriptionPortBlock(portCount: number, host
     sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${Math.floor(Date.now() / 1000)})`,
   ));
   (subRows as any[]).forEach((row: any) => {
+    if (exclude.subscriptionId && Number(row.id) === exclude.subscriptionId) return;
     const s = Number(row.portRangeStart || 0);
     const e = Number(row.portRangeEnd || 0);
     for (let p = s; p > 0 && p <= e; p++) used.add(p);
   });
+  return { start, end, used };
+}
+
+/**
+ * 续费一份已经不在生效中的订阅（过期后再续）时，旧端口段还是不是它的。
+ *
+ * 订阅一过期，它的端口段就不再算占用，可能已经分给了别人的新订阅。原样沿用的话，
+ * 两个租户拿着重叠的端口段，谁先建规则谁占。
+ */
+async function isSubscriptionPortRangeStillFree(
+  range: { start: number; end: number },
+  hostIds: number[],
+  tunnelIds: number[],
+  forwardGroupIds: number[],
+  owner: { subscriptionId: number; userId: number },
+) {
+  const state = await subscriptionPortAllocationState(hostIds, tunnelIds, forwardGroupIds, {
+    subscriptionId: owner.subscriptionId,
+    ruleUserId: owner.userId,
+  });
+  if (!state || range.start < state.start || range.end > state.end || range.end < range.start) return false;
+  for (let port = range.start; port <= range.end; port++) {
+    if (state.used.has(port)) return false;
+  }
+  return true;
+}
+
+export async function findAvailableSubscriptionPortBlock(portCount: number, hostIds: number[], tunnelIds: number[], forwardGroupIds: number[] = []) {
+  const count = Math.max(1, portCount);
+  const state = await subscriptionPortAllocationState(hostIds, tunnelIds, forwardGroupIds);
+  if (!state) return null;
+  const { start, end, used } = state;
+  if (end - start + 1 < count) return null;
 
   for (let port = start; port <= end - count + 1; port++) {
     let ok = true;
@@ -2715,6 +2790,23 @@ export async function findAvailableSubscriptionPortBlock(portCount: number, host
 }
 
 export type SubscriptionSource = "admin" | "payment" | "redeem" | "balance";
+
+/**
+ * 开通 / 续费套餐时「重试也不会成功」的错误：套餐不存在或已停用、续费目标已取消或不可续、
+ * 没有空闲端口段等。在线支付发货遇到它时不再无限重试，而是把实付金额转入余额（见
+ * payment.ts 的 finalizePaidOrder）；数据库、锁之类的临时错误仍然抛普通 Error 继续重试。
+ */
+export class PermanentDeliveryError extends Error {
+  readonly permanentDelivery = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "PermanentDeliveryError";
+  }
+}
+
+export function isPermanentDeliveryError(error: unknown): error is PermanentDeliveryError {
+  return error instanceof PermanentDeliveryError || (error as any)?.permanentDelivery === true;
+}
 
 /** Store purchases may be renewed by the owner; administrative grants and
  * redemption grants require a fresh assignment/administrative action. */
@@ -2736,12 +2828,12 @@ async function applySubscriptionToUserUnlocked(
   targetSubscriptionId?: number | null,
 ) {
   const plan = await getSubscriptionPlanById(planId);
-  if (!plan) throw new Error("套餐不存在");
-  if (!plan.isActive) throw new Error("套餐已停用");
+  if (!plan) throw new PermanentDeliveryError("套餐不存在");
+  if (!plan.isActive) throw new PermanentDeliveryError("套餐已停用");
   const hostIds = (plan as any).hostIds || [];
   const tunnelIds = (plan as any).tunnelIds || [];
   const forwardGroupIds = (plan as any).forwardGroupIds || [];
-  if (hostIds.length === 0 && tunnelIds.length === 0 && forwardGroupIds.length === 0) throw new Error("套餐未绑定任何端口转发、隧道、转发链或转发组");
+  if (hostIds.length === 0 && tunnelIds.length === 0 && forwardGroupIds.length === 0) throw new PermanentDeliveryError("套餐未绑定任何端口转发、隧道、转发链或转发组");
   const now = startsAt || new Date();
   const durationDays = overrideDurationDays === null || overrideDurationDays === undefined
     ? Number(plan.durationDays)
@@ -2756,19 +2848,19 @@ async function applySubscriptionToUserUnlocked(
     : null;
   if (targetSubscriptionId) {
     if (!sameActiveSubscription || Number(sameActiveSubscription.userId) !== Number(userId)) {
-      throw new Error("订阅不存在或无权操作");
+      throw new PermanentDeliveryError("订阅不存在或无权操作");
     }
     if (Number(sameActiveSubscription.planId) !== Number(planId)) {
-      throw new Error("续费套餐与目标订阅不一致");
+      throw new PermanentDeliveryError("续费套餐与目标订阅不一致");
     }
     if (sameActiveSubscription.status === "cancelled") {
-      throw new Error("已取消的订阅不能续费");
+      throw new PermanentDeliveryError("已取消的订阅不能续费");
     }
     if (!isUserRenewableSubscriptionSource(sameActiveSubscription.source)) {
-      throw new Error("管理员分配的套餐不能自行续费，请联系管理员处理");
+      throw new PermanentDeliveryError("管理员分配的套餐不能自行续费，请联系管理员处理");
     }
     if (!isUserRenewableSubscriptionSource(source)) {
-      throw new Error("当前来源不支持用户续费");
+      throw new PermanentDeliveryError("当前来源不支持用户续费");
     }
   }
   if (sameActiveSubscription) {
@@ -2802,6 +2894,21 @@ async function applySubscriptionToUserUnlocked(
 
     let portRangeStart = Number(sameActiveSubscription.portRangeStart || 0);
     let portRangeEnd = Number(sameActiveSubscription.portRangeEnd || 0);
+    const wasActive = sameActiveSubscription.status === "active"
+      && (!currentExpiresAt || currentExpiresAt.getTime() > Date.now());
+    if (!wasActive && portRangeStart && portRangeEnd && !(await isSubscriptionPortRangeStillFree(
+      { start: portRangeStart, end: portRangeEnd },
+      hostIds,
+      tunnelIds,
+      forwardGroupIds,
+      { subscriptionId: Number(sameActiveSubscription.id), userId },
+    ))) {
+      // 旧段已经被别人占了：像新购一样重新分一段（下面那支）；分不到就是永久失败，
+      // 在线支付那边会把钱转入余额。
+      console.warn(`[Billing] renewing inactive subscription=${sameActiveSubscription.id} user=${userId}: port range ${portRangeStart}-${portRangeEnd} was re-allocated, assigning a new block`);
+      portRangeStart = 0;
+      portRangeEnd = 0;
+    }
     const updateData: Partial<InsertUserSubscription> = {
       status: "active",
       expiresAt,
@@ -2815,7 +2922,7 @@ async function applySubscriptionToUserUnlocked(
     }
     if (!portRangeStart || !portRangeEnd) {
       const block = await findAvailableSubscriptionPortBlock(Number(plan.portCount) || 1, hostIds, tunnelIds, forwardGroupIds);
-      if (!block) throw new Error("套餐可用端口不足，无法分配连续端口段");
+      if (!block) throw new PermanentDeliveryError("套餐可用端口不足，无法分配连续端口段");
       portRangeStart = block.start;
       portRangeEnd = block.end;
       (updateData as any).portRangeStart = block.start;
@@ -2834,7 +2941,7 @@ async function applySubscriptionToUserUnlocked(
   }
 
   const block = await findAvailableSubscriptionPortBlock(Number(plan.portCount) || 1, hostIds, tunnelIds, forwardGroupIds);
-  if (!block) throw new Error("套餐可用端口不足，无法分配连续端口段");
+  if (!block) throw new PermanentDeliveryError("套餐可用端口不足，无法分配连续端口段");
   const expiresAt = durationDays > 0 ? addSubscriptionDays(now, durationDays) : null;
   const nextTrafficResetAt = Number(plan.trafficLimit || 0) > 0
     ? (user as any)?.trafficAutoReset
@@ -2926,6 +3033,8 @@ async function getTrafficAddonById(addonId: number) {
       planId: subscriptionPlanTrafficAddons.planId,
       planName: subscriptionPlans.name,
       planTrafficLimit: subscriptionPlans.trafficLimit,
+      planIsActive: subscriptionPlans.isActive,
+      planIsStoreVisible: subscriptionPlans.isStoreVisible,
       trafficBytes: subscriptionPlanTrafficAddons.trafficBytes,
       priceCents: subscriptionPlanTrafficAddons.priceCents,
       isActive: subscriptionPlanTrafficAddons.isActive,
@@ -2965,6 +3074,8 @@ export async function purchaseTrafficAddonWithBalance(userId: number, addonId: n
   await expireDueTrafficAddons(userId);
   const addon = await getTrafficAddonById(addonId);
   if (!addon || !addon.isActive || Number(addon.trafficBytes || 0) <= 0) throw new Error("流量包不可购买");
+  // 和余额买套餐同一套条件：套餐停用或已从商店下架时，挂在它下面的流量包也不能再买。
+  if (!dbBool(addon.planIsActive) || !dbBool(addon.planIsStoreVisible)) throw new Error("流量包不可购买");
   if (Number(addon.planTrafficLimit || 0) <= 0) throw new Error("不限流量套餐无需购买流量包");
   const activeSubscriptions = await getActiveUserSubscriptions(userId);
   const subscription = pickActiveFiniteTrafficSubscription(activeSubscriptions as any[], Number(addon.planId), subscriptionId || undefined);

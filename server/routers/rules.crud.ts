@@ -1027,7 +1027,9 @@ async function prepareDirectRuleRouteForActor(
   if (actor.role !== "admin") {
     currentUser = await requireForwardAccessReady(actor.id, { allowTrafficBillingRecovery: isTrafficBillingRule });
     await requireTrafficBillingBalanceForRule(actor.id, isTrafficBillingRule, undefined, { tunnelId, hostId });
-    if (String(selectedTunnelForRule?.mode || "").toLowerCase() === "forwardx" && !(currentUser as any)?.canAddRules) {
+    // 走计费隧道时权限来自余额（上面两步已确认）：套餐超额暂停期间账户 canAddRules 为 false，
+    // 但计费操作仍然放行。
+    if (String(selectedTunnelForRule?.mode || "").toLowerCase() === "forwardx" && !(currentUser as any)?.canAddRules && !isTrafficBillingRule) {
       throw new Error("无权使用 NEX 加密隧道");
     }
     if (currentUser?.expiresAt && new Date(currentUser.expiresAt) <= new Date()) {
@@ -2637,7 +2639,7 @@ export const crudRulesRouter = router({
           if (ctx.user.role !== "admin" && String(selectedTunnelForRule.mode).toLowerCase() === "forwardx") {
             const owner = await requireForwardAccessReady(ctx.user.id, { allowTrafficBillingRecovery: !!access.isTrafficBillingResource });
             await requireTrafficBillingBalanceForRule(ctx.user.id, !!access.isTrafficBillingResource);
-            if (!(owner as any)?.canAddRules) {
+            if (!(owner as any)?.canAddRules && !access.isTrafficBillingResource) {
               throw new Error("No permission to use custom encrypted tunnels");
             }
           }

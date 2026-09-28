@@ -150,6 +150,8 @@ export const billingRouter = router({
       subscriptionId: z.number().int().positive().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      // 和余额买套餐同一个开关：商店关了，流量包也不能买。
+      if ((await db.getSetting("storeEnabled")) !== "true") throw new Error("商店功能未开启");
       const result = await db.purchaseTrafficAddonWithBalance(ctx.user.id, input.addonId, input.subscriptionId);
       await refreshUserForwardEndpoints(ctx.user.id, "traffic-addon-purchased");
       appendPanelLog("info", `[TrafficAddon] balance purchase user=${ctx.user.id} addon=${input.addonId} bytes=${result.trafficBytes}`);
