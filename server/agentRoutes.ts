@@ -332,6 +332,12 @@ agentRouter.get("/api/agent/events", async (req: Request, res: Response) => {
   }
 });
 
+/** Agent 上报的数值：只收有限的非负数（别让一段字符串被原样写进数值列）。 */
+function finiteAgentNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.min(number, Number.MAX_SAFE_INTEGER) : 0;
+}
+
 // Agent 注册接口
 agentApiRouter.post("/api/agent/register", async (req: Request, res: Response) => {
   try {
@@ -383,7 +389,7 @@ agentApiRouter.post("/api/agent/register", async (req: Request, res: Response) =
         } : {}),
         osInfo: nextOsInfo || existingHost.osInfo,
         cpuInfo: nextCpuInfo || existingHost.cpuInfo,
-        memoryTotal: memoryTotal || existingHost.memoryTotal,
+        memoryTotal: finiteAgentNumber(memoryTotal) || existingHost.memoryTotal,
         agentVersion: nextAgentVersion || (existingHost as any).agentVersion,
         isOnline: true,
         lastHeartbeat: new Date(),
@@ -433,7 +439,7 @@ agentApiRouter.post("/api/agent/register", async (req: Request, res: Response) =
       agentToken: token,
       osInfo: nextOsInfo || null,
       cpuInfo: nextCpuInfo || null,
-      memoryTotal: memoryTotal || null,
+      memoryTotal: finiteAgentNumber(memoryTotal) || null,
       agentVersion: nextAgentVersion || null,
       isOnline: true,
       lastHeartbeat: new Date(),

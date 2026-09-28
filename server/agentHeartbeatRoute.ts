@@ -155,6 +155,18 @@ import { recordAuthenticatedAgentActivity } from "./agentActivity";
 const AGENT_DNS_RESOLVE_TTL_MS = 5 * 60 * 1000;
 const resolvedIpCache = new Map<number, { raw: string; ip: string }>();
 const resolvedIpCheckedAt = new Map<number, number>();
+
+/**
+ * Agent 报上来的 DNS 变化只用于这台 Agent 自己这一次的下发，不写进全面板共享的解析缓存。
+ *
+ * 这个缓存按规则 id 存，同一条规则的其他入口 / 跳点 / 出口（包括负载均衡的其他出口）都会
+ * 复用它。以前直接把 Agent 给的 IP 写进去、还顺手刷新时间：多出口隧道里租户自己的那台
+ * 出口报一个假解析，所有出口都会把明文流量转去它指定的 IP。现在只让缓存过期，由面板
+ * 自己重新解析。
+ */
+function expireSharedResolvedIp(ruleId: number) {
+  resolvedIpCheckedAt.delete(ruleId);
+}
 const resolvedIpInflight = new Map<string, Promise<string>>();
 const tunnelRouteLogCache = new Map<string, string>();
 const nginxRuntimeLogCache = new Map<number, string>();
@@ -1466,7 +1478,14 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         return;
       }
     }
-    const heartbeatMetric = (key: string, index: number) => req.body?.[key] ?? compactMetrics[index];
+    // 指标一律转成有限的非负数：Agent 在租户手里，传一段几 MB 的字符串进来，SQLite 会
+    // 原样存成 TEXT，每次心跳都往 host_metrics 里塞，主机列表每次也要把它读出来。
+    const heartbeatMetric = (key: string, index: number) => {
+      const raw = req.body?.[key] ?? compactMetrics[index];
+      if (raw === undefined || raw === null) return raw;
+      const value = Number(raw);
+      return Number.isFinite(value) && value >= 0 ? Math.min(value, Number.MAX_SAFE_INTEGER) : undefined;
+    };
     const cpuUsage = heartbeatMetric("cpuUsage", 0);
     const memoryUsage = heartbeatMetric("memoryUsage", 1);
     const memoryUsed = heartbeatMetric("memoryUsed", 2);
@@ -1987,13 +2006,13 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     for (const target of resolvedHostRuleTargets) {
       if (!target) continue;
       const { rule, rawTargetIp, previous, forcedResolved, resolved } = target;
-      if (forcedResolved) setBoundedMapValue(resolvedIpCheckedAt, Number(rule.id), Date.now(), AGENT_DYNAMIC_CACHE_MAX);
+      if (forcedResolved) expireSharedResolvedIp(Number(rule.id));
       if (dnsChangedFor("forward-rule-target", Number(rule.id)) && previous && previous.raw === rawTargetIp && previous.ip !== resolved) {
         // IP 变更：标记为需要重新下发
         dnsChangedRuleIds.add(rule.id);
         dnsPreviousIpByRuleId.set(rule.id, previous.ip);
       }
-      setBoundedMapValue(resolvedIpCache, rule.id, { raw: rawTargetIp, ip: resolved }, AGENT_DYNAMIC_CACHE_MAX);
+      if (!forcedResolved) setBoundedMapValue(resolvedIpCache, rule.id, { raw: rawTargetIp, ip: resolved }, AGENT_DYNAMIC_CACHE_MAX);
       // 保存原始值（域名），将 rule.targetIp 替换为解析后的 IP
       (rule as any)._originalTargetIp = rule.targetIp;
       rule.targetIp = resolved;
@@ -2100,8 +2119,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         if (!targetIp || targetPort <= 0) return null;
         const forcedResolved = dnsChangedIpByHost.get(String(targetIp).toLowerCase());
         const resolvedTargetIp = forcedResolved || await resolveTargetIpCached(Number(rule.id), targetIp);
-        if (forcedResolved) setBoundedMapValue(resolvedIpCheckedAt, Number(rule.id), Date.now(), AGENT_DYNAMIC_CACHE_MAX);
-        setBoundedMapValue(resolvedIpCache, Number(rule.id), { raw: targetIp, ip: resolvedTargetIp }, AGENT_DYNAMIC_CACHE_MAX);
+        if (forcedResolved) expireSharedResolvedIp(Number(rule.id));
+        if (!forcedResolved) setBoundedMapValue(resolvedIpCache, Number(rule.id), { raw: targetIp, ip: resolvedTargetIp }, AGENT_DYNAMIC_CACHE_MAX);
         return { targetIp: resolvedTargetIp, targetPort, originalTargetIp: targetIp };
       }
       if (memberIdx >= members.length - 1) return null;
@@ -2120,8 +2139,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       if (!targetIp || targetPort <= 0) return null;
       const forcedResolved = dnsChangedIpByHost.get(String(targetIp).toLowerCase());
       const resolvedTargetIp = forcedResolved || await resolveTargetIpCached(Number(rule.id), targetIp);
-      if (forcedResolved) setBoundedMapValue(resolvedIpCheckedAt, Number(rule.id), Date.now(), AGENT_DYNAMIC_CACHE_MAX);
-      setBoundedMapValue(resolvedIpCache, Number(rule.id), { raw: targetIp, ip: resolvedTargetIp }, AGENT_DYNAMIC_CACHE_MAX);
+      if (forcedResolved) expireSharedResolvedIp(Number(rule.id));
+      if (!forcedResolved) setBoundedMapValue(resolvedIpCache, Number(rule.id), { raw: targetIp, ip: resolvedTargetIp }, AGENT_DYNAMIC_CACHE_MAX);
       return { targetIp: resolvedTargetIp, targetPort, originalTargetIp: targetIp };
     };
 
@@ -2231,7 +2250,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       if (!rawTargetIp) return;
       const forcedResolved = dnsChangedIpByHost.get(rawTargetIp.toLowerCase());
       const resolved = forcedResolved || await resolveTargetIpCached(Number(rule.id), rawTargetIp);
-      if (forcedResolved) setBoundedMapValue(resolvedIpCheckedAt, Number(rule.id), Date.now(), AGENT_DYNAMIC_CACHE_MAX);
+      if (forcedResolved) expireSharedResolvedIp(Number(rule.id));
       rule.targetIp = resolved;
     };
     await mapWithConcurrency(agentAllRules as any[], 32, (rule: any) => hydrateRuntimeTarget(rule));
