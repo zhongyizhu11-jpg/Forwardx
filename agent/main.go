@@ -4467,6 +4467,7 @@ func startIperf3Server(cfg Config, task iperf3Task, port int) iperf3Result {
 		}
 	}
 	cmd := exec.Command("iperf3", "-s", "-p", strconv.Itoa(port))
+	bindChildToAgent(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		iperf3Mu.Unlock()
