@@ -5,9 +5,11 @@ import type { TrpcContext } from "./context";
 import { getSessionCookieOptions } from "./cookies";
 import { runWithConfigAuditContext } from "../configAudit";
 import { DATABASE_MAINTENANCE_MESSAGE, isDatabaseMaintenanceActive } from "../databaseMaintenance";
+import { formatTrpcErrorShape } from "./errorFormatter";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
+  errorFormatter: formatTrpcErrorShape,
 });
 
 export const router = t.router;

@@ -29,8 +29,8 @@ import {
   planMonthlyEquivalentCents,
 } from "@shared/planPricing";
 import { Check, CheckCircle2, Coins, CreditCard, Lock, Package, RefreshCw, Route, Server, ShoppingBag, TicketPercent, WalletCards } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import QRCode from "qrcode";
+import { useMemo, useState } from "react";
+import { usePaymentOrderDialog } from "@/components/PaymentOrderDialog";
 import { toast } from "sonner";
 
 const MILLI_CENTS_PER_YUAN = 100000;
@@ -213,7 +213,7 @@ export default function Store() {
   /** 卡片上选中的那一档。只有一档的套餐也会带上，省得后面到处判空。 */
   const [selectedOption, setSelectedOption] = useState<PlanPricingOption | null>(null);
   const [paymentType, setPaymentType] = useState<"alipay" | "wxpay" | "stripe" | "usdt">("stripe");
-  const [payMode, setPayMode] = useState<"gateway" | "balance">("gateway");
+  const [selectedPayMode, setPayMode] = useState<"gateway" | "balance">("gateway");
   const [discountCode, setDiscountCode] = useState("");
   const [discountPreview, setDiscountPreview] = useState<any | null>(null);
   const [activeTab, setActiveTab] = useUrlTab<StoreTab>({
@@ -222,46 +222,14 @@ export default function Store() {
     storageKey: STORE_TAB_STORAGE_KEY,
   });
 
-  // QR 扫码支付对话框（precreate / native 模式）
-  const [qrOrder, setQrOrder] = useState<{ outTradeNo: string; qrCode: string; subject: string } | null>(null);
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-  const qrPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // 生成 QR 图片 DataURL
-  useEffect(() => {
-    if (!qrOrder?.qrCode) { setQrDataUrl(null); return; }
-    QRCode.toDataURL(qrOrder.qrCode, { width: 220, margin: 1, color: { dark: "#000", light: "#fff" } })
-      .then(setQrDataUrl)
-      .catch(() => setQrDataUrl(null));
-  }, [qrOrder?.qrCode]);
-
-  // 扫码等待期间轮询订单状态，完成后自动关闭对话框
-  const queryOrderUtils = utils;
-  useEffect(() => {
-    if (!qrOrder) {
-      if (qrPollingRef.current) clearInterval(qrPollingRef.current);
-      return;
-    }
-    const poll = async () => {
-      try {
-        const result = await queryOrderUtils.client.payment.queryOrder.query({ outTradeNo: qrOrder.outTradeNo });
-        if (result?.status === "completed" || result?.status === "paid" || result?.status === "processing") {
-          setQrOrder(null);
-          toast.success("已支付");
-          utils.plans.mySubscriptions.invalidate();
-          utils.billing.me.invalidate();
-          utils.billing.ledger.invalidate();
-        } else if (result?.status === "expired" || result?.status === "failed" || result?.status === "cancelled") {
-          setQrOrder(null);
-          toast.error("订单已失效，请重新下单");
-        }
-      } catch {
-        // 轮询失败静默忽略，继续等待
-      }
-    };
-    qrPollingRef.current = setInterval(poll, 3000);
-    return () => { if (qrPollingRef.current) clearInterval(qrPollingRef.current); };
-  }, [qrOrder?.outTradeNo]);
+  // 扫码（precreate / native）或跳转支付（page / wap / stripe / h5）后的等待弹窗，和充值、续费共用
+  const paymentDialog = usePaymentOrderDialog({
+    onPaid: () => {
+      utils.plans.mySubscriptions.invalidate();
+      utils.billing.me.invalidate();
+      utils.billing.ledger.invalidate();
+    },
+  });
 
   const createOrder = trpc.payment.createOrder.useMutation({
     onSuccess: (order) => {
@@ -270,13 +238,7 @@ export default function Store() {
       utils.plans.mySubscriptions.invalidate();
       utils.billing.me.invalidate();
       utils.billing.ledger.invalidate();
-      if (order?.qrCode) {
-        // 扫码支付（precreate / native）：在当前页渲染二维码，等待扫码
-        setQrOrder({ outTradeNo: order.outTradeNo, qrCode: order.qrCode, subject: order.subject || "" });
-      } else if (order?.payUrl) {
-        // 跳转支付（page / wap / redirect / stripe / h5）：新标签页打开
-        window.open(order.payUrl, "_blank", "noopener,noreferrer");
-      }
+      paymentDialog.launch(order);
     },
     onError: (error) => toast.error(error.message || "创建订单失败"),
   });
@@ -340,6 +302,12 @@ export default function Store() {
   /** 这一单的原价：选了档就按那一档，没选（只有一档的套餐）按套餐主表价。 */
   const listPriceCents = Number(selectedOption?.priceCents ?? selectedPlan?.priceCents ?? 0);
   const finalAmountCents = discountPreview?.finalAmountCents ?? listPriceCents;
+  /*
+    免费套餐（或折扣抵到 0 元）走网关会带着 0 元去下单，服务端直接拒绝（最低 0.01）。
+    这种单只能走余额通道：余额购买遇到 0 元不扣钱，直接开通。
+  */
+  const isFreeOrder = !!selectedPlan && finalAmountCents <= 0;
+  const payMode: "gateway" | "balance" = isFreeOrder ? "balance" : selectedPayMode;
 
   return (
     <DashboardLayout>
@@ -485,39 +453,7 @@ export default function Store() {
           </Tabs>
         )}
 
-        {/* 扫码支付对话框（precreate / native 模式） */}
-        <Dialog open={!!qrOrder} onOpenChange={(open) => !open && setQrOrder(null)}>
-          <DialogContent className="sm:max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <WalletCards className="h-5 w-5" />
-                扫码支付
-              </DialogTitle>
-              <DialogDescription>
-                {qrOrder?.subject ? `购买 ${qrOrder.subject}` : "请使用支付宝或微信扫码完成支付"}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex flex-col items-center gap-4 py-2">
-              {qrDataUrl ? (
-                <div className="rounded-lg border border-border/40 bg-white p-3 shadow-sm">
-                  <img src={qrDataUrl} alt="支付二维码" width={220} height={220} />
-                </div>
-              ) : (
-                <div className="flex h-[220px] w-[220px] items-center justify-center rounded-lg border border-border/40">
-                  <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
-              )}
-              <p className="text-sm text-muted-foreground">请使用支付宝 / 微信扫描二维码</p>
-              <div className="flex w-full items-center gap-2 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                <RefreshCw className="h-3.5 w-3.5 animate-spin shrink-0" />
-                <span>正在等待支付结果，付款后将自动跳转……</span>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setQrOrder(null)}>取消</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        {paymentDialog.dialog}
 
         <Dialog open={!!selectedPlan} onOpenChange={(open) => {
           if (open) return;
@@ -567,6 +503,7 @@ export default function Store() {
               </div>
               )}
               <div className="grid gap-2">
+                {!isFreeOrder && (
                 <button
                   type="button"
                   onClick={() => setPayMode("balance")}
@@ -589,7 +526,8 @@ export default function Store() {
                   </span>
                   {payMode === "balance" && <CheckCircle2 className="h-4 w-4" />}
                 </button>
-                {paymentMethods.map((method: any) => (
+                )}
+                {!isFreeOrder && paymentMethods.map((method: any) => (
                   <button
                     key={method.value}
                     type="button"
@@ -604,7 +542,12 @@ export default function Store() {
                     {payMode === "gateway" && paymentType === method.value && <CheckCircle2 className="h-4 w-4" />}
                   </button>
                 ))}
-                {paymentMethods.length === 0 && (
+                {isFreeOrder && (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    本单无需支付，确认后直接开通，不扣余额。
+                  </div>
+                )}
+                {!isFreeOrder && paymentMethods.length === 0 && (
                   <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                     暂无在线支付方式。
                   </div>
@@ -613,9 +556,9 @@ export default function Store() {
             </div>
             <DialogFooter className="gap-2">
               <Button variant="outline" onClick={() => setSelectedPlan(null)}>取消</Button>
-              <Button onClick={confirmBuy} disabled={createOrder.isPending || buyWithBalance.isPending || (payMode === "gateway" && paymentMethods.length === 0) || (payMode === "balance" && walletLoading)}>
+              <Button onClick={confirmBuy} disabled={createOrder.isPending || buyWithBalance.isPending || (payMode === "gateway" && paymentMethods.length === 0) || (payMode === "balance" && walletLoading && !isFreeOrder)}>
                 {(createOrder.isPending || buyWithBalance.isPending) ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <ShoppingBag className="mr-2 h-4 w-4" />}
-                {payMode === "balance" ? (walletLoading ? "余额加载中" : "余额购买") : "去支付"}
+                {isFreeOrder ? "免费开通" : payMode === "balance" ? (walletLoading ? "余额加载中" : "余额购买") : "去支付"}
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useLocation } from "wouter";
-import { pickTabValue } from "@/lib/urlTab";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useSearch } from "wouter";
+import { pickTabValue, tabForSearchChange } from "@/lib/urlTab";
 
 type UseUrlTabOptions<T extends string> = {
   values: readonly T[];
@@ -56,17 +56,36 @@ export function useUrlTab<T extends string>({
     return allowedValues.has(raw as T) ? (raw as T) : null;
   }, [allowedValues]);
 
+  // useLocation() 只随路径变；浏览器后退/前进只改查询串时要靠 useSearch() 才能重新渲染。
+  const search = useSearch();
+
   const resolveTab = useCallback(() => {
     return pickTabValue(currentSearch(), readStoredTab(storageKey, coerce), values, defaultValue, queryKey);
-  }, [coerce, defaultValue, location, queryKey, storageKey, valuesKey]);
+  }, [coerce, defaultValue, queryKey, storageKey, valuesKey]);
 
   const [tab, setTabState] = useState<T>(() => resolveTab());
+  const lastSearchRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const next = resolveTab();
-    setTabState((current) => (current === next ? current : next));
-    writeStoredTab(storageKey, next);
-  }, [resolveTab, storageKey]);
+    const nowSearch = currentSearch();
+    const previousSearch = lastSearchRef.current;
+    lastSearchRef.current = nowSearch;
+    let next: T | null;
+    if (previousSearch === null) {
+      // 第一次：地址栏 > 上次存的 > 默认
+      next = resolveTab();
+    } else {
+      next = tabForSearchChange(previousSearch, nowSearch, values, defaultValue, {
+        queryKey,
+        clearDefaultFromUrl,
+        storedValue: readStoredTab(storageKey, coerce),
+      });
+      if (next === null) return;
+    }
+    const resolved = next;
+    setTabState((current) => (current === resolved ? current : resolved));
+    writeStoredTab(storageKey, resolved);
+  }, [clearDefaultFromUrl, coerce, defaultValue, location, queryKey, resolveTab, search, storageKey, valuesKey]);
 
   const setTab = useCallback((nextValue: T | string) => {
     const next = coerce(nextValue) || defaultValue;

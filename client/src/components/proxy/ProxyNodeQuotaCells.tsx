@@ -1,5 +1,7 @@
 import { Gauge } from "lucide-react";
 
+import { formatBytes } from "@shared/formatBytes";
+
 import {
   formatProxyNodeQuotaLabeled,
   formatProxyNodeQuotaUsedFirst,
@@ -56,15 +58,16 @@ export type HostQuota = {
   reported: boolean;
 };
 
-function hostQuotaLine(hostQuota: HostQuota | null | undefined): string | null {
+export function hostQuotaLine(hostQuota: HostQuota | null | undefined): string | null {
   if (!hostQuota) return null;
   // 既没设额度、又还没报过数 —— 没什么可说的，别占一行。
   if (hostQuota.trafficLimit <= 0 && !hostQuota.reported) return null;
   const mode = normalizeHostTrafficMeasureMode(hostQuota.measureMode);
   const used = hostTrafficUsedBytes(hostQuota, mode);
   const percent = hostTrafficPercent(used, hostQuota.trafficLimit);
-  const usedText = hostQuota.reported ? formatQuotaBytes(used) : "还没有数";
-  const limitText = hostQuota.trafficLimit > 0 ? formatQuotaBytes(hostQuota.trafficLimit) : "不限";
+  // 主机管理按 1024 进制存额度（1 GB = 1024³），这里也得按 1024 显示，否则「100 GB」会写成「107G」。
+  const usedText = hostQuota.reported ? formatBytes(used) : "还没有数";
+  const limitText = hostQuota.trafficLimit > 0 ? formatBytes(hostQuota.trafficLimit) : "不限";
   const tail = percent === null ? "" : `（${percent}%）`;
   return `整机已用 ${usedText} / ${limitText}${tail} · 机房口径 · ${HOST_TRAFFIC_MEASURE_MODE_LABELS[mode]}`;
 }

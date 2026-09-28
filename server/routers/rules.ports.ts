@@ -7,6 +7,7 @@ import {
   requireTrafficBillingAccessIfConfigured,
   requireTunnelUseOrTrafficBillingAccess,
 } from "./helpers";
+import { assertTenantListenPortAllowedOnHosts } from "../tenantListenPortGuard";
 import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom, type PortPolicy } from "@shared/portPolicy";
 
 const randomPortInputSchema = z.object({
@@ -142,6 +143,12 @@ export const portsRulesRouter = router({
           }
         }
         try {
+          // 和保存时同一道闸：共享入口上的系统端口、面板端口不能让租户误以为「可用」。
+          await assertTenantListenPortAllowedOnHosts({ actor: ctx.user, hostIds: await db.getForwardGroupRuleEntryHostIds(input.forwardGroupId), port: input.sourcePort, label: "入口端口" });
+        } catch (error) {
+          return { used: true, reason: error instanceof Error ? error.message : "端口不可用" };
+        }
+        try {
           await db.validateForwardGroupRuleConfig(input.forwardGroupId, {
             sourcePort: input.sourcePort,
             protocol: input.protocol,
@@ -168,6 +175,11 @@ export const portsRulesRouter = router({
       }
       if (plan && !isPortAllowedByPolicy(input.sourcePort, effective)) {
         return { used: true, reason: portPolicyErrorMessage(effective, "套餐端口") };
+      }
+      try {
+        await assertTenantListenPortAllowedOnHosts({ actor: ctx.user, hostIds: [hostId], port: input.sourcePort, label: "源端口" });
+      } catch (error) {
+        return { used: true, reason: error instanceof Error ? error.message : "端口不可用" };
       }
       const excludeRuleIds = input.excludeRuleId
         ? [

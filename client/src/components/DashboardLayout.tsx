@@ -81,6 +81,7 @@ import { useQueryFailureSignal } from "@/hooks/useQueryFailureSignal";
 import { queryFailureBannerText } from "@/lib/queryFailureBanner";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { authErrorMessage } from "@/lib/authErrorMessage";
 import { renderMixedHtml } from "@/lib/htmlContent";
 import { mobileAuth } from "@/lib/mobileAuth";
 import { openMobileReleasePage } from "@/lib/mobileNotifications";
@@ -871,7 +872,7 @@ function DashboardLayoutContent({
       utils.auth.twoFactorStatus.invalidate();
       utils.auth.me.invalidate();
     },
-    onError: (error) => toast.error(error.message || "启用双重验证失败"),
+    onError: (error) => toast.error(authErrorMessage(error.message, "启用双重验证失败")),
   });
 
   const disableTwoFactorMutation = trpc.auth.disableTwoFactor.useMutation({
@@ -882,7 +883,7 @@ function DashboardLayoutContent({
       utils.auth.twoFactorStatus.invalidate();
       utils.auth.me.invalidate();
     },
-    onError: (error) => toast.error(error.message || "关闭双重验证失败"),
+    onError: (error) => toast.error(authErrorMessage(error.message, "关闭双重验证失败")),
   });
 
   useEffect(() => {

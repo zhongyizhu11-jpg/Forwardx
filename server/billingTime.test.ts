@@ -12,7 +12,27 @@ import {
   billingMonthStart,
   billingMonthlyBoundary,
   billingStartOfCalendarDay,
+  formatBillingDateInput,
+  parseBillingDateInput,
+  parseBillingExpiryInput,
 } from "../shared/billingTime";
+
+test("expiry date inputs are interpreted as the start of the day in the billing time zone", () => {
+  // 选 10 月 1 日 = 北京时间 10-01 00:00，而不是 UTC 零点（北京 08:00，西半球读回来是 9 月 30 日）。
+  assert.equal(parseBillingDateInput("2026-10-01")?.toISOString(), "2026-09-30T16:00:00.000Z");
+  assert.equal(parseBillingExpiryInput("2026-10-01")?.toISOString(), "2026-09-30T16:00:00.000Z");
+  assert.equal(parseBillingExpiryInput("2026-10-01T04:05:06.000Z")?.toISOString(), "2026-10-01T04:05:06.000Z");
+  assert.equal(parseBillingExpiryInput("not-a-date"), undefined);
+  assert.equal(parseBillingDateInput("2026-02-30"), null);
+  assert.equal(parseBillingDateInput(""), null);
+
+  // 读回来按计费时区取日期：新值、旧值（UTC 零点）都显示成同一天。
+  assert.equal(formatBillingDateInput(parseBillingDateInput("2026-10-01")), "2026-10-01");
+  assert.equal(formatBillingDateInput(new Date("2026-10-01")), "2026-10-01");
+  assert.equal(formatBillingDateInput("2026-10-01T00:00:00.000Z"), "2026-10-01");
+  assert.equal(formatBillingDateInput(null), "");
+  assert.equal(formatBillingDateInput("garbage"), "");
+});
 
 test("billing calendar boundaries use Asia/Shanghai instead of the process time zone", () => {
   const reference = new Date("2026-08-03T02:00:00.000Z");

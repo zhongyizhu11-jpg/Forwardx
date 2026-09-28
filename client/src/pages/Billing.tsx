@@ -355,6 +355,29 @@ export default function Billing() {
     onError: (error) => toast.error(error.message || "删除失败"),
   });
 
+  // 单个删除也要确认：兑换码、折扣码往往已经发给了用户，误删后对方手里的码直接作废。
+  const confirmDeleteRedemptionCode = async (code: any) => {
+    if (deleteRedemptionCode.isPending) return;
+    const confirmed = await confirmDialog({
+      title: "删除兑换码",
+      description: `确认删除兑换码「${code.code}」？已发出去的码删除后将无法再兑换；已经完成的兑换记录不受影响。`,
+      confirmText: "删除",
+      tone: "destructive",
+    });
+    if (confirmed) deleteRedemptionCode.mutate({ id: code.id });
+  };
+
+  const confirmDeleteDiscountCode = async (code: any) => {
+    if (deleteDiscountCode.isPending) return;
+    const confirmed = await confirmDialog({
+      title: "删除折扣码",
+      description: `确认删除折扣码「${code.code}」？删除后用户将无法再使用它；已经下单的优惠不受影响。`,
+      confirmText: "删除",
+      tone: "destructive",
+    });
+    if (confirmed) deleteDiscountCode.mutate({ id: code.id });
+  };
+
   const validateWindow = (startsAt: string, expiresAt: string) => {
     if (startsAt && expiresAt && parseLocalTime(expiresAt) <= parseLocalTime(startsAt)) {
       toast.error("失效时间必须晚于生效时间");
@@ -901,7 +924,7 @@ export default function Billing() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
                               <p className="min-w-0 break-all font-mono text-sm font-medium">{code.code}</p>
-                              <Button variant="ghost" size="icon" aria-label="删除兑换码" className="-mr-2 -mt-2 shrink-0 text-destructive" onClick={() => deleteRedemptionCode.mutate({ id: code.id })}>
+                              <Button variant="ghost" size="icon" aria-label="删除兑换码" className="-mr-2 -mt-2 shrink-0 text-destructive" disabled={deleteRedemptionCode.isPending} onClick={() => void confirmDeleteRedemptionCode(code)}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
@@ -932,7 +955,7 @@ export default function Billing() {
                         <TableCell>{code.type === "plan" ? `${code.planName || `套餐 #${code.planId}`} / ${code.durationDays || 30} 天` : money(code.amountCents)}</TableCell>
                         <TableCell>{dateText(code.startsAt)} - {dateText(code.expiresAt)}</TableCell>
                         <TableCell>{code.usedAt ? `${code.usedByUsername || code.usedByUserId} 于 ${dateText(code.usedAt)}` : "未使用"}</TableCell>
-                        <TableCell className="text-right"><Button variant="ghost" size="icon" aria-label="删除兑换码" className="text-destructive" onClick={() => deleteRedemptionCode.mutate({ id: code.id })}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                        <TableCell className="text-right"><Button variant="ghost" size="icon" aria-label="删除兑换码" className="text-destructive" disabled={deleteRedemptionCode.isPending} onClick={() => void confirmDeleteRedemptionCode(code)}><Trash2 className="h-4 w-4" /></Button></TableCell>
                       </TableRow>
                     ))}
                     {filteredRedemptionCodes.length === 0 && (
@@ -1008,7 +1031,7 @@ export default function Billing() {
                       <div key={code.id} className="rounded-lg border border-border/50 bg-background/40 p-3">
                         <div className="flex items-start justify-between gap-2">
                           <p className="min-w-0 break-all font-mono text-sm font-medium">{code.code}</p>
-                          <Button variant="ghost" size="icon" aria-label="删除折扣码" className="-mr-2 -mt-2 shrink-0 text-destructive" onClick={() => deleteDiscountCode.mutate({ id: code.id })}>
+                          <Button variant="ghost" size="icon" aria-label="删除折扣码" className="-mr-2 -mt-2 shrink-0 text-destructive" disabled={deleteDiscountCode.isPending} onClick={() => void confirmDeleteDiscountCode(code)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -1040,7 +1063,7 @@ export default function Billing() {
                           <TableCell><Badge variant={status === "生效中" ? "default" : "secondary"}>{status}</Badge></TableCell>
                           <TableCell>{code.usedCount || 0} / {code.maxUses || "不限"}</TableCell>
                           <TableCell>{dateText(code.startsAt)} - {dateText(code.expiresAt)}</TableCell>
-                          <TableCell className="text-right"><Button variant="ghost" size="icon" aria-label="删除折扣码" className="text-destructive" onClick={() => deleteDiscountCode.mutate({ id: code.id })}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                          <TableCell className="text-right"><Button variant="ghost" size="icon" aria-label="删除折扣码" className="text-destructive" disabled={deleteDiscountCode.isPending} onClick={() => void confirmDeleteDiscountCode(code)}><Trash2 className="h-4 w-4" /></Button></TableCell>
                         </TableRow>
                       );
                     })}

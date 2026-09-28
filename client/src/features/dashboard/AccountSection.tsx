@@ -108,7 +108,9 @@ export function AccountSection({
 
   const footer = [
     quota?.sourcesText,
-    quota?.hasQuota && quota.autoResetDay ? `每月 ${quota.autoResetDay} 日自动重置。` : null,
+    quota?.hasQuota && quota.autoResetDay
+      ? `每月 ${quota.autoResetDay} 日自动重置${Number(quota.autoResetDay) > 28 ? "（小月在月末重置）" : ""}。`
+      : null,
   ].filter(Boolean).join("");
   const expiryColor = expiry?.tone === "danger"
     ? "var(--fx-down-text)"

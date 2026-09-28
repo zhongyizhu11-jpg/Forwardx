@@ -25,6 +25,10 @@ function callSites(source: string, mutation: string) {
 for (const [file, mutation] of [
   ["Plans.tsx", "deletePlan"],
   ["Settings.tsx", "clearLogsMutation"],
+  ["../components/TrafficBillingConfigManager.tsx", "deleteConfig"],
+  ["Billing.tsx", "deleteRedemptionCode"],
+  ["Billing.tsx", "deleteDiscountCode"],
+  ["Announcements.tsx", "deleteAnnouncement"],
 ] as const) {
   test(`${file}：${mutation} 只在确认之后调用`, () => {
     const sites = callSites(read(file), mutation);
@@ -33,5 +37,19 @@ for (const [file, mutation] of [
     for (const before of sites) {
       assert.match(before, /if \(confirmed\) $/, `调用前没有确认：…${before}`);
     }
+  });
+}
+
+// 删除按钮在请求进行中要禁用：确认弹窗之后网络慢，连点会发出多个删除请求。
+for (const [file, mutation] of [
+  ["../components/TrafficBillingConfigManager.tsx", "deleteConfig"],
+  ["Billing.tsx", "deleteRedemptionCode"],
+  ["Billing.tsx", "deleteDiscountCode"],
+  ["Announcements.tsx", "deleteAnnouncement"],
+] as const) {
+  test(`${file}：${mutation} 进行中时删除按钮禁用`, () => {
+    const source = read(file);
+    assert.match(source, new RegExp(`(disabled|deleting)=\\{${mutation}\\.isPending\\}`));
+    assert.match(source, new RegExp(`if \\(${mutation}\\.isPending\\) return;`));
   });
 }

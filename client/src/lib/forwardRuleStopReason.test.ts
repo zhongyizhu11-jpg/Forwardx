@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
+import { TRAFFIC_BILLING_BALANCE_BLOCK_REASON } from "../../../shared/const";
 import { resolveForwardRuleStopReason } from "./forwardRuleStatus";
+
+test("server writes the shared balance block reason (single source)", () => {
+  const server = fs.readFileSync(new URL("../../../server/trafficBillingRuleBlock.ts", import.meta.url), "utf8");
+  assert.match(server, /import \{ TRAFFIC_BILLING_BALANCE_BLOCK_REASON \} from "\.\.\/shared\/const";/);
+  assert.doesNotMatch(server, /TRAFFIC_BILLING_BALANCE_BLOCK_REASON = "/);
+});
 
 test("stop reason tells automatic stops apart from manual ones", () => {
   assert.equal(resolveForwardRuleStopReason({ isEnabled: true, disabledByTunnel: true }), null);
@@ -15,4 +23,12 @@ test("stop reason tells automatic stops apart from manual ones", () => {
   assert.equal(manual?.autoResume, false);
   assert.match(manual?.detail || "", /手动/);
   assert.equal(resolveForwardRuleStopReason({ isEnabled: false, protocolBlockReason: "端口冲突" })?.detail, "端口冲突");
+  assert.equal(resolveForwardRuleStopReason({ isEnabled: false, protocolBlockReason: "端口冲突" })?.autoResume, false);
+});
+
+test("traffic-billing balance blocks read as 余额不足 and resume automatically", () => {
+  const reason = resolveForwardRuleStopReason({ isEnabled: false, protocolBlockReason: TRAFFIC_BILLING_BALANCE_BLOCK_REASON });
+  assert.equal(reason?.label, "余额不足");
+  assert.equal(reason?.autoResume, true);
+  assert.equal(reason?.detail, TRAFFIC_BILLING_BALANCE_BLOCK_REASON);
 });

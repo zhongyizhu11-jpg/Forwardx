@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 
 import { billingCalendarParts, billingMonthlyBoundary, MONTHLY_RESET_MAX_DAY } from "./billingTime";
@@ -57,4 +58,12 @@ test("还没到重置日就不该触发", () => {
   const midMonth = new Date("2027-03-10T04:00:00Z");
   const boundary = billingMonthlyBoundary(midMonth, normalizeProxyNodeResetDay(31));
   assert.ok(midMonth.getTime() < boundary.getTime(), "3 月 10 号离月末还早，不能提前清零");
+});
+
+test("用户管理的重置日选择不再卡在 28 号", () => {
+  const source = fs.readFileSync(new URL("../client/src/pages/Users.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /length: 28\b/);
+  assert.doesNotMatch(source, /\.day, 28\)/);
+  assert.match(source, /Array\.from\(\{ length: MONTHLY_RESET_MAX_DAY \}/);
+  assert.match(source, /小月在月末重置/);
 });

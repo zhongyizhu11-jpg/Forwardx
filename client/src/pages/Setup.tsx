@@ -30,6 +30,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
+import { authErrorMessage } from "@/lib/authErrorMessage";
 import { type PanelMigrationScope } from "@shared/panelMigration";
 
 type DatabaseType = "mysql" | "postgresql" | "sqlite";
@@ -189,7 +190,7 @@ export default function Setup() {
       toast.success("数据库已初始化");
       setStep(2);
     },
-    onError: (error) => toast.error(error.message || "数据库连接失败"),
+    onError: (error) => toast.error(authErrorMessage(error.message, "数据库连接失败")),
   });
 
   const createAdmin = trpc.setup.createAdmin.useMutation({
@@ -198,7 +199,7 @@ export default function Setup() {
       await utils.setup.status.invalidate();
       window.location.href = "/login";
     },
-    onError: (error) => toast.error(error.message || "创建管理员失败"),
+    onError: (error) => toast.error(authErrorMessage(error.message, "创建管理员失败")),
   });
 
   const updateAdmin = trpc.setup.updateAdmin.useMutation({
@@ -207,7 +208,7 @@ export default function Setup() {
       await utils.setup.status.invalidate();
       window.location.href = "/login";
     },
-    onError: (error) => toast.error(error.message || "更新管理员失败"),
+    onError: (error) => toast.error(authErrorMessage(error.message, "更新管理员失败")),
   });
 
   const startMigration = trpc.setup.startMigration.useMutation({
@@ -215,7 +216,7 @@ export default function Setup() {
       setJobId(job.id);
       toast.success("迁移任务已开始");
     },
-    onError: (error) => toast.error(error.message || "启动迁移失败"),
+    onError: (error) => toast.error(authErrorMessage(error.message, "启动迁移失败")),
   });
 
   const useExistingData = trpc.setup.useExistingData.useMutation({
@@ -224,7 +225,7 @@ export default function Setup() {
       await utils.setup.status.invalidate();
       window.location.href = "/login";
     },
-    onError: (error) => toast.error(error.message || "使用旧数据失败"),
+    onError: (error) => toast.error(authErrorMessage(error.message, "使用旧数据失败")),
   });
 
   const resetExistingData = trpc.setup.resetExistingData.useMutation({
@@ -234,7 +235,7 @@ export default function Setup() {
       setMode("new");
       setStep(3);
     },
-    onError: (error) => toast.error(error.message || "清空旧数据失败"),
+    onError: (error) => toast.error(authErrorMessage(error.message, "清空旧数据失败")),
   });
 
   const migrationStatus = trpc.setup.migrationStatus.useQuery(

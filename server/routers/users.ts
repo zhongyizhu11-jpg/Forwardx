@@ -4,6 +4,7 @@ import { z } from "zod";
 import * as db from "../db";
 import { FORWARD_TYPES } from "../../shared/forwardTypes";
 import { isValidAvatarValue } from "../../shared/avatar";
+import { parseBillingExpiryInput } from "../../shared/billingTime";
 import { ensureAdminOrSelf, refreshUserForwardEndpoints } from "./helpers";
 import { clearLinkAccessScopeCache } from "../linkAccessView";
 import { getEmailConfig, sendMail } from "../email";
@@ -447,7 +448,10 @@ export const usersRouter = router({
           delete data.maxIPs;
         }
         if (expiresAt !== undefined) {
-          data.manualExpiresAt = expiresAt ? new Date(expiresAt) : null;
+          // 表单传的是 YYYY-MM-DD：按计费时区当天零点，不能 new Date() 成 UTC 零点（跨时区会差一天）。
+          const parsedExpiresAt = expiresAt ? parseBillingExpiryInput(expiresAt) : null;
+          if (parsedExpiresAt === undefined) throw new Error("到期日期无效");
+          data.manualExpiresAt = parsedExpiresAt;
         }
         if (allowedForwardTypes !== undefined) {
           // null 表示全部允许；空字符串表示全部禁用。

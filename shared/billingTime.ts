@@ -150,3 +150,42 @@ export function billingMonthlyBoundary(
   const day = Math.min(requested, maximum, billingDaysInMonth(year, month));
   return billingStartOfDay(year, month, day);
 }
+
+/**
+ * 「到期日期」输入框（YYYY-MM-DD）和存下来的时间点之间的换算，统一按面板计费时区。
+ *
+ * 选「2026-10-01」表示在计费时区的 2026-10-01 00:00 到期 —— 和套餐延期一致。
+ * 以前服务端 `new Date("2026-10-01")` 取的是 UTC 零点（北京时间 08:00），浏览器再按本地时区
+ * 读回来，西半球的管理员会看到前一天。旧数据（UTC 零点）按计费时区读仍是同一天，照样有效。
+ */
+export function parseBillingDateInput(value: unknown): Date | null {
+  const text = String(value ?? "").trim();
+  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > billingDaysInMonth(year, month)) return null;
+  return billingStartOfDay(year, month, day);
+}
+
+/** 时间点 → 计费时区下的 YYYY-MM-DD；空值或无效值返回空串。 */
+export function formatBillingDateInput(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  const date = value instanceof Date ? value : new Date(value as string | number);
+  const time = date.getTime();
+  if (!Number.isFinite(time) || time <= 0) return "";
+  const { year, month, day } = billingCalendarParts(date);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/**
+ * 服务端接收「到期时间」：纯日期按计费时区当天零点，完整的 ISO 时间点原样使用。
+ * 无法解析时返回 undefined，由调用方报错。
+ */
+export function parseBillingExpiryInput(value: string): Date | undefined {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(text)) return parseBillingDateInput(text) ?? undefined;
+  const date = new Date(text);
+  return Number.isFinite(date.getTime()) ? date : undefined;
+}

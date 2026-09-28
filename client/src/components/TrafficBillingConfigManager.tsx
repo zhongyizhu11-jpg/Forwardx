@@ -10,6 +10,7 @@ import { formatMoneyCents as money } from "@shared/formatMoney";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -198,10 +199,12 @@ function BillingConfigCard({
   config,
   onEdit,
   onDelete,
+  deleting = false,
 }: {
   config: any;
   onEdit: () => void;
   onDelete: () => void;
+  deleting?: boolean;
 }) {
   return (
     <div className="rounded-lg border border-border/50 bg-background/40 p-3">
@@ -214,7 +217,7 @@ function BillingConfigCard({
           <Button variant="ghost" size="icon" aria-label={`编辑 ${config.resourceName}`} className="h-8 w-8" onClick={onEdit}>
             <Pencil className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" aria-label={`删除 ${config.resourceName}`} className="h-8 w-8 text-destructive" onClick={onDelete}>
+          <Button variant="ghost" size="icon" aria-label={`删除 ${config.resourceName}`} className="h-8 w-8 text-destructive" disabled={deleting} onClick={onDelete}>
             <Trash2 className="h-4 w-4" />
           </Button>
         </div>
@@ -315,6 +318,19 @@ export default function TrafficBillingConfigManager({
     },
     onError: (error) => toast.error(error.message || "删除失败"),
   });
+  const confirmDialog = useConfirmDialog();
+  // 删掉计费配置后，靠它按量授权的用户会立刻失去这个资源，相关转发规则会被停用 —— 不能点一下就删。
+  const confirmDeleteConfig = (config: any) => {
+    if (deleteConfig.isPending) return;
+    void confirmDialog({
+      title: `删除「${config.resourceName}」的计费配置`,
+      description: "删除后用户不能再按量使用这个资源，已经靠它按量计费的用户，相关转发规则会被停用。只是暂时不想开放的话，编辑配置把它停用即可。",
+      confirmText: "删除",
+      tone: "destructive",
+    }).then((confirmed) => {
+      if (confirmed) deleteConfig.mutate({ id: config.id });
+    });
+  };
 
   const openCreate = () => {
     setConfigForm(defaultBillingConfigForm());
@@ -451,7 +467,8 @@ export default function TrafficBillingConfigManager({
                       key={config.id}
                       config={config}
                       onEdit={() => openEdit(config)}
-                      onDelete={() => deleteConfig.mutate({ id: config.id })}
+                      onDelete={() => confirmDeleteConfig(config)}
+                      deleting={deleteConfig.isPending}
                     />
                   ))}
                   {(data?.configs || []).length === 0 && (
@@ -483,7 +500,7 @@ export default function TrafficBillingConfigManager({
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-1">
                               <Button variant="ghost" size="icon" aria-label={`编辑 ${config.resourceName}`} onClick={() => openEdit(config)}><Pencil className="h-4 w-4" /></Button>
-                              <Button variant="ghost" size="icon" aria-label={`删除 ${config.resourceName}`} className="text-destructive" onClick={() => deleteConfig.mutate({ id: config.id })}><Trash2 className="h-4 w-4" /></Button>
+                              <Button variant="ghost" size="icon" aria-label={`删除 ${config.resourceName}`} className="text-destructive" disabled={deleteConfig.isPending} onClick={() => confirmDeleteConfig(config)}><Trash2 className="h-4 w-4" /></Button>
                             </div>
                           </TableCell>
                         </TableRow>

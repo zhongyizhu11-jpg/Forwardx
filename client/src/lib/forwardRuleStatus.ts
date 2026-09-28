@@ -1,4 +1,5 @@
 import { isLinkProbeFresh } from "@shared/linkProbePolicy";
+import { TRAFFIC_BILLING_BALANCE_BLOCK_REASON } from "@shared/const";
 
 export type ForwardRuleVisualState = "disabled" | "running" | "pending" | "error";
 
@@ -127,8 +128,13 @@ export function resolveForwardRuleStopReason(rule: {
   if (truthy(rule.disabledByGroup)) {
     return { label: "资源停用", detail: "所属转发资源已停用，重新启用后规则自动恢复", autoResume: true };
   }
-  if (String(rule.protocolBlockReason || "").trim()) {
-    return { label: "已停用", detail: String(rule.protocolBlockReason).trim(), autoResume: false };
+  const blockReason = String(rule.protocolBlockReason || "").trim();
+  if (blockReason === TRAFFIC_BILLING_BALANCE_BLOCK_REASON) {
+    // 余额回到正数（充值、管理员加余额）后面板会自动恢复这些规则，不用一条条手动打开。
+    return { label: "余额不足", detail: blockReason, autoResume: true };
+  }
+  if (blockReason) {
+    return { label: "已停用", detail: blockReason, autoResume: false };
   }
   return { label: "已停用", detail: "规则已手动关闭，打开开关即可恢复", autoResume: false };
 }
