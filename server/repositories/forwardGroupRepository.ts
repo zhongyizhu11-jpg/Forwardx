@@ -3653,6 +3653,19 @@ export async function replaceForwardGroupMembers(
   }
 }
 
+/** 把这个组当入口组 / 出口组用的隧道，以及把它当入口组的转发链。 */
+export async function getForwardGroupEndpointReferences(groupId: number) {
+  const db = await getDb();
+  if (!db) return { tunnels: [] as any[], chains: [] as any[] };
+  const [tunnelRows, chainRows] = await Promise.all([
+    db.select({ id: tunnels.id, name: tunnels.name }).from(tunnels)
+      .where(or(eq(tunnels.entryGroupId, groupId), eq(tunnels.exitGroupId, groupId))),
+    db.select({ id: forwardGroups.id, name: forwardGroups.name }).from(forwardGroups)
+      .where(and(eq(forwardGroups.entryGroupId, groupId), sql`${forwardGroups.id} <> ${groupId}`)),
+  ]);
+  return { tunnels: tunnelRows as any[], chains: chainRows as any[] };
+}
+
 export async function deleteForwardGroup(id: number) {
   const db = await getDb();
   const childRules = await getForwardGroupChildRules(id);
