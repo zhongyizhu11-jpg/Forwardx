@@ -224,6 +224,7 @@ import {
 import {
   preferLastKnownForwardRuleVisualStatus,
   resolveForwardRuleVisualStatus,
+  resolveForwardRuleStopReason,
 } from "@/lib/forwardRuleStatus";
 import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { useUrlTab } from "@/hooks/useUrlTab";
@@ -6550,6 +6551,12 @@ function RulesContent() {
               {rule.protocolBlockReason || revokedResourceTitle}
             </span>
           )}
+          {(() => {
+            const stop = !rule.protocolBlockReason && rule.resourceAccessAllowed !== false ? resolveForwardRuleStopReason(rule) : null;
+            return stop?.autoResume ? (
+              <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">{stop.detail}</span>
+            ) : null;
+          })()}
         </TableCell>
         {user?.role === "admin" && (
           <TableCell className="px-3 py-2">
@@ -6664,7 +6671,8 @@ function RulesContent() {
     } else if (visual?.state === "error") {
       tag = <span className="fx-rule-tag" data-tone="down" title={visual.title}>{visual.title}</span>;
     } else if (visual?.state === "disabled") {
-      tag = <span className="fx-rule-tag" data-tone="off">已停用</span>;
+      const stop = resolveForwardRuleStopReason(rule);
+      tag = <span className="fx-rule-tag" data-tone="off" title={stop?.detail || "规则已停用"}>{stop?.label || "已停用"}</span>;
     } else {
       const probe = stableProbeByRule.get(Number(rule.id));
       if (probe?.latestLatencyAt) {
@@ -6772,6 +6780,12 @@ function RulesContent() {
               {rule.protocolBlockReason || revokedResourceTitle}
             </div>
           )}
+          {(() => {
+            const stop = !rule.protocolBlockReason && rule.resourceAccessAllowed !== false ? resolveForwardRuleStopReason(rule) : null;
+            return stop?.autoResume ? (
+              <div className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{stop.detail}</div>
+            ) : null;
+          })()}
 
           <div className="fx-rule-path" title={`${entryAddresses.map((entry) => entry.text).join(" / ")} → ${targetAddress}`}>
             {/* 入口和目标都是点一下就复制（用户要的）；小复制图标常驻，不用悬停才显出来 */}

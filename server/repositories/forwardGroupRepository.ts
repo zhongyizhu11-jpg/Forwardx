@@ -64,6 +64,7 @@ import {
   reserveTunnelExitPort,
   resetForwardRulesByTunnel,
   restoreForwardRulesByTunnel,
+  forwardRuleOwnerAllowsRuntime,
   syncTunnelExitGroupEndpoints,
   updateTunnel,
   usesSharedTunnelPrimaryListener,
@@ -2526,6 +2527,7 @@ async function disableForwardRulesByGroupIds(groupIds: number[], reason: string)
   ));
   const controlledIds = controlledRules.map((rule) => Number(rule.id || 0)).filter((id) => id > 0);
   if (controlledIds.length > 0) {
+    appendPanelLog("warn", `[RuleStop] forward groups=${ids.join(",")} stopped ${controlledIds.length} rule(s) reason=${reason}; they resume automatically when the group is enabled again`);
     await db.update(forwardRules).set({
       isEnabled: false,
       isRunning: false,
@@ -2537,7 +2539,7 @@ async function disableForwardRulesByGroupIds(groupIds: number[], reason: string)
   return controlledIds.length;
 }
 
-async function restoreForwardRulesByGroupId(groupId: number, reason: string) {
+export async function restoreForwardRulesByGroupId(groupId: number, reason: string) {
   const group = await getForwardGroupById(groupId) as any;
   if (!group || !(await forwardGroupRuntimeDependenciesEnabled(group))) return 0;
   const db = await getDb();
@@ -2549,7 +2551,9 @@ async function restoreForwardRulesByGroupId(groupId: number, reason: string) {
   ));
   for (const rule of rules as any[]) {
     const isTemplate = dbBool(rule.isForwardGroupTemplate);
+    const ownerAllowed = !isTemplate || await forwardRuleOwnerAllowsRuntime(rule.userId);
     const canEnableTemplate = isTemplate
+      && ownerAllowed
       && !dbBool(rule.disabledByTunnel)
       && !dbBool(rule.disabledByUser)
       && !String(rule.protocolBlockReason || "").trim();
@@ -2557,9 +2561,11 @@ async function restoreForwardRulesByGroupId(groupId: number, reason: string) {
       isEnabled: canEnableTemplate,
       isRunning: false,
       disabledByGroup: false,
+      ...(ownerAllowed ? {} : { disabledByUser: true }),
       updatedAt: nowDate(),
     } as any).where(eq(forwardRules.id, Number(rule.id)));
   }
+  if (rules.length > 0) appendPanelLog("info", `[RuleStop] forward group=${groupId} resumed ${rules.length} rule(s) reason=${reason}`);
   await syncForwardGroupRules(groupId);
   await refreshControlledForwardRules(rules as any[], reason);
   return rules.length;
@@ -2598,7 +2604,7 @@ async function setTunnelsEnabledByGroup(groupId: number, groupMode: "entry" | "e
           isRunning: false,
           disabledByGroup: true,
         } as any);
-        await disableForwardRulesByTunnel(tunnelId);
+        await disableForwardRulesByTunnel(tunnelId, `${groupMode}-group-${groupId}-disabled`);
         await refreshControlledTunnelRuntime({ ...tunnel, isEnabled: false, disabledByGroup: true }, `${groupMode}-group-disabled`, { resetRules: true });
         changed += 1;
         return;
@@ -2615,6 +2621,77 @@ async function setTunnelsEnabledByGroup(groupId: number, groupMode: "entry" | "e
     });
   }
   return changed;
+}
+
+/**
+ * 自愈：被系统（隧道停用、转发资源停用）连带停掉的规则，原因消除了就自己恢复。
+ *
+ * 正常情况下，开隧道 / 开资源那一步已经把规则拉回来了。这里兜的是「那一步没走完」
+ * 的情况：面板在中途重启、某次恢复抛了错、并发把标记写乱了 —— 以前一旦漏掉，
+ * 一整条隧道的规则就停在那里，只能一条条手动开。手动关掉的规则不带这些标记，
+ * 这里不会碰。
+ */
+export async function healAutoStoppedForwardRules(reason = "auto-heal") {
+  const db = await getDb();
+  if (!db) return { tunnels: 0, tunnelRules: 0, groupRules: 0 };
+  let healedTunnels = 0;
+  let tunnelRules = 0;
+  let groupRules = 0;
+
+  // 1) 被入口/出口组连带停掉的隧道：组已经重新启用，隧道自己回来。
+  const groupStoppedTunnels = await db.select().from(tunnels).where(and(
+    eq(tunnels.disabledByGroup, true),
+    eq(tunnels.isEnabled, false),
+  ));
+  for (const row of groupStoppedTunnels as any[]) {
+    const tunnelId = Number(row.id || 0);
+    if (tunnelId <= 0) continue;
+    await withKeyedTaskLock(`tunnel:${tunnelId}`, async () => {
+      const tunnel = await getTunnelById(tunnelId) as any;
+      if (!tunnel || dbBool(tunnel.isEnabled) || !dbBool(tunnel.disabledByGroup)) return;
+      if (!(await tunnelGroupDependenciesEnabled(tunnel))) return;
+      await updateTunnel(tunnelId, { isEnabled: true, isRunning: false, disabledByGroup: false } as any);
+      tunnelRules += await restoreForwardRulesByTunnel(tunnelId) || 0;
+      await refreshControlledTunnelRuntime({ ...tunnel, isEnabled: true, disabledByGroup: false }, `${reason}-tunnel-group-restored`, { resetRules: true });
+      healedTunnels += 1;
+    });
+  }
+
+  // 2) 标着「因隧道停用而停」、隧道其实已经开着的规则。
+  const tunnelStopped = await db.select({ tunnelId: forwardRules.tunnelId }).from(forwardRules).where(and(
+    eq(forwardRules.disabledByTunnel, true),
+    eq(forwardRules.pendingDelete, false),
+    sql`${forwardRules.tunnelId} IS NOT NULL`,
+  ));
+  const tunnelIds = Array.from(new Set((tunnelStopped as any[]).map((row) => Number(row.tunnelId || 0)).filter((id) => id > 0)));
+  for (const tunnelId of tunnelIds) {
+    await withKeyedTaskLock(`tunnel:${tunnelId}`, async () => {
+      const tunnel = await getTunnelById(tunnelId) as any;
+      if (!tunnel || !dbBool(tunnel.isEnabled) || dbBool(tunnel.disabledByGroup)) return;
+      if (!(await tunnelGroupDependenciesEnabled(tunnel))) return;
+      const restored = await restoreForwardRulesByTunnel(tunnelId) || 0;
+      tunnelRules += restored;
+      await refreshControlledTunnelRuntime(tunnel, `${reason}-tunnel-rules-restored`, { resetRules: true });
+    });
+  }
+
+  // 3) 标着「因转发资源停用而停」、资源其实已经启用的规则。
+  const groupStopped = await db.select({ groupId: forwardRules.forwardGroupId }).from(forwardRules).where(and(
+    eq(forwardRules.disabledByGroup, true),
+    eq(forwardRules.pendingDelete, false),
+    sql`${forwardRules.forwardGroupId} IS NOT NULL`,
+  ));
+  const groupIds = Array.from(new Set((groupStopped as any[]).map((row) => Number(row.groupId || 0)).filter((id) => id > 0)));
+  for (const groupId of groupIds) {
+    const group = await getForwardGroupById(groupId) as any;
+    if (!group || !dbBool(group.isEnabled)) continue;
+    groupRules += await restoreForwardRulesByGroupId(groupId, `${reason}-group-rules-restored`);
+  }
+
+  if (healedTunnels + tunnelRules + groupRules > 0) {
+    appendPanelLog("info", `[RuleRecovery] ${reason}: tunnels=${healedTunnels} tunnelRules=${tunnelRules} groupRules=${groupRules} resumed after their cause cleared`);
+  }
+  return { tunnels: healedTunnels, tunnelRules, groupRules };
 }
 
 export async function setForwardGroupEnabled(groupId: number, isEnabled: boolean) {

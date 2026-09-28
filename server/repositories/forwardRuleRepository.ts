@@ -84,6 +84,28 @@ export async function getForwardRules(userId?: number, hostId?: number) {
 }
 
 
+/** 名下有带这条停用原因的规则的用户（自愈扫描用）。 */
+export async function getUserIdsWithRuleBlockReason(reason: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({ userId: forwardRules.userId }).from(forwardRules).where(and(
+    eq(forwardRules.protocolBlockReason, reason),
+    eq(forwardRules.pendingDelete, false),
+  )).groupBy(forwardRules.userId);
+  return (rows as any[]).map((row) => Number(row.userId || 0)).filter((id) => Number.isInteger(id) && id > 0);
+}
+
+/** 名下有「因账户暂停而停」规则的用户（自愈扫描用）。 */
+export async function getUserIdsWithAccessPausedRules() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({ userId: forwardRules.userId }).from(forwardRules).where(and(
+    eq(forwardRules.disabledByUser, true),
+    eq(forwardRules.pendingDelete, false),
+  )).groupBy(forwardRules.userId);
+  return (rows as any[]).map((row) => Number(row.userId || 0)).filter((id) => Number.isInteger(id) && id > 0);
+}
+
 export type ForwardRuleListCategory = "all" | "local" | "tunnel" | "chain" | "group";
 /**
  * A concrete link resource selected by the Rules page's two-level filter.

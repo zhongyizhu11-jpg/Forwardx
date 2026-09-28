@@ -989,6 +989,13 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     for (const { rule, ruleBytes, billingResource } of billingEntries) {
       strictTrafficAccounting = true;
       const user = await db.getUserById(Number(rule.userId));
+      if (String((user as any)?.role || "") === "admin") {
+        // 管理员用自己的资源不计费，也不会因为余额为 0 被停转发；流量照常记进配额统计。
+        const context = contextsByRuleId.get(Number(rule.id)) as any;
+        const quotaBytes = applyTrafficMultiplier(ruleBytes, quotaTrafficMultiplierForRule(rule, context?.tunnel, context?.group));
+        quotaTrafficByUser.set(rule.userId, (quotaTrafficByUser.get(rule.userId) || 0) + quotaBytes);
+        continue;
+      }
       if (user && Number((user as any).balanceCents || 0) <= 0) {
         console.warn(`[TrafficBilling] user=${rule.userId} balance unavailable, disabling rules`);
         await db.setUserForwardAccess(rule.userId, false, "traffic_billing_balance");

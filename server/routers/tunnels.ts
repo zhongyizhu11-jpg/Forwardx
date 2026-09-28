@@ -1642,7 +1642,7 @@ export const tunnelsRouter = router({
           if (dbBool((data as any).isEnabled)) {
             await db.restoreForwardRulesByTunnel(id);
           } else {
-            await db.disableForwardRulesByTunnel(id);
+            await db.disableForwardRulesByTunnel(id, `tunnel-switched-off-by-user-${ctx.user.id}`);
           }
         }
         if (keyChanged) {

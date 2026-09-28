@@ -8,7 +8,7 @@ import { runForwardGroupFailover, syncForwardGroupRules } from "./forwardGroupRe
 import { getTunnelById, getTunnelExitNodes, getTunnelHops, updateTunnel } from "./tunnelRepository";
 import { getUserById, type ForwardAccessPauseReason } from "./userRepository";
 
-type RuntimeGroupState = {
+export type RuntimeGroupState = {
   isEnabled: boolean;
   groupMode: string;
   entryGroupId: number | null;
@@ -90,7 +90,7 @@ async function addEndpointGroupHostIds(
   }
 }
 
-async function ruleRuntimeControlState(rule: any, groupCache: Map<number, RuntimeGroupState | null>) {
+export async function ruleRuntimeControlState(rule: any, groupCache: Map<number, RuntimeGroupState | null> = new Map()) {
   let blockedByGroup = enabled(rule.disabledByGroup);
   let blockedByTunnel = enabled(rule.disabledByTunnel);
   const groupId = Number(rule.forwardGroupId || 0);
