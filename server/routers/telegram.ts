@@ -15,7 +15,8 @@ import { consumeTelegramWidgetLoginOnce } from "../telegramWidgetSecurity";
 import { consumeTelegramWebAppLoginChallenge } from "../telegramWebAppLogin";
 import { SESSION_TOKEN_TTL_MS, SESSION_TOKEN_TTL_SECONDS, stripSessionSensitiveFields, type SessionKind } from "../session";
 import { createLoginAuthSession } from "../loginSessionService";
-import { authRateLimitState, clearAuthAccountFailures, recordTwoFactorFailure } from "../authRateLimit";
+import { authRateLimitState, clearAuthAccountFailures, recordTwoFactorChallengeIssue, recordTwoFactorFailure, twoFactorChallengeIssueState } from "../authRateLimit";
+import { createTwoFactorChallenge } from "../twoFactorChallenges";
 
 const BIND_CODE_TTL_MS = 5 * 60 * 1000;
 const MOBILE_LOGIN_TTL_MS = 5 * 60 * 1000;
@@ -174,9 +175,34 @@ function verifyTelegramWidgetLogin(payload: z.infer<typeof telegramWidgetLoginSc
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
-async function issueTelegramSession(ctx: any, user: any, sessionKind: SessionKind, mobile?: boolean) {
+type TelegramTwoFactorRequired = {
+  twoFactorRequired: true;
+  username: string;
+  challengeId: string;
+  expiresInSeconds: number;
+};
+
+async function issueTelegramSession(ctx: any, user: any, sessionKind: SessionKind, mobile?: boolean): Promise<any> {
   if (user?.accountEnabled === false) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: ACCOUNT_DISABLED_ERR_MSG });
+  }
+  /*
+    开了双重验证的账户，Telegram 登录也要过 TOTP。以前 Telegram 的几种登录方式直接发会话：
+    谁控制了绑定的 Telegram 账号，谁就绕过了双重验证。这里和密码登录走同一套挑战，
+    前端拿到 twoFactorRequired 后弹出验证码输入，再调 auth.verifyTwoFactorLogin。
+  */
+  if ((await db.getSetting("twoFactorEnabled")) === "true" && user?.twoFactorEnabled && user?.twoFactorSecret) {
+    const ip = String(ctx?.req?.ip || ctx?.req?.socket?.remoteAddress || "unknown");
+    const limit = twoFactorChallengeIssueState(ip, user.username);
+    if (limit.limited) {
+      throw new TRPCError({
+        code: "TOO_MANY_REQUESTS",
+        message: `TWO_FACTOR_CHALLENGE_RATE_LIMITED:${Math.ceil(limit.retryAfterSeconds / 60)}`,
+      });
+    }
+    const challenge = createTwoFactorChallenge({ userId: user.id, username: user.username, mobile, ip });
+    recordTwoFactorChallengeIssue(ip, user.username);
+    return { twoFactorRequired: true, username: user.username, ...challenge } satisfies TelegramTwoFactorRequired;
   }
   const sid = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
   await createLoginAuthSession({
