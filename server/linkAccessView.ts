@@ -194,6 +194,74 @@ export function expandLinkAccessScope(input: LinkAccessClosureInput): LinkAccess
   };
 }
 
+/**
+ * 自己建的隧道，能不能用要看它经过的主机现在还能不能用。
+ *
+ * 隧道是用户拿着「主机授权」自己搭起来的：入口、出口、中转、额外出口都是管理员授权给他的机器。
+ * 授权收回之后，隧道这一行还是他的 —— 以前「自己的隧道」一律当可用，规则照跑，流量照样从那台
+ * 已经不归他用的机器上过。所以非管理员自己的隧道只在它用到的每一台主机（包括入口组里的主机
+ * 成员）都还在他的可用主机里时才算可用；另外被授权、套餐附带、计费授权的隧道不受这条影响，
+ * 那是管理员把整条隧道给了他。
+ *
+ * 查不到拓扑的隧道（那一轮查询失败）维持原样，和本文件其余「查询失败时自己的资源照常可用」一致。
+ */
+export function restrictOwnedTunnelUse(scope: LinkAccessScope, input: {
+  ownedTunnelIds: Iterable<unknown>;
+  grantedTunnelIds: Iterable<unknown>;
+  tunnels?: Iterable<any>;
+  tunnelHops?: Iterable<any>;
+  tunnelExitNodes?: Iterable<any>;
+  members?: Iterable<any> | null;
+}) {
+  const useTunnelIds = scope.useTunnelIds;
+  const useHostIds = scope.useHostIds;
+  if (!useTunnelIds || !useHostIds) return;
+  const granted = new Set(Array.from(input.grantedTunnelIds).map(positiveId).filter(Boolean));
+  const owned = Array.from(input.ownedTunnelIds).map(positiveId)
+    .filter((id) => id > 0 && !granted.has(id) && useTunnelIds.has(id));
+  if (owned.length === 0) return;
+  const tunnelsById = new Map<number, any>();
+  for (const tunnel of input.tunnels || []) {
+    const id = positiveId(tunnel?.id);
+    if (id > 0) tunnelsById.set(id, tunnel);
+  }
+  const extraHostIds = new Map<number, number[]>();
+  const addExtra = (tunnelId: unknown, hostId: unknown) => {
+    const tunnel = positiveId(tunnelId);
+    const host = positiveId(hostId);
+    if (!tunnel || !host) return;
+    const ids = extraHostIds.get(tunnel) || [];
+    ids.push(host);
+    extraHostIds.set(tunnel, ids);
+  };
+  for (const hop of input.tunnelHops || []) addExtra(hop?.tunnelId, hop?.hostId);
+  for (const exit of input.tunnelExitNodes || []) {
+    if (exit?.isEnabled !== undefined && !dbBool(exit.isEnabled, true)) continue;
+    addExtra(exit?.tunnelId, exit?.hostId);
+  }
+  const entryGroupHostIds = new Map<number, number[]>();
+  for (const member of input.members || []) {
+    if (member?.memberType !== "host" || !dbBool(member?.isEnabled, true)) continue;
+    const groupId = positiveId(member?.groupId);
+    const hostId = positiveId(member?.hostId);
+    if (!groupId || !hostId) continue;
+    const ids = entryGroupHostIds.get(groupId) || [];
+    ids.push(hostId);
+    entryGroupHostIds.set(groupId, ids);
+  }
+  for (const tunnelId of owned) {
+    const tunnel = tunnelsById.get(tunnelId);
+    if (!tunnel) continue;
+    const hostIds = [
+      positiveId(tunnel.entryHostId),
+      positiveId(tunnel.exitHostId),
+      ...(extraHostIds.get(tunnelId) || []),
+      ...(entryGroupHostIds.get(positiveId(tunnel.entryGroupId)) || []),
+    ].filter(Boolean);
+    if (hostIds.some((hostId) => !useHostIds.has(hostId))) useTunnelIds.delete(tunnelId);
+  }
+}
+
 async function loadLinkAccessScope(userId: number): Promise<LinkAccessScope> {
   const db = await getDb();
   if (!db) return { hostIds: new Set(), tunnelIds: new Set(), groupIds: new Set(), groupHostIds: new Map(), groupTunnelIds: new Map() };
@@ -230,6 +298,21 @@ async function loadLinkAccessScope(userId: number): Promise<LinkAccessScope> {
   const billingResourceIds = billingSnapshot.usableResourceIds;
   const topologyGroups = topologyGroupsResult.value;
   const topologyMembers = topologyMembersResult.value;
+  const finalizeScope = () => {
+    restrictOwnedTunnelUse(scope, {
+      ownedTunnelIds: (ownedTunnels as any[]).map((tunnel) => tunnel.id),
+      grantedTunnelIds: [
+        ...tunnelPermissions.map((row: any) => row.id),
+        ...subscriptionTunnelIds,
+        ...billingResourceIds.tunnelIds,
+      ],
+      tunnels: topologyTunnels as any[],
+      tunnelHops: topologyHops as any[],
+      tunnelExitNodes: topologyExits as any[],
+      members: topologyMembersResult.ok ? topologyMembers as any[] : null,
+    });
+    return scope;
+  };
   const scope = expandLinkAccessScope({
     hostIds: [
       ...(ownedHosts as any[]).map((host) => host.id),
@@ -283,7 +366,7 @@ async function loadLinkAccessScope(userId: number): Promise<LinkAccessScope> {
     }
     if (!topologyGroupsResult.ok || !topologyMembersResult.ok) {
       useIdsByType.forward_group.clear();
-      return scope;
+      return finalizeScope();
     }
     const groupsById = new Map((topologyGroups as any[]).map((group) => [positiveId(group?.id), group]));
     const membersByGroupId = new Map<number, any[]>();
@@ -317,7 +400,7 @@ async function loadLinkAccessScope(userId: number): Promise<LinkAccessScope> {
       if (groupHasDeniedBillingMember(groupId)) useIdsByType.forward_group.delete(groupId);
     }
   }
-  return scope;
+  return finalizeScope();
 }
 
 export function getLinkAccessScope(user: { id: number; role: string }): Promise<LinkAccessScope | null> {

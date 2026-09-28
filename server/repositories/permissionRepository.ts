@@ -165,7 +165,12 @@ export async function getUserRuleCount(userId: number): Promise<number> {
   return Number(r[0]?.count) || 0;
 }
 
-/** 获取某用户使用的端口数量（去重） */
+/**
+ * 获取某用户使用的端口数量（去重）。
+ *
+ * 线路组的中继规则算在内：它们是替这个用户在中转机上开的真实监听，一条规则最多能开出几十个。
+ * 规则数（getUserRuleCount）不算它们 —— 那是面板生成的，不是用户建的规则。
+ */
 export async function getUserPortCount(userId: number): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
@@ -173,7 +178,6 @@ export async function getUserPortCount(userId: number): Promise<number> {
     eq(forwardRules.userId, userId),
     eq(forwardRules.pendingDelete, false),
     sql`${forwardRules.forwardGroupRuleId} IS NULL`,
-    sql`${forwardRules.routeParentRuleId} IS NULL`,
   ));
   return Number(r[0]?.count) || 0;
 }

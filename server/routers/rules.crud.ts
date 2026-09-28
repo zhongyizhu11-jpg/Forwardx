@@ -70,6 +70,7 @@ import { ensureTunnelListenerPortPolicy, reserveTunnelExitPort, usesSharedTunnel
 import { trafficBillingUserLockKey, withKeyedTaskLock, withTrafficBillingUserLock } from "../keyedTaskLock";
 import { mapWithConcurrency } from "../asyncPool";
 import { reserveRuleCreateQuota, type RuleQuotaReservation } from "../ruleQuotaReservations";
+import { assertRuleTargetsAllowedForActor } from "../ruleTargetPolicy";
 
 /**
  * 规则行上的协议封禁三列永远写 false。
@@ -952,6 +953,46 @@ async function requireForwardAccessReady(userId: number, options?: { allowTraffi
 }
 
 /**
+ * 编辑之后规则是启用的、操作者又不是管理员：和开关那条路（toggleForwardRuleForActor）同一套检查。
+ * 不查的话，被暂停或已到期的用户把「启用」塞进一次编辑里提交，规则就又跑起来了。
+ */
+async function requireForwardAccessForEnabledRule(userId: number, isTrafficBillingResource: boolean) {
+  const owner = await requireForwardAccessReady(userId, { allowTrafficBillingRecovery: isTrafficBillingResource });
+  if (owner?.expiresAt && new Date(owner.expiresAt) <= new Date()) {
+    throw new Error("套餐已到期，请续费后再启用规则");
+  }
+}
+
+/**
+ * 线路组的中转要在每台中转机上占一个端口（一跳一条中继规则），这些端口算进用户的端口配额
+ * （maxPorts），不算规则数。以前完全不算：一条规则最多能在别人的中转机上开出几十个监听。
+ *
+ * 只在这次要**多开**中继时才拦：已经超额的老规则改个名字不该被卡住。
+ */
+export async function assertRouteRelayPortQuota(
+  actor: { id: number; role: string },
+  routePaths: unknown,
+  ruleId: number | null,
+) {
+  if (actor.role === "admin") return;
+  const hopCount = parseRoutePaths(routePaths).reduce((sum, path) => sum + path.hops.length, 0);
+  if (hopCount === 0) return;
+  const user = await db.getUserById(actor.id);
+  const maxPorts = Number((user as any)?.maxPorts || 0);
+  if (maxPorts <= 0) return;
+  const existing = ruleId
+    ? (await db.getRouteRelayRules(ruleId) as any[]).filter((row) => !dbBool(row?.pendingDelete)).length
+    : 0;
+  const extra = Math.max(0, hopCount - existing);
+  if (extra === 0) return;
+  const used = await db.getUserPortCount(actor.id);
+  const selfPort = ruleId ? 0 : 1;
+  if (used + selfPort + extra > maxPorts) {
+    throw new Error(`线路组的中转要在中转机上各占一个端口（这次还需要 ${extra} 个），超出了您的端口配额：已用 ${used}/${maxPorts}`);
+  }
+}
+
+/**
  * 走计费资源的规则，余额不足不许启用 / 新建。
  *
  * ruleShape 传入时按上报流量时计费用的同一套规则判断（转发组 → 隧道 → 入口主机）。
@@ -1716,6 +1757,8 @@ export async function createDirectForwardRuleForActor(
       targetIp: input.targetIp,
       targetPort: input.targetPort,
     });
+    await assertRuleTargetsAllowedForActor(actor, { targetIp: input.targetIp, ...failoverColumns }, { hostId, tunnel: selectedTunnelForRule });
+    await assertRouteRelayPortQuota(actor, failoverColumns.routePaths, null);
     const { routeGroup: _routeGroupInput, ...ruleInput } = input;
     const id = await db.createForwardRule({
       ...ruleInput,
@@ -1922,6 +1965,19 @@ export const crudRulesRouter = router({
           });
         }
         await requireRuleProtocolEnabled({ forwardType, tunnelId: null });
+        const templateFailoverColumns = normalizeFailoverInput({
+          ...input,
+          failoverEnabled: createFailoverEnabled,
+          failoverTargets: createFailoverEnabled ? input.failoverTargets : [],
+          failoverProbeTarget: createFailoverEnabled ? input.failoverProbeTarget : null,
+          failoverSchedule: createFailoverEnabled ? input.failoverSchedule : null,
+          failoverMinHoldSeconds: createFailoverEnabled ? input.failoverMinHoldSeconds : 0,
+          failoverPinnedIndex: createFailoverEnabled ? input.failoverPinnedIndex : null,
+          failoverPinnedUntil: createFailoverEnabled ? input.failoverPinnedUntil : null,
+          failoverPreferFastest: createFailoverEnabled ? input.failoverPreferFastest : false,
+          routeGroup: createFailoverEnabled ? input.routeGroup : null,
+        }, input.protocol, { allowHops: false, targetIp: input.targetIp, targetPort: input.targetPort });
+        await assertRuleTargetsAllowedForActor(ctx.user, { targetIp: input.targetIp, ...templateFailoverColumns }, { forwardGroupId });
         const createTemplateRule = () => db.createForwardRule({
           hostId,
           name: ruleName,
@@ -1956,18 +2012,7 @@ export const crudRulesRouter = router({
             isForwardChain,
             { tunnelRoute: !isForwardChain && (group as any).groupType === "tunnel", forwardxTunnel: false, clearUnsupported: true },
           ),
-          ...normalizeFailoverInput({
-            ...input,
-            failoverEnabled: createFailoverEnabled,
-            failoverTargets: createFailoverEnabled ? input.failoverTargets : [],
-            failoverProbeTarget: createFailoverEnabled ? input.failoverProbeTarget : null,
-            failoverSchedule: createFailoverEnabled ? input.failoverSchedule : null,
-            failoverMinHoldSeconds: createFailoverEnabled ? input.failoverMinHoldSeconds : 0,
-            failoverPinnedIndex: createFailoverEnabled ? input.failoverPinnedIndex : null,
-            failoverPinnedUntil: createFailoverEnabled ? input.failoverPinnedUntil : null,
-            failoverPreferFastest: createFailoverEnabled ? input.failoverPreferFastest : false,
-            routeGroup: createFailoverEnabled ? input.routeGroup : null,
-          }, input.protocol, { allowHops: false, targetIp: input.targetIp, targetPort: input.targetPort }),
+          ...templateFailoverColumns,
           isRunning: false,
           userId: ctx.user.id,
         } as any);
@@ -2325,6 +2370,7 @@ export const crudRulesRouter = router({
             data.disabledByGroup = false;
             data.protocolBlockReason = null;
           }
+          await assertRuleTargetsAllowedForActor(ctx.user, data, { hostId: nextHostId, tunnel: nextTunnelId ? selectedTunnelForRule : null });
 
           await db.updateForwardRule(input.id, data);
           // Let the mapping reconciler acquire endpoint reservations itself;
@@ -2359,6 +2405,9 @@ export const crudRulesRouter = router({
         let groupAccess = { isTrafficBillingResource: false };
         if (ctx.user.role !== "admin") {
           groupAccess = await requireForwardGroupUseAccess(ctx, activeGroupId);
+          if (input.isEnabled !== undefined ? input.isEnabled : dbBool((rule as any).isEnabled)) {
+            await requireForwardAccessForEnabledRule(ctx.user.id, groupAccess.isTrafficBillingResource);
+          }
           const nextSourcePort = input.sourcePort ?? rule.sourcePort;
           const planRange = await db.getUserForwardGroupPlanPortRange(ctx.user.id, activeGroupId);
           if (planRange && !db.isPortAllowedByUserPlanRange(nextSourcePort, planRange)) {
@@ -2487,6 +2536,7 @@ export const crudRulesRouter = router({
           data.protocolBlockReason = null;
         }
         if (keyFieldChanged || groupChanged || data.isEnabled !== undefined) data.isRunning = false;
+        await assertRuleTargetsAllowedForActor(ctx.user, { ...rule, ...data }, { forwardGroupId: activeGroupId });
         if (!groupChanged && isForwardChain) {
           await db.withForwardGroupSyncTransaction(
             activeGroupId,
@@ -2512,6 +2562,9 @@ export const crudRulesRouter = router({
         let groupAccess = { isTrafficBillingResource: false };
         if (ctx.user.role !== "admin") {
           groupAccess = await requireForwardGroupUseAccess(ctx, groupId);
+          if (input.isEnabled !== undefined ? input.isEnabled : dbBool((rule as any).isEnabled)) {
+            await requireForwardAccessForEnabledRule(ctx.user.id, groupAccess.isTrafficBillingResource);
+          }
           const planRange = await db.getUserForwardGroupPlanPortRange(ctx.user.id, groupId);
           if (planRange && !db.isPortAllowedByUserPlanRange(sourcePort, planRange)) {
             const ranges = planRange.ranges.map((range) => `${range.start}-${range.end}`).join(",");
@@ -2605,6 +2658,7 @@ export const crudRulesRouter = router({
           data.disabledByGroup = false;
           data.protocolBlockReason = null;
         }
+        await assertRuleTargetsAllowedForActor(ctx.user, data, { forwardGroupId: groupId });
         await db.updateForwardRule(input.id, data);
         await db.clearForwardRuleTunnelExits(input.id);
         // 变成转发组模板之后没有线路组了：中转机上的中继规则收回。
@@ -2668,6 +2722,11 @@ export const crudRulesRouter = router({
          : dbBool((rule as any).isEnabled);
       if (!nextTunnelIdForRule) {
         const access = await requireHostUseAccess(ctx, nextHostIdForRule);
+        // 和新建（prepareDirectRuleRouteForActor）同一条：普通用户不能直接在主机上开普通端口转发。
+        // 只在换了主机 / 转发方式 / 从隧道改成直连时拦，原样留着的老规则改目标、改名字不受影响。
+        if (ctx.user.role !== "admin" && !access.isTrafficBillingResource && directRouteChanged) {
+          throw new Error("普通端口转发请先创建转发组或转发链后再新增规则。");
+        }
         if (ctx.user.role !== "admin" && nextRuleEnabled) {
           await requireTrafficBillingBalanceForRule(ctx.user.id, !!access.isTrafficBillingResource);
         }
@@ -2939,6 +2998,11 @@ export const crudRulesRouter = router({
         (data as any).disabledByGroup = false;
         (data as any).protocolBlockReason = null;
       }
+      await assertRuleTargetsAllowedForActor(ctx.user, { ...rule, ...data }, {
+        hostId: nextHostIdForRule,
+        tunnel: nextTunnelIdForRule ? selectedTunnelForRule : null,
+      });
+      await assertRouteRelayPortQuota(ctx.user, (data as any).routePaths !== undefined ? (data as any).routePaths : (rule as any).routePaths, Number(rule.id));
       // 关键字段变更时重置 isRunning
       const watchedFields: string[] = [
         "sourcePort",

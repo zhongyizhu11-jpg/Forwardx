@@ -36,6 +36,8 @@ import {
   type ProxyInboundProtocol,
 } from "../../shared/proxyInbound";
 import { formatProxyNodeLink, PROXY_NODE_TRANSPORTS } from "../../shared/proxyNode";
+import { combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "../../shared/portPolicy";
+import { dbBool } from "../repositories/repositoryUtils";
 import {
   generateProxyInboundPassword,
   generateProxyInboundPsk,
@@ -130,6 +132,46 @@ async function assertUsableHost(hostId: number, ctx: any) {
     throw new Error("无权在该主机上开落地节点");
   }
   return host;
+}
+
+/** 普通用户开在别人机器上的入站：靠的是主机授权，授权收回后运行时不再下发它。 */
+function inboundNeedsHostGrant(ctx: any, host: any) {
+  return ctx.user.role !== "admin" && Number(host?.userId) !== Number(ctx.user.id);
+}
+
+/**
+ * 端口能不能用。
+ *
+ * 以前只查了「和别的落地节点撞没撞」。可这台机器上还跑着转发规则、隧道的监听 —— 面板一路放行，
+ * 到了机器上后起的那个 bind 失败，而界面两边都显示正常；租户还能借此把管理员留给转发的端口占掉。
+ * 所以和转发规则走同一个占用判断（isPortUsedOnHost，排除这个入站自己）。
+ *
+ * 开在别人机器上的普通用户还要守那台机器的端口策略（范围 / 白名单）和套餐端口区间，
+ * 和他在同一台机器上建转发规则时是同一套口径。自己的机器不受这条限制：策略是他自己定的，
+ * 而 443 这类常用端口往往就在默认区间外面。
+ */
+async function assertInboundPortAllowed(ctx: any, host: any, port: number, excludeInboundId?: number) {
+  const hostId = Number(host.id);
+  if (await db.isPortUsedOnHost(hostId, port, undefined, "both", undefined, true, undefined, excludeInboundId)) {
+    throw new Error(`该主机的 ${port} 端口已被转发规则或隧道占用`);
+  }
+  if (!inboundNeedsHostGrant(ctx, host)) return;
+  let policy = portPolicyFrom(host);
+  const planRange = await db.getUserPlanPortRange(ctx.user.id, hostId);
+  if (planRange) policy = combinePortPolicies(policy, portPolicyFrom({ portRanges: planRange.ranges }));
+  if (!isPortAllowedByPolicy(port, policy)) throw new Error(portPolicyErrorMessage(policy, "落地节点端口"));
+}
+
+/**
+ * TLS 的证书、私钥是 sing-box 以 root 身份从那台机器上直接读的文件路径。普通用户在别人的机器上
+ * 随手填一个路径，就能让 sing-box 拿那台机器上别人的证书和私钥对外握手。所以在别人的机器上
+ * 只能用面板管得住的两种：自动签证书（ACME）和 REALITY。自己的机器随意。
+ */
+function assertInboundCertPathsAllowed(ctx: any, host: any, inbound: ProxyInbound) {
+  if (!inboundNeedsHostGrant(ctx, host)) return;
+  if (inbound.security === "tls") {
+    throw new Error("在别人的主机上不能指定证书文件路径，请改用自动签证书（ACME）或 REALITY");
+  }
 }
 
 /** 给一个用户补齐它这个协议需要的凭据。已有值不动 —— 编辑时不该把别人的凭据换掉。 */
@@ -471,10 +513,12 @@ export const proxyInboundsRouter = router({
 
       const conflict = await db.findProxyInboundPortConflict(input.hostId, input.port);
       if (conflict) throw new Error(`该主机的 ${input.port} 端口已被落地节点「${conflict.name}」占用`);
+      await assertInboundPortAllowed(ctx, host, input.port);
 
       const inbound = fillGeneratedCredentials(mergeInbound(createEmptyProxyInbound(), input));
       const reason = validateProxyInbound(inbound);
       if (reason) throw new Error(reason);
+      assertInboundCertPathsAllowed(ctx, host, inbound);
 
       const id = await db.createProxyInbound({
         userId: ownerId,
@@ -483,6 +527,7 @@ export const proxyInboundsRouter = router({
         remark: input.remark || null,
         publicLabel: input.publicLabel || null,
         isEnabled: input.isEnabled ?? true,
+        hostGrantRequired: inboundNeedsHostGrant(ctx, host),
         ...inboundQuotaRow(input, ctx.user.role === "admin"),
         ...db.proxyInboundToRow(inbound),
       } as any);
@@ -497,7 +542,16 @@ export const proxyInboundsRouter = router({
       await assertAllowed(ctx);
       const row = await assertOwnedInbound(input.id, ctx);
       const hostId = input.hostId ?? Number(row.hostId);
-      if (input.hostId !== undefined) await assertUsableHost(input.hostId, ctx);
+      const hostChanged = hostId !== Number(row.hostId);
+      /*
+        换主机、或者这个入站本来就是靠主机授权开的，每次保存都重新确认还能用这台机器 ——
+        以前只在传了 hostId 时才查，授权收回之后照样能改。管理员替租户开的（分租）不靠主机授权，
+        不在这里拦，否则租户连改个名字都改不了。
+      */
+      const host = hostChanged || dbBool((row as any).hostGrantRequired)
+        ? await assertUsableHost(hostId, ctx)
+        : await db.getHostById(hostId);
+      if (!host) throw new Error("主机不存在");
 
       const port = input.port ?? Number(row.port);
       if (port !== Number(row.port) || hostId !== Number(row.hostId)) {
@@ -505,6 +559,10 @@ export const proxyInboundsRouter = router({
       }
       const conflict = await db.findProxyInboundPortConflict(hostId, port, input.id);
       if (conflict) throw new Error(`该主机的 ${port} 端口已被落地节点「${conflict.name}」占用`);
+      // 端口没动、也不是重新启用时不查：已经在跑的老入站改个名字不该被卡住。
+      if (hostChanged || port !== Number(row.port) || (input.isEnabled === true && !dbBool((row as any).isEnabled, true))) {
+        await assertInboundPortAllowed(ctx, host, port, input.id);
+      }
 
       const loaded = await db.loadProxyInbound(input.id);
       if (!loaded) throw new Error("落地节点不存在");
@@ -526,6 +584,14 @@ export const proxyInboundsRouter = router({
 
       const reason = validateProxyInbound(inbound);
       if (reason) throw new Error(reason);
+      if (
+        hostChanged
+        || inbound.security !== String(row.security || "")
+        || inbound.certPath !== String((row as any).certPath || "")
+        || inbound.keyPath !== String((row as any).keyPath || "")
+      ) {
+        assertInboundCertPathsAllowed(ctx, host, inbound);
+      }
 
       /**
        * 换归属时派生节点会跟着换主人（syncProxyNodeFromInbound 按入站行的 userId
@@ -544,6 +610,8 @@ export const proxyInboundsRouter = router({
       await db.updateProxyInbound(input.id, {
         hostId,
         userId: ownerId,
+        // 换了机器或者管理员改了归属，按这一次重新定；否则沿用。
+        ...(hostChanged || ownerId !== Number(row.userId) ? { hostGrantRequired: inboundNeedsHostGrant(ctx, host) } : {}),
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.remark !== undefined ? { remark: input.remark || null } : {}),
         ...(input.publicLabel !== undefined ? { publicLabel: input.publicLabel || null } : {}),

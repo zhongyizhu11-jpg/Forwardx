@@ -2001,16 +2001,19 @@ export async function getUsedPortsOnHost(
  *
  * 停用的入站不算：它没在听，挡着反而让人以为端口被莫名占了。
  */
-async function getProxyInboundPortsOnHost(hostId: number): Promise<number[]> {
+async function getProxyInboundPortsOnHost(hostId: number, excludeInboundId = 0): Promise<number[]> {
   const db = await getDb();
   if (!db) return [];
   // 动态导入：proxyInboundRepository 那边也会回头用这个文件里的函数，静态引会成环。
   const { proxyInbounds } = await import("../../drizzle/schema");
   const rows = await db
-    .select({ port: proxyInbounds.port })
+    .select({ id: proxyInbounds.id, port: proxyInbounds.port })
     .from(proxyInbounds)
     .where(and(eq(proxyInbounds.hostId, Number(hostId)), eq(proxyInbounds.isEnabled, true)));
-  return (rows as any[]).map((row) => Number(row.port)).filter((port) => port > 0);
+  return (rows as any[])
+    .filter((row) => !excludeInboundId || Number(row.id) !== Number(excludeInboundId))
+    .map((row) => Number(row.port))
+    .filter((port) => port > 0);
 }
 
 /** 检查某主机上的某端口是否已被占用 */
@@ -2022,6 +2025,8 @@ export async function isPortUsedOnHost(
   excludeTunnelId?: number,
   excludeRuleExitPorts = true,
   allowTunnelListener?: TunnelListenerExemptionInput,
+  /** 落地节点改端口时查冲突，把它自己排除掉。 */
+  excludeProxyInboundId?: number,
 ): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
@@ -2056,7 +2061,7 @@ export async function isPortUsedOnHost(
   const entryGroupRows = await db.select({ count: sqlCountAll() }).from(forwardRules).where(and(...entryGroupConds));
   if ((Number(entryGroupRows[0]?.count) || 0) > 0) return true;
   // 落地节点（sing-box 入站）也在这台机器上真实监听着 —— 见 getProxyInboundPortsOnHost。
-  if ((await getProxyInboundPortsOnHost(hostId)).includes(Number(sourcePort))) return true;
+  if ((await getProxyInboundPortsOnHost(hostId, Number(excludeProxyInboundId || 0))).includes(Number(sourcePort))) return true;
   const primaryExitConds: any[] = [
     eq(tunnels.exitHostId, hostId),
     eq(forwardRules.tunnelExitPort, sourcePort),

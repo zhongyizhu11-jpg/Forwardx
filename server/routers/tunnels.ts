@@ -713,6 +713,24 @@ function relatedGroupsForUser(
     : withAvailability;
 }
 
+/**
+ * 新建隧道：普通用户的转发权限得是正常的（没被暂停、没到期），和新建规则同一套检查。
+ *
+ * 以前新建隧道什么都不看 —— 被暂停、已到期的用户照样能在授权给他的主机上开出新的隧道监听。
+ * 做成中间件放在入口，不进下面那个数据库事务：恢复检查自己会开计费事务、拿用户锁。
+ */
+const tunnelCreateProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  if (ctx.user.role !== "admin") {
+    const check = await db.ensureUserForwardAccessReady(ctx.user.id);
+    if (!check.allowed) throw new Error(check.message || "转发权限已暂停，请续费后再创建隧道");
+    const owner: any = check.user || await db.getUserById(ctx.user.id);
+    if (owner?.expiresAt && new Date(owner.expiresAt) <= new Date()) {
+      throw new Error("您的账户已到期，无法创建隧道");
+    }
+  }
+  return next();
+});
+
 export const tunnelsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
       const accessScope = await getLinkAccessScope(ctx.user);
@@ -865,7 +883,7 @@ export const tunnelsRouter = router({
           }),
         );
       }),
-    create: protectedProcedure
+    create: tunnelCreateProcedure
       .input(z.object({
         name: z.string().min(1).max(128),
         entryGroupId: z.number().nullable().optional(),

@@ -5,6 +5,7 @@ import { clearTunnelRuntimeStatus } from "../tunnelRuntimeStatus";
 import { tunnelLatencyProbeSourceHostIds } from "../tunnelLatencyDetails";
 import { clearTunnelAutoHopLatencyState } from "../tunnelAutoLatencyState";
 import { clearTunnelMultiEntryLatencyState } from "../tunnelMultiEntryLatencyState";
+import { getLinkAccessScope } from "../linkAccessView";
 
 /**
  * 写进日志的账号名要打码，两处（登录审计和用户操作日志）原来各存一份一模一样的实现。
@@ -118,6 +119,14 @@ export async function requireTunnelUseOrTrafficBillingAccess(ctx: { user: { id: 
   if (ctx.user.role !== "admin" && !isTrafficBillingResource && tunnel.userId !== ctx.user.id) {
     const hasPermission = await db.checkUserTunnelPermission(ctx.user.id, tunnel.id);
     if (!hasPermission) throw new Error("无权使用该隧道");
+  }
+  if (ctx.user.role !== "admin" && !isTrafficBillingResource && tunnel.userId === ctx.user.id) {
+    // 自己建的隧道也要看它经过的主机还能不能用：主机授权收回之后不能再拿它建 / 开规则。
+    // 口径和运行时的闸（gateForwardRulesForRuntime）是同一份，见 linkAccessView.restrictOwnedTunnelUse。
+    const scope = await getLinkAccessScope(ctx.user);
+    if (scope && !(scope.useTunnelIds || scope.tunnelIds).has(Number(tunnel.id))) {
+      throw new Error("该隧道经过的主机已不在您的授权范围内，暂时无法使用，请联系管理员恢复主机授权");
+    }
   }
   return { tunnel, isTrafficBillingResource };
 }

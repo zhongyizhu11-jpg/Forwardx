@@ -379,6 +379,8 @@ const tables: TableDef[] = [
       c("congestionControl", "text"),
       c("snellVersion", "int", { notNull: true, default: 0 }), c("snellMode", "text"),
       c("clonedFromInboundId", "int", { notNull: true, default: 0 }),
+      // 普通用户靠主机授权开在别人机器上的入站：授权收回后不再下发。
+      c("hostGrantRequired", "bool", { notNull: true, default: false }),
       // 端口自己的额度与用量。计数链装在监听端口上，多用户入站分不到人头，所以记在这里。
       c("bandwidthMbps", "int", { notNull: true, default: 0 }),
       c("trafficLimit", "bigint", { notNull: true, default: 0 }), c("trafficUsed", "bigint", { notNull: true, default: 0 }),

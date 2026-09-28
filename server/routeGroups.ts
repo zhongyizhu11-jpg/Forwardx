@@ -26,7 +26,9 @@ import {
   markForwardRulePendingDelete,
   updateForwardRule,
 } from "./repositories/forwardRuleRepository";
+import { getUserPlanPortRange } from "./repositories/billingRepository";
 import { getHostNamesByIds, getHostsByIds } from "./repositories/hostRepository";
+import { getUserById } from "./repositories/userRepository";
 import { dbBool } from "./repositories/repositoryUtils";
 import { findAvailablePort, getTunnelById, getTunnelExitNodes, isPortUsedOnHost } from "./repositories/tunnelRepository";
 import { forgetRouteStats, recordRouteHopProbe } from "./routeGroupStats";
@@ -42,10 +44,11 @@ import { forgetRouteStats, recordRouteHopProbe } from "./routeGroupStats";
 
   几条定死的规矩：
 
-  · 中继规则**不进用户的列表、不算配额、不计流量**（流量在入口那条上已经算过了）。
+  · 中继规则**不进用户的列表、不算规则数、不计流量**（流量在入口那条上已经算过了）。
     见 getForwardRules / getUserRuleCount / shouldAccountForwardRuleTraffic 里的过滤。
-  · 端口在中转机上按它自己的端口策略挑；挑好之后尽量不换 —— 换端口等于上一跳也要改，
-    两台机器一起重启转发。
+    但**算端口配额**（getUserPortCount）：它们是在中转机上真实开出来的监听。
+  · 端口在中转机上按它自己的端口策略挑（普通用户再收窄到他在那台机器上的套餐端口区间）；
+    挑好之后尽量不换 —— 换端口等于上一跳也要改，两台机器一起重启转发。
   · 从落地往回解析：最后一跳先定（它的目标就是落地），前一跳的目标才是它的入口地址加
     端口。哪一跳解析不出来（中转不存在、没有入口地址、没有端口可用）整条路径就标成
     不可用（path.issue），不建半截：半截的路径入口 Agent 拨得通第一跳，却永远到不了落地，
@@ -118,9 +121,32 @@ function relayProtocol(rule: any): ForwardRuleProtocol {
   return normalizeForwardRuleProtocol(rule?.protocol);
 }
 
-async function pickRelayPort(hostId: number, existing: RelayRuleRow | null, protocol: ForwardRuleProtocol): Promise<HostPortReservation | null> {
+/**
+ * 中继规则的主人（线路组那条规则的主人）在这台中转机上的套餐端口区间。管理员、没有套餐区间的
+ * 返回空数组（不限）。
+ *
+ * 中继是替用户在中转机上开的监听，和他自己在那台机器上建规则占的是同一类端口：以前按中转机的
+ * 整段端口策略随便挑，一个租户能在套餐给他的区间之外开出监听，挤占别人的端口。
+ */
+async function relayPlanPortRanges(rule: any, hostId: number): Promise<Array<{ start: number; end: number }>> {
+  const userId = Number(rule?.userId || 0);
+  if (userId <= 0) return [];
+  const owner = await getUserById(userId) as any;
+  if (!owner || String(owner.role || "") === "admin") return [];
+  const planRange = await getUserPlanPortRange(userId, hostId);
+  return planRange?.ranges || [];
+}
+
+async function pickRelayPort(
+  hostId: number,
+  existing: RelayRuleRow | null,
+  protocol: ForwardRuleProtocol,
+  allowedRanges: Array<{ start: number; end: number }> = [],
+): Promise<HostPortReservation | null> {
   const excludeIds = existing ? [Number(existing.id)] : [];
-  if (existing && Number(existing.sourcePort) > 0 && Number(existing.hostId) === hostId) {
+  const inPlanRange = (port: number) => allowedRanges.length === 0
+    || allowedRanges.some((range) => port >= range.start && port <= range.end);
+  if (existing && Number(existing.sourcePort) > 0 && Number(existing.hostId) === hostId && inPlanRange(Number(existing.sourcePort))) {
     const preserved = await reserveSpecificHostPort({
       hostId,
       port: Number(existing.sourcePort),
@@ -132,7 +158,7 @@ async function pickRelayPort(hostId: number, existing: RelayRuleRow | null, prot
   return reserveAvailableHostPort({
     hostId,
     protocol,
-    findPort: (reservedPorts) => findAvailablePort(hostId, null, null, protocol, reservedPorts, excludeIds),
+    findPort: (reservedPorts) => findAvailablePort(hostId, null, null, protocol, reservedPorts, excludeIds, allowedRanges),
     isUsed: (port) => isPortUsedOnHost(hostId, port, excludeIds, protocol, undefined, false),
   });
 }
@@ -232,9 +258,12 @@ async function resolvePath(rule: any, path: RoutePath, index: number, hostById: 
       break;
     }
     const existing = liveByKey.get(relayKey(path.key, hopIndex)) || null;
-    const reservation = await pickRelayPort(hostId, existing, relayProtocol(rule));
+    const planRanges = await relayPlanPortRanges(rule, hostId);
+    const reservation = await pickRelayPort(hostId, existing, relayProtocol(rule), planRanges);
     if (!reservation) {
-      plan.issue = `中转「${hostLabel(host, hostId)}」的端口区间内没有可用端口`;
+      plan.issue = planRanges.length > 0
+        ? `中转「${hostLabel(host, hostId)}」在套餐端口区间内没有可用端口`
+        : `中转「${hostLabel(host, hostId)}」的端口区间内没有可用端口`;
       break;
     }
     resolved.push({ hostId, host, hopIndex, port: reservation.port, target: next, existing, reservation });
