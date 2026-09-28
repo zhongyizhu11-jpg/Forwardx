@@ -13,6 +13,8 @@ import { createTunnelHopBatch, registerTunnelHopTest } from "../tunnelHopTestSta
 import { clearTunnelRuntimeStatus } from "../tunnelRuntimeStatus";
 import { createQueryCache } from "../queryCache";
 import { isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "@shared/portPolicy";
+import { assertTenantListenPortAllowed, TENANT_SYSTEM_PORT_MAX } from "../tenantListenPortGuard";
+import { assertNginxCertificatePair, isValidTlsServerName } from "../nginxTlsInput";
 import { structuredLinkTestMessage } from "../linkTestMessages";
 import { isValidHostOrIp } from "../networkAddress";
 import { normalizeTrafficMultiplier } from "../../shared/trafficMultiplier";
@@ -159,11 +161,17 @@ async function validateMimicUdpPort(input: {
   exitHost: any;
   listenPort: number;
   tunnelId?: number;
+  actor?: { id: number; role?: string | null };
 }) {
   const port = Math.floor(Number(input.port || 0));
   if (!Number.isFinite(port) || port <= 0) return 0;
   if (port > 65535) throw new Error("mimic UDP 端口必须在 1-65535 范围内");
   if (port === input.listenPort) throw new Error("mimic UDP 端口不能与出口监听端口相同");
+  // Agent 启动前会清理 mimic 端口上的旧进程；普通用户选 53 这类系统端口会波及宿主机服务。
+  if (input.actor && input.actor.role !== "admin" && port <= TENANT_SYSTEM_PORT_MAX) {
+    throw new Error(`mimic UDP 端口不能使用 1-${TENANT_SYSTEM_PORT_MAX} 的系统端口，请换用 1024 以上的端口`);
+  }
+  if (input.actor) assertTenantListenPortAllowed({ actor: input.actor, host: input.exitHost, port, label: "mimic UDP 端口" });
   const policy = portPolicyFrom(input.exitHost);
   if (!isPortAllowedByPolicy(port, policy)) {
     throw new Error(portPolicyErrorMessage(policy, "mimic UDP 端口"));
@@ -188,7 +196,8 @@ async function ensureConfiguredMimicPorts(tunnelId: number) {
 function normalizeCertDomain(value: unknown) {
   const text = String(value || "").trim();
   if (!text) return null;
-  if (text.length > 253 || /[\s'"<>]/.test(text)) throw new Error("证书域名格式无效");
+  // 证书域名会写进整台主机共用的 nginx 配置（proxy_ssl_name），只收严格的主机名。
+  if (!isValidTlsServerName(text)) throw new Error("证书域名格式无效，只能填写域名（字母、数字、- 与 .）");
   return text;
 }
 
@@ -208,6 +217,8 @@ function normalizeNginxCertInput(input: { certPem?: unknown; certKeyPem?: unknow
   if ((certPem && !certKeyPem) || (!certPem && certKeyPem)) {
     throw new Error("Nginx 自定义证书和私钥需要同时填写");
   }
+  // 解析不了或不配对的证书会让同机 nginx -t 失败，别的租户的转发也跟着停在旧配置上。
+  if (certPem && certKeyPem) assertNginxCertificatePair(certPem, certKeyPem);
   return { certPem, certKeyPem };
 }
 
@@ -941,6 +952,7 @@ export const tunnelsRouter = router({
             if (!isPortAllowedByPolicy(listenPort, policy)) {
               throw new Error(portPolicyErrorMessage(policy, "出口监听端口"));
             }
+            assertTenantListenPortAllowed({ actor: ctx.user, host: exit, port: listenPort, label: "出口监听端口" });
             const reservation = await reserveSpecificHostPort({
               hostId: exitHostId,
               port: listenPort,
@@ -1028,6 +1040,7 @@ export const tunnelsRouter = router({
             exitHostId,
             exitHost: exitHostForConnect,
             listenPort,
+            actor: ctx.user,
           })
           : 0;
         const {
@@ -1342,6 +1355,7 @@ export const tunnelsRouter = router({
           if (!isPortAllowedByPolicy(requestedListenPort, policy)) {
             throw new Error(portPolicyErrorMessage(policy, "出口监听端口"));
           }
+          assertTenantListenPortAllowed({ actor: ctx.user, host: exit, port: requestedListenPort, label: "出口监听端口" });
           if (listenerChanged) {
             const reservation = await reserveSpecificHostPort({
               hostId: exitHostId,
@@ -1404,6 +1418,7 @@ export const tunnelsRouter = router({
               exitHost: exit,
               listenPort: Number((data as any).listenPort || (tunnel as any).listenPort || 0),
               tunnelId: id,
+              actor: ctx.user,
             });
           }
         } else if (!nextDedicatedUdpPortEnabled) {

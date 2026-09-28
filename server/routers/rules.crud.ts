@@ -55,6 +55,7 @@ import {
 } from "./helpers";
 import { requireRuleProtocolEnabled } from "../forwardProtocolSettings";
 import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom } from "@shared/portPolicy";
+import { assertTenantListenPortAllowed, assertTenantListenPortAllowedOnHosts } from "../tenantListenPortGuard";
 import { isTelegramBotReady } from "../telegramReady";
 import { resolveForwardRuleName } from "@shared/forwardRuleName";
 import {
@@ -1103,13 +1104,16 @@ async function assertRulePortWithinEntryPolicy(options: {
   sourcePort: number;
   tunnelId?: number | null;
   tunnel?: any;
+  actor?: { id: number; role?: string | null };
 }) {
   const port = Number(options.sourcePort || 0);
   if (!port) return;
   let policy = portPolicyFrom(null);
+  let listenHost: any = null;
   if (Number(options.tunnelId || 0) > 0) {
     const tunnel = options.tunnel || await db.getTunnelById(Number(options.tunnelId));
     const entryHost = await db.getHostById(Number((tunnel as any)?.entryHostId || options.hostId));
+    listenHost = entryHost;
     policy = combineHostPortPolicyWithRange(
       entryHost as any,
       (tunnel as any)?.portRangeStart,
@@ -1117,11 +1121,14 @@ async function assertRulePortWithinEntryPolicy(options: {
     );
   } else {
     const host = await db.getHostById(Number(options.hostId));
+    listenHost = host;
     policy = portPolicyFrom(host as any);
   }
   if (!isPortAllowedByPolicy(port, policy)) {
     throw new Error(portPolicyErrorMessage(policy, "入口端口"));
   }
+  // 端口策略默认不限制，普通用户在共享主机上仍不能占系统端口/面板端口。
+  if (options.actor) assertTenantListenPortAllowed({ actor: options.actor, host: listenHost, port, label: "入口端口" });
 }
 
 async function assertRulePortWithinUserPlanRange(options: {
@@ -1402,6 +1409,12 @@ export async function toggleForwardRuleForActor(
               forwardGroupId: groupId,
               sourcePort: Number(rule.sourcePort),
             });
+            await assertTenantListenPortAllowedOnHosts({
+              actor,
+              hostIds: await db.getForwardGroupRuleEntryHostIds(groupId),
+              port: Number(rule.sourcePort),
+              label: "入口端口",
+            });
           }
         }
         if (isEnabled) {
@@ -1452,6 +1465,7 @@ export async function toggleForwardRuleForActor(
           hostId: Number(rule.hostId),
           sourcePort: Number(rule.sourcePort),
           tunnelId: Number((rule as any).tunnelId || 0) || null,
+          actor,
         });
         if (actor.role !== "admin") {
           await assertRulePortWithinUserPlanRange({
@@ -1628,6 +1642,7 @@ export async function createDirectForwardRuleForActor(
       sourcePort = sourcePortReservation.port;
     } else {
       if (!isPortAllowedByPolicy(sourcePort, effectivePolicy)) throw new Error(portPolicyErrorMessage(effectivePolicy, "源端口"));
+      assertTenantListenPortAllowed({ actor, host, port: sourcePort, label: "源端口" });
       sourcePortReservation = tryReserveHostPort(hostId, sourcePort, input.protocol);
       if (!sourcePortReservation) throw new Error(`端口 ${sourcePort} 正在被其他请求分配，请稍后重试`);
       const used = await db.isPortUsedOnHost(hostId, sourcePort, undefined, input.protocol);
@@ -1815,6 +1830,9 @@ export const crudRulesRouter = router({
           }
         }
         const entryHostIds = await db.getForwardGroupRuleEntryHostIds(forwardGroupId);
+        if (!randomSourcePort) {
+          await assertTenantListenPortAllowedOnHosts({ actor: ctx.user, hostIds: entryHostIds, port: sourcePort, label: "入口端口" });
+        }
         const reserveEntryPort = async (port: number) => {
           const reservations: HostPortReservation[] = [];
           try {
@@ -2200,6 +2218,7 @@ export const crudRulesRouter = router({
             sourcePort: nextSourcePort,
             tunnelId: nextTunnelId,
             tunnel: selectedTunnelForRule,
+            actor: ctx.user,
           });
           if (ctx.user.role !== "admin") {
             const planRange = await db.getUserPlanPortRange(ctx.user.id, nextHostId, nextTunnelId || undefined);
@@ -2496,6 +2515,12 @@ export const crudRulesRouter = router({
             const ranges = planRange.ranges.map((range) => `${range.start}-${range.end}`).join(",");
             throw new Error(`套餐端口必须在 ${ranges} 内`);
           }
+          await assertTenantListenPortAllowedOnHosts({
+            actor: ctx.user,
+            hostIds: await db.getForwardGroupRuleEntryHostIds(groupId),
+            port: sourcePort,
+            label: "入口端口",
+          });
         }
         const group = await db.validateForwardGroupRuleConfig(groupId, {
           sourcePort,
@@ -2689,6 +2714,7 @@ export const crudRulesRouter = router({
           if (!isPortAllowedByPolicy(nextSourcePortForRule, effectivePolicy)) {
             throw new Error(portPolicyErrorMessage(effectivePolicy, "源端口"));
           }
+          assertTenantListenPortAllowed({ actor: ctx.user, host, port: nextSourcePortForRule, label: "源端口" });
           if (ctx.user.role !== "admin") {
             const planRange = await db.getUserPlanPortRange(ctx.user.id, nextHostIdForRule, nextTunnelIdForRule || undefined);
             if (planRange) {
@@ -2894,6 +2920,7 @@ export const crudRulesRouter = router({
           sourcePort,
           tunnelId: nextTunnelIdForRule,
           tunnel: selectedTunnelForRule,
+          actor: ctx.user,
         });
         if (ctx.user.role !== "admin") {
           await assertRulePortWithinUserPlanRange({

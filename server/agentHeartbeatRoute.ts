@@ -54,6 +54,7 @@ import { getAgentPluginInventory, updateAgentPluginInventory } from "./agentPlug
 import { getAgentHostFromRequest, getAgentPresenceHostFromRequest, getResolvedAgentToken } from "./agentAuth";
 import { normalizeAgentText, normalizeNetworkInterface } from "./agentInputValidation";
 import { pruneMapEntries, setBoundedMapValue } from "./boundedCache";
+import { isValidTlsServerName } from "./nginxTlsInput";
 import { mergeAgentReportedAddress } from "./agentAddressState";
 import {
   gostTunnelTransportType,
@@ -367,7 +368,9 @@ export function buildNginxStreamServerBlock(options: NginxStreamServerOptions) {
       "    proxy_ssl_verify off;",
     );
     const serverName = String(options.sslClient.serverName || "").trim();
-    if (serverName) {
+    // nginxConfigQuote 只转义不加引号，挡不住 ; { } $ 与换行；旧数据里这样的域名直接不写，
+    // 免得一条隧道改写或弄坏整台主机的 nginx 配置。合法主机名原样写出，配置文本不变。
+    if (serverName && isValidTlsServerName(serverName)) {
       lines.push(
         "    proxy_ssl_server_name on;",
         `    proxy_ssl_name ${nginxConfigQuote(serverName)};`,

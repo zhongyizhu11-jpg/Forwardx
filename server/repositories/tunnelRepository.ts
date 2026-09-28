@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import {
   tunnels,
@@ -462,6 +463,8 @@ export async function createTunnel(data: InsertTunnel) {
   if (payload.sortOrder === undefined) {
     payload.sortOrder = await nextTunnelSortOrder(Number(payload.userId || 0));
   }
+  // 隧道密钥永远不能为空：空值会让运行时退回到兜底推导。
+  if (!payload.secret) payload.secret = crypto.randomBytes(32).toString("hex");
   const id = await insertAndGetId("tunnels", payload);
   const created = await getTunnelById(id).catch(() => undefined);
   await recordConfigAuditEvent({ resourceType: "tunnel", resourceId: id, hostId: Number((created as any)?.entryHostId || 0), action: "create", after: created });

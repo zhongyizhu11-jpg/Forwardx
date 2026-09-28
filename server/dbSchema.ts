@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { Pool } from "mysql2/promise";
 import { quoteIdentifierFor } from "./dbRuntime";
 import type Database from "better-sqlite3";
@@ -134,6 +135,35 @@ async function backfillPostgresqlLastAutoTrafficReset(pool: pg.Pool) {
        AND EXISTS (SELECT 1 FROM claimed)`,
     [LAST_AUTO_TRAFFIC_RESET_BACKFILL_MARKER],
   );
+}
+
+/*
+  旧版本的隧道可能没有 secret，运行时会退回到从隧道/主机 id 推导的「密钥」，谁都算得出。
+  每次启动把空 secret 补成随机值。这会让这些旧隧道的密钥变化，Agent 下次心跳会按新配置
+  重新下发，属于预期行为。只改空值，所以重复执行是安全的。
+*/
+function newTunnelSecret() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function backfillSqliteTunnelSecrets(sqlite: Database.Database) {
+  const rows = sqlite.prepare('SELECT "id" FROM "tunnels" WHERE "secret" IS NULL OR "secret" = \'\'').all() as Array<{ id: number }>;
+  const update = sqlite.prepare('UPDATE "tunnels" SET "secret" = ? WHERE "id" = ? AND ("secret" IS NULL OR "secret" = \'\')');
+  for (const row of rows) update.run(newTunnelSecret(), row.id);
+}
+
+async function backfillMysqlTunnelSecrets(pool: Pool) {
+  const [rows] = await pool.query<any[]>("SELECT `id` FROM `tunnels` WHERE `secret` IS NULL OR `secret` = ''");
+  for (const row of rows) {
+    await pool.execute("UPDATE `tunnels` SET `secret` = ? WHERE `id` = ? AND (`secret` IS NULL OR `secret` = '')", [newTunnelSecret(), row.id]);
+  }
+}
+
+async function backfillPostgresqlTunnelSecrets(pool: pg.Pool) {
+  const { rows } = await pool.query('SELECT "id" FROM "tunnels" WHERE "secret" IS NULL OR "secret" = \'\'');
+  for (const row of rows) {
+    await pool.query('UPDATE "tunnels" SET "secret" = $1 WHERE "id" = $2 AND ("secret" IS NULL OR "secret" = \'\')', [newTunnelSecret(), row.id]);
+  }
 }
 
 const tables: TableDef[] = [
@@ -674,6 +704,7 @@ async function ensureMysqlSchema(pool: Pool) {
     );
   }
   await backfillMysqlLastAutoTrafficReset(pool);
+  await backfillMysqlTunnelSecrets(pool);
 }
 
 function indexName(prefix: string, table: string, cols: string[]) {
@@ -707,6 +738,7 @@ async function ensurePostgresqlSchema(pool: pg.Pool) {
     );
   }
   await backfillPostgresqlLastAutoTrafficReset(pool);
+  await backfillPostgresqlTunnelSecrets(pool);
 }
 
 function ensureSqliteSchema(sqlite: Database.Database) {
@@ -734,6 +766,7 @@ function ensureSqliteSchema(sqlite: Database.Database) {
     ).run(key, value);
   }
   backfillSqliteLastAutoTrafficReset(sqlite);
+  backfillSqliteTunnelSecrets(sqlite);
 }
 
 export async function ensureDatabaseSchema(target?: Pool | pg.Pool | Database.Database) {

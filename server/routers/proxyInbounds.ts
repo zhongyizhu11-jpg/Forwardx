@@ -14,6 +14,7 @@ import { z } from "zod";
 import { pushAgentRefresh } from "../agentEvents";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { assertTenantListenPortAllowed } from "../tenantListenPortGuard";
 import {
   createEmptyProxyInbound,
   proxyInboundSecurities,
@@ -277,7 +278,10 @@ type InboundInput = z.infer<typeof inboundInput>;
  * 端口额度那几列。不走 mergeInbound —— 那个拼的是要下发给 sing-box 的配置，
  * 额度只是面板自己记账用的，混进去会让「配置变了没」这种判断跟着抖。
  */
-function inboundQuotaRow(input: Partial<InboundInput>) {
+function inboundQuotaRow(input: Partial<InboundInput>, isAdmin: boolean) {
+  // 额度、已用量、限速是管理员给这个端口定的账：租户自己改就等于自己给自己加额度。
+  // 非管理员提交的这些字段一律忽略，更新时保留原值（表单会原样回传，不能直接报错）。
+  if (!isAdmin) return {};
   return {
     ...(input.bandwidthMbps !== undefined ? { bandwidthMbps: input.bandwidthMbps } : {}),
     ...(input.trafficLimit !== undefined ? { trafficLimit: input.trafficLimit } : {}),
@@ -459,7 +463,8 @@ export const proxyInboundsRouter = router({
     .input(inboundInput)
     .mutation(async ({ ctx, input }) => {
       await assertAllowed(ctx);
-      await assertUsableHost(input.hostId, ctx);
+      const host = await assertUsableHost(input.hostId, ctx);
+      assertTenantListenPortAllowed({ actor: ctx.user, host, port: input.port, label: "落地节点端口" });
       const ownerId = await resolveOwnerId(ctx, input.userId);
 
       await assertInboundQuota(ownerId, ctx);
@@ -478,7 +483,7 @@ export const proxyInboundsRouter = router({
         remark: input.remark || null,
         publicLabel: input.publicLabel || null,
         isEnabled: input.isEnabled ?? true,
-        ...inboundQuotaRow(input),
+        ...inboundQuotaRow(input, ctx.user.role === "admin"),
         ...db.proxyInboundToRow(inbound),
       } as any);
       await db.replaceProxyInboundUsers(Number(id), inbound.users);
@@ -495,6 +500,9 @@ export const proxyInboundsRouter = router({
       if (input.hostId !== undefined) await assertUsableHost(input.hostId, ctx);
 
       const port = input.port ?? Number(row.port);
+      if (port !== Number(row.port) || hostId !== Number(row.hostId)) {
+        assertTenantListenPortAllowed({ actor: ctx.user, host: await db.getHostById(hostId), port, label: "落地节点端口" });
+      }
       const conflict = await db.findProxyInboundPortConflict(hostId, port, input.id);
       if (conflict) throw new Error(`该主机的 ${port} 端口已被落地节点「${conflict.name}」占用`);
 
@@ -540,7 +548,7 @@ export const proxyInboundsRouter = router({
         ...(input.remark !== undefined ? { remark: input.remark || null } : {}),
         ...(input.publicLabel !== undefined ? { publicLabel: input.publicLabel || null } : {}),
         ...(input.isEnabled !== undefined ? { isEnabled: input.isEnabled } : {}),
-        ...inboundQuotaRow(input),
+        ...inboundQuotaRow(input, ctx.user.role === "admin"),
         ...db.proxyInboundToRow(inbound),
       } as any);
       await db.replaceProxyInboundUsers(input.id, inbound.users);

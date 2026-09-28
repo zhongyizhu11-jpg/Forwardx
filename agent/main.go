@@ -9925,6 +9925,59 @@ func fxpRuntimeReadyForTunnelPort(tunnelID int, port int, listenSnapshot *runtim
 	return false
 }
 
+var listUDPListenPortPIDs = func(port int) []int { return listenPortOwnerPIDsForProtocol(port, "udp") }
+var readProcessCmdline = func(pid int) ([]string, error) {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return nil, err
+	}
+	return strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00"), nil
+}
+var killProcessByPID = func(pid int) {
+	if proc, err := os.FindProcess(pid); err == nil {
+		_ = proc.Kill()
+	}
+}
+
+// isManagedFXPCmdline 只认 Agent 自己拉起的 FXP 进程：forwardx-fxp -config /run/forwardx-agent/fxp-*.json。
+func isManagedFXPCmdline(args []string) bool {
+	if len(args) < 3 || !strings.HasPrefix(filepath.Base(args[0]), "forwardx-fxp") {
+		return false
+	}
+	for i := 1; i+1 < len(args); i++ {
+		if args[i] != "-config" {
+			continue
+		}
+		configPath := filepath.Clean(args[i+1])
+		if filepath.Dir(configPath) == "/run/forwardx-agent" &&
+			strings.HasPrefix(filepath.Base(configPath), "fxp-") && strings.HasSuffix(configPath, ".json") {
+			return true
+		}
+	}
+	return false
+}
+
+// mimicPort 是租户可以自选的 UDP 端口。以前直接杀掉该端口上的所有进程，
+// 选 53 就会把宿主机的 systemd-resolved 杀掉；现在只清理 Agent 自己的 FXP 残留进程，
+// 其他占用者保持不动，后面的端口空闲检查会报端口被占用。
+func killManagedFXPOnUDPPort(port int) {
+	if port <= 0 {
+		return
+	}
+	self := os.Getpid()
+	for _, pid := range listUDPListenPortPIDs(port) {
+		if pid <= 0 || pid == self {
+			continue
+		}
+		args, err := readProcessCmdline(pid)
+		if err != nil || !isManagedFXPCmdline(args) {
+			logf("fxp mimic port occupant is not an Agent-managed FXP process; leaving it running port=%d pid=%d", port, pid)
+			continue
+		}
+		killProcessByPID(pid)
+	}
+}
+
 func killFXPByConfigPath(configPath string) {
 	for _, pid := range fxpRuntimePIDs(configPath) {
 		if proc, err := os.FindProcess(pid); err == nil {
@@ -10265,12 +10318,9 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 	}()
 	// When mimic is enabled, UDPListenPort (mimicPort) differs from ListenPort (TCP port).
 	// fxpPortCleanupCmds matches by config filename which always ends in ListenPort, so
-	// using it with mimicPort would never match. Kill the UDP port occupant directly via ss.
+	// using it with mimicPort would never match. Clear stale FXP occupants of the UDP port.
 	if spec.UDPListenPort > 0 && spec.UDPListenPort != spec.ListenPort {
-		port := strconv.Itoa(spec.UDPListenPort)
-		_ = runShell("for pid in $(ss -Hlnup 'sport = :" + port + "' 2>/dev/null | " +
-			"awk '{match($0,/pid=([0-9]+)/,a); if(a[1]!=\"\" && a[1]!=\"$$\" && a[1]!=\"$PPID\") print a[1]}' | sort -u || true); " +
-			"do kill \"$pid\" 2>/dev/null || true; done")
+		killManagedFXPOnUDPPort(spec.UDPListenPort)
 	}
 	if ready, lane, owner := waitForFXPListenEndpointsFree(spec); !ready {
 		staleConfigPaths := []string{configPath}

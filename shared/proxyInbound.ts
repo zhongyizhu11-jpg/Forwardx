@@ -343,6 +343,45 @@ export function isValidRealityShortId(value: unknown): boolean {
 }
 
 /**
+ * 这些字段原样写进 sing-box 配置，sing-box 对不认识的取值是拒绝加载**整份**配置 ——
+ * 同一台落地机上别人的入站跟着一起停。所以只收下面这些已知取值（空串表示不设置）。
+ */
+export const PROXY_INBOUND_VLESS_FLOWS = ["xtls-rprx-vision"] as const;
+export const PROXY_INBOUND_HYSTERIA2_OBFS = ["salamander"] as const;
+export const PROXY_INBOUND_SNELL_OBFS = ["none", "http", "tls"] as const;
+export const PROXY_INBOUND_TUIC_CONGESTION_CONTROLS = ["cubic", "new_reno", "bbr"] as const;
+export const PROXY_INBOUND_SNELL_V6_MODES = ["default", "unshaped", "unsafe-raw"] as const;
+
+function enumFieldError(value: unknown, allowed: readonly string[], field: string): string {
+  const raw = text(value);
+  if (!raw || allowed.includes(raw)) return "";
+  return `不支持的${field}「${raw.slice(0, 32)}」，只能是 ${allowed.join(" / ")} 或留空`;
+}
+
+/**
+ * 只看会原样进 sing-box 配置的枚举字段，按协议取实际会用到的那几个。
+ * 面板合成整台机器的配置时也用它把坏入站单独剔掉，而不是让整份配置校验失败。
+ */
+export function proxyInboundEnumFieldError(inbound: ProxyInbound): string {
+  if (inbound.protocol === "vless") {
+    return enumFieldError(inbound.flow, PROXY_INBOUND_VLESS_FLOWS, "流控");
+  }
+  if (inbound.protocol === "hysteria2") {
+    return enumFieldError(inbound.obfs, PROXY_INBOUND_HYSTERIA2_OBFS, "混淆方式");
+  }
+  if (inbound.protocol === "tuic") {
+    return enumFieldError(inbound.congestionControl, PROXY_INBOUND_TUIC_CONGESTION_CONTROLS, "拥塞控制");
+  }
+  if (inbound.protocol === "snell") {
+    if (Number(inbound.snellVersion) === 6) {
+      return enumFieldError(inbound.snellMode, PROXY_INBOUND_SNELL_V6_MODES, "Snell v6 整形模式");
+    }
+    return enumFieldError(inbound.obfs, PROXY_INBOUND_SNELL_OBFS, "Snell 混淆方式");
+  }
+  return "";
+}
+
+/**
  * 校验入站配置。返回可直接展示给用户的中文原因，空串表示没问题。
  *
  * 这里挡住的都是「存得下去、但开出来连不上」的组合 —— 那类问题在客户端只表现为
@@ -436,6 +475,8 @@ export function validateProxyInbound(inbound: ProxyInbound): string {
       return `sing-box 的 Snell 入站只支持 v${PROXY_INBOUND_SNELL_VERSIONS.join(" 和 v")}，这个是 v${version || "?"}`;
     }
   }
+  const enumError = proxyInboundEnumFieldError(inbound);
+  if (enumError) return enumError;
   return "";
 }
 
