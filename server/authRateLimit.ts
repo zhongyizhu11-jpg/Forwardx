@@ -8,6 +8,7 @@
  */
 
 import { pruneMapEntries, setBoundedMapValue } from "./boundedCache";
+import { ipRateLimitScope } from "./ipRateLimitScope";
 
 export type AuthRateLimitState = {
   limited: boolean;
@@ -33,7 +34,8 @@ const challengeIssueIpStore = new Map<string, number[]>();
 const AUTH_RATE_LIMIT_MAX_KEYS = 50_000;
 
 function normalizeIp(ip: string) {
-  return String(ip || "unknown").trim().toLowerCase() || "unknown";
+  // IPv6 按 /64 归并，见 ipRateLimitScope。
+  return ipRateLimitScope(ip);
 }
 
 function normalizeUsername(username: string) {
