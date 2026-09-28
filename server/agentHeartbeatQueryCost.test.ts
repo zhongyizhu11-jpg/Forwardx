@@ -133,3 +133,111 @@ test("一次心跳的打库次数不随机器数和规则数增长", () => {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+/**
+ * 入口机上挂着一堆指向同一台出口机的隧道规则时，出口机只该取一次。
+ *
+ * 拨号地址（tunnelExitHostAddress / getHopDialAddress / getExtraExitDialAddress）以前每条规则
+ * 都按 hostId 现取一遍主机：一台入口挂几百条隧道规则，冷启动就是几百条一模一样的主机查询。
+ * 这里只数「按 id 取 hosts」这一类语句，规则数放大四倍时条数必须不变。
+ */
+test("隧道规则的出口主机按请求去重，不随规则数增长", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-hb-tunnel-cost-"));
+  const script = String.raw`
+    import http from "node:http";
+    import path from "node:path";
+    import { pathToFileURL } from "node:url";
+
+    const Database = (await import("better-sqlite3")).default;
+    const originalPrepare = Database.prototype.prepare;
+    let recording = false;
+    let statements = [];
+    Database.prototype.prepare = function (sql) {
+      if (recording) statements.push(String(sql));
+      return originalPrepare.call(this, sql);
+    };
+
+    const url = (f) => pathToFileURL(path.join(process.cwd(), f)).href;
+    const runtime = await import(url("server/dbRuntime.ts"));
+    const schema = await import(url("server/dbSchema.ts"));
+    await runtime.connectDatabase({ type: "sqlite", sqlite: { path: process.env.FORWARDX_TEST_DB } });
+    await schema.ensureDatabaseSchema();
+    const exec = (s, p = []) => runtime.executeRaw(s, p);
+
+    const N = Number(process.env.HB_SCALE || 3);
+    await exec("INSERT INTO users (id, username, password, role) VALUES (1, 'admin', 'h', 'admin')");
+    await exec("INSERT INTO hosts (id, name, ip, ipv4, hostType, agentToken, userId, isOnline) VALUES (1, 'in', '203.0.113.1', '203.0.113.1', 'slave', 'tok1', 1, 1)");
+    await exec("INSERT INTO hosts (id, name, ip, ipv4, hostType, agentToken, userId, isOnline) VALUES (2, 'out', '203.0.113.2', '203.0.113.2', 'slave', 'tok2', 1, 1)");
+    for (let t = 1; t <= N; t++) {
+      await exec(
+        'INSERT INTO tunnels (id, name, "entryHostId", "exitHostId", mode, "listenPort", secret, "userId", "isEnabled") VALUES (?, ?, 1, 2, ?, ?, ?, 1, 1)',
+        [t, "t" + t, "tls", 30000 + t, "s" + t],
+      );
+      await exec(
+        'INSERT INTO forward_rules (id, "hostId", name, "forwardType", protocol, "sourcePort", "targetIp", "targetPort", "userId", "isEnabled", "tunnelId") VALUES (?, 1, ?, ?, ?, ?, ?, ?, 1, 1, ?)',
+        [t, "r" + t, "gost", "tcp", 20000 + t, "198.51.100.9", 443, t],
+      );
+    }
+
+    const express = (await import("express")).default;
+    const heartbeat = await import(url("server/agentHeartbeatRoute.ts"));
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      const authorization = String(req.headers.authorization || "");
+      req.agentToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+      next();
+    });
+    heartbeat.registerAgentHeartbeatRoute(app);
+    const server = http.createServer(app);
+    await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+    const base = "http://127.0.0.1:" + server.address().port;
+
+    statements = []; recording = true;
+    const response = await fetch(base + "/api/agent/heartbeat", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok1" },
+      body: JSON.stringify({ agentVersion: "2.3.362", uptime: 1000, cpuUsage: 1, memoryUsage: 1, diskUsage: 1 }),
+    });
+    recording = false;
+    const body = await response.json();
+    const hostById = statements.filter((sql) => /from\s+["\x60]hosts["\x60]\s+where\s+["\x60]hosts["\x60]\.["\x60]id["\x60]\s*=\s*\?/i.test(sql)).length;
+    // 隧道规则最终合进 gost.json 的链里：数一下出口机地址出现在几条隧道链上。
+    let tunnelActions = 0;
+    for (const action of (body.desiredState && body.desiredState.actions) || []) {
+      for (const config of (action.managedConfigs || [])) {
+        if (!String(config.path || "").endsWith("/gost.json")) continue;
+        const gost = JSON.parse(Buffer.from(config.contentBase64, "base64").toString("utf8"));
+        tunnelActions = (gost.chains || []).filter((chain) => JSON.stringify(chain).includes("203.0.113.2")).length;
+      }
+    }
+    console.log("HB_TUNNEL_COST " + JSON.stringify({ scale: N, status: response.status, hostById, tunnelActions, total: statements.length }));
+
+    server.close();
+    await runtime.closeDatabase().catch(() => undefined);
+  `;
+  const run = (scale: number) => {
+    const databasePath = path.join(directory, `hb-tunnel-${scale}.db`);
+    const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, DATABASE_TYPE: "sqlite", FORWARDX_TEST_DB: databasePath, NODE_ENV: "test", HB_SCALE: String(scale) },
+      timeout: 120000,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const line = result.stdout.split("\n").find((l) => l.includes("HB_TUNNEL_COST"));
+    assert.ok(line, `没拿到计数：${result.stdout}`);
+    return JSON.parse(line.slice(line.indexOf("{"))) as { scale: number; status: number; hostById: number; tunnelActions: number; total: number };
+  };
+  try {
+    const small = run(3);
+    const large = run(12);
+    assert.equal(small.status, 200);
+    assert.equal(large.status, 200);
+    // 确认真的走到了隧道规则的下发路径，否则「条数不变」什么也证明不了。
+    assert.ok(large.tunnelActions >= 12, `没生成隧道规则动作：${JSON.stringify(large)}`);
+    assert.equal(large.hostById, small.hostById, `按 id 取主机随隧道规则数涨了：${JSON.stringify({ small, large })}`);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

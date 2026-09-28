@@ -136,8 +136,9 @@ import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
 import { forwardXExitStrategy, gostExitSelector, shouldUseFastTunnelFailover } from "./tunnelExitStrategy";
 import {
   getMimicLifecycleRevisionSignature,
-  hashConfig,
+  hashNormalizedConfig,
   latestConfigRevision,
+  normalizeConfigForHash,
   recordConfigAuditEvent,
   type MimicLifecycleResource,
 } from "./configAudit";
@@ -528,6 +529,15 @@ function stableActionSignature(actions: any[]) {
   })));
 }
 
+/*
+  下发缓存（批次签发时间、期望状态是否要重发、运行时同步动作）只需要判断「和上次一样不一样」，
+  不需要签名原文。原文是整批动作连同全部命令、托管配置的 JSON，一台机器几十上百 KB，
+  乘上几千台机器常驻在内存里；这里只存它的 sha256，比较结果不变。
+*/
+function stableActionSignatureHash(actions: any[], prefix = "") {
+  return crypto.createHash("sha256").update(prefix).update(stableActionSignature(actions)).digest("hex");
+}
+
 function canonicalizeStateSection(value: any): any {
   if (Array.isArray(value)) {
     return value
@@ -557,11 +567,36 @@ export function stableStateSignature(value: any) {
     .digest("hex");
 }
 
-export function stableDesiredStateHash(actions: any[]) {
-  return hashConfig(actions.map((action: any) => {
-    const { issuedAt: _issuedAt, configHash: _configHash, ...stableAction } = action || {};
-    return stableAction;
-  }));
+/*
+  整批期望状态的摘要 = hashConfig(去掉 issuedAt / configHash 的动作数组)。
+  hashConfig 对数组就是逐项规整再 JSON 拼接，而规整是逐键独立的，所以「先规整整条动作、
+  再去掉这两个键」和「先去掉再规整」得到同一个对象。心跳里每条动作算 configHash 时已经
+  规整过一次，把去键后的 JSON 片段记在 normalizedPieces 里，这里直接拼，不再整批重新规整；
+  没给片段（或动作不在里面）时就地规整，结果逐字节相同。
+*/
+function desiredStateActionPiece(normalizedAction: any) {
+  const { issuedAt: _issuedAt, configHash: _configHash, ...stableAction } = normalizedAction || {};
+  return JSON.stringify(stableAction);
+}
+
+// 给一条动作补上 configHash（= hashConfig(action)），顺手把它去键后的规整片段记进 pieces。
+export function withDesiredStateConfigHash<T extends object>(action: T, pieces: WeakMap<object, string>) {
+  const hashInput = normalizeConfigForHash(action);
+  const hashedAction = { ...action, configHash: hashNormalizedConfig(hashInput) };
+  pieces.set(hashedAction, desiredStateActionPiece(hashInput));
+  return hashedAction;
+}
+
+export function stableDesiredStateHash(actions: any[], normalizedPieces?: WeakMap<object, string>) {
+  const hash = crypto.createHash("sha256");
+  hash.update("[");
+  actions.forEach((action: any, index: number) => {
+    if (index > 0) hash.update(",");
+    const cached = action && typeof action === "object" ? normalizedPieces?.get(action) : undefined;
+    hash.update(cached ?? desiredStateActionPiece(normalizeConfigForHash(action)));
+  });
+  hash.update("]");
+  return hash.digest("hex");
 }
 
 export function selectForwardChainListenerPort(
@@ -915,7 +950,7 @@ function resolveActionBatchIssuedAt(hostId: number, actions: any[], fallbackIssu
     return fallbackIssuedAt;
   }
   const now = Date.now();
-  const signature = stableActionSignature(actions);
+  const signature = stableActionSignatureHash(actions);
   const cached = agentActionBatchCache.get(hostId);
   if (cached && cached.signature === signature && now - cached.seenAt < AGENT_ACTION_BATCH_REUSE_MS) {
     setBoundedMapValue(agentActionBatchCache, hostId, { ...cached, seenAt: now }, AGENT_HOST_CACHE_MAX);
@@ -960,7 +995,7 @@ function shouldLogAgentRuntimeDrift(hostId: number, ruleId: number) {
 function shouldSendDesiredState(hostId: number, actions: any[], activeWorkActions: any[], now: number, configRevision = 0) {
   const id = Number(hostId);
   if (!Number.isFinite(id) || id <= 0) return actions.length > 0;
-  const signature = `${Math.max(0, Math.floor(Number(configRevision) || 0))}\n${stableActionSignature(actions)}`;
+  const signature = stableActionSignatureHash(actions, `${Math.max(0, Math.floor(Number(configRevision) || 0))}\n`);
   const cached = agentDesiredStateSendCache.get(id);
   const hasActiveWork = activeWorkActions.length > 0;
   const changed = !cached || cached.signature !== signature;
@@ -1000,7 +1035,7 @@ function shouldSendRuntimeSyncAction(hostId: number, action: any, force: boolean
   if (!Number.isFinite(id) || id <= 0) return true;
   const actionType = String(action?.forwardType || "runtime").trim() || "runtime";
   const cacheKey = `${id}:${actionType}`;
-  const signature = stableActionSignature([action]);
+  const signature = stableActionSignatureHash([action]);
   const cached = agentRuntimeSyncActionCache.get(cacheKey);
   const changed = !cached || cached.signature !== signature;
   const shouldResend = !!cached && resendAfterMs > 0 && now - cached.sentAt >= resendAfterMs;
@@ -1015,7 +1050,7 @@ function shouldSendPluginSyncAction(hostId: number, action: any, now: number, re
   const id = Number(hostId);
   if (!Number.isFinite(id) || id <= 0) return true;
   const cacheKey = `${id}:${String(action?.forwardType || "plugin-sync")}`;
-  const signature = stableActionSignature([action]);
+  const signature = stableActionSignatureHash([action]);
   const cached = agentPluginSyncActionCache.get(cacheKey);
   if (!cached || cached.signature !== signature || now - cached.sentAt >= resendAfterMs) {
     setBoundedMapValue(agentPluginSyncActionCache, cacheKey, { signature, sentAt: now }, AGENT_DYNAMIC_CACHE_MAX);
@@ -2351,13 +2386,21 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       return tokens ? `echo ${shQuote(`[runtime] tunnel generation ${tokens}`)}` : "";
     };
     const tunnelEntryHostIdsByTunnelId = new Map<number, number[]>();
+    // 多条隧道常挂在同一个入口组上；按组 id 合并成一次取组（存 Promise，
+    // 下面是 Promise.all 并发跑的，存结果挡不住同时发出的重复查询）。
+    const tunnelEntryGroupPromiseById = new Map<number, Promise<any>>();
     await Promise.all((hostTunnels as any[]).map(async (tunnel: any) => {
       const entryHostIds = new Set<number>();
       const primaryEntryHostId = Number(tunnel?.entryHostId || 0);
       if (Number.isFinite(primaryEntryHostId) && primaryEntryHostId > 0) entryHostIds.add(primaryEntryHostId);
       const entryGroupId = Number(tunnel?.entryGroupId || 0);
       if (entryGroupId > 0) {
-        const entryGroup = await db.getForwardGroupById(entryGroupId) as any;
+        let entryGroupPending = tunnelEntryGroupPromiseById.get(entryGroupId);
+        if (!entryGroupPending) {
+          entryGroupPending = db.getForwardGroupById(entryGroupId);
+          tunnelEntryGroupPromiseById.set(entryGroupId, entryGroupPending);
+        }
+        const entryGroup = await entryGroupPending as any;
         if (entryGroup && runtimeBool(entryGroup.isEnabled) && String(entryGroup.groupMode || "") === "entry") {
           for (const member of entryGroup.members || []) {
             if (!member || !runtimeBool(member.isEnabled, true) || member.memberType !== "host") continue;
@@ -3005,6 +3048,20 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       addDnsWatch(dnsWatches, value, "host-entry", Number(hostLike?.id || 0));
       return value;
     };
+    // 隧道出口 / 中转 / 额外出口的拨号地址都要按 hostId 取主机，而同一次心跳里
+    // 一台出口机会被几十条规则、WG 拓扑、relay 计划反复问到。这里按 hostId 记住
+    // 取主机的 Promise（只活在这一次请求里，不跨请求，读到的仍是本次心跳的库状态），
+    // 同一台机器整趟心跳只打一次库；存 Promise 而不是结果，是为了并发的调用也能合并。
+    const tunnelDialHostPromiseById = new Map<number, Promise<any>>();
+    const getTunnelDialHost = (hostId: unknown) => {
+      const id = Number(hostId);
+      let pending = tunnelDialHostPromiseById.get(id);
+      if (!pending) {
+        pending = db.getHostById(id);
+        tunnelDialHostPromiseById.set(id, pending);
+      }
+      return pending;
+    };
     const tunnelExitHostAddress = async (tunnel: any) => {
       const connectHost = String(tunnel?.connectHost || "").trim();
       if (connectHost) {
@@ -3012,7 +3069,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         addDnsWatch(dnsWatches, address, "tunnel-connect", Number(tunnel?.id || 0));
         return address;
       }
-      const exit = await db.getHostById(tunnel.exitHostId);
+      const exit = await getTunnelDialHost(tunnel.exitHostId);
       const address = selectTunnelDialAddress(tunnel, exit);
       if (!address) return "";
       addDnsWatch(dnsWatches, address, "host-entry", Number((exit as any)?.id || tunnel?.exitHostId || 0));
@@ -3025,7 +3082,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       if (!Number.isFinite(id) || id <= 0) return "";
       const cached = hostIngressAddressById.get(id);
       if (cached !== undefined) return cached;
-      const hopHost = await db.getHostById(id) as any;
+      const hopHost = await getTunnelDialHost(id) as any;
       const addr = hopHost ? hostPublicAddress(hopHost) : "";
       hostIngressAddressById.set(id, addr);
       return addr;
@@ -3036,7 +3093,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         addDnsWatch(dnsWatches, configured, "tunnel-hop-connect", Number((hop as any)?.id || 0));
         return configured;
       }
-      const hopHost = await db.getHostById(Number((hop as any)?.hostId)) as any;
+      const hopHost = await getTunnelDialHost((hop as any)?.hostId) as any;
       const selected = selectTunnelHopDialAddress(hop, hopHost, tunnel);
       const privateAddress = String(hopHost?.tunnelEntryIp || "").trim();
       if (privateAddress && selected === privateAddress) {
@@ -3051,7 +3108,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         addDnsWatch(dnsWatches, configured, "tunnel-exit-connect", Number((exitNode as any)?.id || 0));
         return configured;
       }
-      const exitHost = await db.getHostById(Number((exitNode as any)?.hostId)) as any;
+      const exitHost = await getTunnelDialHost((exitNode as any)?.hostId) as any;
       const selected = selectTunnelHopDialAddress(exitNode, exitHost, tunnel);
       const privateAddress = String(exitHost?.tunnelEntryIp || "").trim();
       if (privateAddress && selected === privateAddress) {
@@ -6597,6 +6654,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       }
       return false;
     };
+    // 每条动作只规整一次：同一份结果既出 configHash，又留给下面的 desiredStateHash 拼接。
+    const desiredStatePieceByAction = new WeakMap<object, string>();
     const normalizedActions = effectiveActions.map((action: any) => {
       const statusType = action.statusType || (Number(action.ruleId) > 0 ? "rule" : (Number(action.tunnelId) > 0 ? "tunnel" : undefined));
       const normalized = {
@@ -6613,7 +6672,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           ? { reportStatus: true }
           : {}),
       };
-      return { ...normalized, configHash: hashConfig(normalized) };
+      return withDesiredStateConfigHash(normalized, desiredStatePieceByAction);
     });
     if (!deferActionsForLocalState) {
       const runningRuleKeys = new Set(runningRules.map((rule: any) => ruleRuntimeIdentityKey(rule.ruleId, rule.sourcePort, rule.protocol)));
@@ -6712,7 +6771,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         );
       }
     }
-    const desiredStateHash = stableDesiredStateHash(orderedActions);
+    const desiredStateHash = stableDesiredStateHash(orderedActions, desiredStatePieceByAction);
     const desiredState = sendDesiredState ? {
       version: 1,
       issuedAt: actionBatchIssuedAt,

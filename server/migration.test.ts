@@ -574,3 +574,149 @@ test("导入快照时线路组路径里的中转按主机 ID 映射走", () => {
     "快照里缺这台中转就报错，不留一个错的主机 ID",
   );
 });
+
+test("导入快照时隧道 / 线路组的入口出口组和节点的前置代理按新 ID 补回", () => {
+  /*
+    这四列都指向「排在后面才导入」或「同一张表」的行：tunnels.entryGroupId / exitGroupId、
+    forward_groups.entryGroupId、proxy_nodes.frontProxyId。以前原样照抄旧 ID，导入后
+    指向了导入库里另一组 / 另一个节点。源 ID 故意从 50 起，和导入库生成的 1、2… 错开。
+  */
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-deferred-group-refs-"));
+  const databasePath = path.join(directory, "panel.db");
+  const script = String.raw`
+    import assert from "node:assert/strict";
+    import path from "node:path";
+    import { pathToFileURL } from "node:url";
+    const moduleUrl = (file) => pathToFileURL(path.join(process.cwd(), file)).href;
+    const runtime = await import(moduleUrl("server/dbRuntime.ts"));
+    const schema = await import(moduleUrl("server/dbSchema.ts"));
+    const migration = await import(moduleUrl("server/migration.ts"));
+    try {
+      await runtime.connectDatabase({ type: "sqlite", sqlite: { path: process.env.FORWARDX_TEST_DB } });
+      await schema.ensureDatabaseSchema();
+      // 导入库里先占住和快照相同的 ID，逼导入走增量合并、生成新 ID —— 否则恢复模式会
+      // 沿用原 ID，映射是恒等的，测不出「照抄旧 ID」这个错。
+      const exec = (sql, params = []) => runtime.executeRaw(sql, params);
+      await exec("INSERT INTO users (id, username, password, role) VALUES (1, 'existing', 'h', 'admin')");
+      await exec("INSERT INTO hosts (id, name, ip, userId, agentToken) VALUES (1, 'existing', '192.0.2.1', 1, 'existing')");
+      for (const id of [61, 62]) await exec("INSERT INTO forward_groups (id, name, targetIp, userId) VALUES (?, 'occupied', '', 1)", [id]);
+      for (const id of [70, 71]) await exec("INSERT INTO tunnels (id, name, entryHostId, exitHostId, listenPort, userId) VALUES (?, 'occupied', 1, 1, ?, 1)", [id, 40000 + id]);
+      for (const id of [81, 82]) await exec("INSERT INTO proxy_nodes (id, name, address, port, userId) VALUES (?, 'occupied', '192.0.2.9', 1, 1)", [id]);
+      const result = await migration.importMigrationSnapshot({
+        version: 1,
+        exportedAt: Date.now(),
+        tables: {
+          users: [{ id: 57, username: "owner", password: "h", role: "admin" }],
+          hosts: [
+            { id: 50, name: "in", ip: "203.0.113.1", userId: 57, agentToken: "t50" },
+            { id: 51, name: "out", ip: "203.0.113.2", userId: 57, agentToken: "t51" },
+          ],
+          // 61 的入口组是排在它后面的 62：同表自引用也得等第二遍。
+          forward_groups: [
+            { id: 61, name: "chain", groupMode: "failover", targetIp: "198.51.100.1", userId: 57, entryGroupId: 62 },
+            { id: 62, name: "entry", groupMode: "entry", targetIp: "", userId: 57, entryGroupId: null },
+          ],
+          tunnels: [
+            { id: 70, name: "t-bound", entryHostId: 50, exitHostId: 51, entryGroupId: 62, exitGroupId: 61, listenPort: 30001, userId: 57, mode: "tls", secret: "s" },
+            // 源库里就悬空的出口组：置空，不报错、也不留一个指向别处的旧 ID。
+            { id: 71, name: "t-dangling", entryHostId: 50, exitHostId: 51, entryGroupId: null, exitGroupId: 999, listenPort: 30002, userId: 57, mode: "tls", secret: "s" },
+          ],
+          proxy_nodes: [
+            { id: 81, name: "via-front", address: "198.51.100.2", port: 443, userId: 57, frontProxyId: 82 },
+            { id: 82, name: "front", address: "198.51.100.3", port: 443, userId: 57, frontProxyId: 0 },
+          ],
+        },
+      });
+      assert.equal(result.success, true, JSON.stringify(result));
+      assert.deepEqual(result.warnings || [], [], "都能映射上，不该有告警");
+      const one = async (sql, params) => (await runtime.queryRaw(sql, params))[0];
+      const entry = await one("SELECT id FROM forward_groups WHERE name = ?", ["entry"]);
+      const chain = await one("SELECT id, entryGroupId FROM forward_groups WHERE name = ?", ["chain"]);
+      assert.notEqual(Number(entry.id), 62, "测试前提：导入库生成了新 ID");
+      assert.equal(Number(chain.entryGroupId), Number(entry.id));
+      const bound = await one("SELECT entryGroupId, exitGroupId FROM tunnels WHERE name = ?", ["t-bound"]);
+      assert.equal(Number(bound.entryGroupId), Number(entry.id));
+      assert.equal(Number(bound.exitGroupId), Number(chain.id));
+      const dangling = await one("SELECT entryGroupId, exitGroupId FROM tunnels WHERE name = ?", ["t-dangling"]);
+      assert.equal(dangling.entryGroupId, null);
+      assert.equal(dangling.exitGroupId, null);
+      const front = await one("SELECT id, frontProxyId FROM proxy_nodes WHERE name = ?", ["front"]);
+      const via = await one("SELECT frontProxyId FROM proxy_nodes WHERE name = ?", ["via-front"]);
+      assert.equal(Number(via.frontProxyId), Number(front.id));
+      assert.equal(Number(front.frontProxyId), 0);
+    } finally {
+      await runtime.closeDatabase();
+    }
+  `;
+  try {
+    const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+      cwd: process.cwd(),
+      env: { ...process.env, DATABASE_TYPE: "sqlite", FORWARDX_TEST_DB: databasePath },
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("设置页反复拉数据概况时，同一个连接只补一次表结构；重连后再补", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-summary-schema-"));
+  const databasePath = path.join(directory, "panel.db");
+  const script = String.raw`
+    import assert from "node:assert/strict";
+    import path from "node:path";
+    import { pathToFileURL } from "node:url";
+    const Database = (await import("better-sqlite3")).default;
+    const originalPrepare = Database.prototype.prepare;
+    const originalExec = Database.prototype.exec;
+    let statements = [];
+    Database.prototype.prepare = function (sql) {
+      statements.push(String(sql));
+      return originalPrepare.call(this, sql);
+    };
+    Database.prototype.exec = function (sql) {
+      statements.push(String(sql));
+      return originalExec.call(this, sql);
+    };
+    const moduleUrl = (file) => pathToFileURL(path.join(process.cwd(), file)).href;
+    const runtime = await import(moduleUrl("server/dbRuntime.ts"));
+    const migration = await import(moduleUrl("server/migration.ts"));
+    const config = { type: "sqlite", sqlite: { path: process.env.FORWARDX_TEST_DB } };
+    // 补表结构就是逐表 CREATE TABLE IF NOT EXISTS；数这一类就知道补没补。
+    const schemaChecks = () => statements.filter((sql) => /CREATE TABLE IF NOT EXISTS/i.test(sql)).length;
+    try {
+      await runtime.connectDatabase(config);
+      statements = [];
+      await migration.getPanelDataSummary();
+      assert.ok(schemaChecks() > 0, "第一次要补表结构");
+      migration.invalidatePanelDataSummaryCache();
+      statements = [];
+      await migration.getPanelDataSummary();
+      assert.equal(schemaChecks(), 0, "同一个连接第二次不该再补");
+      statements = [];
+      await migration.getPanelDataSummary({ useCache: false });
+      assert.ok(schemaChecks() > 0, "导入 / 迁移那几处（useCache: false）照旧每次都补");
+      await runtime.closeDatabase();
+      await runtime.connectDatabase(config);
+      migration.invalidatePanelDataSummaryCache();
+      statements = [];
+      await migration.getPanelDataSummary();
+      assert.ok(schemaChecks() > 0, "重连换了连接对象，要重新补");
+    } finally {
+      await runtime.closeDatabase();
+    }
+  `;
+  try {
+    const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+      cwd: process.cwd(),
+      env: { ...process.env, DATABASE_TYPE: "sqlite", FORWARDX_TEST_DB: databasePath },
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

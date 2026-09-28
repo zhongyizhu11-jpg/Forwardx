@@ -102,6 +102,7 @@ import {
 import { repairPortForwardRuleHostReferences } from "../portForwardRuleHosts";
 import { summarizeForwardGroupRuntime } from "../forwardGroupRuntimeStatus";
 import { dbBool, sqlBool } from "./repositoryUtils";
+import { reorderWithinSortOrderScope } from "./sortOrderSlots";
 import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
 import { MAX_FORWARD_GROUP_MEMBERS } from "../../shared/forwardGroup";
 import { routeGroupForwardTypeSupported, routeGroupTunnelModeSupported } from "../../shared/routeGroup";
@@ -3634,7 +3635,7 @@ async function nextForwardGroupSortOrder(userId: number, groupMode: ForwardGroup
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
 }
 
-export async function reorderForwardGroups(groupMode: ForwardGroupMode, ids: number[], startIndex = 0) {
+export async function reorderForwardGroups(groupMode: ForwardGroupMode, ids: number[], _startIndex = 0) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const mode = forwardGroupModeOf({ groupMode });
@@ -3646,11 +3647,14 @@ export async function reorderForwardGroups(groupMode: ForwardGroupMode, ids: num
   }).from(forwardGroups).where(inArray(forwardGroups.id, orderedIds));
   if (rows.length !== orderedIds.length) throw new Error("排序中包含不存在的转发项目");
   if ((rows as any[]).some((row) => forwardGroupModeOf(row) !== mode)) throw new Error("排序项目类型不一致");
-  const q = quoteIdentifier;
-  const normalizedStartIndex = Math.max(0, Math.floor(Number(startIndex) || 0));
-  for (const [index, id] of orderedIds.entries()) {
-    await executeRaw(`UPDATE ${q("forward_groups")} SET ${q("sortOrder")} = ? WHERE ${q("id")} = ?`, [normalizedStartIndex + index, id]);
-  }
+  // 按被拖行原有的 sortOrder 位置重排（见 sortOrderSlots）；范围是管理员看到的同类型全部项目，startIndex 不再需要。
+  await reorderWithinSortOrderScope({
+    table: "forward_groups",
+    orderedIds,
+    loadScope: async () => ((await (await getDb()).select({ id: forwardGroups.id, groupMode: forwardGroups.groupMode, sortOrder: forwardGroups.sortOrder })
+      .from(forwardGroups).orderBy(asc(forwardGroups.sortOrder), desc(forwardGroups.createdAt), desc(forwardGroups.id))) as any[])
+      .filter((row) => forwardGroupModeOf(row) === mode),
+  });
 }
 
 export async function updateForwardGroup(id: number, data: Partial<InsertForwardGroup>, options: { skipSync?: boolean } = {}) {
@@ -3891,15 +3895,32 @@ export async function getForwardGroupBandwidthAggregation(groupId: number) {
   };
 }
 
+/**
+ * 成员优先级按给的次序写成 0..n-1，所以必须拿到**这个组的完整成员集合**：
+ * 少带了的成员保留旧 priority，会和新写的撞号（主备挑成员就看 priority，撞号等于次序随机）；
+ * 夹带别的组的 id 以前会被 where 静悄悄吞掉，前端却以为排好了。整体校验通过后在一个事务里写，
+ * 不会留下一半新一半旧的顺序。
+ */
 export async function reorderForwardGroupMembers(groupId: number, memberIds: number[]) {
-  const db = await getDb();
-  for (const [index, memberId] of memberIds.entries()) {
-    await db.update(forwardGroupMembers).set({ priority: index, updatedAt: nowDate() }).where(and(
-      eq(forwardGroupMembers.groupId, groupId),
-      eq(forwardGroupMembers.id, memberId),
-    ));
+  const orderedIds = memberIds.map((id) => Math.floor(Number(id)));
+  if (orderedIds.length === 0 || orderedIds.some((id) => !Number.isInteger(id) || id <= 0) || new Set(orderedIds).size !== orderedIds.length) {
+    throw new Error("成员排序数据无效：成员不能为空或重复");
   }
-  await insertForwardGroupEvent(groupId, null, "reorder", "Member priority updated.");
+  await withDatabaseTransaction(async () => {
+    const db = await getDb();
+    const rows = await db.select({ id: forwardGroupMembers.id }).from(forwardGroupMembers).where(eq(forwardGroupMembers.groupId, groupId));
+    const current = new Set((rows as any[]).map((row) => Number(row.id)));
+    if (current.size !== orderedIds.length || orderedIds.some((id) => !current.has(id))) {
+      throw new Error("成员列表和当前转发组不一致（可能刚被改过），请刷新后按完整的成员顺序重新提交");
+    }
+    for (const [index, memberId] of orderedIds.entries()) {
+      await db.update(forwardGroupMembers).set({ priority: index, updatedAt: nowDate() }).where(and(
+        eq(forwardGroupMembers.groupId, groupId),
+        eq(forwardGroupMembers.id, memberId),
+      ));
+    }
+    await insertForwardGroupEvent(groupId, null, "reorder", "Member priority updated.");
+  });
 }
 
 export async function syncForwardChainsForHost(hostId: number, previousHost?: any) {

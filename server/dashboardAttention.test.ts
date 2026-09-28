@@ -232,3 +232,29 @@ test("每一类只取有限几行，总数照实给；一切正常时一行都�
     console.log("OK");
   `);
 });
+
+test("首页 stats / health 缓存按统计范围：管理员共用全站那份，租户各自一份", () => {
+  runScenario(String.raw`
+    await addUser(1, "admin");
+    await addUser(3, "admin");
+    await addUser(2, "user", 1);
+    await addHost(10, 1, 1, stale);
+    await addHost(20, 2, 1, stale);
+    const { dashboardRouter } = await import(url("server/routers/dashboard.ts"));
+    const call = (id, role) => dashboardRouter.createCaller({ user: { id, role, username: "u" + id }, req: { headers: {} }, res: { setHeader: () => {} } });
+
+    const first = await call(1, "admin").health();
+    // 第一个管理员算完之后改一下库：第二个管理员如果拿到的是改之前的数，说明走的是同一份全站缓存。
+    await exec('UPDATE hosts SET "lastHeartbeat" = ?', [fresh]);
+    const second = await call(3, "admin").health();
+    assert.deepEqual(second, first, "两个管理员看的是同一份全站结果，不该各算一遍");
+    const tenant = await call(2, "user").health();
+    assert.equal(tenant.hosts.total, 1, "租户只数自己的机器，不能拿到全站那份缓存");
+    assert.equal(tenant.hosts.offline, 0, "租户这份是现算的（改库之后）");
+    assert.equal(second.hosts.offline, 2, "管理员那份是改库之前缓存下来的");
+    const adminStats = await call(1, "admin").stats();
+    const tenantStats = await call(2, "user").stats();
+    assert.notDeepEqual(tenantStats, adminStats, "stats 同样按范围分开");
+    console.log("OK");
+  `);
+});

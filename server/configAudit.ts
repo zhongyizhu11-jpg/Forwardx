@@ -59,7 +59,20 @@ function stableJson(value: any) {
 }
 
 export function hashConfig(value: any) {
-  return createHash("sha256").update(JSON.stringify(normalize(value, true, "hash"))).digest("hex");
+  return hashNormalizedConfig(normalizeConfigForHash(value));
+}
+
+/*
+  hashConfig 拆成「规整」和「求摘要」两步单独导出：心跳每条下发动作既要算自己的
+  configHash，又要拼进整批的 desiredStateHash。规整（递归排序键、给密钥字段求摘要）
+  才是贵的那步，拆开后同一份规整结果可以两处复用，而摘要值和直接调 hashConfig 逐字节相同。
+*/
+export function normalizeConfigForHash(value: any) {
+  return normalize(value, true, "hash");
+}
+
+export function hashNormalizedConfig(normalized: any) {
+  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 
 export function shouldAuditConfigPatch(value: Record<string, any> | null | undefined) {

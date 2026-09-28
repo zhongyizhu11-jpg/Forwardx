@@ -24,6 +24,7 @@ import { releaseHostPortReservations, reserveAvailableHostPort, reserveSpecificH
 import { getHostById } from "./hostRepository";
 import { getForwardRulesByTunnel } from "./forwardRuleRepository";
 import { dbBool, sqlBool } from "./repositoryUtils";
+import { reorderWithinSortOrderScope } from "./sortOrderSlots";
 import { mapWithConcurrency } from "../asyncPool";
 import { withKeyedTaskLock } from "../keyedTaskLock";
 import { pageResult, pageWindowForTotal, type PageRequest } from "../../shared/pagination";
@@ -496,18 +497,21 @@ async function nextTunnelSortOrder(userId: number) {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
 }
 
-export async function reorderTunnels(ids: number[], startIndex = 0) {
+// startIndex 保留在签名里只为兼容调用方：现在按被拖行原有的 sortOrder 位置重排，用不上页偏移。
+export async function reorderTunnels(ids: number[], _startIndex = 0) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const orderedIds = ids.map((id) => Math.floor(Number(id))).filter((id) => Number.isInteger(id) && id > 0);
   if (orderedIds.length === 0 || new Set(orderedIds).size !== orderedIds.length) throw new Error("排序数据无效");
   const rows = await db.select({ id: tunnels.id }).from(tunnels).where(sql`${tunnels.id} IN (${sql.join(orderedIds.map((id) => sql`${id}`), sql`, `)})`);
   if (rows.length !== orderedIds.length) throw new Error("排序中包含不存在的隧道");
-  const q = quoteIdentifier;
-  const normalizedStartIndex = Math.max(0, Math.floor(Number(startIndex) || 0));
-  for (const [index, id] of orderedIds.entries()) {
-    await executeRaw(`UPDATE ${q("tunnels")} SET ${q("sortOrder")} = ? WHERE ${q("id")} = ?`, [normalizedStartIndex + index, id]);
-  }
+  // 隧道排序只有管理员能做，面对的是全部隧道的总列表，排序范围就是整张表（按列表的展示顺序）。
+  await reorderWithinSortOrderScope({
+    table: "tunnels",
+    orderedIds,
+    loadScope: async () => (await getDb()).select({ id: tunnels.id, sortOrder: tunnels.sortOrder }).from(tunnels)
+      .orderBy(asc(tunnels.sortOrder), desc(tunnels.createdAt), desc(tunnels.id)),
+  });
 }
 
 function hostEntryAddress(host: any) {

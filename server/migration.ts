@@ -12,6 +12,9 @@ import {
   defaultSqlitePath,
   executeRaw,
   getDatabaseKind,
+  getPool,
+  getPostgresPool,
+  getSqlite,
   nowDate,
   queryRaw,
   readDatabaseConfig,
@@ -554,9 +557,31 @@ async function hasExtraBusinessData() {
   return flags.some(Boolean);
 }
 
+/*
+  设置页每次打开都会拉一次数据概况（backupSummary），而 ensureDatabaseSchema 是整套
+  建表 / 补列 / 补索引的检查，MySQL / PostgreSQL 上是几十上百条 information_schema 查询。
+  表结构在同一个连接的生命周期里不会自己变，所以按「连接对象」记住已经补过：切换数据库或
+  重连会换一个新的连接对象，自然会重新补一次；WeakSet 不拖住旧连接。
+  只有走缓存的调用（设置页）才跳过，导入 / 迁移那几处传 useCache: false 的照旧每次都补。
+*/
+const panelSummarySchemaEnsuredHandles = new WeakSet<object>();
+
+function currentDatabaseHandle(): object | null {
+  const kind = getDatabaseKind();
+  const handle = kind === "sqlite" ? getSqlite() : kind === "postgresql" ? getPostgresPool() : kind ? getPool() : null;
+  return handle ? handle as object : null;
+}
+
+async function ensurePanelSummarySchema(allowSkip: boolean) {
+  const handle = currentDatabaseHandle();
+  if (allowSkip && handle && panelSummarySchemaEnsuredHandles.has(handle)) return;
+  await ensureDatabaseSchema();
+  if (handle) panelSummarySchemaEnsuredHandles.add(handle);
+}
+
 export async function getPanelDataSummary(options: { useCache?: boolean } = {}) {
   await connectDatabase();
-  await ensureDatabaseSchema();
+  await ensurePanelSummarySchema(options.useCache !== false);
   const useCache = options.useCache !== false;
   const cacheKind = getDatabaseKind();
   const now = Date.now();
@@ -1167,6 +1192,10 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
       row.exitHostId = mapRequiredId(maps, "hosts", source.exitHostId);
       row.userId = mapRequiredId(maps, "users", source.userId);
       row.isRunning = false;
+      // 入口组 / 出口组指向 forward_groups，而线路组排在隧道之后才导入，这一遍还映射不出来。
+      // 照抄旧 ID 会指到导入库里另一组；先置空，等 fixDeferredForwardGroupReferences 第二遍补。
+      row.entryGroupId = null;
+      row.exitGroupId = null;
       return { row };
 
     case "tunnel_hops":
@@ -1182,6 +1211,8 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
     case "forward_groups":
       row.userId = mapRequiredId(maps, "users", source.userId);
       row.activeMemberId = null;
+      // 入口组指回同一张表的另一行，和 activeMemberId 一样等第二遍再补。
+      row.entryGroupId = null;
       return { row };
 
     case "forward_group_members":
@@ -1227,6 +1258,9 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
       // 这一列是 notNull default 0，而 mapOptionalId 对「没有」返回的是 null。
       row.inboundId = mapOptionalId(maps, "proxy_inbounds", source.inboundId) || 0;
       row.inboundUserId = mapOptionalId(maps, "proxy_inbound_users", source.inboundUserId) || 0;
+      // 前置代理指向同表另一行，这一遍它可能还没导入；先退回「不经由」（列是 notNull default 0），
+      // 第二遍再按映射补上。
+      row.frontProxyId = 0;
       return { row };
 
     case "proxy_node_shares":
@@ -1554,6 +1588,38 @@ async function updateMappedColumn(
 }
 
 async function fixDeferredForwardGroupReferences(snapshot: MigrationSnapshot, maps: ImportMaps) {
+  /*
+    隧道的入口组 / 出口组、线路组的入口组、代理节点的前置代理：第一遍都先置空了。
+    这里按映射补回来；引用的那一行没被导进来（源库里本就悬空，或那一行导入失败已单独
+    记过告警）就保持置空，不再报一次错 —— 留空的语义是「不绑组 / 不经由前置」，比指向
+    导入库里另一行安全。
+  */
+  const deferredOptional = (table: string, value: unknown) => mapId(maps, table, value);
+  const tunnelEntryGroupUpdates: Array<{ id: number; value: number }> = [];
+  const tunnelExitGroupUpdates: Array<{ id: number; value: number }> = [];
+  for (const tunnel of sortedSnapshotRows(snapshot, "tunnels")) {
+    const nextId = mapId(maps, "tunnels", tunnel.id);
+    if (!nextId) continue;
+    const entryGroupId = deferredOptional("forward_groups", tunnel.entryGroupId);
+    if (entryGroupId) tunnelEntryGroupUpdates.push({ id: nextId, value: entryGroupId });
+    const exitGroupId = deferredOptional("forward_groups", tunnel.exitGroupId);
+    if (exitGroupId) tunnelExitGroupUpdates.push({ id: nextId, value: exitGroupId });
+  }
+  const groupEntryGroupUpdates: Array<{ id: number; value: number }> = [];
+  for (const group of sortedSnapshotRows(snapshot, "forward_groups")) {
+    const nextId = mapId(maps, "forward_groups", group.id);
+    if (!nextId) continue;
+    const entryGroupId = deferredOptional("forward_groups", group.entryGroupId);
+    if (entryGroupId) groupEntryGroupUpdates.push({ id: nextId, value: entryGroupId });
+  }
+  const frontProxyUpdates: Array<{ id: number; value: number }> = [];
+  for (const node of sortedSnapshotRows(snapshot, "proxy_nodes")) {
+    const nextId = mapId(maps, "proxy_nodes", node.id);
+    if (!nextId) continue;
+    const frontProxyId = deferredOptional("proxy_nodes", node.frontProxyId);
+    if (frontProxyId) frontProxyUpdates.push({ id: nextId, value: frontProxyId });
+  }
+
   const groupUpdates: Array<{ id: number; value: number }> = [];
   const memberUpdates: Array<{ id: number; value: number }> = [];
   const ruleUpdates: Array<{ id: number; value: number }> = [];
@@ -1599,6 +1665,10 @@ async function fixDeferredForwardGroupReferences(snapshot: MigrationSnapshot, ma
     await updateMappedColumn("forward_group_members", "ruleId", memberUpdates);
     await updateMappedColumn("forward_rules", "forwardGroupRuleId", ruleUpdates);
     await updateMappedColumn("forward_rules", "routeParentRuleId", routeParentUpdates);
+    await updateMappedColumn("tunnels", "entryGroupId", tunnelEntryGroupUpdates);
+    await updateMappedColumn("tunnels", "exitGroupId", tunnelExitGroupUpdates);
+    await updateMappedColumn("forward_groups", "entryGroupId", groupEntryGroupUpdates);
+    await updateMappedColumn("proxy_nodes", "frontProxyId", frontProxyUpdates);
   });
   if (errors.length > 0) throw new Error(`${errors.length} 条延迟关联无法恢复；${errors.slice(0, 3).join("；")}`);
 }

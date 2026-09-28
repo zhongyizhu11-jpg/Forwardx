@@ -8,6 +8,7 @@ import { sqlBool } from "./repositoryUtils";
 import { pageResult, pageWindowForTotal, type PageRequest } from "../../shared/pagination";
 import { recordConfigAuditEvent, shouldAuditConfigPatch } from "../configAudit";
 import { withKeyedTaskLock } from "../keyedTaskLock";
+import { reorderWithinSortOrderScope } from "./sortOrderSlots";
 
 // ==================== Forward Rule Queries ====================
 
@@ -68,7 +69,7 @@ async function nextForwardRuleSortOrder(userId: number, category: ForwardRuleSor
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
 }
 
-export async function getForwardRules(userId?: number, hostId?: number) {
+export async function getForwardRules(userId?: number, hostId?: number, options: { failoverOnly?: boolean } = {}) {
   const db = await getDb();
   if (!db) return [];
   const conds: any[] = [
@@ -80,6 +81,8 @@ export async function getForwardRules(userId?: number, hostId?: number) {
   ];
   if (userId) conds.push(eq(forwardRules.userId, userId));
   if (hostId) conds.push(eq(forwardRules.hostId, hostId));
+  // 线路组面板只要开了主备 / 线路组的规则：在库里筛，别把全站规则整表读出来、序列化完再让前端丢掉九成。
+  if (options.failoverOnly) conds.push(sql`${forwardRules.failoverEnabled} = ${sqlBool(true)}`);
   return db.select().from(forwardRules).where(and(...conds)).orderBy(sql`${forwardRules.sortOrder} ASC`, desc(forwardRules.createdAt), desc(forwardRules.id));
 }
 
@@ -1129,7 +1132,8 @@ export async function createForwardRule(rule: InsertForwardRule) {
   return id;
 }
 
-export async function reorderForwardRules(category: ForwardRuleSortCategory, ids: number[], userId?: number, startIndex = 0) {
+// startIndex 保留在签名里只为兼容调用方：现在按被拖行原有的 sortOrder 位置重排，用不上页偏移。
+export async function reorderForwardRules(category: ForwardRuleSortCategory, ids: number[], userId?: number, _startIndex = 0) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const orderedIds = ids.map((id) => Math.floor(Number(id))).filter((id) => Number.isInteger(id) && id > 0);
@@ -1162,10 +1166,29 @@ export async function reorderForwardRules(category: ForwardRuleSortCategory, ids
   );
   if (rows.length !== orderedIds.length) throw new Error("排序中包含不存在或无权访问的规则");
   if (rows.some((row: any) => forwardRuleCategoryFromRow(row) !== category)) throw new Error("排序规则类型不一致");
-  const normalizedStartIndex = Math.max(0, Math.floor(Number(startIndex) || 0));
-  for (const [index, id] of orderedIds.entries()) {
-    await executeRaw(`UPDATE ${q("forward_rules")} SET ${q("sortOrder")} = ? WHERE ${q("id")} = ?`, [normalizedStartIndex + index, id]);
-  }
+  // 排序范围 = 这些规则主人的、同一分类下、会出现在规则列表里的全部规则（条件和列表 / nextForwardRuleSortOrder 一致），
+  // 按列表的展示顺序排好。租户只会是自己；管理员按单个用户筛选后才能拖，这里按实际涉及的用户取。
+  const ownerIds = Array.from(new Set(rows.map((row: any) => Number(row.userId)).filter((id: number) => id > 0)));
+  const owners = inList(ownerIds.length > 0 ? ownerIds : [0]);
+  await reorderWithinSortOrderScope({
+    table: "forward_rules",
+    orderedIds,
+    loadScope: () => queryRaw<{ id: number; sortOrder: number }>(
+      `SELECT r.${q("id")} AS ${q("id")}, r.${q("sortOrder")} AS ${q("sortOrder")}
+         FROM ${q("forward_rules")} r
+         LEFT JOIN ${q("forward_groups")} g ON g.${q("id")} = r.${q("forwardGroupId")}
+        WHERE r.${q("userId")} IN ${owners.sql}
+          AND COALESCE(r.${q("pendingDelete")}, ?) = ?
+          AND COALESCE(r.${q("forwardGroupRuleId")}, 0) = 0
+          AND COALESCE(r.${q("routeParentRuleId")}, 0) = 0
+          AND r.${q("id")} NOT IN (
+            SELECT ${q("ruleId")} FROM ${q("forward_group_members")} WHERE ${q("ruleId")} IS NOT NULL
+          )
+          AND ${forwardRuleCategorySql("r", "g")} = ?
+        ORDER BY r.${q("sortOrder")} ASC, r.${q("createdAt")} DESC, r.${q("id")} DESC`,
+      [...owners.params, boolValue(false), boolValue(false), category],
+    ),
+  });
 }
 
 /**

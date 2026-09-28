@@ -253,6 +253,8 @@ export const rulesRouter = router({
       userId: z.number().optional(),
       scope: z.enum(["self", "all"]).optional(),
       tunnelId: z.number().nullable().optional(),
+      // 只要开了主备 / 线路组（failoverEnabled）的规则，线路组面板用。
+      failoverOnly: z.boolean().optional(),
     }).optional())
     .query(async ({ input, ctx }) => {
       const isAdmin = ctx.user.role === "admin";
@@ -261,7 +263,7 @@ export const rulesRouter = router({
           ? undefined
           : input?.userId ?? ctx.user.id
         : ctx.user.id;
-      const rules = await db.getForwardRules(requestedUserId, input?.hostId);
+      const rules = await db.getForwardRules(requestedUserId, input?.hostId, { failoverOnly: input?.failoverOnly === true });
       const filtered = input?.tunnelId === undefined
         ? rules
         : input.tunnelId === null

@@ -213,7 +213,12 @@ async function countDashboardHealth(userId?: number): Promise<HealthCounts> {
   const online = hostOnlineSql();
   const neverConnected = sql`${hosts.lastHeartbeat} IS NULL`;
 
-  const hostRows = await db
+  /*
+    四个聚合互不依赖，并发发出去：MySQL / PostgreSQL 上各走一个连接，首页等最慢的那一条
+    而不是四条相加；SQLite 是同一个同步连接，照样一条条跑，只是不再多排几轮事件循环。
+    这里不在事务里，也不依赖彼此的结果，并发不改变任何一个数。
+  */
+  const hostRowsQuery = db
     .select({
       total: sqlCountAll(),
       online: sql<number>`COALESCE(SUM(CASE WHEN ${online} THEN 1 ELSE 0 END), 0)`,
@@ -225,7 +230,7 @@ async function countDashboardHealth(userId?: number): Promise<HealthCounts> {
   const enabled = sql`${forwardRules.isEnabled} = ${sqlBool(true)}`;
   const running = ruleEffectivelyRunningSql();
   const ownerPaused = ruleOwnerPausedSql();
-  const ruleRows = await db
+  const ruleRowsQuery = db
     .select({
       total: sqlCountAll(),
       running: sql<number>`COALESCE(SUM(CASE WHEN ${enabled} AND ${running} THEN 1 ELSE 0 END), 0)`,
@@ -236,7 +241,7 @@ async function countDashboardHealth(userId?: number): Promise<HealthCounts> {
     .from(forwardRules)
     .where(userFacingRuleWhere(userId));
 
-  const tunnelRows = await db
+  const tunnelRowsQuery = db
     .select({
       total: sqlCountAll(),
       unhealthy: sql<number>`COALESCE(SUM(CASE WHEN ${tunnels.isEnabled} = ${sqlBool(true)} AND ${tunnels.isRunning} = ${sqlBool(false)} THEN 1 ELSE 0 END), 0)`,
@@ -244,7 +249,7 @@ async function countDashboardHealth(userId?: number): Promise<HealthCounts> {
     .from(tunnels)
     .where(userId ? eq(tunnels.userId, userId) : undefined);
 
-  const groupRows = await db
+  const groupRowsQuery = db
     .select({
       total: sqlCountAll(),
       // unknown 是「还没测过」，不是异常；只有明确报坏的才算。
@@ -253,6 +258,7 @@ async function countDashboardHealth(userId?: number): Promise<HealthCounts> {
     })
     .from(forwardGroups)
     .where(userId ? eq(forwardGroups.userId, userId) : undefined);
+  const [hostRows, ruleRows, tunnelRows, groupRows] = await Promise.all([hostRowsQuery, ruleRowsQuery, tunnelRowsQuery, groupRowsQuery]);
 
   const n = (value: unknown) => Math.max(0, Math.trunc(Number(value) || 0));
   const hostTotal = n(hostRows[0]?.total);
