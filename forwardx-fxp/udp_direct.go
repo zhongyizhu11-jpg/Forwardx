@@ -148,7 +148,9 @@ type udpDirectExitSession struct {
 	dataFragments udpFragmentReassembler
 	dataOpener    *fxpUDPCodec
 	returnSealer  *fxpUDPCodec
-	remove        func(*udpDirectExitSession)
+	// counter 是这条规则在这个出口监听上的流量计数（按规则共用一个），nil 表示不记。
+	counter *trafficCounter
+	remove  func(*udpDirectExitSession)
 }
 
 type udpDirectRelaySession struct {
@@ -634,6 +636,27 @@ func serveExitUDPDirect(conn *net.UDPConn, cfg config) error {
 		}
 		return budget
 	}
+	// 出口按规则记流量（见 exit_traffic.go）。只有 udpTargets 里的规则能建会话，
+	// 所以只会替面板给的规则记。计数器按规则共用，只在下面的读循环里建。
+	trafficCounters := map[int]*trafficCounter{}
+	var stopTrafficReporters []func()
+	defer func() {
+		// 放在最后：读循环退出前已经关完会话、等完收发协程，这里交的是最终的数。
+		for _, stop := range stopTrafficReporters {
+			stop()
+		}
+	}()
+	trafficCounterForRule := func(ruleID int) *trafficCounter {
+		if counter, ok := trafficCounters[ruleID]; ok {
+			return counter
+		}
+		counter, stop := startExitTrafficReporter(cfg, ruleID)
+		trafficCounters[ruleID] = counter
+		if counter != nil {
+			stopTrafficReporters = append(stopTrafficReporters, stop)
+		}
+		return counter
+	}
 	var sessionsMu sync.Mutex
 	var workerWG sync.WaitGroup
 	detachSessionLocked := func(session *udpDirectExitSession) bool {
@@ -765,6 +788,9 @@ func serveExitUDPDirect(conn *net.UDPConn, cfg config) error {
 		}
 		if session == nil {
 			created, err := newUDPDirectExitSession(conn, peerAddr, cfg, packet.ruleID, packet.sessionID, target.TargetIP, target.TargetPort, queueBudgetForRule(packet.ruleID), removeSession)
+			if err == nil {
+				created.counter = trafficCounterForRule(packet.ruleID)
+			}
 			if err != nil {
 				log.Printf("exit udp direct session create failed tunnel=%d rule=%d peer=%s target=%s:%d: %v", cfg.TunnelID, packet.ruleID, peerAddr, target.TargetIP, target.TargetPort, err)
 				continue
@@ -804,6 +830,9 @@ func serveExitUDPDirect(conn *net.UDPConn, cfg config) error {
 				wakeSweeper()
 			}
 			if startSession {
+				if session.counter != nil {
+					session.counter.connections.Add(1)
+				}
 				session.start(&workerWG)
 			}
 		}
@@ -934,6 +963,9 @@ func (s *udpDirectExitSession) writeTarget(payload []byte) {
 		s.close()
 		return
 	}
+	if s.counter != nil {
+		s.counter.in.Add(uint64(len(payload)))
+	}
 	s.touch()
 }
 
@@ -981,6 +1013,9 @@ func (s *udpDirectExitSession) readTargetLoop() {
 				s.close()
 				return
 			}
+		}
+		if s.counter != nil {
+			s.counter.out.Add(uint64(n))
 		}
 		s.touch()
 	}

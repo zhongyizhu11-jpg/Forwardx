@@ -65,9 +65,11 @@ func fxpProcessPID(process *fxpProcess) int {
 	return 0
 }
 
-// fxpSpecWithPanelCredentials 把入口上报流量要用的面板地址和令牌填进运行时配置。
+// fxpSpecWithPanelCredentials 把上报流量要用的面板地址和令牌填进运行时配置。入口
+// 和出口都要：NEX 隧道的入口是租户自己的机器时，面板按出口报的流量记账（入口可以
+// 被改成少报），所以出口也得能报。中转不是记账点，不给。
 func fxpSpecWithPanelCredentials(cfg Config, spec fxpSpec) fxpSpec {
-	if spec.Role == "entry" {
+	if fxpRoleReportsTraffic(spec.Role) {
 		spec.PanelURL = currentPanelURL(cfg)
 		spec.Token = cfg.Token
 	} else if isFXPEntryGroup(spec) {

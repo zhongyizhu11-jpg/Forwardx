@@ -99,23 +99,65 @@ async function withTrafficAccountingUserLocks<T>(userIds: number[], task: () => 
   return run(0);
 }
 
+/**
+ * NEX（forwardx）隧道的流量按哪一边记。
+ *
+ * 入口看得到协议层的细节，历来按入口记；但入口机是租户自己的机器时，它上面的
+ * Agent/FXP 可以被改成报 0，流量白走管理员的出口，配额和计费都不动。所以只要有
+ * 一台入口机（主入口、入口组里的机器）不是管理员的，就改按出口记（出口 FXP 也会
+ * 按规则报一份，见 forwardx-fxp/exit_traffic.go）。入口全是管理员的（或没有主人）
+ * 时照旧按入口。两边永远只记一边。
+ */
+export function forwardXTrafficAccountedAtExit(tunnel: any | null, entryTrusted: boolean) {
+  return !!tunnel && isForwardXTunnel(tunnel) && !entryTrusted;
+}
+
 export function trafficAccountingHostIds(
   rule: any,
   tunnel: any | null,
   entryHostIds: Set<number> | undefined,
   extraExitHostIds: Set<number> | undefined,
+  entryTrusted: boolean,
 ) {
   if (!tunnel) return new Set([Number(rule.hostId || 0)]);
-  if (isForwardXTunnel(tunnel)) {
+  if (isForwardXTunnel(tunnel) && entryTrusted) {
     return entryHostIds && entryHostIds.size > 0
       ? new Set(entryHostIds)
       : new Set([Number(tunnel.entryHostId || 0)]);
   }
+  // 其余隧道，以及入口不可信的 NEX 隧道：按出口（主出口 + 负载均衡里启用的出口）记。
   const ids = new Set<number>([Number(tunnel.exitHostId || 0)]);
   if (tunnelUsesExtraExitHosts(tunnel)) {
     for (const hostId of extraExitHostIds || []) ids.add(Number(hostId));
   }
   return ids;
+}
+
+/**
+ * 这份上报算不算：得是这条规则的记账机器报的，而且是记账那一边报的。
+ *
+ * fromForwardXExit 是出口 FXP 替规则记的那份（上报里 reportSide=exit）。只看机器不够：
+ * 一台机器可能既在入口组里又是出口，入口那份和出口那份都会从它报上来，只能按「这份
+ * 是哪边记的」挑一份，不然就记两遍。
+ */
+export function isTrafficAccountingReport(input: {
+  rule: any;
+  tunnel: any | null;
+  entryHostIds: Set<number> | undefined;
+  extraExitHostIds: Set<number> | undefined;
+  entryTrusted: boolean;
+  hostId: number;
+  fromForwardXExit: boolean;
+}) {
+  const hostIds = trafficAccountingHostIds(
+    input.rule,
+    input.tunnel,
+    input.entryHostIds,
+    input.extraExitHostIds,
+    input.entryTrusted,
+  );
+  if (!hostIds.has(Number(input.hostId))) return false;
+  return input.fromForwardXExit === forwardXTrafficAccountedAtExit(input.tunnel, input.entryTrusted);
 }
 
 export function shouldAccountForwardRuleTraffic(rule: any, group: any | null) {
@@ -285,20 +327,34 @@ function compactTrafficStats(value: unknown): AgentTrafficStat[] {
 }
 
 async function tunnelEntryHostIds(tunnel: any) {
-  const ids = new Set<number>();
+  return (await tunnelEntryHostScope(tunnel)).active;
+}
+
+/**
+ * active：现在算入口的机器（主入口 + 启用的入口组里启用的机器），入口记账认它们。
+ * all：判断入口可不可信时要看的机器，入口组里停用的机器也算上 —— 停用的成员
+ * 手里还有隧道密钥，它要是租户的机器，照样能往出口送流量。
+ */
+async function tunnelEntryHostScope(tunnel: any) {
+  const active = new Set<number>();
+  const all = new Set<number>();
   const primary = Number(tunnel?.entryHostId || 0);
-  if (primary > 0) ids.add(primary);
+  if (primary > 0) {
+    active.add(primary);
+    all.add(primary);
+  }
   const entryGroupId = Number(tunnel?.entryGroupId || 0);
   if (entryGroupId > 0) {
     const group = await db.getForwardGroupById(entryGroupId) as any;
-    if (group?.isEnabled && String(group.groupMode || "") === "entry") {
-      for (const member of group.members || []) {
-        const hostId = member?.isEnabled !== false && member?.memberType === "host" ? Number(member.hostId || 0) : 0;
-        if (hostId > 0) ids.add(hostId);
-      }
+    const groupActive = !!group?.isEnabled && String(group?.groupMode || "") === "entry";
+    for (const member of group?.members || []) {
+      const hostId = member?.memberType === "host" ? Number(member.hostId || 0) : 0;
+      if (hostId <= 0) continue;
+      all.add(hostId);
+      if (groupActive && member?.isEnabled !== false) active.add(hostId);
     }
   }
-  return ids;
+  return { active, all };
 }
 
 export function tunnelProbeTargetHostId(
@@ -684,6 +740,8 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     trafficReportProducerId = typeof req.body?.reportProducerId === "string"
       ? req.body.reportProducerId.trim().slice(0, 128)
       : "";
+    // 出口 FXP 替规则记的那份带 reportSide=exit，其余（入口 FXP、Agent 自己的计数）都没有。
+    const trafficReportFromForwardXExit = req.body?.reportSide === "exit";
 
     const objectStats = Array.isArray(req.body?.stats)
       ? req.body.stats.filter(isAgentTrafficStat)
@@ -779,13 +837,25 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     }
     const tunnelContexts = Array.from(tunnelContextsById.values());
     const tunnelIds = Array.from(tunnelContextsById.keys());
-    const [entryHostIdPairs, tunnelExitNodes] = await Promise.all([
-      Promise.all(tunnelContexts.map(async (tunnel) => [Number(tunnel.id), await tunnelEntryHostIds(tunnel)] as const)),
+    const [entryHostScopePairs, tunnelExitNodes] = await Promise.all([
+      Promise.all(tunnelContexts.map(async (tunnel) => [Number(tunnel.id), await tunnelEntryHostScope(tunnel)] as const)),
       tunnelIds.length > 0
         ? db.getTunnelExitNodesByTunnelIds(tunnelIds)
         : Promise.resolve([]),
     ]);
-    const entryHostsByTunnelId = new Map<number, Set<number>>(entryHostIdPairs);
+    const entryHostsByTunnelId = new Map<number, Set<number>>(
+      entryHostScopePairs.map(([tunnelId, scope]) => [tunnelId, scope.active] as const),
+    );
+    // NEX 隧道的入口可不可信（见 forwardXTrafficAccountedAtExit）：入口机一次查完主人。
+    // 其他隧道按出口记，不用查。
+    const forwardXEntryScopes = entryHostScopePairs
+      .filter(([tunnelId]) => isForwardXTunnel(tunnelContextsById.get(tunnelId)));
+    const trustedEntryHostIds = forwardXEntryScopes.length > 0
+      ? await db.getAdminTrustedHostIds(forwardXEntryScopes.flatMap(([, scope]) => Array.from(scope.all)))
+      : new Set<number>();
+    const trustedEntryTunnelIds = new Set<number>(forwardXEntryScopes
+      .filter(([, scope]) => scope.all.size > 0 && Array.from(scope.all).every((hostId) => trustedEntryHostIds.has(hostId)))
+      .map(([tunnelId]) => tunnelId));
     const extraExitHostsByTunnelId = new Map<number, Set<number>>();
     for (const node of tunnelExitNodes as any[]) {
       const tunnelId = Number(node?.tunnelId || 0);
@@ -800,12 +870,15 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     // 拖住全面板的流量、配额和计费处理。
     const isAccountingHostFor = (context: any) => {
       const tunnelId = Number(context?.tunnel?.id || context?.rule?.tunnelId || 0);
-      return trafficAccountingHostIds(
-        context.rule,
-        context.tunnel,
-        entryHostsByTunnelId.get(tunnelId),
-        extraExitHostsByTunnelId.get(tunnelId),
-      ).has(Number(host.id));
+      return isTrafficAccountingReport({
+        rule: context.rule,
+        tunnel: context.tunnel,
+        entryHostIds: entryHostsByTunnelId.get(tunnelId),
+        extraExitHostIds: extraExitHostsByTunnelId.get(tunnelId),
+        entryTrusted: trustedEntryTunnelIds.has(tunnelId),
+        hostId: Number(host.id),
+        fromForwardXExit: trafficReportFromForwardXExit,
+      });
     };
     const accountingUserIds = Array.from(new Set([
       ...(trafficContexts as any[])
@@ -933,13 +1006,8 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
         continue;
       }
       const tunnelId = Number((rule as any).tunnelId || 0);
-      const accountingHostIds = trafficAccountingHostIds(
-        rule,
-        tunnel,
-        entryHostsByTunnelId.get(Number(tunnel?.id || tunnelId)),
-        extraExitHostsByTunnelId.get(Number(tunnel?.id || tunnelId)),
-      );
-      if (!accountingHostIds.has(Number(host.id))) {
+      // 和上锁时的 isAccountingHostFor 同一个判断：不是这台机器、或不是这一边记的，都算「记在别处」。
+      if (!isAccountingHostFor(context)) {
         routedAwayStatCount += 1;
         const ruleBytes = bytesIn + bytesOut;
         if (ruleBytes > 0 && tunnel && !isForwardXTunnel(tunnel)) {

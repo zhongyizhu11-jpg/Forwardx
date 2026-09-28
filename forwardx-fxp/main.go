@@ -59,6 +59,10 @@ type helloFrame struct {
 	// 写死的 IP 是面板明确配的（比如出口本机调度器的 127.0.0.1），照拨；写的是
 	// 域名时，解析出来落到环回、链路本地这些地址上就不拨（见 dialExitTarget）。
 	targetLiteral bool
+	// accountingRuleID 也不上线：出口核对目标时记下「这趟是替哪条规则拨的」，
+	// 出口按它记流量。只有目标表里那条规则的目标对上了才有值；hello 里写的
+	// 规则号是入口说的，不能拿来直接记账（见 exit_traffic.go）。
+	accountingRuleID int
 }
 
 type protocolPolicy struct {
@@ -189,7 +193,7 @@ const (
 	fxpUDPIdleTimeout    = 5 * time.Minute
 	fxpProtocolSampleMax = 512
 	fxpMasterContext     = "forwardx-fxp-v2 master"
-	fxpRuntimeVersion    = "2.2.121"
+	fxpRuntimeVersion    = "2.2.122"
 	fxpFallbackRetry     = 5 * time.Second
 	// A node that stays down is re-probed on a growing delay, because probing a
 	// peer that accepts but never answers costs a whole handshake timeout.
@@ -1713,30 +1717,39 @@ func handleExitSessionWithStartup(conn net.Conn, cfg config, startupComplete fun
 	}
 	switch strings.ToLower(hello.Network) {
 	case "udp":
-		return handleExitUDP(sec, hello)
+		return handleExitUDP(sec, hello, cfg)
 	default:
 		// Legs sharing a multipath session id are reassembled into one stream
 		// before the target is dialled, so only the leading leg connects out.
 		if strings.TrimSpace(hello.MultipathSessionID) != "" {
 			return handleExitMultipath(sec, hello, cfg)
 		}
-		return handleExitTCP(sec, hello)
+		return handleExitTCP(sec, hello, cfg)
 	}
 }
 
-func handleExitTCP(sec *secureConn, hello helloFrame) error {
-	return relayExitTCPToTarget(sec, hello)
+func handleExitTCP(sec *secureConn, hello helloFrame, cfg config) error {
+	return relayExitTCPToTarget(sec, hello, cfg)
 }
 
 // relayExitTCPToTarget connects to the target and relays one exit session over
 // the given transport, which is a single secure connection for an ordinary
 // session and a multipath session when the entry striped it over several legs.
-func relayExitTCPToTarget(sec frameConn, hello helloFrame) error {
+func relayExitTCPToTarget(sec frameConn, hello helloFrame, cfg config) error {
 	target, err := dialExitTarget(hello, 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("dial target: %w", err)
 	}
 	defer target.Close()
+	// 出口按放行的规则记一份流量（见 exit_traffic.go）。多路径会话只有领头那条腿
+	// 走到这里，一个会话只记一次。
+	counter, stopReporting := startExitTrafficReporter(cfg, hello.accountingRuleID)
+	defer stopReporting()
+	var toTarget, fromTarget *atomic.Uint64
+	if counter != nil {
+		counter.connections.Store(1)
+		toTarget, fromTarget = &counter.in, &counter.out
+	}
 	if hello.ProxyProtocolExitSend && hello.ProxySourceIP != "" && hello.ProxySourcePort > 0 {
 		fxpVerbosef(
 			"exit proxy protocol send tunnel=%d rule=%d source=%s:%d dest=%s:%d target=%s:%d",
@@ -1756,10 +1769,11 @@ func relayExitTCPToTarget(sec frameConn, hello helloFrame) error {
 		fxpVerbosef("exit proxy protocol skipped tunnel=%d rule=%d target=%s:%d missingSource=%v", hello.TunnelID, hello.RuleID, hello.TargetIP, hello.TargetPort, hello.ProxySourceIP == "" || hello.ProxySourcePort <= 0)
 	}
 	fxpVerbosef("exit tcp routed tunnel=%d rule=%d target=%s:%d", hello.TunnelID, hello.RuleID, hello.TargetIP, hello.TargetPort)
-	return proxyPlainSecure(target, sec, nil, nil, nil)
+	// 出口这边 plain 是目标：目标 → 入口是 out，入口 → 目标是 in，和入口的记法一样。
+	return proxyPlainSecureCounted(target, sec, nil, nil, fromTarget, toTarget, protocolPolicy{}, nil, nil)
 }
 
-func handleExitUDP(sec *secureConn, hello helloFrame) error {
+func handleExitUDP(sec *secureConn, hello helloFrame, cfg config) error {
 	targetAddr, err := resolveExitUDPTarget(hello)
 	if err != nil {
 		return err
@@ -1770,6 +1784,12 @@ func handleExitUDP(sec *secureConn, hello helloFrame) error {
 	}
 	tuneUDPConn(target, "exit target", fxpUDPSessionBufferBytes)
 	defer target.Close()
+	counter, stopReporting := startExitTrafficReporter(cfg, hello.accountingRuleID)
+	defer stopReporting()
+	if counter == nil {
+		counter = &trafficCounter{}
+	}
+	counter.connections.Store(1)
 	fxpVerbosef("exit udp session routed tunnel=%d rule=%d peer=%s target=%s:%d", hello.TunnelID, hello.RuleID, sec.conn.RemoteAddr(), hello.TargetIP, hello.TargetPort)
 	var lastActivity atomic.Int64
 	lastActivity.Store(time.Now().UnixNano())
@@ -1790,6 +1810,7 @@ func handleExitUDP(sec *secureConn, hello helloFrame) error {
 				errCh <- err
 				return
 			}
+			counter.in.Add(uint64(len(frame)))
 			touch()
 		}
 	}()
@@ -1818,6 +1839,7 @@ func handleExitUDP(sec *secureConn, hello helloFrame) error {
 				errCh <- err
 				return
 			}
+			counter.out.Add(uint64(n))
 			touch()
 		}
 	}()
@@ -1937,12 +1959,19 @@ func proxyPlainSecure(plain net.Conn, sec frameConn, inLimiter, outLimiter *limi
 }
 
 func proxyPlainSecureWithPolicy(plain net.Conn, sec frameConn, inLimiter, outLimiter *limiter, counter *trafficCounter, policy protocolPolicy, onBlock func(string), initialSample []byte) error {
-	errCh := make(chan error, 2)
 	var inCounter, outCounter *atomic.Uint64
 	if counter != nil {
 		inCounter = &counter.in
 		outCounter = &counter.out
 	}
+	return proxyPlainSecureCounted(plain, sec, inLimiter, outLimiter, inCounter, outCounter, policy, onBlock, initialSample)
+}
+
+// proxyPlainSecureCounted 在明文连接和加密帧之间双向转发。inCounter 记 plain → 加密
+// 的字节，outCounter 记加密 → plain 的；入口的 plain 是客户端，出口的 plain 是目标，
+// 方向正好相反，由调用方决定哪个算 in。
+func proxyPlainSecureCounted(plain net.Conn, sec frameConn, inLimiter, outLimiter *limiter, inCounter, outCounter *atomic.Uint64, policy protocolPolicy, onBlock func(string), initialSample []byte) error {
+	errCh := make(chan error, 2)
 	go func() {
 		errCh <- catchPanic("plain to secure copy", func() error {
 			return copyPlainToSecureWithPolicy(sec, plain, inLimiter, inCounter, policy, onBlock, initialSample)

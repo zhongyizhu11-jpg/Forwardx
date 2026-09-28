@@ -533,6 +533,31 @@ export async function getHostsByIds(ids: readonly number[]) {
 }
 
 /**
+ * 这些机器里哪些是管理员的（或者没有主人）。
+ *
+ * 流量记账要看入口机能不能信：租户自己的机器上跑的 Agent/FXP 可以被改成少报，
+ * 管理员的不会。一次查完，只读 id、userId 和主人的角色。查不到的机器、主人已经
+ * 不在的机器都不算可信。
+ */
+export async function getAdminTrustedHostIds(ids: readonly number[]): Promise<Set<number>> {
+  const trusted = new Set<number>();
+  const db = await getDb();
+  if (!db) return trusted;
+  const wanted = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (wanted.length === 0) return trusted;
+  const rows = await db
+    .select({ id: hosts.id, userId: hosts.userId, ownerRole: users.role })
+    .from(hosts)
+    .leftJoin(users, eq(hosts.userId, users.id))
+    .where(inArray(hosts.id, wanted));
+  for (const row of rows as any[]) {
+    const ownerId = Number(row.userId || 0);
+    if (ownerId <= 0 || String(row.ownerRole || "") === "admin") trusted.add(Number(row.id));
+  }
+  return trusted;
+}
+
+/**
  * 只要名字。
  *
  * 提醒文案里「这个端口开在哪台机器上」只需要一个名字，而 getHostsByIds 会把

@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.202"
+var Version = "2.2.203"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -9678,9 +9678,16 @@ func fxpPanelCredentialDigest(panelURL string, token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// fxpRoleReportsTraffic：哪些 FXP 角色自己往面板报流量（入口，以及 NEX 隧道按出口
+// 记账时的出口）。这些角色的运行时配置里带面板地址和令牌，令牌或面板地址一变就要重建。
+func fxpRoleReportsTraffic(role string) bool {
+	role = strings.ToLower(strings.TrimSpace(role))
+	return role == "entry" || role == "exit"
+}
+
 func fxpSpecNeedsPanelCredentials(spec fxpSpec) bool {
 	spec = normalizeFXPSpec(spec)
-	return spec.Role == "entry" || isFXPEntryGroup(spec)
+	return fxpRoleReportsTraffic(spec.Role) || isFXPEntryGroup(spec)
 }
 
 func fxpSpecPanelCredentialDigest(spec fxpSpec) (string, bool) {

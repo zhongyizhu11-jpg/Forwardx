@@ -35,24 +35,35 @@ func authorizeExitTarget(cfg config, hello *helloFrame) error {
 	if host == "" || port <= 0 || port > 65535 {
 		return fmt.Errorf("%w: rule=%d target=%s:%d", errExitTargetNotAllowed, hello.RuleID, host, port)
 	}
-	allowed := cfg.TargetIP != "" && cfg.TargetPort == port && sameTargetHost(cfg.TargetIP, host)
+	// accountingRuleID：放行这个目标的是哪条规则。表里按规则列的目标对上了就是
+	// hello 的规则；只靠出口配置本身的单个目标放行的，算出口配置自己那条规则
+	// （入口在 hello 里随便写个规则号，也不能让出口替别的规则记账）。
+	accountingRuleID := 0
+	allowed := false
 	for _, target := range cfg.StreamTargets {
-		if allowed {
+		if target.RuleID == hello.RuleID && target.TargetPort == port && sameTargetHost(target.TargetIP, host) {
+			allowed, accountingRuleID = true, hello.RuleID
 			break
 		}
-		allowed = target.RuleID == hello.RuleID && target.TargetPort == port && sameTargetHost(target.TargetIP, host)
 	}
-	if strings.EqualFold(hello.Network, "udp") {
+	if !allowed && strings.EqualFold(hello.Network, "udp") {
 		for _, target := range cfg.UDPTargets {
-			if allowed {
+			if target.RuleID == hello.RuleID && target.TargetPort == port && sameTargetHost(target.TargetIP, host) {
+				allowed, accountingRuleID = true, hello.RuleID
 				break
 			}
-			allowed = target.RuleID == hello.RuleID && target.TargetPort == port && sameTargetHost(target.TargetIP, host)
 		}
+	}
+	if !allowed && cfg.TargetIP != "" && cfg.TargetPort == port && sameTargetHost(cfg.TargetIP, host) {
+		allowed, accountingRuleID = true, cfg.RuleID
 	}
 	if !allowed {
 		return fmt.Errorf("%w: rule=%d target=%s", errExitTargetNotAllowed, hello.RuleID, net.JoinHostPort(host, strconv.Itoa(port)))
 	}
+	if accountingRuleID < 0 {
+		accountingRuleID = 0
+	}
+	hello.accountingRuleID = accountingRuleID
 	hello.TargetIP = host
 	hello.targetLiteral = net.ParseIP(strings.Trim(host, "[]")) != nil
 	return nil
