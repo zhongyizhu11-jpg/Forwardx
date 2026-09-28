@@ -294,7 +294,7 @@ export default function Login() {
   const [location] = useLocation();
   // wouter 的 useLocation() 只有路径，查询串要从 useSearch() 取。
   const search = useSearch();
-  const initialMode = new URLSearchParams(location.split("?")[1] || "").get("mode") === "register" ? "register" : "login";
+  const initialMode = new URLSearchParams(search).get("mode") === "register" ? "register" : "login";
   const [mode, setMode] = useState<Mode>(initialMode);
   const [username, setUsername] = useState(() => mobileAuth.getUsername());
   const [password, setPassword] = useState("");
@@ -333,9 +333,9 @@ export default function Login() {
   }, []);
 
   useEffect(() => {
-    const nextMode = new URLSearchParams(location.split("?")[1] || "").get("mode") === "register" ? "register" : "login";
+    const nextMode = new URLSearchParams(search).get("mode") === "register" ? "register" : "login";
     setMode(nextMode);
-  }, [location]);
+  }, [location, search]);
 
   const utils = trpc.useUtils();
   const { data: emailConfig } = trpc.auth.emailConfig.useQuery(undefined, {
