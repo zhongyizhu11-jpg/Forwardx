@@ -32,7 +32,7 @@ import { pushAgentRefresh, pushAgentSupportBundle, pushAgentUpgrade, requestHost
 import { createSupportBundleTask, failSupportBundleHost, getSupportBundleTask } from "../supportBundle";
 import { withKeyedTaskLock } from "../keyedTaskLock";
 import { AGENT_ASSET_NAMES } from "../agentAssets";
-import { maskSecret } from "../ddns";
+import { DEFAULT_DDNS_TTL, maskSecret } from "../ddns";
 import { reconcileHostDdnsRecords } from "../hostDdns";
 import type { DatabaseConfig } from "../dbRuntime";
 import { defaultSqlitePath } from "../dbRuntime";
@@ -1682,7 +1682,7 @@ function publicSystemSettings(all: Record<string, string | null>, activeProtocol
     ddns: {
       enabled: false,
       provider: "disabled",
-      ttl: 600,
+      ttl: DEFAULT_DDNS_TTL,
       cloudflareZoneId: "",
       cloudflareTokenMasked: "",
       huaweicloudAccessKeyId: "",
@@ -1690,18 +1690,18 @@ function publicSystemSettings(all: Record<string, string | null>, activeProtocol
       huaweicloudRegion: "cn-north-4",
       huaweicloudEndpoint: "",
       huaweicloudZoneId: "",
-      huaweicloudTtl: 600,
+      huaweicloudTtl: DEFAULT_DDNS_TTL,
       huaweicloudLine: "default_view",
       aliyunAccessKeyId: "",
       aliyunAccessKeySecretMasked: "",
       aliyunDomainName: "",
       aliyunEndpoint: "https://alidns.aliyuncs.com",
-      aliyunTtl: 600,
+      aliyunTtl: DEFAULT_DDNS_TTL,
       aliyunLine: "default",
       tencentcloudSecretId: "",
       tencentcloudSecretKeyMasked: "",
       tencentcloudDomainName: "",
-      tencentcloudTtl: 600,
+      tencentcloudTtl: DEFAULT_DDNS_TTL,
       tencentcloudRecordLine: "默认",
       tencentcloudRecordLineId: "",
       webhookUrl: "",
@@ -1861,7 +1861,7 @@ export const systemRouter = router({
       ddns: {
         enabled: all.ddnsEnabled === "true",
         provider: all.ddnsProvider || "disabled",
-        ttl: Number(all.ddnsTtl || all.ddnsHuaweiCloudTtl || all.ddnsAliyunTtl || all.ddnsTencentCloudTtl || 600),
+        ttl: Number(all.ddnsTtl || all.ddnsHuaweiCloudTtl || all.ddnsAliyunTtl || all.ddnsTencentCloudTtl || DEFAULT_DDNS_TTL),
         cloudflareZoneId: all.ddnsCloudflareZoneId ?? "",
         cloudflareTokenMasked: maskSecret(all.ddnsCloudflareApiToken),
         huaweicloudAccessKeyId: all.ddnsHuaweiCloudAccessKeyId ?? "",
@@ -1869,18 +1869,18 @@ export const systemRouter = router({
         huaweicloudRegion: all.ddnsHuaweiCloudRegion ?? "cn-north-4",
         huaweicloudEndpoint: all.ddnsHuaweiCloudEndpoint ?? "",
         huaweicloudZoneId: all.ddnsHuaweiCloudZoneId ?? "",
-        huaweicloudTtl: Number(all.ddnsHuaweiCloudTtl || all.ddnsTtl || 600),
+        huaweicloudTtl: Number(all.ddnsHuaweiCloudTtl || all.ddnsTtl || DEFAULT_DDNS_TTL),
         huaweicloudLine: all.ddnsHuaweiCloudLine ?? "default_view",
         aliyunAccessKeyId: all.ddnsAliyunAccessKeyId ?? "",
         aliyunAccessKeySecretMasked: maskSecret(all.ddnsAliyunAccessKeySecret),
         aliyunDomainName: all.ddnsAliyunDomainName ?? "",
         aliyunEndpoint: all.ddnsAliyunEndpoint ?? "https://alidns.aliyuncs.com",
-        aliyunTtl: Number(all.ddnsAliyunTtl || all.ddnsTtl || 600),
+        aliyunTtl: Number(all.ddnsAliyunTtl || all.ddnsTtl || DEFAULT_DDNS_TTL),
         aliyunLine: all.ddnsAliyunLine ?? "default",
         tencentcloudSecretId: all.ddnsTencentCloudSecretId ?? "",
         tencentcloudSecretKeyMasked: maskSecret(all.ddnsTencentCloudSecretKey),
         tencentcloudDomainName: all.ddnsTencentCloudDomainName ?? "",
-        tencentcloudTtl: Number(all.ddnsTencentCloudTtl || all.ddnsTtl || 600),
+        tencentcloudTtl: Number(all.ddnsTencentCloudTtl || all.ddnsTtl || DEFAULT_DDNS_TTL),
         tencentcloudRecordLine: all.ddnsTencentCloudRecordLine ?? "默认",
         tencentcloudRecordLineId: all.ddnsTencentCloudRecordLineId ?? "",
         webhookUrl: all.ddnsWebhookUrl ?? "",

@@ -2907,13 +2907,17 @@ func main() {
 	restoreCountingChainStates(agentBootID)
 
 	startAgentLogMaintenance()
-	// Register and start the communication/reconciliation loops before restoring
-	// persisted runtimes. Runtime restore can involve many FXP listeners and
-	// several seconds of readiness checks; keeping it off the startup path lets
-	// the panel send the desired state immediately. The action queue and FXP
-	// control lock make restore and server-driven reconciliation idempotent when
-	// they overlap.
-	if err := register(cfg); err != nil {
+	// Restore persisted runtimes (WireGuard / FXP / failover) in the background
+	// *before* registering: register() can block for the full HTTP client
+	// timeout when the panel is unreachable, and forwarding must come back
+	// immediately after an Agent restart regardless of panel reachability.
+	// Restore only needs the local snapshots, and the action queue plus the
+	// FXP/failover control locks make restore and server-driven reconciliation
+	// idempotent when they overlap.
+	if err := startRuntimeRestoreThenRegister(cfg, func(cfg Config) {
+		restorePersistedForwardXRuntimes(cfg)
+		wakeHeartbeat()
+	}, register); err != nil {
 		// Registration is intentionally non-fatal; the regular heartbeat path
 		// will retry communication. Keep the failure visible in the Agent log so
 		// an installation that never reaches the panel is diagnosable.
@@ -2931,10 +2935,6 @@ func main() {
 	go agentPresenceLoop(cfg)
 	go agentMetricsScheduler(cfg)
 	go agentDNSWatchScheduler()
-	go func() {
-		restorePersistedForwardXRuntimes(cfg)
-		wakeHeartbeat()
-	}()
 	lastFullHeartbeatAt := time.Time{}
 	metricsOnlyMode := false
 	for {
@@ -12830,22 +12830,8 @@ func (p *failoverProxy) handleConn(client net.Conn) {
 	}
 	p.trackConn(index, client)
 	defer p.untrackConn(index, client)
-	copyDone := make(chan struct{}, 2)
-	go func() {
-		_, _ = io.Copy(upstream, client)
-		if c, ok := upstream.(*net.TCPConn); ok {
-			_ = c.CloseWrite()
-		}
-		copyDone <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(client, upstream)
-		if c, ok := client.(*net.TCPConn); ok {
-			_ = c.CloseWrite()
-		}
-		copyDone <- struct{}{}
-	}()
-	<-copyDone
+	// 等两个方向都结束（带半关闭 linger），客户端半关闭后仍能收完响应。
+	relayTCPBidirectional(client, upstream, tcpRelayHalfCloseLinger)
 }
 
 func guardID(rule guardRule) string {

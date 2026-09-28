@@ -636,6 +636,17 @@ func restorePersistedFailoverIfCurrent(candidate persistedFailover, message *act
 	return start(candidate.RuleID, candidate.SourcePort, candidate.Spec, message), true
 }
 
+// startRuntimeRestoreThenRegister starts restoring the locally persisted
+// runtimes in the background and only then registers with the panel. Restore
+// depends solely on the on-disk snapshots (specs carry their own keys and
+// endpoints), so it must never wait for the panel: register() can hang for the
+// full HTTP client timeout while the panel is black-holed, and forwarding would
+// stay down that long after every Agent restart.
+func startRuntimeRestoreThenRegister(cfg Config, restore func(Config), register func(Config) error) error {
+	go restore(cfg)
+	return register(cfg)
+}
+
 func restorePersistedForwardXRuntimes(cfg Config) {
 	startedAt := time.Now()
 	migrateRuntimeFXPConfigsToPersistent()

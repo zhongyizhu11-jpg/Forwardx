@@ -4523,7 +4523,7 @@ function SystemInfoSection() {
   const [agentPreferPanelInstall, setAgentPreferPanelInstall] = useState(false);
   const [ddnsEnabled, setDdnsEnabled] = useState(false);
   const [ddnsProvider, setDdnsProvider] = useState<DdnsProvider>("disabled");
-  const [ddnsTtl, setDdnsTtl] = useState("600");
+  const [ddnsTtl, setDdnsTtl] = useState("60");
   const [ddnsCloudflareApiToken, setDdnsCloudflareApiToken] = useState("");
   const [ddnsHuaweiCloudAccessKeyId, setDdnsHuaweiCloudAccessKeyId] = useState("");
   const [ddnsHuaweiCloudSecretKey, setDdnsHuaweiCloudSecretKey] = useState("");
@@ -4592,7 +4592,7 @@ function SystemInfoSection() {
       setAgentPreferPanelInstall(!!settings.agentPreferPanelInstall);
       setDdnsEnabled(!!settings.ddns?.enabled);
       setDdnsProvider(isDdnsProvider(settings.ddns?.provider) ? settings.ddns.provider : "disabled");
-      const ddnsUnifiedTtl = String(settings.ddns?.ttl || settings.ddns?.huaweicloudTtl || settings.ddns?.aliyunTtl || settings.ddns?.tencentcloudTtl || 600);
+      const ddnsUnifiedTtl = String(settings.ddns?.ttl || settings.ddns?.huaweicloudTtl || settings.ddns?.aliyunTtl || settings.ddns?.tencentcloudTtl || 60);
       setDdnsTtl(ddnsUnifiedTtl);
       setDdnsHuaweiCloudAccessKeyId(settings.ddns?.huaweicloudAccessKeyId || "");
       setDdnsHuaweiCloudRegion(settings.ddns?.huaweicloudRegion || "cn-north-4");
@@ -4879,7 +4879,7 @@ function SystemInfoSection() {
       toast.error("阿里云 Endpoint 需要以 http:// 或 https:// 开头");
       return;
     }
-    const ttl = normalizeTtl(ddnsTtl, Number(settings?.ddns?.ttl || 600));
+    const ttl = normalizeTtl(ddnsTtl, Number(settings?.ddns?.ttl || 60));
     saveSystemSettings("ddns", {
       ddns: {
         enabled: ddnsEnabled,
@@ -5646,10 +5646,12 @@ function SystemInfoSection() {
             <Input
               value={ddnsTtl}
               onChange={(e) => setDdnsTtl(e.target.value.replace(/\D/g, "").slice(0, 5))}
-              placeholder="600"
+              placeholder="60"
               inputMode="numeric"
             />
-            <p className="text-xs text-muted-foreground">TTL 范围：60-86400 秒。Webhook 会原样传递该值。</p>
+            <p className="text-xs text-muted-foreground">
+              TTL 范围：60-86400 秒，默认 60 秒；入口组故障切换最迟在一个 TTL 后被客户端看到。阿里云 / DNSPod 免费版最低 600 秒，设得更低时会自动按 600 秒提交。Webhook 会原样传递该值。
+            </p>
           </FormField>
 
           {ddnsProvider === "cloudflare" && (
