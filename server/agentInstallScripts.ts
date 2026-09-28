@@ -64,7 +64,10 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     'ACTION="${1:-}"',
     'TOKEN="${2:-}"',
     // 优先使用环境变量 PANEL_URL，其次使用脚本嵌入的默认值
-    `PANEL_URL="\${PANEL_URL:-${defaultPanelUrl}}"`,
+    // 默认地址单独用单引号赋值，再给 PANEL_URL 兜底：它可能来自请求头（没配公开地址时
+    // 按 Host / X-Forwarded-* 推出来），直接放进双引号里，$(…) 会在 bash 里被执行。
+    `DEFAULT_PANEL_URL=${shellQuote(defaultPanelUrl)}`,
+    'PANEL_URL="${PANEL_URL:-$DEFAULT_PANEL_URL}"',
     `RELEASE_VERSION="\${FORWARDX_AGENT_RELEASE_VERSION:-${APP_VERSION}}"`,
     fallbackReleaseLine,
     fallbackReleaseHintLine,
