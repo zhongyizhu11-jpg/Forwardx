@@ -768,11 +768,48 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       ? await db.getProxyInboundTrafficOwnersByIds(inboundStats.map((stat) => proxyInboundIdFromTrafficRuleId(stat.ruleId)))
       : new Map<number, db.ProxyInboundTrafficOwner>();
 
-    const preliminaryTrafficContexts = await db.getForwardRuleTrafficContextsByIds(
-      ruleStats.map((stat) => Number(stat.ruleId)),
-    );
+    const trafficContexts = await db.getForwardRuleTrafficContextsByIds(ruleStats.map((stat) => Number(stat.ruleId)));
+    const contextsByRuleId = new Map((trafficContexts as any[]).map((context) => [Number(context.rule.id), context]));
+    const tunnelContextsById = new Map<number, any>();
+    for (const context of trafficContexts as any[]) {
+      const tunnelId = Number(context?.tunnel?.id || 0);
+      if (tunnelId > 0 && !tunnelContextsById.has(tunnelId)) {
+        tunnelContextsById.set(tunnelId, context.tunnel);
+      }
+    }
+    const tunnelContexts = Array.from(tunnelContextsById.values());
+    const tunnelIds = Array.from(tunnelContextsById.keys());
+    const [entryHostIdPairs, tunnelExitNodes] = await Promise.all([
+      Promise.all(tunnelContexts.map(async (tunnel) => [Number(tunnel.id), await tunnelEntryHostIds(tunnel)] as const)),
+      tunnelIds.length > 0
+        ? db.getTunnelExitNodesByTunnelIds(tunnelIds)
+        : Promise.resolve([]),
+    ]);
+    const entryHostsByTunnelId = new Map<number, Set<number>>(entryHostIdPairs);
+    const extraExitHostsByTunnelId = new Map<number, Set<number>>();
+    for (const node of tunnelExitNodes as any[]) {
+      const tunnelId = Number(node?.tunnelId || 0);
+      const hostId = Number(node?.hostId || 0);
+      if (tunnelId <= 0 || hostId <= 0 || node?.isEnabled === false) continue;
+      const hosts = extraExitHostsByTunnelId.get(tunnelId) || new Set<number>();
+      hosts.add(hostId);
+      extraExitHostsByTunnelId.set(tunnelId, hosts);
+    }
+    // 只锁这台机器真的要替他记账的人。以前按上报里出现的所有规则 id 去锁：一台租户
+    // 的 Agent 报一串别人的规则 id（字节数全 0），就能挨个锁住所有用户的计费行，
+    // 拖住全面板的流量、配额和计费处理。
+    const isAccountingHostFor = (context: any) => {
+      const tunnelId = Number(context?.tunnel?.id || context?.rule?.tunnelId || 0);
+      return trafficAccountingHostIds(
+        context.rule,
+        context.tunnel,
+        entryHostsByTunnelId.get(tunnelId),
+        extraExitHostsByTunnelId.get(tunnelId),
+      ).has(Number(host.id));
+    };
     const accountingUserIds = Array.from(new Set([
-      ...(preliminaryTrafficContexts as any[])
+      ...(trafficContexts as any[])
+        .filter(isAccountingHostFor)
         .map((context) => Number(context?.rule?.userId || 0)),
       // 入站的所有者也要一起上锁，否则同一个用户的两条计费路径可能并发写配额。
       // 这里宁可多锁一个人：非本机的入站待会儿会被丢掉，锁了也只是白锁。
@@ -813,33 +850,6 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       billingResource: NonNullable<Awaited<ReturnType<typeof db.findTrafficBillingResourceForRule>>>;
     }> = [];
     const trafficBillingEnabled = await db.getTrafficBillingEnabledForWrite();
-    const trafficContexts = await db.getForwardRuleTrafficContextsByIds(ruleStats.map((stat) => Number(stat.ruleId)));
-    const contextsByRuleId = new Map((trafficContexts as any[]).map((context) => [Number(context.rule.id), context]));
-    const tunnelContextsById = new Map<number, any>();
-    for (const context of trafficContexts as any[]) {
-      const tunnelId = Number(context?.tunnel?.id || 0);
-      if (tunnelId > 0 && !tunnelContextsById.has(tunnelId)) {
-        tunnelContextsById.set(tunnelId, context.tunnel);
-      }
-    }
-    const tunnelContexts = Array.from(tunnelContextsById.values());
-    const tunnelIds = Array.from(tunnelContextsById.keys());
-    const [entryHostIdPairs, tunnelExitNodes] = await Promise.all([
-      Promise.all(tunnelContexts.map(async (tunnel) => [Number(tunnel.id), await tunnelEntryHostIds(tunnel)] as const)),
-      tunnelIds.length > 0
-        ? db.getTunnelExitNodesByTunnelIds(tunnelIds)
-        : Promise.resolve([]),
-    ]);
-    const entryHostsByTunnelId = new Map<number, Set<number>>(entryHostIdPairs);
-    const extraExitHostsByTunnelId = new Map<number, Set<number>>();
-    for (const node of tunnelExitNodes as any[]) {
-      const tunnelId = Number(node?.tunnelId || 0);
-      const hostId = Number(node?.hostId || 0);
-      if (tunnelId <= 0 || hostId <= 0 || node?.isEnabled === false) continue;
-      const hosts = extraExitHostsByTunnelId.get(tunnelId) || new Set<number>();
-      hosts.add(hostId);
-      extraExitHostsByTunnelId.set(tunnelId, hosts);
-    }
     const rulesWithBytes = new Set(stats
       .filter((stat) => normalizeTrafficCounterBytes(stat.bytesIn) + normalizeTrafficCounterBytes(stat.bytesOut) > 0)
       .map((stat) => Number(stat.ruleId)));
