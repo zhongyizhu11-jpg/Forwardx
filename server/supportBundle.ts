@@ -157,12 +157,19 @@ export async function getSupportBundleTask(taskId: string) {
   let download: { filename: string; mimeType: string; content: string } | undefined;
   if (complete) {
     const panelLogs = await formatPanelLogsForExport("all");
-    const audits = await listRecentConfigAuditEvents(1000);
+    // 支持包是排障用的：审计记录读不出来（库刚切换、表还没建好）也要照样导出，
+    // 把原因写进包里，而不是让整个导出失败。
+    let auditError: string | undefined;
+    const audits = await listRecentConfigAuditEvents(1000).catch((error: unknown) => {
+      auditError = error instanceof Error ? error.message : String(error);
+      return [] as Awaited<ReturnType<typeof listRecentConfigAuditEvents>>;
+    });
     const payload = redactSupportValue({
       format: "forwardx-support-bundle-v1",
       generatedAt: new Date().toISOString(),
       panelLogs: panelLogs.content,
       configAuditEvents: audits.map(redactConfigAuditEventForSupport),
+      ...(auditError ? { configAuditEventsError: auditError } : {}),
       panelHosts: task.panelHosts,
       agentDiagnostics: hosts,
     });
