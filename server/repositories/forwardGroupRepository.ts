@@ -15,7 +15,7 @@ import {
 } from "../../drizzle/schema";
 import { pushAgentRefresh } from "../agentEvents";
 import { appendPanelLog } from "../_core/panelLogger";
-import { getDdnsSettings, updateDdnsRecordValues } from "../ddns";
+import { DEFAULT_DDNS_TTL, getDdnsSettings, updateDdnsRecordValues } from "../ddns";
 import { afterDatabaseCommit, afterDatabaseTransactionSettled, executeRaw, getDb, insertAndGetId, isDatabaseTransactionActive, nowDate, queryRaw, rawEpochToDate, withDatabaseTransaction } from "../dbRuntime";
 import { withForwardTestDates } from "./forwardTestRepository";
 import { boolValue, countAll, inList, quoteIdentifier } from "../dbCompat";
@@ -4067,7 +4067,7 @@ async function preserveForwardGroupDdns(
       domain,
       recordType,
       values: [retainedValue],
-      ttl: Number(ddnsSettings.ttl || 600),
+      ttl: Number(ddnsSettings.ttl || DEFAULT_DDNS_TTL),
     });
     rememberExactDdnsReconciliation(group, retainedValue);
     await db.update(forwardGroups).set({
@@ -4433,7 +4433,7 @@ async function syncEntryGroupDdns(group: any, ddnsSettings: any, options: Forwar
       domain: String(group.domain || ""),
       recordType,
       values: publishedValues,
-      ttl: Number(ddnsSettings.ttl || 600),
+      ttl: Number(ddnsSettings.ttl || DEFAULT_DDNS_TTL),
     });
     if (!(await agentSelectionStillCurrent())) {
       retryChangedAgentSelection();
@@ -4555,7 +4555,7 @@ async function syncSingleForwardGroupDdns(
       domain: String(group.domain || ""),
       recordType,
       values: [value],
-      ttl: Number(ddnsSettings.ttl || 600),
+      ttl: Number(ddnsSettings.ttl || DEFAULT_DDNS_TTL),
     });
     if (options.beforeCommit && !(await options.beforeCommit())) return false;
     rememberExactDdnsReconciliation(group, value);

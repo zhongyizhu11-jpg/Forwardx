@@ -69,10 +69,65 @@ function normalizeProvider(value: string): DdnsProvider {
   return "disabled";
 }
 
-function parseTtl(value: unknown, fallback = 600) {
+// 默认 TTL 60 秒：入口组 / 主机 DDNS 用 DNS 做故障切换，TTL 就是客户端看到切换
+// 的最长延迟，原来的 600 秒意味着最多 10 分钟才生效。
+export const DEFAULT_DDNS_TTL = 60;
+export const MIN_DDNS_TTL = 60;
+export const MAX_DDNS_TTL = 86400;
+
+// 阿里云 / 腾讯云 DNSPod 免费版（以及部分个人版）的记录 TTL 下限是 600 秒，低于
+// 下限会被 API 直接拒绝。套餐无法从配置里得知，所以先按设置的 TTL 提交，被以
+// TTL 为由拒绝时再按这个下限重试，并记住该域名的下限，后续不再白白失败一次。
+const PROVIDER_FREE_TIER_MIN_TTL: Partial<Record<DdnsProvider, number>> = {
+  aliyun: 600,
+  tencentcloud: 600,
+};
+const learnedProviderMinTtl = new Map<string, number>();
+
+function parseTtl(value: unknown, fallback = DEFAULT_DDNS_TTL) {
   const ttl = Math.floor(Number(value || fallback));
   if (!Number.isFinite(ttl)) return fallback;
-  return Math.min(86400, Math.max(60, ttl));
+  return Math.min(MAX_DDNS_TTL, Math.max(MIN_DDNS_TTL, ttl));
+}
+
+class DdnsProviderError extends Error {
+  constructor(message: string, readonly code: string) {
+    super(message);
+    this.name = "DdnsProviderError";
+  }
+}
+
+function isTtlRejection(error: unknown) {
+  if (!(error instanceof DdnsProviderError)) return false;
+  return /ttl/i.test(`${error.code} ${error.message}`);
+}
+
+/**
+ * 按 provider 的 TTL 下限提交记录：先用设置的 TTL（套餐允许就能 60 秒生效），
+ * 被以 TTL 为由拒绝时抬到免费版下限重试，而不是让整次 DDNS 更新失败。
+ * run 内的变更都使用同一个 TTL，第一次写入就会被拒，因此整体重跑是安全的。
+ */
+async function withProviderMinTtl<T>(
+  provider: DdnsProvider,
+  zone: string,
+  ttl: number,
+  run: (ttl: number) => Promise<T>,
+): Promise<T> {
+  const floor = PROVIDER_FREE_TIER_MIN_TTL[provider];
+  const key = `${provider}:${normalizeDomain(zone)}`;
+  const learned = learnedProviderMinTtl.get(key);
+  const effective = learned ? Math.max(ttl, learned) : ttl;
+  try {
+    return await run(effective);
+  } catch (error) {
+    if (!floor || effective >= floor || !isTtlRejection(error)) throw error;
+    learnedProviderMinTtl.set(key, floor);
+    return run(floor);
+  }
+}
+
+export function resetDdnsProviderMinTtlCacheForTests() {
+  learnedProviderMinTtl.clear();
 }
 
 export async function getDdnsSettings(): Promise<DdnsSettings> {
@@ -80,7 +135,7 @@ export async function getDdnsSettings(): Promise<DdnsSettings> {
   const method = String(all.ddnsWebhookMethod || "POST").toUpperCase();
   const ttl = parseTtl(
     all.ddnsTtl,
-    parseTtl(all.ddnsHuaweiCloudTtl || all.ddnsAliyunTtl || all.ddnsTencentCloudTtl, 600),
+    parseTtl(all.ddnsHuaweiCloudTtl || all.ddnsAliyunTtl || all.ddnsTencentCloudTtl, DEFAULT_DDNS_TTL),
   );
   return {
     provider: normalizeProvider(String(all.ddnsProvider || "disabled")),
@@ -223,7 +278,7 @@ function extractJsonError(body: any, fallback: string) {
   );
 }
 
-async function readJson(resp: Response, fallback: string) {
+async function readJsonBody(resp: Response) {
   const text = await resp.text().catch(() => "");
   let body: any = {};
   if (text) {
@@ -233,6 +288,11 @@ async function readJson(resp: Response, fallback: string) {
       body = { message: text };
     }
   }
+  return body;
+}
+
+async function readJson(resp: Response, fallback: string) {
+  const body = await readJsonBody(resp);
   if (!resp.ok) {
     throw new Error(extractJsonError(body, `${fallback} ${resp.status}`));
   }
@@ -297,7 +357,7 @@ async function updateCloudflare(input: {
     type: input.recordType,
     name: recordName,
     content: input.value,
-    ttl: parseTtl(input.ttl, 60),
+    ttl: parseTtl(input.ttl, DEFAULT_DDNS_TTL),
     proxied: !!record?.proxied,
   };
   if (typeof record?.comment === "string" && record.comment) payload.comment = record.comment;
@@ -332,7 +392,7 @@ async function updateWebhook(input: {
   lineId?: string;
   lineName?: string;
 }) {
-  const ttl = parseTtl(input.ttl, 600);
+  const ttl = parseTtl(input.ttl, DEFAULT_DDNS_TTL);
   const vars = {
     domain: input.domain,
     type: input.recordType,
@@ -515,8 +575,10 @@ async function aliyunRequest(settings: DdnsSettings, action: string, params: Rec
     .update(stringToSign, "utf8")
     .digest("base64");
   const resp = await fetch(`${endpoint}/?Signature=${aliyunEncode(signature)}&${canonical}`);
-  const body = await readJson(resp, "阿里云 DNS 请求失败");
-  if (body?.Code) throw new Error(body?.Message || `阿里云 DNS 请求失败: ${body.Code}`);
+  // 阿里云出错时返回 4xx + {Code, Message}，先按 Code 抛出，保留错误码给 TTL 下限判断。
+  const body = await readJsonBody(resp);
+  if (body?.Code) throw new DdnsProviderError(body?.Message || `阿里云 DNS 请求失败: ${body.Code}`, String(body.Code));
+  if (!resp.ok) throw new Error(extractJsonError(body, `阿里云 DNS 请求失败 ${resp.status}`));
   return body;
 }
 
@@ -544,18 +606,20 @@ async function updateAliyun(settings: DdnsSettings, input: DdnsRecordInput) {
     String(item?.Type || "").toUpperCase() === recordType &&
     (!line || String(item?.Line || "") === line)
   ));
-  const payload = {
-    RR: rr,
-    Type: recordType,
-    Value: input.value,
-    Line: line,
-    TTL: ttl,
-  };
-  if (record?.RecordId) {
-    await aliyunRequest(settings, "UpdateDomainRecord", { RecordId: String(record.RecordId), ...payload });
-    return;
-  }
-  await aliyunRequest(settings, "AddDomainRecord", { DomainName: root, ...payload });
+  await withProviderMinTtl("aliyun", root, ttl, async (effectiveTtl) => {
+    const payload = {
+      RR: rr,
+      Type: recordType,
+      Value: input.value,
+      Line: line,
+      TTL: effectiveTtl,
+    };
+    if (record?.RecordId) {
+      await aliyunRequest(settings, "UpdateDomainRecord", { RecordId: String(record.RecordId), ...payload });
+      return;
+    }
+    await aliyunRequest(settings, "AddDomainRecord", { DomainName: root, ...payload });
+  });
 }
 
 function tencentDate(timestamp: number) {
@@ -608,7 +672,7 @@ async function tencentCloudRequest(settings: DdnsSettings, action: string, paylo
   const result = await readJson(resp, "腾讯云 DNSPod 请求失败");
   if (result?.Response?.Error) {
     const error = result.Response.Error;
-    throw new Error(error.Message || `腾讯云 DNSPod 请求失败: ${error.Code}`);
+    throw new DdnsProviderError(error.Message || `腾讯云 DNSPod 请求失败: ${error.Code}`, String(error.Code || ""));
   }
   return result?.Response || {};
 }
@@ -638,20 +702,22 @@ async function updateTencentCloud(settings: DdnsSettings, input: DdnsRecordInput
     String(item?.Type || "").toUpperCase() === recordType &&
     (recordLineId ? String(item?.LineId || "") === recordLineId : String(item?.Line || "") === recordLine)
   ));
-  const payload: Record<string, any> = {
-    Domain: root,
-    SubDomain: subDomain,
-    RecordType: recordType,
-    RecordLine: recordLine,
-    Value: input.value,
-    TTL: ttl,
-  };
-  if (recordLineId) payload.RecordLineId = recordLineId;
-  if (record?.RecordId) {
-    await tencentCloudRequest(settings, "ModifyRecord", { ...payload, RecordId: Number(record.RecordId) });
-    return;
-  }
-  await tencentCloudRequest(settings, "CreateRecord", payload);
+  await withProviderMinTtl("tencentcloud", root, ttl, async (effectiveTtl) => {
+    const payload: Record<string, any> = {
+      Domain: root,
+      SubDomain: subDomain,
+      RecordType: recordType,
+      RecordLine: recordLine,
+      Value: input.value,
+      TTL: effectiveTtl,
+    };
+    if (recordLineId) payload.RecordLineId = recordLineId;
+    if (record?.RecordId) {
+      await tencentCloudRequest(settings, "ModifyRecord", { ...payload, RecordId: Number(record.RecordId) });
+      return;
+    }
+    await tencentCloudRequest(settings, "CreateRecord", payload);
+  });
 }
 
 function uniqueDdnsValues(values: string[]) {
@@ -736,7 +802,7 @@ async function updateCloudflareValues(input: {
       type: recordType,
       name: recordName,
       content: value,
-      ttl: parseTtl(input.ttl, 60),
+      ttl: parseTtl(input.ttl, DEFAULT_DDNS_TTL),
       proxied: !!record?.proxied,
     };
     if (typeof record?.comment === "string" && record.comment) payload.comment = record.comment;
@@ -857,16 +923,18 @@ async function updateAliyunValues(settings: DdnsSettings, input: DdnsRecordValue
   ));
   const managedRecords = candidates.filter((record: any) => String(record?.RecordId || ""));
   const plan = planDdnsValueChanges(managedRecords, values, (record: any) => record?.Value);
-  const payloadFor = (value: string) => ({ RR: rr, Type: recordType, Value: value, Line: line, TTL: ttl });
-  for (const change of plan.updates) {
-    await aliyunRequest(settings, "UpdateDomainRecord", {
-      RecordId: String((change.record as any).RecordId),
-      ...payloadFor(change.value),
-    });
-  }
-  for (const value of plan.creates) {
-    await aliyunRequest(settings, "AddDomainRecord", { DomainName: root, ...payloadFor(value) });
-  }
+  await withProviderMinTtl("aliyun", root, ttl, async (effectiveTtl) => {
+    const payloadFor = (value: string) => ({ RR: rr, Type: recordType, Value: value, Line: line, TTL: effectiveTtl });
+    for (const change of plan.updates) {
+      await aliyunRequest(settings, "UpdateDomainRecord", {
+        RecordId: String((change.record as any).RecordId),
+        ...payloadFor(change.value),
+      });
+    }
+    for (const value of plan.creates) {
+      await aliyunRequest(settings, "AddDomainRecord", { DomainName: root, ...payloadFor(value) });
+    }
+  });
   for (const record of plan.removals) {
     await aliyunRequest(settings, "DeleteDomainRecord", { RecordId: String((record as any).RecordId) });
   }
@@ -898,27 +966,29 @@ async function updateTencentCloudValues(settings: DdnsSettings, input: DdnsRecor
   ));
   const managedRecords = candidates.filter((record: any) => String(record?.RecordId || ""));
   const plan = planDdnsValueChanges(managedRecords, values, (record: any) => record?.Value);
-  const payloadFor = (value: string) => {
-    const payload: Record<string, any> = {
-      Domain: root,
-      SubDomain: subDomain,
-      RecordType: recordType,
-      RecordLine: recordLine,
-      Value: value,
-      TTL: ttl,
+  await withProviderMinTtl("tencentcloud", root, ttl, async (effectiveTtl) => {
+    const payloadFor = (value: string) => {
+      const payload: Record<string, any> = {
+        Domain: root,
+        SubDomain: subDomain,
+        RecordType: recordType,
+        RecordLine: recordLine,
+        Value: value,
+        TTL: effectiveTtl,
+      };
+      if (recordLineId) payload.RecordLineId = recordLineId;
+      return payload;
     };
-    if (recordLineId) payload.RecordLineId = recordLineId;
-    return payload;
-  };
-  for (const change of plan.updates) {
-    await tencentCloudRequest(settings, "ModifyRecord", {
-      ...payloadFor(change.value),
-      RecordId: Number((change.record as any).RecordId),
-    });
-  }
-  for (const value of plan.creates) {
-    await tencentCloudRequest(settings, "CreateRecord", payloadFor(value));
-  }
+    for (const change of plan.updates) {
+      await tencentCloudRequest(settings, "ModifyRecord", {
+        ...payloadFor(change.value),
+        RecordId: Number((change.record as any).RecordId),
+      });
+    }
+    for (const value of plan.creates) {
+      await tencentCloudRequest(settings, "CreateRecord", payloadFor(value));
+    }
+  });
   for (const record of plan.removals) {
     await tencentCloudRequest(settings, "DeleteRecord", {
       Domain: root,

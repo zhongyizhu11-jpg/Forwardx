@@ -553,7 +553,7 @@ const seedSettings = [
   ["trafficBillingEnabled", "false"],
   ["pluginsEnabled", "false"],
   ["twoFactorEnabled", "false"],
-  ["ddnsTtl", "600"],
+  ["ddnsTtl", "60"],
 ] as const;
 
 export function getDatabaseTableDefs(): readonly TableDef[] {
