@@ -33,7 +33,7 @@ import { applyTrafficMultiplier, normalizeTrafficMultiplier } from "../shared/tr
 import { normalizeTrafficCounterBytes, normalizeTrafficCounterConnections } from "../shared/trafficCounterBytes";
 import { mapWithConcurrency } from "./asyncPool";
 import { forwardGroupProbeTopologyKey, tunnelProbeTopologyKey } from "./probeTopology";
-import { trafficBillingUserLockKey, withKeyedTaskLock } from "./keyedTaskLock";
+import { withKeyedTaskLock, withTrafficBillingUserLock } from "./keyedTaskLock";
 import { isTunnelRelayFailover, tunnelRelayCandidates } from "../shared/tunnelRelay";
 import { exitGroupUsesMultipleExits } from "../shared/exitStrategy";
 import { isRuleLatencyReportMethodCompatible } from "../shared/latencyProbe";
@@ -88,14 +88,15 @@ function tunnelUsesExtraExitHosts(tunnel: any) {
 }
 
 async function withTrafficAccountingUserLocks<T>(userIds: number[], task: () => Promise<T>): Promise<T> {
-  const keys = Array.from(new Set(userIds
+  const ids = Array.from(new Set(userIds
     .map((id) => Math.floor(Number(id) || 0))
     .filter((id) => id > 0)))
-    .sort((left, right) => left - right)
-    .map(trafficBillingUserLockKey);
-  const run = (index: number): Promise<T> => index >= keys.length
+    .sort((left, right) => left - right);
+  // 用 withTrafficBillingUserLock 而不是裸的键锁：它同时把「持有这把锁」记进调用链，
+  // 里面记账触发的结算 / 停规则再为同一个用户拿这把锁时按重入处理，不会自己等自己。
+  const run = (index: number): Promise<T> => index >= ids.length
     ? task()
-    : withKeyedTaskLock(keys[index], () => run(index + 1));
+    : withTrafficBillingUserLock(ids[index], () => run(index + 1));
   return run(0);
 }
 

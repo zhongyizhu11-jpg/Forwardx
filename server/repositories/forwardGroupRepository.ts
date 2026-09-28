@@ -51,6 +51,7 @@ import {
 } from "../bandwidthAggregation";
 import { normalizeMemberBandwidthMbps, normalizeMemberWeight } from "../../shared/bandwidthAggregation";
 import {
+  assertOutsideDatabaseTransaction,
   assertTunnelRulePortsFreeOnEntryHosts,
   disableForwardRulesByTunnel,
   ensureTunnelListenerPortPolicy,
@@ -67,7 +68,9 @@ import {
   resetForwardRulesByTunnel,
   restoreForwardRulesByTunnel,
   forwardRuleOwnerAllowsRuntime,
+  pushRouteRelayHostsForParents,
   syncTunnelExitGroupEndpoints,
+  tunnelRuleListenHostIds,
   updateTunnel,
   usesSharedTunnelPrimaryListener,
 } from "./tunnelRepository";
@@ -89,6 +92,7 @@ import {
 import { notifyForwardGroupSwitch } from "../forwardGroupSwitchNotifier";
 import { trafficBillingUserLockKey, withKeyedTaskLock, withTrafficBillingUserLock } from "../keyedTaskLock";
 import {
+  isHostPortReservationHeldByCaller,
   releaseHostPortReservations,
   reserveAvailableHostPort,
   reserveSpecificHostPort,
@@ -1941,6 +1945,20 @@ async function memberEntryHostId(member: any) {
   return Number(tunnel?.entryHostId || 0);
 }
 
+/**
+ * 成员子规则实际在哪些主机上监听入口端口：主机成员就是它自己；隧道成员是隧道入口机，隧道挂了
+ * 入口组时还有组里每台启用的主机（子规则带着 tunnelId，下发时这些主机都会替它监听）。
+ * 查占用、预留端口都要覆盖这整组，只查入口机会和成员机上同端口的规则撞上。
+ */
+async function memberListenHostIds(member: any): Promise<number[]> {
+  if (member.memberType === "host") {
+    const hostId = Number(member.hostId || 0);
+    return hostId > 0 ? [hostId] : [];
+  }
+  const tunnel = await getTunnelById(Number(member.tunnelId));
+  return tunnel ? tunnelRuleListenHostIds(tunnel) : [];
+}
+
 export async function getForwardGroupDefaultHostId(groupId: number) {
   const group = await getForwardGroupById(groupId);
   if (!group) throw new Error("Forward group does not exist");
@@ -1978,9 +1996,9 @@ export async function getForwardGroupRuleEntryHostIds(groupId: number) {
   const portMembers = groupMode === "chain"
     ? (chainEntries.length > 0 ? chainEntries : enabledMembers.slice(0, 1))
     : members;
-  const hostIds = await Promise.all(portMembers
+  const hostIds = (await Promise.all(portMembers
     .filter((member: any) => dbBool(member?.isEnabled, true))
-    .map((member: any) => memberEntryHostId(member)));
+    .map((member: any) => memberListenHostIds(member)))).flat();
   return Array.from(new Set(hostIds.filter((hostId) => Number.isInteger(hostId) && hostId > 0)))
     .sort((left, right) => left - right);
 }
@@ -2206,14 +2224,15 @@ export async function findAvailableForwardGroupPort(
     const existing = excludeTemplateRuleId
       ? await existingChildRule(Number(excludeTemplateRuleId), childMemberId, entry.hostId)
       : null;
-    entries.push({
-      hostId: entry.hostId,
-      ignoreRuleIds: [
-        Number(excludeTemplateRuleId || 0),
-        ...excludedChildRuleIds,
-        Number(existing?.id || 0),
-      ].filter(Boolean),
-    });
+    const ignoreRuleIds = [
+      Number(excludeTemplateRuleId || 0),
+      ...excludedChildRuleIds,
+      Number(existing?.id || 0),
+    ].filter(Boolean);
+    // 隧道成员挂了入口组时，组里的主机也要在这个端口上监听，挑的端口在这些主机上也得空着。
+    for (const hostId of new Set([entry.hostId, ...await memberListenHostIds(member)])) {
+      entries.push({ hostId, ignoreRuleIds });
+    }
     policy = combinePortPolicies(policy, entry.policy);
   }
   if (allowedRange) {
@@ -2323,17 +2342,16 @@ export async function validateForwardGroupRuleConfig(groupId: number, config: Fo
     const existing = config.excludeTemplateRuleId
       ? await existingChildRule(Number(config.excludeTemplateRuleId), childMemberId, hostId)
       : null;
-    const used = await isPortUsedOnHostForGroupChild(
-      hostId,
-      sourcePort,
-      [
-        Number(config.excludeTemplateRuleId || 0),
-        ...excludedChildRuleIds,
-        Number(existing?.id || 0),
-      ].filter(Boolean),
-      protocol,
-    );
-    if (used) throw new Error(`Entry agent port ${sourcePort} is already used`);
+    const ignoreRuleIds = [
+      Number(config.excludeTemplateRuleId || 0),
+      ...excludedChildRuleIds,
+      Number(existing?.id || 0),
+    ].filter(Boolean);
+    // 隧道成员挂了入口组：组里每台主机也替子规则监听，一起查。
+    for (const listenHostId of new Set([hostId, ...await memberListenHostIds(member)])) {
+      const used = await isPortUsedOnHostForGroupChild(listenHostId, sourcePort, ignoreRuleIds, protocol);
+      if (used) throw new Error(`Entry agent port ${sourcePort} is already used`);
+    }
   }
   return group;
 }
@@ -2537,6 +2555,8 @@ async function disableForwardRulesByGroupIds(groupIds: number[], reason: string)
       updatedAt: nowDate(),
     } as any).where(inArray(forwardRules.id, controlledIds));
     await refreshControlledForwardRules(controlledRules, reason);
+    // 这些规则要是线路组规则，中转机上的中继也跟着停，通知中转机马上拉配置。
+    await pushRouteRelayHostsForParents(controlledIds, reason);
   }
   return controlledIds.length;
 }
@@ -2576,6 +2596,7 @@ export async function restoreForwardRulesByGroupId(groupId: number, reason: stri
   if (rules.length > 0) appendPanelLog("info", `[RuleStop] forward group=${groupId} resumed ${rules.length} rule(s) reason=${reason}`);
   await syncForwardGroupRules(groupId);
   await refreshControlledForwardRules(rules as any[], reason);
+  await pushRouteRelayHostsForParents((rules as any[]).map((rule) => Number(rule.id)), reason);
   return rules.length;
 }
 
@@ -2593,6 +2614,7 @@ async function tunnelGroupDependenciesEnabled(tunnel: any) {
 }
 
 async function setTunnelsEnabledByGroup(groupId: number, groupMode: "entry" | "exit", isEnabled: boolean) {
+  assertOutsideDatabaseTransaction("setTunnelsEnabledByGroup");
   const db = await getDb();
   if (!db) return 0;
   const rows = await db.select().from(tunnels).where(
@@ -2640,6 +2662,8 @@ async function setTunnelsEnabledByGroup(groupId: number, groupMode: "entry" | "e
  * 这里不会碰。
  */
 export async function healAutoStoppedForwardRules(reason = "auto-heal") {
+  // 第 1、2 步按隧道拿 tunnel:<id> 键锁，理由同 setTunnelsEnabledByGroup。
+  assertOutsideDatabaseTransaction("healAutoStoppedForwardRules");
   const db = await getDb();
   if (!db) return { tunnels: 0, tunnelRules: 0, groupRules: 0 };
   let healedTunnels = 0;
@@ -2745,9 +2769,6 @@ export async function setForwardGroupEnabled(groupId: number, isEnabled: boolean
       if (mode === "entry" || mode === "exit") {
         affectedTunnels = await setTunnelsEnabledByGroup(groupId, mode, true);
       }
-      if (mode === "failover" || mode === "entry" || mode === "exit") {
-        await runForwardGroupFailover(groupId, { manual: true, forceSync: true });
-      }
     }
   } catch (error) {
     if (isEnabled && !wasEnabled) {
@@ -2761,6 +2782,17 @@ export async function setForwardGroupEnabled(groupId: number, isEnabled: boolean
       }
     }
     throw error;
+  }
+  if (isEnabled && (mode === "failover" || mode === "entry" || mode === "exit")) {
+    // 选活动成员 / 推 DDNS 放到启用之后、尽力而为：DNS 服务商一时报错不该把已经恢复好的
+    // 规则和隧道整个回滚成停用。失败记日志，交给评估队列按退避重试（DDNS 值没更新成功，
+    // 下一轮会再推）。
+    try {
+      await runForwardGroupFailover(groupId, { manual: true, forceSync: true });
+    } catch (error) {
+      appendPanelLog("warn", `[ForwardGroup] failover/DDNS sync after enable failed group=${groupId}; retry scheduled: ${error instanceof Error ? error.message : String(error)}`);
+      scheduleForwardGroupFailover([groupId]);
+    }
   }
   await insertForwardGroupEvent(groupId, null, isEnabled ? "enabled" : "disabled", isEnabled ? "链路资源已启用。" : "链路资源已停用，关联规则已受控关闭。");
   return { success: true, affectedRules, affectedTunnels };
@@ -2804,34 +2836,54 @@ async function ensureMemberRuleForTemplate(group: any, templateRule: any, member
   const hostId = await memberEntryHostId(member);
   if (!hostId) throw new Error("Forward group member has no valid entry agent");
   await assertEntryPortAllowed(member, Number(templateRule.sourcePort));
+  const sourcePort = Number(templateRule.sourcePort);
+  // 子规则实际监听的主机：隧道成员挂了入口组时不只入口机。
+  const listenHostIds = Array.from(new Set([hostId, ...await memberListenHostIds(member)]));
   // 新建子规则时先在进程内占住这个端口，直到子规则写进库：否则同一时刻在这台机器上
   // 手动建规则（它也先预留再查库）和这里只查库的判断可能同时通过，两条规则抢一个端口。
-  // 占不到（多半是调用方——建/改模板的请求——已经替这些入口机占着）就退回原来只查库的判断，
-  // 不能因此把自己的子规则当成冲突跳过。
-  const childPortReservation = existing
-    ? null
-    : tryReserveHostPort(hostId, Number(templateRule.sourcePort), templateRule.protocol);
+  // 占不到时，只有这条调用链自己（建/改模板的请求）替这台机器占着，才退回只查库的判断；
+  // 后台同步（自愈、成员变更）没替谁占着，占不到就是别的请求正在这台机器上分配同一个端口，
+  // 当作冲突，这一轮先跳过这个成员，下一次同步再试。
+  const childPortReservations: HostPortReservation[] = [];
+  let reservedElsewhereHostId = 0;
+  if (!existing) {
+    for (const listenHostId of listenHostIds) {
+      const reservation = tryReserveHostPort(listenHostId, sourcePort, templateRule.protocol);
+      if (reservation) {
+        childPortReservations.push(reservation);
+      } else if (!isHostPortReservationHeldByCaller(listenHostId, sourcePort)) {
+        reservedElsewhereHostId = listenHostId;
+        break;
+      }
+    }
+  }
   const releaseChildPortReservation = async () => {
-    if (childPortReservation) await afterDatabaseTransactionSettled(() => childPortReservation.release());
+    if (childPortReservations.length > 0) await afterDatabaseTransactionSettled(() => releaseHostPortReservations(childPortReservations));
   };
-  let used = false;
+  let usedHostId = reservedElsewhereHostId;
   try {
-    used = await isPortUsedOnHostForGroupChild(
-      hostId,
-      Number(templateRule.sourcePort),
-      [Number(templateRule.id), Number(existing?.id || 0)].filter(Boolean),
-      templateRule.protocol,
-    );
+    for (const listenHostId of usedHostId ? [] : listenHostIds) {
+      const used = await isPortUsedOnHostForGroupChild(
+        listenHostId,
+        sourcePort,
+        [Number(templateRule.id), Number(existing?.id || 0)].filter(Boolean),
+        templateRule.protocol,
+      );
+      if (used) {
+        usedHostId = listenHostId;
+        break;
+      }
+    }
   } catch (error) {
     await releaseChildPortReservation();
     throw error;
   }
-  if (used) {
+  if (usedHostId) {
     await releaseChildPortReservation();
     // 端口冲突只挡这一个成员：以前在这里抛错，整组同步（包括两分钟一次的自愈）每次都
     // 中断在这里，后面的成员和模板全都同步不到。记日志、把已有的子规则停住，
     // 端口空出来后下一次同步会自动恢复。
-    appendPanelLog("warn", `[ForwardGroup] group=${Number(group?.id || 0)} template=${Number(templateRule.id)} member=${Number(member.id)} host=${hostId} port=${Number(templateRule.sourcePort)} already used; child skipped`);
+    appendPanelLog("warn", `[ForwardGroup] group=${Number(group?.id || 0)} template=${Number(templateRule.id)} member=${Number(member.id)} host=${usedHostId} port=${sourcePort} ${reservedElsewhereHostId ? "being allocated by another request" : "already used"}; child skipped`);
     if (existing && dbBool(existing.isEnabled)) {
       // 只关 isEnabled、保留 isRunning：心跳看到「停用但还在跑」才会让 Agent 把它撤掉。
       await updateForwardRule(Number(existing.id), { isEnabled: false } as any);

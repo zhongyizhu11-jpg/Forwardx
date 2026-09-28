@@ -175,7 +175,14 @@ export const portsRulesRouter = router({
             ...((await db.getForwardGroupChildRulesForTemplate(input.excludeRuleId)) as any[]).map((rule: any) => Number(rule.id)),
           ]
         : [];
-      const used = await db.isPortUsedOnHost(hostId, input.sourcePort, excludeRuleIds, input.protocol, undefined, false);
+      // 隧道挂了入口组时，组里每台主机也要在这个端口上监听，任一台被占就算占用。
+      let used = false;
+      for (const listenHostId of await db.forwardRuleListenHostIds(hostId, input.tunnelId)) {
+        if (await db.isPortUsedOnHost(listenHostId, input.sourcePort, excludeRuleIds, input.protocol, undefined, false)) {
+          used = true;
+          break;
+        }
+      }
       return { used };
     }),
   randomPort: protectedProcedure
@@ -217,12 +224,14 @@ export const portsRulesRouter = router({
             ...((await db.getForwardGroupChildRulesForTemplate(input.excludeRuleId)) as any[]).map((rule: any) => Number(rule.id)),
           ]
         : [];
+      const listenHostIds = await db.forwardRuleListenHostIds(input.hostId, input.tunnelId);
       const port = await db.findAvailablePort(
         input.hostId,
         rangeStart,
         rangeEnd,
         input.protocol,
-        [],
+        // 入口组里其他主机上已占用的端口也不能挑。
+        await db.usedPortsOnOtherListenHosts(input.hostId, listenHostIds, excludeRuleIds, input.protocol),
         excludeRuleIds,
         planRange?.ranges || [],
       );

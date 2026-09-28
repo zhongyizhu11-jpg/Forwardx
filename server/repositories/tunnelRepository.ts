@@ -17,10 +17,10 @@ import {
   tunnelLatencyStats,
   users,
 } from "../../drizzle/schema";
-import { afterDatabaseTransactionSettled, executeRaw, getDatabaseKind, getDb, insertAndGetId, isDatabaseTransactionActive, nowDate, queryRaw, withDatabaseTransaction } from "../dbRuntime";
+import { afterDatabaseCommit, afterDatabaseTransactionSettled, executeRaw, getDatabaseKind, getDb, insertAndGetId, isDatabaseTransactionActive, nowDate, queryRaw, withDatabaseTransaction } from "../dbRuntime";
 import { boolValue, quoteIdentifier, sqlCountAll } from "../dbCompat";
 import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, pickAvailablePort, portPolicyFrom } from "@shared/portPolicy";
-import { releaseHostPortReservations, reserveAvailableHostPort, reserveSpecificHostPort, type HostPortReservation } from "../portReservations";
+import { releaseHostPortReservations, reserveAvailableHostPort, reserveSpecificHostPort, reserveSpecificHostPortOnHosts, type HostPortReservation } from "../portReservations";
 import { getHostById } from "./hostRepository";
 import { getForwardRulesByTunnel } from "./forwardRuleRepository";
 import { dbBool, sqlBool } from "./repositoryUtils";
@@ -786,6 +786,38 @@ export async function resetAgentRuntimeStateForHost(hostId: number) {
   );
 }
 
+/**
+ * 线路组规则被系统停掉 / 恢复之后，通知它在中转机上的中继规则所在的主机。
+ *
+ * 中继开不开跟着父规则的 isEnabled 走（下发时由 gateForwardRulesForRuntime 统一判），但中转机
+ * 不会因为父规则变了就来拉配置 —— 以前只刷新入口 / 隧道两端，中转机上的中继要等稳定心跳计划
+ * 过期（最多 5 分钟）才停 / 才恢复，这段时间用户直连中转机还能用、也不计费。pushAgentRefresh
+ * 会顺带让这些主机的稳定心跳计划缓存失效。推送放到提交之后，免得 Agent 抢在提交前拉到旧配置。
+ */
+export async function pushRouteRelayHostsForParents(parentRuleIds: number[], reason: string) {
+  const ids = Array.from(new Set(parentRuleIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) return;
+  const rows = await db.select({ hostId: forwardRules.hostId })
+    .from(forwardRules)
+    .where(inArray(forwardRules.routeParentRuleId, ids));
+  const hostIds = Array.from(new Set((rows as any[]).map((row) => Number(row.hostId || 0)).filter((id) => id > 0)));
+  if (hostIds.length === 0) return;
+  await afterDatabaseCommit(async () => {
+    // 动态导入：agentEvents 经 systemRouter 会回头引到仓储层，静态引会成环。
+    const { pushAgentRefresh } = await import("../agentEvents");
+    for (const hostId of hostIds) pushAgentRefresh(hostId, `${reason}-route-relay`, { urgent: true });
+  });
+}
+
+async function pushRouteRelayHostsForTunnel(tunnelId: number, reason: string) {
+  const db = await getDb();
+  if (!db) return;
+  const rules = await db.select({ id: forwardRules.id }).from(forwardRules).where(eq(forwardRules.tunnelId, tunnelId));
+  await pushRouteRelayHostsForParents((rules as any[]).map((rule) => Number(rule.id)), reason);
+}
+
 export async function disableForwardRulesByTunnel(tunnelId: number, reason = "tunnel-disabled") {
   const db = await getDb();
   if (!db) return;
@@ -811,6 +843,7 @@ export async function disableForwardRulesByTunnel(tunnelId: number, reason = "tu
       eq(forwardRules.disabledByTunnel, true),
     ),
   ));
+  await pushRouteRelayHostsForTunnel(tunnelId, reason);
 }
 
 async function isForwardGroupRuntimeEnabled(groupId: number) {
@@ -863,14 +896,38 @@ export async function forwardRuleOwnerAllowsRuntime(userId: unknown) {
  * 下流量则可能被转到另一个租户的目标。有冲突返回说明文字（写进 protocolBlockReason，
  * 只能由人换端口后手动打开），没有返回 null。转发组模板/子规则、线路组中继的端口由
  * 各自的同步流程分配，这里不管。
+ *
+ * 隧道规则挂了入口组时，组里每台启用的主机也在监听这个端口（见 tunnelRuleListenHostIds），
+ * 每台都要查。传了 heldReservations 就顺手在这些主机上把端口占住（放进数组，由调用方释放），
+ * 免得查完到写库之间另一个请求在同一台机器上拿走同一个端口。
  */
-export async function forwardRuleRestorePortConflict(rule: any): Promise<string | null> {
+export async function forwardRuleRestorePortConflict(rule: any, heldReservations?: HostPortReservation[]): Promise<string | null> {
   if (dbBool(rule?.isForwardGroupTemplate) || Number(rule?.forwardGroupRuleId || 0) > 0 || Number(rule?.routeParentRuleId || 0) > 0) return null;
   const hostId = Number(rule?.hostId || 0);
   const sourcePort = Number(rule?.sourcePort || 0);
   if (hostId <= 0 || sourcePort <= 0) return null;
-  const used = await isPortUsedOnHost(hostId, sourcePort, Number(rule?.id || 0), rule?.protocol, undefined, false);
-  return used ? `端口 ${sourcePort} 在规则停用期间已被其他规则占用，请更换端口后再启用` : null;
+  const ruleId = Number(rule?.id || 0);
+  const hostIds = await forwardRuleListenHostIds(hostId, rule?.tunnelId);
+  const isUsed = (listenHostId: number, port: number) => isPortUsedOnHost(listenHostId, port, ruleId, rule?.protocol, undefined, false);
+  if (heldReservations) {
+    const reservation = await reserveSpecificHostPortOnHosts({ hostIds, port: sourcePort, protocol: rule?.protocol, isUsed });
+    if (reservation) {
+      heldReservations.push(reservation);
+      return null;
+    }
+  } else {
+    let used = false;
+    for (const listenHostId of hostIds) {
+      if (await isUsed(listenHostId, sourcePort)) {
+        used = true;
+        break;
+      }
+    }
+    if (!used) return null;
+  }
+  return hostIds.length > 1
+    ? `端口 ${sourcePort} 在规则停用期间已被入口机或入口组内主机上的其他规则占用，请更换端口后再启用`
+    : `端口 ${sourcePort} 在规则停用期间已被其他规则占用，请更换端口后再启用`;
 }
 
 async function canRestoreForwardRuleAfterTunnel(rule: any) {
@@ -974,7 +1031,9 @@ export async function restoreForwardRulesByTunnel(tunnelId: number) {
     for (const rule of orderedRules) {
       const ownerAllowed = await forwardRuleOwnerAllowsRuntime(rule.userId);
       const canEnable = ownerAllowed && await canRestoreForwardRuleAfterTunnel(rule);
-      let portConflict = canEnable ? await forwardRuleRestorePortConflict(rule) : null;
+      // 源端口也在入口机和入口组的每台主机上占住（和出口端口一样到事务结束才放），
+      // 查完到写库之间别的请求拿不走同一个端口。
+      let portConflict = canEnable ? await forwardRuleRestorePortConflict(rule, heldReservations) : null;
       let tunnelExitPort: number | null = null;
       const managedByOtherFlow = dbBool(rule.isForwardGroupTemplate) || Number(rule.forwardGroupRuleId || 0) > 0 || Number(rule.routeParentRuleId || 0) > 0;
       if (canEnable && !portConflict && tunnel && !managedByOtherFlow) {
@@ -1004,6 +1063,7 @@ export async function restoreForwardRulesByTunnel(tunnelId: number) {
     await afterDatabaseTransactionSettled(() => releaseHostPortReservations(heldReservations));
   }
   if (restored > 0) appendPanelLog("info", `[RuleStop] tunnel=${tunnelId} resumed ${restored} rule(s)`);
+  await pushRouteRelayHostsForParents((rules as any[]).map((rule) => Number(rule.id)), `tunnel-${tunnelId}-restored`);
   return restored;
 }
 
@@ -1842,6 +1902,70 @@ function tunnelRuleServedByEntryGroupHostCondition(hostId: number) {
 }
 
 /**
+ * 隧道上的规则真正在哪些主机上监听 sourcePort：规则所在的入口机（默认隧道入口机），加上隧道
+ * 挂的入口组里每台启用的主机 —— 只在组本身启用时算，和下发口径
+ * （tunnelRuleServedByEntryGroupHostCondition）一致。
+ *
+ * 建、改、开关、恢复一条隧道规则时，端口占用要在这整组主机上查、也要在这整组主机上预留：
+ * 只查入口机，成员机上同端口的规则照样能建出来 / 恢复出来，到 Agent 上后起的那个 bind 失败。
+ * 状态直接读库：恢复路径（开隧道、开入口组）都是先把隧道 / 组写成启用再来调用，读到的就是
+ * 启用之后的成员。
+ */
+export async function tunnelRuleListenHostIds(tunnel: any, primaryHostId?: number | null): Promise<number[]> {
+  const hostIds: number[] = [];
+  const add = (value: unknown) => {
+    const id = Number(value || 0);
+    if (Number.isInteger(id) && id > 0 && !hostIds.includes(id)) hostIds.push(id);
+  };
+  add(Number(primaryHostId || 0) || tunnel?.entryHostId);
+  const entryGroupId = Number(tunnel?.entryGroupId || 0);
+  if (entryGroupId <= 0) return hostIds;
+  const db = await getDb();
+  if (!db) return hostIds;
+  const rows = await db.select({ hostId: forwardGroupMembers.hostId })
+    .from(forwardGroupMembers)
+    .innerJoin(forwardGroups, eq(forwardGroups.id, forwardGroupMembers.groupId))
+    .where(and(
+      eq(forwardGroups.id, entryGroupId),
+      eq(forwardGroups.groupMode, "entry"),
+      eq(forwardGroups.isEnabled, true),
+      eq(forwardGroupMembers.memberType, "host"),
+      eq(forwardGroupMembers.isEnabled, true),
+    ))
+    .orderBy(asc(forwardGroupMembers.hostId));
+  for (const row of rows as any[]) add(row.hostId);
+  return hostIds;
+}
+
+/** 同 tunnelRuleListenHostIds，按规则的 hostId / tunnelId 取；不在隧道上的规则只在自己的主机上监听。 */
+export async function forwardRuleListenHostIds(hostId: unknown, tunnelId?: unknown): Promise<number[]> {
+  const primary = Number(hostId || 0);
+  const id = Number(tunnelId || 0);
+  const tunnel = id > 0 ? await getTunnelById(id) : null;
+  if (!tunnel) return primary > 0 ? [primary] : [];
+  return tunnelRuleListenHostIds(tunnel, primary);
+}
+
+/**
+ * 随机挑端口时给 findAvailablePort 追加的排除端口：规则还要在这些「其他」监听主机上同时监听，
+ * 那边已占用的端口也不能挑（取交集）。只有入口机一台时返回空。
+ */
+export async function usedPortsOnOtherListenHosts(
+  primaryHostId: number,
+  hostIds: number[],
+  excludeRuleId?: number | number[],
+  protocol?: unknown,
+): Promise<number[]> {
+  const others = hostIds.filter((hostId) => Number(hostId) !== Number(primaryHostId));
+  if (others.length === 0) return [];
+  const used = new Set<number>();
+  for (const hostId of others) {
+    for (const port of await getUsedPortsOnHost(hostId, excludeRuleId, protocol, undefined, false)) used.add(port);
+  }
+  return Array.from(used);
+}
+
+/**
  * 把一批主机加进入口组（或把隧道挂到入口组）之前调用：这些隧道上启用的规则之后都要在
  * 这些主机上监听，端口已被占用就直接拒绝，不要等到 Agent 上 bind 失败。
  */
@@ -2290,11 +2414,23 @@ export async function replaceTunnelExitNodes(tunnelId: number, nodes: Array<Omit
   });
 }
 
+/**
+ * 要去等 tunnel:<id> 键锁的批量路径（入口/出口组开关、自愈、出口组端点同步）不能在数据库事务里调用：
+ * tunnels.update 等路径是「先拿键锁、再开事务」，SQLite 下事务占着全局连接锁，这边在事务里再等
+ * 键锁就互相等死，整个面板的数据库访问都卡住。现在没有这样的调用方；以后谁在事务里调，直接报错。
+ */
+export function assertOutsideDatabaseTransaction(label: string) {
+  if (isDatabaseTransactionActive()) {
+    throw new Error(`[programming error] ${label} 会等待隧道键锁，不能在数据库事务里调用（会与先拿键锁再开事务的路径互相等死）`);
+  }
+}
+
 export async function syncTunnelExitGroupEndpoints(
   tunnelInput: any,
   members: ExitGroupTunnelMember[],
   strategyInput: unknown,
 ) {
+  assertOutsideDatabaseTransaction("syncTunnelExitGroupEndpoints");
   const tunnelId = Number(tunnelInput?.id || 0);
   if (tunnelId <= 0) return { tunnel: tunnelInput, changed: false, previousHostIds: [], nextHostIds: [] };
   return withKeyedTaskLock(`tunnel:${tunnelId}`, async () => {

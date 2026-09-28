@@ -59,10 +59,13 @@ import { assertTenantListenPortAllowed, assertTenantListenPortAllowedOnHosts } f
 import { isTelegramBotReady } from "../telegramReady";
 import { resolveForwardRuleName } from "@shared/forwardRuleName";
 import {
+  combineHostPortReservations,
   releaseHostPortReservations,
-  reserveAvailableHostPort,
+  reserveAvailableHostPortOnHosts,
   reserveSpecificHostPort,
+  reserveSpecificHostPortOnHosts,
   reservedHostPorts,
+  runWithHeldHostPortReservations,
   tryReserveHostPort,
   type HostPortReservation,
 } from "../portReservations";
@@ -1531,11 +1534,12 @@ export async function toggleForwardRuleForActor(
             throw new Error("套餐已到期，请续费后再启用规则");
           }
         }
-        sourcePortReservation = await reserveSpecificHostPort({
-          hostId: Number(rule.hostId),
+        // 隧道挂了入口组时，组里每台主机也在这个端口上监听，都要查、都要占住。
+        sourcePortReservation = await reserveSpecificHostPortOnHosts({
+          hostIds: await db.forwardRuleListenHostIds(rule.hostId, (rule as any).tunnelId),
           port: Number(rule.sourcePort),
           protocol: (rule as any).protocol,
-          isUsed: (port) => db.isPortUsedOnHost(Number(rule.hostId), port, Number(rule.id), (rule as any).protocol, undefined, false),
+          isUsed: (hostId, port) => db.isPortUsedOnHost(hostId, port, Number(rule.id), (rule as any).protocol, undefined, false),
         });
         if (!sourcePortReservation) throw new Error(`端口 ${rule.sourcePort} 已被占用，请更换端口后再启用`);
         // 出口端口同理：停用期间它不算占用，可能已被别的规则/隧道拿走。重新预留一次，
@@ -1663,23 +1667,26 @@ export async function createDirectForwardRuleForActor(
   let sourcePortReservation: HostPortReservation | null = null;
   let tunnelExitPortReservation: HostPortReservation | null = null;
   let quotaReservation: RuleQuotaReservation | null = null;
+  // 规则在哪些主机上监听：隧道挂了入口组时，除了入口机还有组里每台启用的主机。
+  const listenHostIds = tunnelId ? await db.tunnelRuleListenHostIds(selectedTunnelForRule, hostId) : [hostId];
   try {
     if (sourcePort === 0) {
       let randomRangeStart = selectedTunnelForRule ? (selectedTunnelForRule as any).portRangeStart : null;
       let randomRangeEnd = selectedTunnelForRule ? (selectedTunnelForRule as any).portRangeEnd : null;
-      sourcePortReservation = await reserveAvailableHostPort({
-        hostId,
+      sourcePortReservation = await reserveAvailableHostPortOnHosts({
+        hostIds: listenHostIds,
         protocol: input.protocol,
-        findPort: (reservedPorts) => db.findAvailablePort(
+        // 挑的端口要在每台监听主机上都空着：把其他主机上已占用的端口一并排除。
+        findPort: async (reservedPorts) => db.findAvailablePort(
           hostId,
           randomRangeStart,
           randomRangeEnd,
           input.protocol,
-          reservedPorts,
+          [...reservedPorts, ...await db.usedPortsOnOtherListenHosts(hostId, listenHostIds, [], input.protocol)],
           [],
           planRange?.ranges || [],
         ),
-        isUsed: (port) => db.isPortUsedOnHost(hostId, port, undefined, input.protocol),
+        isUsed: (listenHostId, port) => db.isPortUsedOnHost(listenHostId, port, undefined, input.protocol),
       });
       if (!sourcePortReservation) throw new Error("该主机端口区间内已无可用端口");
       sourcePort = sourcePortReservation.port;
@@ -1693,6 +1700,21 @@ export async function createDirectForwardRuleForActor(
         sourcePortReservation.release();
         sourcePortReservation = null;
         throw new Error(`端口 ${sourcePort} 已被其他规则占用`);
+      }
+      const otherListenHostIds = listenHostIds.filter((listenHostId) => listenHostId !== hostId);
+      if (otherListenHostIds.length > 0) {
+        const groupReservation = await reserveSpecificHostPortOnHosts({
+          hostIds: otherListenHostIds,
+          port: sourcePort,
+          protocol: input.protocol,
+          isUsed: (listenHostId, port) => db.isPortUsedOnHost(listenHostId, port, undefined, input.protocol),
+        });
+        if (!groupReservation) {
+          sourcePortReservation.release();
+          sourcePortReservation = null;
+          throw new Error(`端口 ${sourcePort} 已被隧道入口组内其他主机上的规则占用或正在分配`);
+        }
+        sourcePortReservation = combineHostPortReservations([sourcePortReservation, groupReservation]);
       }
     }
 
@@ -2017,11 +2039,12 @@ export const crudRulesRouter = router({
           userId: ctx.user.id,
         } as any);
         let id = 0;
+        // 同步子规则时，这些入口端口是本请求自己占着的（见 runWithHeldHostPortReservations）。
         if (isForwardChain) {
-          id = await db.withForwardGroupSyncTransaction(forwardGroupId, createTemplateRule);
+          id = await runWithHeldHostPortReservations(groupReservations, () => db.withForwardGroupSyncTransaction(forwardGroupId, createTemplateRule));
         } else {
           id = await createTemplateRule();
-          await db.syncForwardGroupRules(forwardGroupId);
+          await runWithHeldHostPortReservations(groupReservations, () => db.syncForwardGroupRules(forwardGroupId));
         }
         await quotaReservation?.release();
         quotaReservation = null;
@@ -2070,21 +2093,34 @@ export const crudRulesRouter = router({
       // could cause needless port churn on every edit.
       let tunnelExitPortReservationForUpdate: HostPortReservation | null = null;
       let tunnelExitPortReservationForConversion: HostPortReservation | null = null;
-      const reserveRulePort = async (hostId: number, port: number, protocol: "tcp" | "udp" | "both", excludeRuleIds: number | number[]) => {
-        const existing = heldReservations.find((reservation) => (
-          reservation.hostId === Number(hostId)
-          && reservation.port === Number(port)
-          && reservation.protocol === protocol
-        ));
-        if (existing) return existing;
-        const reservation = await reserveSpecificHostPort({
-          hostId,
-          port,
-          protocol,
-          isUsed: (candidate) => db.isPortUsedOnHost(hostId, candidate, excludeRuleIds, protocol, undefined, false),
-        });
-        if (reservation) heldReservations.push(reservation);
-        return reservation;
+      const reserveRulePort = async (
+        hostId: number,
+        port: number,
+        protocol: "tcp" | "udp" | "both",
+        excludeRuleIds: number | number[],
+        tunnelId?: number | null,
+      ) => {
+        // 隧道挂了入口组时，组里每台主机也在这个端口上监听：每台都要查、都要占住。
+        const listenHostIds = tunnelId ? await db.forwardRuleListenHostIds(hostId, tunnelId) : [Number(hostId)];
+        let primary: HostPortReservation | null = null;
+        for (const listenHostId of listenHostIds) {
+          const existing = heldReservations.find((reservation) => (
+            reservation.hostId === Number(listenHostId)
+            && reservation.port === Number(port)
+            && reservation.protocol === protocol
+          ));
+          const reservation = existing || await reserveSpecificHostPort({
+            hostId: listenHostId,
+            port,
+            protocol,
+            isUsed: (candidate) => db.isPortUsedOnHost(listenHostId, candidate, excludeRuleIds, protocol, undefined, false),
+          });
+          // 占不到就返回 null，调用方随即报错；这次已占到的留在 heldReservations 里，由 finally 统一释放。
+          if (!reservation) return null;
+          if (!existing) heldReservations.push(reservation);
+          primary ||= reservation;
+        }
+        return primary;
       };
       const reserveForwardGroupEntryPorts = async (
         groupId: number,
@@ -2195,23 +2231,26 @@ export const crudRulesRouter = router({
           if (ctx.user.role !== "admin") {
             planRange = await db.getUserPlanPortRange(ctx.user.id, nextHostId, nextTunnelId || undefined);
           }
-          const reservation = await reserveAvailableHostPort({
-            hostId: nextHostId,
+          // 隧道挂了入口组时，随机挑的端口要在入口机和组里每台主机上都空着，并一起占住。
+          const listenHostIds = nextTunnelId ? await db.forwardRuleListenHostIds(nextHostId, nextTunnelId) : [nextHostId];
+          const reservation = await reserveAvailableHostPortOnHosts({
+            hostIds: listenHostIds,
             protocol: nextProtocol,
-            findPort: (reservedPorts) => db.findAvailablePort(
+            findPort: async (reservedPorts) => db.findAvailablePort(
               nextHostId,
               rangeStart,
               rangeEnd,
               nextProtocol,
-              reservedPorts,
+              [...reservedPorts, ...await db.usedPortsOnOtherListenHosts(nextHostId, listenHostIds, excludeRuleIds, nextProtocol)],
               excludeRuleIds,
               planRange?.ranges || [],
             ),
-            isUsed: (port) => db.isPortUsedOnHost(nextHostId, port, excludeRuleIds, nextProtocol, undefined, false),
+            isUsed: (listenHostId, port) => db.isPortUsedOnHost(listenHostId, port, excludeRuleIds, nextProtocol, undefined, false),
             maxAttempts: 256,
           });
           if (!reservation) throw new Error("入口 Agent 端口区间内已无可用端口");
-          heldReservations.push(reservation);
+          // 按主机拆开登记：后面 reserveRulePort 按「主机 + 端口」认自己已经占着的预留。
+          heldReservations.push(...(reservation.parts || [reservation]));
           input.sourcePort = reservation.port;
         }
       }
@@ -2274,7 +2313,7 @@ export const crudRulesRouter = router({
               throw new Error(`套餐端口必须在 ${ranges} 区间内`);
             }
           }
-          const sourceReservation = await reserveRulePort(nextHostId, nextSourcePort, nextProtocol, excludeRuleIds);
+          const sourceReservation = await reserveRulePort(nextHostId, nextSourcePort, nextProtocol, excludeRuleIds, nextTunnelId);
           if (!sourceReservation) throw new Error(`Port ${nextSourcePort} is already used or being allocated`);
           if (!nextTunnelId) {
             const host = await db.getHostById(nextHostId);
@@ -2537,6 +2576,8 @@ export const crudRulesRouter = router({
         }
         if (keyFieldChanged || groupChanged || data.isEnabled !== undefined) data.isRunning = false;
         await assertRuleTargetsAllowedForActor(ctx.user, { ...rule, ...data }, { forwardGroupId: activeGroupId });
+        // 同步子规则时，新入口端口是本请求自己占着的（见 runWithHeldHostPortReservations）。
+        await runWithHeldHostPortReservations(heldReservations, async () => {
         if (!groupChanged && isForwardChain) {
           await db.withForwardGroupSyncTransaction(
             activeGroupId,
@@ -2551,6 +2592,7 @@ export const crudRulesRouter = router({
           }
           await db.syncForwardGroupRules(activeGroupId);
         }
+        });
         await db.runForwardGroupFailover(activeGroupId);
         return { success: true, reset: keyFieldChanged || groupChanged };
       }
@@ -2670,7 +2712,7 @@ export const crudRulesRouter = router({
         } else if (Number((rule as any).hostId || 0) > 0) {
           pushAgentRefresh(Number((rule as any).hostId), "forward-rule-route-changed");
         }
-        await db.syncForwardGroupRules(groupId);
+        await runWithHeldHostPortReservations(heldReservations, () => db.syncForwardGroupRules(groupId));
         await db.runForwardGroupFailover(groupId);
         return { success: true, reset: true };
       }
@@ -2788,7 +2830,7 @@ export const crudRulesRouter = router({
               throw new Error(`套餐端口必须在 ${ranges} 区间内`);
             }
           }
-          const sourceReservation = await reserveRulePort(nextHostIdForRule, nextSourcePortForRule, nextProtocolForRule, rule.id);
+          const sourceReservation = await reserveRulePort(nextHostIdForRule, nextSourcePortForRule, nextProtocolForRule, rule.id, nextTunnelIdForRule);
           if (!sourceReservation) {
             throw new Error(`端口 ${nextSourcePortForRule} 已被其他规则占用`);
           }
@@ -2991,7 +3033,7 @@ export const crudRulesRouter = router({
             tunnelId: nextTunnelIdForRule,
           });
         }
-        const sourceReservation = await reserveRulePort(nextHostIdForRule, sourcePort, nextProtocolForRule, rule.id);
+        const sourceReservation = await reserveRulePort(nextHostIdForRule, sourcePort, nextProtocolForRule, rule.id, nextTunnelIdForRule);
         if (!sourceReservation) throw new Error(`端口 ${sourcePort} 已被占用，请更换端口后再启用`);
         (data as any).disabledByUser = false;
         (data as any).disabledByTunnel = false;
