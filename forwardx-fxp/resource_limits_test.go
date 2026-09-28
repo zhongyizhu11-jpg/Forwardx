@@ -382,6 +382,26 @@ func (c *shortDeadlineConn) SetDeadline(deadline time.Time) error {
 	return c.Conn.SetDeadline(deadline)
 }
 
+func (c *shortDeadlineConn) shorten(deadline time.Time) time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if deadline.IsZero() {
+		c.cleared++
+		return deadline
+	}
+	return time.Now().Add(c.timeout)
+}
+
+// 握手确认和 hello 用的是单方向的读 / 写超时（另一个方向可能正有协程在等），
+// 同样缩短、同样计数。
+func (c *shortDeadlineConn) SetReadDeadline(deadline time.Time) error {
+	return c.Conn.SetReadDeadline(c.shorten(deadline))
+}
+
+func (c *shortDeadlineConn) SetWriteDeadline(deadline time.Time) error {
+	return c.Conn.SetWriteDeadline(c.shorten(deadline))
+}
+
 func (c *shortDeadlineConn) clearedCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
