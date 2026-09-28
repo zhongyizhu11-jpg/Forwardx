@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.200"
+var Version = "2.2.201"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -14298,6 +14298,12 @@ func postOnceWithClient(client *http.Client, cfg Config, path string, payload an
 	return postOnceWithClientToPanelURL(client, cfg, currentPanelURL(cfg), path, payload, out)
 }
 
+// 面板单次响应的上限。最大的是心跳下发的全量配置，几千条规则也远小于这个数；
+// 不设上限的话，一个恶意/出错的响应就能把 Agent 内存吃光。
+const agentMaxPanelResponseBytes = 64 << 20
+
+var errUnauthenticatedPanelResponse = errors.New("panel response is not an authenticated envelope")
+
 func postOnceWithClientToPanelURL(client *http.Client, cfg Config, panelURL string, path string, payload any, out any) error {
 	startedAt := time.Now()
 	env, err := encrypt(map[string]any{
@@ -14334,15 +14340,19 @@ func postOnceWithClientToPanelURL(client *http.Client, cfg Config, panelURL stri
 	defer res.Body.Close()
 	observeAgentAuthCapability(panelURL, res.Header.Get(agentAuthCapabilityHeader))
 	authResult := res.Header.Get(agentAuthResultHeader)
-	resBody, _ := io.ReadAll(res.Body)
+	resBody, _ := io.ReadAll(io.LimitReader(res.Body, agentMaxPanelResponseBytes))
 	decodedBody := resBody
 	var respEnv envelope
 	var decryptErr error
 	responseAuthenticated := strings.EqualFold(strings.TrimSpace(authResult), agentAuthResultAccepted)
+	// 只有用本机 token 验过 MAC 的信封才算面板说的话。响应头谁都能伪造；面板对
+	// 认证通过的请求总是回加密信封（包括 410 迁移），明文只会出现在认证失败时。
+	envelopeVerified := false
 	if err := json.Unmarshal(resBody, &respEnv); err == nil && respEnv.V == 1 {
 		if plain, err := decryptForPanel(respEnv, cfg.Token, panelURL, res.Header.Get(encryptedResponseClockHeader)); err == nil {
 			decodedBody = plain
 			responseAuthenticated = true
+			envelopeVerified = true
 		} else {
 			decryptErr = err
 		}
@@ -14355,7 +14365,9 @@ func postOnceWithClientToPanelURL(client *http.Client, cfg Config, panelURL stri
 			PanelURL     string        `json:"panelUrl"`
 			AgentUpgrade *agentUpgrade `json:"agentUpgrade"`
 		}
-		if err := json.Unmarshal(decodedBody, &migrated); err == nil {
+		// 迁移会把新地址永久写进配置：没验过的响应一律不信，否则网络路径上的人
+		// 回一个 4xx 就能把这台 Agent 永久劫持到他的面板。
+		if err := json.Unmarshal(decodedBody, &migrated); err == nil && envelopeVerified {
 			panelURL := strings.TrimSpace(migrated.PanelURL)
 			if panelURL == "" && migrated.AgentUpgrade != nil {
 				panelURL = strings.TrimSpace(migrated.AgentUpgrade.PanelURL)
@@ -14377,6 +14389,10 @@ func postOnceWithClientToPanelURL(client *http.Client, cfg Config, panelURL stri
 	}
 	if decryptErr != nil {
 		return wrapAgentRequestAttemptError(decryptErr, auth, authResult, responseAuthenticated)
+	}
+	if !envelopeVerified {
+		// 2xx 却不是信封：不是我们的面板（或者被人改过）。里面的命令会以 root 执行，绝不能用。
+		return wrapAgentRequestAttemptError(errUnauthenticatedPanelResponse, auth, authResult, false)
 	}
 	if err := json.Unmarshal(decodedBody, out); err != nil {
 		return wrapAgentRequestAttemptError(err, auth, authResult, responseAuthenticated)

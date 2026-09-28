@@ -1,8 +1,9 @@
 import * as db from "./db";
 import { appendPanelLog } from "./_core/panelLogger";
-import { trafficBillingUserLockKey, withKeyedTaskLock } from "./keyedTaskLock";
+import { withTrafficBillingUserLock } from "./keyedTaskLock";
 import { restoreUserForwardRulesAfterAccessRecovery } from "./repositories/userForwardAccessRecovery";
 import { reconcileReauthorizedRulesForAllUsers } from "./ruleResourceAuthorization";
+import { reconcileTrafficBillingRuleBlocksForAllUsers } from "./trafficBillingRuleBlock";
 
 /**
  * 被系统连带停掉的规则，原因消除后自动恢复。
@@ -26,8 +27,8 @@ export async function healAutoStoppedRules(reason = "auto-heal") {
   for (const userId of await db.getUserIdsWithAccessPausedRules()) {
     try {
       // 和计费/套餐变更走同一把锁：不会跟一次正在进行的暂停抢着写。
-      const result = await withKeyedTaskLock(
-        trafficBillingUserLockKey(userId),
+      const result = await withTrafficBillingUserLock(
+        userId,
         () => restoreUserForwardRulesAfterAccessRecovery(userId),
       );
       userRules += result.enabledRuleIds.length;
@@ -37,9 +38,11 @@ export async function healAutoStoppedRules(reason = "auto-heal") {
   }
 
   const authorizationRules = await reconcileReauthorizedRulesForAllUsers();
+  // 旧版本余额不足时把有套餐的人整户暂停；以及已经充值、还停着的计费规则。
+  const trafficBillingRules = await reconcileTrafficBillingRuleBlocksForAllUsers();
 
   if (userRules > 0) {
     appendPanelLog("info", `[RuleRecovery] ${reason}: resumed ${userRules} rule(s) whose owner's forwarding access is active again`);
   }
-  return { ...linkResult, userRules, authorizationRules };
+  return { ...linkResult, userRules, authorizationRules, trafficBillingRules };
 }

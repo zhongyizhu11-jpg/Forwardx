@@ -1063,3 +1063,27 @@ test("完整配置里组名和节点名去掉逗号与等号，引用处同步�
   assert.ok(section(text, "[Proxy Group]").includes("主 选 = select, A B C, DIRECT"));
   assert.ok(section(text, "[Rule]").includes("FINAL,主 选"));
 });
+
+// ==================== 节点字段里的换行不能插出新配置段 ====================
+
+test("节点主人在 sni 里塞换行，插不进收到共享的人的 Surge / Loon / QX 配置", () => {
+  const evil = node(
+    "trojan://pw@1.2.3.4:443?sni=a.com%0A%5BMITM%5D%0Ahostname%3D*%0Aca-p12%3DEVIL#shared",
+    { address: "1.2.3.4", port: 443, name: "shared\n[Rule]\nFINAL,DIRECT" },
+  );
+  const document = { nodes: [evil], groups: [], ruleSets: [], rules: [] };
+  const outputs = [
+    renderProxySubscription(document, "surge"),
+    renderProxySubscription(document, "loon"),
+    renderProxySubscription(document, "quantumultx"),
+    decodeBase64Utf8(renderProxySubscription(document, "base64")),
+    ...(["surge", "loon", "quantumultx"] as const).map((format) => (
+      renderProxySubscription({ ...profileDocument(), nodes: [...profileDocument().nodes, evil] }, format, { profile: true, profileUrl: "https://panel.example/sub" })
+    )),
+  ];
+  for (const output of outputs) {
+    for (const line of output.split("\n")) {
+      assert.doesNotMatch(line, /^\s*(\[MITM\]|hostname\s*=|ca-p12\s*=|FINAL,DIRECT)/, `注入的行出现在输出里：${line}`);
+    }
+  }
+});

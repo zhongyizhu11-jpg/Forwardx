@@ -39,8 +39,9 @@ function formatFromUserAgent(userAgent: string): ProxySubscriptionFormat | null 
 }
 
 function clientIp(req: Request): string {
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return forwarded || req.ip || "";
+  // 用 req.ip：它按面板的 trust proxy 设置解析 X-Forwarded-For。直接读这个头的话，
+  // 谁都能在请求里写一个假 IP，「谁在拉这个订阅」的记录就不可信了。
+  return req.ip || "";
 }
 
 /**

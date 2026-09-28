@@ -10,7 +10,7 @@ import {
   withDatabaseTransaction,
 } from "./dbRuntime";
 import { recordConfigAuditEvent } from "./configAudit";
-import { trafficBillingUserLockKey, withKeyedTaskLock } from "./keyedTaskLock";
+import { trafficBillingUserLockKey, withKeyedTaskLock, withTrafficBillingUserLock } from "./keyedTaskLock";
 import {
   getForwardRuleById,
   markOrphanedForwardGroupTemplatesPendingDelete,
@@ -20,7 +20,6 @@ import {
   settleTrafficBillingRuleOnDelete,
   trafficBillingResourceCandidatesForRule,
 } from "./repositories/trafficBillingRepository";
-import { setUserForwardAccess } from "./repositories/userRepository";
 
 const REPAIR_BATCH_SIZE = 200;
 
@@ -264,7 +263,7 @@ async function retireRuleIf(
     let before: any = null;
     let billed: any = null;
     let claimed = false;
-    await withKeyedTaskLock(trafficBillingUserLockKey((preview as any).userId), async () => {
+    await withTrafficBillingUserLock((preview as any).userId, async () => {
       await withDatabaseTransaction(async () => {
         const current = await getForwardRuleById(ruleId);
         if (!current || databaseBoolean((current as any).pendingDelete) || !(await stillManagedAndInvalid())) return;
@@ -319,8 +318,9 @@ async function retireRuleIf(
     });
     if (billed && Number(billed.balanceAfterCents) < 0) {
       const userId = positiveId(before.userId);
-      await setUserForwardAccess(userId, false, "traffic_billing_balance");
-      await refreshUserRuleEndpoints(userId, `${source}-balance-negative`);
+      const { handleTrafficBillingShortfall } = await import("./trafficBillingRuleBlock");
+      const shortfall = await handleTrafficBillingShortfall(userId, `${source}-settlement-negative`);
+      if (shortfall.accountPaused) await refreshUserRuleEndpoints(userId, `${source}-balance-negative`);
     }
     await refreshRetiredRuleEndpoints(before, source);
     return true;

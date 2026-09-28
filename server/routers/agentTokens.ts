@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertCanAddSelfServiceHost } from "../selfServiceHostLimit";
 import { nanoid } from "nanoid";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
@@ -29,6 +30,11 @@ export const agentTokensRouter = router({
   create: protectedProcedure
     .input(z.object({ description: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
+      // 每个 token 注册一台新机器：建 token 这一步就按自助上限卡住（注册时还会再查一次）。
+      await assertCanAddSelfServiceHost({ ...(await db.getUserById(ctx.user.id)), ...ctx.user } as any, {
+        getGlobalLimitRaw: () => db.getSetting("selfServiceHostLimit"),
+        countOwnedHosts: (userId) => db.countHostsByUserId(userId),
+      });
       const token = nanoid(32);
       const id = await db.createAgentToken({
         token,

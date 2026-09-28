@@ -1,11 +1,9 @@
 import { Request, Response, NextFunction } from "express";
-import * as db from "./db";
-import { decryptPayload, decryptPayloadWithCandidates, encryptPayload, isEncryptedEnvelope, rememberEncryptedEnvelope } from "./agentCrypto";
+import { decryptPayload, encryptPayload, isEncryptedEnvelope } from "./agentCrypto";
 import {
   AGENT_AUTH_RESULT_ACCEPTED,
   AGENT_AUTH_RESULT_HEADER,
   AGENT_AUTH_RESULT_REJECTED,
-  getCandidateAgentTokens,
   hasClocklessAgentAuth,
   hasSignedAgentAuthAttempt,
   hasVerifiedAgentAuthProof,
@@ -51,6 +49,7 @@ function agentAuthFailureCategory(error: unknown) {
   if (message.includes("mac verification failed")) return "mac-verification-failed";
   if (message.includes("replay detected")) return "replay-detected";
   if (message.includes("invalid agent auth proof")) return "invalid-auth-proof";
+  if (message.includes("agent auth proof required")) return "missing-auth-proof";
   if (message.includes("invalid iv")) return "invalid-envelope";
   if (message.includes("no token candidates")) return "no-token-candidates";
   if (message.includes("unexpected token") || message.includes("json")) return "invalid-payload";
@@ -118,17 +117,14 @@ export async function agentEncryptionMiddleware(req: Request, res: Response, nex
       authStage = "verify-proof";
       throw new Error("Invalid Agent auth proof");
     } else {
-      let resolved;
-      try {
-        authStage = "decrypt-candidates";
-        resolved = decryptPayloadWithCandidates(req.body, await getCandidateAgentTokens(), { nowMs: protocolNowMs });
-      } catch {
-        authStage = "refresh-token-candidates";
-        resolved = decryptPayloadWithCandidates(req.body, await db.getAgentAuthTokenCandidates({ force: true }), { nowMs: protocolNowMs });
-      }
-      token = resolved.token;
-      payload = resolved.payload;
-      rememberEncryptedEnvelope(req.body);
+      /*
+        不带认证头的请求直接拒绝。以前会拿面板上每一个 Agent token 挨个去验这个包
+        的 MAC、失败了再从数据库重载一遍 token 再验一遍 —— 全程同步：不需要任何凭据，
+        发一个 10MB 的包就能把事件循环卡住好几秒，几个请求就能让整个面板停摆。
+        现在的 Agent 每个请求都带签名认证头，按指纹直接找到那一个 token。
+      */
+      authStage = "missing-auth-proof";
+      throw new Error("Agent auth proof required");
     }
   } catch (err: any) {
     const message = String(err?.message || "Unauthorized");

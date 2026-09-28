@@ -182,3 +182,27 @@ test("envelope replay after a verified challenge proof stays accepted", async ()
     resetAgentCryptoCaches();
   }
 });
+
+test("Agent middleware rejects unsigned envelopes without trying every token (no unauthenticated CPU burn)", async () => {
+  await withAgentMiddlewareServer(async (baseUrl) => {
+    // 一个像模像样、体积很大的信封，不带认证头。以前会拿每个 token 去验它的 MAC，
+    // 失败后还要重载 token 再验一遍；现在直接拒绝。
+    const envelope = {
+      v: 1,
+      iv: "00".repeat(16),
+      ct: "ab".repeat(20 * 1024),
+      mac: "00".repeat(32),
+      ts: Date.now(),
+    };
+    const startedAt = Date.now();
+    const response = await fetch(`${baseUrl}/api/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(envelope),
+    });
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get(AGENT_AUTH_RESULT_HEADER), AGENT_AUTH_RESULT_REJECTED);
+    assert.match(String((await response.json()).message || ""), /auth proof required/i);
+    assert.ok(Date.now() - startedAt < 5_000);
+  });
+});

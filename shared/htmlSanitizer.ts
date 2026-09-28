@@ -88,16 +88,47 @@ function sanitizeAttributes(rawAttrs: string, tagName: string) {
   return attrs.length ? ` ${attrs.join(" ")}` : "";
 }
 
+const TAG_AT_CURSOR = /<\s*(\/)?\s*([a-zA-Z][a-zA-Z0-9-]*)([^<>]*)>/y;
+
+function renderAllowedTag(closing: string | undefined, rawName: string, rawAttrs: string) {
+  const tagName = rawName.toLowerCase();
+  if (!ALLOWED_TAGS.has(tagName)) return "";
+  if (closing) return VOID_TAGS.has(tagName) ? "" : `</${tagName}>`;
+  return `<${tagName}${sanitizeAttributes(rawAttrs || "", tagName)}>`;
+}
+
+/**
+ * 白名单过滤。
+ *
+ * 逐个扫描，而不是对整段做一次正则替换：以前删掉一个不允许的标签之后，左右两边的
+ * 文字会拼成一个新标签（`<<x>img src=x onerror=…>` → `<img src=x onerror=…>`），
+ * 再过几遍也一样。现在输出里的每个 `<` 要么是这里重新生成的白名单标签，要么被转义
+ * 成 `&lt;` —— 怎么拼都拼不出新标签。
+ */
 export function sanitizeHtml(input: string) {
   const withoutDangerousBlocks = String(input || "")
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
     .replace(/<\s*(script|style|iframe|object|embed|link|meta|base|form|input|button|textarea|select|option|svg|math)[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
     .replace(/<\s*(script|style|iframe|object|embed|link|meta|base|form|input|button|textarea|select|option|svg|math)\b[^>]*\/?\s*>/gi, "");
 
-  return withoutDangerousBlocks.replace(/<\s*(\/)?\s*([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>/g, (full, closing: string, rawName: string, rawAttrs: string) => {
-    const tagName = rawName.toLowerCase();
-    if (!ALLOWED_TAGS.has(tagName)) return "";
-    if (closing) return VOID_TAGS.has(tagName) ? "" : `</${tagName}>`;
-    const attrs = sanitizeAttributes(rawAttrs || "", tagName);
-    return VOID_TAGS.has(tagName) ? `<${tagName}${attrs}>` : `<${tagName}${attrs}>`;
-  });
+  let output = "";
+  let cursor = 0;
+  while (cursor < withoutDangerousBlocks.length) {
+    const next = withoutDangerousBlocks.indexOf("<", cursor);
+    if (next < 0) {
+      output += withoutDangerousBlocks.slice(cursor);
+      break;
+    }
+    output += withoutDangerousBlocks.slice(cursor, next);
+    TAG_AT_CURSOR.lastIndex = next;
+    const match = TAG_AT_CURSOR.exec(withoutDangerousBlocks);
+    if (!match) {
+      output += "&lt;";
+      cursor = next + 1;
+      continue;
+    }
+    output += renderAllowedTag(match[1], match[2], match[3]);
+    cursor = TAG_AT_CURSOR.lastIndex;
+  }
+  return output;
 }

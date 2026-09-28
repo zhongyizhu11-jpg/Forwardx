@@ -3235,6 +3235,8 @@ export async function installPluginFromPackage(input: {
   sourceUrl?: string | null;
   branch?: string | null;
   manifestPath?: string | null;
+  /** 从商店条目安装时，包里声明的插件 ID 必须等于条目 ID。 */
+  expectedId?: string | null;
 }) {
   const files = stripPackageRoot(readPluginPackage(input.content, input.fileName || ""));
   if (files.length > MAX_PLUGIN_PACKAGE_FILES) throw new Error(`插件包文件不能超过 ${MAX_PLUGIN_PACKAGE_FILES} 个`);
@@ -3242,6 +3244,9 @@ export async function installPluginFromPackage(input: {
   const manifest = normalizeManifest(manifestFile.manifest, {
     repository: input.sourceUrl || undefined,
   });
+  if (input.expectedId && manifest.id !== input.expectedId) {
+    throw new Error(`插件包声明的 ID ${manifest.id} 与商店条目 ${input.expectedId} 不一致，已拒绝安装`);
+  }
   const sourceManifestPath = input.manifestPath || manifestFile.path;
   await upsertPlugin(manifest, {
     sourceType: input.sourceType || "upload",
@@ -3306,6 +3311,7 @@ export async function installPluginFromPackageUrl(input: {
   sourceUrl?: string | null;
   branch?: string | null;
   manifestPath?: string | null;
+  expectedId?: string | null;
 }) {
   const content = await fetchBuffer(input.url);
   return installPluginFromPackage({
@@ -3315,6 +3321,7 @@ export async function installPluginFromPackageUrl(input: {
     sourceUrl: input.sourceUrl || input.url,
     branch: input.branch || null,
     manifestPath: input.manifestPath || null,
+    expectedId: input.expectedId || null,
   });
 }
 
@@ -3327,9 +3334,15 @@ export async function installPluginFromStoreItem(item: PluginStoreItem) {
       return await installPluginFromPackageUrl({
         url: item.packageUrl,
         fileName: item.packageUrl.split("/").pop() || `${item.id}.tar.gz`,
-        sourceUrl: packageRepository || item.repository,
+        /*
+          来源记成真正下载的地址。第三方商店条目以前可以写 packageRepository = 官方仓库、
+          packageUrl = 任意地址：包是从任意地址下的，来源却记成官方仓库，内置插件的
+          「只信官方来源」检查就被骗过，内置插件被替换，脚本以 root 跑到各台主机上。
+        */
+        sourceUrl: item.storeSourceId ? item.packageUrl : (packageRepository || item.repository),
         branch: packageBranch,
         manifestPath: item.manifestPath,
+        expectedId: item.id,
       });
     } catch (error) {
       packageErrors.push(`packageUrl: ${error instanceof Error ? error.message : String(error)}`);
@@ -3344,6 +3357,7 @@ export async function installPluginFromStoreItem(item: PluginStoreItem) {
         sourceUrl: sourceRepository,
         branch: packageBranch,
         manifestPath: item.manifestPath,
+        expectedId: item.id,
       });
     } catch (error) {
       packageErrors.push(`packagePath: ${error instanceof Error ? error.message : String(error)}`);

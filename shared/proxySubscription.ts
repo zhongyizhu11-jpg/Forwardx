@@ -1145,12 +1145,38 @@ export type RenderProxySubscriptionOptions = {
   profileUrl?: string;
 };
 
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f\u2028\u2029]/g;
+
+function stripControlCharacters<T>(value: T): T {
+  if (typeof value === "string") return value.replace(CONTROL_CHARACTERS, "") as T;
+  if (Array.isArray(value)) return value.map(stripControlCharacters) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, stripControlCharacters(item)])) as T;
+  }
+  return value;
+}
+
+/**
+ * 节点和策略组里的每个字符串都去掉控制字符（换行、回车……）。
+ *
+ * Surge / Loon / Quantumult X 是一行一个节点的文本配置，字段原样拼进去。节点的 sni、
+ * host、path、密码这些都来自节点主人 —— 共享给别人的节点，主人在 sni 里塞一个换行，
+ * 就能往收到共享的每个人的配置里插 [MITM] 证书、[Rule]、[Script] 段落。
+ */
+function sanitizeDocumentForTextFormats(document: ProxySubscriptionDocument): ProxySubscriptionDocument {
+  return {
+    ...document,
+    nodes: stripControlCharacters(document.nodes),
+    groups: stripControlCharacters(document.groups),
+  };
+}
+
 export function renderProxySubscription(
   document: ProxySubscriptionDocument,
   format: ProxySubscriptionFormat,
   options: RenderProxySubscriptionOptions = {},
 ): string {
-  const filtered = filterForFormat(document, format);
+  const filtered = filterForFormat(sanitizeDocumentForTextFormats(document), format);
   const { nodes, groups, ruleSets, rules, notices } = filtered;
   if (format === "clash") return renderClash(nodes, groups, ruleSets, rules, notices);
   if (format === "singbox") return renderSingbox(nodes, groups, ruleSets, rules);

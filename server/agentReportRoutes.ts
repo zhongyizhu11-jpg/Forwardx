@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import * as db from "./db";
 import { isHostMetricsWatching, pushAgentRefresh } from "./agentEvents";
+import { handleTrafficBillingShortfall } from "./trafficBillingRuleBlock";
 import {
   isAgentForwardGroupLatencyResult,
   isAgentHostProbeServiceResult,
@@ -767,11 +768,48 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       ? await db.getProxyInboundTrafficOwnersByIds(inboundStats.map((stat) => proxyInboundIdFromTrafficRuleId(stat.ruleId)))
       : new Map<number, db.ProxyInboundTrafficOwner>();
 
-    const preliminaryTrafficContexts = await db.getForwardRuleTrafficContextsByIds(
-      ruleStats.map((stat) => Number(stat.ruleId)),
-    );
+    const trafficContexts = await db.getForwardRuleTrafficContextsByIds(ruleStats.map((stat) => Number(stat.ruleId)));
+    const contextsByRuleId = new Map((trafficContexts as any[]).map((context) => [Number(context.rule.id), context]));
+    const tunnelContextsById = new Map<number, any>();
+    for (const context of trafficContexts as any[]) {
+      const tunnelId = Number(context?.tunnel?.id || 0);
+      if (tunnelId > 0 && !tunnelContextsById.has(tunnelId)) {
+        tunnelContextsById.set(tunnelId, context.tunnel);
+      }
+    }
+    const tunnelContexts = Array.from(tunnelContextsById.values());
+    const tunnelIds = Array.from(tunnelContextsById.keys());
+    const [entryHostIdPairs, tunnelExitNodes] = await Promise.all([
+      Promise.all(tunnelContexts.map(async (tunnel) => [Number(tunnel.id), await tunnelEntryHostIds(tunnel)] as const)),
+      tunnelIds.length > 0
+        ? db.getTunnelExitNodesByTunnelIds(tunnelIds)
+        : Promise.resolve([]),
+    ]);
+    const entryHostsByTunnelId = new Map<number, Set<number>>(entryHostIdPairs);
+    const extraExitHostsByTunnelId = new Map<number, Set<number>>();
+    for (const node of tunnelExitNodes as any[]) {
+      const tunnelId = Number(node?.tunnelId || 0);
+      const hostId = Number(node?.hostId || 0);
+      if (tunnelId <= 0 || hostId <= 0 || node?.isEnabled === false) continue;
+      const hosts = extraExitHostsByTunnelId.get(tunnelId) || new Set<number>();
+      hosts.add(hostId);
+      extraExitHostsByTunnelId.set(tunnelId, hosts);
+    }
+    // 只锁这台机器真的要替他记账的人。以前按上报里出现的所有规则 id 去锁：一台租户
+    // 的 Agent 报一串别人的规则 id（字节数全 0），就能挨个锁住所有用户的计费行，
+    // 拖住全面板的流量、配额和计费处理。
+    const isAccountingHostFor = (context: any) => {
+      const tunnelId = Number(context?.tunnel?.id || context?.rule?.tunnelId || 0);
+      return trafficAccountingHostIds(
+        context.rule,
+        context.tunnel,
+        entryHostsByTunnelId.get(tunnelId),
+        extraExitHostsByTunnelId.get(tunnelId),
+      ).has(Number(host.id));
+    };
     const accountingUserIds = Array.from(new Set([
-      ...(preliminaryTrafficContexts as any[])
+      ...(trafficContexts as any[])
+        .filter(isAccountingHostFor)
         .map((context) => Number(context?.rule?.userId || 0)),
       // 入站的所有者也要一起上锁，否则同一个用户的两条计费路径可能并发写配额。
       // 这里宁可多锁一个人：非本机的入站待会儿会被丢掉，锁了也只是白锁。
@@ -812,33 +850,6 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       billingResource: NonNullable<Awaited<ReturnType<typeof db.findTrafficBillingResourceForRule>>>;
     }> = [];
     const trafficBillingEnabled = await db.getTrafficBillingEnabledForWrite();
-    const trafficContexts = await db.getForwardRuleTrafficContextsByIds(ruleStats.map((stat) => Number(stat.ruleId)));
-    const contextsByRuleId = new Map((trafficContexts as any[]).map((context) => [Number(context.rule.id), context]));
-    const tunnelContextsById = new Map<number, any>();
-    for (const context of trafficContexts as any[]) {
-      const tunnelId = Number(context?.tunnel?.id || 0);
-      if (tunnelId > 0 && !tunnelContextsById.has(tunnelId)) {
-        tunnelContextsById.set(tunnelId, context.tunnel);
-      }
-    }
-    const tunnelContexts = Array.from(tunnelContextsById.values());
-    const tunnelIds = Array.from(tunnelContextsById.keys());
-    const [entryHostIdPairs, tunnelExitNodes] = await Promise.all([
-      Promise.all(tunnelContexts.map(async (tunnel) => [Number(tunnel.id), await tunnelEntryHostIds(tunnel)] as const)),
-      tunnelIds.length > 0
-        ? db.getTunnelExitNodesByTunnelIds(tunnelIds)
-        : Promise.resolve([]),
-    ]);
-    const entryHostsByTunnelId = new Map<number, Set<number>>(entryHostIdPairs);
-    const extraExitHostsByTunnelId = new Map<number, Set<number>>();
-    for (const node of tunnelExitNodes as any[]) {
-      const tunnelId = Number(node?.tunnelId || 0);
-      const hostId = Number(node?.hostId || 0);
-      if (tunnelId <= 0 || hostId <= 0 || node?.isEnabled === false) continue;
-      const hosts = extraExitHostsByTunnelId.get(tunnelId) || new Set<number>();
-      hosts.add(hostId);
-      extraExitHostsByTunnelId.set(tunnelId, hosts);
-    }
     const rulesWithBytes = new Set(stats
       .filter((stat) => normalizeTrafficCounterBytes(stat.bytesIn) + normalizeTrafficCounterBytes(stat.bytesOut) > 0)
       .map((stat) => Number(stat.ruleId)));
@@ -986,6 +997,8 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     await db.addProxyNodeTraffic(trafficByProxyNode);
     await db.addProxyInboundTraffic(trafficByProxyInbound);
 
+    // 一次上报里同一个人的多条计费规则只处理一次余额不足。
+    const shortfallUserIds = new Set<number>();
     for (const { rule, ruleBytes, billingResource } of billingEntries) {
       strictTrafficAccounting = true;
       const user = await db.getUserById(Number(rule.userId));
@@ -996,12 +1009,8 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
         quotaTrafficByUser.set(rule.userId, (quotaTrafficByUser.get(rule.userId) || 0) + quotaBytes);
         continue;
       }
-      if (user && Number((user as any).balanceCents || 0) <= 0) {
-        console.warn(`[TrafficBilling] user=${rule.userId} balance unavailable, disabling rules`);
-        await db.setUserForwardAccess(rule.userId, false, "traffic_billing_balance");
-        await refreshUserRuleAgents(rule.userId, "traffic-billing-balance-unavailable");
-        continue;
-      }
+      // 已经跑出来的流量先照常计费（余额可以扣成负数），再看要不要停。以前余额为 0 时
+      // 这段流量直接丢掉：既不扣费也不计配额，规则被停后再手动打开就能白跑一段。
       const billed = await db.billTrafficUsage({
         userId: Number(rule.userId),
         ruleId: Number(rule.id),
@@ -1009,10 +1018,12 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
         resourceType: billingResource.resourceType,
         resourceId: billingResource.resourceId,
       });
-      if (billed && billed.balanceAfterCents < 0) {
-        console.warn(`[TrafficBilling] user=${rule.userId} balance negative, disabling rules`);
-        await db.setUserForwardAccess(rule.userId, false, "traffic_billing_balance");
-        await refreshUserRuleAgents(rule.userId, "traffic-billing-balance-negative");
+      const balanceAfterCents = billed ? Number(billed.balanceAfterCents) : Number((user as any)?.balanceCents || 0);
+      if (user && balanceAfterCents <= 0 && !shortfallUserIds.has(Number(rule.userId))) {
+        shortfallUserIds.add(Number(rule.userId));
+        console.warn(`[TrafficBilling] user=${rule.userId} balance ${balanceAfterCents < 0 ? "negative" : "unavailable"}, stopping traffic-billed rules`);
+        const shortfall = await handleTrafficBillingShortfall(Number(rule.userId), balanceAfterCents < 0 ? "balance-negative" : "balance-unavailable");
+        if (shortfall.accountPaused) await refreshUserRuleAgents(rule.userId, "traffic-billing-balance-unavailable");
       }
     }
 

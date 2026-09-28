@@ -44,6 +44,7 @@ import { z } from "zod";
 import { planProxyNodeBinding } from "@shared/proxyNodeAutoBind";
 import { isIP } from "node:net";
 import * as db from "../db";
+import { handleTrafficBillingShortfall } from "../trafficBillingRuleBlock";
 import { pushAgentRefresh } from "../agentEvents";
 import { forwardTypeSchema } from "./schemas";
 import {
@@ -65,7 +66,7 @@ import {
   type HostPortReservation,
 } from "../portReservations";
 import { ensureTunnelListenerPortPolicy, reserveTunnelExitPort, usesSharedTunnelPrimaryListener } from "../repositories/tunnelRepository";
-import { trafficBillingUserLockKey, withKeyedTaskLock } from "../keyedTaskLock";
+import { trafficBillingUserLockKey, withKeyedTaskLock, withTrafficBillingUserLock } from "../keyedTaskLock";
 import { mapWithConcurrency } from "../asyncPool";
 import { reserveRuleCreateQuota, type RuleQuotaReservation } from "../ruleQuotaReservations";
 
@@ -949,7 +950,26 @@ async function requireForwardAccessReady(userId: number, options?: { allowTraffi
   return check.user || await db.getUserById(userId);
 }
 
-async function requireTrafficBillingBalanceForRule(userId: number, isTrafficBillingRule: boolean, message = "流量计费余额不足，请充值后再使用该计费资源") {
+/**
+ * 走计费资源的规则，余额不足不许启用 / 新建。
+ *
+ * ruleShape 传入时按上报流量时计费用的同一套规则判断（转发组 → 隧道 → 入口主机）。
+ * 只看隧道本身的话，一条隧道没配计费、入口主机配了的规则会被漏掉：上报流量时它按
+ * 主机计费，余额为 0 被停，用户又能随手打开，白跑一段。
+ */
+async function requireTrafficBillingBalanceForRule(
+  userId: number,
+  isTrafficBillingRule: boolean,
+  message = "流量计费余额不足，请充值后再使用该计费资源",
+  ruleShape?: { forwardGroupId?: number | null; tunnelId?: number | null; hostId?: number | null },
+) {
+  if (!isTrafficBillingRule && ruleShape && await db.getTrafficBillingEnabledForWrite()) {
+    isTrafficBillingRule = !!(await db.findTrafficBillingResourceForRule({
+      forwardGroupId: ruleShape.forwardGroupId ?? null,
+      tunnelId: ruleShape.tunnelId ?? null,
+      hostId: ruleShape.hostId ?? null,
+    }));
+  }
   if (!isTrafficBillingRule) return;
   const user = await db.getUserById(userId);
   if (Number((user as any)?.balanceCents || 0) <= 0) {
@@ -1005,7 +1025,7 @@ async function prepareDirectRuleRouteForActor(
   let currentUser = await db.getUserById(actor.id);
   if (actor.role !== "admin") {
     currentUser = await requireForwardAccessReady(actor.id, { allowTrafficBillingRecovery: isTrafficBillingRule });
-    await requireTrafficBillingBalanceForRule(actor.id, isTrafficBillingRule);
+    await requireTrafficBillingBalanceForRule(actor.id, isTrafficBillingRule, undefined, { tunnelId, hostId });
     if (String(selectedTunnelForRule?.mode || "").toLowerCase() === "forwardx" && !(currentUser as any)?.canAddRules) {
       throw new Error("无权使用 NEX 加密隧道");
     }
@@ -1141,7 +1161,7 @@ async function assertForwardGroupPortWithinUserPlanRange(options: {
 }
 
 async function settleTrafficBillingForDeletedRule(rule: any) {
-  const billed = await withKeyedTaskLock(trafficBillingUserLockKey(rule.userId), async () => {
+  const billed = await withTrafficBillingUserLock(rule.userId, async () => {
     const billingResource = await db.findTrafficBillingResourceForRule(rule);
     const fallback = db.trafficBillingResourceCandidatesForRule(rule)[0];
     const resource = billingResource || fallback;
@@ -1159,8 +1179,8 @@ async function settleTrafficBillingForDeletedRule(rule: any) {
     return result;
   });
   if (billed && Number(billed.balanceAfterCents) < 0) {
-    await db.setUserForwardAccess(Number(rule.userId), false, "traffic_billing_balance");
-    await refreshUserForwardEndpoints(Number(rule.userId), "traffic-billing-delete-balance-negative");
+    const shortfall = await handleTrafficBillingShortfall(Number(rule.userId), "delete-settlement-negative");
+    if (shortfall.accountPaused) await refreshUserForwardEndpoints(Number(rule.userId), "traffic-billing-delete-balance-negative");
   }
   return billed;
 }
@@ -1445,7 +1465,10 @@ export async function toggleForwardRuleForActor(
             ? await requireTunnelUseOrTrafficBillingAccess(actorContext, activeTunnelId)
             : await requireHostUseAccess(actorContext, rule.hostId);
           const owner = await requireForwardAccessReady(actor.id, { allowTrafficBillingRecovery: !!resourceAccess.isTrafficBillingResource });
-          await requireTrafficBillingBalanceForRule(actor.id, !!resourceAccess.isTrafficBillingResource);
+          await requireTrafficBillingBalanceForRule(actor.id, !!resourceAccess.isTrafficBillingResource, undefined, {
+            tunnelId: activeTunnelId || null,
+            hostId: Number(rule.hostId),
+          });
           if (owner.expiresAt && new Date(owner.expiresAt) <= new Date()) {
             throw new Error("套餐已到期，请续费后再启用规则");
           }
@@ -2572,7 +2595,10 @@ export const crudRulesRouter = router({
           ? await requireTunnelUseOrTrafficBillingAccess(ctx, activeTunnelId)
           : await requireHostUseAccess(ctx, nextHostIdForRule);
         const owner = await requireForwardAccessReady(ctx.user.id, { allowTrafficBillingRecovery: !!resourceAccess.isTrafficBillingResource });
-        await requireTrafficBillingBalanceForRule(ctx.user.id, !!resourceAccess.isTrafficBillingResource);
+        await requireTrafficBillingBalanceForRule(ctx.user.id, !!resourceAccess.isTrafficBillingResource, undefined, {
+          tunnelId: activeTunnelId || null,
+          hostId: nextHostIdForRule,
+        });
         if (owner.expiresAt && new Date(owner.expiresAt) <= new Date()) {
           throw new Error("套餐已到期，请续费后再启用规则");
         }

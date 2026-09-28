@@ -1062,7 +1062,9 @@ export const tunnelsRouter = router({
           loadBalanceStrategy: loadBalanceEnabled && extraExitNodes.length > 0 ? loadBalanceStrategy : "round_robin",
           listenPort,
           mimicPort,
-          trafficMultiplier: normalizeTrafficMultiplier(input.trafficMultiplier),
+          // 流量倍率决定按多少计入流量配额，只有管理员能改：普通用户以前能把自己的隧道
+          // 设成 1%，走这条隧道的流量就只按 1% 扣配额。
+          trafficMultiplier: ctx.user.role === "admin" ? normalizeTrafficMultiplier(input.trafficMultiplier) : 100,
           secret,
           userId: ctx.user.id,
         } as any);
@@ -1248,7 +1250,10 @@ export const tunnelsRouter = router({
           (data as any).forwardxVersion = nextForwardXVersion;
         }
         (data as any).relayMode = nextRelayMode;
-        if ((data as any).trafficMultiplier !== undefined) {
+        if (ctx.user.role !== "admin") {
+          // 流量倍率只有管理员能改（见创建处）。
+          delete (data as any).trafficMultiplier;
+        } else if ((data as any).trafficMultiplier !== undefined) {
           (data as any).trafficMultiplier = normalizeTrafficMultiplier((data as any).trafficMultiplier);
         }
         const tunnelRuntimeKeys = [

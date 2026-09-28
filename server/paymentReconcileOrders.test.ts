@@ -122,12 +122,32 @@ test("网关说还没付，订单原样留着", () => {
   `, UNPAID_GATEWAY);
 });
 
-test("网关说查无此单，就地关掉，别让它挂到过期", () => {
+test("网关说查无此单：不关单（用户可能还没打开收银页，随后照样能付），交给过期清理", () => {
   runInDatabase(String.raw`
     await makePendingOrder("R-4");
     await payment.reconcilePendingPaymentOrders();
-    assert.equal(await orderStatus("R-4"), "cancelled");
+    assert.equal(await orderStatus("R-4"), "pending");
     assert.equal(await balance(), 0);
+  `, MISSING_GATEWAY);
+});
+
+test("官方支付宝 / 微信的单不去易支付查，更不能因为「查无此单」被关掉", () => {
+  runInDatabase(String.raw`
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (const [outTradeNo, provider] of [["R-OA", "alipay"], ["R-OW", "wxpay"]]) {
+      await exec(
+        "INSERT INTO payment_orders (outTradeNo, userId, provider, paymentType, status, subject, amountCents, currency, orderType, createdAt, updatedAt, expiresAt) VALUES (?, 1, ?, ?, 'pending', '充值', 1000, 'CNY', 'balance', ?, ?, ?)",
+        [outTradeNo, provider, provider, nowSec - 300, nowSec - 300, nowSec + 900],
+      );
+    }
+    let calls = 0;
+    const original = globalThis.fetch;
+    globalThis.fetch = async (...args) => { calls += 1; return original(...args); };
+    await payment.reconcilePendingPaymentOrders();
+    globalThis.fetch = original;
+    assert.equal(calls, 0, "官方网关的单不能拿去问易支付");
+    assert.equal(await orderStatus("R-OA"), "pending");
+    assert.equal(await orderStatus("R-OW"), "pending");
   `, MISSING_GATEWAY);
 });
 

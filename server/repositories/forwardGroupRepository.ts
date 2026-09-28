@@ -69,7 +69,6 @@ import {
   updateTunnel,
   usesSharedTunnelPrimaryListener,
 } from "./tunnelRepository";
-import { setUserForwardAccess } from "./userRepository";
 import { findTrafficBillingResourceForRule, settleTrafficBillingRuleOnDelete, trafficBillingResourceCandidatesForRule } from "./trafficBillingRepository";
 import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom, type PortPolicy } from "@shared/portPolicy";
 import { clearTunnelRuntimeStatus } from "../tunnelRuntimeStatus";
@@ -86,7 +85,7 @@ import {
   nextForwardGroupHealthRecheckAt,
 } from "../forwardGroupHealthRecheck";
 import { notifyForwardGroupSwitch } from "../forwardGroupSwitchNotifier";
-import { trafficBillingUserLockKey, withKeyedTaskLock } from "../keyedTaskLock";
+import { trafficBillingUserLockKey, withKeyedTaskLock, withTrafficBillingUserLock } from "../keyedTaskLock";
 import {
   releaseHostPortReservations,
   reserveAvailableHostPort,
@@ -109,7 +108,7 @@ async function settleAndMarkForwardGroupRulePendingDelete(
   rule: any,
   resource?: { resourceType: any; resourceId: number } | null,
 ) {
-  return withKeyedTaskLock(trafficBillingUserLockKey(rule?.userId), async () => {
+  return withTrafficBillingUserLock(rule?.userId, async () => {
     const billed = resource
       ? await settleTrafficBillingRuleOnDelete({
         userId: Number(rule?.userId || 0),
@@ -2539,6 +2538,12 @@ async function disableForwardRulesByGroupIds(groupIds: number[], reason: string)
   return controlledIds.length;
 }
 
+/** 余额不足只停计费资源上的规则（见 server/trafficBillingRuleBlock.ts）。按需加载，避免仓储层和它互相引用。 */
+async function handleTrafficBillingShortfallLazily(userId: number, reason: string) {
+  const { handleTrafficBillingShortfall } = await import("../trafficBillingRuleBlock");
+  await handleTrafficBillingShortfall(userId, reason);
+}
+
 export async function restoreForwardRulesByGroupId(groupId: number, reason: string) {
   const group = await getForwardGroupById(groupId) as any;
   if (!group || !(await forwardGroupRuntimeDependenciesEnabled(group))) return 0;
@@ -3197,6 +3202,9 @@ async function removeManagedRule(
 ) {
   const rule = await getForwardRuleById(ruleId);
   if (!rule) return;
+  // 已经在删除流程里（等 Agent 确认）：不再重复结算、重复标记。以前每次同步都会对它
+  // 再来一遍，既多拿一次计费锁，又会把 Agent 已确认的删除状态重新打回「待删」。
+  if (dbBool((rule as any).pendingDelete)) return;
   const billingResource = await findTrafficBillingResourceForRule(rule);
   const fallback = trafficBillingResourceCandidatesForRule(rule)[0];
   const resource = billingResource || fallback;
@@ -3204,7 +3212,7 @@ async function removeManagedRule(
     await markForwardRulePendingDelete(Number(rule.id));
     await afterDatabaseCommit(async () => {
       const billed = resource
-        ? await withKeyedTaskLock(trafficBillingUserLockKey(rule?.userId), () => settleTrafficBillingRuleOnDelete({
+        ? await withTrafficBillingUserLock(rule?.userId, () => settleTrafficBillingRuleOnDelete({
             userId: Number(rule?.userId || 0),
             ruleId: Number(rule?.id || 0),
             resourceType: resource.resourceType,
@@ -3212,7 +3220,7 @@ async function removeManagedRule(
           }))
         : null;
       if (billed && Number(billed.balanceAfterCents) < 0) {
-        await setUserForwardAccess(Number((rule as any).userId), false, "traffic_billing_balance");
+        await handleTrafficBillingShortfallLazily(Number((rule as any).userId), "group-child-delete-settlement-negative");
       }
       await refreshRuleEndpoints(rule, "forward-group-child-deleted");
     });
@@ -3225,7 +3233,7 @@ async function removeManagedRule(
   }
   const billed = await settleAndMarkForwardGroupRulePendingDelete(rule, resource);
   if (billed && Number(billed.balanceAfterCents) < 0) {
-    await setUserForwardAccess(Number((rule as any).userId), false, "traffic_billing_balance");
+    await handleTrafficBillingShortfallLazily(Number((rule as any).userId), "group-child-delete-settlement-negative");
   }
   await refreshRuleEndpoints(rule, "forward-group-child-deleted");
 }
@@ -3656,7 +3664,7 @@ export async function deleteForwardGroup(id: number) {
     const resource = billingResource || fallback;
     const billed = await settleAndMarkForwardGroupRulePendingDelete(template, resource);
     if (billed && Number(billed.balanceAfterCents) < 0) {
-      await setUserForwardAccess(Number((template as any).userId), false, "traffic_billing_balance");
+      await handleTrafficBillingShortfallLazily(Number((template as any).userId), "group-delete-settlement-negative");
     }
   }
   const members = await db.select().from(forwardGroupMembers).where(eq(forwardGroupMembers.groupId, id));
