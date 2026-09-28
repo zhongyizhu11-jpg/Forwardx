@@ -4,6 +4,9 @@ import { useOverlayContainer } from "@/components/ui/overlay-root"
 import { cn } from "@/lib/utils"
 import { createPortal } from "react-dom"
 import { Toaster as Sonner } from "sonner"
+import { installShortToastDurations } from "@/lib/toastDurations"
+
+installShortToastDurations()
 
 type ToasterProps = React.ComponentProps<typeof Sonner>
 
