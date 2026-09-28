@@ -124,3 +124,11 @@ func queryHopIPs(host string) ([]net.IP, error) {
 	}
 	return ips, nil
 }
+
+// flushHopResolverCache 在配置重载时清掉缓存：面板 bump DNSGeneration 的意思
+// 就是「这些域名该重新解析了」。
+func flushHopResolverCache() {
+	fxpHopResolver.mu.Lock()
+	fxpHopResolver.entries = map[string]*hopResolveEntry{}
+	fxpHopResolver.mu.Unlock()
+}

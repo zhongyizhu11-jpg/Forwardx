@@ -74,4 +74,6 @@ type config struct {
 	TransportVersion string `json:"transportVersion,omitempty"`
 	// UDPWirePacketSize 显式覆盖 UDP 单包上限（字节），0 表示按传输版本取默认值。
 	UDPWirePacketSize int `json:"udpWirePacketSize,omitempty"`
+	// ReloadNonce 由 Agent 在热更新时写入，进程应用后原样写回 <config>.applied。
+	ReloadNonce string `json:"reloadNonce,omitempty"`
 }

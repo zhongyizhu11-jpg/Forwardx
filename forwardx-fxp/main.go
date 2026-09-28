@@ -673,21 +673,54 @@ func main() {
 	)
 	log.Printf("forwardx-fxp udp wire packet limit=%dB transport=%s", configureFXPUDPWireLimit(cfg), cfg.TransportVersion)
 	ctx := shutdownContext()
-	switch strings.ToLower(cfg.Role) {
-	case "entry":
-		err = runEntry(ctx.done, cfg)
-	case "entry-group":
-		err = runEntryGroup(ctx.done, cfg)
-	case "exit":
-		err = runExit(ctx.done, cfg)
-	case "relay":
-		err = runRelay(ctx.done, cfg)
-	default:
-		err = fmt.Errorf("unknown role %q", cfg.Role)
-	}
+	writeFXPReloadAck(*configPath, cfg.ReloadNonce, nil)
+	err = runManaged(ctx.done, cfg, watchFXPConfigReloads(*configPath))
 	if err != nil && !errors.Is(err, net.ErrClosed) {
 		log.Fatal(err)
 	}
+}
+
+// watchFXPConfigReloads：收到 SIGHUP 就重读配置文件并交给运行时原地生效，
+// 结果写进 <config>.applied，Agent 据此判断热更新成没成，不成就回退成重启。
+func watchFXPConfigReloads(configPath string) <-chan fxpReloadRequest {
+	requests := make(chan fxpReloadRequest)
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		for range hup {
+			next, err := readConfig(configPath)
+			if err == nil {
+				err = validateConfig(next)
+			}
+			if err != nil {
+				log.Printf("fxp config reload rejected: %v", err)
+				writeFXPReloadAck(configPath, next.ReloadNonce, err)
+				continue
+			}
+			result := make(chan error, 1)
+			requests <- fxpReloadRequest{cfg: next, result: result}
+			writeFXPReloadAck(configPath, next.ReloadNonce, <-result)
+		}
+	}()
+	return requests
+}
+
+func writeFXPReloadAck(configPath, nonce string, applyErr error) {
+	ack := struct {
+		Nonce string `json:"nonce"`
+		OK    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+		PID   int    `json:"pid"`
+	}{Nonce: nonce, OK: applyErr == nil, PID: os.Getpid()}
+	if applyErr != nil {
+		ack.Error = applyErr.Error()
+	}
+	raw, _ := json.Marshal(ack)
+	tmp := configPath + ".applied.tmp"
+	if err := os.WriteFile(tmp, raw, 0600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, configPath+".applied")
 }
 
 type signalContext struct {
@@ -824,239 +857,12 @@ func closeWriteConn(conn net.Conn) {
 	}
 }
 
-type entryServer struct {
-	serve func() error
-	close func() error
-}
-
-type entryRuntime struct {
-	cfg       config
-	servers   []entryServer
-	sessionWG sync.WaitGroup
-	closeOnce sync.Once
-	release   func()
-}
-
-func prepareEntryRuntime(cfg config) (*entryRuntime, error) {
-	runtime := &entryRuntime{cfg: cfg, servers: make([]entryServer, 0, 2)}
-	gate := newConnGate(cfg.MaxConnections, cfg.MaxIPs)
-	selector := newExitEndpointSelector(cfg.Exits, exitEndpoint{Host: cfg.ExitHost, Port: cfg.ExitPort, UDPPort: cfg.UDPExitPort, Key: cfg.Key}, cfg.ExitStrategy)
-	inLimiter := newLimiter(cfg.LimitIn)
-	outLimiter := newLimiter(cfg.LimitOut)
-	if selector.count() > 1 {
-		log.Printf("entry exit selector exits=%s strategy=%s", formatEndpointList(selector), normalizeExitStrategy(cfg.ExitStrategy))
-	}
-	if protocolHas(cfg, "tcp") {
-		ln, err := listenTCP(cfg.ListenHost, cfg.ListenPort, cfg.TCPFastOpen)
-		if err != nil {
-			return nil, fmt.Errorf("entry tcp listen :%d: %w", cfg.ListenPort, err)
-		}
-		runtime.servers = append(runtime.servers, entryServer{
-			serve: func() error {
-				return acceptEntryTCP(ln, cfg, gate, selector, inLimiter, outLimiter, &runtime.sessionWG)
-			},
-			close: ln.Close,
-		})
-		if !multipathEnabled(cfg) {
-			runtime.release = selector.activate(cfg)
-		}
-	}
-	if protocolHas(cfg, "udp") {
-		port := udpListenPort(cfg)
-		addr, err := net.ResolveUDPAddr("udp", listenAddress(cfg.ListenHost, port))
-		if err != nil {
-			runtime.close()
-			return nil, err
-		}
-		udpConn, err := net.ListenUDP("udp", addr)
-		if err != nil {
-			runtime.close()
-			return nil, fmt.Errorf("entry udp listen :%d: %w", port, err)
-		}
-		tuneUDPConn(udpConn, "entry", fxpUDPListenBufferBytes)
-		runtime.servers = append(runtime.servers, entryServer{
-			serve: func() error { return serveEntryUDPDirect(udpConn, cfg, selector, inLimiter, outLimiter) },
-			close: udpConn.Close,
-		})
-	}
-	return runtime, nil
-}
-
-func (runtime *entryRuntime) close() {
-	if runtime == nil {
-		return
-	}
-	runtime.closeOnce.Do(func() {
-		for _, server := range runtime.servers {
-			_ = server.close()
-		}
-		if runtime.release != nil {
-			runtime.release()
-		}
-	})
-}
-
-func (runtime *entryRuntime) serve(done <-chan struct{}) error {
-	if runtime == nil {
-		return errors.New("entry runtime is nil")
-	}
-	select {
-	case <-done:
-		runtime.close()
-		return nil
-	default:
-	}
-	cfg := runtime.cfg
-	for _, protocol := range []string{"tcp", "udp"} {
-		if protocolHas(cfg, protocol) {
-			port := cfg.ListenPort
-			if protocol == "udp" {
-				port = udpListenPort(cfg)
-			}
-			log.Printf("entry %s listening on :%d tunnel=%d rule=%d", protocol, port, cfg.TunnelID, cfg.RuleID)
-		}
-	}
-
-	runtimeDone := make(chan struct{})
-	var stopOnce sync.Once
-	stop := func() {
-		stopOnce.Do(func() {
-			close(runtimeDone)
-			runtime.close()
-		})
-	}
-	go func() {
-		select {
-		case <-done:
-			stop()
-		case <-runtimeDone:
-		}
-	}()
-
-	errCh := make(chan error, len(runtime.servers))
-	var serverWG sync.WaitGroup
-	for _, server := range runtime.servers {
-		server := server
-		serverWG.Add(1)
-		go func() {
-			defer serverWG.Done()
-			errCh <- server.serve()
-			stop()
-		}()
-	}
-	serverWG.Wait()
-	stop()
-	waitForFXPSessionDrain("entry", cfg, &runtime.sessionWG)
-	close(errCh)
-	for err := range errCh {
-		if err != nil && !errors.Is(err, net.ErrClosed) {
-			return err
-		}
-	}
-	return nil
-}
-
 func runEntry(done <-chan struct{}, cfg config) error {
-	runtime, err := prepareEntryRuntime(cfg)
-	if err != nil {
-		return err
-	}
-	return runtime.serve(done)
+	return runManaged(done, cfg, nil)
 }
 
 func runEntryGroup(done <-chan struct{}, cfg config) error {
-	runtimes := make([]*entryRuntime, 0, len(cfg.Entries))
-	closeRuntimes := func() {
-		for _, runtime := range runtimes {
-			runtime.close()
-		}
-	}
-	for index, entry := range cfg.Entries {
-		select {
-		case <-done:
-			closeRuntimes()
-			return nil
-		default:
-		}
-		runtime, err := prepareEntryRuntime(entry)
-		if err != nil {
-			closeRuntimes()
-			return fmt.Errorf("entry-group entry %d rule=%d listen=%d: %w", index, entry.RuleID, entry.ListenPort, err)
-		}
-		runtimes = append(runtimes, runtime)
-	}
-
-	groupDone := make(chan struct{})
-	var stopOnce sync.Once
-	stop := func() {
-		stopOnce.Do(func() { close(groupDone) })
-	}
-	go func() {
-		select {
-		case <-done:
-			stop()
-		case <-groupDone:
-		}
-	}()
-
-	type entryResult struct {
-		index int
-		err   error
-	}
-	results := make(chan entryResult, len(runtimes))
-	for i, runtime := range runtimes {
-		i, runtime := i, runtime
-		go func() {
-			err := runtime.serve(groupDone)
-			if err == nil {
-				select {
-				case <-groupDone:
-				default:
-					err = errors.New("entry runtime stopped unexpectedly")
-				}
-			}
-			stop()
-			results <- entryResult{index: i, err: err}
-		}()
-	}
-
-	var firstErr error
-	for range runtimes {
-		result := <-results
-		if result.err != nil && firstErr == nil {
-			entry := cfg.Entries[result.index]
-			firstErr = fmt.Errorf("entry-group entry %d rule=%d listen=%d: %w", result.index, entry.RuleID, entry.ListenPort, result.err)
-		}
-	}
-	return firstErr
-}
-
-func acceptEntryTCP(ln net.Listener, cfg config, gate *connGate, selector *exitEndpointSelector, inLimiter, outLimiter *limiter, sessionWG *sync.WaitGroup) error {
-	for {
-		client, err := acceptWithRetry(ln, "entry", cfg)
-		if err != nil {
-			return err
-		}
-		enableTCPKeepAlive(client)
-		release, ok, reason := gate.acquire(client.RemoteAddr())
-		if !ok {
-			active, ips, connectionsForIP := gate.statsFor(client.RemoteAddr())
-			log.Printf("entry tcp rejected by connection gate tunnel=%d rule=%d client=%s reason=%s active=%d maxConnections=%d distinctIPs=%d connectionsForIP=%d maxIPs=%d", cfg.TunnelID, cfg.RuleID, client.RemoteAddr(), reason, active, cfg.MaxConnections, ips, connectionsForIP, cfg.MaxIPs)
-			_ = client.Close()
-			continue
-		}
-		sessionWG.Add(1)
-		go func() {
-			defer sessionWG.Done()
-			defer release()
-			err := catchPanic("entry tcp session", func() error {
-				return handleEntryTCP(client, cfg, selector, inLimiter, outLimiter)
-			})
-			if err != nil && !isClosedErr(err) {
-				log.Printf("entry tcp session error: %v", err)
-			}
-		}()
-	}
+	return runManaged(done, cfg, nil)
 }
 
 func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector, inLimiter, outLimiter *limiter) error {
@@ -1829,90 +1635,7 @@ func (s *udpEntrySession) close() {
 }
 
 func runExit(done <-chan struct{}, cfg config) error {
-	var wg sync.WaitGroup
-	var sessionWG sync.WaitGroup
-	errCh := make(chan error, 2)
-	if protocolHas(cfg, "tcp") {
-		gates := newListenerConnGates(cfg)
-		ln, err := listenTCP(cfg.ListenHost, cfg.ListenPort, cfg.TCPFastOpen)
-		if err != nil {
-			return fmt.Errorf("exit tcp listen :%d: %w", cfg.ListenPort, err)
-		}
-		log.Printf("exit tcp listening on :%d tunnel=%d", cfg.ListenPort, cfg.TunnelID)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-done
-			_ = ln.Close()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			errCh <- acceptExitTCP(ln, cfg, gates, &sessionWG, done)
-		}()
-	}
-	if protocolHas(cfg, "udp") {
-		port := udpListenPort(cfg)
-		addr, err := net.ResolveUDPAddr("udp", listenAddress(cfg.ListenHost, port))
-		if err != nil {
-			return err
-		}
-		udpConn, err := net.ListenUDP("udp", addr)
-		if err != nil {
-			return fmt.Errorf("exit udp listen :%d: %w", port, err)
-		}
-		tuneUDPConn(udpConn, "exit", fxpUDPListenBufferBytes)
-		log.Printf("exit udp listening on :%d tunnel=%d", port, cfg.TunnelID)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-done
-			_ = udpConn.Close()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			errCh <- serveExitUDPDirect(udpConn, cfg)
-		}()
-	}
-	wg.Wait()
-	waitForFXPSessionDrain("exit", cfg, &sessionWG)
-	select {
-	case err := <-errCh:
-		if errors.Is(err, net.ErrClosed) {
-			return nil
-		}
-		return err
-	default:
-		return nil
-	}
-}
-
-func acceptExitTCP(ln net.Listener, cfg config, gates *listenerConnGates, sessionWG *sync.WaitGroup, stopping <-chan struct{}) error {
-	for {
-		conn, err := acceptWithRetry(ln, "exit", cfg)
-		if err != nil {
-			return nil
-		}
-		enableTCPKeepAlive(conn)
-		startupComplete, release, ok, reason := gates.acquire(conn.RemoteAddr())
-		if !ok {
-			logListenerConnGateRejection("exit", cfg, conn.RemoteAddr(), gates, reason)
-			_ = conn.Close()
-			continue
-		}
-		sessionWG.Add(1)
-		go func(conn net.Conn) {
-			defer sessionWG.Done()
-			defer release()
-			err := catchPanic("exit session", func() error {
-				return handleExitSessionWithStartup(conn, cfg, startupComplete, stopping)
-			})
-			if err != nil && !isClosedErr(err) {
-				log.Printf("exit session error: %v", err)
-			}
-		}(conn)
-	}
+	return runManaged(done, cfg, nil)
 }
 
 func handleExitSession(conn net.Conn, cfg config) error {
@@ -2077,103 +1800,7 @@ func handleExitUDP(sec *secureConn, hello helloFrame) error {
 // connects to the next downstream hop with a new key, re-sends the helloFrame,
 // and bidirectionally relays decrypted frames between the two secure connections.
 func runRelay(done <-chan struct{}, cfg config) error {
-	if cfg.RelayExitHost == "" || cfg.RelayExitPort <= 0 || cfg.RelayKey == "" {
-		return fmt.Errorf("relay requires relayExitHost, relayExitPort, and relayKey")
-	}
-	selector := newExitEndpointSelector(cfg.Exits, exitEndpoint{Host: cfg.RelayExitHost, Port: cfg.RelayExitPort, UDPPort: cfg.UDPRelayExitPort, Key: cfg.RelayKey}, cfg.ExitStrategy)
-	var wg sync.WaitGroup
-	var sessionWG sync.WaitGroup
-	errCh := make(chan error, 2)
-	if selector.count() > 1 {
-		log.Printf("relay exit selector exits=%s strategy=%s", formatEndpointList(selector), normalizeExitStrategy(cfg.ExitStrategy))
-	}
-	if protocolHas(cfg, "tcp") {
-		gates := newListenerConnGates(cfg)
-		ln, err := listenTCP(cfg.ListenHost, cfg.ListenPort, cfg.TCPFastOpen)
-		if err != nil {
-			return fmt.Errorf("relay tcp listen :%d: %w", cfg.ListenPort, err)
-		}
-		log.Printf("relay tcp listening on :%d tunnel=%d next=%s:%d", cfg.ListenPort, cfg.TunnelID, cfg.RelayExitHost, cfg.RelayExitPort)
-		release := selector.activate(func() config { c := cfg; c.Key = cfg.RelayKey; return c }())
-		defer release()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-done
-			_ = ln.Close()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			errCh <- acceptRelayTCP(ln, cfg, selector, gates, &sessionWG, done)
-		}()
-	}
-	if protocolHas(cfg, "udp") {
-		port := udpListenPort(cfg)
-		addr, err := net.ResolveUDPAddr("udp", listenAddress(cfg.ListenHost, port))
-		if err != nil {
-			return err
-		}
-		udpConn, err := net.ListenUDP("udp", addr)
-		if err != nil {
-			return fmt.Errorf("relay udp listen :%d: %w", port, err)
-		}
-		tuneUDPConn(udpConn, "relay", fxpUDPListenBufferBytes)
-		downstreamPort := cfg.UDPRelayExitPort
-		if downstreamPort <= 0 {
-			downstreamPort = cfg.RelayExitPort
-		}
-		log.Printf("relay udp listening on :%d tunnel=%d next=%s:%d", port, cfg.TunnelID, cfg.RelayExitHost, downstreamPort)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-done
-			_ = udpConn.Close()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			errCh <- serveRelayUDPDirect(udpConn, cfg, selector)
-		}()
-	}
-	wg.Wait()
-	waitForFXPSessionDrain("relay", cfg, &sessionWG)
-	select {
-	case err := <-errCh:
-		if errors.Is(err, net.ErrClosed) {
-			return nil
-		}
-		return err
-	default:
-		return nil
-	}
-}
-
-func acceptRelayTCP(ln net.Listener, cfg config, selector *exitEndpointSelector, gates *listenerConnGates, sessionWG *sync.WaitGroup, stopping <-chan struct{}) error {
-	for {
-		upConn, err := acceptWithRetry(ln, "relay", cfg)
-		if err != nil {
-			return nil
-		}
-		enableTCPKeepAlive(upConn)
-		startupComplete, release, ok, reason := gates.acquire(upConn.RemoteAddr())
-		if !ok {
-			logListenerConnGateRejection("relay", cfg, upConn.RemoteAddr(), gates, reason)
-			_ = upConn.Close()
-			continue
-		}
-		sessionWG.Add(1)
-		go func(upConn net.Conn) {
-			defer sessionWG.Done()
-			defer release()
-			err := catchPanic("relay session", func() error {
-				return handleRelaySessionWithStartup(upConn, cfg, selector, startupComplete, stopping)
-			})
-			if err != nil && !isClosedErr(err) {
-				log.Printf("relay session error: %v", err)
-			}
-		}(upConn)
-	}
+	return runManaged(done, cfg, nil)
 }
 
 func handleRelaySession(upConn net.Conn, cfg config, selector *exitEndpointSelector) error {
