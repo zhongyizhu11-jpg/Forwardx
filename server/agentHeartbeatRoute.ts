@@ -2473,7 +2473,43 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       }
       return Array.from(targets.values()).sort((a, b) => a.ruleId - b.ruleId);
     };
-    const forwardXUDPTargetsChanged = (tunnel: any, targets: Array<{ ruleId: number; targetIp: string; targetPort: number }>) => {
+    /*
+      出口的 TCP 目标表（streamTargets）：FXP 出口只拨表里的目标，hello 里别的一律拒（见
+      forwardx-fxp/exit_targets.go），免得拿到隧道密钥的人把出口当开放代理。和入口写进 hello 的
+      一个口径（tunnelExitSchedulerEndpoint）：规则目标（域名原样、解析出的 IP 都放）、线路组的
+      路径 A，这台出口跑着调度器时再加本机调度器。走 TCP 的 UDP（UDP over TCP）拨的也是这个目标，
+      所以不按协议筛。
+    */
+    const forwardXStreamTargets = (tunnel: any) => {
+      type StreamTarget = { ruleId: number; targetIp: string; targetPort: number };
+      if (!tunnel || !isForwardXTunnel(tunnel) || !runtimeBool(tunnel.isEnabled) || !isTunnelProtocolEnabled(forwardProtocolSettings, tunnel)) {
+        return [] as StreamTarget[];
+      }
+      const targets = new Map<string, StreamTarget>();
+      const add = (ruleId: number, targetIp: unknown, targetPort: unknown) => {
+        const ip = String(targetIp || "").trim();
+        const port = Number(targetPort || 0);
+        if (!ip || !Number.isInteger(port) || port <= 0 || port > 65535) return;
+        targets.set(`${ruleId}|${ip}|${port}`, { ruleId, targetIp: ip, targetPort: port });
+      };
+      for (const rule of agentAllRules as any[]) {
+        if (!rule || runtimeBool(rule.pendingDelete) || !runtimeBool(rule.isEnabled) || rule.forwardType !== "gost") continue;
+        if (Number(rule.tunnelId || 0) !== Number(tunnel.id || 0)) continue;
+        if (!isRuleProtocolEnabled(forwardProtocolSettings, rule, tunnel)) continue;
+        const ruleId = Number(rule.id || 0);
+        if (!Number.isInteger(ruleId) || ruleId <= 0) continue;
+        add(ruleId, processTarget(rule), rule.targetPort);
+        add(ruleId, rule.targetIp, rule.targetPort);
+        const primary = routePrimaryEndpoint(rule);
+        add(ruleId, primary.targetIp, primary.targetPort);
+        const scheduler = forwardXSchedulerFailover(rule, tunnel);
+        if (scheduler) add(ruleId, "127.0.0.1", scheduler.listenPort);
+      }
+      return Array.from(targets.values()).sort((a, b) => a.ruleId - b.ruleId
+        || a.targetIp.localeCompare(b.targetIp)
+        || a.targetPort - b.targetPort);
+    };
+    const forwardXUDPTargetsChanged = (tunnel: any, targets: unknown) => {
       const key = `${Number(host.id)}:${Number(tunnel?.id || 0)}`;
       const signature = stableStateSignature(targets);
       if (fxpUdpTargetSignatureCache.get(key) === signature) return false;
@@ -4919,10 +4955,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       const tunnelProtocolEnabled = isTunnelProtocolEnabled(forwardProtocolSettings, tunnel);
       const endpointEnabled = runtimeBool(tunnel.isEnabled) && tunnelProtocolEnabled && isCurrentHostActiveExit;
       const udpTargets = fxpTunnel ? forwardXUDPTargets(tunnel) : [];
+      const streamTargets = fxpTunnel ? forwardXStreamTargets(tunnel) : [];
       const shouldSyncUDPTargets = fxpTunnel
         && runtimeBool(tunnel.isEnabled)
         && tunnelProtocolEnabled
-        && forwardXUDPTargetsChanged(tunnel, udpTargets);
+        && forwardXUDPTargetsChanged(tunnel, { udpTargets, streamTargets });
       const shouldRefreshExit = fxpTunnel
         ? (!runtimeReady || shouldSyncUDPTargets)
         : (!runtimeBool(tunnel.isRunning) || pendingTunnelExitRuleIds.has(Number(tunnel.id)) || (isCurrentHostSharedRuntimeExtraExit && !runtimeReady));
@@ -4952,6 +4989,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         protocol: "both",
         key: tunnelSecretSeed(tunnel),
         udpTargets,
+        streamTargets,
         dnsGeneration: tunnelDnsGeneration(tunnel),
       } : null;
       const exitFXPSpec = baseExitFXPSpec ? await applyForwardXTransport(baseExitFXPSpec, tunnel) : undefined;
@@ -5004,10 +5042,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         const isLastHop = hostIdx === hops.length - 1;
         const isFirst = hostIdx === 0;
         const udpTargets = isFXP && isLastHop ? forwardXUDPTargets(tunnel) : [];
+        const streamTargets = isFXP && isLastHop ? forwardXStreamTargets(tunnel) : [];
         const shouldSyncUDPTargets = isFXP
           && isLastHop
           && runtimeBool(tunnel.isEnabled)
-          && forwardXUDPTargetsChanged(tunnel, udpTargets);
+          && forwardXUDPTargetsChanged(tunnel, { udpTargets, streamTargets });
         if (runtimeBool(tunnel.isEnabled) && listenPortValue > 0) {
           expectedTunnelPorts.add(listenPortValue);
         }
@@ -5049,7 +5088,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           }
           const fxpSpec = await buildForwardXHopSpec(tunnel, hops, hostIdx, op);
           if (!fxpSpec) continue;
-          if (isLastHop) fxpSpec.udpTargets = udpTargets;
+          if (isLastHop) {
+            fxpSpec.udpTargets = udpTargets;
+            fxpSpec.streamTargets = streamTargets;
+          }
 
           actions.push({
             tunnelId: tunnel.id,

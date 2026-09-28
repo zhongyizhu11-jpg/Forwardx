@@ -64,7 +64,7 @@ func TestEntryFallsBackQuicklyWhenThePrimaryExitBlackHoles(t *testing.T) {
 	defer close(entryDone)
 	go func() {
 		_ = runExit(exitDone, config{
-			Role: "exit", TunnelID: 81, ListenPort: backupPort, Protocol: "tcp", Key: key,
+			Role: "exit", TunnelID: 81, ListenPort: backupPort, Protocol: "tcp", Key: key, StreamTargets: loopbackStreamTargets(82, targetPort),
 		})
 	}()
 	waitForTCP(t, backupPort)
@@ -268,7 +268,7 @@ func TestRelayFallsBackToItsBackupDownstream(t *testing.T) {
 
 	go func() {
 		_ = runExit(exitDone, config{
-			Role: "exit", TunnelID: 3, ListenPort: exitPort, Protocol: "tcp", Key: downstreamKey,
+			Role: "exit", TunnelID: 3, ListenPort: exitPort, Protocol: "tcp", Key: downstreamKey, StreamTargets: loopbackStreamTargets(4, targetPort),
 		})
 	}()
 	waitForTCP(t, exitPort)

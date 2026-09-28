@@ -28,12 +28,12 @@ func TestExitClosesTargetWhenUpstreamVanishes(t *testing.T) {
 		close(targetClosed)
 	}()
 	key := "vanish-key"
-	exitPort := startTestExit(t, 131, key)
+	exitPort := startTestExit(t, 131, key, loopbackStreamTargets(132, target.Addr().(*net.TCPAddr).Port)...)
 	conn, sec, err := dialSecureTCPFresh("127.0.0.1", exitPort, config{TunnelID: 131, Key: key})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hello := []byte(`{"network":"tcp","targetIp":"127.0.0.1","targetPort":` + strconv.Itoa(target.Addr().(*net.TCPAddr).Port) + `,"tunnelId":131}`)
+	hello := []byte(`{"network":"tcp","targetIp":"127.0.0.1","targetPort":` + strconv.Itoa(target.Addr().(*net.TCPAddr).Port) + `,"tunnelId":131,"ruleId":132}`)
 	if err := writeSecureFramesWithDeadline(sec, hello, []byte("x")); err != nil {
 		t.Fatal(err)
 	}

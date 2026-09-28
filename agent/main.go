@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.201"
+var Version = "2.2.202"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -2793,6 +2793,7 @@ type fxpSpec struct {
 	TargetIP                 string            `json:"targetIp"`
 	TargetPort               int               `json:"targetPort"`
 	UDPTargets               []fxpUDPTarget    `json:"udpTargets,omitempty"`
+	StreamTargets            []fxpUDPTarget    `json:"streamTargets,omitempty"` // 出口允许按 hello 拨的 TCP 目标，原样交给 FXP
 	Key                      string            `json:"key"`
 	LimitIn                  int64             `json:"limitIn"`
 	LimitOut                 int64             `json:"limitOut"`
@@ -9416,6 +9417,18 @@ func normalizeFXPSpec(spec fxpSpec) fxpSpec {
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].RuleID < targets[j].RuleID })
 	spec.UDPTargets = targets
+	streamTargets := make([]fxpUDPTarget, 0, len(spec.StreamTargets))
+	seenStreamTargets := map[fxpUDPTarget]bool{}
+	for _, target := range spec.StreamTargets {
+		target.TargetIP = strings.TrimSpace(target.TargetIP)
+		if target.RuleID <= 0 || target.TargetIP == "" || target.TargetPort <= 0 || target.TargetPort > 65535 || seenStreamTargets[target] {
+			continue
+		}
+		seenStreamTargets[target] = true
+		streamTargets = append(streamTargets, target)
+	}
+	sort.SliceStable(streamTargets, func(i, j int) bool { return streamTargets[i].RuleID < streamTargets[j].RuleID })
+	spec.StreamTargets = streamTargets
 	spec = normalizeFXPMultipath(spec)
 	return spec
 }
@@ -9513,6 +9526,11 @@ func fxpServerSignature(spec fxpSpec) string {
 		parts = append(parts, strings.TrimSpace(exit.Host), strconv.Itoa(exit.Port), strconv.Itoa(exit.UDPPort), strings.TrimSpace(exit.Key), strings.TrimSpace(exit.PeerID))
 	}
 	for _, target := range spec.UDPTargets {
+		parts = append(parts, strconv.Itoa(target.RuleID), strings.TrimSpace(target.TargetIP), strconv.Itoa(target.TargetPort))
+	}
+	// TCP 目标表变了出口必须拿到新配置，否则新规则的连接会被出口拒掉。
+	parts = append(parts, "stream")
+	for _, target := range spec.StreamTargets {
 		parts = append(parts, strconv.Itoa(target.RuleID), strings.TrimSpace(target.TargetIP), strconv.Itoa(target.TargetPort))
 	}
 	return strings.Join(parts, "|")

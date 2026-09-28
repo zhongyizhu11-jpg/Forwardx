@@ -28,13 +28,13 @@ func startLatencyEchoTarget(t *testing.T) int {
 	return target.Addr().(*net.TCPAddr).Port
 }
 
-func startTestExit(t *testing.T, tunnelID int, key string) int {
+func startTestExit(t *testing.T, tunnelID int, key string, targets ...streamTarget) int {
 	t.Helper()
 	port := freeTCPUDPPort(t)
 	done := make(chan struct{})
 	t.Cleanup(func() { close(done) })
 	go func() {
-		_ = runExit(done, config{Role: "exit", TunnelID: tunnelID, ListenPort: port, Protocol: "tcp", Key: key})
+		_ = runExit(done, config{Role: "exit", TunnelID: tunnelID, ListenPort: port, Protocol: "tcp", Key: key, StreamTargets: targets})
 	}()
 	waitForTCP(t, port)
 	return port
@@ -61,7 +61,7 @@ func TestEntryDoesNotWaitForClientFirstBytes(t *testing.T) {
 		}
 	}()
 	key := "server-first-key"
-	exitPort := startTestExit(t, 91, key)
+	exitPort := startTestExit(t, 91, key, loopbackStreamTargets(92, banner.Addr().(*net.TCPAddr).Port)...)
 	entryPort := freeTCPUDPPort(t)
 	entryDone := make(chan struct{})
 	defer close(entryDone)
@@ -101,7 +101,7 @@ func TestPooledConnectionsAreHandshakedAndReused(t *testing.T) {
 	resetFXPEndpointRegistry()
 	key := "pool-key"
 	targetPort := startLatencyEchoTarget(t)
-	exitPort := startTestExit(t, 93, key)
+	exitPort := startTestExit(t, 93, key, loopbackStreamTargets(94, targetPort)...)
 	cfg := config{TunnelID: 93, Key: key}
 	state := fxpEndpointStateFor(exitEndpoint{Host: "127.0.0.1", Port: exitPort, Key: key})
 	state.prewarm(cfg)
@@ -128,7 +128,7 @@ func TestPooledConnectionsAreHandshakedAndReused(t *testing.T) {
 	if sec.ackPending || len(sec.pendingPrefix) != 0 {
 		t.Fatal("池里的连接应该已经确认过握手")
 	}
-	hello := []byte(`{"network":"tcp","targetIp":"127.0.0.1","targetPort":` + strconv.Itoa(targetPort) + `,"tunnelId":93}`)
+	hello := []byte(`{"network":"tcp","targetIp":"127.0.0.1","targetPort":` + strconv.Itoa(targetPort) + `,"tunnelId":93,"ruleId":94}`)
 	if err := writeSecureFramesWithDeadline(sec, hello, []byte("ping")); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestEntryFailsOverImmediatelyWhenThePrimaryResets(t *testing.T) {
 	}()
 	key := "reset-key"
 	targetPort := startLatencyEchoTarget(t)
-	backupPort := startTestExit(t, 95, key)
+	backupPort := startTestExit(t, 95, key, loopbackStreamTargets(96, targetPort)...)
 	entryPort := freeTCPUDPPort(t)
 	entryDone := make(chan struct{})
 	defer close(entryDone)

@@ -93,6 +93,12 @@ func TestAgentHotReloadsFXPEntryGroupWithoutDroppingConnections(t *testing.T) {
 	portB := freeAgentTestPort(t)
 
 	exitSpec := fxpSpec{Role: "exit", TransportVersion: "v1", TunnelID: tunnelID, ListenPort: exitPort, Protocol: "tcp", Key: key}
+	// 出口只拨目标表里的目标（FXP 2.2.121 起）。
+	for _, ruleID := range []int{1, 2} {
+		for _, target := range []int{targetOne, targetTwo} {
+			exitSpec.StreamTargets = append(exitSpec.StreamTargets, fxpUDPTarget{RuleID: ruleID, TargetIP: "127.0.0.1", TargetPort: target})
+		}
+	}
 	entry := func(ruleID, port, target int) fxpSpec {
 		return fxpSpec{
 			Role: "entry", TransportVersion: "v1", TunnelID: tunnelID, RuleID: ruleID,
