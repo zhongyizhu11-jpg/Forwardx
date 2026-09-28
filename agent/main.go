@@ -7422,6 +7422,7 @@ func fxpMatchesRunning(spec *fxpSpec, desiredGroups ...*fxpSpec) bool {
 							panelCredentialDigest: credentialDigest,
 						}
 						fxpMu.Unlock()
+						watchAdoptedFXPProcess(id, configPath)
 						matches = true
 					}
 				}
@@ -9955,6 +9956,7 @@ func adoptExistingFXP(spec fxpSpec, signature string, configPath string, expecte
 		panelCredentialDigest: credentialDigest,
 	}
 	fxpMu.Unlock()
+	watchAdoptedFXPProcess(id, configPath)
 	logf("fxp %s adopted existing runtime tunnel=%d rule=%d listen=:%d protocol=%s config=%s", spec.Role, spec.TunnelID, spec.RuleID, spec.ListenPort, spec.Protocol, configPath)
 	return true
 }
@@ -10374,11 +10376,14 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 	}
 	fxpMu.Unlock()
 	desiredStarted = true
+	startedAt := time.Now()
 	go func() {
 		err := <-exited
 		fxpMu.Lock()
 		current := fxpServers[id]
-		if current != nil && current.cmd == cmd {
+		// 记录还指着这个进程，说明不是 Agent 主动停的（主动停会先删记录）。
+		unexpected := current != nil && current.cmd == cmd
+		if unexpected {
 			delete(fxpServers, id)
 		}
 		fxpMu.Unlock()
@@ -10386,6 +10391,9 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 			logf("fxp runtime exited tunnel=%d rule=%d: %v", spec.TunnelID, spec.RuleID, err)
 		}
 		releaseWireGuardRef()
+		if unexpected && persistenceEnabled {
+			noteFXPUnexpectedExit(id, time.Since(startedAt))
+		}
 	}()
 	for _, conflicting := range conflictingSpecs {
 		replacement, hasRemaining := fxpSpecWithoutListenConflicts(conflicting, originalSpec)
