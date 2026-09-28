@@ -4,6 +4,7 @@ import { executeRaw, getDatabaseKind, getDb, insertAndGetId, nowDate, queryRaw, 
 import { hashPassword, verifyPassword, verifyPasswordAgainstDummy } from "../password";
 import { getSessionKindField, type SessionKind } from "../session";
 import { revokeUserAuthSessions } from "./sessionRepository";
+import { appendPanelLog } from "../_core/panelLogger";
 import {
   AVATAR_DAILY_CHANGE_LIMIT,
   AVATAR_RANDOM_WINDOW_LIMIT,
@@ -750,6 +751,19 @@ export async function updateUserTrafficSettings(userId: number, data: {
   await db.update(users).set({ ...data, updatedAt: nowDate() } as any).where(eq(users.id, userId));
 }
 
+/** 账户级暂停会一次停掉这个人名下所有规则，写一行面板日志，事后能查到是哪一步停的。 */
+async function logUserRuleStop(userId: number, reason: string) {
+  const db = await getDb();
+  if (!db) return;
+  const [row] = await db.select({ count: sql<number>`count(*)` }).from(forwardRules).where(and(
+    eq(forwardRules.userId, userId),
+    eq(forwardRules.isEnabled, true),
+    eq(forwardRules.pendingDelete, false),
+  ));
+  const count = Number((row as any)?.count || 0);
+  if (count > 0) appendPanelLog("warn", `[RuleStop] user=${userId} stopped ${count} rule(s) reason=${reason}; they resume automatically when the account's forwarding access is restored`);
+}
+
 export async function setUserForwardAccess(userId: number, enabled: boolean, reason?: ForwardAccessPauseReason) {
   const db = await getDb();
   if (!db) return;
@@ -762,6 +776,7 @@ export async function setUserForwardAccess(userId: number, enabled: boolean, rea
     updatedAt: now,
   }).where(eq(users.id, userId));
   if (!enabled) {
+    await logUserRuleStop(userId, `access-paused:${reason ?? "manual"}`);
     await db.update(forwardRules).set({
       isEnabled: false,
       disabledByUser: true,
@@ -791,6 +806,7 @@ export async function setUserAccountEnabled(userId: number, enabled: boolean) {
       updatedAt: now,
     }).where(eq(users.id, userId));
     if (!enabled) {
+      await logUserRuleStop(userId, "account-disabled");
       await db.update(forwardRules).set({
         isEnabled: false,
         disabledByUser: true,
@@ -922,6 +938,7 @@ export async function getExpiredUsers() {
 export async function disableAllUserRules(userId: number) {
   const db = await getDb();
   if (!db) return;
+  await logUserRuleStop(userId, "entitlement-lost (plan expired, traffic used up or access removed)");
   await db.update(forwardRules).set({
     isEnabled: false,
     disabledByUser: true,

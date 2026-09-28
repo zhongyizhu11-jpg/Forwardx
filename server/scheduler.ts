@@ -23,6 +23,7 @@ import { cleanOldAddressGeoCache } from "./hostGeo";
 import { reconcileHostDdnsRecords } from "./hostDdns";
 import { checkPanelUpdateTask } from "./_core/systemRouter";
 import { createNonOverlappingScheduledTask } from "./scheduledTask";
+import { healAutoStoppedRules } from "./forwardRuleAutoRecovery";
 import {
   SELF_TEST_TIMEOUT_SECONDS,
   selfTestTimeoutSeconds,
@@ -903,6 +904,13 @@ export function startScheduler() {
     await runForwardGroupFailover();
     await runHostDdnsReconcile();
   });
+  const autoStoppedRuleRecovery = createNonOverlappingScheduledTask("auto-stopped rule recovery", async () => {
+    try {
+      await healAutoStoppedRules("scheduled-auto-heal");
+    } catch (error) {
+      console.error("[Scheduler] Auto-stopped rule recovery error:", error);
+    }
+  });
   const hostStatusSweep = createNonOverlappingScheduledTask("host status sweep", async () => {
     await runHostStatusSweep();
   });
@@ -962,6 +970,8 @@ export function startScheduler() {
   // the broad recovery sweep evaluates persisted heartbeat timestamps.
   repeatAfter(forwardingMaintenance, 5 * 60 * 1000, 20_000);
   repeatAfter(expirationCheck, 60 * 60 * 1000, 16_000);
+  // 被隧道/转发资源/账户暂停/授权失效连带停掉的规则：原因消除后最迟两分钟自己恢复。
+  repeatAfter(autoStoppedRuleRecovery, 2 * 60 * 1000, 40_000);
   // Keep host expiry dates responsive without changing the account-expiration
   // scan cadence or creating a timer per host.
   repeatAfter(hostBillingCycleCheck, 5 * 60 * 1000, 18_000);

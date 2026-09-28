@@ -85,3 +85,50 @@ export function resolveForwardRuleVisualStatus(input: {
   }
   return { state: "pending", title: "等待 Agent 上报运行状态" };
 }
+
+export type ForwardRuleStopReason = {
+  /** 标签上的短字 */
+  label: string;
+  /** 悬停 / 卡片上的一句说明：为什么停、会不会自己回来 */
+  detail: string;
+  /** true = 原因消除后面板会自动恢复，不需要手动打开 */
+  autoResume: boolean;
+};
+
+function truthy(value: unknown) {
+  return value === true || value === 1 || value === "1" || String(value).toLowerCase() === "true";
+}
+
+/**
+ * 规则为什么是停着的。
+ *
+ * 系统连带停的（隧道关了、转发资源停了、账户暂停）会在原因消除后自己恢复 ——
+ * 卡片上写清楚，用户就不会去一条条手动打开。protocolBlockReason 另有一行
+ * 原文展示，这里只给一个短标签。
+ */
+export function resolveForwardRuleStopReason(rule: {
+  isEnabled?: unknown;
+  disabledByTunnel?: unknown;
+  disabledByGroup?: unknown;
+  disabledByUser?: unknown;
+  protocolBlockReason?: string | null;
+} | null | undefined): ForwardRuleStopReason | null {
+  if (!rule || truthy(rule.isEnabled)) return null;
+  if (truthy(rule.disabledByUser)) {
+    return {
+      label: "账户暂停",
+      detail: "账户转发权限已暂停（到期、流量用尽、余额不足或账户停用），恢复后规则自动启用",
+      autoResume: true,
+    };
+  }
+  if (truthy(rule.disabledByTunnel)) {
+    return { label: "隧道停用", detail: "所属隧道已关闭，隧道重新开启后规则自动恢复", autoResume: true };
+  }
+  if (truthy(rule.disabledByGroup)) {
+    return { label: "资源停用", detail: "所属转发资源已停用，重新启用后规则自动恢复", autoResume: true };
+  }
+  if (String(rule.protocolBlockReason || "").trim()) {
+    return { label: "已停用", detail: String(rule.protocolBlockReason).trim(), autoResume: false };
+  }
+  return { label: "已停用", detail: "规则已手动关闭，打开开关即可恢复", autoResume: false };
+}

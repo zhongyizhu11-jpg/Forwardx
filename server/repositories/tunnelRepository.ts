@@ -14,6 +14,7 @@ import {
   forwardGroupMembers,
   forwardGroups,
   tunnelLatencyStats,
+  users,
 } from "../../drizzle/schema";
 import { executeRaw, getDatabaseKind, getDb, insertAndGetId, nowDate, queryRaw, withDatabaseTransaction } from "../dbRuntime";
 import { boolValue, quoteIdentifier, sqlCountAll } from "../dbCompat";
@@ -27,6 +28,7 @@ import { withKeyedTaskLock } from "../keyedTaskLock";
 import { pageResult, pageWindowForTotal, type PageRequest } from "../../shared/pagination";
 import { normalizeExitGroupStrategy } from "../../shared/exitStrategy";
 import { recordConfigAuditEvent, shouldAuditConfigPatch } from "../configAudit";
+import { appendPanelLog } from "../_core/panelLogger";
 import {
   planExitGroupTunnelEndpoints,
   type ExitGroupTunnelMember,
@@ -767,9 +769,17 @@ export async function resetAgentRuntimeStateForHost(hostId: number) {
   );
 }
 
-export async function disableForwardRulesByTunnel(tunnelId: number) {
+export async function disableForwardRulesByTunnel(tunnelId: number, reason = "tunnel-disabled") {
   const db = await getDb();
   if (!db) return;
+  const [affected] = await db.select({ count: sqlCountAll() }).from(forwardRules).where(and(
+    eq(forwardRules.tunnelId, tunnelId),
+    eq(forwardRules.pendingDelete, false),
+    eq(forwardRules.isEnabled, true),
+  ));
+  const count = Number((affected as any)?.count || 0);
+  // 批量停规则一定要留痕：以后看到「一整条隧道的规则都停了」，面板日志里能直接找到原因。
+  if (count > 0) appendPanelLog("warn", `[RuleStop] tunnel=${tunnelId} stopped ${count} rule(s) reason=${reason}; they resume automatically when the tunnel is enabled again`);
   await db.update(forwardRules).set({
     isEnabled: false,
     isRunning: false,
@@ -801,6 +811,31 @@ async function isForwardGroupRuntimeEnabled(groupId: number) {
     groupMode: forwardGroups.groupMode,
   }).from(forwardGroups).where(eq(forwardGroups.id, Number(group.entryGroupId))).limit(1))[0] as any;
   return dbBool(entryGroup?.isEnabled) && String(entryGroup.groupMode || "") === "entry";
+}
+
+/**
+ * 规则主人现在能不能跑转发。管理员不受套餐/暂停约束。
+ *
+ * 隧道、转发资源恢复时都要先问这一句：用户在隧道停用期间被暂停（到期、超流量、
+ * 余额不足）的话，他的规则当时已经是停的，暂停那一刻没打上 disabledByUser ——
+ * 不问这一句，隧道一开，暂停中的用户的规则就跟着跑起来了。
+ */
+export async function forwardRuleOwnerAllowsRuntime(userId: unknown) {
+  const id = Number(userId || 0);
+  if (!Number.isInteger(id) || id <= 0) return true;
+  const db = await getDb();
+  if (!db) return false;
+  const owner = (await db.select({
+    role: users.role,
+    accountEnabled: users.accountEnabled,
+    canAddRules: users.canAddRules,
+    forwardAccessPauseReason: users.forwardAccessPauseReason,
+  }).from(users).where(eq(users.id, id)).limit(1))[0] as any;
+  // 找不到主人时不在这里拦：改记成账户暂停它就永远恢复不了，下发时的授权闸会拦住它。
+  if (!owner || String(owner.role || "") === "admin") return true;
+  return dbBool(owner.accountEnabled, true)
+    && dbBool(owner.canAddRules)
+    && !String(owner.forwardAccessPauseReason || "").trim();
 }
 
 async function canRestoreForwardRuleAfterTunnel(rule: any) {
@@ -854,15 +889,22 @@ export async function restoreForwardRulesByTunnel(tunnelId: number) {
       ),
     ),
   ));
+  let restored = 0;
   for (const rule of rules as any[]) {
-    const isEnabled = await canRestoreForwardRuleAfterTunnel(rule);
+    const ownerAllowed = await forwardRuleOwnerAllowsRuntime(rule.userId);
+    const isEnabled = ownerAllowed && await canRestoreForwardRuleAfterTunnel(rule);
+    if (isEnabled) restored += 1;
     await db.update(forwardRules).set({
       isEnabled,
       disabledByTunnel: false,
+      // 主人暂停中：改记成「因账户暂停而停」，账户恢复时由那条路径自动拉起。
+      ...(ownerAllowed ? {} : { disabledByUser: true }),
       isRunning: false,
       updatedAt: nowDate(),
-    }).where(eq(forwardRules.id, Number(rule.id)));
+    } as any).where(eq(forwardRules.id, Number(rule.id)));
   }
+  if (restored > 0) appendPanelLog("info", `[RuleStop] tunnel=${tunnelId} resumed ${restored} rule(s)`);
+  return restored;
 }
 
 export async function findAvailableTunnelExitPort(
