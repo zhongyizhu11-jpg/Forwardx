@@ -119,7 +119,27 @@ export async function verifyUserPassword(userId: number, password: string) {
 export async function updateUserProfile(userId: number, data: { name?: string; email?: string; displayRemark?: string | null; avatar?: string | null; telegramAnnouncementSubscribed?: boolean }) {
   const db = await getDb();
   if (!db) return;
-  await db.update(users).set({ ...data, updatedAt: nowDate() }).where(eq(users.id, userId));
+  const patch: Record<string, unknown> = { ...data, updatedAt: nowDate() };
+  if (data.email !== undefined) {
+    const email = data.email.trim();
+    const current = await getUserById(userId);
+    if (email.toLowerCase() !== String((current as any)?.email || "").trim().toLowerCase()) {
+      /*
+        改邮箱：不能和别人的用户名 / 邮箱撞上（登录按「用户名或邮箱」匹配，撞了两个都
+        匹配上就谁也登不进去；注册也会把对方挡掉），改完「已验证」清掉 —— 新地址没验过。
+      */
+      const taken = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(sql`(LOWER(${users.username}) = ${email.toLowerCase()} OR LOWER(${users.email}) = ${email.toLowerCase()}) AND ${users.id} <> ${userId}`)
+        .limit(1);
+      if (taken[0]) throw new Error("该邮箱已被其他账户使用");
+      patch.email = email;
+      patch.emailVerified = false;
+      patch.emailVerifiedAt = null;
+    }
+  }
+  await db.update(users).set(patch as any).where(eq(users.id, userId));
 }
 
 export async function getTelegramAnnouncementSubscribers() {
