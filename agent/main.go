@@ -13278,20 +13278,64 @@ func (s *protocolGuardServer) handleConn(cfg Config, client net.Conn) {
 		}
 	}
 	inspection := newProtocolGuardInspection(s.rule.Policy)
-	errCh := make(chan error, 2)
-	go func() { errCh <- s.copyTCPToTargetWithGuard(connCtx, cfg, client, target, first, inspection) }()
-	go func() { errCh <- s.copyTCPToClientWithGuard(connCtx, cfg, client, target, inspection) }()
-	<-errCh
-	// A failure, EOF, or policy block in either direction owns the whole
-	// connection. Cancel rate reservations and close both sockets so the other
-	// copy goroutine cannot remain blocked in WaitN or network I/O.
-	cancelConn()
-	_ = client.Close()
-	_ = target.Close()
-	<-errCh
+	type copyResult struct {
+		toTarget bool
+		err      error
+	}
+	var progress atomic.Int64
+	results := make(chan copyResult, 2)
+	go func() {
+		results <- copyResult{toTarget: true, err: s.copyTCPToTargetWithGuard(connCtx, cfg, client, target, first, inspection, &progress)}
+	}()
+	go func() {
+		results <- copyResult{toTarget: false, err: s.copyTCPToClientWithGuard(connCtx, cfg, client, target, inspection, &progress)}
+	}()
+	closeAll := func() {
+		// Cancel rate reservations and close both sockets so the other copy
+		// goroutine cannot remain blocked in WaitN or network I/O.
+		cancelConn()
+		_ = client.Close()
+		_ = target.Close()
+	}
+	firstResult := <-results
+	source, destination := client, target
+	if !firstResult.toTarget {
+		source, destination = target, client
+	}
+	_, sourceHalfCloses := source.(*net.TCPConn)
+	destinationTCP, destinationHalfCloses := destination.(*net.TCPConn)
+	if (firstResult.err != nil && !errors.Is(firstResult.err, io.EOF)) || !sourceHalfCloses || !destinationHalfCloses {
+		// 出错、被策略拦截，或者连接本身没有半关闭（EOF 就是对端彻底走了）：
+		// 整条连接一起结束。
+		closeAll()
+		<-results
+		return
+	}
+	// 一个方向干净地读到 EOF 是半关闭（比如客户端发完请求 shutdown 写端再等响应）：
+	// 把半关闭传给另一端，另一个方向接着跑；它有数据在走就一直等，空闲超过
+	// linger 才收掉，免得一个永远不关的对端把协程钉住。
+	_ = destinationTCP.CloseWrite()
+	ticker := time.NewTicker(tcpRelayHalfCloseLinger)
+	defer ticker.Stop()
+	last := progress.Load()
+	for {
+		select {
+		case <-results:
+			closeAll()
+			return
+		case <-ticker.C:
+			current := progress.Load()
+			if current == last {
+				closeAll()
+				<-results
+				return
+			}
+			last = current
+		}
+	}
 }
 
-func (s *protocolGuardServer) copyTCPToTargetWithGuard(ctx context.Context, cfg Config, client net.Conn, target net.Conn, initial []byte, inspection *protocolGuardInspection) error {
+func (s *protocolGuardServer) copyTCPToTargetWithGuard(ctx context.Context, cfg Config, client net.Conn, target net.Conn, initial []byte, inspection *protocolGuardInspection, progress *atomic.Int64) error {
 	writeChunk := func(chunk []byte) error {
 		if len(chunk) == 0 {
 			return nil
@@ -13304,6 +13348,9 @@ func (s *protocolGuardServer) copyTCPToTargetWithGuard(ctx context.Context, cfg 
 			return err
 		}
 		_, err := target.Write(chunk)
+		if progress != nil {
+			progress.Add(int64(len(chunk)))
+		}
 		return err
 	}
 	if err := writeChunk(initial); err != nil {
@@ -13324,7 +13371,7 @@ func (s *protocolGuardServer) copyTCPToTargetWithGuard(ctx context.Context, cfg 
 	}
 }
 
-func (s *protocolGuardServer) copyTCPToClientWithGuard(ctx context.Context, cfg Config, client net.Conn, target net.Conn, inspection *protocolGuardInspection) error {
+func (s *protocolGuardServer) copyTCPToClientWithGuard(ctx context.Context, cfg Config, client net.Conn, target net.Conn, inspection *protocolGuardInspection, progress *atomic.Int64) error {
 	buf := getAgentByteBuffer(32 * 1024)
 	defer putAgentByteBuffer(buf)
 	for {
@@ -13340,6 +13387,9 @@ func (s *protocolGuardServer) copyTCPToClientWithGuard(ctx context.Context, cfg 
 			}
 			if _, writeErr := client.Write(chunk); writeErr != nil {
 				return writeErr
+			}
+			if progress != nil {
+				progress.Add(int64(n))
 			}
 		}
 		if err != nil {
