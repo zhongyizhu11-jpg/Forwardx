@@ -10,6 +10,12 @@ import { addMonthsClamped } from "./repositories/repositoryUtils";
 import { clearMobileTelegramLoginChallenge, hasMobileTelegramLoginChallenge } from "./telegramMobileLogin";
 import { createTelegramWebAppLoginChallenge } from "./telegramWebAppLogin";
 import { withTelegramApiTimeout } from "./telegramApiTimeout";
+import {
+  isTelegramUnauthorizedError,
+  telegramApiErrorFromResponse,
+  telegramPollingRetryDelayMs,
+  telegramRetryAfterMs,
+} from "./telegramApiError";
 import { formatForwardRuleProtocol } from "../shared/forwardTypes";
 import { isAgentVersionAtLeast } from "./agentRouteUtils";
 import { APP_VERSION, AGENT_VERSION } from "../shared/versions";
@@ -618,7 +624,8 @@ async function telegramApi<T = any>(method: string, body?: Record<string, unknow
     });
     const json = await resp.json().catch(() => null) as any;
     if (!resp.ok || !json?.ok) {
-      throw new Error(json?.description || `Telegram API ${method} failed: ${resp.status}`);
+      // 带上 error_code / retry_after：提醒分发要靠它区分「这个人收不到」和「整个通道出问题」。
+      throw telegramApiErrorFromResponse(method, resp.status, json);
     }
     return json.result as T;
   });
@@ -649,8 +656,22 @@ async function sendMessage(chatId: number | string, text: string, replyMarkup?: 
   });
 }
 
+/**
+ * 后台通知（提醒、主机上下线、规则异常）用的发送入口。
+ *
+ * 遇到 429 按 Telegram 给的 retry_after 等一次再发（最多等 30 秒），还不行才抛：
+ * 批量通知时一碰到限流就放弃，后面的消息会全部丢掉。交互式回复不走这里，
+ * 不让用户点个按钮等半分钟。
+ */
 export async function sendTelegramMessage(chatId: number | string, text: string) {
-  await sendMessage(chatId, text);
+  try {
+    await sendMessage(chatId, text);
+  } catch (error) {
+    const waitMs = telegramRetryAfterMs(error);
+    if (waitMs === null) throw error;
+    await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+    await sendMessage(chatId, text);
+  }
 }
 
 export async function syncTelegramBotCommands() {
@@ -5466,28 +5487,50 @@ export async function refreshTelegramBotProfile() {
 }
 
 export async function startTelegramBot() {
+  // 先占位再 await：启动时和保存设置时几乎同时调进来，原来两边都能在 await 期间
+  // 通过这道检查，于是跑起两个轮询循环，互相抢 getUpdates（Telegram 回 409），
+  // 同一条消息还可能被处理两次。
   if (pollingStarted) return;
-  const settings = await getTelegramSettings();
+  pollingStarted = true;
+  let settings: Awaited<ReturnType<typeof getTelegramSettings>>;
+  try {
+    settings = await getTelegramSettings();
+  } catch (error) {
+    pollingStarted = false;
+    throw error;
+  }
   if (!settings.enabled || !settings.token) {
+    pollingStarted = false;
     console.info("[Telegram] Bot is disabled or token is not configured");
     return;
   }
   if (!ENV.telegramBotPolling) {
+    pollingStarted = false;
     console.info("[Telegram] Bot polling is disabled");
     return;
   }
-  pollingStarted = true;
   pollingAbort = false;
   console.info("[Telegram] Starting bot polling");
   refreshTelegramBotProfile().catch((error) => console.warn(`[Telegram] getMe failed: ${error instanceof Error ? error.message : String(error)}`));
 
   void (async () => {
+    let consecutiveFailures = 0;
     while (!pollingAbort) {
       try {
         await pollOnce();
+        consecutiveFailures = 0;
       } catch (error) {
-        console.warn(`[Telegram] Polling failed: ${error instanceof Error ? error.message : String(error)}`);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        if (isTelegramUnauthorizedError(error)) {
+          // Token 失效再怎么重试也是 401：停下来，等管理员在设置里改了 Token 或重新
+          // 启用机器人（systemRouter 保存设置后会再调 startTelegramBot）。
+          console.warn("[Telegram] Bot token rejected (401 Unauthorized); polling paused until Telegram settings are saved again");
+          pollingStarted = false;
+          return;
+        }
+        consecutiveFailures += 1;
+        const delayMs = telegramPollingRetryDelayMs(consecutiveFailures, error);
+        console.warn(`[Telegram] Polling failed (retry in ${Math.round(delayMs / 1000)}s): ${error instanceof Error ? error.message : String(error)}`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
   })();

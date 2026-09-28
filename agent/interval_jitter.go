@@ -2,6 +2,7 @@ package main
 
 import (
 	"hash/fnv"
+	"math/rand/v2"
 	"time"
 )
 
@@ -46,4 +47,33 @@ func stableIntervalJitterBelow(base time.Duration, key string, percent int) time
 
 func agentPeriodicInterval(base time.Duration, scope string) time.Duration {
 	return stableIntervalJitter(base, agentBootID+":"+scope, agentPeriodicJitterPercent)
+}
+
+// fullJitterDelay 在 [floor, base] 内均匀随机取一个等待时间（“full jitter”）。
+// 面板重启后所有 Agent 会在同一时刻失败，固定的重试间隔会让它们在同一时刻一起回来，
+// 把刚起来的面板再压垮一次；随机化把这一波请求摊开。floor 防止退化成 0 间隔空转。
+func fullJitterDelay(base time.Duration, floor time.Duration) time.Duration {
+	if floor < 0 {
+		floor = 0
+	}
+	if base <= floor {
+		return base
+	}
+	return floor + time.Duration(rand.Int64N(int64(base-floor)+1))
+}
+
+// fullJitterSeconds 是按秒计的 fullJitterDelay，结果不小于 floor 秒。
+func fullJitterSeconds(base int, floor int) int {
+	if base <= floor {
+		return base
+	}
+	return floor + rand.IntN(base-floor+1)
+}
+
+// randomDelayUpTo 返回 [0, limit] 内的随机时长。
+func randomDelayUpTo(limit time.Duration) time.Duration {
+	if limit <= 0 {
+		return 0
+	}
+	return time.Duration(rand.Int64N(int64(limit) + 1))
 }

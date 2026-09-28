@@ -18,10 +18,12 @@ import {
   shouldReconcileProtocolGuardBackend,
   stableStateSignature,
   stableDesiredStateHash,
+  withDesiredStateConfigHash,
   normalizeAgentRuntimeBoolean,
 } from "./agentHeartbeatRoute";
 import { normalizeTransportTuningInput } from "./routers/rules.crud";
 import { hasAgentVersionChanged } from "./agentRouteUtils";
+import { hashConfig } from "./configAudit";
 import { HOST_ONLINE_TTL_MS } from "./repositories/hostRepository";
 import {
   clearAuthenticatedAgentActivity,
@@ -577,6 +579,40 @@ test("desired-state aggregate hash ignores delivery timestamps and per-action tr
     stableDesiredStateHash([{ ...action, issuedAt: 200, configHash: "delivery-b" }]),
   );
   assert.notEqual(stableDesiredStateHash([action]), stableDesiredStateHash([{ ...action, ruleId: 8 }]));
+});
+
+test("desired-state hashes reuse per-action normalization without changing a byte", () => {
+  // 改写前的实现原样抄在这里当基准：新实现复用每条动作的规整结果，摘要必须和它逐字节相同，
+  // 否则所有 Agent 会在升级面板后被当成「期望状态变了」整批重下发一次。
+  const legacyDesiredStateHash = (actions: any[]) => hashConfig(actions.map((action: any) => {
+    const { issuedAt: _issuedAt, configHash: _configHash, ...stableAction } = action || {};
+    return stableAction;
+  }));
+  const samples: any[][] = [
+    [],
+    [{ ruleId: 7, op: "apply", configRevision: 12, issuedAt: 100 }],
+    [
+      {
+        op: "apply", ruleId: 3, tunnelId: 0, statusType: "rule", sourcePort: 443, protocol: "tcp",
+        commands: ["systemctl restart a", { nested: [3, 1, 2], z: null, a: undefined }],
+        managedConfigs: [{ path: "/etc/x", content: "k=v", privateKey: "secret-1" }],
+        token: "tok", isRunning: true, updatedAt: new Date(0), issuedAt: 5, configRevision: 2,
+        knownRunning: false, failover: { enabled: true, targets: [{ ip: "1.1.1.1", port: 1 }] },
+        configHash: "stale-from-source",
+      },
+      { op: "remove", tunnelId: 9, statusType: "tunnel", reportStatus: true, wireGuard: { password: "p", peers: [] } },
+      { statusType: "runtime", op: "apply", forwardType: "forwardx", fxp: { b: 1, a: [2, 1] }, big: BigInt(5) },
+    ],
+  ];
+  for (const sample of samples) {
+    const pieces = new WeakMap<object, string>();
+    const hashed = sample.map((action) => withDesiredStateConfigHash(action, pieces));
+    hashed.forEach((action, index) => assert.equal(action.configHash, hashConfig(sample[index])));
+    const ordered = hashed.slice().reverse();
+    assert.equal(stableDesiredStateHash(ordered, pieces), legacyDesiredStateHash(ordered));
+    assert.equal(stableDesiredStateHash(ordered), legacyDesiredStateHash(ordered));
+  }
+  assert.equal(stableDesiredStateHash([null]), legacyDesiredStateHash([null]));
 });
 
 test("state signatures remain stable across nested object and array ordering", () => {

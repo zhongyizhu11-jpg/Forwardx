@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import { autoForwardRuleName, resolveForwardRuleName } from "./forwardRuleName";
 
@@ -43,4 +44,11 @@ test("用户填了就用用户的，只有空白算没填", () => {
   assert.equal(resolveForwardRuleName("   ", from), "10.9.9.9:8080");
   assert.equal(resolveForwardRuleName(undefined, from), "10.9.9.9:8080");
   assert.equal(resolveForwardRuleName(null, from), "10.9.9.9:8080");
+});
+
+test("编辑规则时清空名称也按目标自动生成（更新接口不接受空名称）", () => {
+  const source = fs.readFileSync(new URL("../client/src/pages/Rules.tsx", import.meta.url), "utf8");
+  const update = source.slice(source.indexOf("updateMutation.mutate({"), source.indexOf("createMutation.mutate({"));
+  assert.match(update, /name: resolveForwardRuleName\(form\.name, form\)\.slice\(0, 128\)/);
+  assert.match(source, /placeholder=\{autoForwardRuleName\(form\)[^\n]*\n\s*maxLength=\{128\}/);
 });

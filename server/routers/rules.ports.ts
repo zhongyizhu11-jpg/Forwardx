@@ -7,6 +7,7 @@ import {
   requireTrafficBillingAccessIfConfigured,
   requireTunnelUseOrTrafficBillingAccess,
 } from "./helpers";
+import { assertTenantListenPortAllowedOnHosts } from "../tenantListenPortGuard";
 import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPolicy, portPolicyErrorMessage, portPolicyFrom, type PortPolicy } from "@shared/portPolicy";
 
 const randomPortInputSchema = z.object({
@@ -121,7 +122,7 @@ export const portsRulesRouter = router({
       hostId: z.number().int().positive().optional(),
       forwardGroupId: z.number().int().positive().optional(),
       tunnelId: z.number().nullable().optional(),
-      sourcePort: z.number().min(1).max(65535),
+      sourcePort: z.number().int().min(1).max(65535),
       excludeRuleId: z.number().optional(),
       protocol: z.enum(["tcp", "udp", "both"]).optional().default("both"),
     }).refine(
@@ -140,6 +141,12 @@ export const portsRulesRouter = router({
             const ranges = planRange.ranges.map((range) => `${range.start}-${range.end}`).join(",");
             return { used: true, reason: `套餐端口必须在 ${ranges} 范围内` };
           }
+        }
+        try {
+          // 和保存时同一道闸：共享入口上的系统端口、面板端口不能让租户误以为「可用」。
+          await assertTenantListenPortAllowedOnHosts({ actor: ctx.user, hostIds: await db.getForwardGroupRuleEntryHostIds(input.forwardGroupId), port: input.sourcePort, label: "入口端口" });
+        } catch (error) {
+          return { used: true, reason: error instanceof Error ? error.message : "端口不可用" };
         }
         try {
           await db.validateForwardGroupRuleConfig(input.forwardGroupId, {
@@ -169,13 +176,25 @@ export const portsRulesRouter = router({
       if (plan && !isPortAllowedByPolicy(input.sourcePort, effective)) {
         return { used: true, reason: portPolicyErrorMessage(effective, "套餐端口") };
       }
+      try {
+        await assertTenantListenPortAllowedOnHosts({ actor: ctx.user, hostIds: [hostId], port: input.sourcePort, label: "源端口" });
+      } catch (error) {
+        return { used: true, reason: error instanceof Error ? error.message : "端口不可用" };
+      }
       const excludeRuleIds = input.excludeRuleId
         ? [
             input.excludeRuleId,
             ...((await db.getForwardGroupChildRulesForTemplate(input.excludeRuleId)) as any[]).map((rule: any) => Number(rule.id)),
           ]
         : [];
-      const used = await db.isPortUsedOnHost(hostId, input.sourcePort, excludeRuleIds, input.protocol, undefined, false);
+      // 隧道挂了入口组时，组里每台主机也要在这个端口上监听，任一台被占就算占用。
+      let used = false;
+      for (const listenHostId of await db.forwardRuleListenHostIds(hostId, input.tunnelId)) {
+        if (await db.isPortUsedOnHost(listenHostId, input.sourcePort, excludeRuleIds, input.protocol, undefined, false)) {
+          used = true;
+          break;
+        }
+      }
       return { used };
     }),
   randomPort: protectedProcedure
@@ -217,12 +236,14 @@ export const portsRulesRouter = router({
             ...((await db.getForwardGroupChildRulesForTemplate(input.excludeRuleId)) as any[]).map((rule: any) => Number(rule.id)),
           ]
         : [];
+      const listenHostIds = await db.forwardRuleListenHostIds(input.hostId, input.tunnelId);
       const port = await db.findAvailablePort(
         input.hostId,
         rangeStart,
         rangeEnd,
         input.protocol,
-        [],
+        // 入口组里其他主机上已占用的端口也不能挑。
+        await db.usedPortsOnOtherListenHosts(input.hostId, listenHostIds, excludeRuleIds, input.protocol),
         excludeRuleIds,
         planRange?.ranges || [],
       );

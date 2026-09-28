@@ -5,6 +5,7 @@ import {
   effectiveSmtpSecurityMode,
   resolveSmtpSecurityMode,
   smtpErrorMessage,
+  SmtpOperationTimeoutError,
   withSmtpOperationTimeout,
 } from "./smtpTransport";
 
@@ -40,7 +41,7 @@ export async function getEmailConfig() {
 export async function sendMail(payload: MailPayload) {
   const config = await getEmailConfig();
   if (!config.enabled) return { skipped: true, reason: "email disabled" };
-  if (!config.host || !config.from) throw new Error("邮件服务未配置完整");
+  if (!config.host || !config.from) throw Object.assign(new Error("邮件服务未配置完整"), { code: "ECONFIG" });
 
   const transporter = nodemailer.createTransport(buildSmtpTransportOptions(config));
   try {
@@ -57,7 +58,14 @@ export async function sendMail(payload: MailPayload) {
     );
     return { skipped: false, messageId: result.messageId };
   } catch (error) {
-    throw new Error(smtpErrorMessage(error, config.port, config.security));
+    // 中文提示给人看；原始的 code / responseCode / command 留在错误对象上给程序看 ——
+    // 提醒分发要靠它区分「这个收件地址被拒」（跳过这一个）和「SMTP 挂了」（整轮停下）。
+    const source = error as { code?: unknown; responseCode?: unknown; command?: unknown } | null;
+    throw Object.assign(new Error(smtpErrorMessage(error, config.port, config.security)), {
+      code: error instanceof SmtpOperationTimeoutError ? "ETIMEDOUT" : source?.code,
+      responseCode: source?.responseCode,
+      command: source?.command,
+    });
   } finally {
     transporter.close();
   }

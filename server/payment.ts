@@ -1,3 +1,4 @@
+import { DATABASE_MAINTENANCE_MESSAGE, isDatabaseMaintenanceActive } from "./databaseMaintenance";
 import crypto from "crypto";
 import express from "express";
 import { z } from "zod";
@@ -1482,6 +1483,17 @@ export const paymentRouter = router({
 });
 
 export const paymentCallbackRouter = express.Router();
+
+// 切换数据库期间，支付回调写进正在被复制的旧库会随切换丢失（钱付了、订单没到账）。
+// 回 503 让支付渠道按它们自己的重试策略稍后再通知，切换完成后照常处理。
+paymentCallbackRouter.use("/api/payment/webhook", (_req, res, next) => {
+  if (isDatabaseMaintenanceActive()) {
+    res.setHeader("Retry-After", "60");
+    res.status(503).type("text/plain").send(DATABASE_MAINTENANCE_MESSAGE);
+    return;
+  }
+  next();
+});
 
 async function handleEasyPayNotification(req: express.Request, res: express.Response) {
   try {

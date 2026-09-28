@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Link, useLocation, useSearch } from "wouter";
 import { mobileAuth } from "@/lib/mobileAuth";
+import { authErrorMessage } from "@/lib/authErrorMessage";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { ACCOUNT_DISABLED_ERR_MSG } from "@shared/const";
 
@@ -409,7 +410,7 @@ export default function Login() {
           toast.error("无法连接面板，请检查右上角面板地址");
           return;
         }
-        toast.error(error.message || "验证码加载失败");
+        toast.error(authErrorMessage(error.message, "验证码加载失败"));
       },
     });
   }, [captchaCooldownUntil, createCaptchaMutation, hasMobilePanelUrl]);
@@ -473,7 +474,7 @@ export default function Login() {
         setCaptchaAnswer("");
         setCaptchaResetKey((value) => value + 1);
       } else {
-        toast.error(msg || "登录失败");
+        toast.error(authErrorMessage(msg, "登录失败"));
         if (msg === ACCOUNT_DISABLED_ERR_MSG && mobileAuth.isNative) {
           mobileAuth.clear();
         }
@@ -512,7 +513,7 @@ export default function Login() {
     },
     onError: (error) => {
       if (error.message === ACCOUNT_DISABLED_ERR_MSG && mobileAuth.isNative) mobileAuth.clear();
-      toast.error(error.message || "Telegram 登录失败");
+      toast.error(authErrorMessage(error.message, "Telegram 登录失败"));
     },
   });
 
@@ -531,28 +532,36 @@ export default function Login() {
     refetchOnWindowFocus: false,
     staleTime: Infinity,
   });
-  const telegramLoginPreview = telegramLinkActive ? telegramLoginPreviewQuery.data : undefined;
-  const showTelegramLinkConfirm = telegramLinkActive && hasMobilePanelUrl && !telegramLoginPreviewQuery.error;
+  /*
+    点了「继续登录」之后链接已经从地址栏清掉，预览随之失效；把确认时看到的账户留下来，
+    弹窗保持打开并显示加载中，直到登录请求有结果 —— 否则弹窗一闪就没了，慢网下像是没反应。
+  */
+  const [telegramLinkConfirming, setTelegramLinkConfirming] = useState<typeof telegramLoginPreviewQuery.data | null>(null);
+  const telegramLoginPreview = telegramLinkActive ? telegramLoginPreviewQuery.data : telegramLinkConfirming ?? undefined;
+  const showTelegramLinkConfirm = (telegramLinkActive && hasMobilePanelUrl && !telegramLoginPreviewQuery.error) || !!telegramLinkConfirming;
+  const telegramLinkLoginPending = !!telegramLinkConfirming;
 
   useEffect(() => {
     const error = telegramLoginPreviewQuery.error;
     if (!error || !telegramLinkActive) return;
     setTelegramLoginCode(telegramLinkCode);
     clearTelegramLinkFromUrl();
-    const msg = error.message || "";
-    const limited = /^TELEGRAM_LOGIN_RATE_LIMITED:(\d+)$/.exec(msg);
-    toast.error(limited ? `尝试过于频繁，请 ${limited[1]} 分钟后重试` : msg || "Telegram 登录码无效或已过期");
+    toast.error(authErrorMessage(error.message, "Telegram 登录码无效或已过期"));
   }, [telegramLinkActive, telegramLinkCode, telegramLoginPreviewQuery.error]);
 
   const confirmTelegramLinkLogin = () => {
     if (!telegramLinkActive || !telegramLoginPreview || telegramLoginMutation.isPending) return;
     const code = telegramLinkCode;
+    setTelegramLinkConfirming(telegramLoginPreview);
     setTelegramLoginCode(code);
     clearTelegramLinkFromUrl();
-    telegramLoginMutation.mutate({ code, mobile: mobileAuth.isNative });
+    telegramLoginMutation.mutate({ code, mobile: mobileAuth.isNative }, {
+      onSettled: () => setTelegramLinkConfirming(null),
+    });
   };
 
   const cancelTelegramLinkLogin = () => {
+    if (telegramLinkLoginPending) return;
     setTelegramLoginCode(telegramLinkCode);
     clearTelegramLinkFromUrl();
   };
@@ -600,7 +609,7 @@ export default function Login() {
         toast.error("Telegram 登录未启用，请改用账号密码登录");
         return;
       }
-      toast.error(msg || "Telegram 自动登录失败，请使用账号密码登录。");
+      toast.error(authErrorMessage(msg, "Telegram 自动登录失败，请使用账号密码登录。"));
     },
   });
 
@@ -624,7 +633,7 @@ export default function Login() {
     onError: (error) => {
       setMobileTelegramLogin(null);
       if (error.message === ACCOUNT_DISABLED_ERR_MSG) mobileAuth.clear();
-      toast.error(error.message || "Telegram 登录失败");
+      toast.error(authErrorMessage(error.message, "Telegram 登录失败"));
     },
     onSettled: () => {
       mobileTelegramStatusPendingRef.current = false;
@@ -644,7 +653,7 @@ export default function Login() {
     },
     onError: (error) => {
       if (error.message === ACCOUNT_DISABLED_ERR_MSG && mobileAuth.isNative) mobileAuth.clear();
-      toast.error(error.message || "双重验证失败");
+      toast.error(authErrorMessage(error.message, "双重验证失败"));
     },
   });
   const mobileTelegramStatusPendingRef = useRef(false);
@@ -681,7 +690,7 @@ export default function Login() {
         setShowPanelSettings(true);
         return;
       }
-      toast.error(msg || "无法发起 Telegram 登录");
+      toast.error(authErrorMessage(msg, "无法发起 Telegram 登录"));
     },
   });
 
@@ -702,7 +711,7 @@ export default function Login() {
         setShowPanelSettings(true);
         return;
       }
-      toast.error(msg === "CAPTCHA_INVALID" ? "验证码错误或已过期，请重新输入" : msg || "注册失败");
+      toast.error(authErrorMessage(msg, "注册失败"));
       setCaptchaAnswer("");
       setCaptchaResetKey((value) => value + 1);
     },
@@ -717,7 +726,7 @@ export default function Login() {
         setShowPanelSettings(true);
         return;
       }
-      toast.error(msg || "发送验证码失败");
+      toast.error(authErrorMessage(msg, "发送验证码失败"));
     },
   });
 
@@ -939,7 +948,7 @@ export default function Login() {
     setPassword("");
   };
 
-  const isPending = loginMutation.isPending || registerMutation.isPending || telegramWebAppLoginMutation.isPending;
+  const isPending = loginMutation.isPending || registerMutation.isPending || telegramWebAppLoginMutation.isPending || telegramLoginMutation.isPending;
   const isTwoFactorPending = verifyTwoFactorLoginMutation.isPending;
   const isTelegramPending = telegramLoginMutation.isPending || telegramWebAppLoginMutation.isPending;
   const isMobileTelegramWaiting = startMobileTelegramLoginMutation.isPending || !!mobileTelegramLogin;
@@ -1190,6 +1199,11 @@ export default function Login() {
                   未添加服务器地址，请点击右上角设置按钮添加
                 </button>
               )}
+              {showInsecurePanelWarning && (
+                <p className="rounded-md border border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] bg-[var(--fx-warn-soft)] px-3 py-2 text-sm text-[var(--fx-warn-text)]">
+                  当前面板地址使用 http://，注册时填写的密码和邮箱验证码会以明文传输，建议改用 https:// 地址。
+                </p>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="reg-username">用户名</Label>
                 <Input
@@ -1394,17 +1408,17 @@ export default function Login() {
             </>
           )}
           <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={cancelTelegramLinkLogin}>
+            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={cancelTelegramLinkLogin} disabled={telegramLinkLoginPending}>
               取消
             </Button>
             <Button
               type="button"
               className="w-full sm:w-auto"
               onClick={confirmTelegramLinkLogin}
-              disabled={!telegramLoginPreview || telegramLoginMutation.isPending}
+              disabled={!telegramLoginPreview || telegramLoginMutation.isPending || telegramLinkLoginPending}
             >
-              <LogIn className="mr-2 h-4 w-4" />
-              继续登录
+              {telegramLinkLoginPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LogIn className="mr-2 h-4 w-4" />}
+              {telegramLinkLoginPending ? "登录中..." : "继续登录"}
             </Button>
           </DialogFooter>
         </DialogContent>

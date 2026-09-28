@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, like, max, ne, or } from "drizzle-orm";
 import { configAuditEvents } from "../drizzle/schema";
-import { getDb, insertAndGetId } from "./dbRuntime";
+import { afterDatabaseCommit, getDb, insertAndGetId, isDatabaseTransactionActive } from "./dbRuntime";
 import { invalidateAgentStableHeartbeatPlan } from "./agentHeartbeatGate";
 import { deleteExpiredHistoryRows } from "./repositories/historyRetention";
 import { quoteIdentifier } from "./dbCompat";
@@ -59,7 +59,20 @@ function stableJson(value: any) {
 }
 
 export function hashConfig(value: any) {
-  return createHash("sha256").update(JSON.stringify(normalize(value, true, "hash"))).digest("hex");
+  return hashNormalizedConfig(normalizeConfigForHash(value));
+}
+
+/*
+  hashConfig 拆成「规整」和「求摘要」两步单独导出：心跳每条下发动作既要算自己的
+  configHash，又要拼进整批的 desiredStateHash。规整（递归排序键、给密钥字段求摘要）
+  才是贵的那步，拆开后同一份规整结果可以两处复用，而摘要值和直接调 hashConfig 逐字节相同。
+*/
+export function normalizeConfigForHash(value: any) {
+  return normalize(value, true, "hash");
+}
+
+export function hashNormalizedConfig(normalized: any) {
+  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 
 export function shouldAuditConfigPatch(value: Record<string, any> | null | undefined) {
@@ -83,12 +96,23 @@ function buildDiff(before: any, after: any) {
   return diff;
 }
 
+/**
+ * requestId 来自客户端的 x-request-id 头，原样写进 VARCHAR(64) 的 requestId 列。
+ * 超长时 PG 报 value too long —— 审计本身失败只记一条 warn，可它发生在 tunnels.create/update
+ * 的事务里，PG 的事务一旦有语句失败就整个作废，后面的 COMMIT 只会回滚，用户的保存莫名失败。
+ * 只留 [A-Za-z0-9._-]，截到 64 个字符；洗完是空的就当没传，退回随机 UUID。
+ */
+export function sanitizeAuditRequestId(value: unknown) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return String(raw ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64) || undefined;
+}
+
 export function runWithConfigAuditContext<T>(context: Partial<ConfigAuditContext>, callback: () => T): T {
   return auditContext.run({
     source: context.source || "system",
     actorUserId: context.actorUserId || null,
     actorName: context.actorName || null,
-    requestId: context.requestId || randomUUID(),
+    requestId: sanitizeAuditRequestId(context.requestId) || randomUUID(),
     requestPath: context.requestPath || null,
   }, callback);
 }
@@ -113,31 +137,48 @@ export async function recordConfigAuditEvent(input: {
   const diff = buildDiff(input.before, input.after);
   if (input.action === "update" && Object.keys(diff).length === 0) return 0;
   const context = currentConfigAuditContext();
-  try {
-    const revision = await insertAndGetId("config_audit_events", {
-      resourceType: input.resourceType,
-      resourceId,
-      hostId: Number(input.hostId || 0) > 0 ? Number(input.hostId) : null,
-      action: input.action,
-      source: input.source || context?.source || "system",
-      actorUserId: context?.actorUserId || null,
-      actorName: context?.actorName || null,
-      requestId: context?.requestId || null,
-      requestPath: context?.requestPath || null,
-      beforeJson: input.before === undefined ? null : stableJson(before),
-      afterJson: input.after === undefined ? null : stableJson(after),
-      diffJson: stableJson(diff),
-      configHash: hashConfig(input.after),
-    });
-    if (input.action !== "dispatch") {
-      const hostId = Number(input.hostId || 0);
-      invalidateAgentStableHeartbeatPlan(hostId > 0 ? hostId : undefined);
+  const row = {
+    resourceType: input.resourceType,
+    resourceId,
+    hostId: Number(input.hostId || 0) > 0 ? Number(input.hostId) : null,
+    action: input.action,
+    source: input.source || context?.source || "system",
+    actorUserId: context?.actorUserId || null,
+    actorName: context?.actorName || null,
+    requestId: context?.requestId || null,
+    requestPath: context?.requestPath || null,
+    beforeJson: input.before === undefined ? null : stableJson(before),
+    afterJson: input.after === undefined ? null : stableJson(after),
+    diffJson: stableJson(diff),
+    configHash: hashConfig(input.after),
+  };
+  const write = async () => {
+    try {
+      const revision = await insertAndGetId("config_audit_events", row);
+      if (input.action !== "dispatch") {
+        const hostId = Number(input.hostId || 0);
+        invalidateAgentStableHeartbeatPlan(hostId > 0 ? hostId : undefined);
+      }
+      return revision;
+    } catch (error) {
+      console.warn(`[ConfigAudit] write failed resource=${input.resourceType}:${resourceId}: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
     }
-    return revision;
-  } catch (error) {
-    console.warn(`[ConfigAudit] write failed resource=${input.resourceType}:${resourceId}: ${error instanceof Error ? error.message : String(error)}`);
+  };
+  /*
+   * 事务里的审计挪到提交之后再写。审计写失败本来只该记一条 warn，可在 PG 的事务里任何一条语句
+   * 失败都会让整个事务作废（后面的语句全报 current transaction is aborted），调用方的配置改动
+   * 也就跟着没了。运行时没有保存点的封装，而手写 SAVEPOINT 在同一事务里并发调用时会互相释放、
+   * 回滚到别人的保存点，悄悄吞掉中间的语句。提交后再写：事务回滚了就不记（和原来一样），
+   * 心跳计划的失效也落在数据真正可见之后。调用方都不用返回的 revision，事务里返回 0。
+   */
+  if (isDatabaseTransactionActive()) {
+    await afterDatabaseCommit(async () => {
+      await write();
+    });
     return 0;
   }
+  return write();
 }
 
 export async function latestConfigRevision() {

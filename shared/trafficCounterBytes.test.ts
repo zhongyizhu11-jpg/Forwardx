@@ -26,3 +26,8 @@ test("连接数同一套规矩", () => {
   assert.equal(normalizeTrafficCounterConnections(-50), 0);
   assert.equal(normalizeTrafficCounterConnections(3.7), 3);
 });
+
+test("单次上报的连接数截到 INT 上限 —— 明细表的 connections 还是 INT 列", () => {
+  assert.equal(normalizeTrafficCounterConnections(1e12), 2147483647);
+  assert.equal(normalizeTrafficCounterConnections(2147483647), 2147483647);
+});

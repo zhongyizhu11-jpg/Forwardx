@@ -49,6 +49,30 @@ export type DdnsRecordValuesInput = Omit<DdnsRecordInput, "value"> & {
   values: string[];
 };
 
+/** 单次 DNS 服务商 API 请求最长等多久。 */
+export const DDNS_REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * 所有 DNS 服务商 API 请求都走这里：带超时。
+ *
+ * 原来的 fetch 一个都没设超时。DDNS 更新是在转发组故障切换的按组加锁里做的，
+ * 服务商 API 半路卡住（TCP 建上了但一直不回），这把锁就一直不放：这个组之后的
+ * 健康检查、切换、恢复全排在它后面，故障切换恰恰在最需要它的时候停摆。
+ * 超时覆盖到读完响应体为止（signal 对 resp.json()/text() 同样生效）。
+ */
+export async function ddnsFetch(url: string, init: RequestInit = {}, timeoutMs = DDNS_REQUEST_TIMEOUT_MS) {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (error) {
+    if ((error as { name?: string } | null)?.name === "TimeoutError") {
+      let host = url;
+      try { host = new URL(url).host; } catch { /* 保留原样 */ }
+      throw new Error(`DDNS 请求超时（${Math.ceil(timeoutMs / 1000)} 秒无响应）：${host}`);
+    }
+    throw error;
+  }
+}
+
 export function maskSecret(value: string | null | undefined) {
   const v = String(value || "").trim();
   if (!v) return "";
@@ -314,7 +338,7 @@ async function resolveCloudflareZoneId(input: {
   const candidates = cloudflareZoneCandidates(input.domain);
   for (const candidate of candidates) {
     const query = new URLSearchParams({ name: candidate, status: "active", per_page: "50" });
-    const resp = await fetch(`https://api.cloudflare.com/client/v4/zones?${query.toString()}`, { headers });
+    const resp = await ddnsFetch(`https://api.cloudflare.com/client/v4/zones?${query.toString()}`, { headers });
     const body = await readJson(resp, "Cloudflare 查询 Zone 失败");
     if (body?.success === false) {
       throw new Error(extractJsonError(body, "Cloudflare 查询 Zone 失败"));
@@ -343,7 +367,7 @@ async function updateCloudflare(input: {
   const base = `https://api.cloudflare.com/client/v4/zones/${encodeURIComponent(zoneId)}/dns_records`;
   const recordName = normalizeDnsName(input.domain);
   const query = new URLSearchParams({ type: input.recordType, name: recordName, per_page: "50" });
-  const findResp = await fetch(`${base}?${query.toString()}`, { headers });
+  const findResp = await ddnsFetch(`${base}?${query.toString()}`, { headers });
   const findBody = await readJson(findResp, "Cloudflare 查询记录失败");
   if (findBody?.success === false) {
     throw new Error(extractJsonError(findBody, "Cloudflare 查询记录失败"));
@@ -361,7 +385,7 @@ async function updateCloudflare(input: {
     proxied: !!record?.proxied,
   };
   if (typeof record?.comment === "string" && record.comment) payload.comment = record.comment;
-  const resp = await fetch(record?.id ? `${base}/${encodeURIComponent(String(record.id))}` : base, {
+  const resp = await ddnsFetch(record?.id ? `${base}/${encodeURIComponent(String(record.id))}` : base, {
     method: record?.id ? "PUT" : "POST",
     headers,
     body: JSON.stringify(payload),
@@ -413,7 +437,7 @@ async function updateWebhook(input: {
     lineId: input.lineId || undefined,
     lineName: input.lineName || undefined,
   });
-  const resp = await fetch(url, {
+  const resp = await ddnsFetch(url, {
     method: input.method,
     headers: input.method === "GET" ? headers : { "Content-Type": "application/json", ...headers },
     body: input.method === "GET" ? undefined : body,
@@ -450,7 +474,7 @@ async function huaweicloudRequest(settings: DdnsSettings, method: string, path: 
   const stringToSign = ["SDK-HMAC-SHA256", sdkDate, sha256Hex(canonicalRequest)].join("\n");
   const signature = hmac(settings.huaweicloudSecretKey, stringToSign, "hex");
   const authorization = `SDK-HMAC-SHA256 Access=${settings.huaweicloudAccessKeyId}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-  const resp = await fetch(`${endpoint}${path}${queryString ? `?${queryString}` : ""}`, {
+  const resp = await ddnsFetch(`${endpoint}${path}${queryString ? `?${queryString}` : ""}`, {
     method,
     headers: {
       Authorization: authorization,
@@ -574,7 +598,7 @@ async function aliyunRequest(settings: DdnsSettings, action: string, params: Rec
     .createHmac("sha1", `${settings.aliyunAccessKeySecret}&`)
     .update(stringToSign, "utf8")
     .digest("base64");
-  const resp = await fetch(`${endpoint}/?Signature=${aliyunEncode(signature)}&${canonical}`);
+  const resp = await ddnsFetch(`${endpoint}/?Signature=${aliyunEncode(signature)}&${canonical}`);
   // 阿里云出错时返回 4xx + {Code, Message}，先按 Code 抛出，保留错误码给 TTL 下限判断。
   const body = await readJsonBody(resp);
   if (body?.Code) throw new DdnsProviderError(body?.Message || `阿里云 DNS 请求失败: ${body.Code}`, String(body.Code));
@@ -657,7 +681,7 @@ async function tencentCloudRequest(settings: DdnsSettings, action: string, paylo
   const secretSigning = hmac(secretService, "tc3_request");
   const signature = hmac(secretSigning, stringToSign, "hex");
   const authorization = `${algorithm} Credential=${settings.tencentcloudSecretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-  const resp = await fetch(`https://${host}`, {
+  const resp = await ddnsFetch(`https://${host}`, {
     method: "POST",
     headers: {
       Authorization: authorization,
@@ -785,7 +809,7 @@ async function updateCloudflareValues(input: {
   const recordName = normalizeDnsName(input.domain);
   const recordType = input.recordType.toUpperCase();
   const query = new URLSearchParams({ type: recordType, name: recordName, per_page: "100" });
-  const findResp = await fetch(base + "?" + query.toString(), { headers });
+  const findResp = await ddnsFetch(base + "?" + query.toString(), { headers });
   const findBody = await readJson(findResp, "Cloudflare 查询记录失败");
   if (findBody?.success === false) throw new Error(extractJsonError(findBody, "Cloudflare 查询记录失败"));
 
@@ -811,7 +835,7 @@ async function updateCloudflareValues(input: {
 
   for (const change of plan.updates) {
     const id = String((change.record as any)?.id || "");
-    const resp = await fetch(base + "/" + encodeURIComponent(id), {
+    const resp = await ddnsFetch(base + "/" + encodeURIComponent(id), {
       method: "PUT",
       headers,
       body: JSON.stringify(payloadFor(change.value, change.record)),
@@ -822,14 +846,14 @@ async function updateCloudflareValues(input: {
 
   for (const value of plan.creates) {
     const payload = payloadFor(value);
-    const resp = await fetch(base, { method: "POST", headers, body: JSON.stringify(payload) });
+    const resp = await ddnsFetch(base, { method: "POST", headers, body: JSON.stringify(payload) });
     const body = await readJson(resp, "Cloudflare 创建记录失败");
     if (body?.success === false) throw new Error(extractJsonError(body, "Cloudflare 创建记录失败"));
   }
 
   for (const record of plan.removals) {
     const id = String((record as any)?.id || "");
-    const resp = await fetch(base + "/" + encodeURIComponent(id), { method: "DELETE", headers });
+    const resp = await ddnsFetch(base + "/" + encodeURIComponent(id), { method: "DELETE", headers });
     const body = await readJson(resp, "Cloudflare 删除记录失败");
     if (body?.success === false) throw new Error(extractJsonError(body, "Cloudflare 删除记录失败"));
   }
@@ -863,7 +887,7 @@ async function updateWebhookValues(settings: DdnsSettings, input: DdnsRecordValu
     lineId: input.lineId || undefined,
     lineName: input.lineName || undefined,
   });
-  const resp = await fetch(url, {
+  const resp = await ddnsFetch(url, {
     method: settings.webhookMethod,
     headers: settings.webhookMethod === "GET" ? headers : { "Content-Type": "application/json", ...headers },
     body: settings.webhookMethod === "GET" ? undefined : body,

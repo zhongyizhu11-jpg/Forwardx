@@ -50,26 +50,42 @@ function ephemeralKeyDate(key: string): string | null {
   return match ? match[1] : null;
 }
 
+function settingUpdatedAtMs(value: unknown): number | null {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.getTime() : null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  // 列是秒级 epoch；万一驱动给回毫秒，也认得出来。
+  return numeric > 1e12 ? numeric : numeric * 1000;
+}
+
 /**
  * 清掉过期的日标记。
  *
- * 去重窗口只有一天，留 7 天纯属保险（跨时区、面板停机几天再回来）。日期解析不出来
- * 的键一律不动 —— 宁可留着垃圾，也不能误删一条真设置。
+ * 去重窗口只有一天，留 7 天纯属保险（跨时区、面板停机几天再回来）。
+ *
+ * 到期类提醒的键不带日期（按「这一次到期 + 这一档」去重，见 scheduler 的
+ * expiryThresholdKey）：它们按行上的写入时间清。每一档只在到期前那 24 小时里有效，
+ * 过了就再也不会被问到，同样留 7 天足够。
+ *
+ * 日期和写入时间都解析不出来的键一律不动 —— 宁可留着垃圾，也不能误删一条真设置。
  */
 export async function pruneEphemeralSettings(retainDays = 7): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
-  const cutoff = new Date(Date.now() - Math.max(1, retainDays) * 24 * 3600 * 1000)
+  const cutoffMs = Date.now() - Math.max(1, retainDays) * 24 * 3600 * 1000;
+  const cutoff = new Date(cutoffMs)
     .toISOString()
     .slice(0, 10);
-  const rows = await db.select({ key: systemSettings.key }).from(systemSettings);
-  const stale = (rows as Array<{ key: string }>)
-    .map((row) => String(row.key || ""))
-    .filter((key) => isEphemeralSettingKey(key))
-    .filter((key) => {
-      const date = ephemeralKeyDate(key);
-      return !!date && date < cutoff;
-    });
+  const rows = await db.select({ key: systemSettings.key, updatedAt: systemSettings.updatedAt }).from(systemSettings);
+  const stale = (rows as Array<{ key: string; updatedAt: unknown }>)
+    .filter((row) => isEphemeralSettingKey(row.key))
+    .filter((row) => {
+      const date = ephemeralKeyDate(String(row.key || ""));
+      if (date) return date < cutoff;
+      const updatedAtMs = settingUpdatedAtMs(row.updatedAt);
+      return updatedAtMs !== null && updatedAtMs < cutoffMs;
+    })
+    .map((row) => String(row.key || ""));
   if (stale.length === 0) return 0;
   // 分批删：一条 IN 里塞几万个参数，MySQL 那边会直接拒绝。
   for (let i = 0; i < stale.length; i += 200) {
@@ -173,11 +189,22 @@ export async function getSettingsByPrefix(prefix: string): Promise<Record<string
   return values;
 }
 
+/**
+ * 这个键写进去会不会改变 getAllSettings() 的结果。
+ *
+ * 日标记和运行时缓存本来就不进那份映射（见 getAllSettings），写它们时不必把整份
+ * 设置缓存作废 —— 否则一轮提醒发一千条，就是一千次「下一次读设置得整表重读」。
+ */
+function affectsAllSettingsCache(key: string) {
+  return !isEphemeralSettingKey(key) && !String(key || "").startsWith(RUNTIME_CACHE_SETTING_PREFIX);
+}
+
 /** UPSERT 单个系统设置 */
 export async function setSetting(key: string, value: string | null): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  invalidateAllSettingsCache();
+  const invalidatesCache = affectsAllSettingsCache(key);
+  if (invalidatesCache) invalidateAllSettingsCache();
   const nowSec = Math.floor(Date.now() / 1000);
   if (getDatabaseKind() === "sqlite") {
     await executeRaw(
@@ -195,7 +222,7 @@ export async function setSetting(key: string, value: string | null): Promise<voi
       [key, value, nowSec],
     );
   }
-  invalidateAllSettingsCache();
+  if (invalidatesCache) invalidateAllSettingsCache();
 }
 /** 批量 UPSERT */
 export async function setSettings(map: Record<string, string | null>): Promise<void> {

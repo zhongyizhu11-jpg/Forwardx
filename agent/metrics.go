@@ -462,6 +462,33 @@ type trafficDiagnosticsSnapshot struct {
 	ip6tablesMarkers  map[string]bool
 	nftMarkers        map[int]bool
 	nftProcessMarkers map[string]bool
+	// 对应 binary 的 -nvxL 快照这一轮执行失败，其计数与标记都不可信。
+	iptablesSnapshotFailed  bool
+	ip6tablesSnapshotFailed bool
+}
+
+// trafficStateIptablesSnapshotUnreliable 判断这条规则这一轮是否依赖了失败的 iptables 快照。
+// 依赖时整条跳过：不写基线（否则基线被写成 0，下一轮会把整段历史流量重报一遍），
+// 也不排队修复（修复会先清掉计数规则，计数器归零）。
+func trafficStateIptablesSnapshotUnreliable(state localRuleState, diagnostics trafficDiagnosticsSnapshot) bool {
+	if !diagnostics.iptablesSnapshotFailed && !diagnostics.ip6tablesSnapshotFailed {
+		return false
+	}
+	switch trafficCounterFamilyForForwardType(state.ForwardType) {
+	case trafficCounterFamilyIptables:
+		if strings.Contains(strings.Trim(strings.TrimSpace(state.TargetIP), "[]"), ":") {
+			return diagnostics.ip6tablesSnapshotFailed
+		}
+		return diagnostics.iptablesSnapshotFailed
+	case trafficCounterFamilyProcess:
+		if hasCompleteNftProcessLayout(state, diagnostics.nftProcessMarkers) {
+			return false
+		}
+		// 进程型规则的 iptables 回退在 v4/v6 两边都装了监听计数，结果是两边相加。
+		return true
+	default:
+		return false
+	}
 }
 
 type trafficPrevState struct {
@@ -618,6 +645,69 @@ func writeTrafficStateFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return nil
+}
+
+// writeTrafficStateFileDeferred 原子替换（临时文件 + rename）但不做任何 fsync。
+// 只给流量基线（traffic_<port>.prev）用：需要落盘的时候由 syncTrafficBaselineFiles 统一刷一次，
+// 不需要落盘的场景（无增量时的基线刷新）掉电后退回旧值也只会少记、不会多记，见 writePrevState。
+func writeTrafficStateFileDeferred(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(trafficStateDir, 0755); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(trafficStateDir, ".traffic-state-*")
+	if err != nil {
+		return err
+	}
+	tmp := file.Name()
+	if err := file.Chmod(mode); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// syncTrafficBaselineFiles 让一批刚写好的基线文件（内容 + 目录项）一次性落盘。
+// Linux 上用一次 syncfs 代替“每个端口 文件 fsync + 目录 fsync”共 2N 次同步；
+// syncfs 不可用时退回逐个 fsync 文件、最后只 fsync 一次目录（N+1 次）。
+func syncTrafficBaselineFiles(paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	if err := trafficStateFilesystemSync(trafficStateDir); err == nil {
+		return nil
+	}
+	for _, path := range paths {
+		file, err := os.Open(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		syncErr := file.Sync()
+		closeErr := file.Close()
+		if syncErr != nil {
+			return syncErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return syncTrafficStateDirectoryAfterMutation(trafficStateDir)
 }
 
 func ensureTrafficReportIdentity(identity string) error {
@@ -1149,7 +1239,10 @@ func collectTraffic(cfg Config) time.Duration {
 			} else if shouldLogAgentReport("traffic-report-retry-failed", agentReportLogInterval) {
 				logf("traffic report retry failed stats=%d: %v", pending.StatCount, err)
 			}
+			// 面板不可达时指数退避（上限 60 秒）并加随机抖动，而不是每个采集周期都重发一次。
+			return pendingTrafficReportRetryDelay(trafficCollectionIntervalForRuleCount(len(states)))
 		} else {
+			pendingTrafficReportRetryFailures.Store(0)
 			if seconds, ok := response["trafficReportInterval"].(float64); ok {
 				setActiveTrafficReportIntervalSeconds(int(seconds))
 			}
@@ -1186,12 +1279,24 @@ func collectTraffic(cfg Config) time.Duration {
 			iptablesCounters, iptablesDiagnostics = iptablesCounterSnapshotWithDiagnostics()
 			diagnostics.iptablesMarkers = iptablesDiagnostics.iptablesMarkers
 			diagnostics.ip6tablesMarkers = iptablesDiagnostics.ip6tablesMarkers
+			diagnostics.iptablesSnapshotFailed = iptablesDiagnostics.iptablesSnapshotFailed
+			diagnostics.ip6tablesSnapshotFailed = iptablesDiagnostics.ip6tablesSnapshotFailed
+		}
+		if diagnostics.iptablesSnapshotFailed || diagnostics.ip6tablesSnapshotFailed {
+			reliable := make([]localRuleState, 0, len(states))
+			for _, state := range states {
+				if !trafficStateIptablesSnapshotUnreliable(state, diagnostics) {
+					reliable = append(reliable, state)
+				}
+			}
+			states = reliable
 		}
 		connCounts, connTotals := conntrackConnectionsSnapshot(conntrackFallbackTrafficStates(states, diagnostics))
 		// Capture the fallback snapshot before queuing a missing connection rule.
 		// The new persistent counter starts after this point, so the migration
 		// cannot report the same connection from both sources.
 		missingCountingLayouts := repairMissingCountingLayouts(states, diagnostics)
+		scheduleIptablesCountingDedupe(diagnostics)
 		for _, state := range states {
 			if missingCountingLayouts[state.Port] {
 				continue
@@ -1299,6 +1404,31 @@ func collectTraffic(cfg Config) time.Duration {
 	}
 	nextInterval = trafficCollectionIntervalForRuleCount(len(states))
 	return trafficCollectBackoffInterval(nextInterval, time.Since(started))
+}
+
+const pendingTrafficReportRetryMaxDelay = time.Minute
+
+// pendingTrafficReportRetryFailures 只在 collectTraffic 里读写（它是单飞的），用原子量只是为了测试方便。
+var pendingTrafficReportRetryFailures atomic.Int32
+
+// pendingTrafficReportRetryDelay 待确认报告重发失败后的等待：base、2*base、4*base……封顶 60 秒，
+// 每次在 [base, 退避值] 里随机取，避免面板恢复时所有 Agent 同时重发。
+func pendingTrafficReportRetryDelay(base time.Duration) time.Duration {
+	if base <= 0 {
+		base = trafficCollectInterval
+	}
+	if base >= pendingTrafficReportRetryMaxDelay {
+		return base
+	}
+	failures := pendingTrafficReportRetryFailures.Add(1)
+	backoff := base
+	for i := int32(0); i < failures && backoff < pendingTrafficReportRetryMaxDelay; i++ {
+		backoff *= 2
+	}
+	if backoff > pendingTrafficReportRetryMaxDelay {
+		backoff = pendingTrafficReportRetryMaxDelay
+	}
+	return fullJitterDelay(backoff, base)
 }
 
 func trafficCollectionIntervalForRuleCount(count int) time.Duration {
@@ -2662,8 +2792,10 @@ func iptablesCounterSnapshotWithDiagnostics() (map[string]trafficCounters, traff
 		ip6tablesMarkers: map[string]bool{},
 		nftMarkers:       map[int]bool{},
 	}
-	parseIptablesCounterSnapshot("iptables", chainCounters, diagnostics.iptablesMarkers)
-	parseIptablesCounterSnapshot("ip6tables", chainCounters, diagnostics.ip6tablesMarkers)
+	// 快照命令失败（锁忙、超时）时结果不可信：记下来让调用方跳过依赖它的规则，
+	// 既不推进基线也不触发会清空计数器的修复。没装 ip6tables 不算失败。
+	diagnostics.iptablesSnapshotFailed = !parseIptablesCounterSnapshot("iptables", chainCounters, diagnostics.iptablesMarkers)
+	diagnostics.ip6tablesSnapshotFailed = !parseIptablesCounterSnapshot("ip6tables", chainCounters, diagnostics.ip6tablesMarkers)
 
 	out := map[string]trafficCounters{}
 	for marker, byChain := range chainCounters {
@@ -2691,14 +2823,88 @@ func iptablesCounterSnapshotWithDiagnostics() (map[string]trafficCounters, traff
 	return out, diagnostics
 }
 
-func parseIptablesCounterSnapshot(binary string, chainCounters map[string]map[string]uint64, markers map[string]bool) {
-	raw, err := commandOutputWithTimeout(5*time.Second, binary, "-t", "mangle", "-nvxL")
+func parseIptablesCounterSnapshot(binary string, chainCounters map[string]map[string]uint64, markers map[string]bool) bool {
+	raw, err := iptablesCommandOutput(binary, "-t", "mangle", "-nvxL")
 	if err != nil {
+		if iptablesBinaryMissing(err) {
+			return true
+		}
+		if shouldLogAgentReport("traffic-iptables-snapshot-failed:"+binary, agentReportLogInterval) {
+			logf("traffic counter snapshot failed binary=%s: %v", binary, err)
+		}
+		return false
+	}
+	parseIptablesCounterText(string(raw), chainCounters, markers)
+	return true
+}
+
+var iptablesCounterMarkerPattern = regexp.MustCompile(`fwx-stat-([0-9]+):(in|out|conn)`)
+
+// iptablesCountingDuplicateSuffix 标记某端口在快照里出现了逐字重复的计数规则。
+const iptablesCountingDuplicateSuffix = ":dup"
+
+const iptablesCountingDedupeInterval = 10 * time.Minute
+
+var (
+	iptablesCountingDedupeRunning atomic.Bool
+	iptablesCountingDedupeMu      sync.Mutex
+	iptablesCountingDedupeLast    = map[string]time.Time{}
+)
+
+// scheduleIptablesCountingDedupe 在后台删掉快照里发现的重复计数规则。计数已经按“同链同规则取一份”
+// 处理，不会再多记；这里只是把规则表收拾干净。每个端口 10 分钟最多尝试一次，有动作在执行时跳过。
+func scheduleIptablesCountingDedupe(diagnostics trafficDiagnosticsSnapshot) {
+	ports := []string{}
+	now := time.Now()
+	iptablesCountingDedupeMu.Lock()
+	for _, markers := range []map[string]bool{diagnostics.iptablesMarkers, diagnostics.ip6tablesMarkers} {
+		for key := range markers {
+			if !strings.HasSuffix(key, iptablesCountingDuplicateSuffix) {
+				continue
+			}
+			port := strings.TrimSuffix(key, iptablesCountingDuplicateSuffix)
+			if last := iptablesCountingDedupeLast[port]; !last.IsZero() && now.Sub(last) < iptablesCountingDedupeInterval {
+				continue
+			}
+			iptablesCountingDedupeLast[port] = now
+			ports = append(ports, port)
+		}
+	}
+	for port, last := range iptablesCountingDedupeLast {
+		if now.Sub(last) > 2*iptablesCountingDedupeInterval {
+			delete(iptablesCountingDedupeLast, port)
+		}
+	}
+	iptablesCountingDedupeMu.Unlock()
+	if len(ports) == 0 || atomic.LoadInt64(&actionPendingCount) > 0 {
 		return
 	}
-	markerPattern := regexp.MustCompile(`fwx-stat-([0-9]+):(in|out|conn)`)
+	if !iptablesCountingDedupeRunning.CompareAndSwap(false, true) {
+		return
+	}
+	sort.Strings(ports)
+	go func() {
+		defer iptablesCountingDedupeRunning.Store(false)
+		commands := make([]string, 0, len(ports)*2)
+		for _, port := range ports {
+			for _, binary := range iptablesAgentBinaries() {
+				commands = append(commands, iptablesAgentDedupeCountingRules(binary, port))
+			}
+		}
+		ok := runIptablesShellBatch(commands)
+		logf("traffic counting duplicate rules removed ports=%s ok=%v", strings.Join(ports, ","), ok)
+	}()
+}
+
+// parseIptablesCounterText 解析 `-t mangle -nvxL` 输出。同一条链里完全相同的计数规则
+// （旧版本 `-C || -A` 在锁忙时重复追加出来的）只取一份，避免流量被数两遍；
+// 协议或匹配条件不同的规则（如 tcp/udp 各一条）照常相加。
+func parseIptablesCounterText(text string, chainCounters map[string]map[string]uint64, markers map[string]bool) {
 	currentChain := ""
-	for _, line := range strings.Split(string(raw), "\n") {
+	type ruleKey struct{ chain, marker, spec string }
+	values := map[ruleKey]uint64{}
+	order := []ruleKey{}
+	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -2710,7 +2916,7 @@ func parseIptablesCounterSnapshot(binary string, chainCounters map[string]map[st
 			}
 			continue
 		}
-		match := markerPattern.FindStringSubmatch(line)
+		match := iptablesCounterMarkerPattern.FindStringSubmatch(line)
 		if len(match) < 3 || currentChain == "" {
 			continue
 		}
@@ -2731,11 +2937,22 @@ func parseIptablesCounterSnapshot(binary string, chainCounters map[string]map[st
 		if err != nil {
 			continue
 		}
-		marker := port + ":" + direction
-		if chainCounters[marker] == nil {
-			chainCounters[marker] = map[string]uint64{}
+		key := ruleKey{chain: currentChain, marker: port + ":" + direction, spec: strings.Join(fields[2:], " ")}
+		previous, seen := values[key]
+		if !seen {
+			order = append(order, key)
+		} else {
+			markers[port+iptablesCountingDuplicateSuffix] = true
 		}
-		chainCounters[marker][currentChain] += counterValue
+		if !seen || counterValue > previous {
+			values[key] = counterValue
+		}
+	}
+	for _, key := range order {
+		if chainCounters[key.marker] == nil {
+			chainCounters[key.marker] = map[string]uint64{}
+		}
+		chainCounters[key.marker][key.chain] += values[key]
 	}
 }
 
@@ -3076,7 +3293,7 @@ func conntrackOriginalTuple(line string) (protocol, sourceIP, targetIP, sourcePo
 
 func conntrackConnections(port string) uint64 {
 	cmd := fmt.Sprintf(`awk -v p="dport=%s" 'index($0,p" ")>0 {c++} END{print c+0}' /proc/net/nf_conntrack 2>/dev/null`, port)
-	out, err := commandOutputWithTimeout(5*time.Second, "sh", "-lc", cmd)
+	out, err := commandOutputWithTimeout(5*time.Second, "sh", "-c", cmd)
 	if err != nil {
 		return 0
 	}
@@ -3105,7 +3322,7 @@ func iptablesLegacyBytes(chain string) uint64 {
 	byChain := map[string]uint64{}
 	for _, binary := range []string{"iptables", "ip6tables"} {
 		for _, parent := range parentChains {
-			raw, err := commandOutputWithTimeout(5*time.Second, binary, "-t", "mangle", "-nvxL", parent)
+			raw, err := iptablesCommandOutput(binary, "-t", "mangle", "-nvxL", parent)
 			if err != nil {
 				continue
 			}
@@ -3157,7 +3374,7 @@ func nftablesRuleBytes(chain string, ruleID int, direction string) uint64 {
 	colonMarker := fmt.Sprintf("fwx-rule-%d:%s", ruleID, direction)
 	dashMarker := fmt.Sprintf("fwx-rule-%d-%s", ruleID, direction)
 	cmd := fmt.Sprintf(`nft -a list chain inet forwardx %s 2>/dev/null | awk -v colon=%s -v dash=%s '(index($0, colon) || index($0, dash)) && /counter packets/ {for(i=1;i<=NF;i++) if($i=="bytes") {s+=$(i+1)}} END{print s+0}'`, shellQuote(chain), shellQuote(colonMarker), shellQuote(dashMarker))
-	out, err := commandOutputWithTimeout(5*time.Second, "sh", "-lc", cmd)
+	out, err := commandOutputWithTimeout(5*time.Second, "sh", "-c", cmd)
 	if err != nil {
 		return 0
 	}
@@ -3167,7 +3384,7 @@ func nftablesRuleBytes(chain string, ruleID int, direction string) uint64 {
 
 func nftablesChainBytes(chain string) uint64 {
 	cmd := fmt.Sprintf(`nft -a list chain inet forwardx %s 2>/dev/null | awk '/counter packets/ {for(i=1;i<=NF;i++) if($i=="bytes") {s+=$(i+1)}} END{print s+0}'`, shellQuote(chain))
-	out, err := commandOutputWithTimeout(5*time.Second, "sh", "-lc", cmd)
+	out, err := commandOutputWithTimeout(5*time.Second, "sh", "-c", cmd)
 	if err != nil {
 		return 0
 	}
@@ -3237,7 +3454,20 @@ func writePrev(port string, ruleID int, in, out, conns uint64) {
 	})
 }
 
+// writePrevState 写一个端口的流量基线，不单独 fsync。
+//
+// 崩溃语义：
+//   - 带增量的基线只经 commitTrafficBaselines 写入，它在删除待确认报告之前统一落盘一次；
+//     落盘前崩溃时待确认报告还在，重启后按同一个 reportId 重发（面板去重）并重写基线，不丢不重。
+//   - 无增量时的基线刷新（包括计数器变小后的重置）不单独落盘：掉电后退回旧基线，
+//     下一轮最多因计数器“变小”被当作 0 处理，只会少记不会多记；
+//     文件写到一半（空文件/全零）会被 readPrevState 当成缺失，走初始基线，同样不会多记。
 func writePrevState(port string, next trafficPrevState) error {
+	_, err := writePrevStateFile(port, next)
+	return err
+}
+
+func writePrevStateFile(port string, next trafficPrevState) (string, error) {
 	next.connSource = normalizeTrafficConnectionSource(next.connSource)
 	trafficPrevMu.Lock()
 	previous, exists := trafficPrevCache[port]
@@ -3246,28 +3476,42 @@ func writePrevState(port string, next trafficPrevState) error {
 		if isPersistentProcessConnectionSource(next.connSource) {
 			clearFreshProcessConnectionCounter(port, next.ruleID)
 		}
-		return nil
+		return "", nil
 	}
 	path := trafficStateDir + "/traffic_" + port + ".prev"
 	data := []byte(fmt.Sprintf("%d\n%d\n%d\n%d\n%s\n", next.ruleID, next.in, next.out, next.conns, next.connSource))
-	if err := writeTrafficStateFile(path, data, 0644); err != nil {
-		return err
+	if err := writeTrafficStateFileDeferred(path, data, 0644); err != nil {
+		return "", err
 	}
 	cacheTrafficPrev(port, next)
 	if isPersistentProcessConnectionSource(next.connSource) {
 		clearFreshProcessConnectionCounter(port, next.ruleID)
 	}
-	return nil
+	return path, nil
 }
 
+// commitTrafficBaselines 在面板确认收到报告后推进基线。所有基线先各自原子替换，
+// 再统一落盘一次；落盘成功之前调用方不得删除待确认报告（见 completePendingTrafficReport）。
 func commitTrafficBaselines(reportSucceeded bool, updates []trafficBaselineUpdate) error {
 	if !reportSucceeded {
 		return nil
 	}
+	written := make([]string, 0, len(updates))
 	for _, update := range updates {
-		if err := writePrevState(update.port, update.state); err != nil {
+		path, err := writePrevStateFile(update.port, update.state)
+		if err != nil {
 			return fmt.Errorf("persist traffic baseline port %s: %w", update.port, err)
 		}
+		if path != "" {
+			written = append(written, path)
+		}
+	}
+	if err := syncTrafficBaselineFiles(written); err != nil {
+		// 落盘失败时丢掉内存缓存，保证下一次提交会真的重写并重新落盘。
+		for _, update := range updates {
+			invalidateTrafficPrev(update.port)
+		}
+		return fmt.Errorf("sync traffic baselines: %w", err)
 	}
 	return nil
 }
@@ -3284,9 +3528,15 @@ func invalidateTrafficPrev(port string) {
 	trafficPrevMu.Unlock()
 }
 
+// delta 计算两次快照之间的增量。计数器变小时一律按 0 处理，并由调用方把基线重置到当前值。
+//
+// 以前变小时返回 cur（假设计数器从 0 重新开始），但 v4 与 v6 的计数是相加进同一个键的：
+// 只有 ip6tables 被清空时 cur 仍是 v4 的全部历史累计，会被当成新流量整段重报。
+// 分别保存 (binary, chain) 基线能更精确，但要改基线文件格式并做迁移；这里选更稳妥的做法：
+// 宁可少记计数器重置后到下一次采样之间的那一点流量，也不重复计费。
 func delta(cur, prev uint64) uint64 {
 	if cur >= prev {
 		return cur - prev
 	}
-	return cur
+	return 0
 }

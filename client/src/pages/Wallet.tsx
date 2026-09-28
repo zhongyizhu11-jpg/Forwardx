@@ -14,6 +14,7 @@ import { LedgerRow, ledgerMeta } from "@/components/LedgerRow";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { usePaymentOrderDialog } from "@/components/PaymentOrderDialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -84,13 +85,22 @@ export default function Wallet() {
   const [paymentType, setPaymentType] = useState<PaymentType>("stripe");
   const [redeemCode, setRedeemCode] = useState("");
 
+  // 扫码支付（微信 Native / 支付宝当面付）要渲染二维码；跳转支付被拦截时要有能点的链接
+  const paymentDialog = usePaymentOrderDialog({
+    onPaid: () => {
+      utils.payment.myOrders.invalidate();
+      utils.billing.me.invalidate();
+      utils.billing.ledger.invalidate();
+    },
+  });
+
   const createOrder = trpc.payment.createOrder.useMutation({
     onSuccess: (order) => {
       toast.success("充值订单已创建");
       setRechargeOpen(false);
       utils.payment.myOrders.invalidate();
       utils.billing.ledger.invalidate();
-      if (order?.payUrl) window.open(order.payUrl, "_blank", "noopener,noreferrer");
+      paymentDialog.launch(order);
     },
     onError: (error) => toast.error(error.message || "创建订单失败"),
   });
@@ -428,6 +438,8 @@ export default function Wallet() {
             )}
           </CardContent>
         </Card>
+
+        {paymentDialog.dialog}
 
         <Dialog open={rechargeOpen} onOpenChange={setRechargeOpen}>
           <DialogContent>

@@ -39,6 +39,7 @@ import { runAgentRuntimeRecovery } from "./agentRuntimeRecovery";
 import { observePresenceCapableHostActivity } from "./agentFastLiveness";
 import { pruneMapEntries, setBoundedMapValue } from "./boundedCache";
 import { AGENT_INSTALL_SCRIPT_SIGNATURE_HEADER, installScriptSignatureForRequest } from "./agentInstallScriptSignature";
+import { DATABASE_MAINTENANCE_MESSAGE, isDatabaseMaintenanceActive } from "./databaseMaintenance";
 
 const agentRouter = Router();
 const agentApiRouter = Router();
@@ -253,6 +254,16 @@ agentRouter.post("/api/sync", agentEncryptionMiddleware, (req: Request, res: Res
 });
 
 agentApiRouter.use(rejectAgentWhenPanelMigrated);
+// 切换数据库期间，Agent 的注册/心跳/上报一律 503（见 server/databaseMaintenance.ts）：
+// 这些都是写库的，写进正在被复制的旧库只会丢失或两边对不上。Agent 按失败重试即可。
+agentApiRouter.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method === "POST" && isDatabaseMaintenanceActive()) {
+    res.setHeader("Retry-After", "30");
+    res.status(503).json({ error: DATABASE_MAINTENANCE_MESSAGE });
+    return;
+  }
+  next();
+});
 
 agentRouter.get("/api/stream", async (req: Request, res: Response) => {
   try {

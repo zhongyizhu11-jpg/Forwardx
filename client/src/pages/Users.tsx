@@ -21,7 +21,7 @@ import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AutoAnimateContainer from "@/components/AutoAnimateContainer";
 import DashboardLayout from "@/components/DashboardLayout";
 import { SummaryStrip } from "@/components/entity/SummaryStrip";
-import DatePickerInput, { formatDateInputValue, parseDateInputValue } from "@/components/DatePickerInput";
+import DatePickerInput from "@/components/DatePickerInput";
 import { PersistentPagination, usePersistentPageRequest, useServerPagination } from "@/components/PersistentPagination";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -99,7 +99,7 @@ import {
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
-import { BILLING_DATE_TIME_FORMAT_OPTIONS, billingCalendarParts } from "@shared/billingTime";
+import { BILLING_DATE_TIME_FORMAT_OPTIONS, BILLING_TIME_ZONE, MONTHLY_RESET_MAX_DAY, billingCalendarParts, formatBillingDateInput, parseBillingDateInput } from "@shared/billingTime";
 import { FORWARD_TYPES } from "@shared/forwardTypes";
 
 function parseTrafficInputGB(value: string): number {
@@ -146,7 +146,7 @@ function billingDateTimeText(value?: string | Date | null) {
 }
 
 function currentBillingResetDay() {
-  return Math.min(billingCalendarParts(new Date()).day, 28);
+  return Math.min(billingCalendarParts(new Date()).day, MONTHLY_RESET_MAX_DAY);
 }
 
 function isSubscriptionActive(sub: any) {
@@ -468,6 +468,11 @@ function UsersContent() {
     onSuccess: () => {
       utils.users.options.invalidate();
       utils.users.listPage.invalidate();
+      // 删用户会连带删掉他名下的全部转发规则，规则列表和统计要跟着刷新。
+      utils.rules.list.invalidate();
+      utils.rules.listPage.invalidate();
+      utils.rules.listSummary.invalidate();
+      utils.rules.mapItems.invalidate();
       toast.success("用户已删除");
       setShowDeleteUser(false);
       setDeleteUserId(null);
@@ -504,7 +509,7 @@ function UsersContent() {
         manualTrafficLimit: variables.trafficLimit,
         manualGostRateLimitIn: variables.gostRateLimitIn,
         manualGostRateLimitOut: variables.gostRateLimitOut,
-        manualExpiresAt: variables.expiresAt ? parseDateInputValue(variables.expiresAt) : null,
+        manualExpiresAt: variables.expiresAt ? parseBillingDateInput(variables.expiresAt) : null,
         trafficAutoReset: variables.trafficAutoReset,
         trafficResetDay: variables.trafficResetDay,
         manualMaxRules: variables.maxRules,
@@ -882,7 +887,7 @@ function UsersContent() {
     } else {
       setTrafficLimitInput("0");
     }
-    setExpiresAtInput(formatDateInputValue(u.manualExpiresAt));
+    setExpiresAtInput(formatBillingDateInput(u.manualExpiresAt));
     setTrafficAutoReset(!!u.trafficAutoReset);
     setTrafficResetDay(u.trafficResetDay || 1);
     const gostIn = Number(u.manualGostRateLimitIn) || 0;
@@ -1073,7 +1078,7 @@ function UsersContent() {
     }
     setExtendSubscriptionId(Number(sub.id));
     setExtendSubscriptionLabel(`${userLabel({ username: sub.username, name: sub.name, id: sub.userId })} · ${sub.planName || `套餐 #${sub.planId}`}`);
-    setExtendExpiresAtInput(formatDateInputValue(sub.expiresAt));
+    setExtendExpiresAtInput(formatBillingDateInput(sub.expiresAt));
     setShowExtendDialog(true);
   };
 
@@ -1103,10 +1108,10 @@ function UsersContent() {
   const handleExtendSubscription = () => {
     if (!extendSubscriptionId) return;
     const text = extendExpiresAtInput.trim();
-    if (text && !parseDateInputValue(text)) return toast.error("请选择有效到期日期");
+    if (text && !parseBillingDateInput(text)) return toast.error("请选择有效到期日期");
     extendSubscriptionMutation.mutate({
       id: extendSubscriptionId,
-      expiresAt: text ? parseDateInputValue(text)?.toISOString() || null : null,
+      expiresAt: text ? parseBillingDateInput(text)?.toISOString() || null : null,
     });
   };
 
@@ -1212,7 +1217,7 @@ function UsersContent() {
               {isExpired && <Badge variant="destructive" className="h-5 shrink-0 px-1.5 text-[10px]">已到期</Badge>}
             </div>
             <p className={`mt-1 truncate font-medium ${isExpired ? "text-destructive" : ""}`}>
-              {u.expiresAt ? new Date(u.expiresAt).toLocaleDateString() : "不限"}
+              {u.expiresAt ? new Date(u.expiresAt).toLocaleDateString(undefined, { timeZone: BILLING_TIME_ZONE }) : "不限"}
             </p>
           </div>
           <div className="min-w-0 rounded-md bg-muted/25 p-2">
@@ -1586,7 +1591,7 @@ function UsersContent() {
                                 <div className="flex items-center gap-1.5 whitespace-nowrap">
                                   <CalendarClock className="h-3 w-3 text-muted-foreground" />
                                   <span className={`text-xs ${isExpired ? "text-destructive" : "text-muted-foreground"}`}>
-                                    {new Date(u.expiresAt).toLocaleDateString()}
+                                    {new Date(u.expiresAt).toLocaleDateString(undefined, { timeZone: BILLING_TIME_ZONE })}
                                   </span>
                                 </div>
                                 {isExpired && (
@@ -1973,7 +1978,7 @@ function UsersContent() {
         <DialogContent className="sm:max-w-md">
           <DialogTitle>删除用户</DialogTitle>
           <DialogDescription>
-            确认删除用户 "{deleteUserName}"？该操作会移除该用户的权限配置，且不可撤销。
+            确认删除用户 "{deleteUserName}"？该操作会同时删除该用户名下的全部转发规则（先结算流量并停止转发）和权限配置，且不可撤销。该用户名下还有隧道、转发组或主机时无法删除，请先转移给其他用户或删除。
           </DialogDescription>
           <DialogFooter>
             <Button
@@ -2473,7 +2478,7 @@ function UsersContent() {
                     checked={trafficAutoReset}
                     onCheckedChange={(checked) => {
                       setTrafficAutoReset(checked);
-                      // 启用时默认以当前日期作为重置日（最大 28）
+                      // 启用时默认以当前日期作为重置日；29–31 日在小月按月末重置
                       if (checked) {
                         const today = currentBillingResetDay();
                         setTrafficResetDay(today);
@@ -2492,7 +2497,7 @@ function UsersContent() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                        {Array.from({ length: MONTHLY_RESET_MAX_DAY }, (_, i) => i + 1).map((d) => (
                           <SelectItem key={d} value={String(d)}>
                             每月 {d} 日
                             {d === currentBillingResetDay() ? "（今日）" : ""}
@@ -2501,7 +2506,7 @@ function UsersContent() {
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      默认以启用当天作为重置日，可修改为每月 1–28 号中任意一天
+                      默认以启用当天作为重置日，可修改为每月 1–{MONTHLY_RESET_MAX_DAY} 号中任意一天；小月在月末重置（如 31 日在 2 月按 28/29 日）
                     </p>
                   </FormField>
                 )}

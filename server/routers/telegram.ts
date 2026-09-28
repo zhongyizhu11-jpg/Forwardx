@@ -9,7 +9,7 @@ import { ENV } from "../env";
 import { TRPCError } from "@trpc/server";
 import * as db from "../db";
 import { sendTelegramMessage } from "../telegramBot";
-import { createMobileTelegramLoginChallenge, takeMobileTelegramLoginChallenge } from "../telegramMobileLogin";
+import { consumeMobileTelegramLoginIssue, createMobileTelegramLoginChallenge, takeMobileTelegramLoginChallenge } from "../telegramMobileLogin";
 import { createTelegramMobilePollToken, verifyTelegramMobilePollToken } from "../telegramMobilePollToken";
 import { consumeTelegramWidgetLoginOnce } from "../telegramWidgetSecurity";
 import { consumeTelegramWebAppLoginChallenge } from "../telegramWebAppLogin";
@@ -328,7 +328,17 @@ export const telegramRouter = router({
     return { success: true };
   }),
 
-  startMobileLogin: publicProcedure.mutation(async () => {
+  startMobileLogin: publicProcedure.mutation(async ({ ctx }) => {
+    // 公开接口：先过来源限流再干活。已经因为试码失败被封的来源也不给发新的挑战。
+    const ip = String(ctx.req.ip || ctx.req.socket.remoteAddress || "unknown");
+    const blocked = authRateLimitState(ip, TELEGRAM_LOGIN_PREVIEW_SCOPE);
+    const retryAfterSeconds = blocked.limited ? blocked.retryAfterSeconds : consumeMobileTelegramLoginIssue(ip);
+    if (retryAfterSeconds > 0) {
+      throw new TRPCError({
+        code: "TOO_MANY_REQUESTS",
+        message: `TELEGRAM_LOGIN_RATE_LIMITED:${Math.ceil(retryAfterSeconds / 60)}`,
+      });
+    }
     const settings = await getTelegramSettings();
     if (!settings.enabled || !settings.configured || !settings.botUsername) {
       throw new Error("Telegram 登录尚未启用");

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
+import { usePaymentOrderDialog } from "@/components/PaymentOrderDialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import DataSectionLoading from "@/components/DataSectionLoading";
@@ -102,7 +103,7 @@ export default function Subscriptions() {
   const [selected, setSelected] = useState<{ sub: any; addon: any } | null>(null);
   const [renewingSub, setRenewingSub] = useState<any | null>(null);
   const [paymentType, setPaymentType] = useState<"alipay" | "wxpay" | "stripe" | "usdt">("stripe");
-  const [payMode, setPayMode] = useState<"gateway" | "balance">("gateway");
+  const [selectedPayMode, setPayMode] = useState<"gateway" | "balance">("gateway");
   const [discountCode, setDiscountCode] = useState("");
   const [discountPreview, setDiscountPreview] = useState<any | null>(null);
   const [showCancelled, setShowCancelled] = useState(false);
@@ -168,6 +169,17 @@ export default function Subscriptions() {
     setDiscountPreview(null);
   };
 
+  // 扫码支付（微信 Native / 支付宝当面付）要渲染二维码；跳转支付被拦截时要有能点的链接
+  const paymentDialog = usePaymentOrderDialog({
+    onPaid: () => {
+      utils.payment.myOrders.invalidate();
+      utils.plans.mySubscriptions.invalidate();
+      utils.billing.me.invalidate();
+      utils.billing.ledger.invalidate();
+      utils.dashboard.userTraffic.invalidate();
+    },
+  });
+
   const createOrder = trpc.payment.createOrder.useMutation({
     onSuccess: (order) => {
       toast.success("续费订单已创建");
@@ -176,7 +188,7 @@ export default function Subscriptions() {
       utils.plans.mySubscriptions.invalidate();
       utils.billing.me.invalidate();
       utils.billing.ledger.invalidate();
-      if (order?.payUrl) window.open(order.payUrl, "_blank", "noopener,noreferrer");
+      paymentDialog.launch(order);
     },
     onError: (error) => toast.error(error.message || "创建续费订单失败"),
   });
@@ -270,6 +282,9 @@ export default function Subscriptions() {
   const renewingPrice = renewPriceCents;
   const renewFinalAmountCents = Number(discountPreview?.finalAmountCents ?? renewingPrice);
   const renewBalanceEnough = balanceReady && balance >= renewFinalAmountCents;
+  // 0 元续费（免费套餐或折扣抵满）走网关会被拒（最低 0.01），只能走余额通道：不扣钱，直接续期。
+  const isFreeRenew = !!renewingSub && renewFinalAmountCents <= 0;
+  const payMode: "gateway" | "balance" = isFreeRenew ? "balance" : selectedPayMode;
 
   return (
     <DashboardLayout>
@@ -610,6 +625,12 @@ export default function Subscriptions() {
               )}
 
               <div className="grid gap-2">
+                {isFreeRenew && (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    本单无需支付，确认后直接续期，不扣余额。
+                  </div>
+                )}
+                {!isFreeRenew && (
                 <button
                   type="button"
                   onClick={() => setPayMode("balance")}
@@ -632,7 +653,8 @@ export default function Subscriptions() {
                   </span>
                   {payMode === "balance" && <CheckCircle2 className="h-4 w-4" />}
                 </button>
-                {paymentMethods.map((method: any) => (
+                )}
+                {!isFreeRenew && paymentMethods.map((method: any) => (
                   <button
                     key={method.value}
                     type="button"
@@ -647,7 +669,7 @@ export default function Subscriptions() {
                     {payMode === "gateway" && paymentType === method.value && <CheckCircle2 className="h-4 w-4" />}
                   </button>
                 ))}
-                {paymentMethods.length === 0 && (
+                {!isFreeRenew && paymentMethods.length === 0 && (
                   <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                     暂无在线支付方式。
                   </div>
@@ -663,11 +685,11 @@ export default function Subscriptions() {
                   createOrder.isPending ||
                   renewWithBalance.isPending ||
                   (payMode === "gateway" && paymentMethods.length === 0) ||
-                  (payMode === "balance" && (walletLoading || !renewBalanceEnough))
+                  (payMode === "balance" && !isFreeRenew && (walletLoading || !renewBalanceEnough))
                 }
               >
                 {(createOrder.isPending || renewWithBalance.isPending) ? <RefreshCw className="forwardx-icon-spin mr-2 h-4 w-4" /> : <ShoppingBag className="mr-2 h-4 w-4" />}
-                {payMode === "balance" ? (walletLoading ? "余额加载中" : renewBalanceEnough ? "余额续费" : "余额不足") : "去支付"}
+                {isFreeRenew ? "免费续期" : payMode === "balance" ? (walletLoading ? "余额加载中" : renewBalanceEnough ? "余额续费" : "余额不足") : "去支付"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -717,6 +739,8 @@ export default function Subscriptions() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {paymentDialog.dialog}
       </div>
     </DashboardLayout>
   );

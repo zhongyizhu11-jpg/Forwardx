@@ -7,6 +7,8 @@ import {
 import { getForwardProtocolSettings, isTunnelProtocolEnabled } from "./forwardProtocolSettings";
 import { getForwardGroups } from "./repositories/forwardGroupRepository";
 import { getHostStatusRows } from "./repositories/hostRepository";
+import { queryRaw } from "./dbRuntime";
+import { quoteIdentifier } from "./dbCompat";
 import { getLatestTunnelLatencies } from "./repositories/metricsRepository";
 import {
   getTunnelExitNodesByTunnelIds,
@@ -52,6 +54,19 @@ export function publicLinkAvailabilitySummary(
   };
 }
 
+/** 全站有没有任何一个转发组挂着隧道成员（和整表跑 buildForwardGroupAvailabilitySummaryIndex 时的判据一致）。 */
+export async function anyForwardGroupHasTunnelMember() {
+  const q = quoteIdentifier;
+  const rows = await queryRaw<{ present: number }>(
+    `SELECT 1 AS ${q("present")} FROM ${q("forward_group_members")} m
+      INNER JOIN ${q("forward_groups")} g ON g.${q("id")} = m.${q("groupId")}
+      WHERE m.${q("memberType")} = ? AND m.${q("tunnelId")} > 0
+      LIMIT 1`,
+    ["tunnel"],
+  );
+  return rows.length > 0;
+}
+
 export function buildLinkAvailabilitySummaryIndex(input: {
   hosts?: any[];
   tunnels?: any[];
@@ -69,13 +84,25 @@ export function buildLinkAvailabilitySummaryIndex(input: {
 export async function buildForwardGroupAvailabilitySummaryIndex(
   groups: any[],
   supportingGroups: any[] = [],
+  options: { loadHostStatus?: boolean } = {},
 ): Promise<LinkAvailabilitySummaryIndex> {
   let allGroups = Array.from(new Map([...groups, ...supportingGroups]
     .map((group) => [Number(group.id), group])).values());
   const tunnelIds = positiveIds(allGroups.flatMap((group) => (group.members || [])
     .filter((member: any) => member?.memberType === "tunnel")
     .map((member: any) => member?.tunnelId)));
-  if (tunnelIds.length === 0) return buildLinkAvailabilitySummaryIndex({ groups: allGroups });
+  if (tunnelIds.length === 0) {
+    if (!options.loadHostStatus) return buildLinkAvailabilitySummaryIndex({ groups: allGroups });
+    /*
+      调用方只传了一部分组、但希望结果和「整表传进来」时一样（见 forwardGroups.list）：
+      整表里只要有隧道成员，下面那条路就会按主机状态行（含快速失联判定）取主机；
+      这一部分组恰好没有隧道成员时也得走同样的主机来源，否则同一台机器的在线判定会不一样。
+    */
+    const hosts = await getHostStatusRows({
+      hostIds: positiveIds(allGroups.flatMap((group) => (group.members || []).map((member: any) => member?.host?.id || member?.hostId))),
+    });
+    return buildLinkAvailabilitySummaryIndex({ hosts, groups: allGroups });
+  }
 
   const tunnels = await getTunnelsByIds(tunnelIds) as any[];
   const [hops, exits, latestLatencyByTunnel, protocolSettings] = await Promise.all([

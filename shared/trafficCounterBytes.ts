@@ -15,9 +15,15 @@ export function normalizeTrafficCounterBytes(value: unknown): number {
   return Math.min(Math.floor(num), Number.MAX_SAFE_INTEGER);
 }
 
-/** 连接数同理：负数和小数都不该出现在计数里。 */
+/**
+ * 连接数同理：负数和小数都不该出现在计数里。
+ *
+ * 上限是 INT 而不是安全整数：单次上报的连接数原样写进 traffic_stats / traffic_stat_buckets 的
+ * INT 列，超过 2147483647 在 MySQL 严格模式和 PG 上都直接报 out of range，整批上报回滚。
+ * （累加的两张计数表已经是 BIGINT，不受这个上限约束。）
+ */
 export function normalizeTrafficCounterConnections(value: unknown): number {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return 0;
-  return Math.min(Math.floor(num), Number.MAX_SAFE_INTEGER);
+  return Math.min(Math.floor(num), 2147483647);
 }

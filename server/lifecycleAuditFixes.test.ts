@@ -289,3 +289,159 @@ test("monthly traffic reset days past the end of a short month reset on its last
     assert.deepEqual(await due("2026-02-28T04:00:00.000Z"), [12, 13, 14, 15]);
   `);
 });
+
+test("restoring a tunnel on an entry group checks the rule port on every enabled group host", () => {
+  runScenario("entry-group-restore", String.raw`
+    const groups = await import(moduleUrl("server/repositories/forwardGroupRepository.ts"));
+    const hostCols = ["id", "name", "ip", "hostType", "userId", "isOnline"];
+    await insert("hosts", hostCols, [1, "entry-a", "198.51.100.1", "slave", 1, 1]);
+    await insert("hosts", hostCols, [2, "entry-b", "198.51.100.2", "slave", 1, 1]);
+    await insert("hosts", hostCols, [3, "exit", "198.51.100.3", "slave", 1, 1]);
+    await insert("forward_groups", ["id", "name", "groupType", "groupMode", "domain", "targetIp", "userId", "isEnabled"],
+      [20, "entry", "host", "entry", "entry.example.test", "0.0.0.0", 1, 0]);
+    await insert("forward_group_members", ["id", "groupId", "memberType", "hostId", "priority", "isEnabled"], [201, 20, "host", 1, 0, 1]);
+    await insert("forward_group_members", ["id", "groupId", "memberType", "hostId", "priority", "isEnabled"], [202, 20, "host", 2, 1, 1]);
+    await insert("tunnels", ["id", "name", "entryGroupId", "entryHostId", "exitHostId", "mode", "listenPort", "userId", "isEnabled", "disabledByGroup"],
+      [10, "grouped", 20, 1, 3, "tls", 25000, 1, 0, 1]);
+    const stopped = [...ruleCols, "disabledByTunnel"];
+    await insert("forward_rules", stopped, [30, 1, "clash", "gost", "tcp", 10, 25000, 15000, "203.0.113.1", 443, 1, 0, 0, 0, 0, 1]);
+    await insert("forward_rules", stopped, [31, 1, "free", "gost", "tcp", 10, 25001, 15001, "203.0.113.2", 443, 1, 0, 0, 0, 0, 1]);
+    // 入口组停用期间，组里的 entry-b 上有人建了同端口的直连规则（那时组没启用，不算冲突）。
+    await insert("forward_rules", ruleCols, [40, 2, "direct-on-b", "iptables", "tcp", null, null, 15000, "203.0.113.9", 80, 1, 1, 1, 0, 0]);
+
+    await groups.setForwardGroupEnabled(20, true);
+    assert.equal(Number((await one('SELECT "isEnabled" FROM "tunnels" WHERE "id" = 10')).isEnabled), 1);
+    const clash = await one('SELECT "isEnabled", "protocolBlockReason" FROM "forward_rules" WHERE "id" = 30');
+    assert.equal(Number(clash.isEnabled), 0, "a rule whose port is taken on an entry-group host must not be restored");
+    assert.match(String(clash.protocolBlockReason || ""), /端口 15000/);
+    const free = await one('SELECT "isEnabled", "protocolBlockReason" FROM "forward_rules" WHERE "id" = 31');
+    assert.equal(Number(free.isEnabled), 1);
+    assert.equal(free.protocolBlockReason, null);
+    assert.equal(Number((await one('SELECT "isEnabled" FROM "forward_rules" WHERE "id" = 40')).isEnabled), 1, "the direct rule keeps running");
+  `);
+});
+
+test("rules on an entry-group tunnel check and pick ports on every group host", () => {
+  runScenario("entry-group-rule-ports", String.raw`
+    const { rulesRouter } = await import(moduleUrl("server/routers/rules.ts"));
+    const crud = await import(moduleUrl("server/routers/rules.crud.ts"));
+    const caller = rulesRouter.createCaller(context(admin));
+    const hostCols = ["id", "name", "ip", "hostType", "userId", "isOnline", "portRangeStart", "portRangeEnd"];
+    await insert("hosts", hostCols, [1, "entry-a", "198.51.100.1", "slave", 1, 1, 16000, 16001]);
+    await insert("hosts", hostCols, [2, "entry-b", "198.51.100.2", "slave", 1, 1, 16000, 16001]);
+    await insert("hosts", hostCols, [3, "exit", "198.51.100.3", "slave", 1, 1, 26000, 26099]);
+    await insert("forward_groups", ["id", "name", "groupType", "groupMode", "domain", "targetIp", "userId", "isEnabled"],
+      [20, "entry", "host", "entry", "entry.example.test", "0.0.0.0", 1, 1]);
+    await insert("forward_group_members", ["id", "groupId", "memberType", "hostId", "priority", "isEnabled"], [201, 20, "host", 1, 0, 1]);
+    await insert("forward_group_members", ["id", "groupId", "memberType", "hostId", "priority", "isEnabled"], [202, 20, "host", 2, 1, 1]);
+    await insert("tunnels", ["id", "name", "entryGroupId", "entryHostId", "exitHostId", "mode", "listenPort", "userId", "isEnabled"],
+      [10, "grouped", 20, 1, 3, "tls", 26000, 1, 1]);
+    await insert("forward_rules", ruleCols, [40, 2, "direct-on-b", "iptables", "tcp", null, null, 16000, "203.0.113.9", 80, 1, 1, 1, 0, 0]);
+
+    const checked = await caller.checkPort({ hostId: 1, tunnelId: 10, sourcePort: 16000, protocol: "tcp" });
+    assert.equal(checked.used, true, "port check must include entry-group hosts");
+    assert.equal((await caller.checkPort({ hostId: 1, sourcePort: 16000, protocol: "tcp" })).used, false, "a plain rule on host 1 only checks host 1");
+    assert.equal((await caller.randomPort({ hostId: 1, tunnelId: 10, protocol: "tcp" })).port, 16001);
+
+    const base = { hostId: 1, tunnelId: 10, forwardType: "gost", protocol: "tcp", targetIp: "203.0.113.1", targetPort: 443 };
+    await assert.rejects(() => crud.createDirectForwardRuleForActor(admin, { ...base, name: "fixed", sourcePort: 16000 }), /16000/);
+    await crud.createDirectForwardRuleForActor(admin, { ...base, name: "random", sourcePort: 0 });
+    const row = await one('SELECT "sourcePort" FROM "forward_rules" WHERE "name" = ?', ["random"]);
+    assert.equal(Number(row.sourcePort), 16001, "random port must be free on every entry-group host");
+
+    // 停着的隧道规则：重新打开 / 改到同一个端口都要看组里的主机。
+    await insert("forward_rules", ruleCols, [50, 1, "stopped", "gost", "tcp", 10, 26050, 16000, "203.0.113.5", 443, 1, 0, 0, 0, 0]);
+    await assert.rejects(() => crud.toggleForwardRuleForActor(admin, 50, true), /16000/);
+    assert.equal(Number((await one('SELECT "isEnabled" FROM "forward_rules" WHERE "id" = 50')).isEnabled), 0);
+    await runtime.executeRaw('UPDATE "forward_rules" SET "sourcePort" = 16002 WHERE "id" = 50');
+    await assert.rejects(() => caller.update({ id: 50, sourcePort: 16000, isEnabled: true }), /16000/);
+    assert.equal(Number((await one('SELECT "sourcePort" FROM "forward_rules" WHERE "id" = 50')).sourcePort), 16002);
+  `);
+});
+
+test("system stop/restore of a route-group parent refreshes its relay hosts", () => {
+  runScenario("relay-refresh", String.raw`
+    const tunnelRepo = await import(moduleUrl("server/repositories/tunnelRepository.ts"));
+    const recovery = await import(moduleUrl("server/ruleBlockRecovery.ts"));
+    const gate = await import(moduleUrl("server/agentHeartbeatGate.ts"));
+    // pushAgentRefresh 会让主机的稳定心跳计划失效：记下被失效的主机。
+    const invalidated = [];
+    const original = gate.agentStableHeartbeatPlanCache.invalidate.bind(gate.agentStableHeartbeatPlanCache);
+    gate.agentStableHeartbeatPlanCache.invalidate = (hostId) => { invalidated.push(Number(hostId)); return original(hostId); };
+    const hostCols = ["id", "name", "ip", "hostType", "userId", "isOnline"];
+    for (const id of [1, 2, 5]) await insert("hosts", hostCols, [id, "h" + id, "198.51.100." + id, "slave", 1, 1]);
+    await insert("tunnels", ["id", "name", "entryHostId", "exitHostId", "mode", "listenPort", "userId", "isEnabled"], [10, "t", 1, 2, "tls", 25000, 1, 1]);
+    await insert("forward_rules", ruleCols, [40, 1, "parent", "gost", "tcp", 10, 25000, 15000, "203.0.113.1", 443, 1, 1, 1, 0, 0]);
+    await insert("forward_rules", [...ruleCols, "routeParentRuleId"], [41, 5, "relay", "gost", "tcp", null, null, 17000, "203.0.113.2", 443, 1, 1, 1, 0, 0, 40]);
+
+    await tunnelRepo.disableForwardRulesByTunnel(10, "test");
+    assert.ok(invalidated.includes(5), "relay host must be refreshed when the parent is stopped with its tunnel: " + JSON.stringify(invalidated));
+    invalidated.length = 0;
+    await tunnelRepo.restoreForwardRulesByTunnel(10);
+    assert.equal(Number((await one('SELECT "isEnabled" FROM "forward_rules" WHERE "id" = 40')).isEnabled), 1);
+    assert.ok(invalidated.includes(5), "relay host must be refreshed when the parent is restored");
+    invalidated.length = 0;
+    await recovery.refreshBlockedRuleRuntime([{ id: 40, hostId: 1, tunnelId: 10 }], "test-block");
+    assert.ok(invalidated.includes(5), "relay host must be refreshed when the parent is blocked or unblocked");
+  `);
+});
+
+test("a DDNS provider error while enabling a forward group does not roll the enable back", () => {
+  runScenario("enable-ddns", String.raw`
+    const groups = await import(moduleUrl("server/repositories/forwardGroupRepository.ts"));
+    const settings = await import(moduleUrl("server/repositories/settingsRepository.ts"));
+    // Webhook 地址为空：DDNS 更新直接报错，正好模拟 DNS 服务商出错。
+    await settings.setSettings({ ddnsEnabled: "true", ddnsProvider: "webhook", ddnsWebhookUrl: "" });
+    const now = Math.floor(Date.now() / 1000);
+    const hostCols = ["id", "name", "ip", "ipv4", "hostType", "userId", "isOnline", "lastHeartbeat"];
+    await insert("hosts", hostCols, [1, "h1", "198.51.100.1", "198.51.100.1", "slave", 1, 1, now]);
+    const groupCols = ["id", "name", "groupType", "groupMode", "forwardType", "domain", "recordType", "targetIp", "userId", "isEnabled"];
+    await insert("forward_groups", groupCols, [10, "failover", "host", "failover", "realm", "fo.example.test", "A", "0.0.0.0", 1, 0]);
+    await insert("forward_group_members", ["id", "groupId", "memberType", "hostId", "priority", "isEnabled"], [101, 10, "host", 1, 0, 1]);
+    await insert("forward_rules", [...ruleCols, "forwardGroupId", "disabledByGroup"], [100, 1, "template", "realm", "tcp", null, null, 16000, "203.0.113.10", 80, 1, 0, 0, 0, 1, 10, 1]);
+
+    await groups.setForwardGroupEnabled(10, true);
+    assert.equal(Number((await one('SELECT "isEnabled" FROM "forward_groups" WHERE "id" = 10')).isEnabled), 1, "the group stays enabled");
+    assert.equal(Number((await one('SELECT "isEnabled" FROM "forward_rules" WHERE "id" = 100')).isEnabled), 1, "restored rules stay enabled");
+    const error = await one('SELECT "type" FROM "forward_group_events" WHERE "groupId" = 10 AND "type" = ?', ["ddns-error"]);
+    assert.ok(error, "the DDNS failure is still recorded");
+  `);
+});
+
+test("a background forward-group sync treats a port reserved by another request as a conflict", () => {
+  runScenario("group-sync-reservation", String.raw`
+    const groups = await import(moduleUrl("server/repositories/forwardGroupRepository.ts"));
+    const reservations = await import(moduleUrl("server/portReservations.ts"));
+    const hostCols = ["id", "name", "ip", "ipv4", "hostType", "userId", "isOnline"];
+    for (const id of [1, 2]) await insert("hosts", hostCols, [id, "h" + id, "198.51.100." + id, "198.51.100." + id, "slave", 1, 1]);
+    const groupCols = ["id", "name", "groupType", "groupMode", "forwardType", "domain", "recordType", "targetIp", "userId", "isEnabled"];
+    await insert("forward_groups", groupCols, [10, "failover", "host", "failover", "realm", "fo.example.test", "A", "0.0.0.0", 1, 1]);
+    await insert("forward_group_members", ["id", "groupId", "memberType", "hostId", "priority", "isEnabled"], [101, 10, "host", 1, 0, 1]);
+    await insert("forward_group_members", ["id", "groupId", "memberType", "hostId", "priority", "isEnabled"], [102, 10, "host", 2, 1, 1]);
+    await insert("forward_rules", [...ruleCols, "forwardGroupId"], [100, 1, "template", "realm", "tcp", null, null, 16000, "203.0.113.10", 80, 1, 1, 0, 0, 1, 10]);
+    const children = async () => (await runtime.queryRaw('SELECT "forwardGroupMemberId" FROM "forward_rules" WHERE "forwardGroupRuleId" = 100 ORDER BY "forwardGroupMemberId"'))
+      .map((row) => Number(row.forwardGroupMemberId));
+
+    // 另一个请求正在 h2 上分配 16000：后台同步不能退回只查库、跟它抢这个端口。
+    const other = reservations.tryReserveHostPort(2, 16000, "tcp");
+    await groups.syncForwardGroupRules(10);
+    assert.deepEqual(await children(), [101], "the member whose port is being allocated elsewhere is skipped this round");
+
+    // 调用方（建/改模板的请求）自己持有的预留：照常建子规则。
+    await reservations.runWithHeldHostPortReservations([other], () => groups.syncForwardGroupRules(10));
+    assert.deepEqual(await children(), [101, 102]);
+    other.release();
+  `);
+});
+
+test("lock-taking batch lifecycle paths refuse to run inside a database transaction", () => {
+  runScenario("tx-guard", String.raw`
+    const groups = await import(moduleUrl("server/repositories/forwardGroupRepository.ts"));
+    await assert.rejects(
+      () => runtime.withDatabaseTransaction(() => groups.healAutoStoppedForwardRules("test")),
+      /programming error/,
+    );
+    const result = await groups.healAutoStoppedForwardRules("test");
+    assert.equal(result.tunnels, 0);
+  `);
+});

@@ -37,6 +37,7 @@ import {
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { authErrorMessage } from "@/lib/authErrorMessage";
 
 const DISPLAY_NAME_MAX_LENGTH = 24;
 
@@ -193,7 +194,7 @@ function ProfileContent() {
       utils.auth.twoFactorStatus.invalidate();
       utils.auth.me.invalidate();
     },
-    onError: (error) => toast.error(error.message || "启用双重验证失败"),
+    onError: (error) => toast.error(authErrorMessage(error.message, "启用双重验证失败")),
   });
 
   const disableTwoFactorMutation = trpc.auth.disableTwoFactor.useMutation({
@@ -204,7 +205,7 @@ function ProfileContent() {
       utils.auth.twoFactorStatus.invalidate();
       utils.auth.me.invalidate();
     },
-    onError: (error) => toast.error(error.message || "关闭双重验证失败"),
+    onError: (error) => toast.error(authErrorMessage(error.message, "关闭双重验证失败")),
   });
 
   useEffect(() => {

@@ -1214,6 +1214,10 @@ export default function ProxyInboundsSection({
             */}
             <div className="space-y-2 rounded-lg border p-3">
               <Label>这个端口的额度</Label>
+              {/* 额度是管理员给端口定的账，服务端对非管理员提交的这些字段一律忽略 —— 可编辑的样子只会让人以为改成了。 */}
+              {!isAdmin ? (
+                <p className="text-xs text-muted-foreground">额度由管理员设置，这里只读；需要调整请联系管理员。</p>
+              ) : null}
               <div className="grid grid-cols-2 gap-2">
                 <div className="min-w-0 space-y-1">
                   <Label className="text-xs text-muted-foreground">带宽（Mbps）</Label>
@@ -1222,7 +1226,9 @@ export default function ProxyInboundsSection({
                     inputMode="numeric"
                     value={form.bandwidthMbps}
                     onChange={(event) => setForm((prev) => ({ ...prev, bandwidthMbps: event.target.value }))}
-                    placeholder="不填 = 不限"
+                    placeholder={isAdmin ? "不填 = 不限" : "不限"}
+                    readOnly={!isAdmin}
+                    disabled={!isAdmin}
                   />
                 </div>
                 <div className="min-w-0 space-y-1">
@@ -1232,7 +1238,9 @@ export default function ProxyInboundsSection({
                     inputMode="numeric"
                     value={form.trafficLimitGb}
                     onChange={(event) => setForm((prev) => ({ ...prev, trafficLimitGb: event.target.value }))}
-                    placeholder="不填 = 不限"
+                    placeholder={isAdmin ? "不填 = 不限" : "不限"}
+                    readOnly={!isAdmin}
+                    disabled={!isAdmin}
                   />
                 </div>
               </div>
@@ -1246,18 +1254,22 @@ export default function ProxyInboundsSection({
                       value={form.trafficUsedGb}
                       onChange={(event) => setForm((prev) => ({ ...prev, trafficUsedGb: event.target.value }))}
                       placeholder="0"
+                      readOnly={!isAdmin}
+                      disabled={!isAdmin}
                     />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="shrink-0"
-                      onClick={() => setForm((prev) => ({ ...prev, trafficUsedGb: "" }))}
-                    >
-                      清零
-                    </Button>
+                    {isAdmin ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() => setForm((prev) => ({ ...prev, trafficUsedGb: "" }))}
+                      >
+                        清零
+                      </Button>
+                    ) : null}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    面板自己会累加，这里只是用来手工校准。
+                    {isAdmin ? "面板自己会累加，这里只是用来手工校准。" : "面板自己会累加。"}
                     <span className="mt-1 block text-[var(--fx-warn-text)]">
                       这是<strong>这个端口</strong>跑掉的量，不是这台机器的总量 —— 机房按整台机器的网卡算，
                       那个数在「主机管理」里，通常比这里大。
@@ -1277,9 +1289,12 @@ export default function ProxyInboundsSection({
                       className="h-8 w-16"
                       value={form.trafficResetDay}
                       onChange={(event) => setForm((prev) => ({ ...prev, trafficResetDay: event.target.value }))}
+                      readOnly={!isAdmin}
+                      disabled={!isAdmin}
                     />
                   ) : null}
                   <Checkbox aria-label="每月自动清零"
+                    disabled={!isAdmin}
                     checked={form.trafficAutoReset}
                     onCheckedChange={(checked) => setForm((prev) => ({ ...prev, trafficAutoReset: checked }))}
                   />

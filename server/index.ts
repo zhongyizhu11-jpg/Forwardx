@@ -17,7 +17,7 @@ import { clientLogoRouter } from "./clientLogoRoute";
 import { proxySubscriptionRouter } from "./proxySubscriptionRoute";
 import { initDatabase } from "./db";
 import { installPanelLogger } from "./_core/panelLogger";
-import { loadPanelSslRuntimeConfig } from "./panelSsl";
+import { loadPanelSslRuntimeConfig, startPanelSslAutoReload } from "./panelSsl";
 import { startBackgroundServices } from "./backgroundServices";
 import { initializePanelClock } from "./panelClock";
 import { ENV } from "./env";
@@ -156,9 +156,10 @@ async function startServer() {
   app.set("trust proxy", resolveTrustProxySetting(ENV.trustProxy));
   const panelSsl = await runStartupStep("panel-ssl", () => loadPanelSslRuntimeConfig());
   const protocol = panelSsl.enabled ? "https" : "http";
-  const server = panelSsl.enabled && panelSsl.options
-    ? createHttpsServer(panelSsl.options, app)
-    : createHttpServer(app);
+  const httpsServer = panelSsl.enabled && panelSsl.options ? createHttpsServer(panelSsl.options, app) : null;
+  const server = httpsServer ?? createHttpServer(app);
+  // 续签后的证书文件自动热加载（不用重启面板），快过期时在日志里提醒。
+  if (httpsServer) startPanelSslAutoReload(httpsServer, panelSsl);
   installSecurityHeaders(app);
   installCompression(app);
 

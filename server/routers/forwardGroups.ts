@@ -20,6 +20,7 @@ import {
 } from "../../shared/bandwidthAggregation";
 import { getLinkAccessScope, visibleForwardGroupMemberIds, type LinkAccessScope } from "../linkAccessView";
 import {
+  anyForwardGroupHasTunnelMember,
   buildForwardGroupAvailabilitySummaryIndex,
   publicLinkAvailabilitySummary,
   type LinkAvailabilitySummaryIndex,
@@ -118,19 +119,39 @@ function attachForwardGroupAvailability(
   }));
 }
 
-function availabilityIndexForGroups(groups: any[], supportingGroups: any[] = []) {
-  return buildForwardGroupAvailabilitySummaryIndex(groups, supportingGroups);
+function availabilityIndexForGroups(groups: any[], supportingGroups: any[] = [], options: { loadHostStatus?: boolean } = {}) {
+  return buildForwardGroupAvailabilitySummaryIndex(groups, supportingGroups, options);
 }
 
 export const forwardGroupsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
-    const [groups, accessScope] = await Promise.all([
-      db.getForwardGroups(undefined, { includeRuntime: true }) as Promise<any[]>,
-      getLinkAccessScope(ctx.user),
+    const accessScope = await getLinkAccessScope(ctx.user);
+    if (!accessScope) {
+      const groups = await db.getForwardGroups(undefined, { includeRuntime: true }) as any[];
+      const availabilityIndex = await availabilityIndexForGroups(groups);
+      return attachForwardGroupAvailability(groups, availabilityIndex, null);
+    }
+    /*
+      租户以前也是先把全站的组连同成员、模板、子规则、延迟整表读出来，再丢掉看不见的。
+      现在只读看得见的组；可用性要用到的另外几类组照样补齐，结果和整表算时一致：
+      - 转发链的入口组（entryGroupId）：可见范围本来就会把它带上，不在的话这里单独补；
+      - 隧道成员的入口 / 出口组：可用性计算里自己按需去取；
+      - 主机在线的来源：全站有隧道成员时整表那条路按主机状态行取，这里照着同一个判据走。
+    */
+    const visibleIds = Array.from(accessScope.groupIds).filter((id) => Number(id) > 0);
+    const [visible, hasTunnelMembers] = await Promise.all([
+      visibleIds.length > 0
+        ? db.getForwardGroups(undefined, { includeRuntime: true, ids: visibleIds }) as Promise<any[]>
+        : Promise.resolve([] as any[]),
+      anyForwardGroupHasTunnelMember(),
     ]);
-    const availabilityIndex = await availabilityIndexForGroups(groups);
-    if (!accessScope) return attachForwardGroupAvailability(groups, availabilityIndex, null);
-    const visible = groups.filter((group: any) => accessScope.groupIds.has(Number(group.id)));
+    const entryGroupIds = Array.from(new Set(visible
+      .map((group: any) => Number(group.entryGroupId || 0))
+      .filter((id) => id > 0 && !accessScope.groupIds.has(id))));
+    const supportingGroups = entryGroupIds.length > 0
+      ? await db.getForwardGroups(undefined, { includeRuntime: false, ids: entryGroupIds }) as any[]
+      : [];
+    const availabilityIndex = await availabilityIndexForGroups(visible, supportingGroups, { loadHostStatus: hasTunnelMembers });
     return db.filterForwardGroupFieldsForUse(
       attachForwardGroupAvailability(visible, availabilityIndex, accessScope),
       accessScope,
@@ -316,7 +337,7 @@ export const forwardGroupsRouter = router({
     })),
 
   reorder: adminProcedure
-    .input(z.object({ groupId: z.number(), memberIds: z.array(z.number()).min(1) }))
+    .input(z.object({ groupId: z.number(), memberIds: z.array(z.number().int().positive()).min(1) }))
     .mutation(async ({ input }) => withKeyedTaskLock(`forward-group:${input.groupId}`, async () => {
       await db.reorderForwardGroupMembers(input.groupId, input.memberIds);
       await db.runForwardGroupFailover(input.groupId, { forcePriority: true, forceSync: true });

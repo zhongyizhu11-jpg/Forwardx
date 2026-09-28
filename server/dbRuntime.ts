@@ -458,6 +458,18 @@ export function clearDatabaseSetupPendingConfig() {
   }
 }
 
+/**
+ * 每条 MySQL 连接最多缓存多少条预处理语句。
+ *
+ * executeRaw 走 execute()，mysql2 按 SQL 文本给每条连接缓存预处理语句，默认上限 16000。
+ * 批量插入的行数、IN 列表的长度一变就是一条新文本，缓存只增不减；而服务端 max_prepared_stmt_count
+ * 默认只有 16382，而且是全实例共享的 —— 32 条连接各攒几百条就能把它顶满，之后这个 MySQL 实例上
+ * 所有客户端的 prepare 都报 1461。调小之后 mysql2 自带的 LRU 会把最久没用的关掉（COM_STMT_CLOSE）。
+ * 256 × 最多 32 条连接 = 8192，留一半给同实例的其他应用；固定文本的热语句一百来条，缓存装得下。
+ * 不改成 query()：那样每条都得在客户端拼 SQL，固定语句的预处理收益也没了。
+ */
+export const MYSQL_MAX_PREPARED_STATEMENTS = 256;
+
 function mysqlConnectionOptions(config: MysqlConfig): ConnectionOptions {
   const pool = getDatabasePoolSettings();
   return {
@@ -470,6 +482,7 @@ function mysqlConnectionOptions(config: MysqlConfig): ConnectionOptions {
     timezone: "+00:00",
     dateStrings: false,
     ssl: config.ssl ? {} : undefined,
+    maxPreparedStatements: MYSQL_MAX_PREPARED_STATEMENTS,
   };
 }
 

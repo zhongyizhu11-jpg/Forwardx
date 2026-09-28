@@ -4,6 +4,7 @@ import { afterDatabaseCommit } from "./dbRuntime";
 import { dbBool } from "./repositories/repositoryUtils";
 import { withTrafficBillingUserLock } from "./keyedTaskLock";
 import { refreshBlockedRuleRuntime, resumeBlockedRules } from "./ruleBlockRecovery";
+import { TRAFFIC_BILLING_BALANCE_BLOCK_REASON } from "../shared/const";
 
 /**
  * 流量计费余额不足时，只停走计费资源的那几条规则。
@@ -15,7 +16,7 @@ import { refreshBlockedRuleRuntime, resumeBlockedRules } from "./ruleBlockRecove
  *   - 转发权限完全来自流量计费（没有套餐、也没有手动权限）：和以前一样暂停账户 ——
  *     没有余额他就没有任何转发权限。
  */
-export const TRAFFIC_BILLING_BALANCE_BLOCK_REASON = "流量计费余额不足，充值后自动恢复";
+export { TRAFFIC_BILLING_BALANCE_BLOCK_REASON };
 
 function hasBalance(user: any) {
   return Number(user?.balanceCents || 0) > 0;

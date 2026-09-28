@@ -4,6 +4,7 @@ import { z } from "zod";
 import * as db from "../db";
 import { FORWARD_TYPES } from "../../shared/forwardTypes";
 import { isValidAvatarValue } from "../../shared/avatar";
+import { parseBillingExpiryInput } from "../../shared/billingTime";
 import { ensureAdminOrSelf, refreshUserForwardEndpoints } from "./helpers";
 import { clearLinkAccessScopeCache } from "../linkAccessView";
 import { getEmailConfig, sendMail } from "../email";
@@ -17,6 +18,8 @@ import { reconcileUserRuleResourceAuthorization } from "../ruleResourceAuthoriza
 import { pushAgentRefresh } from "../agentEvents";
 
 const DISPLAY_NAME_MAX_LENGTH = 24;
+// int 列（MySQL INT / PostgreSQL integer）能存的最大值；计数类上限写库前在入口挡住。
+const INT32_MAX = 2_147_483_647;
 
 function actorLabel(ctx: { user?: { id: number; username?: string } | null }) {
   return ctx.user ? `adminId=${ctx.user.id}` : "adminId=unknown";
@@ -376,26 +379,30 @@ export const usersRouter = router({
       }),
     /** 更新用户流量管理和权限设置 */
     updateTrafficSettings: adminProcedure
+      // 这些都落到整数列（int / bigint）：小数在 MySQL / PostgreSQL 上要么被截断要么报错，
+      // 超过 int 上限直接写库失败。在入口挡成整数 + 上限，报清楚的校验错误。
+      // 计数类上限统一用 int 列的上限而不是更小的「合理值」：已经存了大数的用户，
+      // 表单每次保存都会原样回传，收得太紧会让管理员连别的设置都改不了。
       .input(z.object({
         userId: z.number(),
-        trafficLimit: z.number().min(0).optional(),
+        trafficLimit: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
         gostRateLimitIn: z.number().int().min(0).max(1_000_000).optional(),
         gostRateLimitOut: z.number().int().min(0).max(1_000_000).optional(),
         expiresAt: z.string().nullable().optional(), // ISO date string or null
         trafficAutoReset: z.boolean().optional(),
-        trafficResetDay: z.number().min(1).max(31).optional(),
+        trafficResetDay: z.number().int().min(1).max(31).optional(),
         canAddRules: z.boolean().optional(),
         displayRemark: z.string().trim().max(24).nullable().optional(),
-        maxRules: z.number().min(0).optional(),
+        maxRules: z.number().int().min(0).max(INT32_MAX).optional(),
         /** 自建落地节点数上限，0 = 不限。与 maxRules 一样走 manual 那一列。 */
-        maxProxyInbounds: z.number().min(0).optional(),
+        maxProxyInbounds: z.number().int().min(0).max(INT32_MAX).optional(),
         /** 能自助加几台机器。0 = 跟随系统设置的全局上限，不是「不限」。 */
-        maxSelfServiceHosts: z.number().min(0).max(10000).nullable().optional(),
+        maxSelfServiceHosts: z.number().int().min(0).max(10000).nullable().optional(),
         /** 订阅地址条数上限，0 = 不限。 */
-        maxProxySubTokens: z.number().min(0).optional(),
-        maxPorts: z.number().min(0).optional(),
-        maxConnections: z.number().min(0).optional(),
-        maxIPs: z.number().min(0).optional(),
+        maxProxySubTokens: z.number().int().min(0).max(INT32_MAX).optional(),
+        maxPorts: z.number().int().min(0).max(INT32_MAX).optional(),
+        maxConnections: z.number().int().min(0).max(INT32_MAX).optional(),
+        maxIPs: z.number().int().min(0).max(INT32_MAX).optional(),
         // 逗号分隔的转发方式列表；null 为全部允许
         allowedForwardTypes: z.string().nullable().optional(),
         allowForwardXTunnel: z.boolean().optional(),
@@ -441,7 +448,10 @@ export const usersRouter = router({
           delete data.maxIPs;
         }
         if (expiresAt !== undefined) {
-          data.manualExpiresAt = expiresAt ? new Date(expiresAt) : null;
+          // 表单传的是 YYYY-MM-DD：按计费时区当天零点，不能 new Date() 成 UTC 零点（跨时区会差一天）。
+          const parsedExpiresAt = expiresAt ? parseBillingExpiryInput(expiresAt) : null;
+          if (parsedExpiresAt === undefined) throw new Error("到期日期无效");
+          data.manualExpiresAt = parsedExpiresAt;
         }
         if (allowedForwardTypes !== undefined) {
           // null 表示全部允许；空字符串表示全部禁用。

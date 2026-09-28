@@ -5,6 +5,8 @@ import "sync/atomic"
 var (
 	trafficStateDirectoryDirty atomic.Bool
 	trafficStateDirectorySync  = syncTrafficStateDirectory
+	// trafficStateFilesystemSync 一次性刷整个状态目录所在文件系统（Linux syncfs），测试里可替换。
+	trafficStateFilesystemSync = syncTrafficStateFilesystem
 )
 
 func syncTrafficStateDirectoryAfterMutation(stateDir string) error {

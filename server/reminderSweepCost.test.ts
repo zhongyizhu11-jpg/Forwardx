@@ -226,8 +226,9 @@ test("六条提醒都发得出去，去重键一条不少一条不多", () => {
   assert.deepEqual(one.errors, [], "扫描过程中不该有任何错误");
 
   const expected = [
-    `emailReminder:expiry:2:2:${one.today}`,
-    `emailReminder:hostRenewal:1:${one.stoppedAt}:2:2:${one.today}`,
+    // 到期类按「这一次到期 + 这一档」去重，不带日期（同一档横跨两个日历日时不能发两次）。
+    `emailReminder:expiry:2:${one.stoppedAt}:2`,
+    `emailReminder:hostRenewal:1:2:${one.stoppedAt}:2`,
     `emailReminder:hostTraffic:1:2:${one.today}`,
     `emailReminder:proxyInboundTraffic:1:warn:2:${one.today}`,
     `emailReminder:proxyNodeTraffic:1:warn:2:${one.today}`,

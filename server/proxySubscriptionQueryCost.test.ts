@@ -78,7 +78,7 @@ test("SQLite 一次订阅组装不重复查模板，也不整表读主机", () =
       独立凭据（proxy_inbound_users）。查两遍就会各变成两条 —— 所以按「各一条」订，
       而不是订一个宽松的上限（订宽了等于没订，我第一版就吃过这个亏）。
     */
-    for (const table of ["proxy_nodes", "proxy_node_shares", "proxy_inbound_users"]) {
+    for (const table of ["proxy_nodes", "proxy_node_shares"]) {
       const reads = touching(table);
       assert.equal(
         reads.length,
@@ -86,6 +86,8 @@ test("SQLite 一次订阅组装不重复查模板，也不整表读主机", () =
         table + " 被查了 " + reads.length + " 次，模板那一路多半又查了两遍：\n" + reads.join("\n"),
       );
     }
+    // 独立凭据只查主人自己节点挂着的那几条；这里三个节点都不是从凭据派生的，一条都不该查。
+    assert.equal(touching("proxy_inbound_users").length, 0, "没有凭据派生的节点，不该去扫分享凭据");
 
     const hostReads = touching("hosts");
     assert.equal(hostReads.length, 1, "主机只该查一次，实际 " + hostReads.length + " 条");

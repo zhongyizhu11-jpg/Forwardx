@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pickTabValue } from "./urlTab";
+import { pickTabValue, tabForSearchChange } from "./urlTab";
 
 const values = ["plans", "billing"] as const;
 
@@ -42,4 +42,28 @@ test("不在清单里的值一律丢掉", () => {
 test("queryKey 可以换，别的键不干扰", () => {
   assert.equal(pickTabValue("?view=billing", null, values, "plans", "view"), "billing");
   assert.equal(pickTabValue("?tab=billing", null, values, "plans", "view"), "plans");
+});
+
+/**
+ * 浏览器后退/前进只改查询串。原来 tab 只跟着 useLocation()（只有路径）重算，
+ * 地址栏退回去了，页面上的 tab 纹丝不动。
+ */
+test("后退/前进改了 tab 参数，tab 跟着换", () => {
+  assert.equal(tabForSearchChange("", "?tab=billing", values, "plans"), "billing");
+  // 默认 tab 不写进地址栏：退回到没有 tab 的那一条，就是默认 tab，不能回落到上次存的 billing。
+  assert.equal(tabForSearchChange("?tab=billing", "", values, "plans", { storedValue: "billing" }), "plans");
+  assert.equal(tabForSearchChange("?tab=billing&page=2", "?page=2", values, "plans"), "plans");
+});
+
+test("tab 参数没变就不动 tab（别的查询参数变化不算）", () => {
+  assert.equal(tabForSearchChange("", "?page=2", values, "plans"), null);
+  assert.equal(tabForSearchChange("?tab=billing", "?tab=billing&page=3", values, "plans"), null);
+  assert.equal(tabForSearchChange("?tab=billing", "?tab=billing", values, "plans"), null);
+});
+
+test("不清掉默认值的页面，tab 参数被去掉时退回上次存的", () => {
+  assert.equal(
+    tabForSearchChange("?tab=plans", "", values, "plans", { clearDefaultFromUrl: false, storedValue: "billing" }),
+    "billing",
+  );
 });

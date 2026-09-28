@@ -4555,7 +4555,7 @@ function TunnelsContent() {
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                       <FormField className="space-y-2">
                         <Label>出口监听端口</Label>
-                        <Input type="number" min={0} max={65535} step={1} value={form.listenPort || ""} onChange={(e) => { setListenPortExplicit(true); setForm({ ...form, listenPort: Number(e.target.value) || 0 }); }} placeholder="自动分配" />
+                        <Input type="number" min={0} max={65535} step={1} value={form.listenPort || ""} onChange={(e) => { setListenPortExplicit(true); setForm({ ...form, listenPort: parseInt(e.target.value, 10) || 0 }); }} placeholder="自动分配" />
                       </FormField>
                       <FormField className="space-y-2">
                         <Label>隧道限速 (Mbps)</Label>
@@ -4867,7 +4867,7 @@ function TunnelsContent() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <FormField className="space-y-2">
                 <Label>出口监听端口</Label>
-                <Input type="number" min={0} max={65535} step={1} value={form.listenPort || ""} onChange={(e) => { setListenPortExplicit(true); setForm({ ...form, listenPort: Number(e.target.value) || 0 }); }} placeholder="自动分配" />
+                <Input type="number" min={0} max={65535} step={1} value={form.listenPort || ""} onChange={(e) => { setListenPortExplicit(true); setForm({ ...form, listenPort: parseInt(e.target.value, 10) || 0 }); }} placeholder="自动分配" />
               </FormField>
               <FormField className="space-y-2">
                 <Label>隧道限速 (Mbps)</Label>

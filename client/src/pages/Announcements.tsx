@@ -6,6 +6,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import EmptyState from "@/components/EmptyState";
 import DataSectionLoading from "@/components/DataSectionLoading";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -103,6 +104,18 @@ export default function Announcements() {
     onError: (error) => toast.error(error.message || "删除失败"),
   });
 
+  const confirmDialog = useConfirmDialog();
+  const confirmDeleteAnnouncement = async (item: any) => {
+    if (deleteAnnouncement.isPending) return;
+    const confirmed = await confirmDialog({
+      title: "删除公告",
+      description: `确认删除公告「${item.title}」？删除后所有用户都将看不到它，且无法恢复。`,
+      confirmText: "删除",
+      tone: "destructive",
+    });
+    if (confirmed) deleteAnnouncement.mutate({ id: item.id });
+  };
+
   const submit = () => {
     const payload = {
       title: form.title.trim(),
@@ -168,7 +181,7 @@ export default function Announcements() {
                           <Button variant="outline" size="icon" aria-label={`编辑公告 ${item.title}`} onClick={() => edit(item)}>
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" aria-label={`删除公告 ${item.title}`} className="text-destructive" onClick={() => deleteAnnouncement.mutate({ id: item.id })}>
+                          <Button variant="ghost" size="icon" aria-label={`删除公告 ${item.title}`} className="text-destructive" disabled={deleteAnnouncement.isPending} onClick={() => void confirmDeleteAnnouncement(item)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>

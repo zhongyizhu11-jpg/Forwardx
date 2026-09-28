@@ -161,7 +161,7 @@ export const billingRouter = router({
   adminAddTrafficAddon: adminProcedure
     .input(z.object({
       userId: z.number().int().positive(),
-      trafficBytes: z.number().int().positive(),
+      trafficBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), // 超过安全整数就不是精确字节数了，bigint 列也会被写歪
       subscriptionId: z.number().int().positive().optional().nullable(),
       description: z.string().trim().max(200).optional(),
     }))

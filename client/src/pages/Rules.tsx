@@ -97,7 +97,7 @@ import {
   type EntryAddressFamily,
 } from "@/lib/ruleEntryDisplay";
 import { cn } from "@/lib/utils";
-import { autoForwardRuleName } from "@shared/forwardRuleName";
+import { autoForwardRuleName, resolveForwardRuleName } from "@shared/forwardRuleName";
 import {
   BILLING_TIME_ZONE,
 } from "@shared/billingTime";
@@ -3778,7 +3778,8 @@ function RulesContent() {
       updateMutation.mutate({
         id: editingId,
         hostId: isForwardGroupRouteMode ? undefined : form.hostId!,
-        name: form.name,
+        // 更新接口要求名称非空；清空名称时和新建一样按目标自动生成，而不是报错。
+        name: resolveForwardRuleName(form.name, form).slice(0, 128),
         forwardType: submitForwardType,
         protocol: form.protocol,
         gostMode: "direct" as const,
@@ -7724,6 +7725,7 @@ function RulesContent() {
               <Label className="flex items-baseline gap-1.5">规则名称<span className="text-xs font-normal text-muted-foreground">留空自动生成</span></Label>
               <Input
               placeholder={autoForwardRuleName(form) || "例如: Web 服务转发"}
+              maxLength={128}
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               />

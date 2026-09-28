@@ -34,3 +34,38 @@ export function pickTabValue<T extends string>(
   })();
   return fromQuery || coerce(storedValue) || defaultValue;
 }
+
+function tabParamOf(search: string, queryKey: string): string | null {
+  const raw = String(search || "");
+  const query = raw.includes("?") ? raw.slice(raw.indexOf("?") + 1) : raw;
+  if (!query) return null;
+  try {
+    return new URLSearchParams(query).get(queryKey);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 页面已经打开时，地址栏的查询串变了（浏览器后退/前进、别处跳转），tab 要不要跟着换。
+ *
+ * 只看 tab 这个键有没有变：别的查询参数变了不动 tab。tab 键被去掉时 ——
+ * 默认 tab 本来就不写进地址栏（clearDefaultFromUrl），所以「没有 tab」就是默认 tab，
+ * 不能再回落到上次存的值，否则后退到默认 tab 那一条历史时页面纹丝不动。
+ *
+ * 返回 null 表示不用换。
+ */
+export function tabForSearchChange<T extends string>(
+  previousSearch: string,
+  nextSearch: string,
+  values: readonly T[],
+  defaultValue: T,
+  options: { queryKey?: string; clearDefaultFromUrl?: boolean; storedValue?: string | null } = {},
+): T | null {
+  const queryKey = options.queryKey || "tab";
+  const previous = tabParamOf(previousSearch, queryKey);
+  const next = tabParamOf(nextSearch, queryKey);
+  if (previous === next) return null;
+  const clearDefaultFromUrl = options.clearDefaultFromUrl ?? true;
+  return pickTabValue(nextSearch, clearDefaultFromUrl ? null : options.storedValue, values, defaultValue, queryKey);
+}

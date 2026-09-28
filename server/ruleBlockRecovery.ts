@@ -35,6 +35,8 @@ export async function refreshBlockedRuleRuntime(rules: any[], reason: string) {
   for (const hostId of hostIds) {
     pushAgentRefresh(hostId, reason, { urgent: true });
   }
+  // 线路组规则停 / 开之后，中转机上的中继跟着变，也要马上通知中转机。
+  await db.pushRouteRelayHostsForParents(rules.map((rule) => positiveId(rule.id)), reason);
 }
 
 /**

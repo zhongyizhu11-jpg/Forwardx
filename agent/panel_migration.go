@@ -304,13 +304,6 @@ func persistPanelMigrationConfig(panelURL string, fallback string, migrationID s
 		return err
 	}
 	next = append(next, '\n')
-	tmp := path + ".migration.tmp"
-	if err := os.WriteFile(tmp, next, 0600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Chmod(path, 0600)
+	// 迁移状态与 token 在同一个配置文件里，写坏了 Agent 就连不上任何面板：原子替换并落盘。
+	return writeConfigFileAtomic(path, next)
 }

@@ -207,14 +207,22 @@ async function resolveProxyNodeShareScope(nodeId: number): Promise<ProxyNodeShar
  * 用来把这类凭据派生出的节点从**主人自己**的订阅里摘掉：它们只为某个租户而
  * 存在，留在主人订阅里就是每多一个租户多一条垃圾节点。
  */
-async function getSharedCredentialUserIds(): Promise<Set<number>> {
+async function getSharedCredentialUserIds(onlyIds?: readonly number[]): Promise<Set<number>> {
+  // 调用方只关心某几条凭据时（订阅：主人自己节点挂着的那几条），只查这几条，
+  // 不用每拉一次订阅就把全站的分享凭据扫一遍。
+  const candidateIds = onlyIds === undefined
+    ? undefined
+    : Array.from(new Set(onlyIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+  if (candidateIds && candidateIds.length === 0) return new Set();
   const db = await getDb();
   if (!db) return new Set();
   const { proxyInboundUsers } = await import("../../drizzle/schema");
   const rows = await db
     .select({ id: proxyInboundUsers.id })
     .from(proxyInboundUsers)
-    .where(sql`${proxyInboundUsers.sharedUserId} > 0`);
+    .where(candidateIds
+      ? and(sql`${proxyInboundUsers.sharedUserId} > 0`, inArray(proxyInboundUsers.id, candidateIds))
+      : sql`${proxyInboundUsers.sharedUserId} > 0`);
   return new Set((rows as any[]).map((row) => Number(row.id)).filter((id) => id > 0));
 }
 
@@ -742,11 +750,14 @@ export async function getProxyNodesSharedToUser(userId: number) {
  * 或者策略组指向不存在的节点这种坏配置。
  */
 export async function getProxyNodesForSubscription(userId: number) {
-  const [owned, shared, sharedCredentialIds] = await Promise.all([
+  const [owned, shared] = await Promise.all([
     getProxyNodesByUser(userId),
     getProxyNodesSharedToUser(userId),
-    getSharedCredentialUserIds(),
   ]);
+  // 只可能摘掉主人自己节点挂着的凭据：自己没有节点就不用查，有就只查这几条凭据。
+  const sharedCredentialIds = await getSharedCredentialUserIds(
+    (owned as any[]).map((row) => Number(row.inboundUserId || 0)),
+  );
   /**
    * 为别人单独发的凭据不进主人自己的订阅。
    *

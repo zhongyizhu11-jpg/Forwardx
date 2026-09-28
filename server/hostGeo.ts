@@ -246,8 +246,15 @@ async function writePersistentGeoCache(cacheKey: string, value: AddressGeoLookup
   ).catch(() => undefined);
 }
 
+/**
+ * 清掉已经过期的地理缓存行。
+ *
+ * expiresAt 写入时就已经是「抓取时间 + 30 天」，过了它这一行再也不会被读
+ * （readPersistentGeoCacheEntry 只要 expiresAt > now 的）。原来这里又往回减了 30 天，
+ * 过期行要白白多躺一个月才被删。
+ */
 export async function cleanOldAddressGeoCache() {
-  const cutoff = epochSeconds(new Date(Date.now() - ADDRESS_GEO_STALE_MS));
+  const cutoff = epochSeconds();
   await executeRaw(
     `DELETE FROM ${quoteIdentifier("ip_geo_cache")} WHERE ${quoteIdentifier("expiresAt")} <= ?`,
     [cutoff],

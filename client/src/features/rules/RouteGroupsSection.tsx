@@ -35,7 +35,8 @@ type RouteGroupRow = {
 export function RouteGroupsSection({ searchQuery = "", isAdmin = false }: { searchQuery?: string; isAdmin?: boolean }) {
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
-  const rulesQuery = trpc.rules.list.useQuery(isAdmin ? { scope: "all" } : undefined, { staleTime: 15_000 });
+  // 只拉开了主备的规则：以前拉全部规则再在这里按 failoverEnabled 丢掉绝大多数。
+  const rulesQuery = trpc.rules.list.useQuery(isAdmin ? { scope: "all", failoverOnly: true } : { failoverOnly: true }, { staleTime: 15_000 });
   const hostsQuery = trpc.hosts.options.useQuery(undefined, { staleTime: 60_000 });
   const [openRuleId, setOpenRuleId] = useState<number | null>(null);
   const hostById = useMemo(() => new Map<number, any>((hostsQuery.data || []).map((host: any) => [Number(host.id), host])), [hostsQuery.data]);

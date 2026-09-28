@@ -187,7 +187,8 @@ function hostListCondition(input: Omit<HostListQuery, keyof PageRequest>) {
     const numericId = /^\d+$/.test(token) ? Number(token) : 0;
     conditions.push(or(
       ...textConditions,
-      ...(numericId > 0 ? [eq(hosts.id, numericId)] : []),
+      // 超出安全整数的数字传给 PG 的 BIGINT 列会报 out of range，整个列表 500。
+      ...(Number.isSafeInteger(numericId) && numericId > 0 ? [eq(hosts.id, numericId)] : []),
     ));
   }
   return conditions.length > 0 ? and(...conditions) : undefined;

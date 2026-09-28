@@ -24,6 +24,7 @@ const MILLI_CENTS_PER_CENT = 1000;
 const BILLING_DENOMINATOR = 100n * BigInt(MILLI_CENTS_PER_CENT);
 const TRAFFIC_BILLING_RULE_USAGE_BACKFILL_MARKER = "traffic-billing-rule-usage-v1";
 const TRAFFIC_BILLING_ENABLED_CACHE_MS = 5_000;
+const TRAFFIC_BILLING_LOCK_CHUNK = 500;
 let trafficBillingEnabledCache: { value: boolean; expiresAt: number } | null = null;
 let lastTrafficBillingAccessWarningAt = 0;
 
@@ -41,12 +42,21 @@ export async function lockTrafficBillingUserRows(userIds: number | number[]) {
   if (ids.length === 0) return;
   const q = quoteDbIdentifier;
   const lock = getDatabaseKind() === "sqlite" ? "" : " FOR UPDATE";
-  for (const userId of ids) {
+  /*
+    以前一个用户一条 SELECT … FOR UPDATE：一次流量上报涉及几百个用户就是几百次往返，
+    而且全程握着事务。改成按 id 分批（500 个一批，躲开各库的占位符上限）一条语句锁住：
+    - 加锁顺序不变：ids 已升序、批次按升序处理，每批 ORDER BY id 让 MySQL / PostgreSQL
+      按主键升序逐行上锁，和并发的其他上报之间仍是同一个全局顺序，不会互相死锁；
+    - SQLite 没有行锁（事务本身已独占写），这里只是一次存在性检查；
+    - 少了任何一行就和以前一样报 User not found。
+  */
+  for (let index = 0; index < ids.length; index += TRAFFIC_BILLING_LOCK_CHUNK) {
+    const chunk = ids.slice(index, index + TRAFFIC_BILLING_LOCK_CHUNK);
     const rows = await queryRaw<{ id: number }>(
-      `SELECT ${q("id")} AS ${q("id")} FROM ${q("users")} WHERE ${q("id")} = ?${lock}`,
-      [userId],
+      `SELECT ${q("id")} AS ${q("id")} FROM ${q("users")} WHERE ${q("id")} IN (${chunk.map(() => "?").join(", ")}) ORDER BY ${q("id")}${lock}`,
+      chunk,
     );
-    if (!rows[0]) throw new Error("User not found");
+    if (rows.length < chunk.length) throw new Error("User not found");
   }
 }
 

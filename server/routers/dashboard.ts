@@ -20,11 +20,20 @@ function dashboardScopeUserId(user: { id: number; role?: unknown }): number | un
   return String(user.role || "") === "admin" ? undefined : user.id;
 }
 
+/**
+ * stats / health 的结果只取决于统计范围：管理员看的都是全站，按人分缓存等于每个管理员
+ * 各算一遍同一份全站聚合。所以按范围做键 —— 全站一份，租户仍然各自一份（键里带他的 id），
+ * 不会把一个租户的数给到另一个人。
+ */
+function dashboardScopeCacheKey(scope: number | undefined) {
+  return scope === undefined ? "all" : `user:${scope}`;
+}
+
 export const dashboardRouter = router({
     stats: protectedProcedure.query(async ({ ctx }) => {
       const scope = dashboardScopeUserId(ctx.user);
       return cachedDashboardQuery(
-        `stats:${ctx.user.id}`,
+        `stats:${dashboardScopeCacheKey(scope)}`,
         5_000,
         30_000,
         () => db.getDashboardStats(scope, { includeTraffic: false }),
@@ -37,7 +46,7 @@ export const dashboardRouter = router({
     health: protectedProcedure.query(async ({ ctx }) => {
       const scope = dashboardScopeUserId(ctx.user);
       return cachedDashboardQuery(
-        `health:${ctx.user.id}`,
+        `health:${dashboardScopeCacheKey(scope)}`,
         5_000,
         30_000,
         () => db.getDashboardHealth(scope),

@@ -88,11 +88,34 @@ async function telegramHostStatusEnabled() {
   return settings.telegramHostStatusNotify === "true" && botEnabled && botConfigured;
 }
 
-async function sendHostStatusTelegram(host: any, status: HostStatus) {
+/** 一轮巡检里超过这么多台主机同时掉线，就改发一条汇总，而不是每台一条。 */
+export const HOST_STATUS_SUMMARY_THRESHOLD = 5;
+/** 汇总消息里最多列出多少台主机的名字，其余只报数量。 */
+const HOST_STATUS_SUMMARY_MAX_NAMES = 30;
+
+function hostStatusSummaryMessage(hosts: any[], status: HostStatus) {
+  const online = status === "online";
+  const marker = online ? "🟢" : "🔴";
+  const title = online ? "NEX 主机批量上线通知" : "NEX 主机批量离线告警";
+  const listed = hosts.slice(0, HOST_STATUS_SUMMARY_MAX_NAMES);
+  const rest = hosts.length - listed.length;
+  return [
+    `<b>${marker} ${escapeHtml(title)}</b>`,
+    "",
+    online
+      ? `本轮共有 <b>${hosts.length}</b> 台主机重新连接面板：`
+      : `本轮巡检共有 <b>${hosts.length}</b> 台主机心跳超时，已被标记离线：`,
+    ...listed.map((host) => `• ${escapeHtml(hostName(host))} (#${escapeHtml(host?.id || "-")})`),
+    ...(rest > 0 ? [`…以及另外 ${rest} 台`] : []),
+    "",
+    `<b>时间</b>：${escapeHtml(formatTime())}`,
+  ].join("\n");
+}
+
+async function sendTelegramToAdmins(text: string, logLabel: string) {
   if (!(await telegramHostStatusEnabled())) return;
   const recipients = await db.getTelegramAdminRecipients();
   if (recipients.length === 0) return;
-  const text = hostStatusMessage(host, status);
   let sent = 0;
   let failed = 0;
   for (const user of recipients as any[]) {
@@ -102,31 +125,53 @@ async function sendHostStatusTelegram(host: any, status: HostStatus) {
       sent += 1;
     } catch (error) {
       failed += 1;
-      console.warn(`[Telegram] Host status notify failed user=${user.id} host=${host?.id}: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`[Telegram] Host status notify failed user=${user.id} ${logLabel}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   if (sent > 0 || failed > 0) {
-    console.info(`[Telegram] Host status notify status=${status} host=${host?.id} sent=${sent} failed=${failed}`);
+    console.info(`[Telegram] Host status notify ${logLabel} sent=${sent} failed=${failed}`);
   }
 }
 
-async function notifyHostStatusChange(host: any, status: HostStatus) {
+async function sendHostStatusTelegram(host: any, status: HostStatus) {
+  await sendTelegramToAdmins(hostStatusMessage(host, status), `status=${status} host=${host?.id}`);
+}
+
+/**
+ * 记下一次状态变化，返回这次要不要通知。
+ *
+ * 首次见到的主机只记不报（除非是上线且已完成预热），状态没变不报。
+ */
+function recordHostStatusTransition(host: any, status: HostStatus) {
   const hostId = Number(host?.id || 0);
-  if (!Number.isFinite(hostId) || hostId <= 0) return;
+  if (!Number.isFinite(hostId) || hostId <= 0) return false;
   if (status === "online") fastOfflineNotificationDebouncer.cancel(hostId);
   const previous = lastKnownStatus.get(hostId);
-  if (previous === status) return;
+  if (previous === status) return false;
+  lastKnownStatus.set(hostId, status);
+  if (previous === undefined) return hostStatusNotifierPrimed && status === "online";
+  return true;
+}
 
-  if (previous === undefined) {
-    lastKnownStatus.set(hostId, status);
-    if (hostStatusNotifierPrimed && status === "online") {
-      await sendHostStatusTelegram(host, status);
-    }
+async function notifyHostStatusChange(host: any, status: HostStatus) {
+  if (recordHostStatusTransition(host, status)) await sendHostStatusTelegram(host, status);
+}
+
+/**
+ * 一批状态变化一起通知。
+ *
+ * 机房断电、上游网络抖一下，一轮巡检能扫出几十上百台同时掉线。原来是每台主机给每个
+ * 管理员各发一条：一百台就是每人一百条，Telegram 很快开始 429，后面的消息（包括
+ * 真正要紧的）全被丢掉，管理员手机也被刷屏。超过阈值就合成一条汇总。
+ */
+async function notifyHostStatusChanges(hosts: any[], status: HostStatus) {
+  const due = hosts.filter((host) => recordHostStatusTransition(host, status));
+  if (due.length === 0) return;
+  if (due.length > HOST_STATUS_SUMMARY_THRESHOLD) {
+    await sendTelegramToAdmins(hostStatusSummaryMessage(due, status), `status=${status} summary hosts=${due.length}`);
     return;
   }
-
-  lastKnownStatus.set(hostId, status);
-  await sendHostStatusTelegram(host, status);
+  for (const host of due) await sendHostStatusTelegram(host, status);
 }
 
 /**
@@ -323,7 +368,7 @@ export async function sweepOfflineHostsAndNotify() {
     void db.scheduleForwardGroupsForHostHealthChange(Number(host.id)).catch((error) => {
       console.warn(`[HostStatus] Offline forward-group evaluation failed host=${host.id}: ${error instanceof Error ? error.message : String(error)}`);
     });
-    await notifyHostStatusChange(host, "offline");
   }
+  await notifyHostStatusChanges(transitionedHosts, "offline");
   return transitionedHosts.length;
 }

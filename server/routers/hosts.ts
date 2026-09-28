@@ -1585,7 +1585,9 @@ export const hostsRouter = router({
         return { success: true };
       }),
     metrics: protectedProcedure
-      .input(z.object({ hostId: z.number(), limit: z.number().default(60), live: z.boolean().optional() }))
+      // limit 直接进 SQL 的 LIMIT 和缓存键：不设上限一次能拖出整张指标表，小数 / 负数在
+      // 各库上要么报错要么行为不一；1440 = 按分钟采样一天，前端实际只要 2。
+      .input(z.object({ hostId: z.number(), limit: z.number().int().min(1).max(1440).default(60), live: z.boolean().optional() }))
       .query(async ({ input, ctx }) => {
         await requireHostAccess(ctx, input.hostId);
         if (input.live) return db.getLatestHostMetrics(input.hostId, input.limit);
