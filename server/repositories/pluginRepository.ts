@@ -1772,6 +1772,9 @@ async function syncBundledPluginAssets(pluginId: string, bundledPath: string): P
     paths: [],
     errors: [],
   };
+  // 写失败的文件也要留在保留名单里：原来失败就被下面的清理当成「包里已经没有」删掉旧版本，
+  // 只留一条限流过的 warn —— MySQL 的 TEXT 列装不下超过 64KB 的数据文件时，白名单就这样悄无声息地少了几块。
+  const failedPaths: string[] = [];
   for (const file of dataFiles) {
     try {
       await upsertPluginAsset(pluginId, file.path, file.content.toString("utf8"), contentTypeForPath(file.path));
@@ -1779,12 +1782,13 @@ async function syncBundledPluginAssets(pluginId: string, bundledPath: string): P
       result.paths.push(file.path);
     } catch (error) {
       result.skipped += 1;
+      failedPaths.push(file.path);
       const message = error instanceof Error ? error.message : String(error);
       result.errors.push(`${file.path}: ${message}`);
-      warnPluginThrottled(`local-sync:${pluginId}:${file.path}`, `[Plugin] local asset sync skipped plugin=${pluginId} path=${file.path}: ${message}`);
+      console.error(`[Plugin] local asset sync failed plugin=${pluginId} path=${file.path}: ${message}`);
     }
   }
-  await prunePluginDataAssets(pluginId, result.paths);
+  await prunePluginDataAssets(pluginId, [...result.paths, ...failedPaths]);
   return result;
 }
 
@@ -2303,6 +2307,20 @@ function pluginAgentStateEpoch(value: unknown, fallback = Math.floor(Date.now() 
   return Number.isFinite(time) ? Math.floor(time / 1000) : fallback;
 }
 
+/**
+ * 按 UTF-8 字节截断，截断点落在多字节字符中间时退回到字符边界，不留半个字。
+ *
+ * Agent 输出原来按字符截 64K：全是中文时是 192KB，超过 MySQL TEXT 的 64KB 列宽，严格模式下
+ * 整条状态更新报 Data too long。列已经换成 LONGTEXT，这里仍按字节给出真正的上限。
+ */
+export function truncateUtf8Bytes(value: string, maxBytes: number) {
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.byteLength <= maxBytes) return value;
+  let end = Math.max(0, Math.floor(maxBytes));
+  while (end > 0 && (buffer[end] & 0xc0) === 0x80) end -= 1;
+  return buffer.subarray(0, end).toString("utf8");
+}
+
 function pluginAgentStateData(value: unknown) {
   if (value === undefined) return null;
   try {
@@ -2396,7 +2414,7 @@ export async function syncPluginAgentActionState(pluginId: string, groupId: stri
       pluginVersion: group.pluginVersion || null,
       actionId: group.actionId,
       status: result.status === "success" && pluginAgentResultEffective(result.data) ? "effective" : result.status,
-      output: String(result.output || "").slice(0, 64 * 1024) || null,
+      output: truncateUtf8Bytes(String(result.output || ""), 64 * 1024) || null,
       error: [
         result.error || result.errorDetail || result.processError || result.stderr || "",
         result.advice ? `处理建议: ${result.advice}` : "",

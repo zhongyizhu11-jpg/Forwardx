@@ -540,8 +540,9 @@ const tables: TableDef[] = [
   { name: "forward_rule_tunnel_exits", columns: [c("id", "id"), c("ruleId", "int", { notNull: true }), c("tunnelId", "int", { notNull: true }), c("exitNodeId", "int", { notNull: true }), c("exitSeq", "int", { notNull: true }), c("exitHostId", "int", { notNull: true }), c("tunnelExitPort", "int", { notNull: true }), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["ruleId", "exitNodeId"], ["ruleId", "exitSeq"]], indexes: [["ruleId"], ["tunnelId"], ["exitHostId"], ["exitHostId", "tunnelExitPort"]] },
   { name: "host_metrics", columns: [c("id", "id"), c("hostId", "int", { notNull: true }), c("cpuUsage", "int"), c("memoryUsage", "int"), c("memoryUsed", "bigint"), c("swapUsage", "int"), c("swapUsed", "bigint"), c("swapTotal", "bigint"), c("networkIn", "bigint"), c("networkOut", "bigint"), c("diskUsage", "int"), c("diskUsed", "bigint"), c("diskTotal", "bigint"), c("uptime", "bigint"), c("recordedAt", "epoch", { notNull: true, default: "now" })], indexes: [["hostId", "recordedAt"], ["recordedAt", "hostId"]] },
   { name: "host_traffic_counters", columns: [c("id", "id"), c("hostId", "int", { notNull: true }), c("bytesIn", "bigint", { notNull: true, default: 0 }), c("bytesOut", "bigint", { notNull: true, default: 0 }), c("lastSystemIn", "bigint"), c("lastSystemOut", "bigint"), c("lastDeltaIn", "bigint", { notNull: true, default: 0 }), c("lastDeltaOut", "bigint", { notNull: true, default: 0 }), c("lastReportedAt", "epoch"), c("resetAt", "epoch"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["hostId"]], indexes: [["updatedAt"], ["lastReportedAt"]] },
-  { name: "user_traffic_counters", columns: [c("id", "id"), c("userId", "int", { notNull: true }), c("bytesIn", "bigint", { notNull: true, default: 0 }), c("bytesOut", "bigint", { notNull: true, default: 0 }), c("connections", "int", { notNull: true, default: 0 }), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["userId"]], indexes: [["updatedAt"]] },
-  { name: "forward_rule_traffic_counters", columns: [c("id", "id"), c("ruleId", "int", { notNull: true }), c("hostId", "int", { notNull: true }), c("userId", "int", { notNull: true }), c("bytesIn", "bigint", { notNull: true, default: 0 }), c("bytesOut", "bigint", { notNull: true, default: 0 }), c("connections", "int", { notNull: true, default: 0 }), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["ruleId", "hostId"]], indexes: [["userId"], ["ruleId"], ["hostId"], ["updatedAt"]] },
+  // 两张计数表的 connections 从不清零，用 BIGINT（老库的升级见 BIGINT_COLUMN_UPGRADES）。
+  { name: "user_traffic_counters", columns: [c("id", "id"), c("userId", "int", { notNull: true }), c("bytesIn", "bigint", { notNull: true, default: 0 }), c("bytesOut", "bigint", { notNull: true, default: 0 }), c("connections", "bigint", { notNull: true, default: 0 }), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["userId"]], indexes: [["updatedAt"]] },
+  { name: "forward_rule_traffic_counters", columns: [c("id", "id"), c("ruleId", "int", { notNull: true }), c("hostId", "int", { notNull: true }), c("userId", "int", { notNull: true }), c("bytesIn", "bigint", { notNull: true, default: 0 }), c("bytesOut", "bigint", { notNull: true, default: 0 }), c("connections", "bigint", { notNull: true, default: 0 }), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["ruleId", "hostId"]], indexes: [["userId"], ["ruleId"], ["hostId"], ["updatedAt"]] },
   { name: "traffic_stats", columns: [c("id", "id"), c("ruleId", "int", { notNull: true }), c("hostId", "int", { notNull: true }), c("bytesIn", "bigint", { notNull: true, default: 0 }), c("bytesOut", "bigint", { notNull: true, default: 0 }), c("connections", "int", { notNull: true, default: 0 }), c("recordedAt", "epoch", { notNull: true, default: "now" })], indexes: [["ruleId", "recordedAt"], ["hostId", "recordedAt"], ["recordedAt", "ruleId"], ["recordedAt", "hostId"]] },
   { name: "traffic_stat_buckets", columns: [c("id", "id"), c("bucketStart", "epoch", { notNull: true }), c("bucketMinutes", "int", { notNull: true, default: 30 }), c("userId", "int", { notNull: true }), c("ruleId", "int", { notNull: true }), c("hostId", "int", { notNull: true }), c("bytesIn", "bigint", { notNull: true, default: 0 }), c("bytesOut", "bigint", { notNull: true, default: 0 }), c("connections", "int", { notNull: true, default: 0 }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["bucketStart", "bucketMinutes", "ruleId", "hostId"]], indexes: [["userId", "bucketStart"], ["bucketStart", "userId"], ["bucketMinutes", "bucketStart"], ["bucketMinutes", "userId", "bucketStart"], ["bucketMinutes", "ruleId", "bucketStart"], ["bucketMinutes", "hostId", "bucketStart"], ["ruleId", "bucketStart"], ["hostId", "bucketStart"]] },
   { name: "agent_traffic_reports", columns: [c("id", "id"), c("hostId", "int", { notNull: true }), c("producerId", "varchar", { length: 128 }), c("reportId", "varchar", { length: 128, notNull: true }), c("receivedAt", "epoch", { notNull: true, default: "now" })], unique: [["hostId", "reportId"], ["hostId", "producerId"]], indexes: [["receivedAt"]] },
@@ -578,12 +579,15 @@ const tables: TableDef[] = [
   { name: "redemption_codes", columns: [c("id", "id"), c("code", "text", { notNull: true }), c("type", "varchar", { length: 32, notNull: true }), c("planId", "int"), c("durationDays", "int"), c("amountCents", "bigint", { notNull: true, default: 0 }), c("startsAt", "epoch"), c("expiresAt", "epoch"), c("isActive", "bool", { notNull: true, default: true }), c("usedByUserId", "int"), c("usedAt", "epoch"), c("createdByUserId", "int"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["code"]], indexes: [["isActive", "startsAt", "expiresAt", "usedAt"]] },
   { name: "discount_codes", columns: [c("id", "id"), c("code", "text", { notNull: true }), c("discountType", "varchar", { length: 32, notNull: true }), c("discountValue", "int", { notNull: true }), c("maxUses", "int", { notNull: true, default: 0 }), c("usedCount", "int", { notNull: true, default: 0 }), c("startsAt", "epoch"), c("expiresAt", "epoch"), c("isActive", "bool", { notNull: true, default: true }), c("createdByUserId", "int"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["code"]], indexes: [["isActive", "startsAt", "expiresAt", "usedCount"]] },
   { name: "discount_code_plans", columns: [c("id", "id"), c("discountCodeId", "int", { notNull: true }), c("planId", "int", { notNull: true }), c("createdAt", "epoch", { notNull: true, default: "now" })], unique: [["discountCodeId", "planId"]], indexes: [["planId"]] },
-  { name: "announcements", columns: [c("id", "id"), c("title", "text", { notNull: true }), c("content", "text", { notNull: true }), c("type", "varchar", { length: 32, notNull: true, default: "normal" }), c("targetVersion", "text"), c("isActive", "bool", { notNull: true, default: true }), c("startsAt", "epoch"), c("expiresAt", "epoch"), c("createdByUserId", "int"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], indexes: [["type", "isActive", "updatedAt"], ["type", "targetVersion", "isActive"]] },
+  // 下面这几列在 MySQL 上用 LONGTEXT：TEXT 只有 64KB，而公告正文、商店条目缓存、插件资产（上限 512KB，
+  // 内置的地区白名单数据就有超过 64KB 的）、Agent 回来的 dataJson（256KB）都可能更大 —— 严格模式下
+  // 写入直接报 Data too long，非严格模式下被悄悄截断。SQLite / PG 的 TEXT 没有这个上限。
+  { name: "announcements", columns: [c("id", "id"), c("title", "text", { notNull: true }), c("content", "longtext", { notNull: true }), c("type", "varchar", { length: 32, notNull: true, default: "normal" }), c("targetVersion", "text"), c("isActive", "bool", { notNull: true, default: true }), c("startsAt", "epoch"), c("expiresAt", "epoch"), c("createdByUserId", "int"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], indexes: [["type", "isActive", "updatedAt"], ["type", "targetVersion", "isActive"]] },
   { name: "announcement_reads", columns: [c("id", "id"), c("announcementId", "int", { notNull: true }), c("userId", "int", { notNull: true }), c("dismissedAt", "epoch", { notNull: true, default: "now" })], unique: [["announcementId", "userId"]], indexes: [["userId", "announcementId"]] },
   { name: "plugins", columns: [c("id", "id"), c("pluginId", "varchar", { length: 128, notNull: true }), c("name", "text", { notNull: true }), c("version", "varchar", { length: 64, notNull: true, default: "0.0.0" }), c("description", "text"), c("author", "text"), c("homepage", "text"), c("repository", "text"), c("sourceType", "varchar", { length: 32, notNull: true, default: "github" }), c("sourceUrl", "text"), c("branch", "varchar", { length: 128 }), c("manifestPath", "text"), c("manifestJson", "text", { notNull: true }), c("permissionsJson", "text"), c("extensionPointsJson", "text"), c("status", "varchar", { length: 32, notNull: true, default: "disabled" }), c("trusted", "bool", { notNull: true, default: false }), c("installedAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }), c("lastCheckedAt", "epoch"), c("latestVersion", "varchar", { length: 64 }), c("lastError", "text")], unique: [["pluginId"]], indexes: [["status"], ["sourceType"]] },
-  { name: "plugin_store_sources", columns: [c("id", "id"), c("name", "text", { notNull: true }), c("repository", "text", { notNull: true }), c("branch", "varchar", { length: 128, notNull: true, default: "main" }), c("catalogPath", "text", { notNull: true, default: "forwardx-store.json" }), c("itemsJson", "text"), c("lastSyncedAt", "epoch"), c("lastError", "text"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["repository", "branch", "catalogPath"]], indexes: [["updatedAt"]] },
-  { name: "plugin_assets", columns: [c("id", "id"), c("pluginId", "varchar", { length: 128, notNull: true }), c("path", "text", { notNull: true }), c("contentType", "varchar", { length: 128 }), c("size", "int", { notNull: true, default: 0 }), c("sha256", "varchar", { length: 64 }), c("content", "text"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["pluginId", "path"]], indexes: [["pluginId"]] },
-  { name: "plugin_agent_states", columns: [c("id", "id"), c("pluginId", "varchar", { length: 128, notNull: true }), c("resourceViewId", "varchar", { length: 128, notNull: true }), c("hostId", "int", { notNull: true }), c("pluginVersion", "varchar", { length: 64 }), c("actionId", "varchar", { length: 128 }), c("groupId", "varchar", { length: 64 }), c("taskId", "varchar", { length: 64 }), c("status", "varchar", { length: 32, notNull: true, default: "idle" }), c("dataJson", "text"), c("output", "text"), c("error", "text"), c("startedAt", "epoch"), c("finishedAt", "epoch"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["pluginId", "resourceViewId", "hostId"]], indexes: [["hostId"], ["pluginId", "resourceViewId"], ["groupId"]] },
+  { name: "plugin_store_sources", columns: [c("id", "id"), c("name", "text", { notNull: true }), c("repository", "text", { notNull: true }), c("branch", "varchar", { length: 128, notNull: true, default: "main" }), c("catalogPath", "text", { notNull: true, default: "forwardx-store.json" }), c("itemsJson", "longtext"), c("lastSyncedAt", "epoch"), c("lastError", "text"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["repository", "branch", "catalogPath"]], indexes: [["updatedAt"]] },
+  { name: "plugin_assets", columns: [c("id", "id"), c("pluginId", "varchar", { length: 128, notNull: true }), c("path", "text", { notNull: true }), c("contentType", "varchar", { length: 128 }), c("size", "int", { notNull: true, default: 0 }), c("sha256", "varchar", { length: 64 }), c("content", "longtext"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["pluginId", "path"]], indexes: [["pluginId"]] },
+  { name: "plugin_agent_states", columns: [c("id", "id"), c("pluginId", "varchar", { length: 128, notNull: true }), c("resourceViewId", "varchar", { length: 128, notNull: true }), c("hostId", "int", { notNull: true }), c("pluginVersion", "varchar", { length: 64 }), c("actionId", "varchar", { length: 128 }), c("groupId", "varchar", { length: 64 }), c("taskId", "varchar", { length: 64 }), c("status", "varchar", { length: 32, notNull: true, default: "idle" }), c("dataJson", "longtext"), c("output", "longtext"), c("error", "text"), c("startedAt", "epoch"), c("finishedAt", "epoch"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["pluginId", "resourceViewId", "hostId"]], indexes: [["hostId"], ["pluginId", "resourceViewId"], ["groupId"]] },
   { name: "config_audit_events", columns: [c("id", "id"), c("resourceType", "varchar", { length: 32, notNull: true }), c("resourceId", "int", { notNull: true }), c("hostId", "int"), c("action", "varchar", { length: 32, notNull: true }), c("source", "varchar", { length: 64, notNull: true, default: "system" }), c("actorUserId", "int"), c("actorName", "text"), c("requestId", "varchar", { length: 64 }), c("requestPath", "text"), c("beforeJson", "text"), c("afterJson", "text"), c("diffJson", "text"), c("configHash", "varchar", { length: 64, notNull: true }), c("createdAt", "epoch", { notNull: true, default: "now" })], indexes: [["resourceType", "resourceId", "id"], ["hostId", "id"], ["actorUserId", "id"]] },
 ];
 
@@ -661,6 +665,56 @@ function columnSql(kind: SchemaKind, column: ColumnDef, forAlter = false) {
   return `${name} ${type}${column.notNull ? " NOT NULL" : ""}${defaultSql(kind, column.default, column.type)}`;
 }
 
+/*
+ * 这两张计数表的 connections 从建号起一直累加、从不清零，INT 撑到 21 亿就溢出：之后这个
+ * 用户（这条规则）的每次流量上报都报 out of range，整批上报事务一起回滚。新库直接建成
+ * BIGINT；老库上的列在这里升一次。
+ *
+ * 只在查到当前还是 INT 这类窄整型时才改 —— MySQL 的 MODIFY 和 PG 的 ALTER TYPE 都会重写整表，
+ * 不能每次启动都来一遍。这里只列真正会累加溢出的列，不做通用的「定义是 bigint 就升」，
+ * 免得某张历史大表的类型漂移在某次升级时悄悄变成一次长时间锁表。
+ */
+const BIGINT_COLUMN_UPGRADES: ReadonlyArray<readonly [string, string]> = [
+  ["user_traffic_counters", "connections"],
+  ["forward_rule_traffic_counters", "connections"],
+];
+const NARROW_INTEGER_TYPES = new Set(["tinyint", "smallint", "mediumint", "int", "integer"]);
+
+function bigintUpgradeTargets(rows: unknown) {
+  const targets: Array<{ table: string; column: ColumnDef }> = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const table = String((row as any)?.tableName ?? "");
+    const columnName = String((row as any)?.columnName ?? "");
+    if (!NARROW_INTEGER_TYPES.has(String((row as any)?.dataType ?? "").toLowerCase())) continue;
+    if (!BIGINT_COLUMN_UPGRADES.some(([t, col]) => t === table && col === columnName)) continue;
+    const column = tables.find((t) => t.name === table)?.columns.find((col) => col.name === columnName);
+    if (column?.type === "bigint") targets.push({ table, column });
+  }
+  return targets;
+}
+
+async function upgradeMysqlBigintColumns(pool: Pool) {
+  const [rows] = await pool.query<any[]>(
+    "SELECT TABLE_NAME AS tableName, COLUMN_NAME AS columnName, DATA_TYPE AS dataType FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?) AND COLUMN_NAME IN (?)",
+    [BIGINT_COLUMN_UPGRADES.map(([table]) => table), BIGINT_COLUMN_UPGRADES.map(([, column]) => column)],
+  );
+  for (const { table, column } of bigintUpgradeTargets(rows)) {
+    // columnSql 带上原来的 NOT NULL DEFAULT 0，MODIFY 不会把约束弄丢。
+    await pool.query(`ALTER TABLE ${quoteIdentifierFor("mysql", table)} MODIFY COLUMN ${columnSql("mysql", column, true)}`);
+  }
+}
+
+async function upgradePostgresqlBigintColumns(pool: pg.Pool) {
+  const result = await pool.query(
+    'SELECT table_name AS "tableName", column_name AS "columnName", data_type AS "dataType" FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1::text[]) AND column_name = ANY($2::text[])',
+    [BIGINT_COLUMN_UPGRADES.map(([table]) => table), BIGINT_COLUMN_UPGRADES.map(([, column]) => column)],
+  );
+  for (const { table, column } of bigintUpgradeTargets(result?.rows)) {
+    // PG 改类型时 NOT NULL 和 DEFAULT 原样保留。
+    await pool.query(`ALTER TABLE ${quoteIdentifierFor("postgresql", table)} ALTER COLUMN ${quoteIdentifierFor("postgresql", column.name)} TYPE BIGINT`);
+  }
+}
+
 function mysqlKey(table: string, prefix: string, cols: string[]) {
   const name = quoteIdentifierFor("mysql", `${prefix}_${table}_${cols.join("_")}`.slice(0, 60));
   const expr = cols.map((col) => {
@@ -699,6 +753,7 @@ async function ensureMysqlSchema(pool: Pool) {
       await pool.query(`ALTER TABLE ${quoteIdentifierFor("mysql", table.name)} ADD ${uniquePrefix === "uniq" ? "UNIQUE " : ""}INDEX ${key.name} (${key.expr})`).catch(() => undefined);
     }
   }
+  await upgradeMysqlBigintColumns(pool);
   for (const [key, value] of seedSettings) {
     await pool.execute(
       "INSERT INTO system_settings (`key`, value, updatedAt) VALUES (?, ?, UNIX_TIMESTAMP()) ON DUPLICATE KEY UPDATE `key` = `key`",
@@ -733,6 +788,7 @@ async function ensurePostgresqlSchema(pool: pg.Pool) {
       await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${name} ON ${quoteIdentifierFor("postgresql", table.name)} (${cols.map((col) => quoteIdentifierFor("postgresql", col)).join(", ")})`).catch(() => undefined);
     }
   }
+  await upgradePostgresqlBigintColumns(pool);
   for (const [key, value] of seedSettings) {
     await pool.query(
       'INSERT INTO system_settings ("key", value, "updatedAt") VALUES ($1, $2, EXTRACT(EPOCH FROM NOW())::INT) ON CONFLICT ("key") DO NOTHING',

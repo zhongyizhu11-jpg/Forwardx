@@ -16,6 +16,7 @@ import {
   getDatabasePoolSettings,
   getSchemaDialect,
   maskDatabaseConfig,
+  MYSQL_MAX_PREPARED_STATEMENTS,
   queryRaw,
   quoteDbIdentifier,
   readDatabaseConfig,
@@ -350,6 +351,8 @@ function mysqlPoolOptions(config: DatabaseConfig & { type: "mysql" }): PoolOptio
     timezone: "+00:00",
     dateStrings: false,
     ssl: mysqlConfig.ssl ? {} : undefined,
+    // 迁移时批量插入的文本各不相同，同样要限住每条连接的预处理语句缓存（见 dbRuntime）。
+    maxPreparedStatements: MYSQL_MAX_PREPARED_STATEMENTS,
   };
 }
 

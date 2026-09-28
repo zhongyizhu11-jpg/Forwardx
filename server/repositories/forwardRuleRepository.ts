@@ -537,7 +537,12 @@ function buildForwardRuleSqlFilter(
     );
 
     const numeric = /^\d+$/.test(token) ? Number(token) : 0;
-    if (Number.isSafeInteger(numeric) && numeric > 0) {
+    // 除了 r.id 是 BIGINT，其余都是 INTEGER 列：PG 按列类型推断参数，超出 int 范围的数字
+    // 直接报 out of range，整个规则列表 500。这种数字本来也不可能匹配到 INT 列。
+    if (Number.isSafeInteger(numeric) && numeric > 2147483647) {
+      tokenClauses.push(ruleColumn("r", "id") + " = ?");
+      tokenParams.push(numeric);
+    } else if (numeric > 0 && numeric <= 2147483647) {
       for (const expression of [
         ruleColumn("r", "id"),
         ruleColumn("r", "hostId"),
@@ -1209,7 +1214,8 @@ function routeEventText(value: unknown, limit = ROUTE_EVENT_TEXT_LIMIT) {
 function routeEventInt(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
-  return Number.isFinite(number) ? Math.round(number) : null;
+  // score / latencyMs 是 INT 列，Agent 报来的离谱值夹到 int 范围，别让整条事件写失败。
+  return Number.isFinite(number) ? Math.max(-2147483648, Math.min(2147483647, Math.round(number))) : null;
 }
 
 /**
@@ -1235,8 +1241,8 @@ export async function insertForwardRuleRouteEvent(event: ForwardRuleRouteEventIn
     latencyMs: routeEventInt(event.latencyMs),
     createdAt: new Date(seconds * 1000),
   };
-  const inserted: any = await db.insert(forwardRuleRouteEvents).values(row as any);
-  return Number(inserted?.insertId || inserted?.lastInsertRowid || 0);
+  // drizzle 的 insert 结果三种库各长各样（MySQL 是 [ResultSetHeader]、PG 没有 id），统一走 insertAndGetId。
+  return insertAndGetId("forward_rule_route_events", row);
 }
 
 export async function getForwardRuleRouteEvents(ruleId: number, limit = 20) {

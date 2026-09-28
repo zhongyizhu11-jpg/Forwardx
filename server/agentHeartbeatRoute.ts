@@ -1486,22 +1486,24 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     }
     // 指标一律转成有限的非负数：Agent 在租户手里，传一段几 MB 的字符串进来，SQLite 会
     // 原样存成 TEXT，每次心跳都往 host_metrics 里塞，主机列表每次也要把它读出来。
-    const heartbeatMetric = (key: string, index: number) => {
+    // 这些列都是整型（百分比几项是 INT，其余 BIGINT）：小数在 PG 上是 invalid input syntax for type
+    // integer，超过 int 范围两边都报 out of range —— 整条心跳的指标写入失败。一律取整，INT 列再截到 int 上限。
+    const heartbeatMetric = (key: string, index: number, max = Number.MAX_SAFE_INTEGER) => {
       const raw = req.body?.[key] ?? compactMetrics[index];
       if (raw === undefined || raw === null) return raw;
       const value = Number(raw);
-      return Number.isFinite(value) && value >= 0 ? Math.min(value, Number.MAX_SAFE_INTEGER) : undefined;
+      return Number.isFinite(value) && value >= 0 ? Math.min(Math.round(value), max) : undefined;
     };
-    const cpuUsage = heartbeatMetric("cpuUsage", 0);
-    const memoryUsage = heartbeatMetric("memoryUsage", 1);
+    const cpuUsage = heartbeatMetric("cpuUsage", 0, 2147483647);
+    const memoryUsage = heartbeatMetric("memoryUsage", 1, 2147483647);
     const memoryUsed = heartbeatMetric("memoryUsed", 2);
     const memoryTotal = heartbeatMetric("memoryTotal", 3);
-    const swapUsage = heartbeatMetric("swapUsage", 4);
+    const swapUsage = heartbeatMetric("swapUsage", 4, 2147483647);
     const swapUsed = heartbeatMetric("swapUsed", 5);
     const swapTotal = heartbeatMetric("swapTotal", 6);
     const networkIn = heartbeatMetric("networkIn", 7);
     const networkOut = heartbeatMetric("networkOut", 8);
-    const diskUsage = heartbeatMetric("diskUsage", 9);
+    const diskUsage = heartbeatMetric("diskUsage", 9, 2147483647);
     const diskUsed = heartbeatMetric("diskUsed", 10);
     const diskTotal = heartbeatMetric("diskTotal", 11);
     const uptime = heartbeatMetric("uptime", 12);

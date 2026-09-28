@@ -155,8 +155,9 @@ function tunnelListCondition(input: Omit<TunnelListQuery, keyof PageRequest>) {
         tunnels.connectHost,
         tunnels.certDomain,
       ].map((column) => sql`LOWER(COALESCE(${column}, '')) LIKE ${pattern} ESCAPE '!'`),
-      ...(numeric > 0 ? [
-        eq(tunnels.id, numeric),
+      // PG 按列类型推断参数：端口是 INTEGER，超出 int 范围的数字直接报 out of range，整个列表 500。
+      ...(Number.isSafeInteger(numeric) && numeric > 0 ? [eq(tunnels.id, numeric)] : []),
+      ...(numeric > 0 && numeric <= 2147483647 ? [
         eq(tunnels.listenPort, numeric),
         eq(tunnels.mimicPort, numeric),
       ] : []),

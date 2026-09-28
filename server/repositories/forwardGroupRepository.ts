@@ -989,8 +989,9 @@ function forwardGroupListCondition(input: {
         forwardGroups.lastStatus,
         forwardGroups.lastMessage,
       ].map((column) => sql`LOWER(COALESCE(${column}, '')) LIKE ${pattern} ESCAPE '!'`),
-      ...(numeric > 0 ? [
-        eq(forwardGroups.id, numeric),
+      // PG 按列类型推断参数：端口是 INTEGER，超出 int 范围的数字直接报 out of range，整个列表 500。
+      ...(Number.isSafeInteger(numeric) && numeric > 0 ? [eq(forwardGroups.id, numeric)] : []),
+      ...(numeric > 0 && numeric <= 2147483647 ? [
         eq(forwardGroups.sourcePort, numeric),
         eq(forwardGroups.targetPort, numeric),
       ] : []),
