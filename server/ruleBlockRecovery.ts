@@ -56,11 +56,13 @@ export async function resumeBlockedRules(userId: number, rules: any[], reason: s
       disabledByGroup: false,
       disabledByTunnel: false,
     }, groupCache);
-    const isEnabled = ownerAllowed && control.canEnable;
+    const canEnable = ownerAllowed && control.canEnable;
+    const portConflict = canEnable ? await db.forwardRuleRestorePortConflict(rule) : null;
+    const isEnabled = canEnable && !portConflict;
     await db.updateForwardRule(Number(rule.id), {
       isEnabled,
       isRunning: false,
-      protocolBlockReason: null,
+      protocolBlockReason: portConflict,
       disabledByUser: !ownerAllowed,
       disabledByGroup: control.blockedByGroup,
       disabledByTunnel: control.blockedByTunnel,

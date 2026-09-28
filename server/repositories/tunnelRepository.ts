@@ -603,12 +603,26 @@ export async function clearTunnelTestSnapshot(id: number, options: { clearHistor
   } as any).where(eq(tunnels.id, id));
 }
 
+export const TUNNEL_DELETED_RULE_BLOCK_REASON = "所属隧道已删除，请编辑规则选择新的隧道后再启用";
+
 export async function deleteTunnel(id: number) {
   return withDatabaseTransaction(async () => {
   const db = await getDb();
   if (!db) return;
   const before = await getTunnelById(id).catch(() => undefined);
-  await db.update(forwardRules).set({ tunnelId: null, isEnabled: false, isRunning: false, updatedAt: nowDate() }).where(eq(forwardRules.tunnelId, id));
+  // 隧道没了，规则只剩入口主机和目标：清掉所有「系统连带停用」的标记，写明原因。
+  // 不清的话，账户恢复 / 授权恢复 / 充值之后自动恢复会把它当成一条直连转发打开 ——
+  // 绕过隧道直接从入口机连目标，也不查端口。
+  await db.update(forwardRules).set({
+    tunnelId: null,
+    isEnabled: false,
+    isRunning: false,
+    disabledByUser: false,
+    disabledByTunnel: false,
+    disabledByGroup: false,
+    protocolBlockReason: TUNNEL_DELETED_RULE_BLOCK_REASON,
+    updatedAt: nowDate(),
+  } as any).where(eq(forwardRules.tunnelId, id));
   await db.delete(forwardRuleTunnelExits).where(eq(forwardRuleTunnelExits.tunnelId, id));
   await db.delete(tunnelExitNodes).where(eq(tunnelExitNodes.tunnelId, id));
   await db.delete(tunnelHops).where(eq(tunnelHops.tunnelId, id));
@@ -838,6 +852,22 @@ export async function forwardRuleOwnerAllowsRuntime(userId: unknown) {
     && !String(owner.forwardAccessPauseReason || "").trim();
 }
 
+/**
+ * 自动恢复一条规则前查端口：它停着的这段时间，端口不再算占用，可能已经被别的规则
+ * 拿走了。直接恢复会让两条启用的规则抢同一个端口 —— Agent 绑不上其中一条，iptables
+ * 下流量则可能被转到另一个租户的目标。有冲突返回说明文字（写进 protocolBlockReason，
+ * 只能由人换端口后手动打开），没有返回 null。转发组模板/子规则、线路组中继的端口由
+ * 各自的同步流程分配，这里不管。
+ */
+export async function forwardRuleRestorePortConflict(rule: any): Promise<string | null> {
+  if (dbBool(rule?.isForwardGroupTemplate) || Number(rule?.forwardGroupRuleId || 0) > 0 || Number(rule?.routeParentRuleId || 0) > 0) return null;
+  const hostId = Number(rule?.hostId || 0);
+  const sourcePort = Number(rule?.sourcePort || 0);
+  if (hostId <= 0 || sourcePort <= 0) return null;
+  const used = await isPortUsedOnHost(hostId, sourcePort, Number(rule?.id || 0), rule?.protocol, undefined, false);
+  return used ? `端口 ${sourcePort} 在规则停用期间已被其他规则占用，请更换端口后再启用` : null;
+}
+
 async function canRestoreForwardRuleAfterTunnel(rule: any) {
   if (dbBool(rule.disabledByUser) || dbBool(rule.disabledByGroup) || String(rule.protocolBlockReason || "").trim()) return false;
   const groupId = Number(rule.forwardGroupId || 0);
@@ -892,13 +922,16 @@ export async function restoreForwardRulesByTunnel(tunnelId: number) {
   let restored = 0;
   for (const rule of rules as any[]) {
     const ownerAllowed = await forwardRuleOwnerAllowsRuntime(rule.userId);
-    const isEnabled = ownerAllowed && await canRestoreForwardRuleAfterTunnel(rule);
+    const canEnable = ownerAllowed && await canRestoreForwardRuleAfterTunnel(rule);
+    const portConflict = canEnable ? await forwardRuleRestorePortConflict(rule) : null;
+    const isEnabled = canEnable && !portConflict;
     if (isEnabled) restored += 1;
     await db.update(forwardRules).set({
       isEnabled,
       disabledByTunnel: false,
       // 主人暂停中：改记成「因账户暂停而停」，账户恢复时由那条路径自动拉起。
       ...(ownerAllowed ? {} : { disabledByUser: true }),
+      ...(portConflict ? { protocolBlockReason: portConflict } : {}),
       isRunning: false,
       updatedAt: nowDate(),
     } as any).where(eq(forwardRules.id, Number(rule.id)));

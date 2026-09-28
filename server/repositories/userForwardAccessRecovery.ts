@@ -5,7 +5,7 @@ import { afterDatabaseCommit, getDb, nowDate } from "../dbRuntime";
 import { keyedTaskDepth, runWithTrafficBillingUserLockHeld, trafficBillingUserLockKey, withKeyedTaskLock } from "../keyedTaskLock";
 import { getForwardRulesForUserSync } from "./forwardRuleRepository";
 import { runForwardGroupFailover, syncForwardGroupRules } from "./forwardGroupRepository";
-import { getTunnelById, getTunnelExitNodes, getTunnelHops, updateTunnel } from "./tunnelRepository";
+import { forwardRuleRestorePortConflict, getTunnelById, getTunnelExitNodes, getTunnelHops, updateTunnel } from "./tunnelRepository";
 import { getUserById, type ForwardAccessPauseReason } from "./userRepository";
 
 export type RuntimeGroupState = {
@@ -174,6 +174,17 @@ export async function restoreUserForwardRulesAfterAccessRecovery(userId: number)
     // group sync below; enabling them directly can bypass a disabled member.
     if (Number(rule.forwardGroupRuleId || 0) > 0) continue;
     if (!control.canEnable) continue;
+    // 停着的这段时间端口可能被别的规则拿走了：有冲突就不恢复，写明原因让人换端口。
+    const portConflict = await forwardRuleRestorePortConflict(rule);
+    if (portConflict) {
+      await db.update(forwardRules).set({
+        isEnabled: false,
+        isRunning: false,
+        protocolBlockReason: portConflict,
+        updatedAt: nowDate(),
+      } as any).where(eq(forwardRules.id, Number(rule.id)));
+      continue;
+    }
     await db.update(forwardRules).set({
       isEnabled: true,
       isRunning: false,

@@ -57,7 +57,22 @@ test("rules stopped by the system resume once their cause clears; manually stopp
       // 别的原因（端口冲突）停的：不是授权失效，不动。
       await insert("forward_rules", columns, [206, 1, "port-conflict", "iptables", "tcp", null, 11006, "203.0.113.7", 80, 2, 0, 0, 0, "端口冲突"]);
 
+      // 停着的这段时间端口被别的规则拿走了：不能恢复，写明原因。
+      await insert("forward_rules", columns, [207, 1, "port-taken-while-stopped", "gost", "tcp", 30, 11500, "203.0.113.8", 80, 2, 0, 0, 1, null]);
+      await insert("forward_rules", columns, [208, 1, "took-the-port", "iptables", "tcp", null, 11500, "203.0.113.9", 80, 2, 1, 0, 0, null]);
+      // 隧道被删掉的规则：清掉系统停用标记、写明原因，账户恢复时也不能被当成直连打开。
+      await insert("tunnels", ["id", "name", "entryHostId", "exitHostId", "mode", "listenPort", "userId", "isEnabled"], [32, "to-be-deleted", 1, 4, "tls", 19002, 2, 1]);
+      await insert("forward_rules", columns, [209, 1, "on-deleted-tunnel", "gost", "tcp", 32, 11600, "203.0.113.10", 80, 2, 0, 1, 0, null]);
+      await tunnels.deleteTunnel(32);
+      const orphan = await rule(209);
+      assert.equal(bool(orphan.disabledByUser), false, "deleting a tunnel must drop system-stop markers");
+      assert.equal(orphan.protocolBlockReason, tunnels.TUNNEL_DELETED_RULE_BLOCK_REASON);
+
       const result = await healAutoStoppedRules("test");
+      assert.equal(bool((await rule(207)).isEnabled), false, "a rule whose port was taken while stopped must not come back");
+      assert.match(String((await rule(207)).protocolBlockReason || ""), /端口 11500/);
+      assert.equal(bool((await rule(208)).isEnabled), true, "the rule now holding the port keeps it");
+      assert.equal(bool((await rule(209)).isEnabled), false, "a rule on a deleted tunnel must never be auto-enabled as a direct forward");
       assert.equal(bool((await rule(200)).isEnabled), true, "a rule stopped by a tunnel that is back on must resume");
       assert.equal(bool((await rule(200)).disabledByTunnel), false);
       assert.equal(bool((await rule(201)).isEnabled), false, "a rule on a still-disabled tunnel must stay stopped");
