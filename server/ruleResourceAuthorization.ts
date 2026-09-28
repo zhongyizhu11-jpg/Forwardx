@@ -6,7 +6,7 @@ import { canUseForwardRuleResource, clearLinkAccessScopeCache, getLinkAccessScop
 import { withKeyedTaskLock } from "./keyedTaskLock";
 import { pushTunnelEndpointRefresh } from "./routers/helpers";
 import { appendPanelLog } from "./_core/panelLogger";
-import { ruleRuntimeControlState, type RuntimeGroupState } from "./repositories/userForwardAccessRecovery";
+import { resumeBlockedRules } from "./ruleBlockRecovery";
 
 export const RULE_RESOURCE_AUTHORIZATION_REVOKED_REASON = "资源授权已失效，请编辑规则并选择当前有权限的端口转发或隧道";
 
@@ -99,47 +99,7 @@ async function restoreReauthorizedRules(userId: number, rules: any[], access: Li
     && String(rule.protocolBlockReason || "") === RULE_RESOURCE_AUTHORIZATION_REVOKED_REASON
     && ruleHasResourceAccess(rule, access)
   ));
-  if (candidates.length === 0) return [];
-  const ownerAllowed = await db.forwardRuleOwnerAllowsRuntime(userId);
-  const groupCache = new Map<number, RuntimeGroupState | null>();
-  const restoredIds: number[] = [];
-  const groupIds = new Set<number>();
-  const tunnelIds = new Set<number>();
-  const hostIds = new Set<number>();
-  for (const rule of candidates) {
-    const control = await ruleRuntimeControlState({
-      ...rule,
-      protocolBlockReason: null,
-      disabledByGroup: false,
-      disabledByTunnel: false,
-    }, groupCache);
-    const isEnabled = ownerAllowed && control.canEnable;
-    await db.updateForwardRule(Number(rule.id), {
-      isEnabled,
-      isRunning: false,
-      protocolBlockReason: null,
-      disabledByUser: !ownerAllowed,
-      disabledByGroup: control.blockedByGroup,
-      disabledByTunnel: control.blockedByTunnel,
-    } as any);
-    if (isEnabled) restoredIds.push(Number(rule.id));
-    const groupId = positiveId(rule.forwardGroupId);
-    const tunnelId = positiveId(rule.tunnelId);
-    if (groupId) groupIds.add(groupId);
-    else if (tunnelId) tunnelIds.add(tunnelId);
-    else if (positiveId(rule.hostId)) hostIds.add(positiveId(rule.hostId));
-  }
-  await mapWithConcurrency(Array.from(groupIds), 4, async (groupId) => {
-    await db.syncForwardGroupRules(groupId);
-    await db.runForwardGroupFailover(groupId);
-  });
-  await mapWithConcurrency(Array.from(tunnelIds), 4, async (tunnelId) => {
-    const tunnel = await db.getTunnelById(tunnelId);
-    if (tunnel) await pushTunnelEndpointRefresh(tunnel, "rule-resource-authorization-restored", { urgent: true });
-  });
-  for (const hostId of hostIds) {
-    pushAgentRefresh(hostId, "rule-resource-authorization-restored", { urgent: true });
-  }
+  const restoredIds = await resumeBlockedRules(userId, candidates, "rule-resource-authorization-restored");
   if (restoredIds.length > 0) {
     appendPanelLog("info", `[RuleRecovery] user=${userId} resumed ${restoredIds.length} rule(s) after resource authorization was restored`);
   }

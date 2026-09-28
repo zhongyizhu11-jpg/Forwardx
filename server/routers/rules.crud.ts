@@ -44,6 +44,7 @@ import { z } from "zod";
 import { planProxyNodeBinding } from "@shared/proxyNodeAutoBind";
 import { isIP } from "node:net";
 import * as db from "../db";
+import { handleTrafficBillingShortfall } from "../trafficBillingRuleBlock";
 import { pushAgentRefresh } from "../agentEvents";
 import { forwardTypeSchema } from "./schemas";
 import {
@@ -1159,8 +1160,8 @@ async function settleTrafficBillingForDeletedRule(rule: any) {
     return result;
   });
   if (billed && Number(billed.balanceAfterCents) < 0) {
-    await db.setUserForwardAccess(Number(rule.userId), false, "traffic_billing_balance");
-    await refreshUserForwardEndpoints(Number(rule.userId), "traffic-billing-delete-balance-negative");
+    const shortfall = await handleTrafficBillingShortfall(Number(rule.userId), "delete-settlement-negative");
+    if (shortfall.accountPaused) await refreshUserForwardEndpoints(Number(rule.userId), "traffic-billing-delete-balance-negative");
   }
   return billed;
 }

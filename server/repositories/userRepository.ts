@@ -778,6 +778,17 @@ async function isAdminUser(userId: number) {
   return String((row as any)?.role || "") === "admin";
 }
 
+/** 转发权限因这个原因暂停着的用户（自愈扫描用）。 */
+export async function getUserIdsWithForwardAccessPause(reason: Exclude<ForwardAccessPauseReason, null>) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({ id: users.id }).from(users).where(and(
+    eq(users.forwardAccessPauseReason, reason),
+    ne(users.role, "admin"),
+  ));
+  return (rows as any[]).map((row) => Number(row.id || 0)).filter((id) => Number.isInteger(id) && id > 0);
+}
+
 /**
  * 旧版本会把管理员也自动暂停（流量计费余额为 0 时最常见），暂停标记一直留着。
  * 这里把这类自动暂停撤掉；管理员手动设置的暂停（manual）不动。返回解除了几个。

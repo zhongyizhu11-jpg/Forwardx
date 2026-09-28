@@ -2169,7 +2169,10 @@ async function recoverUserForwardAccessIfEligibleUnlocked(
   const effectiveLimits = mergeManualAndPlanLimits(user, limits);
   const hasTrafficBillingResource = billingResources.hostIds.length > 0 || billingResources.tunnelIds.length > 0 || billingResources.forwardGroupIds.length > 0;
   const hasTrafficBillingBalance = Number((user as any).balanceCents || 0) > 0;
-  if (pauseReason === "traffic_billing_balance" && hasTrafficBillingResource && !hasTrafficBillingBalance) {
+  // 只有转发权限完全来自流量计费的人，余额不足才整户暂停。有套餐 / 手动权限的人
+  // 继续往下走（旧版本留下的整户暂停在这里撤掉），计费资源上的规则由
+  // reconcileTrafficBillingRuleBlocks 单独停。
+  if (pauseReason === "traffic_billing_balance" && hasTrafficBillingResource && !hasTrafficBillingBalance && !effectiveLimits.canAddRules) {
     return {
       allowed: false,
       restored: false,
@@ -2305,17 +2308,20 @@ export async function recoverUserForwardAccessIfEligible(
   // serialized pass so callers immediately observe the new rule state instead
   // of racing the queued after-commit task.
   if (!isDatabaseTransactionActive() && result.allowed) {
-    const recovery = await withTrafficBillingUserLock(
-      userId,
-      () => restoreUserForwardRulesAfterAccessRecovery(userId),
-    );
-    if (recovery.enabledRuleIds.length > 0) {
+    const { reconcileTrafficBillingRuleBlocks } = await import("../trafficBillingRuleBlock");
+    const recovery = await withTrafficBillingUserLock(userId, async () => {
+      // 先处理余额：没余额时先给计费资源上的规则打上原因，下面的账户恢复就不会把它们带起来。
+      const billingRuleIds = await reconcileTrafficBillingRuleBlocks(userId);
+      const accessRecovery = await restoreUserForwardRulesAfterAccessRecovery(userId);
+      return [...billingRuleIds, ...accessRecovery.enabledRuleIds];
+    });
+    if (recovery.length > 0) {
       return {
         ...result,
         restored: true,
         restoredRuleIds: Array.from(new Set([
           ...(result.restoredRuleIds || []),
-          ...recovery.enabledRuleIds,
+          ...recovery,
         ])),
       };
     }

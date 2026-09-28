@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import * as db from "./db";
 import { isHostMetricsWatching, pushAgentRefresh } from "./agentEvents";
+import { handleTrafficBillingShortfall } from "./trafficBillingRuleBlock";
 import {
   isAgentForwardGroupLatencyResult,
   isAgentHostProbeServiceResult,
@@ -986,6 +987,8 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     await db.addProxyNodeTraffic(trafficByProxyNode);
     await db.addProxyInboundTraffic(trafficByProxyInbound);
 
+    // 一次上报里同一个人的多条计费规则只处理一次余额不足。
+    const shortfallUserIds = new Set<number>();
     for (const { rule, ruleBytes, billingResource } of billingEntries) {
       strictTrafficAccounting = true;
       const user = await db.getUserById(Number(rule.userId));
@@ -997,9 +1000,12 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
         continue;
       }
       if (user && Number((user as any).balanceCents || 0) <= 0) {
-        console.warn(`[TrafficBilling] user=${rule.userId} balance unavailable, disabling rules`);
-        await db.setUserForwardAccess(rule.userId, false, "traffic_billing_balance");
-        await refreshUserRuleAgents(rule.userId, "traffic-billing-balance-unavailable");
+        if (!shortfallUserIds.has(Number(rule.userId))) {
+          shortfallUserIds.add(Number(rule.userId));
+          console.warn(`[TrafficBilling] user=${rule.userId} balance unavailable, stopping traffic-billed rules`);
+          const shortfall = await handleTrafficBillingShortfall(Number(rule.userId), "balance-unavailable");
+          if (shortfall.accountPaused) await refreshUserRuleAgents(rule.userId, "traffic-billing-balance-unavailable");
+        }
         continue;
       }
       const billed = await db.billTrafficUsage({
@@ -1009,10 +1015,11 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
         resourceType: billingResource.resourceType,
         resourceId: billingResource.resourceId,
       });
-      if (billed && billed.balanceAfterCents < 0) {
-        console.warn(`[TrafficBilling] user=${rule.userId} balance negative, disabling rules`);
-        await db.setUserForwardAccess(rule.userId, false, "traffic_billing_balance");
-        await refreshUserRuleAgents(rule.userId, "traffic-billing-balance-negative");
+      if (billed && billed.balanceAfterCents < 0 && !shortfallUserIds.has(Number(rule.userId))) {
+        shortfallUserIds.add(Number(rule.userId));
+        console.warn(`[TrafficBilling] user=${rule.userId} balance negative, stopping traffic-billed rules`);
+        const shortfall = await handleTrafficBillingShortfall(Number(rule.userId), "balance-negative");
+        if (shortfall.accountPaused) await refreshUserRuleAgents(rule.userId, "traffic-billing-balance-negative");
       }
     }
 

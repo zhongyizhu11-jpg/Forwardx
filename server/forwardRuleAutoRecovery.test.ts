@@ -109,7 +109,7 @@ test("rules stopped by the system resume once their cause clears; manually stopp
 
       // 什么都不需要恢复时，扫描是空操作。
       const idle = await healAutoStoppedRules("test-idle");
-      assert.deepEqual(idle, { tunnels: 0, tunnelRules: 0, groupRules: 0, userRules: 0, authorizationRules: 0 });
+      assert.deepEqual(idle, { tunnels: 0, tunnelRules: 0, groupRules: 0, userRules: 0, authorizationRules: 0, trafficBillingRules: 0 });
     } finally {
       await runtime.closeDatabase().catch(() => undefined);
     }
