@@ -916,7 +916,6 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     // 共用这一个端口，字节数分不到人头，所以记在入站上而不是派生节点上。
     const trafficByProxyInbound = new Map<number, number>();
     const trafficBatch: db.TrafficStatBatchItem[] = [];
-    const runningRuleIds = new Set<number>();
     const billingEntries: Array<{
       rule: any;
       ruleBytes: number;
@@ -1036,7 +1035,6 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       acceptedBytesOut += bytesOut;
       const ruleBytes = bytesIn + bytesOut;
       if (ruleBytes > 0) {
-        if (!(rule as any).isRunning) runningRuleIds.add(Number(rule.id));
         logTrafficReportSample(
           `rule:${host.id}:${rule.id}`,
           `[Traffic] host=${host.id} rule=${rule.id}`,
@@ -1061,7 +1059,9 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     }
 
     await db.insertTrafficStatsBatch(trafficBatch);
-    await db.markForwardRulesRunning(Array.from(runningRuleIds));
+    // 不再按「有流量」把规则记成运行中：改完规则后 isRunning=false 表示「待重新下发」，
+    // 这时旧配置照样有流量，记回 true 会让心跳以为新配置已经生效、不再下发。运行状态只认
+    // Agent 的下发回执（/status，带重试）和心跳按本机监听做的恢复。
     await db.addProxyNodeTraffic(trafficByProxyNode);
     await db.addProxyInboundTraffic(trafficByProxyInbound);
 

@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
-import { InsertUser, users, forwardRules, trafficBillingUsage, userSubscriptions } from "../../drizzle/schema";
+import { InsertUser, users, forwardRules, forwardGroups, hosts, tunnels, trafficBillingUsage, userSubscriptions } from "../../drizzle/schema";
 import { executeRaw, getDatabaseKind, getDb, insertAndGetId, nowDate, queryRaw, quoteDbIdentifier, rawAffectedRows, withDatabaseTransaction } from "../dbRuntime";
 import { hashPassword, verifyPassword, verifyPasswordAgainstDummy } from "../password";
 import { getSessionKindField, type SessionKind } from "../session";
@@ -14,7 +14,7 @@ import {
   randomAvataaarsValue,
 } from "../../shared/avatar";
 import { pageResult, pageWindowForTotal, type PageRequest } from "../../shared/pagination";
-import { billingCalendarParts, billingMonthStart } from "../../shared/billingTime";
+import { billingCalendarParts, billingDaysInMonth, billingMonthStart } from "../../shared/billingTime";
 
 export type ForwardAccessPauseReason = "manual" | "traffic_billing_balance" | "traffic_limit" | "expired" | null;
 
@@ -715,6 +715,40 @@ export async function updateUserRole(userId: number, role: "user" | "admin") {
 }
 
 /**
+ * 删账号前要先处理掉的资源：他名下的隧道、转发组、主机。
+ *
+ * 这些是别人的规则也可能在用的基础设施，不能跟着人一起悄悄删掉，也不能留成没有主人的
+ * 行（没人能再管它们），所以要求管理员先转移或删除。
+ */
+export async function getUserOwnedInfrastructureCounts(userId: number) {
+  const db = await getDb();
+  if (!db) return { tunnels: 0, forwardGroups: 0, hosts: 0 };
+  const count = (rows: any[]) => Number(rows[0]?.count || 0);
+  const [tunnelRows, groupRows, hostRows] = await Promise.all([
+    db.select({ count: sql<number>`COUNT(*)` }).from(tunnels).where(eq(tunnels.userId, userId)),
+    db.select({ count: sql<number>`COUNT(*)` }).from(forwardGroups).where(eq(forwardGroups.userId, userId)),
+    db.select({ count: sql<number>`COUNT(*)` }).from(hosts).where(eq(hosts.userId, userId)),
+  ]);
+  return { tunnels: count(tunnelRows), forwardGroups: count(groupRows), hosts: count(hostRows) };
+}
+
+/**
+ * 删账号时要按正常删除流程收掉的规则：他自己建的顶层规则（含转发组模板）。
+ * 转发组子规则跟着模板走，线路组中继跟着父规则走，这里不单独列。
+ */
+export async function getUserTopLevelForwardRuleIds(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({ id: forwardRules.id }).from(forwardRules).where(and(
+    eq(forwardRules.userId, userId),
+    eq(forwardRules.pendingDelete, false),
+    sql`${forwardRules.forwardGroupRuleId} IS NULL`,
+    sql`${forwardRules.routeParentRuleId} IS NULL`,
+  ));
+  return (rows as any[]).map((row) => Number(row.id)).filter((id) => id > 0);
+}
+
+/**
  * 删账号。
  *
  * 收凭据这一步放在这里，而不是只放在删人那条路由上：凭据是按 sharedUserId 找的，
@@ -992,12 +1026,15 @@ export async function addUserTraffic(userId: number, bytes: number) {
 export async function getUsersForAutoReset(reference = nowDate()) {
   const db = await getDb();
   if (!db) return [];
-  const { day } = billingCalendarParts(reference);
+  const { year, month, day } = billingCalendarParts(reference);
   const monthStart = billingMonthStart(reference);
   const monthStartSec = Math.floor(monthStart.getTime() / 1000);
+  // 重置日按当月天数截断：设成 29-31 号的用户，在没有这一天的月份（2 月、小月）里按月末重置，
+  // 否则这个月整月都不会重置。本月是否已经重置过仍由 lastAutoTrafficReset 把关。
+  const isLastDayOfMonth = day >= billingDaysInMonth(year, month);
   return db.select().from(users).where(and(
     eq(users.trafficAutoReset, true),
-    sql`${users.trafficResetDay} <= ${day}`,
+    ...(isLastDayOfMonth ? [] : [sql`${users.trafficResetDay} <= ${day}`]),
     sql`(${users.lastAutoTrafficReset} IS NULL OR ${users.lastAutoTrafficReset} < ${monthStartSec})`,
   ));
 }

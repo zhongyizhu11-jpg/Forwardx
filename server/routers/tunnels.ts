@@ -22,6 +22,7 @@ import {
   type HostPortReservation,
 } from "../portReservations";
 import { withKeyedTaskLock } from "../keyedTaskLock";
+import { afterDatabaseCommit, afterDatabaseTransactionSettled } from "../dbRuntime";
 import { normalizeForwardXVersion } from "../../shared/forwardTypes";
 import { AGENT_FORWARDX_WIREGUARD_VERSION, isForwardXWireGuardV2 } from "../forwardXWireGuard";
 import { isAgentVersionAtLeast } from "../agentRouteUtils";
@@ -1100,7 +1101,7 @@ export const tunnelsRouter = router({
         }
         const ensuredMimic = (runtimeOptions.udpOverTcp || forwardxVersion === "v2") ? await ensureConfiguredMimicPorts(id) : null;
         const createdTunnel = await db.getTunnelById(id);
-        await pushTunnelEndpointRefresh(createdTunnel || {
+        const refreshTarget = createdTunnel || {
           id,
           name: input.name,
           entryGroupId: input.entryGroupId ?? null,
@@ -1108,10 +1109,17 @@ export const tunnelsRouter = router({
           entryHostId,
           exitHostId,
           loadBalanceEnabled: loadBalanceEnabled && extraExitNodes.length > 0,
-        }, "tunnel-created", { urgent: true });
+        };
+        // 提交后再通知 Agent：事务里推送的话，Agent 可能在提交前就来拉配置，
+        // 拿到的是还没有这条隧道的旧数据；事务回滚时更会推一条根本不存在的隧道。
+        await afterDatabaseCommit(async () => {
+          await pushTunnelEndpointRefresh(refreshTarget, "tunnel-created", { urgent: true });
+        });
         return { id, listenPort, mimicPort: Number(ensuredMimic?.tunnel?.mimicPort || mimicPort || 0) };
         } finally {
-          releaseHostPortReservations(heldReservations);
+          // 端口预留要一直占到事务结束：MySQL/PG 下提交前别的请求读不到这里写的端口，
+          // 在事务里提前释放，并发的创建/改端口就可能拿到同一个端口。
+          await afterDatabaseTransactionSettled(() => releaseHostPortReservations(heldReservations));
         }
       })),
     update: protectedProcedure
@@ -1449,6 +1457,12 @@ export const tunnelsRouter = router({
         if (nextTunnelEnabled) {
           await requireEntryGroupAccess(ctx, nextEntryGroupId, true);
         }
+        const nextEntryGroupNumber = Number(nextEntryGroupId || 0);
+        if (nextTunnelEnabled && nextEntryGroupNumber > 0 && nextEntryGroupNumber !== Number((tunnel as any).entryGroupId || 0)) {
+          // 挂到新的入口组后，组里每台启用的主机都要替这条隧道的规则监听 sourcePort，先查端口再写。
+          const entryGroupHostIds = await getTunnelEntryTestHostIds({ entryGroupId: nextEntryGroupNumber, entryHostId: 0 });
+          await hopRepo.assertTunnelRulePortsFreeOnEntryHosts([id], entryGroupHostIds);
+        }
         if ((data as any).loadBalanceEnabled && nextExitGroup) {
           (data as any).loadBalanceStrategy = inheritedExitGroupStrategy(nextExitGroup, (data as any).loadBalanceStrategy);
         }
@@ -1636,7 +1650,16 @@ export const tunnelsRouter = router({
           // Mapping reconciliation runs after primary ports have been fixed;
           // it can therefore use the repaired primary value as its preference
           // without reintroducing a stale/out-of-policy port.
-          await hopRepo.reconcileTunnelRuleExitMappings(id);
+          // 必须放到提交之后：它按规则拿 rule-tunnel-exits:<id> 键锁。SQLite 下本事务
+          // 占着全局连接锁，心跳恰好先拿了同一把键锁、再等连接锁查库时，两边互等，
+          // 整个面板的数据库访问都会卡死。提交后再做，失败也只记日志，心跳会逐条再校正。
+          await afterDatabaseCommit(async () => {
+            try {
+              await hopRepo.reconcileTunnelRuleExitMappings(id);
+            } catch (error: any) {
+              appendPanelLog("warn", `[Tunnel] exit mapping reconcile after update failed tunnel=${id}: ${error?.message || error}`);
+            }
+          });
         }
         const ensuredMimic = nextDedicatedUdpPortEnabled ? await ensureConfiguredMimicPorts(id) : null;
         if (ensuredMimic?.changed && !keyChanged) {
@@ -1677,7 +1700,8 @@ export const tunnelsRouter = router({
             ...existingExtraHostIds,
             ...nextExtraHostIds,
           ];
-          await refreshTunnelRuntimeHosts(id, affectedHostIds, hopChanged ? "tunnel-hop-updated" : "tunnel-updated", { urgent: true });
+          // 提交后再推送，Agent 才不会在提交前拉到旧配置（也排在上面的出口映射校正之后）。
+          await afterDatabaseCommit(() => refreshTunnelRuntimeHosts(id, affectedHostIds, hopChanged ? "tunnel-hop-updated" : "tunnel-updated", { urgent: true }));
         }
         const updatedTunnel = await db.getTunnelById(id);
         const hydratedTunnel = updatedTunnel ? (await attachTunnelEndpointHosts([updatedTunnel as any]))[0] : null;
@@ -1695,7 +1719,8 @@ export const tunnelsRouter = router({
           tunnel: tunnelWithAvailability ? tunnelForUser(tunnelWithAvailability, accessScope) : null,
         };
         } finally {
-          releaseHostPortReservations(heldReservations);
+          // 预留端口占到事务结束再放，理由同创建。
+          await afterDatabaseTransactionSettled(() => releaseHostPortReservations(heldReservations));
         }
       }))),
     deleteImpact: protectedProcedure

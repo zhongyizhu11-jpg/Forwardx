@@ -1551,6 +1551,11 @@ export const hostsRouter = router({
         if (blockers.managedRuleCount > 0) {
           throw new Error(`该主机仍被 ${blockers.managedRuleCount} 条转发组/转发链规则引用，请先在转发组中移除该主机或删除对应转发组`);
         }
+        // 隧道、转发组成员、套餐里还引用着它时不能删：这些行不会跟着主机删，会留下指向空主机的引用。
+        const references = await db.getHostDeleteReferenceLabels(input.id);
+        if (references.length > 0) {
+          throw new Error(`该主机仍被引用：${references.join("；")}。请先解除这些引用后再删除主机`);
+        }
         if (blockers.pendingCleanupCount > 0) {
           await db.releaseHostPendingRuleCleanup(input.id);
         }
