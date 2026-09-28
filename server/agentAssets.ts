@@ -213,3 +213,60 @@ export function getMissingBundledAgentAssets(version = APP_VERSION) {
   const normalized = normalizeVersion(version);
   return AGENT_ASSET_NAMES.filter((asset) => !getBundledAgentAssetPath(normalized, asset));
 }
+
+const RELEASE_CHECKSUM_TTL_MS = 6 * 60 * 60 * 1000;
+const RELEASE_CHECKSUM_FAILURE_TTL_MS = 5 * 60 * 1000;
+const releaseChecksumCache = new Map<string, { at: number; sums: Record<string, string> | null }>();
+
+export function parseSha256Sums(text: string) {
+  const sums: Record<string, string> = {};
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const match = line.trim().match(/^([0-9a-f]{64})\s+\*?(\S+)$/i);
+    if (match && AGENT_ASSET_NAME_SET.has(match[2])) sums[match[2]] = match[1].toLowerCase();
+  }
+  return sums;
+}
+
+/**
+ * 某个发布版本里 Agent / FXP / runtime 二进制的 SHA-256。
+ *
+ * 嵌进面板生成的 install.sh：二进制不管是从 GitHub、加速镜像还是面板缓存下的，都按这里
+ * 的值校验。安装脚本是从面板拿的，面板是 https 时这份哈希和面板一样可信 —— 镜像被人
+ * 替换了二进制，校验就过不去。
+ *
+ * 优先用面板自带（发布包里打进来的）二进制现算，其次去 GitHub 取 SHA256SUMS；
+ * 都拿不到就返回 null，安装脚本会自己再去 GitHub 取一次。
+ */
+export async function getAgentReleaseChecksums(version: string): Promise<Record<string, string> | null> {
+  const normalized = normalizeVersion(version);
+  if (!isSemver(normalized)) return null;
+  const cached = releaseChecksumCache.get(normalized);
+  if (cached && Date.now() - cached.at < (cached.sums ? RELEASE_CHECKSUM_TTL_MS : RELEASE_CHECKSUM_FAILURE_TTL_MS)) {
+    return cached.sums;
+  }
+  let sums: Record<string, string> | null = null;
+  const bundled: Record<string, string> = {};
+  for (const asset of AGENT_ASSET_NAMES) {
+    const filePath = getBundledAgentAssetPath(normalized, asset);
+    if (!filePath) continue;
+    const { createHash } = await import("crypto");
+    bundled[asset] = createHash("sha256").update(await fsp.readFile(filePath)).digest("hex");
+  }
+  if (Object.keys(bundled).length === AGENT_ASSET_NAMES.length) {
+    sums = bundled;
+  } else {
+    try {
+      const response = await fetch(`${REPO_URL}/releases/download/v${normalized}/SHA256SUMS`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (response.ok) {
+        const parsed = { ...parseSha256Sums(await response.text()), ...bundled };
+        if (Object.keys(parsed).length > 0) sums = parsed;
+      }
+    } catch {
+      sums = Object.keys(bundled).length > 0 ? bundled : null;
+    }
+  }
+  releaseChecksumCache.set(normalized, { at: Date.now(), sums });
+  return sums;
+}

@@ -1,7 +1,8 @@
 import { Router, Request, Response, NextFunction } from "express";
 import * as db from "./db";
 import { AGENT_VERSION } from "./_core/systemRouter";
-import { AGENT_ASSET_NAME_SET, getOrFetchAgentAssetPath } from "./agentAssets";
+import { AGENT_ASSET_NAME_SET, getAgentReleaseChecksums, getOrFetchAgentAssetPath } from "./agentAssets";
+import { APP_VERSION } from "../shared/versions";
 import { appendPanelLog } from "./_core/panelLogger";
 import { generateInstallScript } from "./agentInstallScripts";
 import { isNginxForwardProtocolEnabled } from "../shared/forwardTypes";
@@ -496,6 +497,7 @@ agentRouter.get("/api/agent/install.sh", async (req: Request, res: Response) => 
     migrationFallbackPanelUrl: migrationFallbackEnabled ? panelMigration?.fallbackPanelUrl : undefined,
     panelMigrationId: migrationFallbackEnabled ? panelMigration?.id : undefined,
     panelMigrationStartedAt: migrationFallbackEnabled ? panelMigration?.startedAt : undefined,
+    releaseChecksums: { [APP_VERSION]: await getAgentReleaseChecksums(APP_VERSION).catch(() => null) },
   }));
 });
 
