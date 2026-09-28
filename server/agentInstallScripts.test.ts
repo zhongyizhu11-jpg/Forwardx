@@ -57,8 +57,28 @@ test("Agent services avoid duplicate logs and disable core dumps", () => {
   assert.match(script, /LogRateLimitBurst=200/);
   assert.match(script, /output_log="\/dev\/null"/);
   assert.match(script, /error_log="\/var\/log\/forwardx-agent\/\$SERVICE_NAME-stderr\.log"/);
-  assert.match(script, /ulimit -c 0 2>\/dev\/null \|\| true; exec \$GO_AGENT_BIN/);
+  assert.match(script, /ulimit -c 0 2>\/dev\/null \|\| true; ulimit -n 1048576 [^;]*; exec \$GO_AGENT_BIN/);
   assert.doesNotMatch(script, /output_log="\/var\/log\/forwardx-agent\/\$SERVICE_NAME\.log"/);
+});
+
+test("Agent restarts leave FXP tunnel processes running and raise fd limits", () => {
+  const script = generateInstallScript("https://panel.example.com");
+
+  assert.match(script, /KillMode=process/);
+  assert.match(script, /LimitNOFILE=1048576/);
+  assert.match(script, /TasksMax=infinity/);
+});
+
+test("Agent install and upgrade both apply forwarding network tuning", () => {
+  const script = generateInstallScript("https://panel.example.com");
+  const upgrade = scriptSection(script, "do_upgrade() {", "# ============ 入口 ============");
+
+  assert.match(script, /apply_network_tuning\(\) \{/);
+  assert.match(script, /FORWARDX_NETWORK_TUNING/);
+  assert.match(script, /net\.ipv4\.tcp_fastopen = \$\(\(cur \| 3\)\)/);
+  assert.match(script, /net\.ipv4\.tcp_congestion_control = bbr/);
+  assert.match(upgrade, /\n\s*apply_network_tuning\n/);
+  assert.ok(upgrade.indexOf("apply_network_tuning") < upgrade.indexOf("write_agent_service"));
 });
 
 test("Agent install and upgrade do not install or modify host time synchronization", () => {

@@ -1394,13 +1394,17 @@ func pickUDPDirectEndpoint(selector *exitEndpointSelector, cfg config, selection
 		if udpPort <= 0 {
 			udpPort = endpoint.Port
 		}
-		addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(endpoint.Host, strconv.Itoa(udpPort)))
+		address, err := resolveHopAddress(endpoint.Host, udpPort)
+		var addr *net.UDPAddr
+		if err == nil {
+			addr, err = net.ResolveUDPAddr("udp", address)
+		}
 		if err != nil {
 			lastErr = err
 			selector.markFailure(index, err)
 			continue
 		}
-		selector.markHealthy(index)
+		selector.markResolved(index)
 		return endpoint, index, addr, nil
 	}
 	if lastErr == nil {

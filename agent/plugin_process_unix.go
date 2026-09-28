@@ -10,6 +10,7 @@ import (
 
 func configurePluginTaskCommand(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	bindChildToAgent(cmd)
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return os.ErrProcessDone

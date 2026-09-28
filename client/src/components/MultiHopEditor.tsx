@@ -448,7 +448,7 @@ export default function MultiHopEditor({
                 />
 
                 <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5">
-                <div className="flex h-7 w-[56px] shrink-0 items-center justify-center">
+                <div className="flex h-7 w-11 shrink-0 items-center justify-center sm:w-[56px]">
                   {showTunnelEntryIpSwitch ? (
                     <TooltipProvider delayDuration={120}>
                       <Tooltip>
@@ -465,7 +465,7 @@ export default function MultiHopEditor({
                   )}
                 </div>
 
-                <div className="flex h-7 w-[56px] shrink-0 items-center justify-center">
+                <div className="flex h-7 w-11 shrink-0 items-center justify-center sm:w-[56px]">
                   {showIpv6Switch ? (
                     <TooltipProvider delayDuration={120}>
                       <Tooltip>
@@ -486,7 +486,7 @@ export default function MultiHopEditor({
                   {ROLE_LABELS[role]}
                 </Badge>
 
-                <div className="flex h-7 w-[84px] shrink-0 items-center justify-end gap-0.5">
+                <div className="flex h-7 min-w-[84px] shrink-0 items-center justify-end gap-0.5">
                 <Button
                   variant="ghost"
                   size="icon"

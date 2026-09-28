@@ -10,6 +10,10 @@ package main
 //
 // Relays need no changes: they forward secure frames verbatim, so a leg routed
 // through a relay looks exactly like a direct leg to both ends.
+//
+// 两端都**不等齐**：入口第一条腿握手完成就开始送数据，出口第一条腿到了就去连
+// 目标，其余的腿什么时候好、什么时候加进来。原来两端都要等所有腿到齐 —— 一个
+// 挂掉的中转能让每条新连接都干等满拨号超时（出口那边最多再等 10 秒）。
 
 import (
 	"crypto/rand"
@@ -23,10 +27,10 @@ import (
 	"time"
 )
 
-// multipathLegJoinTimeout bounds how long the exit waits for the remaining legs
-// of a session before starting with the ones that arrived. A leg delayed past
-// this is refused rather than allowed to join a running stream mid-flight.
-const multipathLegJoinTimeout = 10 * time.Second
+// multipathEndedTTL is how long the exit remembers a finished session, so a
+// leg that shows up after the end is refused instead of starting the whole
+// session over with a fresh connection to the target.
+const multipathEndedTTL = 2 * time.Minute
 
 // newMultipathSessionID mints the identifier that ties an entry's legs together
 // at the exit.
@@ -66,109 +70,76 @@ func multipathLegLabel(leg multipathLeg) string {
 	return fmt.Sprintf("%s:%d", leg.Host, leg.Port)
 }
 
-// dialMultipathLegs opens every configured leg and announces the shared session
-// on each one.
-//
-// Dialling and announcing are separate phases on purpose: the hello carries the
-// leg count the exit should wait for, and only once every dial has resolved is
-// that count actually known. Announcing the configured count instead would make
-// the exit sit through its join timeout on every connection whenever one relay
-// front happens to be down.
-//
-// A leg that fails is skipped rather than failing the session, so losing a relay
-// front costs bandwidth instead of connectivity.
-func dialMultipathLegs(cfg config, hello helloFrame, sessionID string) ([]*multipathLegConn, error) {
-	type dialed struct {
-		index int
-		conn  net.Conn
-		sec   *secureConn
-		label string
-		err   error
+// multipathLegHealthKey names the endpoint a leg dials, for the health memory.
+func multipathLegHealthKey(leg multipathLeg) string {
+	return fmt.Sprintf("%s:%d", strings.TrimSpace(leg.Host), leg.Port)
+}
+
+// multipathLegCandidates picks the configured legs a new session should dial:
+// all of them except those that failed recently. If every leg is in backoff,
+// all of them are dialled anyway — the memory saves effort, it must never be
+// the reason a connection cannot be made.
+func multipathLegCandidates(cfg config) []int {
+	candidates := make([]int, 0, len(cfg.MultipathLegs))
+	for index, leg := range cfg.MultipathLegs {
+		if multipathLegHealthMemory.allow(multipathLegHealthKey(leg)) {
+			candidates = append(candidates, index)
+		} else {
+			fxpVerbosef("multipath leg %d (%s) failed recently, skipping it for this session", index, multipathLegLabel(leg))
+		}
 	}
-	configured := len(cfg.MultipathLegs)
-	results := make(chan dialed, configured)
-	var wg sync.WaitGroup
-	for index, legCfg := range cfg.MultipathLegs {
-		wg.Add(1)
+	if len(candidates) == 0 {
+		for index := range cfg.MultipathLegs {
+			candidates = append(candidates, index)
+		}
+	}
+	return candidates
+}
+
+// multipathDialResult is one leg that finished dialling, or why it did not.
+type multipathDialResult struct {
+	leg *multipathLegConn
+	key string
+	err error
+}
+
+// dialMultipathLegs starts dialling the chosen legs in parallel, announcing the
+// shared session on each, and hands back the results as they come in. Nothing
+// here waits for the slowest leg: the caller starts on the first one.
+func dialMultipathLegs(cfg config, hello helloFrame, sessionID string, indexes []int) <-chan multipathDialResult {
+	results := make(chan multipathDialResult, len(indexes))
+	for _, index := range indexes {
 		go func(index int, legCfg multipathLeg) {
-			defer wg.Done()
 			dialCfg := cfg
 			if strings.TrimSpace(legCfg.Key) != "" {
 				dialCfg.Key = legCfg.Key
 			}
 			label := multipathLegLabel(legCfg)
+			key := multipathLegHealthKey(legCfg)
 			conn, sec, err := dialSecureTCP(legCfg.Host, legCfg.Port, dialCfg)
 			if err != nil {
-				results <- dialed{index: index, label: label, err: fmt.Errorf("leg %d (%s): %w", index, label, err)}
+				results <- multipathDialResult{key: key, err: fmt.Errorf("leg %d (%s): %w", index, label, err)}
 				return
 			}
-			results <- dialed{index: index, conn: conn, sec: sec, label: label}
-		}(index, legCfg)
-	}
-	wg.Wait()
-	close(results)
-
-	ordered := make([]*dialed, configured)
-	var firstErr error
-	for result := range results {
-		result := result
-		if result.err != nil {
-			if firstErr == nil {
-				firstErr = result.err
+			legHello := hello
+			legHello.MultipathSessionID = sessionID
+			legHello.MultipathLegIndex = index
+			legHello.MultipathLegCount = len(cfg.MultipathLegs)
+			frame, err := json.Marshal(legHello)
+			if err == nil {
+				err = writeSecureHello(sec, frame)
 			}
-			fxpVerbosef("multipath leg dial failed: %v", result.err)
-			continue
-		}
-		ordered[result.index] = &result
-	}
-
-	// Keep the configured order so leg labels stay meaningful in logs.
-	live := make([]*dialed, 0, configured)
-	for _, result := range ordered {
-		if result != nil {
-			live = append(live, result)
-		}
-	}
-	if len(live) == 0 {
-		if firstErr == nil {
-			firstErr = errMultipathNoLegs
-		}
-		return nil, firstErr
-	}
-
-	// Announce the count the exit will actually see.
-	legs := make([]*multipathLegConn, 0, len(live))
-	for index, result := range live {
-		legHello := hello
-		legHello.MultipathSessionID = sessionID
-		legHello.MultipathLegIndex = index
-		legHello.MultipathLegCount = len(live)
-		frame, marshalErr := json.Marshal(legHello)
-		if marshalErr != nil {
-			_ = result.conn.Close()
-			if firstErr == nil {
-				firstErr = marshalErr
+			if err != nil {
+				_ = conn.Close()
+				results <- multipathDialResult{key: key, err: fmt.Errorf("leg %d (%s) hello: %w", index, label, err)}
+				return
 			}
-			continue
-		}
-		if err := writeSecureHello(result.sec, frame); err != nil {
-			_ = result.conn.Close()
-			wrapped := fmt.Errorf("leg %d (%s) hello: %w", index, result.label, err)
-			if firstErr == nil {
-				firstErr = wrapped
-			}
-			fxpVerbosef("multipath leg hello failed: %v", wrapped)
-			continue
-		}
-		legs = append(legs, &multipathLegConn{index: len(legs), sec: result.sec, label: result.label})
+			leg := newMultipathLeg(index, sec, label)
+			leg.healthKey = key
+			results <- multipathDialResult{leg: leg, key: key}
+		}(index, cfg.MultipathLegs[index])
 	}
-	if len(legs) == 0 {
-		if firstErr == nil {
-			firstErr = errMultipathNoLegs
-		}
-		return nil, firstErr
-	}
-	return legs, nil
+	return results
 }
 
 // closeMultipathLegs tears down legs that will not be used.
@@ -180,189 +151,173 @@ func closeMultipathLegs(legs []*multipathLegConn) {
 	}
 }
 
-// multipathExitPending collects the legs of one session as they arrive at the
-// exit.
-//
-// The first leg to arrive leads: it waits for its siblings, runs the target
-// connection for the whole session, and releases the follower goroutines when
-// the session ends. Followers must stay parked because returning would close
-// the connection their leg rides on.
-type multipathExitPending struct {
-	sessionID string
-	legCount  int
-
-	mu      sync.Mutex
-	legs    []*multipathLegConn
-	started bool
-
-	// ready fires once every announced leg has arrived.
-	ready     chan struct{}
-	readyOnce sync.Once
-	// done fires when the leader has finished the session.
-	done chan struct{}
-}
-
 // multipathExitRegistry groups arriving legs by session id.
 type multipathExitRegistry struct {
 	mu       sync.Mutex
-	sessions map[string]*multipathExitPending
+	sessions map[string]*multipathSession
+	// ended remembers recently finished sessions, see multipathEndedTTL.
+	ended     map[string]time.Time
+	lastPrune time.Time
 }
 
-var exitMultipathSessions = &multipathExitRegistry{sessions: map[string]*multipathExitPending{}}
+var exitMultipathSessions = newMultipathExitRegistry()
 
-// join adds one leg, reporting whether this caller leads the session.
-//
-// A leg arriving after the leader started is refused: the stream is already
-// running and its sequence numbering cannot absorb a new path.
-func (r *multipathExitRegistry) join(sessionID string, legCount int, leg *multipathLegConn) (*multipathExitPending, bool, error) {
+func newMultipathExitRegistry() *multipathExitRegistry {
+	return &multipathExitRegistry{
+		sessions: map[string]*multipathSession{},
+		ended:    map[string]time.Time{},
+	}
+}
+
+// join adds one leg to its session, starting the session if this is the first
+// leg to arrive, and reports whether this caller leads it.
+func (r *multipathExitRegistry) join(sessionID string, leg *multipathLegConn, maxPending int) (*multipathSession, bool, error) {
 	r.mu.Lock()
-	pending, exists := r.sessions[sessionID]
-	if !exists {
-		pending = &multipathExitPending{
-			sessionID: sessionID,
-			legCount:  legCount,
-			ready:     make(chan struct{}),
-			done:      make(chan struct{}),
+	defer r.mu.Unlock()
+	if _, over := r.ended[sessionID]; over {
+		return nil, false, errors.New("multipath leg arrived after its session ended")
+	}
+	if session, ok := r.sessions[sessionID]; ok {
+		if !session.addLeg(leg) {
+			return nil, false, fmt.Errorf("multipath leg %d refused: session over or leg already joined", leg.index)
 		}
-		r.sessions[sessionID] = pending
+		return session, false, nil
 	}
-	r.mu.Unlock()
-
-	pending.mu.Lock()
-	if pending.started {
-		pending.mu.Unlock()
-		return nil, false, errors.New("multipath leg arrived after its session started")
-	}
-	if legCount > pending.legCount {
-		pending.legCount = legCount
-	}
-	leg.index = len(pending.legs)
-	pending.legs = append(pending.legs, leg)
-	complete := len(pending.legs) >= pending.legCount
-	pending.mu.Unlock()
-
-	if complete {
-		pending.readyOnce.Do(func() { close(pending.ready) })
-	}
-	return pending, !exists, nil
+	session := newMultipathSession([]*multipathLegConn{leg}, maxPending)
+	r.sessions[sessionID] = session
+	return session, true, nil
 }
 
-func (r *multipathExitRegistry) remove(sessionID string) {
+// finish forgets a session and refuses its stragglers for a while.
+func (r *multipathExitRegistry) finish(sessionID string) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.sessions, sessionID)
-	r.mu.Unlock()
+	now := time.Now()
+	r.ended[sessionID] = now
+	if now.Sub(r.lastPrune) < multipathEndedTTL/2 {
+		return
+	}
+	r.lastPrune = now
+	for id, at := range r.ended {
+		if now.Sub(at) > multipathEndedTTL {
+			delete(r.ended, id)
+		}
+	}
 }
 
-// pendingCount reports how many sessions are still assembling, for tests.
+// pendingCount reports how many sessions are still running, for tests.
 func (r *multipathExitRegistry) pendingCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.sessions)
 }
 
-// claim closes the session to further legs and returns those collected.
-func (p *multipathExitPending) claim() []*multipathLegConn {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.started = true
-	legs := make([]*multipathLegConn, len(p.legs))
-	copy(legs, p.legs)
-	for index, leg := range legs {
-		leg.index = index
-	}
-	return legs
-}
-
 // handleExitMultipath routes one arriving leg into its session.
 //
-// The leader assembles the session and drives the target connection; followers
-// park until it finishes.
+// The first leg to arrive leads: it starts the session and dials the target
+// right away, without waiting for its siblings, and relays for the whole
+// session. Later legs join the running session and park until their leg is
+// done, because returning would close the connection it rides on.
 func handleExitMultipath(sec *secureConn, hello helloFrame, cfg config) error {
 	sessionID := strings.TrimSpace(hello.MultipathSessionID)
 	if sessionID == "" {
 		return errors.New("multipath leg is missing its session id")
 	}
-	legCount := hello.MultipathLegCount
-	if legCount < 1 {
-		legCount = 1
-	}
-	leg := &multipathLegConn{
-		sec:   sec,
-		label: fmt.Sprintf("peer-%s", sec.conn.RemoteAddr()),
-	}
-	pending, leader, err := exitMultipathSessions.join(sessionID, legCount, leg)
+	leg := newMultipathLeg(hello.MultipathLegIndex, sec, fmt.Sprintf("peer-%s", sec.conn.RemoteAddr()))
+	session, leader, err := exitMultipathSessions.join(sessionID, leg, multipathPendingLimit(cfg))
 	if err != nil {
 		return err
 	}
 	if !leader {
-		// Hold the connection open; the leader is relaying for every leg.
-		<-pending.done
+		<-leg.dead
 		return nil
 	}
-
-	defer func() {
-		exitMultipathSessions.remove(sessionID)
-		close(pending.done)
-	}()
-	// Give the sibling legs a moment to arrive, then run with what is there.
-	timer := time.NewTimer(multipathLegJoinTimeout)
-	defer timer.Stop()
-	select {
-	case <-pending.ready:
-	case <-timer.C:
-	}
-	legs := pending.claim()
+	defer exitMultipathSessions.finish(sessionID)
+	defer session.closeTransport()
 	fxpVerbosef(
-		"exit multipath session=%s legs=%d/%d target=%s:%d",
+		"exit multipath session=%s first-leg=%d configured=%d target=%s:%d",
 		sessionID,
-		len(legs),
-		legCount,
+		hello.MultipathLegIndex,
+		hello.MultipathLegCount,
 		hello.TargetIP,
 		hello.TargetPort,
 	)
-	session := newMultipathSession(legs, multipathPendingLimit(cfg))
-	if hello.MultipathExtended {
-		// 入口声明了它听得懂扩展帧，那就回一帧 ready，两边都可以开流控了。
-		session.enableExtended()
-	}
-	defer session.closeTransport()
 	return relayExitTCPToTarget(session, hello)
 }
 
 // dialEntryMultipath brings up the legs for one client connection and wraps
 // them in a session.
 //
-// A leg that fails to dial is skipped, so the session degrades to the paths
-// that are up rather than failing outright. Even a single surviving leg is
-// still served: it behaves exactly like an ordinary session, just with the
-// multipath framing, which keeps the exit side consistent.
+// The session starts as soon as the first leg is up; the rest join as they
+// come. A leg that fails to dial is skipped and remembered, so the session
+// degrades to the paths that are up rather than failing outright, and the next
+// sessions do not wait on it either.
 func dialEntryMultipath(cfg config, hello helloFrame, client net.Conn) (*multipathSession, error) {
 	sessionID, err := newMultipathSessionID()
 	if err != nil {
 		return nil, err
 	}
-	// 告诉出口这边听得懂扩展帧。老出口会忽略这个字段，于是永远不会回 ready，
-	// 这边也就永远不发新类型的帧 —— 行为退回今天的样子。
-	hello.MultipathExtended = true
-	legs, err := dialMultipathLegs(cfg, hello, sessionID)
-	if err != nil {
-		return nil, err
+	candidates := multipathLegCandidates(cfg)
+	results := dialMultipathLegs(cfg, hello, sessionID, candidates)
+	remaining := len(candidates)
+	var firstErr error
+	var session *multipathSession
+	var first *multipathLegConn
+	for session == nil && remaining > 0 {
+		result := <-results
+		remaining--
+		if result.err != nil {
+			multipathLegHealthMemory.failed(result.key)
+			fxpVerbosef("multipath leg dial failed: %v", result.err)
+			if firstErr == nil {
+				firstErr = result.err
+			}
+			continue
+		}
+		multipathLegHealthMemory.dialed(result.key)
+		first = result.leg
+		session = newMultipathSession([]*multipathLegConn{first}, multipathPendingLimit(cfg))
 	}
-	labels := make([]string, 0, len(legs))
-	for _, leg := range legs {
-		labels = append(labels, leg.label)
+	if session == nil {
+		if firstErr == nil {
+			firstErr = errMultipathNoLegs
+		}
+		return nil, firstErr
+	}
+	if remaining > 0 {
+		go joinLateMultipathLegs(session, results, remaining)
 	}
 	fxpVerbosef(
-		"entry multipath tunnel=%d rule=%d client=%s session=%s legs=%d/%d [%s] target=%s:%d",
+		"entry multipath tunnel=%d rule=%d client=%s session=%s first=%s dialing=%d/%d target=%s:%d",
 		cfg.TunnelID,
 		cfg.RuleID,
 		client.RemoteAddr(),
 		sessionID,
-		len(legs),
+		first.label,
+		len(candidates),
 		len(cfg.MultipathLegs),
-		strings.Join(labels, ", "),
 		cfg.TargetIP,
 		cfg.TargetPort,
 	)
-	return newMultipathSession(legs, multipathPendingLimit(cfg)), nil
+	return session, nil
+}
+
+// joinLateMultipathLegs adds the legs that finish dialling after the session
+// started.
+func joinLateMultipathLegs(session *multipathSession, results <-chan multipathDialResult, remaining int) {
+	for ; remaining > 0; remaining-- {
+		result := <-results
+		if result.err != nil {
+			multipathLegHealthMemory.failed(result.key)
+			fxpVerbosef("multipath leg dial failed: %v", result.err)
+			continue
+		}
+		multipathLegHealthMemory.dialed(result.key)
+		if !session.addLeg(result.leg) {
+			closeMultipathLegs([]*multipathLegConn{result.leg})
+			continue
+		}
+		fxpVerbosef("multipath leg %d (%s) joined, %d live", result.leg.index, result.leg.label, session.aliveLegCount())
+	}
 }

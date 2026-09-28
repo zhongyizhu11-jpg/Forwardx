@@ -118,6 +118,7 @@ func TestSecureDialTimeoutIgnoresInvalidOrDuplicateExitEntries(t *testing.T) {
 }
 
 func TestFallbackSelectorUsesPriorityAndRetriesPrimaryAfterCooldown(t *testing.T) {
+	resetFXPEndpointRegistry()
 	selector := newExitEndpointSelector([]exitEndpoint{
 		{Host: "127.0.0.2", Port: 10002},
 	}, exitEndpoint{Host: "127.0.0.1", Port: 10001}, "fallback")
@@ -138,9 +139,7 @@ func TestFallbackSelectorUsesPriorityAndRetriesPrimaryAfterCooldown(t *testing.T
 	// 死节点。探一个「连得上但不回话」的出口要等满整个握手超时 —— 实测是
 	// 每隔几秒就有人卡二十秒。现在到期只代表「可以去后台探一探了」，探通了
 	// 才回到用户路径。
-	selector.mu.Lock()
-	selector.retryAfter[0] = time.Now().Add(-time.Millisecond)
-	selector.mu.Unlock()
+	setEndpointRetryAfter(selector, 0, time.Now().Add(-time.Millisecond))
 	stillBackup, stillIndex, ok := selector.pick(nil)
 	if !ok || stillIndex != 1 || stillBackup.Port != 10002 {
 		t.Fatalf("冷却到期就把首选放回用户路径了：index=%d endpoint=%+v ok=%v", stillIndex, stillBackup, ok)
@@ -157,6 +156,7 @@ func TestFallbackSelectorUsesPriorityAndRetriesPrimaryAfterCooldown(t *testing.T
 }
 
 func TestExitSelectorStrategies(t *testing.T) {
+	resetFXPEndpointRegistry()
 	endpoints := []exitEndpoint{
 		{Host: "127.0.0.2", Port: 10002},
 		{Host: "127.0.0.3", Port: 10003},
@@ -1296,46 +1296,6 @@ func TestFxpServerAcceptsCompatibilityWireContext(t *testing.T) {
 	_ = client.conn.Close()
 	if err := <-errCh; err != nil {
 		t.Fatalf("compat handshake failed: %v", err)
-	}
-}
-
-func TestFxpClientRetriesCompatibilityWireContext(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-
-	cfg := config{Role: "entry", TunnelID: 89, RuleID: 0, ListenPort: 12345, Key: "compat-retry-key"}
-	done := make(chan error, 1)
-	go func() {
-		for i := 0; i < 2; i++ {
-			conn, err := ln.Accept()
-			if err != nil {
-				done <- err
-				return
-			}
-			sec, err := newServerSecureConnWithWires(conn, cfg, []fxpWireContext{fxpWireCompat2390})
-			if err != nil {
-				_ = conn.Close()
-				continue
-			}
-			_ = sec.conn.Close()
-			done <- nil
-			return
-		}
-		done <- errors.New("compat retry did not reach server")
-	}()
-
-	port := ln.Addr().(*net.TCPAddr).Port
-	conn, sec, err := dialSecureTCP("127.0.0.1", port, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = sec.conn.Close()
-	_ = conn.Close()
-	if err := <-done; err != nil {
-		t.Fatal(err)
 	}
 }
 

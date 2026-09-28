@@ -8,7 +8,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -84,7 +83,6 @@ func TestMultipathSessionKeepsEveryByteWhenALegDiesAtTheWindow(t *testing.T) {
 	const chunks = 8000
 	const chunkSize = 2048
 	client, server, raw := newTCPMultipathPair(t, 3, 1024)
-	server.enableExtended() // 出口侧：入口在 hello 里声明过，于是回 ready 并开流控
 
 	var expected bytes.Buffer
 	for i := 0; i < chunks; i++ {
@@ -158,7 +156,6 @@ func TestMultipathSessionKeepsEveryByteWhenALegDiesMidFlight(t *testing.T) {
 	const chunks = 20000
 	const chunkSize = 2048
 	client, server, raw := newTCPMultipathPair(t, 3, 1024)
-	server.enableExtended()
 
 	var expected bytes.Buffer
 	for i := 0; i < chunks; i++ {
@@ -221,7 +218,6 @@ func TestMultipathSessionRecoversLosslesslyFromABlackHoledLeg(t *testing.T) {
 	const chunks = 4000
 	const chunkSize = 2048
 	client, server, hole := newBlackHolePair(t, 3, 1024, 1)
-	server.enableExtended()
 	client.setLegStallTuning(300*time.Millisecond, 50*time.Millisecond)
 	server.setLegStallTuning(300*time.Millisecond, 50*time.Millisecond)
 
@@ -270,108 +266,13 @@ func TestMultipathSessionRecoversLosslesslyFromABlackHoledLeg(t *testing.T) {
 	if err := <-sent; err != nil {
 		t.Fatalf("send: %v", err)
 	}
+	// 卡住的那片早就由别的腿重发了，流可能比看门狗先跑完；这里给它一点时间。
+	deadline := time.Now().Add(3 * time.Second)
+	for client.aliveLegCount() != 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
 	if client.aliveLegCount() != 2 {
 		t.Fatalf("黑洞腿应该被摘掉，还剩 %d 条", client.aliveLegCount())
-	}
-}
-
-func TestMultipathSessionStaysSilentWithAPeerThatNeverAskedForExtendedFrames(t *testing.T) {
-	// 老版本对端听不懂 ready/ack 这两种帧，收到就会当成协议错误把会话掐掉。
-	// 所以这一条钉的是：**没确认对端听得懂之前，一帧都不发**。
-	//
-	// 这里两端都不调 enableExtended，正是入口对上老出口时的样子：出口不会回
-	// ready，入口也就永远不知道对方听得懂，于是谁都不发新类型的帧。
-	pair := newMultipathTestPair(t, 3, 64)
-
-	received := make(chan []byte, 1)
-	go func() {
-		data, _ := drainStream(pair.server)
-		received <- data
-	}()
-	var expected bytes.Buffer
-	for i := 0; i < 200; i++ {
-		chunk := markedChunk(i, 256)
-		expected.Write(chunk)
-		if err := pair.client.writeFrame(chunk); err != nil {
-			t.Fatalf("writeFrame %d: %v", i, err)
-		}
-	}
-	if err := pair.client.writeFrame(nil); err != nil {
-		t.Fatalf("fin: %v", err)
-	}
-	select {
-	case got := <-received:
-		if !bytes.Equal(got, expected.Bytes()) {
-			t.Fatalf("老对端下的流都传不对：收到 %d 字节，应为 %d", len(got), expected.Len())
-		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("老对端下的流没跑完")
-	}
-
-	for name, session := range map[string]*multipathSession{"entry": pair.client, "exit": pair.server} {
-		if session.peerExtended.Load() {
-			t.Fatalf("%s 侧凭空认定对端听得懂扩展帧", name)
-		}
-		if got := session.ackedSeq.Load(); got != 0 {
-			t.Fatalf("%s 侧给老对端发了回执（acked=%d）—— 老对端会直接掐掉会话", name, got)
-		}
-	}
-	// 没有回执，窗口就该一直不生效，行为退回改动之前。
-	if _, active, _, _ := pair.client.sendWin.limit(); active {
-		t.Fatal("没收到任何回执，发送窗口却生效了")
-	}
-}
-
-func TestSendWindowStaysDormantUntilTheFarSideReports(t *testing.T) {
-	window := newSendWindow()
-	done := make(chan struct{})
-	// 一个回执都没有的时候，窗口不该拦任何东西。
-	if err := window.reserve(1<<40, done, time.Second); err != nil {
-		t.Fatalf("dormant window must not hold anything back: %v", err)
-	}
-	window.update(0, 4)
-	if err := window.reserve(3, done, time.Second); err != nil {
-		t.Fatalf("seq inside the window: %v", err)
-	}
-
-	blocked := make(chan error, 1)
-	go func() { blocked <- window.reserve(4, done, 5*time.Second) }()
-	select {
-	case err := <-blocked:
-		t.Fatalf("seq 4 是窗口外的第一个，不该放行（%v）", err)
-	case <-time.After(100 * time.Millisecond):
-	}
-	window.update(1, 4) // 对端交付了一片，窗口往前挪一格
-	select {
-	case err := <-blocked:
-		if err != nil {
-			t.Fatalf("window advanced: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("窗口挪了，等在外面的那片却没被放行")
-	}
-}
-
-func TestSendWindowGivesUpWhenTheFarSideGoesSilent(t *testing.T) {
-	// 对端彻底没声音的时候，发送端不能永远挂着 —— 那正是「两端都不报错」的
-	// 那种卡死。宁可带着原因收掉，让上层重连。
-	window := newSendWindow()
-	window.update(0, 1)
-	err := window.reserve(1, make(chan struct{}), 150*time.Millisecond)
-	if !errors.Is(err, errMultipathSendStalled) {
-		t.Fatalf("expected the sender to give up, got %v", err)
-	}
-	// 窗口只要还在动，等多久都算正常背压，不该报错。
-	moving := newSendWindow()
-	moving.update(0, 1)
-	go func() {
-		for i := uint64(1); i <= 6; i++ {
-			time.Sleep(40 * time.Millisecond)
-			moving.update(i, 1)
-		}
-	}()
-	if err := moving.reserve(5, make(chan struct{}), 150*time.Millisecond); err != nil {
-		t.Fatalf("窗口一直在动，不该判成卡死：%v", err)
 	}
 }
 
@@ -382,7 +283,6 @@ func TestSendWindowGivesUpWhenTheFarSideGoesSilent(t *testing.T) {
 // 根本不给别的腿走的机会。
 func TestMultipathSessionEndsTheStreamEvenWhenOneLegBlackHoles(t *testing.T) {
 	client, server, hole := newBlackHolePair(t, 3, 64, 1)
-	server.enableExtended()
 	client.setLegStallTuning(200*time.Millisecond, 50*time.Millisecond)
 	server.setLegStallTuning(200*time.Millisecond, 50*time.Millisecond)
 
@@ -417,7 +317,6 @@ func TestMultipathSessionEndsAnIdleStreamWhenOneLegBlackHoles(t *testing.T) {
 	// 往前走」，而卡住的那条腿之后的腿根本轮不到写。只有同时发才走得出去。
 	// 开关必须在会话起来之前就打开，否则那条腿的读取者会先正常读掉一帧。
 	client, server, _ := newBlackHolePairArmed(t, 3, 64, 1, true)
-	server.enableExtended()
 	client.setLegStallTuning(200*time.Millisecond, 50*time.Millisecond)
 	server.setLegStallTuning(200*time.Millisecond, 50*time.Millisecond)
 

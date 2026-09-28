@@ -13,6 +13,7 @@ import (
 // 这是最常见的半死形态 —— 进程卡住、LB 把连接收下但后端已经没了、
 // 中间设备静默丢包。问题是：切到备用要等多久？
 func TestEntryFallsBackQuicklyWhenThePrimaryExitBlackHoles(t *testing.T) {
+	resetFXPEndpointRegistry()
 	// 回声目标
 	target, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -144,6 +145,7 @@ func TestFallbackRetryBacksOffWhileAnEndpointStaysDown(t *testing.T) {
 }
 
 func TestExitSelectorKeepsAFailedEndpointOffTheUserPath(t *testing.T) {
+	resetFXPEndpointRegistry()
 	selector := newExitEndpointSelector(
 		[]exitEndpoint{{Host: "127.0.0.1", Port: 2}},
 		exitEndpoint{Host: "127.0.0.1", Port: 1},
@@ -152,9 +154,7 @@ func TestExitSelectorKeepsAFailedEndpointOffTheUserPath(t *testing.T) {
 	selector.markFailure(0, errTestEndpointDown)
 
 	// 「到点了」不等于「可以用了」：还有健康的可用时，坏节点不该再被派给用户。
-	selector.mu.Lock()
-	selector.retryAfter[0] = time.Now().Add(-time.Hour)
-	selector.mu.Unlock()
+	setEndpointRetryAfter(selector, 0, time.Now().Add(-time.Hour))
 	if _, index, ok := selector.pick(nil); !ok || index != 1 {
 		t.Fatalf("坏节点又被派给用户连接了：index=%d ok=%v", index, ok)
 	}
@@ -174,15 +174,16 @@ func TestExitSelectorKeepsAFailedEndpointOffTheUserPath(t *testing.T) {
 	if _, back, ok := selector.pick(nil); !ok || back != 0 {
 		t.Fatalf("探通之后没有回到首选：index=%d ok=%v", back, ok)
 	}
-	selector.mu.Lock()
-	failures := selector.failures[0]
-	selector.mu.Unlock()
+	selector.states[0].mu.Lock()
+	failures := selector.states[0].failures
+	selector.states[0].mu.Unlock()
 	if failures != 0 {
 		t.Fatalf("恢复健康之后失败计数没清零：%d", failures)
 	}
 }
 
 func TestExitSelectorStillUsesADownEndpointWhenNothingElseIsLeft(t *testing.T) {
+	resetFXPEndpointRegistry()
 	// 全都挂了的时候不能挑不出来 —— 那就等于直接拒绝服务。
 	selector := newExitEndpointSelector(
 		[]exitEndpoint{{Host: "127.0.0.1", Port: 2}},
@@ -199,6 +200,7 @@ func TestExitSelectorStillUsesADownEndpointWhenNothingElseIsLeft(t *testing.T) {
 var errTestEndpointDown = errors.New("endpoint down")
 
 func TestExitSelectorStillRecoversWhereNothingProbes(t *testing.T) {
+	resetFXPEndpointRegistry()
 	/*
 	   不是每条路都有后台探测可用。
 
@@ -217,10 +219,8 @@ func TestExitSelectorStillRecoversWhereNothingProbes(t *testing.T) {
 	)
 	selector.markFailure(0, errTestEndpointDown)
 	selector.markFailure(1, errTestEndpointDown)
-	selector.mu.Lock()
-	selector.retryAfter[0] = time.Now().Add(time.Hour)  // 首选还在冷却里
-	selector.retryAfter[1] = time.Now().Add(-time.Hour) // 备用冷却到期了
-	selector.mu.Unlock()
+	setEndpointRetryAfter(selector, 0, time.Now().Add(time.Hour))  // 首选还在冷却里
+	setEndpointRetryAfter(selector, 1, time.Now().Add(-time.Hour)) // 备用冷却到期了
 
 	if _, index, ok := selector.pick(nil); !ok || index != 1 {
 		t.Fatalf("冷却到期的那个没被挑中：index=%d ok=%v —— 没有探测的路子就再也回不来了", index, ok)
@@ -228,6 +228,7 @@ func TestExitSelectorStillRecoversWhereNothingProbes(t *testing.T) {
 }
 
 func TestRelayFallsBackToItsBackupDownstream(t *testing.T) {
+	resetFXPEndpointRegistry()
 	/*
 	   中转这一跳和入口走的是同一个择优拨号函数，所以超时那套行为已经由上面
 	   那条钉住了，这里不重复付一次十秒。

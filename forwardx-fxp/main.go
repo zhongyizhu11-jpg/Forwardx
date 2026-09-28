@@ -93,7 +93,25 @@ type secureConn struct {
 	// concurrently. Keep complete encrypted frames serialized so their length
 	// and payload records cannot interleave on the underlying stream.
 	writeMu sync.Mutex
+	// 流水线握手：客户端的 salt 和握手帧先攒在 pendingPrefix 里，跟第一次写
+	// （hello、首包）合成一个 TCP 段发出去；握手确认也不等，ackPending 让第一次
+	// readFrame 先把它读掉再交出数据帧。每一跳因此省掉一个往返。
+	pendingPrefix []byte
+	ackPending    bool
+	ackTunnelID   int
+	ackTimeout    time.Duration
+	// onAck 报告握手确认的结果，出口择优靠它更新健康状态。
+	onAck func(error)
 }
+
+// fxpAckError 表示对端没有确认握手：连不通的黑洞、拒绝了密钥、半路断开。
+// 这时对端还没回过任何数据，入口可以换一个出口把已发出的内容原样重放。
+type fxpAckError struct {
+	err error
+}
+
+func (e *fxpAckError) Error() string { return "fxp handshake ack: " + e.err.Error() }
+func (e *fxpAckError) Unwrap() error { return e.err }
 
 type fxpWireContext struct {
 	name          string
@@ -146,7 +164,7 @@ const (
 	fxpUDPIdleTimeout    = 5 * time.Minute
 	fxpProtocolSampleMax = 512
 	fxpMasterContext     = "forwardx-fxp-v2 master"
-	fxpRuntimeVersion    = "2.2.119"
+	fxpRuntimeVersion    = "2.2.120"
 	fxpFallbackRetry     = 5 * time.Second
 	// A node that stays down is re-probed on a growing delay, because probing a
 	// peer that accepts but never answers costs a whole handshake timeout.
@@ -158,9 +176,11 @@ const (
 	// even when user-facing access limits are disabled. The active limits are
 	// intentionally well above the standard plan limits; the lower pending
 	// limits only cover the short handshake/hello phase.
-	fxpListenerMaxConnections        = 8192
-	fxpListenerMaxPendingConnections = 512
-	fxpListenerMaxPendingPerIP       = 256
+	fxpListenerMaxConnections = 8192
+	// 待定连接里包括上一跳连接池预热、正在等 hello 的连接（每个上一跳进程每个
+	// 端点最多 fxpPoolMaxSize 条），所以比单纯的握手阶段放宽一些。
+	fxpListenerMaxPendingConnections = 2048
+	fxpListenerMaxPendingPerIP       = 1024
 )
 
 var (
@@ -190,18 +210,16 @@ type listenerConnGates struct {
 }
 
 type exitEndpointSelector struct {
-	endpoints  []exitEndpoint
-	healthy    []bool
-	retryAfter []time.Time
-	// failures counts consecutive failures per endpoint, so a node that stays
-	// down is re-probed less and less often instead of every few seconds.
-	failures []int
-	// probing marks an endpoint that a background probe is already checking,
-	// so several connections cannot pile probes onto the same dead node.
-	probing  []bool
+	endpoints []exitEndpoint
+	// states 是这些端点在整个进程里共享的健康和连接池（见 endpoint_pool.go）。
+	// 同一个出口被入口组里多条规则引用时，大家看到的是同一份。
+	states   []*fxpEndpointState
 	strategy string
 	next     int
 	mu       sync.Mutex
+	// probed 表示有 TCP 探测在盯这些端点；UDP 那条路就不再拿「地址解析成功」
+	// 去覆盖探测得出的健康结论。
+	probed atomic.Bool
 }
 
 // fallbackRetryDelay backs off a repeatedly failing endpoint.
@@ -247,7 +265,8 @@ func newListenerConnGates(cfg config) *listenerConnGates {
 	}
 }
 
-func newExitEndpointSelector(exits []exitEndpoint, fallback exitEndpoint, strategy string) *exitEndpointSelector {
+// normalizeExitEndpoints 去重、补默认值，丢掉无效端点。选择器和拨号超时都按它算。
+func normalizeExitEndpoints(exits []exitEndpoint, fallback exitEndpoint) []exitEndpoint {
 	endpoints := make([]exitEndpoint, 0, len(exits)+1)
 	seen := map[string]bool{}
 	add := func(endpoint exitEndpoint) {
@@ -272,18 +291,51 @@ func newExitEndpointSelector(exits []exitEndpoint, fallback exitEndpoint, strate
 	for _, endpoint := range exits {
 		add(endpoint)
 	}
-	healthy := make([]bool, len(endpoints))
-	retryAfter := make([]time.Time, len(endpoints))
-	for i := range healthy {
-		healthy[i] = true
+	return endpoints
+}
+
+func newExitEndpointSelector(exits []exitEndpoint, fallback exitEndpoint, strategy string) *exitEndpointSelector {
+	endpoints := normalizeExitEndpoints(exits, fallback)
+	states := make([]*fxpEndpointState, len(endpoints))
+	for i, endpoint := range endpoints {
+		states[i] = fxpEndpointStateFor(endpoint)
 	}
 	return &exitEndpointSelector{
-		endpoints:  endpoints,
-		healthy:    healthy,
-		retryAfter: retryAfter,
-		failures:   make([]int, len(endpoints)),
-		probing:    make([]bool, len(endpoints)),
-		strategy:   normalizeExitStrategy(strategy),
+		endpoints: endpoints,
+		states:    states,
+		strategy:  normalizeExitStrategy(strategy),
+	}
+}
+
+// activate 在一个 TCP 运行时启动时调用：马上给当前首选的端点预热连接池，
+// 有备选时再让维护循环主动探测每个端点。返回的函数在运行时关闭时撤销探测。
+func (s *exitEndpointSelector) activate(cfg config) func() {
+	if s == nil || len(s.endpoints) == 0 {
+		return func() {}
+	}
+	if endpoint, index, ok := s.pick(nil); ok {
+		dialCfg := cfg
+		if endpoint.Key != "" {
+			dialCfg.Key = endpoint.Key
+		}
+		s.states[index].prewarm(dialCfg)
+	}
+	if len(s.endpoints) < 2 {
+		return func() {}
+	}
+	s.probed.Store(true)
+	releases := make([]func(), 0, len(s.states))
+	for i, state := range s.states {
+		dialCfg := cfg
+		if s.endpoints[i].Key != "" {
+			dialCfg.Key = s.endpoints[i].Key
+		}
+		releases = append(releases, state.watch(dialCfg))
+	}
+	return func() {
+		for _, release := range releases {
+			release()
+		}
 	}
 }
 
@@ -295,30 +347,19 @@ func (s *exitEndpointSelector) claimProbe(now time.Time) (exitEndpoint, int, boo
 	if s == nil {
 		return exitEndpoint{}, -1, false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.endpoints {
-		if s.healthy[i] || s.probing[i] || s.retryAfter[i].IsZero() {
-			continue
+	for i, state := range s.states {
+		if state.claimProbe(now) {
+			return s.endpoints[i], i, true
 		}
-		if now.Before(s.retryAfter[i]) {
-			continue
-		}
-		s.probing[i] = true
-		return s.endpoints[i], i, true
 	}
 	return exitEndpoint{}, -1, false
 }
 
 func (s *exitEndpointSelector) releaseProbe(index int) {
-	if s == nil || index < 0 {
+	if s == nil || index < 0 || index >= len(s.states) {
 		return
 	}
-	s.mu.Lock()
-	if index < len(s.probing) {
-		s.probing[index] = false
-	}
-	s.mu.Unlock()
+	s.states[index].releaseProbe()
 }
 
 // probeFailedEndpoint re-checks one endpoint that has been down, off the path
@@ -331,20 +372,11 @@ func (s *exitEndpointSelector) probeFailedEndpoint(cfg config) {
 	if !ok {
 		return
 	}
-	go func() {
-		defer s.releaseProbe(index)
-		dialCfg := cfg
-		if endpoint.Key != "" {
-			dialCfg.Key = endpoint.Key
-		}
-		conn, _, err := dialSecureTCP(endpoint.Host, endpoint.Port, dialCfg)
-		if err != nil {
-			s.markFailure(index, err)
-			return
-		}
-		_ = conn.Close()
-		s.markHealthy(index)
-	}()
+	dialCfg := cfg
+	if endpoint.Key != "" {
+		dialCfg.Key = endpoint.Key
+	}
+	go s.states[index].runProbe(dialCfg)
 }
 
 func (s *exitEndpointSelector) count() int {
@@ -366,6 +398,10 @@ func (s *exitEndpointSelector) pick(excluded map[int]bool, selectionKeys ...stri
 		return exitEndpoint{}, -1, false
 	}
 	now := time.Now()
+	tiers := make([]int, len(s.states))
+	for i, state := range s.states {
+		tiers[i] = state.tier(now)
+	}
 	// 分三档挑，而不是「够格/不够格」两档：
 	//
 	//	1. 确认健康的（含从没失败过的）
@@ -379,16 +415,7 @@ func (s *exitEndpointSelector) pick(excluded map[int]bool, selectionKeys ...stri
 	//
 	// 但第 2 档不能干脆去掉：像 UDP 直连那条路根本不拨号，只做一次地址解析，
 	// 没有后台探测可言。真把它去掉，一次 DNS 抖动就能把那条规则的出口永久停用。
-	tier := func(index int) int {
-		switch {
-		case s.healthy[index]:
-			return 1
-		case s.retryAfter[index].IsZero() || !now.Before(s.retryAfter[index]):
-			return 2
-		default:
-			return 3
-		}
-	}
+	tier := func(index int) int { return tiers[index] }
 	if s.strategy == "fallback" {
 		for wanted := 1; wanted <= 3; wanted++ {
 			for i := range s.endpoints {
@@ -440,46 +467,31 @@ func (s *exitEndpointSelector) pick(excluded map[int]bool, selectionKeys ...stri
 }
 
 func (s *exitEndpointSelector) markFailure(index int, err error) {
-	if s == nil || index < 0 {
+	if s == nil || index < 0 || index >= len(s.states) {
 		return
 	}
-	s.mu.Lock()
-	if index >= len(s.endpoints) {
-		s.mu.Unlock()
-		return
-	}
-	endpoint := s.endpoints[index]
-	wasHealthy := s.healthy[index]
-	s.healthy[index] = false
-	s.failures[index]++
-	delay := fallbackRetryDelay(s.failures[index])
-	s.retryAfter[index] = time.Now().Add(delay)
-	s.mu.Unlock()
-	if wasHealthy {
-		log.Printf("exit endpoint unhealthy index=%d endpoint=%s:%d retryIn=%s reason=%v", index, endpoint.Host, endpoint.Port, delay, err)
-	}
+	s.states[index].markFailure(err)
 }
 
 func (s *exitEndpointSelector) markHealthy(index int) {
-	if s == nil || index < 0 {
+	if s == nil || index < 0 || index >= len(s.states) {
 		return
 	}
-	s.mu.Lock()
-	if index >= len(s.endpoints) {
-		s.mu.Unlock()
-		return
-	}
-	endpoint := s.endpoints[index]
-	wasHealthy := s.healthy[index]
-	s.healthy[index] = true
-	s.failures[index] = 0
-	s.retryAfter[index] = time.Time{}
-	s.mu.Unlock()
-	if !wasHealthy {
-		log.Printf("exit endpoint recovered index=%d endpoint=%s:%d", index, endpoint.Host, endpoint.Port)
-	}
+	s.states[index].markHealthy()
 }
 
+// markResolved 是 UDP 直连那条路「解析到地址了」。它不说明对端活着，所以有
+// TCP 探测盯着时不拿它覆盖健康；纯 UDP 的规则没有别的信号，才照旧当成健康。
+func (s *exitEndpointSelector) markResolved(index int) {
+	if s == nil || s.probed.Load() {
+		return
+	}
+	s.markHealthy(index)
+}
+
+// dialSelectedSecureTCP 按选择器挑端点，返回一条确认过握手的连接（池里有就用
+// 池里的）。只剩 UDP-over-TCP 的旧会话在用；TCP 会话走 selectedTransport，
+// 那里不等确认、失败了还能重放。
 func dialSelectedSecureTCP(selector *exitEndpointSelector, cfg config, selectionKey string) (net.Conn, *secureConn, exitEndpoint, error) {
 	if selector == nil || selector.count() == 0 {
 		return nil, nil, exitEndpoint{}, errors.New("no exit endpoints")
@@ -499,8 +511,6 @@ func dialSelectedSecureTCP(selector *exitEndpointSelector, cfg config, selection
 		conn, sec, err := dialSecureTCP(endpoint.Host, endpoint.Port, dialCfg)
 		if err == nil {
 			selector.markHealthy(index)
-			// 这条连接已经有着落了，顺手派一次后台探测去看看掉线的那些
-			// 回来没有 —— 探测的等待由后台协程扛，不占用户的时间。
 			selector.probeFailedEndpoint(cfg)
 			return conn, sec, endpoint, nil
 		}
@@ -661,22 +671,56 @@ func main() {
 		cfg.LimitIn,
 		cfg.LimitOut,
 	)
+	log.Printf("forwardx-fxp udp wire packet limit=%dB transport=%s", configureFXPUDPWireLimit(cfg), cfg.TransportVersion)
 	ctx := shutdownContext()
-	switch strings.ToLower(cfg.Role) {
-	case "entry":
-		err = runEntry(ctx.done, cfg)
-	case "entry-group":
-		err = runEntryGroup(ctx.done, cfg)
-	case "exit":
-		err = runExit(ctx.done, cfg)
-	case "relay":
-		err = runRelay(ctx.done, cfg)
-	default:
-		err = fmt.Errorf("unknown role %q", cfg.Role)
-	}
+	writeFXPReloadAck(*configPath, cfg.ReloadNonce, nil)
+	err = runManaged(ctx.done, cfg, watchFXPConfigReloads(*configPath))
 	if err != nil && !errors.Is(err, net.ErrClosed) {
 		log.Fatal(err)
 	}
+}
+
+// watchFXPConfigReloads：收到 SIGHUP 就重读配置文件并交给运行时原地生效，
+// 结果写进 <config>.applied，Agent 据此判断热更新成没成，不成就回退成重启。
+func watchFXPConfigReloads(configPath string) <-chan fxpReloadRequest {
+	requests := make(chan fxpReloadRequest)
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		for range hup {
+			next, err := readConfig(configPath)
+			if err == nil {
+				err = validateConfig(next)
+			}
+			if err != nil {
+				log.Printf("fxp config reload rejected: %v", err)
+				writeFXPReloadAck(configPath, next.ReloadNonce, err)
+				continue
+			}
+			result := make(chan error, 1)
+			requests <- fxpReloadRequest{cfg: next, result: result}
+			writeFXPReloadAck(configPath, next.ReloadNonce, <-result)
+		}
+	}()
+	return requests
+}
+
+func writeFXPReloadAck(configPath, nonce string, applyErr error) {
+	ack := struct {
+		Nonce string `json:"nonce"`
+		OK    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+		PID   int    `json:"pid"`
+	}{Nonce: nonce, OK: applyErr == nil, PID: os.Getpid()}
+	if applyErr != nil {
+		ack.Error = applyErr.Error()
+	}
+	raw, _ := json.Marshal(ack)
+	tmp := configPath + ".applied.tmp"
+	if err := os.WriteFile(tmp, raw, 0600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, configPath+".applied")
 }
 
 type signalContext struct {
@@ -736,7 +780,11 @@ func protocolHas(cfg config, network string) bool {
 
 func dialTCP(host string, port int, timeout time.Duration) (net.Conn, error) {
 	d := net.Dialer{Timeout: timeout, KeepAlive: fxpTCPKeepAlive}
-	conn, err := d.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	address, err := resolveHopAddress(host, port)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := d.Dial("tcp", address)
 	if err != nil {
 		return nil, err
 	}
@@ -762,41 +810,35 @@ func secureDialTimeout(cfg config) time.Duration {
 			Key:     cfg.RelayKey,
 		}
 	}
-	selector := newExitEndpointSelector(cfg.Exits, fallback, cfg.ExitStrategy)
-	if selector.count() > 1 {
+	if len(normalizeExitEndpoints(cfg.Exits, fallback)) > 1 {
 		return fxpFallbackDial
 	}
 	return 10 * time.Second
 }
 
+// dialSecureTCP 返回一条握完手、确认过的安全连接：池里有预热好的就直接用，
+// 没有才现拨。多路径的腿走这里。
 func dialSecureTCP(host string, port int, cfg config) (net.Conn, *secureConn, error) {
-	var lastErr error
-	dialTimeout := secureDialTimeout(cfg)
-	for _, wire := range fxpWireContexts {
-		conn, err := dialTCP(host, port, dialTimeout)
-		if err != nil {
-			return nil, nil, err
-		}
-		sec, err := newClientSecureConnWithWire(conn, cfg, wire)
-		if err == nil {
-			if wire.compat {
-				log.Printf("fxp using compatibility wire context=%s tunnel=%d peer=%s:%d", wire.name, cfg.TunnelID, host, port)
-			}
-			return conn, sec, nil
-		}
-		lastErr = err
+	state := fxpEndpointStateFor(exitEndpoint{Host: host, Port: port, Key: cfg.Key})
+	if conn, sec, ok := state.take(cfg); ok {
+		return conn, sec, nil
+	}
+	return dialSecureTCPFresh(host, port, cfg)
+}
+
+// dialSecureTCPFresh 不碰连接池，现拨一条并完整握手。连接池预热和后台探测用它：
+// 它们要的就是真实地走一遍网络。
+func dialSecureTCPFresh(host string, port int, cfg config) (net.Conn, *secureConn, error) {
+	conn, err := dialTCP(host, port, secureDialTimeout(cfg))
+	if err != nil {
+		return nil, nil, err
+	}
+	sec, err := newClientSecureConnWithWire(conn, cfg, fxpWireCurrent)
+	if err != nil {
 		_ = conn.Close()
-		if isNetTimeout(err) {
-			// 对端一个字节都没回。兼容上下文只决定**怎么解读**收到的字节，
-			// 换一个再来一遍还是同样地等满超时 —— 白白把「切备用」的时间
-			// 翻倍。实测主用是黑洞时，这一条就占了 20 秒里的 10 秒。
-			break
-		}
+		return nil, nil, err
 	}
-	if lastErr == nil {
-		lastErr = errors.New("fxp secure connect failed")
-	}
-	return nil, nil, lastErr
+	return conn, sec, nil
 }
 
 func enableTCPKeepAlive(conn net.Conn) {
@@ -815,249 +857,50 @@ func closeWriteConn(conn net.Conn) {
 	}
 }
 
-type entryServer struct {
-	serve func() error
-	close func() error
-}
-
-type entryRuntime struct {
-	cfg       config
-	servers   []entryServer
-	sessionWG sync.WaitGroup
-	closeOnce sync.Once
-}
-
-func prepareEntryRuntime(cfg config) (*entryRuntime, error) {
-	runtime := &entryRuntime{cfg: cfg, servers: make([]entryServer, 0, 2)}
-	gate := newConnGate(cfg.MaxConnections, cfg.MaxIPs)
-	selector := newExitEndpointSelector(cfg.Exits, exitEndpoint{Host: cfg.ExitHost, Port: cfg.ExitPort, UDPPort: cfg.UDPExitPort, Key: cfg.Key}, cfg.ExitStrategy)
-	inLimiter := newLimiter(cfg.LimitIn)
-	outLimiter := newLimiter(cfg.LimitOut)
-	if selector.count() > 1 {
-		log.Printf("entry exit selector exits=%s strategy=%s", formatEndpointList(selector), normalizeExitStrategy(cfg.ExitStrategy))
-	}
-	if protocolHas(cfg, "tcp") {
-		ln, err := listenTCP(cfg.ListenHost, cfg.ListenPort, cfg.TCPFastOpen)
-		if err != nil {
-			return nil, fmt.Errorf("entry tcp listen :%d: %w", cfg.ListenPort, err)
-		}
-		runtime.servers = append(runtime.servers, entryServer{
-			serve: func() error {
-				return acceptEntryTCP(ln, cfg, gate, selector, inLimiter, outLimiter, &runtime.sessionWG)
-			},
-			close: ln.Close,
-		})
-	}
-	if protocolHas(cfg, "udp") {
-		port := udpListenPort(cfg)
-		addr, err := net.ResolveUDPAddr("udp", listenAddress(cfg.ListenHost, port))
-		if err != nil {
-			runtime.close()
-			return nil, err
-		}
-		udpConn, err := net.ListenUDP("udp", addr)
-		if err != nil {
-			runtime.close()
-			return nil, fmt.Errorf("entry udp listen :%d: %w", port, err)
-		}
-		tuneUDPConn(udpConn, "entry", fxpUDPListenBufferBytes)
-		runtime.servers = append(runtime.servers, entryServer{
-			serve: func() error { return serveEntryUDPDirect(udpConn, cfg, selector, inLimiter, outLimiter) },
-			close: udpConn.Close,
-		})
-	}
-	return runtime, nil
-}
-
-func (runtime *entryRuntime) close() {
-	if runtime == nil {
-		return
-	}
-	runtime.closeOnce.Do(func() {
-		for _, server := range runtime.servers {
-			_ = server.close()
-		}
-	})
-}
-
-func (runtime *entryRuntime) serve(done <-chan struct{}) error {
-	if runtime == nil {
-		return errors.New("entry runtime is nil")
-	}
-	select {
-	case <-done:
-		runtime.close()
-		return nil
-	default:
-	}
-	cfg := runtime.cfg
-	for _, protocol := range []string{"tcp", "udp"} {
-		if protocolHas(cfg, protocol) {
-			port := cfg.ListenPort
-			if protocol == "udp" {
-				port = udpListenPort(cfg)
-			}
-			log.Printf("entry %s listening on :%d tunnel=%d rule=%d", protocol, port, cfg.TunnelID, cfg.RuleID)
-		}
-	}
-
-	runtimeDone := make(chan struct{})
-	var stopOnce sync.Once
-	stop := func() {
-		stopOnce.Do(func() {
-			close(runtimeDone)
-			runtime.close()
-		})
-	}
-	go func() {
-		select {
-		case <-done:
-			stop()
-		case <-runtimeDone:
-		}
-	}()
-
-	errCh := make(chan error, len(runtime.servers))
-	var serverWG sync.WaitGroup
-	for _, server := range runtime.servers {
-		server := server
-		serverWG.Add(1)
-		go func() {
-			defer serverWG.Done()
-			errCh <- server.serve()
-			stop()
-		}()
-	}
-	serverWG.Wait()
-	stop()
-	waitForFXPSessionDrain("entry", cfg, &runtime.sessionWG)
-	close(errCh)
-	for err := range errCh {
-		if err != nil && !errors.Is(err, net.ErrClosed) {
-			return err
-		}
-	}
-	return nil
-}
-
 func runEntry(done <-chan struct{}, cfg config) error {
-	runtime, err := prepareEntryRuntime(cfg)
-	if err != nil {
-		return err
-	}
-	return runtime.serve(done)
+	return runManaged(done, cfg, nil)
 }
 
 func runEntryGroup(done <-chan struct{}, cfg config) error {
-	runtimes := make([]*entryRuntime, 0, len(cfg.Entries))
-	closeRuntimes := func() {
-		for _, runtime := range runtimes {
-			runtime.close()
-		}
-	}
-	for index, entry := range cfg.Entries {
-		select {
-		case <-done:
-			closeRuntimes()
-			return nil
-		default:
-		}
-		runtime, err := prepareEntryRuntime(entry)
-		if err != nil {
-			closeRuntimes()
-			return fmt.Errorf("entry-group entry %d rule=%d listen=%d: %w", index, entry.RuleID, entry.ListenPort, err)
-		}
-		runtimes = append(runtimes, runtime)
-	}
-
-	groupDone := make(chan struct{})
-	var stopOnce sync.Once
-	stop := func() {
-		stopOnce.Do(func() { close(groupDone) })
-	}
-	go func() {
-		select {
-		case <-done:
-			stop()
-		case <-groupDone:
-		}
-	}()
-
-	type entryResult struct {
-		index int
-		err   error
-	}
-	results := make(chan entryResult, len(runtimes))
-	for i, runtime := range runtimes {
-		i, runtime := i, runtime
-		go func() {
-			err := runtime.serve(groupDone)
-			if err == nil {
-				select {
-				case <-groupDone:
-				default:
-					err = errors.New("entry runtime stopped unexpectedly")
-				}
-			}
-			stop()
-			results <- entryResult{index: i, err: err}
-		}()
-	}
-
-	var firstErr error
-	for range runtimes {
-		result := <-results
-		if result.err != nil && firstErr == nil {
-			entry := cfg.Entries[result.index]
-			firstErr = fmt.Errorf("entry-group entry %d rule=%d listen=%d: %w", result.index, entry.RuleID, entry.ListenPort, result.err)
-		}
-	}
-	return firstErr
-}
-
-func acceptEntryTCP(ln net.Listener, cfg config, gate *connGate, selector *exitEndpointSelector, inLimiter, outLimiter *limiter, sessionWG *sync.WaitGroup) error {
-	for {
-		client, err := ln.Accept()
-		if err != nil {
-			return err
-		}
-		enableTCPKeepAlive(client)
-		release, ok, reason := gate.acquire(client.RemoteAddr())
-		if !ok {
-			active, ips, connectionsForIP := gate.statsFor(client.RemoteAddr())
-			log.Printf("entry tcp rejected by connection gate tunnel=%d rule=%d client=%s reason=%s active=%d maxConnections=%d distinctIPs=%d connectionsForIP=%d maxIPs=%d", cfg.TunnelID, cfg.RuleID, client.RemoteAddr(), reason, active, cfg.MaxConnections, ips, connectionsForIP, cfg.MaxIPs)
-			_ = client.Close()
-			continue
-		}
-		sessionWG.Add(1)
-		go func() {
-			defer sessionWG.Done()
-			defer release()
-			if err := handleEntryTCP(client, cfg, selector, inLimiter, outLimiter); err != nil && !isClosedErr(err) {
-				log.Printf("entry tcp session error: %v", err)
-			}
-		}()
-	}
+	return runManaged(done, cfg, nil)
 }
 
 func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector, inLimiter, outLimiter *limiter) error {
 	defer client.Close()
+	selectionKey := endpointSelectionSource(client.RemoteAddr().String())
+	// 单路径：一接受就开始连下一跳（池里有就是现成的），不再先等客户端首包。
+	// 以前先读首包、最多等 150ms 才拨号：SSH、SMTP、MySQL 这类服务端先说话的
+	// 协议每条连接白等 150ms，客户端先说话的也要把「读」和「拨」串起来。
+	var selected *selectedTransport
+	var connectDone chan error
+	if !multipathEnabled(cfg) {
+		selected = newSelectedTransport(selector, cfg, selectionKey)
+		connectDone = make(chan error, 1)
+		go func() { connectDone <- selected.connect() }()
+	}
+	started := false
+	defer func() {
+		if selected != nil && !started {
+			// 提前返回时连接可能还在建立，等它有了结果再关，免得漏掉。
+			go func() {
+				<-connectDone
+				selected.closeTransport()
+			}()
+		}
+	}()
 	var first []byte
 	proxyInfo := proxyProtocolInfoFromConn(client)
-	initialTimeout := 150 * time.Millisecond
+	// 只有要解析客户端送来的 PROXY 头时才需要先读：hello 里要带上真实来源。
 	if cfg.ProxyProtocolReceive {
-		initialTimeout = 5 * time.Second
-	}
-	initial, err := readInitialTCPPayload(client, initialTimeout)
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			return nil
+		initialTimeout := 5 * time.Second
+		initial, err := readInitialTCPPayload(client, initialTimeout)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
 		}
-		return err
-	}
-	first = initial
-	if cfg.ProxyProtocolReceive {
-		parsed, remaining, ok, err := consumeProxyProtocolFromConn(client, first, initialTimeout)
+		parsed, remaining, ok, err := consumeProxyProtocolFromConn(client, initial, initialTimeout)
 		if err != nil {
 			return err
 		}
@@ -1085,7 +928,6 @@ func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector,
 	if !cfg.ProxyProtocolSend {
 		proxyInfo = proxyProtocolInfo{}
 	}
-	selectionKey := endpointSelectionSource(client.RemoteAddr().String())
 	helloValues := helloFrame{
 		Network:                  "tcp",
 		TargetIP:                 cfg.TargetIP,
@@ -1101,29 +943,6 @@ func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector,
 		ProxyProtocolExitSend:    cfg.ProxyProtocolExitSend,
 		ProxyProtocolVersion:     normalizeProxyProtocolVersion(cfg.ProxyProtocolVersion),
 	}
-	// A multipath entry spreads this one client connection over every leg, so
-	// the session is no longer capped by the slowest single path.
-	var transport frameConn
-	if multipathEnabled(cfg) {
-		session, err := dialEntryMultipath(cfg, helloValues, client)
-		if err != nil {
-			return fmt.Errorf("dial multipath exit: %w", err)
-		}
-		transport = session
-	} else {
-		exit, sec, endpoint, err := dialSelectedSecureTCP(selector, cfg, selectionKey)
-		if err != nil {
-			return fmt.Errorf("dial exit: %w", err)
-		}
-		defer exit.Close()
-		hello, _ := json.Marshal(helloValues)
-		if err := writeSecureHello(sec, hello); err != nil {
-			return err
-		}
-		fxpVerbosef("entry tcp routed tunnel=%d rule=%d client=%s exit=%s:%d target=%s:%d", cfg.TunnelID, cfg.RuleID, client.RemoteAddr(), endpoint.Host, endpoint.Port, cfg.TargetIP, cfg.TargetPort)
-		transport = sec
-	}
-	defer transport.closeTransport()
 	policy := protocolPolicy{BlockHTTP: cfg.BlockHTTP, BlockSocks: cfg.BlockSocks, BlockTLS: cfg.BlockTLS}
 	reportBlock := func(proto string) {
 		reportProtocolBlock(cfg, proto)
@@ -1133,11 +952,43 @@ func handleEntryTCP(client net.Conn, cfg config, selector *exitEndpointSelector,
 			reportBlock(proto)
 			return nil
 		}
-		inLimiter.wait(len(first))
-		if err := transport.writeFrame(first); err != nil {
-			return err
-		}
 	}
+	// A multipath entry spreads this one client connection over every leg, so
+	// the session is no longer capped by the slowest single path.
+	var transport frameConn
+	if multipathEnabled(cfg) {
+		session, err := dialEntryMultipath(cfg, helloValues, client)
+		if err != nil {
+			return fmt.Errorf("dial multipath exit: %w", err)
+		}
+		transport = session
+		if len(first) > 0 {
+			inLimiter.wait(len(first))
+			if err := transport.writeFrame(first); err != nil {
+				transport.closeTransport()
+				return err
+			}
+		}
+	} else {
+		if err := <-connectDone; err != nil {
+			return fmt.Errorf("dial exit: %w", err)
+		}
+		hello, _ := json.Marshal(helloValues)
+		frames := [][]byte{hello}
+		if len(first) > 0 {
+			inLimiter.wait(len(first))
+			frames = append(frames, first)
+		}
+		started = true
+		if err := selected.start(frames...); err != nil {
+			selected.closeTransport()
+			return fmt.Errorf("dial exit: %w", err)
+		}
+		endpoint := selected.currentEndpoint()
+		fxpVerbosef("entry tcp routed tunnel=%d rule=%d client=%s exit=%s:%d target=%s:%d", cfg.TunnelID, cfg.RuleID, client.RemoteAddr(), endpoint.Host, endpoint.Port, cfg.TargetIP, cfg.TargetPort)
+		transport = selected
+	}
+	defer transport.closeTransport()
 	counter := &trafficCounter{}
 	// Count the accepted FXP client session even when it carries no payload.
 	counter.connections.Store(1)
@@ -1784,107 +1635,23 @@ func (s *udpEntrySession) close() {
 }
 
 func runExit(done <-chan struct{}, cfg config) error {
-	var wg sync.WaitGroup
-	var sessionWG sync.WaitGroup
-	errCh := make(chan error, 2)
-	if protocolHas(cfg, "tcp") {
-		gates := newListenerConnGates(cfg)
-		ln, err := listenTCP(cfg.ListenHost, cfg.ListenPort, cfg.TCPFastOpen)
-		if err != nil {
-			return fmt.Errorf("exit tcp listen :%d: %w", cfg.ListenPort, err)
-		}
-		log.Printf("exit tcp listening on :%d tunnel=%d", cfg.ListenPort, cfg.TunnelID)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-done
-			_ = ln.Close()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			errCh <- acceptExitTCP(ln, cfg, gates, &sessionWG)
-		}()
-	}
-	if protocolHas(cfg, "udp") {
-		port := udpListenPort(cfg)
-		addr, err := net.ResolveUDPAddr("udp", listenAddress(cfg.ListenHost, port))
-		if err != nil {
-			return err
-		}
-		udpConn, err := net.ListenUDP("udp", addr)
-		if err != nil {
-			return fmt.Errorf("exit udp listen :%d: %w", port, err)
-		}
-		tuneUDPConn(udpConn, "exit", fxpUDPListenBufferBytes)
-		log.Printf("exit udp listening on :%d tunnel=%d", port, cfg.TunnelID)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-done
-			_ = udpConn.Close()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			errCh <- serveExitUDPDirect(udpConn, cfg)
-		}()
-	}
-	wg.Wait()
-	waitForFXPSessionDrain("exit", cfg, &sessionWG)
-	select {
-	case err := <-errCh:
-		if errors.Is(err, net.ErrClosed) {
-			return nil
-		}
-		return err
-	default:
-		return nil
-	}
-}
-
-func acceptExitTCP(ln net.Listener, cfg config, gates *listenerConnGates, sessionWG *sync.WaitGroup) error {
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			return err
-		}
-		enableTCPKeepAlive(conn)
-		startupComplete, release, ok, reason := gates.acquire(conn.RemoteAddr())
-		if !ok {
-			logListenerConnGateRejection("exit", cfg, conn.RemoteAddr(), gates, reason)
-			_ = conn.Close()
-			continue
-		}
-		sessionWG.Add(1)
-		go func(conn net.Conn) {
-			defer sessionWG.Done()
-			defer release()
-			if err := handleExitSessionWithStartup(conn, cfg, startupComplete); err != nil && !isClosedErr(err) {
-				log.Printf("exit session error: %v", err)
-			}
-		}(conn)
-	}
+	return runManaged(done, cfg, nil)
 }
 
 func handleExitSession(conn net.Conn, cfg config) error {
-	return handleExitSessionWithStartup(conn, cfg, nil)
+	return handleExitSessionWithStartup(conn, cfg, nil, nil)
 }
 
-func handleExitSessionWithStartup(conn net.Conn, cfg config, startupComplete func()) error {
+func handleExitSessionWithStartup(conn net.Conn, cfg config, startupComplete func(), stopping <-chan struct{}) error {
 	defer conn.Close()
 	sec, err := newExitSecureConn(conn, cfg)
 	if err != nil {
 		probeDelay()
 		return err
 	}
-	frame, err := readSecureHello(sec)
+	frame, err := awaitSecureHello(sec, stopping)
 	if err != nil {
-		probeDelay()
-		return err
+		return quietHelloError(err)
 	}
 	var hello helloFrame
 	if err := json.Unmarshal(frame, &hello); err != nil {
@@ -1893,6 +1660,9 @@ func handleExitSessionWithStartup(conn net.Conn, cfg config, startupComplete fun
 	}
 	if startupComplete != nil {
 		startupComplete()
+	}
+	if hello.Network == "probe" {
+		return nil
 	}
 	if hello.TargetIP == "" {
 		hello.TargetIP = cfg.TargetIP
@@ -2030,108 +1800,14 @@ func handleExitUDP(sec *secureConn, hello helloFrame) error {
 // connects to the next downstream hop with a new key, re-sends the helloFrame,
 // and bidirectionally relays decrypted frames between the two secure connections.
 func runRelay(done <-chan struct{}, cfg config) error {
-	if cfg.RelayExitHost == "" || cfg.RelayExitPort <= 0 || cfg.RelayKey == "" {
-		return fmt.Errorf("relay requires relayExitHost, relayExitPort, and relayKey")
-	}
-	selector := newExitEndpointSelector(cfg.Exits, exitEndpoint{Host: cfg.RelayExitHost, Port: cfg.RelayExitPort, UDPPort: cfg.UDPRelayExitPort, Key: cfg.RelayKey}, cfg.ExitStrategy)
-	var wg sync.WaitGroup
-	var sessionWG sync.WaitGroup
-	errCh := make(chan error, 2)
-	if selector.count() > 1 {
-		log.Printf("relay exit selector exits=%s strategy=%s", formatEndpointList(selector), normalizeExitStrategy(cfg.ExitStrategy))
-	}
-	if protocolHas(cfg, "tcp") {
-		gates := newListenerConnGates(cfg)
-		ln, err := listenTCP(cfg.ListenHost, cfg.ListenPort, cfg.TCPFastOpen)
-		if err != nil {
-			return fmt.Errorf("relay tcp listen :%d: %w", cfg.ListenPort, err)
-		}
-		log.Printf("relay tcp listening on :%d tunnel=%d next=%s:%d", cfg.ListenPort, cfg.TunnelID, cfg.RelayExitHost, cfg.RelayExitPort)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-done
-			_ = ln.Close()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			errCh <- acceptRelayTCP(ln, cfg, selector, gates, &sessionWG)
-		}()
-	}
-	if protocolHas(cfg, "udp") {
-		port := udpListenPort(cfg)
-		addr, err := net.ResolveUDPAddr("udp", listenAddress(cfg.ListenHost, port))
-		if err != nil {
-			return err
-		}
-		udpConn, err := net.ListenUDP("udp", addr)
-		if err != nil {
-			return fmt.Errorf("relay udp listen :%d: %w", port, err)
-		}
-		tuneUDPConn(udpConn, "relay", fxpUDPListenBufferBytes)
-		downstreamPort := cfg.UDPRelayExitPort
-		if downstreamPort <= 0 {
-			downstreamPort = cfg.RelayExitPort
-		}
-		log.Printf("relay udp listening on :%d tunnel=%d next=%s:%d", port, cfg.TunnelID, cfg.RelayExitHost, downstreamPort)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-done
-			_ = udpConn.Close()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			errCh <- serveRelayUDPDirect(udpConn, cfg, selector)
-		}()
-	}
-	wg.Wait()
-	waitForFXPSessionDrain("relay", cfg, &sessionWG)
-	select {
-	case err := <-errCh:
-		if errors.Is(err, net.ErrClosed) {
-			return nil
-		}
-		return err
-	default:
-		return nil
-	}
-}
-
-func acceptRelayTCP(ln net.Listener, cfg config, selector *exitEndpointSelector, gates *listenerConnGates, sessionWG *sync.WaitGroup) error {
-	for {
-		upConn, err := ln.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			return err
-		}
-		enableTCPKeepAlive(upConn)
-		startupComplete, release, ok, reason := gates.acquire(upConn.RemoteAddr())
-		if !ok {
-			logListenerConnGateRejection("relay", cfg, upConn.RemoteAddr(), gates, reason)
-			_ = upConn.Close()
-			continue
-		}
-		sessionWG.Add(1)
-		go func(upConn net.Conn) {
-			defer sessionWG.Done()
-			defer release()
-			if err := handleRelaySessionWithStartup(upConn, cfg, selector, startupComplete); err != nil && !isClosedErr(err) {
-				log.Printf("relay session error: %v", err)
-			}
-		}(upConn)
-	}
+	return runManaged(done, cfg, nil)
 }
 
 func handleRelaySession(upConn net.Conn, cfg config, selector *exitEndpointSelector) error {
-	return handleRelaySessionWithStartup(upConn, cfg, selector, nil)
+	return handleRelaySessionWithStartup(upConn, cfg, selector, nil, nil)
 }
 
-func handleRelaySessionWithStartup(upConn net.Conn, cfg config, selector *exitEndpointSelector, startupComplete func()) error {
+func handleRelaySessionWithStartup(upConn net.Conn, cfg config, selector *exitEndpointSelector, startupComplete func(), stopping <-chan struct{}) error {
 	defer upConn.Close()
 	// Accept upstream encrypted connection (like exit)
 	upSec, err := newExitSecureConn(upConn, cfg)
@@ -2139,10 +1815,9 @@ func handleRelaySessionWithStartup(upConn net.Conn, cfg config, selector *exitEn
 		probeDelay()
 		return err
 	}
-	frame, err := readSecureHello(upSec)
+	frame, err := awaitSecureHello(upSec, stopping)
 	if err != nil {
-		probeDelay()
-		return err
+		return quietHelloError(err)
 	}
 	var hello helloFrame
 	if err := json.Unmarshal(frame, &hello); err != nil {
@@ -2151,6 +1826,10 @@ func handleRelaySessionWithStartup(upConn net.Conn, cfg config, selector *exitEn
 	}
 	if startupComplete != nil {
 		startupComplete()
+	}
+	if hello.Network == "probe" {
+		// 上一跳在探这台中转本身活没活，不往下传。
+		return nil
 	}
 	fxpVerbosef(
 		"relay proxy protocol tunnel=%d rule=%d upstream=%s downstream=%s:%d hasProxy=%v source=%s:%d dest=%s:%d",
@@ -2175,33 +1854,35 @@ func handleRelaySessionWithStartup(upConn net.Conn, cfg config, selector *exitEn
 	if selectionKey == "" {
 		selectionKey = endpointSelectionSource(upConn.RemoteAddr().String())
 	}
-	downConn, downSec, endpoint, err := dialSelectedSecureTCP(selector, downCfg, selectionKey)
-	if err != nil {
+	down := newSelectedTransport(selector, downCfg, selectionKey)
+	if err := down.connect(); err != nil {
+		down.closeTransport()
 		log.Printf("relay dial downstream %s:%d: %v", cfg.RelayExitHost, cfg.RelayExitPort, err)
 		return err
 	}
-	defer downConn.Close()
+	defer down.closeTransport()
 	// Re-send helloFrame to downstream
 	helloBytes, _ := json.Marshal(hello)
-	if err := writeSecureHello(downSec, helloBytes); err != nil {
+	if err := down.start(helloBytes); err != nil {
 		return err
 	}
+	endpoint := down.currentEndpoint()
 	fxpVerbosef("relay tcp routed tunnel=%d upstream=%s downstream=%s:%d target=%s:%d", cfg.TunnelID, upConn.RemoteAddr(), endpoint.Host, endpoint.Port, hello.TargetIP, hello.TargetPort)
 	// Bidirectional relay: upstream ↔ downstream
-	return relayBidir(upSec, downSec)
+	return relayBidir(upSec, down)
 }
 
-func relayBidir(up *secureConn, down *secureConn) error {
+func relayBidir(up *secureConn, down frameConn) error {
 	errCh := make(chan error, 2)
-	go func() { errCh <- relayCopy(up, down) }()
-	go func() { errCh <- relayCopy(down, up) }()
+	go func() { errCh <- catchPanic("relay upstream copy", func() error { return relayCopy(up, down) }) }()
+	go func() { errCh <- catchPanic("relay downstream copy", func() error { return relayCopy(down, up) }) }()
 	return waitBidirectional(errCh, func() {
 		_ = up.conn.Close()
-		_ = down.conn.Close()
+		down.closeTransport()
 	})
 }
 
-func relayCopy(src, dst *secureConn) error {
+func relayCopy(src, dst frameConn) error {
 	for {
 		frame, err := src.readFrame()
 		if err != nil {
@@ -2228,9 +1909,13 @@ func proxyPlainSecureWithPolicy(plain net.Conn, sec frameConn, inLimiter, outLim
 		outCounter = &counter.out
 	}
 	go func() {
-		errCh <- copyPlainToSecureWithPolicy(sec, plain, inLimiter, inCounter, policy, onBlock, initialSample)
+		errCh <- catchPanic("plain to secure copy", func() error {
+			return copyPlainToSecureWithPolicy(sec, plain, inLimiter, inCounter, policy, onBlock, initialSample)
+		})
 	}()
-	go func() { errCh <- copySecureToPlain(plain, sec, outLimiter, outCounter) }()
+	go func() {
+		errCh <- catchPanic("secure to plain copy", func() error { return copySecureToPlain(plain, sec, outLimiter, outCounter) })
+	}()
 	return waitBidirectional(errCh, func() {
 		_ = plain.Close()
 		sec.closeTransport()
@@ -2272,6 +1957,8 @@ func waitBidirectionalWithLinger(errCh <-chan error, closeAll func(), halfCloseL
 		return nil
 	}
 }
+
+var errSecurePeerVanished = errors.New("fxp peer closed without end-of-stream")
 
 func copyPlainToSecure(dst frameConn, src net.Conn, limiter *limiter, counter *atomic.Uint64) error {
 	return copyPlainToSecureWithPolicy(dst, src, limiter, counter, protocolPolicy{}, nil, nil)
@@ -2333,7 +2020,10 @@ func copySecureToPlain(dst net.Conn, src frameConn, limiter *limiter, counter *a
 		frame, err := src.readFrame()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return nil
+				// 正常结束是一个空帧（下面那个分支）。没等到空帧就读到 EOF，是上一跳
+				// 直接断了（进程崩溃、连接被掐）：整条会话一起收掉。以前当成正常结束，
+				// 另一个方向就一直挂在目标连接上，直到目标自己关。
+				return errSecurePeerVanished
 			}
 			return err
 		}
@@ -2463,15 +2153,28 @@ func newClientSecureConn(conn net.Conn, cfg config) (*secureConn, error) {
 	return newClientSecureConnWithWire(conn, cfg, fxpWireCurrent)
 }
 
+// newClientSecureConnWithWire 做一次完整握手：发出去，等到确认才返回。
+// 连接池预热、后台探测和多路径的腿用它 —— 它们要的是一条确认可用的连接。
 func newClientSecureConnWithWire(conn net.Conn, cfg config, wire fxpWireContext) (*secureConn, error) {
-	if err := setFXPConnDeadline(conn, fxpHandshakeTimeout); err != nil {
+	sec, err := newPipelinedClientSecureConn(conn, cfg, wire)
+	if err != nil {
 		return nil, err
+	}
+	sec.ackTimeout = fxpHandshakeTimeout
+	if err := sec.consumeHandshakeAck(); err != nil {
+		return nil, err
+	}
+	return sec, nil
+}
+
+// newPipelinedClientSecureConn 只在本地准备好握手，一个字节都还没发。
+// salt 和握手帧挂在 pendingPrefix 上，随第一次写一起出去。
+func newPipelinedClientSecureConn(conn net.Conn, cfg config, wire fxpWireContext) (*secureConn, error) {
+	if conn == nil {
+		return nil, errors.New("fxp connection is nil")
 	}
 	salt := make([]byte, fxpSaltSize)
 	if _, err := rand.Read(salt); err != nil {
-		return nil, err
-	}
-	if _, err := writeFull(conn, salt); err != nil {
 		return nil, err
 	}
 	sec, err := newSessionSecureConnWithWire(conn, cfg.Key, salt, true, wire)
@@ -2479,21 +2182,70 @@ func newClientSecureConnWithWire(conn net.Conn, cfg config, wire fxpWireContext)
 		return nil, err
 	}
 	hs, _ := json.Marshal(fxpHandshake{V: fxpHandshakeVersion, TS: time.Now().Unix(), TunnelID: cfg.TunnelID})
-	if err := sec.writeFrame(hs); err != nil {
-		return nil, err
-	}
-	ack, err := sec.readFrame()
-	if err != nil {
-		return nil, err
-	}
-	var reply fxpHandshake
-	if err := json.Unmarshal(ack, &reply); err != nil || reply.V != fxpHandshakeVersion || reply.TunnelID != cfg.TunnelID {
-		return nil, errors.New("fxp handshake rejected")
-	}
-	if err := clearFXPConnDeadline(conn); err != nil && !isClosedErr(err) {
-		return nil, err
-	}
+	prefix := make([]byte, 0, fxpSaltSize+4+sec.lenWriteAEAD.Overhead()+len(hs)+sec.dataWriteAEAD.Overhead())
+	prefix = append(prefix, salt...)
+	prefix = sec.appendSealedFrameLocked(prefix, hs)
+	sec.pendingPrefix = prefix
+	sec.ackPending = true
+	sec.ackTunnelID = cfg.TunnelID
+	sec.ackTimeout = fxpHandshakeTimeout
 	return sec, nil
+}
+
+// consumeHandshakeAck 读掉并校验对端的握手确认。流水线握手时由第一次
+// readFrame 调用；完整握手时在建连阶段直接调用。
+func (c *secureConn) consumeHandshakeAck() error {
+	c.ackPending = false
+	err := c.flushPendingPrefix()
+	var ack []byte
+	if err == nil {
+		timeout := c.ackTimeout
+		if timeout <= 0 {
+			timeout = fxpHandshakeTimeout
+		}
+		err = c.conn.SetReadDeadline(time.Now().Add(timeout))
+	}
+	if err == nil {
+		ack, err = c.readEncryptedFrame()
+	}
+	if err == nil {
+		var reply fxpHandshake
+		if jsonErr := json.Unmarshal(ack, &reply); jsonErr != nil || reply.V != fxpHandshakeVersion || reply.TunnelID != c.ackTunnelID {
+			err = errors.New("fxp handshake rejected")
+		}
+	}
+	if err == nil {
+		if clearErr := c.conn.SetReadDeadline(time.Time{}); clearErr != nil && !isClosedErr(clearErr) {
+			err = clearErr
+		}
+	}
+	if c.onAck != nil {
+		c.onAck(err)
+	}
+	if err != nil {
+		return &fxpAckError{err: err}
+	}
+	return nil
+}
+
+// flushPendingPrefix 把还没发出去的握手送走。正常路径上它跟第一次写合并，
+// 这里只兜底「还没写过就先读」的情况，免得双方互相干等。
+func (c *secureConn) flushPendingPrefix() error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if len(c.pendingPrefix) == 0 {
+		return nil
+	}
+	prefix := c.pendingPrefix
+	c.pendingPrefix = nil
+	if err := c.conn.SetWriteDeadline(time.Now().Add(fxpHandshakeTimeout)); err != nil {
+		return err
+	}
+	_, err := writeFull(c.conn, prefix)
+	if clearErr := c.conn.SetWriteDeadline(time.Time{}); err == nil && clearErr != nil && !isClosedErr(clearErr) {
+		err = clearErr
+	}
+	return err
 }
 
 func newServerSecureConn(conn net.Conn, cfg config) (*secureConn, error) {
@@ -2577,34 +2329,74 @@ func clearFXPConnDeadline(conn net.Conn) error {
 	return nil
 }
 
+// awaitSecureHello 在已经认证过的连接上等 hello。上一跳的连接池会让连接在这里
+// 空等一阵（fxpServerHelloWait），进程要退出时不必等满，直接关掉。
+func awaitSecureHello(sec *secureConn, stopping <-chan struct{}) ([]byte, error) {
+	if stopping == nil {
+		return readSecureHelloWithin(sec, fxpServerHelloWait)
+	}
+	waiting := make(chan struct{})
+	defer close(waiting)
+	go func() {
+		select {
+		case <-stopping:
+			_ = sec.conn.Close()
+		case <-waiting:
+		}
+	}()
+	return readSecureHelloWithin(sec, fxpServerHelloWait)
+}
+
+// quietHelloError：握手已经通过了，hello 之前对端关掉连接是连接池在换新连接，
+// 不是出错。
+func quietHelloError(err error) error {
+	if errors.Is(err, io.EOF) || isClosedErr(err) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil
+	}
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return nil
+	}
+	return err
+}
+
 func writeSecureHello(sec *secureConn, hello []byte) error {
 	if sec == nil {
 		return errors.New("fxp secure connection is nil")
 	}
-	if err := setFXPConnDeadline(sec.conn, fxpHelloTimeout); err != nil {
+	return writeSecureFramesWithDeadline(sec, hello)
+}
+
+// writeSecureFramesWithDeadline 把几帧合成一次写，只设写超时 —— 同时可能有
+// 读协程在等握手确认，碰读超时会把它的超时清掉。
+func writeSecureFramesWithDeadline(sec *secureConn, frames ...[]byte) error {
+	if err := sec.conn.SetWriteDeadline(time.Now().Add(fxpHelloTimeout)); err != nil {
+		return fmt.Errorf("set fxp write deadline: %w", err)
+	}
+	if err := sec.writeFrames(frames...); err != nil {
 		return err
 	}
-	if err := sec.writeFrame(hello); err != nil {
-		return err
-	}
-	if err := clearFXPConnDeadline(sec.conn); err != nil && !isClosedErr(err) {
+	if err := sec.conn.SetWriteDeadline(time.Time{}); err != nil && !isClosedErr(err) {
 		return err
 	}
 	return nil
 }
 
 func readSecureHello(sec *secureConn) ([]byte, error) {
+	return readSecureHelloWithin(sec, fxpHelloTimeout)
+}
+
+func readSecureHelloWithin(sec *secureConn, timeout time.Duration) ([]byte, error) {
 	if sec == nil {
 		return nil, errors.New("fxp secure connection is nil")
 	}
-	if err := setFXPConnDeadline(sec.conn, fxpHelloTimeout); err != nil {
-		return nil, err
+	if err := sec.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, fmt.Errorf("set fxp read deadline: %w", err)
 	}
 	hello, err := sec.readFrame()
 	if err != nil {
 		return nil, err
 	}
-	if err := clearFXPConnDeadline(sec.conn); err != nil && !isClosedErr(err) {
+	if err := sec.conn.SetReadDeadline(time.Time{}); err != nil && !isClosedErr(err) {
 		return nil, err
 	}
 	return hello, nil
@@ -2686,40 +2478,66 @@ func (c *secureConn) writeFrame(plain []byte) error {
 }
 
 func (c *secureConn) readFrame() ([]byte, error) {
+	if c.ackPending {
+		if err := c.consumeHandshakeAck(); err != nil {
+			return nil, err
+		}
+	}
 	return c.readEncryptedFrame()
 }
 
 func (c *secureConn) writeEncryptedFrame(plain []byte) error {
+	return c.writeFrames(plain)
+}
+
+// writeFrames 把几帧（连同还没发出去的握手）封进一个缓冲区，一次系统调用写出。
+func (c *secureConn) writeFrames(frames ...[]byte) error {
 	if c == nil {
 		return errors.New("nil secure connection")
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	if len(plain) > fxpMaxFrame {
-		return errors.New("frame too large")
+	wireSize := len(c.pendingPrefix)
+	for _, plain := range frames {
+		if len(plain) > fxpMaxFrame {
+			return errors.New("frame too large")
+		}
+		wireSize += 4 + c.lenWriteAEAD.Overhead() + len(plain) + c.dataWriteAEAD.Overhead()
 	}
+	wire := getFXPByteBuffer(wireSize)
+	defer putFXPByteBuffer(wire)
+	wire = append(wire[:0], c.pendingPrefix...)
+	startCounter := c.writeCounter
+	for _, plain := range frames {
+		wire = c.appendSealedFrameLocked(wire, plain)
+	}
+	written, err := writeFull(c.conn, wire)
+	if err == nil && written != len(wire) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		// 帧没完整写出去，这条连接的计数已经和对端对不上了，只能作废。
+		c.writeCounter = startCounter
+		return err
+	}
+	c.pendingPrefix = nil
+	return nil
+}
+
+// appendSealedFrameLocked 把一帧加密追加到 dst，并推进写计数。调用方持有 writeMu
+// （或者连接还没交给任何其他协程）。
+func (c *secureConn) appendSealedFrameLocked(dst []byte, plain []byte) []byte {
 	counter := c.writeCounter
 	var lenPlain [4]byte
 	binary.BigEndian.PutUint32(lenPlain[:], uint32(len(plain)))
-	wireSize := 4 + c.lenWriteAEAD.Overhead() + len(plain) + c.dataWriteAEAD.Overhead()
-	wire := getFXPByteBuffer(wireSize)
-	defer putFXPByteBuffer(wire)
-	wire = wire[:0]
 	var lenNonce [12]byte
 	var dataNonce [12]byte
 	fillFXPNonce(lenNonce[:], c.writeDir, counter, 0)
 	fillFXPNonce(dataNonce[:], c.writeDir, counter, 1)
-	wire = c.lenWriteAEAD.Seal(wire, lenNonce[:], lenPlain[:], c.lengthAD)
-	wire = c.dataWriteAEAD.Seal(wire, dataNonce[:], plain, c.payloadAD)
-	written, err := writeFull(c.conn, wire)
-	if err != nil {
-		return err
-	}
-	if written != len(wire) {
-		return io.ErrShortWrite
-	}
+	dst = c.lenWriteAEAD.Seal(dst, lenNonce[:], lenPlain[:], c.lengthAD)
+	dst = c.dataWriteAEAD.Seal(dst, dataNonce[:], plain, c.payloadAD)
 	c.writeCounter++
-	return err
+	return dst
 }
 
 func (c *secureConn) readEncryptedFrame() ([]byte, error) {

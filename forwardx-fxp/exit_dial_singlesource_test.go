@@ -23,8 +23,7 @@ dialSecureTCP，那条路就会**悄悄**拿不到其中任何一样：死节点
 func TestExitDialingStaysBehindTheSelector(t *testing.T) {
 	// 允许直接调 dialSecureTCP 的地方，以及为什么。
 	allowed := map[string]string{
-		"main.go:probeFailedEndpoint":         "后台探测：它本来就是在替 selector 探，不能再绕回 selector",
-		"main.go:dialSelectedSecureTCP":       "唯一的择优入口",
+		"main.go:dialSelectedSecureTCP":       "UDP-over-TCP 旧会话的择优入口（TCP 会话走 selectedTransport）",
 		"main.go:dialSecureTCP":               "定义本身",
 		"multipath_wire.go:dialMultipathLegs": "多路径的腿按配置一条条拨，不走出口择优",
 	}

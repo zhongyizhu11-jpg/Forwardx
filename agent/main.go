@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.199"
+var Version = "2.2.200"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -2907,13 +2907,17 @@ func main() {
 	restoreCountingChainStates(agentBootID)
 
 	startAgentLogMaintenance()
-	// Register and start the communication/reconciliation loops before restoring
-	// persisted runtimes. Runtime restore can involve many FXP listeners and
-	// several seconds of readiness checks; keeping it off the startup path lets
-	// the panel send the desired state immediately. The action queue and FXP
-	// control lock make restore and server-driven reconciliation idempotent when
-	// they overlap.
-	if err := register(cfg); err != nil {
+	// Restore persisted runtimes (WireGuard / FXP / failover) in the background
+	// *before* registering: register() can block for the full HTTP client
+	// timeout when the panel is unreachable, and forwarding must come back
+	// immediately after an Agent restart regardless of panel reachability.
+	// Restore only needs the local snapshots, and the action queue plus the
+	// FXP/failover control locks make restore and server-driven reconciliation
+	// idempotent when they overlap.
+	if err := startRuntimeRestoreThenRegister(cfg, func(cfg Config) {
+		restorePersistedForwardXRuntimes(cfg)
+		wakeHeartbeat()
+	}, register); err != nil {
 		// Registration is intentionally non-fatal; the regular heartbeat path
 		// will retry communication. Keep the failure visible in the Agent log so
 		// an installation that never reaches the panel is diagnosable.
@@ -2931,10 +2935,6 @@ func main() {
 	go agentPresenceLoop(cfg)
 	go agentMetricsScheduler(cfg)
 	go agentDNSWatchScheduler()
-	go func() {
-		restorePersistedForwardXRuntimes(cfg)
-		wakeHeartbeat()
-	}()
 	lastFullHeartbeatAt := time.Time{}
 	metricsOnlyMode := false
 	for {
@@ -4467,6 +4467,7 @@ func startIperf3Server(cfg Config, task iperf3Task, port int) iperf3Result {
 		}
 	}
 	cmd := exec.Command("iperf3", "-s", "-p", strconv.Itoa(port))
+	bindChildToAgent(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		iperf3Mu.Unlock()
@@ -7421,6 +7422,7 @@ func fxpMatchesRunning(spec *fxpSpec, desiredGroups ...*fxpSpec) bool {
 							panelCredentialDigest: credentialDigest,
 						}
 						fxpMu.Unlock()
+						watchAdoptedFXPProcess(id, configPath)
 						matches = true
 					}
 				}
@@ -9954,6 +9956,7 @@ func adoptExistingFXP(spec fxpSpec, signature string, configPath string, expecte
 		panelCredentialDigest: credentialDigest,
 	}
 	fxpMu.Unlock()
+	watchAdoptedFXPProcess(id, configPath)
 	logf("fxp %s adopted existing runtime tunnel=%d rule=%d listen=:%d protocol=%s config=%s", spec.Role, spec.TunnelID, spec.RuleID, spec.ListenPort, spec.Protocol, configPath)
 	return true
 }
@@ -10206,6 +10209,11 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 		}
 		return true
 	}
+	// 配置变了、进程还活着：先试着原地热更新，连接一条不断；不行再走下面的重建。
+	if existingActive && existing.signature != signature &&
+		reloadFXPRuntimeLocked(cfg, existing, id, spec, signature, configPath, expectedCredentialDigest, persistenceEnabled) {
+		return true
+	}
 	if existingActive && existing.signature == signature {
 		logf("fxp dependency or listener drift detected; rebuilding role=%s version=%s tunnel=%d rule=%d", spec.Role, spec.TransportVersion, spec.TunnelID, spec.RuleID)
 	}
@@ -10272,15 +10280,7 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 		actionMessage.set("fxp create runtime dir failed: %v", err)
 		return false
 	}
-	if spec.Role == "entry" {
-		spec.PanelURL = currentPanelURL(cfg)
-		spec.Token = cfg.Token
-	} else if isFXPEntryGroup(spec) {
-		for index := range spec.Entries {
-			spec.Entries[index].PanelURL = currentPanelURL(cfg)
-			spec.Entries[index].Token = cfg.Token
-		}
-	}
+	spec = fxpSpecWithPanelCredentials(cfg, spec)
 	logf(
 		"proxy-debug fxp config role=%s tunnel=%d rule=%d listen=%d udpListen=%d protocol=%s exitStrategy=%s proxyReceive=%v proxySend=%v proxyExitReceive=%v proxyExitSend=%v tcpFastOpen=%v exit=%s:%d udpExit=%d relayNext=%s:%d udpRelayNext=%d target=%s:%d udpTargets=%d",
 		spec.Role,
@@ -10376,11 +10376,14 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 	}
 	fxpMu.Unlock()
 	desiredStarted = true
+	startedAt := time.Now()
 	go func() {
 		err := <-exited
 		fxpMu.Lock()
 		current := fxpServers[id]
-		if current != nil && current.cmd == cmd {
+		// 记录还指着这个进程，说明不是 Agent 主动停的（主动停会先删记录）。
+		unexpected := current != nil && current.cmd == cmd
+		if unexpected {
 			delete(fxpServers, id)
 		}
 		fxpMu.Unlock()
@@ -10388,6 +10391,9 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 			logf("fxp runtime exited tunnel=%d rule=%d: %v", spec.TunnelID, spec.RuleID, err)
 		}
 		releaseWireGuardRef()
+		if unexpected && persistenceEnabled {
+			noteFXPUnexpectedExit(id, time.Since(startedAt))
+		}
 	}()
 	for _, conflicting := range conflictingSpecs {
 		replacement, hasRemaining := fxpSpecWithoutListenConflicts(conflicting, originalSpec)
@@ -10499,6 +10505,7 @@ func stopFXPRuntime(spec fxpSpec) {
 	}
 	if s.configPath != "" {
 		_ = os.Remove(s.configPath)
+		_ = os.Remove(fxpReloadAckPath(s.configPath))
 	}
 }
 
@@ -12829,22 +12836,8 @@ func (p *failoverProxy) handleConn(client net.Conn) {
 	}
 	p.trackConn(index, client)
 	defer p.untrackConn(index, client)
-	copyDone := make(chan struct{}, 2)
-	go func() {
-		_, _ = io.Copy(upstream, client)
-		if c, ok := upstream.(*net.TCPConn); ok {
-			_ = c.CloseWrite()
-		}
-		copyDone <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(client, upstream)
-		if c, ok := client.(*net.TCPConn); ok {
-			_ = c.CloseWrite()
-		}
-		copyDone <- struct{}{}
-	}()
-	<-copyDone
+	// 等两个方向都结束（带半关闭 linger），客户端半关闭后仍能收完响应。
+	relayTCPBidirectional(client, upstream, tcpRelayHalfCloseLinger)
 }
 
 func guardID(rule guardRule) string {
@@ -13285,20 +13278,64 @@ func (s *protocolGuardServer) handleConn(cfg Config, client net.Conn) {
 		}
 	}
 	inspection := newProtocolGuardInspection(s.rule.Policy)
-	errCh := make(chan error, 2)
-	go func() { errCh <- s.copyTCPToTargetWithGuard(connCtx, cfg, client, target, first, inspection) }()
-	go func() { errCh <- s.copyTCPToClientWithGuard(connCtx, cfg, client, target, inspection) }()
-	<-errCh
-	// A failure, EOF, or policy block in either direction owns the whole
-	// connection. Cancel rate reservations and close both sockets so the other
-	// copy goroutine cannot remain blocked in WaitN or network I/O.
-	cancelConn()
-	_ = client.Close()
-	_ = target.Close()
-	<-errCh
+	type copyResult struct {
+		toTarget bool
+		err      error
+	}
+	var progress atomic.Int64
+	results := make(chan copyResult, 2)
+	go func() {
+		results <- copyResult{toTarget: true, err: s.copyTCPToTargetWithGuard(connCtx, cfg, client, target, first, inspection, &progress)}
+	}()
+	go func() {
+		results <- copyResult{toTarget: false, err: s.copyTCPToClientWithGuard(connCtx, cfg, client, target, inspection, &progress)}
+	}()
+	closeAll := func() {
+		// Cancel rate reservations and close both sockets so the other copy
+		// goroutine cannot remain blocked in WaitN or network I/O.
+		cancelConn()
+		_ = client.Close()
+		_ = target.Close()
+	}
+	firstResult := <-results
+	source, destination := client, target
+	if !firstResult.toTarget {
+		source, destination = target, client
+	}
+	_, sourceHalfCloses := source.(*net.TCPConn)
+	destinationTCP, destinationHalfCloses := destination.(*net.TCPConn)
+	if (firstResult.err != nil && !errors.Is(firstResult.err, io.EOF)) || !sourceHalfCloses || !destinationHalfCloses {
+		// 出错、被策略拦截，或者连接本身没有半关闭（EOF 就是对端彻底走了）：
+		// 整条连接一起结束。
+		closeAll()
+		<-results
+		return
+	}
+	// 一个方向干净地读到 EOF 是半关闭（比如客户端发完请求 shutdown 写端再等响应）：
+	// 把半关闭传给另一端，另一个方向接着跑；它有数据在走就一直等，空闲超过
+	// linger 才收掉，免得一个永远不关的对端把协程钉住。
+	_ = destinationTCP.CloseWrite()
+	ticker := time.NewTicker(tcpRelayHalfCloseLinger)
+	defer ticker.Stop()
+	last := progress.Load()
+	for {
+		select {
+		case <-results:
+			closeAll()
+			return
+		case <-ticker.C:
+			current := progress.Load()
+			if current == last {
+				closeAll()
+				<-results
+				return
+			}
+			last = current
+		}
+	}
 }
 
-func (s *protocolGuardServer) copyTCPToTargetWithGuard(ctx context.Context, cfg Config, client net.Conn, target net.Conn, initial []byte, inspection *protocolGuardInspection) error {
+func (s *protocolGuardServer) copyTCPToTargetWithGuard(ctx context.Context, cfg Config, client net.Conn, target net.Conn, initial []byte, inspection *protocolGuardInspection, progress *atomic.Int64) error {
 	writeChunk := func(chunk []byte) error {
 		if len(chunk) == 0 {
 			return nil
@@ -13311,6 +13348,9 @@ func (s *protocolGuardServer) copyTCPToTargetWithGuard(ctx context.Context, cfg 
 			return err
 		}
 		_, err := target.Write(chunk)
+		if progress != nil {
+			progress.Add(int64(len(chunk)))
+		}
 		return err
 	}
 	if err := writeChunk(initial); err != nil {
@@ -13331,7 +13371,7 @@ func (s *protocolGuardServer) copyTCPToTargetWithGuard(ctx context.Context, cfg 
 	}
 }
 
-func (s *protocolGuardServer) copyTCPToClientWithGuard(ctx context.Context, cfg Config, client net.Conn, target net.Conn, inspection *protocolGuardInspection) error {
+func (s *protocolGuardServer) copyTCPToClientWithGuard(ctx context.Context, cfg Config, client net.Conn, target net.Conn, inspection *protocolGuardInspection, progress *atomic.Int64) error {
 	buf := getAgentByteBuffer(32 * 1024)
 	defer putAgentByteBuffer(buf)
 	for {
@@ -13347,6 +13387,9 @@ func (s *protocolGuardServer) copyTCPToClientWithGuard(ctx context.Context, cfg 
 			}
 			if _, writeErr := client.Write(chunk); writeErr != nil {
 				return writeErr
+			}
+			if progress != nil {
+				progress.Add(int64(n))
 			}
 		}
 		if err != nil {

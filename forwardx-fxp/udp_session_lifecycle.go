@@ -88,6 +88,9 @@ func startFXPUDPSessionWorker(wg *sync.WaitGroup, worker func()) {
 		if wg != nil {
 			defer wg.Done()
 		}
-		worker()
+		_ = catchPanic("udp session worker", func() error {
+			worker()
+			return nil
+		})
 	}()
 }

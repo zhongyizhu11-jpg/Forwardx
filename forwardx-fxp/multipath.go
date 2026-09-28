@@ -21,21 +21,31 @@ package main
 //
 // Wire format, carried inside one existing secure frame on each leg:
 //
-//	byte 0     kind: 0 = data, 1 = fin
+//	byte 0     kind: 0 = data, 1 = fin, 4 = ack
 //	byte 1..8  seq, big endian
-//	byte 9..   payload (data frames only)
+//	byte 9..   payload (data and ack frames only)
 //
 // Sequence numbers are per direction and count chunks, not bytes. The receiver
 // delivers chunks strictly in sequence order, so the byte stream the target
 // sees is identical to the single-path case. A fin frame carries the total
-// chunk count in its seq field and is broadcast on every leg, so the receiver
-// learns where the stream ends no matter which legs survive.
+// chunk count in its seq field and is repeated until the far side acknowledges
+// it, so the stream end survives the loss of any leg.
 //
-// Scheduling is pull based: every leg has a writer goroutine competing for the
-// same queue, so a fast leg naturally claims more chunks than a slow one and no
-// static weighting is needed. A leg that fails hands its in-flight chunk back
-// to the queue for another leg to carry; the receiver drops duplicates by
-// sequence number, so a retry that partially reached the far side is harmless.
+// Reliability: every chunk stays in the sender's retransmit buffer until the
+// receiver acknowledges it (multipath_flow.go). A leg that dies, or goes quiet
+// while its siblings keep delivering, hands every chunk it had not delivered
+// back to the others, and the receiver drops duplicates by sequence number, so
+// losing a leg costs a retransmission instead of the whole connection.
+//
+// Scheduling is pull based: every leg has a writer that claims the next chunk
+// once its own backlog is below what that path can carry, so a fast leg claims
+// more than a slow one and a stalled leg stops claiming at all. When several
+// legs are idle the one expected to deliver soonest takes the chunk, which
+// keeps interactive traffic on the lowest-latency path (multipath_sched.go).
+//
+// Legs are independent: a session starts on the first leg that comes up and
+// the rest join whenever they are ready (multipath_wire.go), so one dead relay
+// costs bandwidth, never connection setup time.
 
 import (
 	"encoding/binary"
@@ -48,19 +58,17 @@ import (
 const (
 	multipathKindData byte = 0
 	multipathKindFin  byte = 1
-	// multipathKindReady is the exit telling the entry that it understands the
-	// frame kinds below; multipathKindAck carries flow control. Neither is ever
-	// sent to a peer that has not proved it understands them, because a peer
-	// that does not treats an unknown kind as a protocol error and drops the
-	// session. See multipath_flow.go.
-	multipathKindReady byte = 2
-	multipathKindAck   byte = 3
+	// multipathKindAck carries the receiver's cumulative progress back to the
+	// sender (multipath_flow.go). Kinds 2 and 3 belonged to an earlier ack
+	// format and are deliberately left unused: a peer still speaking that
+	// format rejects this one as unknown and resets, instead of misreading it.
+	multipathKindAck byte = 4
 )
 
 // multipathKnownKind reports whether a received frame kind can be parsed.
 func multipathKnownKind(kind byte) bool {
 	switch kind {
-	case multipathKindData, multipathKindFin, multipathKindReady, multipathKindAck:
+	case multipathKindData, multipathKindFin, multipathKindAck:
 		return true
 	}
 	return false
@@ -115,21 +123,28 @@ const multipathReorderOverdraftChunks = 256
 // both ends hanging with no error.
 const multipathReorderGapTimeout = 15 * time.Second
 
-// multipathLegStallTimeout is how long one leg's write may sit still, while
-// other legs keep completing writes, before that leg is retired.
+// multipathLegStallTimeout is how long one leg may make no progress, while
+// other legs keep making theirs, before that leg is retired. Progress is either
+// a write completing or the far side acknowledging bytes that leg carried: a
+// leg can stop in the write (the peer stopped reading) or after it (the path
+// swallows what the kernel sends), and both look like silence.
 //
 // The comparison against the other legs is what makes this safe: every leg
 // blocking together is ordinary backpressure and nothing is retired. Only a leg
 // that has stopped on its own is, and a leg that has moved nothing in this long
-// while its siblings drained is contributing no bandwidth anyway.
-const multipathLegStallTimeout = 10 * time.Second
+// while its siblings drained is contributing no bandwidth anyway. Retiring it
+// costs nothing but a retransmission: whatever it had not delivered goes back
+// to the other legs straight away.
+const multipathLegStallTimeout = 5 * time.Second
 
-// multipathLegStallCheck is how often the watchdog looks.
+// multipathLegStallCheck is how often the watchdog looks while the session is
+// idle. With data outstanding the session ticks at multipathBusyTick instead.
 const multipathLegStallCheck = 2 * time.Second
 
-// multipathAckInterval is how often progress that the inline thresholds did not
-// report is reported anyway, so a lost acknowledgement cannot strand the sender.
-const multipathAckInterval = 500 * time.Millisecond
+// multipathBusyTick is the housekeeping period while anything is unacknowledged
+// in either direction: retransmit decisions and ack refreshes need a finer
+// clock than the idle watchdog, and an idle session should not pay for it.
+const multipathBusyTick = 50 * time.Millisecond
 
 // multipathMinLegs is the smallest number of legs that still counts as
 // multipath. A single leg is just an ordinary session.
@@ -189,6 +204,11 @@ type reorderBuffer struct {
 	pending  map[uint64][]byte
 	nextSeq  uint64
 	maxItems int
+
+	// recvContig is the first sequence number not yet received: every chunk
+	// below it is either delivered or waiting in pending. It is what the
+	// receiver acknowledges, and what lets the sender forget a chunk.
+	recvContig uint64
 
 	// overdrafts counts the chunks taken past the bound because the chunk due
 	// next had not arrived. Diagnostic only: a non-zero count means the legs
@@ -328,8 +348,37 @@ func (b *reorderBuffer) push(seq uint64, payload []byte) error {
 	stored := make([]byte, len(payload))
 	copy(stored, payload)
 	b.pending[seq] = stored
+	if b.recvContig < b.nextSeq {
+		b.recvContig = b.nextSeq
+	}
+	for {
+		if _, ok := b.pending[b.recvContig]; !ok {
+			break
+		}
+		b.recvContig++
+	}
 	b.ready.Broadcast()
 	return nil
+}
+
+// ackState reports what an acknowledgement should carry: the next chunk due
+// for delivery, the first chunk not yet received, and whether the end of the
+// stream is known.
+func (b *reorderBuffer) ackState() (delivered uint64, received uint64, finSeen bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	received = b.recvContig
+	if received < b.nextSeq {
+		received = b.nextSeq
+	}
+	return b.nextSeq, received, b.finalKnown
+}
+
+// finished reports whether the far side's end of stream has been announced.
+func (b *reorderBuffer) finished() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.finalKnown
 }
 
 // holeAgeLocked reports how long the chunk due next has been missing while
