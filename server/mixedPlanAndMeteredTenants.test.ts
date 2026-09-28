@@ -19,8 +19,9 @@ import test from "node:test";
  *    办法只有一个：把他的转发挪到没配价的资源上。
  *
  * 第 2 条在「整台主机兜底价」这个功能下特别容易踩：兜底价会把这台机器上**所有**
- * 没被单独计价的转发接管过去，包括套餐户的。而套餐户通常余额是 0 —— 余额 ≤ 0 会被
- * 直接停掉名下全部转发。这条用例把这个后果钉住，免得哪天有人以为兜底价只对计费户生效。
+ * 没被单独计价的转发接管过去，包括套餐户的。而套餐户通常余额是 0 —— 那条转发照常扣费
+ * 后被停（只停走计费资源的这一条，账户不暂停）。这条用例把这个后果钉住，免得哪天有人
+ * 以为兜底价只对计费户生效。
  */
 test("套餐户和计费户能同时跑，但走的是资源不是人", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-mixed-billing-"));
@@ -46,8 +47,8 @@ test("套餐户和计费户能同时跑，但走的是资源不是人", () => {
       const exec = (sql, p = []) => runtime.executeRaw(sql, p);
       const query = (sql, p = []) => runtime.queryRaw(sql, p);
 
-      // 套餐户：有流量额度，余额 0（买的是套餐，没充过钱）
-      await exec("INSERT INTO users (id, username, password, role, trafficLimit, trafficUsed, balanceCents, canAddRules, accountEnabled) VALUES (2, '套餐户', 'h', 'user', ?, 0, 0, 1, 1)", [100 * GB]);
+      // 套餐户：有流量额度、有自己的转发权限（manualCanAddRules），余额 0（买的是套餐，没充过钱）
+      await exec("INSERT INTO users (id, username, password, role, trafficLimit, trafficUsed, balanceCents, canAddRules, manualCanAddRules, accountEnabled) VALUES (2, '套餐户', 'h', 'user', ?, 0, 0, 1, 1, 1)", [100 * GB]);
       // 计费户：没有额度，余额 100 元
       await exec("INSERT INTO users (id, username, password, role, trafficLimit, trafficUsed, balanceCents, canAddRules, accountEnabled) VALUES (3, '计费户', 'h', 'user', 0, 0, 10000, 1, 1)");
 
@@ -107,7 +108,8 @@ test("套餐户和计费户能同时跑，但走的是资源不是人", () => {
         这是「每台机器整台按量计费」那个功能。它会把这台机器上**所有**没被单独计价的
         转发接管过去 —— 套餐户那条也在内，因为分叉只看资源，不看人。
 
-        套餐户余额是 0，而余额 ≤ 0 的处理是**停掉他名下全部转发**。
+        套餐户余额是 0：已经跑出去的这 1GB 照常扣费（余额扣成负数），然后只停他走计费
+        资源的那条转发 —— 账户不暂停，没挂计费资源的转发照常跑。
       */
       await billing.upsertTrafficBillingConfig({
         resourceType: "host", resourceId: 10, enabled: true, pricePerGbMilliCents: 100000,
@@ -123,12 +125,13 @@ test("套餐户和计费户能同时跑，但走的是资源不是人", () => {
         2 * GB,
         "兜底价一配，套餐户这条就不再记进套餐额度了 —— 他被接管到按量那条路上",
       );
+      assert.equal(Number(plan2.balanceCents), -100, "已经跑出去的 1GB 照常扣费，不能白跑");
       assert.equal(
         Number(plan2.canAddRules),
-        0,
-        "套餐户余额 0，被按量计费判定为余额不足，名下转发全停",
+        1,
+        "有套餐的人余额不足不暂停账户，只停走计费资源的转发",
       );
-      assert.equal(await ruleEnabled(201), false, "转发确实被停掉了，不只是标记");
+      assert.equal(await ruleEnabled(201), false, "走计费资源的那条转发确实被停掉了");
 
       // 计费户不受影响：他本来就挂在转发组上，走的还是组价。
       const metered2 = await userRow(3);
@@ -147,7 +150,7 @@ test("套餐户和计费户能同时跑，但走的是资源不是人", () => {
       await report("r3", [{ ruleId: 201, bytesIn: 1 * GB, bytesOut: 0 }]);
       const plan3 = await userRow(2);
       assert.equal(Number(plan3.trafficUsed), 3 * GB, "兜底价停掉，套餐户回到记额度那条路");
-      assert.equal(Number(plan3.balanceCents), 0, "仍然一分钱不扣");
+      assert.equal(Number(plan3.balanceCents), -100, "回到套餐额度后不再扣费（余额停在之前那笔）");
 
       console.log("MIXED_OK");
     } finally {

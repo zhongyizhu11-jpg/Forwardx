@@ -999,15 +999,8 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
         quotaTrafficByUser.set(rule.userId, (quotaTrafficByUser.get(rule.userId) || 0) + quotaBytes);
         continue;
       }
-      if (user && Number((user as any).balanceCents || 0) <= 0) {
-        if (!shortfallUserIds.has(Number(rule.userId))) {
-          shortfallUserIds.add(Number(rule.userId));
-          console.warn(`[TrafficBilling] user=${rule.userId} balance unavailable, stopping traffic-billed rules`);
-          const shortfall = await handleTrafficBillingShortfall(Number(rule.userId), "balance-unavailable");
-          if (shortfall.accountPaused) await refreshUserRuleAgents(rule.userId, "traffic-billing-balance-unavailable");
-        }
-        continue;
-      }
+      // 已经跑出来的流量先照常计费（余额可以扣成负数），再看要不要停。以前余额为 0 时
+      // 这段流量直接丢掉：既不扣费也不计配额，规则被停后再手动打开就能白跑一段。
       const billed = await db.billTrafficUsage({
         userId: Number(rule.userId),
         ruleId: Number(rule.id),
@@ -1015,11 +1008,12 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
         resourceType: billingResource.resourceType,
         resourceId: billingResource.resourceId,
       });
-      if (billed && billed.balanceAfterCents < 0 && !shortfallUserIds.has(Number(rule.userId))) {
+      const balanceAfterCents = billed ? Number(billed.balanceAfterCents) : Number((user as any)?.balanceCents || 0);
+      if (user && balanceAfterCents <= 0 && !shortfallUserIds.has(Number(rule.userId))) {
         shortfallUserIds.add(Number(rule.userId));
-        console.warn(`[TrafficBilling] user=${rule.userId} balance negative, stopping traffic-billed rules`);
-        const shortfall = await handleTrafficBillingShortfall(Number(rule.userId), "balance-negative");
-        if (shortfall.accountPaused) await refreshUserRuleAgents(rule.userId, "traffic-billing-balance-negative");
+        console.warn(`[TrafficBilling] user=${rule.userId} balance ${balanceAfterCents < 0 ? "negative" : "unavailable"}, stopping traffic-billed rules`);
+        const shortfall = await handleTrafficBillingShortfall(Number(rule.userId), balanceAfterCents < 0 ? "balance-negative" : "balance-unavailable");
+        if (shortfall.accountPaused) await refreshUserRuleAgents(rule.userId, "traffic-billing-balance-unavailable");
       }
     }
 
