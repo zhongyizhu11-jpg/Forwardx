@@ -4561,10 +4561,13 @@ function TunnelsContent() {
                         <Label>隧道限速 (Mbps)</Label>
                         <Input type="number" min={0} max={1000000} step={1} value={form.rateLimitMbps || ""} onChange={(e) => setForm({ ...form, rateLimitMbps: Number(e.target.value) || 0 })} placeholder="不限速" />
                       </FormField>
-                      <FormField className="space-y-2">
-                        <Label>流量倍率</Label>
-                        <Input type="number" min={0.01} max={50} step={0.01} value={form.trafficMultiplier || ""} onChange={(e) => setForm({ ...form, trafficMultiplier: Number(e.target.value) || 1 })} placeholder="1" />
-                      </FormField>
+                      {/* 流量倍率决定按多少计入流量配额，只有管理员能改（服务端同样强制） */}
+                      {user?.role === "admin" && (
+                        <FormField className="space-y-2">
+                          <Label>流量倍率</Label>
+                          <Input type="number" min={0.01} max={50} step={0.01} value={form.trafficMultiplier || ""} onChange={(e) => setForm({ ...form, trafficMultiplier: Number(e.target.value) || 1 })} placeholder="1" />
+                        </FormField>
+                      )}
                     </div>
                   </>
                 ) : (
@@ -4870,10 +4873,13 @@ function TunnelsContent() {
                 <Label>隧道限速 (Mbps)</Label>
                 <Input type="number" min={0} max={1000000} step={1} value={form.rateLimitMbps || ""} onChange={(e) => setForm({ ...form, rateLimitMbps: Number(e.target.value) || 0 })} placeholder="不限速" />
               </FormField>
-              <FormField className="space-y-2">
-                <Label>流量倍率</Label>
-                <Input type="number" min={0.01} max={50} step={0.01} value={form.trafficMultiplier || ""} onChange={(e) => setForm({ ...form, trafficMultiplier: Number(e.target.value) || 1 })} placeholder="1" />
-              </FormField>
+              {/* 流量倍率决定按多少计入流量配额，只有管理员能改（服务端同样强制） */}
+              {user?.role === "admin" && (
+                <FormField className="space-y-2">
+                  <Label>流量倍率</Label>
+                  <Input type="number" min={0.01} max={50} step={0.01} value={form.trafficMultiplier || ""} onChange={(e) => setForm({ ...form, trafficMultiplier: Number(e.target.value) || 1 })} placeholder="1" />
+                </FormField>
+              )}
             </div>
           </div>
           <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-background/95 px-3.5 py-3 sm:px-4">
