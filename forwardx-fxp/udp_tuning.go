@@ -420,4 +420,5 @@ func tuneUDPConn(conn *net.UDPConn, label string, bytes int) {
 	if err := conn.SetWriteBuffer(bytes); err != nil {
 		fxpUDPTuneLog.Printf("%s udp write buffer tune skipped: %v", label, err)
 	}
+	forceUDPSocketBuffers(conn, bytes)
 }

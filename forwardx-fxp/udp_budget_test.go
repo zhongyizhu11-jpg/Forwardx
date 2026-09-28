@@ -174,7 +174,7 @@ func TestUDPFragmentBudgetNeverLeaksOrOvercharges(t *testing.T) {
 			inFlight = nil
 			continue
 		case 4: // 超长片
-			packet.payload = make([]byte, fxpUDPFragmentPayloadSize+1)
+			packet.payload = make([]byte, fxpUDPMaxFragmentPayload+1)
 			emit(packet)
 			continue
 		}

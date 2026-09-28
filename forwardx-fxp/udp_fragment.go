@@ -3,21 +3,56 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
 const (
-	fxpUDPAuthTagSize            = 16
-	fxpUDPMaxDatagramPayload     = 65507
-	fxpUDPMaxSinglePayload       = 65507 - fxpUDPHeaderSize - fxpUDPAuthTagSize
-	fxpUDPMaxWirePacketSize      = 1200
-	fxpUDPFragmentPayloadSize    = fxpUDPMaxWirePacketSize - fxpUDPHeaderSize - fxpUDPAuthTagSize
-	fxpUDPMaxFragments           = (fxpUDPMaxDatagramPayload + fxpUDPFragmentPayloadSize - 1) / fxpUDPFragmentPayloadSize
-	fxpUDPFragmentTimeout        = 5 * time.Second
-	fxpUDPMaxPendingFragmentSets = 8
+	fxpUDPAuthTagSize        = 16
+	fxpUDPMaxDatagramPayload = 65507
+	fxpUDPMaxSinglePayload   = 65507 - fxpUDPHeaderSize - fxpUDPAuthTagSize
+	// 发送端的单包上限按传输方式定（configureFXPUDPWireLimit），夹在这两个值之间。
+	// 接收端一律按上限收，所以沿途各跳用的上限不同也能互通。
+	fxpUDPMinWirePacketSize = 1200
+	fxpUDPMaxWirePacketSize = 1472 // 1500 MTU 减 IPv4 + UDP 头
+	// V1 直接走公网：加上 mimic 的 12 字节、IPv6 外层头，1400 仍在 1500 以内，
+	// 不会被拆成 IP 分片。以前固定 1200，QUIC、游戏常见的 1250~1350 字节的包
+	// 全被拆成两片：每跳包数翻倍，丢包率也跟着翻倍。
+	fxpUDPDefaultWirePacketSize = 1400
+	// V2 的包走 userspace WireGuard：默认 MTU 1380 减内层 IPv4 + UDP 头。
+	fxpUDPWireGuardWirePacketSize = 1352
+	fxpUDPMaxFragmentPayload      = fxpUDPMaxWirePacketSize - fxpUDPHeaderSize - fxpUDPAuthTagSize
+	fxpUDPMinFragmentPayload      = fxpUDPMinWirePacketSize - fxpUDPHeaderSize - fxpUDPAuthTagSize
+	fxpUDPMaxFragments            = (fxpUDPMaxDatagramPayload + fxpUDPMinFragmentPayload - 1) / fxpUDPMinFragmentPayload
+	fxpUDPFragmentTimeout         = 5 * time.Second
+	fxpUDPMaxPendingFragmentSets  = 8
 )
+
+var fxpUDPWirePacketLimit atomic.Int64
+
+func init() {
+	fxpUDPWirePacketLimit.Store(fxpUDPDefaultWirePacketSize)
+}
+
+// configureFXPUDPWireLimit 在进程启动时按配置定下发送端的单包上限。
+func configureFXPUDPWireLimit(cfg config) int {
+	limit := fxpUDPDefaultWirePacketSize
+	if strings.EqualFold(strings.TrimSpace(cfg.TransportVersion), "v2") {
+		limit = fxpUDPWireGuardWirePacketSize
+	}
+	if cfg.UDPWirePacketSize > 0 {
+		limit = cfg.UDPWirePacketSize
+	}
+	limit = max(fxpUDPMinWirePacketSize, min(fxpUDPMaxWirePacketSize, limit))
+	fxpUDPWirePacketLimit.Store(int64(limit))
+	return limit
+}
+
+func fxpUDPFragmentPayloadLimit() int {
+	return int(fxpUDPWirePacketLimit.Load()) - fxpUDPHeaderSize - fxpUDPAuthTagSize
+}
 
 type fxpUDPSequenceSeedAllocator struct {
 	last atomic.Uint64
@@ -107,10 +142,11 @@ func fxpUDPFragmentCount(payloadSize int) (int, error) {
 	if payloadSize < 0 || payloadSize > fxpUDPMaxDatagramPayload {
 		return 0, fmt.Errorf("udp datagram payload too large: %d", payloadSize)
 	}
-	if payloadSize <= fxpUDPFragmentPayloadSize {
+	fragmentPayload := fxpUDPFragmentPayloadLimit()
+	if payloadSize <= fragmentPayload {
 		return 1, nil
 	}
-	count := (payloadSize + fxpUDPFragmentPayloadSize - 1) / fxpUDPFragmentPayloadSize
+	count := (payloadSize + fragmentPayload - 1) / fragmentPayload
 	if count > fxpUDPMaxFragments {
 		return 0, fmt.Errorf("udp datagram requires too many fragments: %d", count)
 	}
@@ -204,9 +240,10 @@ func sealFXPUDPDatagramsWithCodec(packet fxpUDPPacket, codec *fxpUDPCodec, count
 		return nil, err
 	}
 	frames := make([][]byte, 0, count)
+	fragmentPayload := fxpUDPFragmentPayloadLimit()
 	for index := 0; index < count; index++ {
-		start := index * fxpUDPFragmentPayloadSize
-		end := min(start+fxpUDPFragmentPayloadSize, len(packet.payload))
+		start := index * fragmentPayload
+		end := min(start+fragmentPayload, len(packet.payload))
 		fragment := packet
 		fragment.sequence = sequence
 		fragment.payload = packet.payload[start:end]
@@ -236,7 +273,7 @@ func (r *udpFragmentReassembler) accept(packet fxpUDPPacket, replay *udpReplayWi
 		}
 		return packet.payload, true
 	}
-	if len(packet.payload) == 0 || len(packet.payload) > fxpUDPFragmentPayloadSize {
+	if len(packet.payload) == 0 || len(packet.payload) > fxpUDPMaxFragmentPayload {
 		return nil, false
 	}
 

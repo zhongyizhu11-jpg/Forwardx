@@ -671,6 +671,7 @@ func main() {
 		cfg.LimitIn,
 		cfg.LimitOut,
 	)
+	log.Printf("forwardx-fxp udp wire packet limit=%dB transport=%s", configureFXPUDPWireLimit(cfg), cfg.TransportVersion)
 	ctx := shutdownContext()
 	switch strings.ToLower(cfg.Role) {
 	case "entry":
