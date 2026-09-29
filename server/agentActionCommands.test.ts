@@ -359,6 +359,44 @@ test("iptables：旧版无标记的共享副本只在没有别的规则引用时
   });
 });
 
+/**
+ * 换隧道后旧入口的临时桥接（规则 id 落在桥接编号段）插到链首：
+ * 机器上原有 firewalld 那样的 FORWARD 末尾 REJECT、Docker 的 FORWARD DROP 策略，追加在后面的
+ * ACCEPT 永远轮不到，客户端连旧入口只看到超时。用户自己的 iptables 规则照旧追加。
+ */
+test("iptables：旧入口桥接插到链首，排在机器上已有的 REJECT 前面；普通规则照旧追加", () => {
+  const bridgeRule = { id: 2_000_000_005, sourcePort: 52582, targetIp: "42.194.198.67", targetPort: 52582, protocol: "both" };
+  const bridgeCmds = buildIptablesForwardCmds(bridgeRule);
+  assert.ok(bridgeCmds.some((line) => line.includes("-I PREROUTING -p tcp --dport 52582 -j DNAT --to-destination 42.194.198.67:52582")), bridgeCmds.join("\n"));
+  assert.ok(bridgeCmds.some((line) => line.includes("-I FORWARD -p udp -d 42.194.198.67 --dport 52582 -m comment --comment fwx-rule-2000000005 -j ACCEPT")), bridgeCmds.join("\n"));
+  assert.ok(!bridgeCmds.some((line) => / -A (PREROUTING|POSTROUTING|FORWARD) -p /.test(line)), "桥接的四段规则都该是 -I");
+  const normalCmds = buildIptablesForwardCmds(sharedTargetRule(7, 1007));
+  assert.ok(normalCmds.some((line) => line.includes("-A FORWARD -p tcp -d 10.0.0.9 --dport 80 -m comment --comment fwx-rule-7 -j ACCEPT")), normalCmds.join("\n"));
+  assert.ok(!normalCmds.some((line) => / -I (PREROUTING|POSTROUTING|FORWARD) -p /.test(line)), "普通规则不该改成 -I");
+
+  withFakeIptables((exec, state) => {
+    // 机器上原有的布局：firewalld 式的 FORWARD 末尾 REJECT。
+    exec(["iptables -A FORWARD -j FORWARD_IN_ZONES", "iptables -A FORWARD -j REJECT --reject-with icmp-host-prohibited"]);
+    exec(buildIptablesForwardCmds(bridgeRule));
+    exec(buildIptablesForwardCmds(sharedTargetRule(7, 1007)));
+    const filter = readTable(state, "filter").trim().split("\n");
+    const reject = filter.findIndex((line) => line.includes("-j REJECT"));
+    const bridgeAccepts = filter.map((line, index) => (line.includes("fwx-rule-2000000005") ? index : -1)).filter((index) => index >= 0);
+    const normalAccepts = filter.map((line, index) => (line.includes("fwx-rule-7 ") ? index : -1)).filter((index) => index >= 0);
+    assert.equal(bridgeAccepts.length, 4, filter.join("\n"));
+    assert.ok(bridgeAccepts.every((index) => index < reject), `桥接的放行要排在 REJECT 前面：\n${filter.join("\n")}`);
+    assert.ok(normalAccepts.every((index) => index > reject), `普通规则照旧追加在后面：\n${filter.join("\n")}`);
+    const nat = readTable(state, "nat").trim().split("\n");
+    assert.ok(nat.slice(0, 4).every((line) => line.includes("52582")), `桥接的 DNAT / MASQUERADE 也在链首：\n${nat.join("\n")}`);
+
+    // 重下一遍（目标没变）：先删后插，仍然只有一份，仍在链首。
+    exec(buildIptablesForwardCmds(bridgeRule));
+    const again = readTable(state, "filter").trim().split("\n");
+    assert.equal(again.filter((line) => line.includes("fwx-rule-2000000005")).length, 4, again.join("\n"));
+    assert.ok(again.findIndex((line) => line.includes("fwx-rule-2000000005")) < again.findIndex((line) => line.includes("-j REJECT")));
+  });
+});
+
 test("iptables：-C 因锁忙等原因失败（非 1）时不追加，避免重复规则", () => {
   withFakeIptables((exec, state) => {
     exec(buildCountingChainCmds(22022, "203.0.113.10", 443, "tcp", "iptables"), { FAKE_IPT_CHECK_RC: "4" });

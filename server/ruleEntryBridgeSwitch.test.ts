@@ -119,6 +119,8 @@ function run(): Outcome {
           fxpRole: action.fxp ? action.fxp.role : null,
           // 只留 DNAT 那几行：整份命令很长，结果要从子进程的 stdout 里原样读回来。
           dnat: (action.commands || []).filter((line) => line.includes("DNAT --to-destination")).join("\n"),
+          // 桥接接管 / 规则收回端口时清 conntrack 老流的那几行。
+          conntrackFlush: [...(action.preCommands || []), ...(action.commands || [])].filter((line) => line.includes("conntrack -D")).join("\n"),
         }));
     };
     const bridgeRows = async () => (await query('SELECT id, "ruleId", "hostId", "sourcePort", protocol, "isRunning", "runtimeTarget", "expiresAt" FROM forward_rule_entry_bridges ORDER BY id'))
@@ -316,6 +318,21 @@ test("C → A：规则回到 Po0，Po0 上的桥接让位，规则照常起", ()
   const entry = outcome.po0AfterCA.find((action: Action) => action.op === "apply" && action.ruleId === 10);
   assert.ok(entry, JSON.stringify(outcome.po0AfterCA));
   assert.equal(entry.tunnelId, 1);
+  // Po0 上的 Agent 还报着桥接在监听：规则收回端口时要把被桥接 DNAT 出去的老流从 conntrack 里清掉。
+  assert.match(entry.conntrackFlush, /conntrack -D -p tcp --dport 40981/);
+  assert.match(entry.conntrackFlush, /conntrack -D -p udp --dport 40981/);
+});
+
+test("桥接接管旧入口端口时把换之前就连着的老流从 conntrack 里清掉，并把规则插到链首", () => {
+  const [bridge] = bridgeApplies(outcome.po0AfterAB);
+  assert.ok(bridge, JSON.stringify(outcome.po0AfterAB));
+  assert.match(bridge.conntrackFlush, /conntrack -D -p tcp --dport 40981/);
+  assert.match(bridge.conntrackFlush, /conntrack -D -p udp --dport 40981/);
+  assert.match(bridge.dnat, /-I PREROUTING -p tcp --dport 40981 -j DNAT --to-destination 203\.0\.113\.2:40981/);
+  // 规则本身（不是桥接）在新入口上起，不清 conntrack：那台机器上这个端口本来没有老流。
+  const entry = outcome.po01AfterAB.find((action: Action) => action.op === "apply" && action.ruleId === 10);
+  assert.ok(entry, JSON.stringify(outcome.po01AfterAB));
+  assert.equal(entry.conntrackFlush, "");
 });
 
 test("到期的桥接不再下发，Agent 上的监听当孤儿撤掉；清理把行删掉", () => {

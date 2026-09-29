@@ -1,4 +1,5 @@
 import { forwardRuleProtocols, normalizeForwardRuleProtocol } from "@shared/forwardTypes";
+import { isEntryBridgeRuleId } from "@shared/ruleEntryBridge";
 import { isIP } from "net";
 
 type IptablesBinary = "iptables" | "ip6tables";
@@ -66,9 +67,9 @@ export function iptablesEnsureShell(bin: string, tableArg: string, rule: string,
   return `${bin} ${tableArg}-C ${rule} 2>/dev/null; __fwx_rc=$?; if [ "$__fwx_rc" -eq 1 ]; then ${bin} ${tableArg}${appendFlag} ${rule}; elif [ "$__fwx_rc" -ne 0 ]; then echo "[iptables] check failed rc=$__fwx_rc, skip append" >&2; false; fi`;
 }
 
-function iptablesEnsure(binary: IptablesBinary, table: string | null, rule: string, optional = false) {
+function iptablesEnsure(binary: IptablesBinary, table: string | null, rule: string, optional = false, appendFlag: "-A" | "-I" = "-A") {
   const tableArg = table ? `-t ${table} ` : "";
-  const command = iptablesEnsureShell(iptablesBin(binary), tableArg, rule);
+  const command = iptablesEnsureShell(iptablesBin(binary), tableArg, rule, appendFlag);
   if (binary === "ip6tables") {
     return optional
       ? `if command -v ip6tables >/dev/null 2>&1; then ${command}; fi; true`
@@ -308,6 +309,28 @@ function buildConntrackCleanupCmds(port: number, protocol?: string): string[] {
   return forwardRuleProtocols(protocol, "both").map((proto) =>
     `command -v conntrack >/dev/null 2>&1 && conntrack -D -p ${proto} --dport ${port} 2>/dev/null || true`
   );
+}
+
+/**
+ * 换隧道后旧入口的桥接接管端口时，把这个端口上已有的 conntrack 记录清掉。
+ *
+ * 换之前就连着旧入口的客户端（hy2 / tuic / WireGuard 这类 UDP 客户端一直用同一个源端口发包），
+ * 它的流在 conntrack 里已经有一条「不做 NAT、直送本机」的记录：DNAT 只在流的第一个包上判定，
+ * 而这条记录每来一个包就续一次命。只要客户端不停地发，它的包就永远进不了桥接，全投到本机
+ * 早已撤掉的监听上直接丢掉 —— 客户端看到的就是断流、超时（netns 里用真 Agent 复现过）。
+ * 删掉这些记录，下一个包就按新插的 DNAT 重新建流。只清「目的端口 = 桥接端口」的记录：
+ * 这些流原本都是这台机器上那个监听在收，监听已经撤了，记录留着没有任何用处。
+ *
+ * conntrack 命令行不是每台机器都装（Debian 系叫 conntrack，RHEL 系叫 conntrack-tools），
+ * 没有就顺手装一下；装不上也不拦着桥接生效 —— 转发规则在这一步之前已经插好，只是老客户端
+ * 得等自己重连。
+ */
+export function buildEntryBridgeConntrackFlushCmds(port: number, protocol?: string): string[] {
+  if (!Number(port)) return [];
+  return [
+    `command -v conntrack >/dev/null 2>&1 || { apt-get install -y -qq conntrack || yum install -y -q conntrack-tools || dnf install -y -q conntrack-tools || apk add --no-cache conntrack-tools; } >/dev/null 2>&1; true`,
+    ...buildConntrackCleanupCmds(port, protocol),
+  ];
 }
 
 function buildNftForwardTargetCleanupCmds(rule: any): string[] {
@@ -564,6 +587,18 @@ export function buildIptablesForwardCmds(rule: any): string[] {
   const tag = iptablesRuleTag(rule);
   // 没有规则 ID（隧道/孤儿快照）时退回旧的无标记写法。
   const tagMatch = tag ? `-m comment --comment ${tag} ` : "";
+  /*
+    换隧道后留在旧入口上的临时桥接（shared/ruleEntryBridge）插到链首，而不是追加到链尾。
+
+    桥接要在「任何一台曾经当过入口的机器」上立刻起来，可那台机器上原有的防火墙布局不归面板管：
+    firewalld 的 FORWARD 链末尾是 `-j REJECT --reject-with icmp-host-prohibited`，装了 Docker
+    的机器 FORWARD 默认策略是 DROP。追加在这些后面的 ACCEPT 永远轮不到 —— DNAT 过去的包在本机
+    就被拒掉，客户端连旧入口只看到超时；而 `-C` 查规则都在、Agent 的就绪检查也过，面板日志里
+    一切正常，什么都看不出来（netns 里用真 Agent 复现过：ruleEntryBridgeNetns.e2e.test）。
+    用户自己建的 iptables 规则照旧追加：那是他在自己机器上选的转发方式，和已有防火墙规则的
+    先后由他自己定，不能因为这次改动把已有部署的顺序都换掉。
+  */
+  const appendFlag: "-A" | "-I" = isEntryBridgeRuleId(rule.id) ? "-I" : "-A";
   const cmds = [
     binary === "ip6tables"
       ? `sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null`
@@ -571,11 +606,13 @@ export function buildIptablesForwardCmds(rule: any): string[] {
     ...buildIptablesForwardCleanupCmds(rule),
   ];
   for (const proto of protos) {
-    cmds.push(iptablesEnsure(binary, "nat", `PREROUTING -p ${proto} --dport ${rule.sourcePort} -j DNAT --to-destination ${iptablesDnatTarget(targetIp, rule.targetPort)}`));
-    cmds.push(iptablesEnsure(binary, "nat", `POSTROUTING -p ${proto} -d ${targetIp} --dport ${rule.targetPort} ${tagMatch}-j MASQUERADE`));
-    cmds.push(iptablesEnsure(binary, null, `FORWARD -p ${proto} -d ${targetIp} --dport ${rule.targetPort} ${tagMatch}-j ACCEPT`));
-    cmds.push(iptablesEnsure(binary, null, `FORWARD -p ${proto} -s ${targetIp} --sport ${rule.targetPort} ${proto === "tcp" ? "-m state --state ESTABLISHED,RELATED " : ""}${tagMatch}-j ACCEPT`));
+    cmds.push(iptablesEnsure(binary, "nat", `PREROUTING -p ${proto} --dport ${rule.sourcePort} -j DNAT --to-destination ${iptablesDnatTarget(targetIp, rule.targetPort)}`, false, appendFlag));
+    cmds.push(iptablesEnsure(binary, "nat", `POSTROUTING -p ${proto} -d ${targetIp} --dport ${rule.targetPort} ${tagMatch}-j MASQUERADE`, false, appendFlag));
+    cmds.push(iptablesEnsure(binary, null, `FORWARD -p ${proto} -d ${targetIp} --dport ${rule.targetPort} ${tagMatch}-j ACCEPT`, false, appendFlag));
+    cmds.push(iptablesEnsure(binary, null, `FORWARD -p ${proto} -s ${targetIp} --sport ${rule.targetPort} ${proto === "tcp" ? "-m state --state ESTABLISHED,RELATED " : ""}${tagMatch}-j ACCEPT`, false, appendFlag));
   }
+  // 桥接：规则插好之后，把换之前就连着这个端口的老流从 conntrack 里清掉，让它们走新的 DNAT。
+  if (appendFlag === "-I") cmds.push(...buildEntryBridgeConntrackFlushCmds(Number(rule.sourcePort), rule.protocol));
   return cmds;
 }
 
