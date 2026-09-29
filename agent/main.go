@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.204"
+var Version = "2.2.205"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -3744,6 +3744,7 @@ func register(cfg Config) error {
 		"cpuInfo":      cpuInfo(),
 		"memoryTotal":  memTotal(),
 		"agentVersion": Version,
+		"fxpVersion":   reportedFXPVersion(),
 	}
 	var out map[string]any
 	return post(cfg, "/api/agent/register", payload, &out)
@@ -4090,6 +4091,7 @@ func heartbeat(cfg Config, forceReconcile ...bool) (heartbeatResult, error) {
 	payload["pluginVersions"] = pluginVersions
 	payload["pluginSyncSignatures"] = pluginSyncSignatures
 	payload["mimicEnvironment"] = mimicEnvironment(false)
+	payload["fxpVersion"] = reportedFXPVersion()
 	if (!compactEnabled || shouldReportStatic) && primaryIP != "" {
 		payload["ip"] = primaryIP
 	}
@@ -4276,6 +4278,7 @@ func heartbeatKeepalive(cfg Config) (heartbeatResult, error) {
 		"failoverStats":             failoverStatsSnapshot(),
 	}
 	payload["mimicEnvironment"] = mimicEnvironment(false)
+	payload["fxpVersion"] = reportedFXPVersion()
 	if compactAgentReports.Load() {
 		payload["m"] = []any{
 			cpuUsage(),
@@ -4956,7 +4959,7 @@ func agentEventStream(cfg Config) {
 }
 
 func runAgentEventStream(cfg Config) error {
-	env, err := encrypt(map[string]any{"agentVersion": Version}, cfg.Token)
+	env, err := encrypt(map[string]any{"agentVersion": Version, "fxpVersion": reportedFXPVersion()}, cfg.Token)
 	if err != nil {
 		return err
 	}
@@ -6618,7 +6621,7 @@ func cleanupStaleRuntimeBeforeApply(cfg Config, a action, actionMessage *actionM
 			if desiredActionLocalRuntimeReady(a) {
 				return staleRuntimeCleanupResult{ok: true}
 			}
-			if actionUsesManagedListener(a) && unknownManagedListenerCleanupNeeded(a.SourcePort, gostRuntimeListenProtocol(a.ForwardType, a.Protocol)) {
+			if actionUsesManagedListener(a) && !fxpActionListenerOwnedByRuntime(a) && unknownManagedListenerCleanupNeeded(a.SourcePort, gostRuntimeListenProtocol(a.ForwardType, a.Protocol)) {
 				if !cleanupUnknownManagedListener(cfg, port, a.SourcePort, a.ForwardType, gostRuntimeListenProtocol(a.ForwardType, a.Protocol), actionMessage) {
 					return staleRuntimeCleanupResult{}
 				}
@@ -6728,7 +6731,7 @@ func cleanupStaleRuntimeBeforeApply(cfg Config, a action, actionMessage *actionM
 				waitForActionListenPortFree(a, 2*time.Second)
 			}
 		}
-		if actionUsesManagedListener(a) && unknownManagedListenerCleanupNeeded(a.SourcePort, gostRuntimeListenProtocol(a.ForwardType, a.Protocol)) {
+		if actionUsesManagedListener(a) && !fxpActionListenerOwnedByRuntime(a) && unknownManagedListenerCleanupNeeded(a.SourcePort, gostRuntimeListenProtocol(a.ForwardType, a.Protocol)) {
 			if !cleanupUnknownManagedListener(cfg, port, a.SourcePort, a.ForwardType, gostRuntimeListenProtocol(a.ForwardType, a.Protocol), actionMessage) {
 				return staleRuntimeCleanupResult{}
 			}
@@ -7479,6 +7482,10 @@ func runtimePortOccupiedByProtocol(port int, protocol string) bool {
 
 func fxpMatchesRunning(spec *fxpSpec, desiredGroups ...*fxpSpec) bool {
 	if spec == nil {
+		return false
+	}
+	// 装着的 FXP 太旧时不能算“已在运行”，否则动作会被当成成功跳过，面板看不到原因。
+	if fxpVersionWireIncompatible(installedFXPVersion()) {
 		return false
 	}
 	normalized := normalizeFXPSpec(*spec)
@@ -10007,6 +10014,29 @@ func fxpProcessMatchesCurrentRuntime(process *fxpProcess) bool {
 	return fxpProcessUsesCurrentExecutable(process) && fxpProcessUsesPanelCredentialDigest(process, "")
 }
 
+/*
+fxpActionListenerOwnedByRuntime：动作要的端口正由本机「同一身份」的 FXP 运行时监听着——
+隧道动作是这条隧道自己的出口 / 中转，规则动作是这条规则在入口（组）里的那一路。
+
+这种端口不是来历不明的监听，只是配置旧了（出口的目标表多了 / 少了规则、入口换了目标）：
+交给 startFXP 原地热更新（热更新不了它自己会换进程）。以前执行前的清理把它当未知监听先杀掉，
+规则换隧道时出口机上新旧两条隧道的出口进程都被重启，两条隧道上所有连接全断，热更新形同虚设。
+V2（WireGuard）的运行时和代理端口绑在一起、从来不热更新，保持原来的清理。
+*/
+func fxpActionListenerOwnedByRuntime(a action) bool {
+	if a.Fxp == nil || !validActionPort(a.SourcePort) {
+		return false
+	}
+	if normalizeFXPSpec(*a.Fxp).TransportVersion == forwardXWireGuardVersion {
+		return false
+	}
+	listenSnapshot := readLocalRuntimeReadinessCached().listenSnapshot
+	if strings.TrimSpace(a.StatusType) == "tunnel" || (a.TunnelID > 0 && a.RuleID <= 0) {
+		return a.TunnelID > 0 && fxpRuntimeReadyForTunnelPort(a.TunnelID, a.SourcePort, listenSnapshot)
+	}
+	return a.RuleID > 0 && fxpRuntimeReadyForRulePort(a.RuleID, a.SourcePort, a.Protocol, listenSnapshot)
+}
+
 func fxpRuntimeReadyForRulePort(ruleID int, port int, protocol string, listenSnapshot *runtimeListenSnapshot) bool {
 	if ruleID <= 0 || port <= 0 {
 		return false
@@ -10464,6 +10494,11 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 	runtimePath, err := resolveFXPRuntimeExecutable()
 	if err != nil || runtimePath == "" {
 		actionMessage.set("fxp runtime missing: install /usr/local/bin/forwardx-fxp to use custom encrypted tunnels")
+		return false
+	}
+	// 旧 FXP 握不上新协议：宁可让动作失败、在面板上写清楚原因，也不要跑一个注定连不通的进程。
+	if err := fxpRuntimeCompatibilityError(); err != nil {
+		actionMessage.set("%v", err)
 		return false
 	}
 	originalSpec := spec

@@ -97,6 +97,7 @@ import {
   type EntryAddressFamily,
 } from "@/lib/ruleEntryDisplay";
 import { cn } from "@/lib/utils";
+import { tunnelFxpIssueText } from "@/features/links/TunnelFxpIssueNotice";
 import { autoForwardRuleName, resolveForwardRuleName } from "@shared/forwardRuleName";
 import {
   BILLING_TIME_ZONE,
@@ -5986,6 +5987,22 @@ function RulesContent() {
     forwardGroupById,
   });
 
+  // 走的 NEX 隧道上有节点的 FXP 握不上当前协议：规则 tcping 能通、流量全超时，要直接标出来。
+  const renderTunnelFxpIssueBadge = (tunnel: any) => {
+    const issue = tunnelFxpIssueText(tunnel);
+    if (!issue) return null;
+    return (
+      <Badge
+        key="fxp-issue"
+        variant="outline"
+        className="h-5 w-fit border-destructive/30 px-1.5 text-[10px] text-destructive"
+        title={issue}
+      >
+        <AlertCircle className="mr-1 h-3 w-3" />
+        隧道 FXP 过旧
+      </Badge>
+    );
+  };
   const renderKernelForwardWarningBadge = (warning: string | null) => {
     if (!warning) return null;
     return (
@@ -6117,7 +6134,9 @@ function RulesContent() {
     const groupRouteLabel = getForwardGroupRouteLabel(group);
     const GroupRouteIcon = groupMode === "port" ? ArrowRightLeft : Layers3;
     const kernelWarning = getRuleKernelForwardWarning(rule);
-    const warningBadge = renderKernelForwardWarningBadge(kernelWarning);
+    const kernelWarningBadge = renderKernelForwardWarningBadge(kernelWarning);
+    const fxpIssueBadge = renderTunnelFxpIssueBadge(tunnel);
+    const warningBadge = kernelWarningBadge || fxpIssueBadge ? <>{kernelWarningBadge}{fxpIssueBadge}</> : null;
     const badge = (
       <Badge
         variant="outline"
@@ -6198,6 +6217,7 @@ function RulesContent() {
         <div className="min-w-0 text-muted-foreground">
           {renderTunnelRoute(tunnel, true)}
         </div>
+        {fxpIssueBadge}
       </div>
     );
   };
@@ -6700,6 +6720,7 @@ function RulesContent() {
 
     const alerts = [
       renderKernelForwardWarningBadge(getRuleKernelForwardWarning(rule)),
+      rule?.tunnelId ? renderTunnelFxpIssueBadge(tunnelById.get(Number(rule.tunnelId))) : null,
       renderSubscriptionBadge(rule, "card"),
       !supported ? (
         <Badge key="unsupported" variant="outline" className="h-5 border-destructive/30 px-1.5 text-[10px] text-destructive">

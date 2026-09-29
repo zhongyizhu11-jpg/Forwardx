@@ -252,6 +252,7 @@ export const hosts = table("hosts", {
   cpuInfo: text("cpuInfo"),
   memoryTotal: bigint("memoryTotal", { mode: "number" }),
   agentVersion: text("agentVersion"),
+  fxpVersion: varchar("fxpVersion", { length: 64 }),
   mimicAvailable: boolean("mimicAvailable"),
   mimicVersion: text("mimicVersion"),
   mimicStatus: varchar("mimicStatus", { length: 64 }),

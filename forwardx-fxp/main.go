@@ -193,7 +193,7 @@ const (
 	fxpUDPIdleTimeout    = 5 * time.Minute
 	fxpProtocolSampleMax = 512
 	fxpMasterContext     = "forwardx-fxp-v2 master"
-	fxpRuntimeVersion    = "2.2.123"
+	fxpRuntimeVersion    = "2.2.124"
 	fxpFallbackRetry     = 5 * time.Second
 	// A node that stays down is re-probed on a growing delay, because probing a
 	// peer that accepts but never answers costs a whole handshake timeout.
@@ -217,6 +217,15 @@ const (
 	// 的上一跳连上就立刻发握手（流水线握手随 hello 一起写，预热连接也是连上
 	// 就握手），同一 IP 同时停在这个阶段的连接只有几条。
 	fxpListenerMaxHandshakePerIP = 64
+	// 同一个上一跳的突发：用户那边一下开几百条连接（网页、测速、多规则共用一台
+	// 入口）时，入口会同时现拨几百条到出口，这些连接在出口的握手阶段一起停留
+	// 半个往返，远超上面那 64 条。超出的部分走单独的突发份额（每 IP 加上它
+	// 最多 fxpListenerMaxPendingPerIP 条，和 2.3.389 之前一样），但只给
+	// fxpServerBurstHandshakeTimeout 读握手：合法的上一跳连上就发握手，几个
+	// 往返内就完成；不说话的连接很快让位。突发份额单独计数，占满了也不影响
+	// 每个 IP 那 64 条保底份额 —— 慢速连接攻击的效果不比没有突发份额时更大。
+	fxpListenerMaxHandshakeBurstPerIP = fxpListenerMaxPendingPerIP - fxpListenerMaxHandshakePerIP
+	fxpServerBurstHandshakeTimeout    = 2 * time.Second
 	// 服务端读完初始握手字节的时限。比 fxpHandshakeTimeout 短：不说话的连接
 	// 早点让位。留到 5 秒是为了照顾 2.2.121 及更早的入口 —— 它们在
 	// proxyProtocolReceive 规则上先拨出口、再最多等 5 秒客户端的 PROXY 头，
@@ -259,8 +268,11 @@ type connGate struct {
 // 占满，已经握过手的连接池和会话不受影响。
 type listenerConnGates struct {
 	handshake *connGate
-	pending   *connGate
-	active    *connGate
+	// burst：handshake 这道闸按 IP 满了之后的突发份额，读握手的时限更短
+	// （见 fxpListenerMaxHandshakeBurstPerIP）。
+	burst   *connGate
+	pending *connGate
+	active  *connGate
 }
 
 // listenerAdmission 是一条连接在三道闸上的租约。方法对 nil 安全：直接调用
@@ -272,6 +284,9 @@ type listenerAdmission struct {
 	releaseHandshake func()
 	releasePending   func()
 	releaseActive    func()
+	// burst：这条连接占的是突发份额，burstTimer 到点还没握完手就关掉它。
+	burst      bool
+	burstTimer *time.Timer
 }
 
 type exitEndpointSelector struct {
@@ -325,8 +340,10 @@ func newListenerConnGates(cfg config) *listenerConnGates {
 	pendingConnections := minInt(maxConnections, fxpListenerMaxPendingConnections)
 	pendingPerIP := minInt(pendingConnections, fxpListenerMaxPendingPerIP)
 	handshakePerIP := minInt(pendingConnections, fxpListenerMaxHandshakePerIP)
+	burstPerIP := minInt(pendingConnections, fxpListenerMaxHandshakeBurstPerIP)
 	return &listenerConnGates{
 		handshake: newConnGate(pendingConnections, handshakePerIP),
+		burst:     newConnGate(pendingConnections, burstPerIP),
 		pending:   newConnGate(pendingConnections, pendingPerIP),
 		active:    newConnGate(maxConnections, maxPerIP),
 	}
@@ -675,13 +692,46 @@ func (g *connGate) statsFor(remoteAddr net.Addr) (int64, int, int) {
 	return g.active, len(g.ips), g.ips[ip]
 }
 
-// admit 在接受连接时调用，只占握手这道闸。
+// admit 在接受连接时调用，只占握手这道闸；这道闸满了再试突发份额。
 func (g *listenerConnGates) admit(remoteAddr net.Addr) (*listenerAdmission, bool, string) {
 	releaseHandshake, ok, reason := g.handshake.acquire(remoteAddr)
-	if !ok {
-		return nil, false, "handshake/" + reason
+	if ok {
+		return &listenerAdmission{gates: g, remote: remoteAddr, releaseHandshake: releaseHandshake}, true, ""
 	}
-	return &listenerAdmission{gates: g, remote: remoteAddr, releaseHandshake: releaseHandshake}, true, ""
+	if g.burst != nil {
+		releaseBurst, burstOK, burstReason := g.burst.acquire(remoteAddr)
+		if burstOK {
+			return &listenerAdmission{gates: g, remote: remoteAddr, releaseHandshake: releaseBurst, burst: true}, true, ""
+		}
+		reason += ",burst/" + burstReason
+	}
+	return nil, false, "handshake/" + reason
+}
+
+// admitConn 是监听上用的 admit：占了突发份额的连接，fxpServerBurstHandshakeTimeout
+// 之内没握完手就直接关掉，让出份额。
+func (g *listenerConnGates) admitConn(conn net.Conn) (*listenerAdmission, bool, string) {
+	admission, ok, reason := g.admit(conn.RemoteAddr())
+	if ok && admission.burst {
+		admission.mu.Lock()
+		admission.burstTimer = time.AfterFunc(fxpServerBurstHandshakeTimeout, func() {
+			admission.mu.Lock()
+			expired := admission.releaseHandshake != nil
+			admission.mu.Unlock()
+			if expired {
+				_ = conn.Close()
+			}
+		})
+		admission.mu.Unlock()
+	}
+	return admission, ok, reason
+}
+
+func (a *listenerAdmission) stopBurstTimerLocked() {
+	if a.burstTimer != nil {
+		a.burstTimer.Stop()
+		a.burstTimer = nil
+	}
 }
 
 // authenticated 在握手通过后调用：让出握手闸，换成 pending + active。
@@ -691,6 +741,7 @@ func (a *listenerAdmission) authenticated() (bool, string) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.stopBurstTimerLocked()
 	if a.releaseHandshake != nil {
 		a.releaseHandshake()
 		a.releaseHandshake = nil
@@ -731,6 +782,7 @@ func (a *listenerAdmission) release() {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.stopBurstTimerLocked()
 	for _, release := range []*func(){&a.releaseHandshake, &a.releasePending, &a.releaseActive} {
 		if *release != nil {
 			(*release)()
@@ -748,17 +800,55 @@ func (a *listenerAdmission) logRejection(role string, cfg config, reason string)
 
 func logListenerConnGateRejection(role string, cfg config, remoteAddr net.Addr, gates *listenerConnGates, reason string) {
 	handshake, handshakeIPs, handshakeForIP := gates.handshake.statsFor(remoteAddr)
+	var burst int64
+	var burstForIP, burstMax int
+	if gates.burst != nil {
+		burst, _, burstForIP = gates.burst.statsFor(remoteAddr)
+		burstMax = gates.burst.maxPerIP
+	}
 	pending, pendingIPs, pendingForIP := gates.pending.statsFor(remoteAddr)
 	active, activeIPs, activeForIP := gates.active.statsFor(remoteAddr)
-	log.Printf("%s tcp rejected by connection gate tunnel=%d client=%s reason=%s handshake=%d/%d handshakeIPs=%d handshakeForIP=%d/%d pending=%d/%d pendingIPs=%d pendingForIP=%d/%d active=%d/%d activeIPs=%d activeForIP=%d/%d", role, cfg.TunnelID, remoteAddr, reason, handshake, gates.handshake.maxConnections, handshakeIPs, handshakeForIP, gates.handshake.maxPerIP, pending, gates.pending.maxConnections, pendingIPs, pendingForIP, gates.pending.maxPerIP, active, gates.active.maxConnections, activeIPs, activeForIP, gates.active.maxPerIP)
+	log.Printf("%s tcp rejected by connection gate tunnel=%d client=%s reason=%s handshake=%d/%d handshakeIPs=%d handshakeForIP=%d/%d burst=%d burstForIP=%d/%d pending=%d/%d pendingIPs=%d pendingForIP=%d/%d active=%d/%d activeIPs=%d activeForIP=%d/%d", role, cfg.TunnelID, remoteAddr, reason, handshake, gates.handshake.maxConnections, handshakeIPs, handshakeForIP, gates.handshake.maxPerIP, burst, burstForIP, burstMax, pending, gates.pending.maxConnections, pendingIPs, pendingForIP, gates.pending.maxPerIP, active, gates.active.maxConnections, activeIPs, activeForIP, gates.active.maxPerIP)
+}
+
+/*
+parseRuntimeFlags 解析命令行。
+
+-version 打印运行时版本后退出：Agent 和安装脚本据此判断装着的 FXP 能不能和别的机器握手
+（隧道协议有过不兼容的升级，Agent 升上去了而 FXP 还是旧的，这条隧道就连不通）。不认识这个
+参数的旧版本会报 "flag provided but not defined" 并以退出码 2 结束，调用方据此认出旧版本。
+*/
+func parseRuntimeFlags(args []string, output io.Writer) (configPath string, showVersion bool, err error) {
+	flags := flag.NewFlagSet("forwardx-fxp", flag.ContinueOnError)
+	flags.SetOutput(output)
+	config := flags.String("config", "", "config file")
+	version := flags.Bool("version", false, "print the runtime version and exit")
+	if err := flags.Parse(args); err != nil {
+		return "", false, err
+	}
+	return *config, *version, nil
+}
+
+func printRuntimeVersion(output io.Writer) {
+	fmt.Fprintln(output, fxpRuntimeVersion)
 }
 
 func main() {
+	configPathValue, showVersion, flagErr := parseRuntimeFlags(os.Args[1:], os.Stderr)
+	if errors.Is(flagErr, flag.ErrHelp) {
+		os.Exit(0)
+	}
+	if flagErr != nil {
+		os.Exit(2)
+	}
+	if showVersion {
+		printRuntimeVersion(os.Stdout)
+		return
+	}
 	ignoreBrokenPipeSignal()
 	configureFXPLogging()
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	configPath := flag.String("config", "", "config file")
-	flag.Parse()
+	configPath := &configPathValue
 	if *configPath == "" {
 		log.Fatal("missing -config")
 	}

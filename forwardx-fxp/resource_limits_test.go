@@ -229,10 +229,31 @@ func TestListenerHandshakeGateBoundsSilentConnectionsPerIP(t *testing.T) {
 		}
 		held = append(held, admission)
 	}
-	if _, ok, reason := gates.admit(attacker); ok || reason != "handshake/maxIPs" {
+	// 保底份额满了之后还有突发份额（读握手的时限更短，见 admitConn），突发份额
+	// 也满了才拒。
+	for i := 0; i < fxpListenerMaxHandshakeBurstPerIP; i++ {
+		admission, ok, reason := gates.admit(attacker)
+		if !ok || !admission.burst {
+			t.Fatalf("burst connection %d: ok=%v reason=%s", i+1, ok, reason)
+		}
+		held = append(held, admission)
+	}
+	if _, ok, reason := gates.admit(attacker); ok || reason != "handshake/maxIPs,burst/maxIPs" {
 		t.Fatalf("attacker exceeded the per-IP handshake cap: ok=%v reason=%q", ok, reason)
 	}
 	entry := &net.TCPAddr{IP: net.ParseIP("198.51.100.7"), Port: 40001}
+	// 攻击者占满了自己的突发份额，别的 IP 的保底份额一条不少。
+	var base []*listenerAdmission
+	for i := 0; i < fxpListenerMaxHandshakePerIP; i++ {
+		admission, ok, reason := gates.admit(entry)
+		if !ok || admission.burst {
+			t.Fatalf("entry base handshake slot %d: ok=%v burst=%v reason=%s", i+1, ok, admission != nil && admission.burst, reason)
+		}
+		base = append(base, admission)
+	}
+	for _, admission := range base {
+		admission.release()
+	}
 	// 合法入口的连接池：握手通过后在等 hello 的连接可以远超握手份额。
 	var pooled []*listenerAdmission
 	for i := 0; i < fxpListenerMaxHandshakePerIP*4; i++ {
@@ -248,6 +269,70 @@ func TestListenerHandshakeGateBoundsSilentConnectionsPerIP(t *testing.T) {
 		if n, ips := gate.stats(); n != 0 || ips != 0 {
 			t.Fatalf("%s gate did not drain: n=%d ips=%d", name, n, ips)
 		}
+	}
+}
+
+type remoteAddrConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (c remoteAddrConn) RemoteAddr() net.Addr { return c.remote }
+
+// 同一个上一跳一下来一批新连接（用户开网页、测速），超过每 IP 64 条的握手
+// 保底份额时不拒，占突发份额；突发份额的连接 fxpServerBurstHandshakeTimeout
+// 内没握完手就被关掉，握完手的照常。
+func TestListenerHandshakeBurstAdmitsAndExpiresSilentConnections(t *testing.T) {
+	gates := newListenerConnGates(config{})
+	entry := &net.TCPAddr{IP: net.ParseIP("198.51.100.8"), Port: 40002}
+	var held []*listenerAdmission
+	for i := 0; i < fxpListenerMaxHandshakePerIP; i++ {
+		admission, ok, reason := gates.admit(entry)
+		if !ok {
+			t.Fatalf("base slot %d rejected: %s", i+1, reason)
+		}
+		held = append(held, admission)
+	}
+	defer func() {
+		for _, admission := range held {
+			admission.release()
+		}
+	}()
+	silentServer, silentClient := net.Pipe()
+	defer silentClient.Close()
+	silent, ok, reason := gates.admitConn(remoteAddrConn{Conn: silentServer, remote: entry})
+	if !ok || !silent.burst {
+		t.Fatalf("burst connection rejected: ok=%v reason=%s", ok, reason)
+	}
+	defer silent.release()
+	liveServer, liveClient := net.Pipe()
+	defer liveClient.Close()
+	defer liveServer.Close()
+	live, ok, reason := gates.admitConn(remoteAddrConn{Conn: liveServer, remote: entry})
+	if !ok || !live.burst {
+		t.Fatalf("second burst connection rejected: ok=%v reason=%s", ok, reason)
+	}
+	defer live.release()
+	if ok, reason := live.authenticated(); !ok {
+		t.Fatalf("authenticated burst connection rejected: %s", reason)
+	}
+	if n, _ := gates.burst.stats(); n != 1 {
+		t.Fatalf("burst lease not handed over on authentication: burst=%d", n)
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		_, _ = silentClient.Read(make([]byte, 1))
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(fxpServerBurstHandshakeTimeout + 2*time.Second):
+		t.Fatal("silent burst connection was not closed")
+	}
+	_ = liveClient.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	if _, err := liveClient.Read(make([]byte, 1)); !isNetTimeout(err) {
+		t.Fatalf("authenticated burst connection was closed: %v", err)
 	}
 }
 

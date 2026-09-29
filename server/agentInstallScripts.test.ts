@@ -147,16 +147,25 @@ test("Agent upgrade config normalization preserves unknown fields and applies mi
   assert.match(normalizer, /if ! mv -f "\$TMP" "\$CONFIG_DIR\/config\.json"; then/);
 });
 
-test("Agent upgrade keeps a usable existing FXP when its asset is unavailable", () => {
+test("Agent upgrade stages Agent and FXP before replacing either", () => {
   const script = generateInstallScript("https://panel.example.com");
   const upgrade = scriptSection(script, "do_upgrade() {", "# ============ 入口 ============");
+  const binaries = scriptSection(script, "upgrade_agent_and_fxp_binaries() {", "# ============ 卸载 ============");
 
+  // 升级不再直接下载到正在用的路径：先下到 *.forwardx-new，都拿到了才替换（行为测试见
+  // agentInstallFxpUpgrade.test.ts）。
+  assert.match(upgrade, /if upgrade_agent_and_fxp_binaries; then/);
+  assert.doesNotMatch(upgrade, /download_release_binary "forwardx-(agent|fxp)-linux-\$\{GO_ARCH\}" "\$(GO_AGENT_BIN|FXP_BIN)"/);
+  assert.match(binaries, /stage_release_binary "forwardx-agent-linux-\$\{GO_ARCH\}" "\$GO_AGENT_BIN" "Go Agent" "0"/);
   assert.match(
-    upgrade,
-    /if ! RELEASE_VERSION="\$FXP_RELEASE_VERSION" download_release_binary "forwardx-fxp-linux-\$\{GO_ARCH\}" "\$FXP_BIN" "ForwardX FXP" "0"; then/,
+    binaries,
+    /RELEASE_VERSION="\$FXP_RELEASE_VERSION" stage_release_binary "forwardx-fxp-linux-\$\{GO_ARCH\}" "\$FXP_BIN" "ForwardX FXP" "0"/,
   );
-  assert.match(upgrade, /保留现有 runtime/);
-  assert.doesNotMatch(upgrade, /download_release_binary "forwardx-fxp-linux-\$\{GO_ARCH\}" "\$FXP_BIN" "ForwardX FXP" "0" \|\| true/);
+  assert.ok(
+    binaries.indexOf('promote_staged_binary "$FXP_BIN"') < binaries.indexOf('promote_staged_binary "$GO_AGENT_BIN"'),
+    "FXP 先换、Agent 后换",
+  );
+  assert.match(binaries, /fxp_version_wire_compatible "\$CURRENT_FXP"/);
 });
 
 test("gost runtime upgrades validate a same-directory candidate before replacement", () => {

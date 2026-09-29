@@ -9,7 +9,8 @@ import { markHostMetricsWatching, pushAgentRefresh, pushAgentUpgrade } from "../
 import { AGENT_ASSET_NAMES, getMissingBundledAgentAssets } from "../agentAssets";
 import { pushTunnelEndpointRefresh, requireHostAccess, requireHostsAccess } from "./helpers";
 import { AGENT_VERSION, APP_VERSION, REPO_URL } from "../_core/systemRouter";
-import { isAgentUpgradeTargetSatisfied, isAgentVersionAtLeast } from "../agentRouteUtils";
+import { isAgentUpgradeCompleted, isHostAgentUpgradeUnnecessary } from "../agentRouteUtils";
+import { hostNeedsAgentUpgrade } from "@shared/fxpRuntime";
 import { normalizeVersion } from "@shared/version";
 import { scheduleHostGeoRefresh } from "../hostGeo";
 import { refreshHostAddressRuntime } from "../hostAddressRuntime";
@@ -344,7 +345,7 @@ async function clearCompletedHostAgentUpgradeRequests<T extends any[]>(hostRows:
   const completedIds: number[] = [];
   const cleanedRows = hostRows.map((host: any) => {
     const targetVersion = host.agentUpgradeTargetVersion || AGENT_VERSION;
-    if (host.agentUpgradeRequested && host.agentVersion && isAgentUpgradeTargetSatisfied(host.agentVersion, targetVersion, AGENT_VERSION)) {
+    if (host.agentUpgradeRequested && host.agentVersion && isAgentUpgradeCompleted(host, targetVersion, AGENT_VERSION)) {
       completedIds.push(Number(host.id));
       return {
         ...host,
@@ -540,6 +541,7 @@ function compactHostStatus(host: any) {
     isOnline: !!host?.isOnline,
     lastHeartbeat: host?.lastHeartbeat || null,
     agentVersion: host?.agentVersion || null,
+    fxpVersion: host?.fxpVersion || null,
     agentUpgradeRequested: !!host?.agentUpgradeRequested,
     agentUpgradeTargetVersion: host?.agentUpgradeTargetVersion || null,
     agentUpgradeRequestedAt: host?.agentUpgradeRequestedAt || null,
@@ -967,7 +969,7 @@ export const hostsRouter = router({
         let onlineOutdatedItems = 0;
         let offlineUpgradeableItems = 0;
         for (const row of pageData.versionCounts as any[]) {
-          if (!row?.agentVersion || isAgentVersionAtLeast(row.agentVersion, AGENT_VERSION)) continue;
+          if (!hostNeedsAgentUpgrade(row, AGENT_VERSION)) continue;
           const count = Math.max(0, Number(row.count || 0));
           outdatedItems += count;
           if (row.online) onlineOutdatedItems += count;
@@ -996,9 +998,7 @@ export const hostsRouter = router({
       .query(async ({ input }) => {
         scheduleStaleHostUpgradeCleanup();
         const hosts = await db.getHostUpgradeCandidates(input) as any[];
-        const outdated = hosts.filter((host: any) => (
-          !!host.agentVersion && !isAgentVersionAtLeast(host.agentVersion, AGENT_VERSION)
-        ));
+        const outdated = hosts.filter((host: any) => hostNeedsAgentUpgrade(host, AGENT_VERSION));
         const candidates = outdated.filter((host: any) => {
           if (!host.isOnline) return false;
           const requestedAt = host.agentUpgradeRequestedAt ? new Date(host.agentUpgradeRequestedAt).getTime() : 0;
@@ -1672,10 +1672,10 @@ export const hostsRouter = router({
         }
         const targetVersion = normalizeVersion(input.targetVersion || AGENT_VERSION);
         const currentVersion = normalizeVersion((host as any).agentVersion);
-        if (currentVersion && isAgentVersionAtLeast(currentVersion, targetVersion)) {
+        if (isHostAgentUpgradeUnnecessary({ agentVersion: currentVersion, fxpVersion: (host as any).fxpVersion }, targetVersion, AGENT_VERSION)) {
           return { success: true, pushed: false, alreadyLatest: true };
         }
-        appendPanelLog("info", `[AgentUpgrade] request host=${host.id} name=${host.name} current=${currentVersion || "-"} target=${targetVersion}`);
+        appendPanelLog("info", `[AgentUpgrade] request host=${host.id} name=${host.name} current=${currentVersion || "-"} fxp=${(host as any).fxpVersion || "-"} target=${targetVersion}`);
         await assertAgentReleaseAssetsReady(targetVersion);
         await db.requestHostAgentUpgrade(input.hostId, targetVersion);
         const configuredPanelUrl = (await db.getSetting("panelPublicUrl")) || "";
@@ -1714,7 +1714,7 @@ export const hostsRouter = router({
         }
         const upgradeHosts = onlineHosts.filter((host) => {
           const currentVersion = normalizeVersion((host as any).agentVersion);
-          if (currentVersion && isAgentVersionAtLeast(currentVersion, targetVersion)) {
+          if (isHostAgentUpgradeUnnecessary({ agentVersion: currentVersion, fxpVersion: (host as any).fxpVersion }, targetVersion, AGENT_VERSION)) {
             skippedLatest += 1;
             return false;
           }

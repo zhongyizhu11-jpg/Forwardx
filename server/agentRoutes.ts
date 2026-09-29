@@ -8,7 +8,7 @@ import { generateInstallScript } from "./agentInstallScripts";
 import { isNginxForwardProtocolEnabled } from "../shared/forwardTypes";
 import { registerAgentEventClient, unregisterAgentEventClient } from "./agentEvents";
 import { agentEncryptionMiddleware, getAgentTunneledPath } from "./agentEncryptionMiddleware";
-import { AGENT_PANEL_MIGRATION_VERSION, hasAgentVersionChanged, isAgentUpgradeTargetSatisfied, isAgentVersionAtLeast } from "./agentRouteUtils";
+import { AGENT_PANEL_MIGRATION_VERSION, hasAgentVersionChanged, isAgentUpgradeCompleted, isAgentVersionAtLeast, normalizeReportedFxpVersion } from "./agentRouteUtils";
 import { resolvePanelUrl } from "./agentPanelUrl";
 import { decryptPayload, encryptPayload, isEncryptedEnvelope } from "./agentCrypto";
 import { assertCanAddSelfServiceHost } from "./selfServiceHostLimit";
@@ -137,6 +137,7 @@ async function openAgentEventStream(input: {
   res: Response;
   token: string;
   agentVersion?: string | null;
+  fxpVersion?: string | null;
 }) {
   const { req, res, token } = input;
   const migratedTo = await db.getSetting("migratedToPanelUrl");
@@ -174,6 +175,7 @@ async function openAgentEventStream(input: {
   }
   const agentVersion = normalizeAgentText(input.agentVersion, 64);
   const agentVersionChanged = hasAgentVersionChanged((host as any).agentVersion, agentVersion);
+  const fxpVersion = normalizeReportedFxpVersion(input.fxpVersion);
   const wasOnline = isHostStatusOnline(host);
   recordAuthenticatedAgentActivity(host.id);
   observePresenceCapableHostActivity(host.id);
@@ -182,7 +184,7 @@ async function openAgentEventStream(input: {
       && !isAgentVersionAtLeast((host as any).agentVersion, AGENT_FIREWALL_COUNTER_REFRESH_VERSION);
     const upgradedProtocolGuardBackendAgent = isAgentVersionAtLeast(agentVersion, AGENT_PROTOCOL_GUARD_BACKEND_VERSION)
       && !isAgentVersionAtLeast((host as any).agentVersion, AGENT_PROTOCOL_GUARD_BACKEND_VERSION);
-    await db.updateHostHeartbeat(host.id, { agentVersion } as any);
+    await db.updateHostHeartbeat(host.id, { agentVersion, ...(fxpVersion ? { fxpVersion } : {}) } as any);
     if (agentVersionChanged) {
       prepareAgentDesiredStateResync(host.id);
       appendPanelLog(
@@ -198,7 +200,11 @@ async function openAgentEventStream(input: {
     }
     const requestedTargetVersion = (host as any).agentUpgradeTargetVersion || AGENT_VERSION;
     const agentUpgradeCompleted = (host as any).agentUpgradeRequested
-      && isAgentUpgradeTargetSatisfied(agentVersion, requestedTargetVersion, AGENT_VERSION);
+      && isAgentUpgradeCompleted(
+        { agentVersion, fxpVersion: fxpVersion || (host as any).fxpVersion },
+        requestedTargetVersion,
+        AGENT_VERSION,
+      );
     if (agentUpgradeCompleted) {
       await db.clearHostAgentUpgradeRequest(host.id);
     }
@@ -299,6 +305,7 @@ agentRouter.get("/api/stream", async (req: Request, res: Response) => {
       res,
       token,
       agentVersion: payload?.agentVersion,
+      fxpVersion: payload?.fxpVersion,
     });
   } catch (error) {
     const message = agentErrorMessage(error);
@@ -354,7 +361,7 @@ function finiteAgentNumber(value: unknown) {
 // Agent 注册接口
 agentApiRouter.post("/api/agent/register", async (req: Request, res: Response) => {
   try {
-    const { token, osInfo, cpuInfo, memoryTotal, agentVersion } = req.body;
+    const { token, osInfo, cpuInfo, memoryTotal, agentVersion, fxpVersion } = req.body;
     if (!token) {
       res.status(400).json({ error: "Token is required" });
       return;
@@ -377,6 +384,7 @@ agentApiRouter.post("/api/agent/register", async (req: Request, res: Response) =
     const nextOsInfo = normalizeAgentText(osInfo, 256);
     const nextCpuInfo = normalizeAgentText(cpuInfo, 256);
     const nextAgentVersion = normalizeAgentText(agentVersion, 64);
+    const nextFxpVersion = normalizeReportedFxpVersion(fxpVersion);
 
     const existingHost = await db.getHostByAgentToken(token);
     if (existingHost) {
@@ -404,6 +412,7 @@ agentApiRouter.post("/api/agent/register", async (req: Request, res: Response) =
         cpuInfo: nextCpuInfo || existingHost.cpuInfo,
         memoryTotal: finiteAgentNumber(memoryTotal) || existingHost.memoryTotal,
         agentVersion: nextAgentVersion || (existingHost as any).agentVersion,
+        ...(nextFxpVersion ? { fxpVersion: nextFxpVersion } : {}),
         isOnline: true,
         lastHeartbeat: new Date(),
       });
@@ -454,6 +463,7 @@ agentApiRouter.post("/api/agent/register", async (req: Request, res: Response) =
       cpuInfo: nextCpuInfo || null,
       memoryTotal: finiteAgentNumber(memoryTotal) || null,
       agentVersion: nextAgentVersion || null,
+      fxpVersion: nextFxpVersion || null,
       isOnline: true,
       lastHeartbeat: new Date(),
       userId: agentToken.userId,

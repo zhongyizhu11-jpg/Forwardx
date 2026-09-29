@@ -30,6 +30,11 @@ type hopResolveEntry struct {
 	ips        []net.IP
 	resolvedAt time.Time
 	refreshing bool
+	// invalidated：配置重载（面板 bump 了 DNSGeneration）之后这条结果不再算新鲜。
+	// 拨 TCP 的先现查一次（查不到再退回旧地址）；UDP 读循环不能等，先接着用旧
+	// 地址、同时在后台刷新 —— 以前重载直接清空缓存，重载之后每个新 UDP 会话的
+	// 头一个包都要被丢掉（QUIC 这类协议因此多等一整个重传超时）。
+	invalidated bool
 }
 
 var fxpHopResolver = struct {
@@ -55,14 +60,15 @@ func lookupHopIP(host string) (net.IP, error) {
 	now := time.Now()
 	fxpHopResolver.mu.Lock()
 	entry := fxpHopResolver.entries[host]
+	var stale net.IP
 	if entry != nil && len(entry.ips) > 0 {
 		age := now.Sub(entry.resolvedAt)
-		if age < fxpHopResolveTTL {
+		if !entry.invalidated && age < fxpHopResolveTTL {
 			ip := entry.ips[0]
 			fxpHopResolver.mu.Unlock()
 			return ip, nil
 		}
-		if age < fxpHopResolveStaleMax {
+		if !entry.invalidated && age < fxpHopResolveStaleMax {
 			ip := entry.ips[0]
 			if !entry.refreshing {
 				entry.refreshing = true
@@ -71,10 +77,25 @@ func lookupHopIP(host string) (net.IP, error) {
 			fxpHopResolver.mu.Unlock()
 			return ip, nil
 		}
+		if age < fxpHopResolveStaleMax {
+			stale = entry.ips[0]
+		}
 	}
 	fxpHopResolver.mu.Unlock()
 	ips, err := queryHopIPs(host)
 	if err != nil {
+		// 重载作废的结果：现查失败时旧地址照样用到 fxpHopResolveStaleMax，和到期
+		// 刷新失败时一个口径。
+		if stale != nil {
+			// 之后的拨号不再每次现查（DNS 挂了的时候每条连接都要白等一个超时），
+			// 回到「过期先用旧地址、后台刷新」的路子。
+			fxpHopResolver.mu.Lock()
+			if fxpHopResolver.entries[host] == entry {
+				entry.invalidated = false
+			}
+			fxpHopResolver.mu.Unlock()
+			return stale, nil
+		}
 		return nil, err
 	}
 	storeHopIPs(host, ips)
@@ -109,10 +130,11 @@ func lookupHopIPNonBlocking(host string) (net.IP, bool) {
 	entry := fxpHopResolver.entries[host]
 	if entry != nil && len(entry.ips) > 0 {
 		age := now.Sub(entry.resolvedAt)
-		if age < fxpHopResolveTTL {
+		if !entry.invalidated && age < fxpHopResolveTTL {
 			return entry.ips[0], true
 		}
 		if age < fxpHopResolveStaleMax {
+			// 过期或被重载作废：先用旧地址，后台刷新。
 			if !entry.refreshing {
 				entry.refreshing = true
 				go refreshHopIP(host)
@@ -144,6 +166,7 @@ func refreshHopIP(host string) {
 	if err == nil {
 		entry.ips = ips
 		entry.resolvedAt = time.Now()
+		entry.invalidated = false
 	}
 }
 
@@ -178,8 +201,18 @@ func queryHopIPs(host string) ([]net.IP, error) {
 	return ips, nil
 }
 
-// flushHopResolverCache 在配置重载时清掉缓存：面板 bump DNSGeneration 的意思
-// 就是「这些域名该重新解析了」。
+// invalidateHopResolverCache 在配置重载时调用：面板 bump DNSGeneration 的意思
+// 就是「这些域名该重新解析了」。结果留着但标成作废（见 hopResolveEntry.invalidated）：
+// TCP 拨号现查，UDP 读循环先用旧地址、后台刷新，不丢新会话的包。
+func invalidateHopResolverCache() {
+	fxpHopResolver.mu.Lock()
+	for _, entry := range fxpHopResolver.entries {
+		entry.invalidated = true
+	}
+	fxpHopResolver.mu.Unlock()
+}
+
+// flushHopResolverCache 整个清空缓存（测试用）。
 func flushHopResolverCache() {
 	fxpHopResolver.mu.Lock()
 	fxpHopResolver.entries = map[string]*hopResolveEntry{}

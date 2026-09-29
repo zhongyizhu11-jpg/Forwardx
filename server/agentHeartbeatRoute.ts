@@ -22,7 +22,7 @@ import {
   proxyInboundTrafficRuleId,
 } from "../shared/proxyInboundTraffic";
 import { effectiveGithubAccelerator } from "../shared/githubAccelerator";
-import { AGENT_PLUGIN_TASK_VERSION, buildMetaAgentSelfTestPayload, buildRuleAgentSelfTestPayload, hasAgentVersionChanged, isAgentUpgradeTargetSatisfied, isAgentVersionAtLeast, parseSelfTestMeta, tunnelSecretSeed } from "./agentRouteUtils";
+import { AGENT_PLUGIN_TASK_VERSION, buildMetaAgentSelfTestPayload, buildRuleAgentSelfTestPayload, hasAgentVersionChanged, isAgentUpgradeCompleted, isAgentVersionAtLeast, normalizeReportedFxpVersion, parseSelfTestMeta, tunnelSecretSeed } from "./agentRouteUtils";
 import { resolveAgentAdvertisedPanelUrl } from "./agentPanelUrl";
 import { getAgentMigrationSwitchTarget, getPanelMigrationAgentDirective } from "./panelMigrationAgentState";
 import * as hopRepo from "./repositories/tunnelRepository";
@@ -1546,6 +1546,9 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     const nextCpuInfo = normalizeAgentText(cpuInfo, 256);
     const nextAgentVersion = normalizeAgentText(agentVersion, 64);
     const agentVersionChanged = hasAgentVersionChanged((host as any).agentVersion, nextAgentVersion);
+    // 没报（旧 Agent）就保留库里的值；报了就以这次为准。
+    const nextFxpVersion = normalizeReportedFxpVersion(req.body?.fxpVersion);
+    const fxpVersionChanged = !!nextFxpVersion && nextFxpVersion !== String((host as any).fxpVersion || "");
     const agentBootId = normalizeAgentText(req.body?.agentBootId, 128);
     const agentBootedAtSeconds = Number(req.body?.agentBootedAt || 0);
     const agentProcessId = Math.max(0, Math.floor(Number(req.body?.agentProcessId || 0)));
@@ -1659,6 +1662,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       || upgradedProtocolGuardBackendAgent
       || addressChanged
       || agentVersionChanged
+      || fxpVersionChanged
       || (!!nextCpuInfo && nextCpuInfo !== String(previousHost.cpuInfo || ""))
       || (Number(memoryTotal || 0) > 0 && Number(memoryTotal) !== Number(previousHost.memoryTotal || 0))
       || (!!agentBootId && agentBootId !== normalizeAgentText(previousHost.agentBootId, 128))
@@ -1683,6 +1687,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       ipv4: reportedAddress.ipv4,
       ipv6: reportedAddress.ipv6,
       agentVersion: nextAgentVersion || (host as any).agentVersion || null,
+      ...(nextFxpVersion ? { fxpVersion: nextFxpVersion } : {}),
       cpuInfo: nextCpuInfo || (host as any).cpuInfo || null,
       memoryTotal: memoryTotal || (host as any).memoryTotal || null,
       ...(agentBootId ? { agentBootId } : {}),
@@ -1722,6 +1727,13 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       } : {}),
     } as any);
     Object.assign(host as any, reportedAddress);
+    if (fxpVersionChanged) {
+      appendPanelLog(
+        "info",
+        `[AgentUpgrade] host=${host.id} fxp=${String(previousHost.fxpVersion || "-")} -> ${nextFxpVersion}`,
+      );
+      (host as any).fxpVersion = nextFxpVersion;
+    }
     if (agentVersionChanged) {
       invalidateAgentDesiredStateCache(host.id, { preserveLocalRuntimeState: !!localRuntimeState.state });
       appendPanelLog(
@@ -6216,7 +6228,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     const requestedTargetVersion = (host as any).agentUpgradeTargetVersion || AGENT_VERSION;
     const agentUpgradeCompleted = (host as any).agentUpgradeRequested
       && agentVersion
-      && isAgentUpgradeTargetSatisfied(agentVersion, requestedTargetVersion, AGENT_VERSION);
+      && isAgentUpgradeCompleted(
+        { agentVersion, fxpVersion: nextFxpVersion || (host as any).fxpVersion },
+        requestedTargetVersion,
+        AGENT_VERSION,
+      );
     if (agentUpgradeCompleted) {
       await db.clearHostAgentUpgradeRequest(host.id);
     }

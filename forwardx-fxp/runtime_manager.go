@@ -334,7 +334,7 @@ func buildExitPlans(cfg config) ([]tcpListenPlan, []udpServePlan, error) {
 					sig: fxpComponentSignature(cfg, stripExitTCPFields),
 					cfg: cfg,
 					serve: func(conn net.Conn, tracked *trackedConn) {
-						admission, ok, reason := gates.admit(conn.RemoteAddr())
+						admission, ok, reason := gates.admitConn(conn)
 						if !ok {
 							logListenerConnGateRejection("exit", cfg, conn.RemoteAddr(), gates, reason)
 							_ = conn.Close()
@@ -400,7 +400,7 @@ func buildRelayPlans(cfg config) ([]tcpListenPlan, []udpServePlan, error) {
 					sig: fxpComponentSignature(cfg, stripUDPOnlyFields),
 					cfg: cfg,
 					serve: func(conn net.Conn, tracked *trackedConn) {
-						admission, ok, reason := gates.admit(conn.RemoteAddr())
+						admission, ok, reason := gates.admitConn(conn)
 						if !ok {
 							logListenerConnGateRejection("relay", cfg, conn.RemoteAddr(), gates, reason)
 							_ = conn.Close()
@@ -789,7 +789,7 @@ func runManaged(done <-chan struct{}, cfg config, reloads <-chan fxpReloadReques
 			if !strings.EqualFold(request.cfg.Role, cfg.Role) {
 				err = fmt.Errorf("reload cannot change role %s -> %s", cfg.Role, request.cfg.Role)
 			} else {
-				flushHopResolverCache()
+				invalidateHopResolverCache()
 				err = manager.apply(request.cfg)
 			}
 			if err == nil {

@@ -17,7 +17,8 @@ import {
   telegramRetryAfterMs,
 } from "./telegramApiError";
 import { formatForwardRuleProtocol } from "../shared/forwardTypes";
-import { isAgentVersionAtLeast } from "./agentRouteUtils";
+import { isAgentVersionAtLeast, isHostAgentUpgradeUnnecessary } from "./agentRouteUtils";
+import { fxpRuntimeStatus } from "../shared/fxpRuntime";
 import { APP_VERSION, AGENT_VERSION } from "../shared/versions";
 import { checkPanelUpdateTask, startPanelUpgradeTask } from "./_core/systemRouter";
 import { forwardxAiClient } from "./ai/client";
@@ -4783,7 +4784,9 @@ async function handleUpdateAgent(message: TelegramMessage, user: any) {
   const outdated = hosts.filter((host) => {
     const current = String(host?.agentVersion || "").trim();
     if (!current) return true;
-    return !isAgentVersionAtLeast(current, targetVersion);
+    if (!isAgentVersionAtLeast(current, targetVersion)) return true;
+    // Agent 已是最新、FXP 却旧了（或没装）：重跑安装脚本才能修好。
+    return !isHostAgentUpgradeUnnecessary(host, targetVersion, AGENT_VERSION);
   });
   if (outdated.length === 0) {
     await sendMessage(
@@ -4805,7 +4808,9 @@ async function handleUpdateAgent(message: TelegramMessage, user: any) {
     const hostId = Number(host?.id || 0);
     const hostName = shortText(host?.name || host?.ip || host?.entryIp || `主机${hostId}`, 20);
     const current = String(host?.agentVersion || "").trim() || "未知";
-    return `- #${hostId} ${escapeHtml(hostName)} · v${escapeHtml(current)} -> v${escapeHtml(targetVersion)}`;
+    const fxp = fxpRuntimeStatus(host);
+    const fxpNote = fxp.needsUpgrade ? ` · FXP ${escapeHtml(fxp.label)}` : "";
+    return `- #${hostId} ${escapeHtml(hostName)} · v${escapeHtml(current)}${fxpNote} -> v${escapeHtml(targetVersion)}`;
   });
   if (outdated.length > UPDATE_AGENT_PREVIEW_LIMIT) {
     preview.push(`- 其余 ${outdated.length - UPDATE_AGENT_PREVIEW_LIMIT} 台主机将一并下发升级`);
@@ -4873,7 +4878,7 @@ async function executePendingUpdateAction(pending: PendingUpdateAction) {
       continue;
     }
     const currentVersion = String((host as any)?.agentVersion || "").trim();
-    if (currentVersion && isAgentVersionAtLeast(currentVersion, targetVersion)) {
+    if (currentVersion && isHostAgentUpgradeUnnecessary({ agentVersion: currentVersion, fxpVersion: (host as any)?.fxpVersion }, targetVersion, AGENT_VERSION)) {
       skippedLatest += 1;
       continue;
     }

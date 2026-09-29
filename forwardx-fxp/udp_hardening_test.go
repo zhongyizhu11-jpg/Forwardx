@@ -117,6 +117,40 @@ func TestResolveHopAddressNonBlockingDoesNotWaitForDNS(t *testing.T) {
 	}
 }
 
+// 配置重载（DNSGeneration）只把解析结果标成作废：UDP 读循环照旧拿到旧地址、
+// 不再返回「在解析」丢包，同时后台刷新；TCP 拨号走阻塞路径，现查一次拿新地址。
+func TestHopResolverReloadServesStaleToUDPAndRequeriesForTCP(t *testing.T) {
+	flushHopResolverCache()
+	defer flushHopResolverCache()
+	storeHopIPs("stale.example.test", []net.IP{net.ParseIP("203.0.113.9")})
+	// localhost 故意存一个错的旧地址：TCP 路径现查之后应该换成真实结果。
+	storeHopIPs("localhost", []net.IP{net.ParseIP("203.0.113.7")})
+	invalidateHopResolverCache()
+
+	started := time.Now()
+	address, err := resolveHopAddressNonBlocking("stale.example.test", 53)
+	if err != nil || address != "203.0.113.9:53" {
+		t.Fatalf("重载之后 UDP 路径应该先用旧地址：%q %v", address, err)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("non-blocking resolve waited %s", elapsed)
+	}
+	fxpHopResolver.mu.Lock()
+	refreshing := fxpHopResolver.entries["stale.example.test"].refreshing
+	fxpHopResolver.mu.Unlock()
+	if !refreshing {
+		t.Fatal("作废的结果被用到时应该在后台刷新")
+	}
+
+	address, err = resolveHopAddress("localhost", 80)
+	if err != nil {
+		t.Skipf("localhost 解析不了：%v", err)
+	}
+	if host, _, _ := net.SplitHostPort(address); host == "203.0.113.7" {
+		t.Fatalf("重载之后 TCP 路径还在用作废的地址：%s", address)
+	}
+}
+
 // 规则设了 maxConnections / maxIPs 时，UDP 直连入口也按它限会话数；会话结束
 // 之后份额归还。
 func TestEntryUDPDirectEnforcesRuleConnectionLimits(t *testing.T) {
