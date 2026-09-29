@@ -15,7 +15,10 @@ const files = ["server", "shared", "client/src", "scripts"]
 if (files.length === 0) throw new Error("No test files found");
 console.log(`Discovered ${files.length} test files`);
 const child = spawn(process.execPath, [
-  "--import", "tsx", "--test", "--test-concurrency=4", ...files,
+  "--import", "tsx", "--test", "--test-concurrency=4",
+  "--test-reporter=tap", "--test-reporter-destination=stdout",
+  "--test-reporter=./scripts/test-failure-summary.mjs", "--test-reporter-destination=stdout",
+  ...files,
 ], { cwd: root, stdio: "inherit" });
 child.on("error", (error) => {
   console.error(error);
