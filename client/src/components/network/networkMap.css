@@ -51,9 +51,11 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .fx-netmap .nm-num { font-family: var(--nm-font-num); font-variant-numeric: tabular-nums; }
 
 /* 布局：地图铺满，抽屉从底下升起；≥900px 变成右侧 400px 栏 */
-.nm-layout { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr; }
+/* 行高锁成容器高度：默认的 auto 行会被右侧栏里长长的告警列表撑高，地图跟着变高、列表也滚不了 */
+.nm-layout { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
 .nm-map-wrap { position: relative; min-height: 0; overflow: hidden; }
-.nm-map { position: absolute; inset: 0; background: var(--nm-bg); }
+/* maplibre-gl.css 是画布 lazy 进来之后才注入的，它的 .maplibregl-map { position: relative } 会盖掉同权重的规则，这里多带一层选择器 */
+.nm-map-wrap > .nm-map { position: absolute; inset: 0; background: var(--nm-bg); }
 .nm-map .maplibregl-canvas { outline: none; }
 .nm-map .maplibregl-ctrl-attrib { display: none; }
 .nm-map-fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--nm-muted); font-size: 13px; }

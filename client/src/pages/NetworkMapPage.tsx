@@ -173,6 +173,7 @@ function NetworkMapPageBody() {
   const [view, setView] = useState<MapSheetView>({ view: "overview" });
   const [focus, setFocus] = useState<MapFocus | null>(null);
   const [toastText, setToastText] = useState<string | null>(null);
+  const [mapUnavailable, setMapUnavailable] = useState(false);
   const toastTimer = useRef<number | null>(null);
   const toast = useCallback((text: string) => {
     setToastText(text);
@@ -392,10 +393,15 @@ function NetworkMapPageBody() {
               onSelectCluster={() => { if (!rail && snap !== "peek") setSnap("peek"); }}
               onMapClick={() => { if (layerMenuOpen) { setLayerMenuOpen(false); return; } if (!rail && snap !== "peek") setSnap("peek"); }}
               onRasterError={onRasterError}
+              onUnavailable={() => setMapUnavailable(true)}
               onReady={(api) => { cameraRef.current = api; }}
             />
           </Suspense>
-          {!model.loading && model.nodes.length === 0 ? (
+          {mapUnavailable ? (
+            <div className="nm-map-fallback">
+              <div>这个浏览器画不了地图（没有 WebGL）。主机和线路仍在{rail ? "右侧" : "下方"}列表里，或换个开了硬件加速的浏览器再看。</div>
+            </div>
+          ) : !model.loading && model.nodes.length === 0 ? (
             <div className="nm-map-fallback" style={{ pointerEvents: "none" }}>
               <div>还没有主机。装好第一台 Agent，它就会出现在这张图上。</div>
             </div>

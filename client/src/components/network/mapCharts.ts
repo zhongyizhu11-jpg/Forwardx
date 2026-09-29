@@ -116,7 +116,8 @@ export function drawLineChart(canvas: HTMLCanvasElement, data: ReadonlyArray<num
     ctx.beginPath(); ctx.moveTo(pad.left, ty); ctx.lineTo(width - pad.right, ty); ctx.stroke();
     ctx.restore();
     ctx.fillStyle = palette.warn;
-    ctx.fillText(`${options.threshold} ms 阈值`, pad.left + 4, ty - 3);
+    // 全程都在阈值以下时阈值线贴着图顶，字写在线上面会被裁掉，改写到线下面
+    ctx.fillText(`${options.threshold} ms 阈值`, pad.left + 4, ty - 3 < pad.top + 10 ? ty + 11 : ty - 3);
     ctx.fillStyle = palette.muted;
   }
   if (options.axisLabels) {

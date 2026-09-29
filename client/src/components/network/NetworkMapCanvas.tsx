@@ -62,6 +62,8 @@ export type NetworkMapCanvasProps = {
   onMapClick: () => void;
   /** 高德瓦片拉不下来（内网、被墙、断网）时叫一次 */
   onRasterError: () => void;
+  /** 建不出 WebGL 上下文（远程桌面、老浏览器、被禁用了硬件加速）：页面画兜底文案 */
+  onUnavailable: () => void;
   onReady: (api: NetworkMapCameraApi) => void;
 };
 
@@ -73,6 +75,12 @@ const COUNTRY_LABELS: Array<[string, number, number]> = [
   ["澳大利亚", 134, -25], ["印度尼西亚", 114, -3], ["美国", -100, 40], ["加拿大", -105, 58], ["巴西", -53, -10],
   ["菲律宾", 122.5, 12.5], ["欧洲", 15, 50], ["非洲", 20, 5],
 ];
+
+/** 框住几个点时在地图留白之外再让出的边：marker 下面的名字和备注有百来像素宽，贴边会被裁掉半截 */
+const FIT_PADDING = { top: 36, bottom: 36, left: 64, right: 64 };
+
+/** 一跳的两端在屏幕上至少隔这么远才挂延迟胶囊 */
+const CAP_MIN_ARC_PX = 110;
 
 const FALLBACK_COLORS: NetworkMapLineColors = { healthy: "#06b6d4", warn: "#f59e0b", down: "#ef4444", standby: "#94a3b8" };
 
@@ -121,7 +129,7 @@ function escapeHtml(value: unknown) {
 
 type HostMarkerEntry = { marker: Marker; element: HTMLElement; signature: string };
 type TargetMarkerEntry = { marker: Marker; element: HTMLElement; signature: string };
-type CapEntry = { marker: Marker; element: HTMLElement };
+type CapEntry = { marker: Marker; element: HTMLElement; button: HTMLButtonElement };
 
 type Live = {
   props: NetworkMapCanvasProps;
@@ -347,7 +355,10 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         const fid = `t:${link.id}:${index}`;
         live.linkFeatureIds.push({ fid, tunnelId: link.id });
         linkFeatures.push({ type: "Feature", properties: { fid, tunnel: link.id, health: lineHealth(link.health) }, geometry: { type: "LineString", coordinates: points } });
-        if (index === capIndex) {
+        // 两端在屏幕上挨得太近（缩到全球时的港日新）胶囊会盖住 marker，线短到放不下就不挂
+        const pa = map.project(a as [number, number]);
+        const pb = map.project(b as [number, number]);
+        if (index === capIndex && Math.hypot(pa.x - pb.x, pa.y - pb.y) >= CAP_MIN_ARC_PX) {
           const text = typeof link.latencyMs === "number" ? `${Math.round(link.latencyMs)} ms` : lineHealth(link.health) === "down" ? "中断" : lineHealth(link.health) === "standby" ? describeNetworkHealth(link.health).label : "";
           if (text) caps.push({ tunnelId: link.id, at: points[Math.floor(points.length / 2)], health: link.health, text });
         }
@@ -414,16 +425,19 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       seenCaps.add(cap.tunnelId);
       let entry = live.capMarkers.get(cap.tunnelId);
       if (!entry) {
-        const element = el(`<button type="button" class="nm-mk nm-mk-cap"></button>`);
-        element.addEventListener("click", (event) => { event.stopPropagation(); live.props.onSelectLink(cap.tunnelId); });
+        // marker 元素本身会被 MapLibre 写 transform 定位，所以胶囊按钮套在一个 0×0 的壳里，
+        // 自己再用 translate(-50%, -50%) 居中；直接把按钮当 marker 元素，它的居中会被盖掉
+        const element = el(`<div class="nm-mk"><button type="button" class="nm-mk-cap"></button></div>`);
+        const button = element.firstElementChild as HTMLButtonElement;
+        button.addEventListener("click", (event) => { event.stopPropagation(); live.props.onSelectLink(cap.tunnelId); });
         const marker = new maplibregl.Marker({ element, anchor: "center" }).setLngLat(cap.at as [number, number]).addTo(map);
-        entry = { marker, element };
+        entry = { marker, element, button };
         live.capMarkers.set(cap.tunnelId, entry);
       } else entry.marker.setLngLat(cap.at as [number, number]);
-      entry.element.className = `nm-mk nm-mk-cap ${healthClass(cap.health)}`;
-      entry.element.textContent = cap.text;
+      entry.button.className = `nm-mk-cap ${healthClass(cap.health)}`;
+      entry.button.textContent = cap.text;
       const link = model.links.find((item) => item.id === cap.tunnelId);
-      entry.element.setAttribute("aria-label", `${link?.name || "隧道"} ${cap.text}，查看链路`);
+      entry.button.setAttribute("aria-label", `${link?.name || "隧道"} ${cap.text}，查看链路`);
     }
     for (const [tunnelId, entry] of live.capMarkers) {
       if (seenCaps.has(tunnelId)) continue;
@@ -467,7 +481,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       if (!map || points.length === 0) return;
       const bounds = boundsForPoints(points.map((point) => display(point)));
       if (!bounds) return;
-      map.fitBounds(bounds, { maxZoom, duration: live.props.reduceMotion ? 0 : 1200, essential: true });
+      map.fitBounds(bounds, { maxZoom, padding: FIT_PADDING, duration: live.props.reduceMotion ? 0 : 1200, essential: true });
     },
     fitAll() {
       const map = live.map;
@@ -475,7 +489,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       const points = layoutPoints().map((point) => point.lngLat);
       if (points.length === 0) { map.jumpTo({ center: [110, 25], zoom: 1.6 }); return; }
       const bounds = boundsForPoints(points);
-      if (bounds) map.fitBounds(bounds, { maxZoom: 5, duration: live.props.reduceMotion ? 0 : 1200, essential: true });
+      if (bounds) map.fitBounds(bounds, { maxZoom: 5, padding: FIT_PADDING, duration: live.props.reduceMotion ? 0 : 1200, essential: true });
     },
     hostLngLat(hostId) {
       const node = live.props.model.nodes.find((item) => item.id === hostId);
@@ -501,6 +515,20 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     live.dashFrame = requestAnimationFrame(tickDash);
   };
 
+  // ---- 底图：改颜色和可见性；高德瓦片拉不下来时页面会切到暗黑网格，这里把瓦片层关掉，不再白请求 ----
+  const applyBaseLayer = (baseLayer: NetworkMapBaseLayerId) => {
+    const map = live.map;
+    if (!map || !live.loaded) return;
+    const patch = baseLayerPaintPatch(baseLayer);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.background, "background-color", patch.background);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-color", patch.land);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-opacity", patch.landOpacity);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-color", patch.border);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-width", patch.borderWidth);
+    map.setLayoutProperty(NETWORK_MAP_LAYERS.graticule, "visibility", patch.graticule);
+    for (const [id, visibility] of Object.entries(patch.raster)) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+  };
+
   // ---- 创建地图（只一次）----
   useEffect(() => {
     const container = containerRef.current;
@@ -523,15 +551,22 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         touchPitch: false,
         fadeDuration: 0,
       });
-    } catch {
-      // 没有 WebGL（远程桌面、老浏览器）：页面会画兜底文案，这里什么也不做
+    } catch (error) {
+      // 没有 WebGL（远程桌面、老浏览器）：告诉页面画兜底文案
+      console.error("[NetworkMap] 地图引擎起不来", error);
+      live.props.onUnavailable();
       return undefined;
     }
     live.map = map;
     map.touchZoomRotate.disableRotation();
     map.setPadding(live.props.padding);
-    map.on("load", () => {
+    // 初始化挂在 style.load 而不是 load 上：load 要等所有源（包括高德瓦片）都「到达终态」
+    // 之后的下一帧才发，而瓦片报错不会再触发重绘 —— 内网 / 被墙时最后一块瓦片失败在
+    // 上一帧之后，load 就永远不来，图上一个点都没有。style.load 只看样式本身，源都已建好，
+    // setData / setFeatureState / 改图层属性这时都能用；marker 本来就不依赖样式。
+    map.once("style.load", () => {
       live.loaded = true;
+      applyBaseLayer(live.props.baseLayer);
       if (live.props.reduceMotion) map.setLayoutProperty(NETWORK_MAP_LAYERS.linkFlow, "visibility", "none");
       syncStaticMarkers();
       relayout();
@@ -547,7 +582,13 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       // 高德瓦片拉不下来：只报一次，页面会切到暗黑网格并提示
       const sourceId = event?.sourceId || event?.source?.id;
       const isRasterTile = (sourceId && rasterIds.has(String(sourceId))) || (event?.tile && !sourceId);
-      if (!isRasterTile || live.rasterErrorReported) return;
+      if (!isRasterTile) {
+        // 注册了 error 监听后 MapLibre 就不再往控制台打了；别的错误（样式、我们自己的
+        // 事件处理函数抛的）还是要看得见，否则图上少了东西没人知道为什么
+        console.error("[NetworkMap]", event?.error || event);
+        return;
+      }
+      if (live.rasterErrorReported) return;
       if (!NETWORK_MAP_BASE_LAYERS[live.props.baseLayer].amap) return;
       live.rasterErrorReported = true;
       live.props.onRasterError();
@@ -584,14 +625,9 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
   useEffect(() => {
     const map = live.map;
     if (!map || !live.loaded) return;
-    const patch = baseLayerPaintPatch(props.baseLayer);
-    map.setPaintProperty(NETWORK_MAP_LAYERS.background, "background-color", patch.background);
-    map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-color", patch.land);
-    map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-opacity", patch.landOpacity);
-    map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-color", patch.border);
-    map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-width", patch.borderWidth);
-    map.setLayoutProperty(NETWORK_MAP_LAYERS.graticule, "visibility", patch.graticule);
-    for (const [id, visibility] of Object.entries(patch.raster)) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+    // 用户又选回高德：再拉一次瓦片，拉不下来还是要报（切走时源没人用，MapLibre 会把失败的瓦片扔掉，切回来会重新请求）
+    live.rasterErrorReported = false;
+    applyBaseLayer(props.baseLayer);
     // 皮肤跟着底图换了，线的颜色也要从新皮肤的变量里再读一遍
     requestAnimationFrame(() => {
       if (!live.map) return;
