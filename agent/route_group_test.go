@@ -157,7 +157,7 @@ func TestFailureThresholdNeedsConsecutiveFailures(t *testing.T) {
 
 // 探测那一侧同样要连续够次数：时间够了、次数不够也不算。
 func TestHealthCheckThresholdCountsProbes(t *testing.T) {
-	closedPort := failoverTestPort(t)
+	closedPort := refusingTestPort(t)
 	openListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
