@@ -6618,7 +6618,7 @@ func cleanupStaleRuntimeBeforeApply(cfg Config, a action, actionMessage *actionM
 			if desiredActionLocalRuntimeReady(a) {
 				return staleRuntimeCleanupResult{ok: true}
 			}
-			if actionUsesManagedListener(a) && unknownManagedListenerCleanupNeeded(a.SourcePort, gostRuntimeListenProtocol(a.ForwardType, a.Protocol)) {
+			if actionUsesManagedListener(a) && !fxpActionListenerOwnedByRuntime(a) && unknownManagedListenerCleanupNeeded(a.SourcePort, gostRuntimeListenProtocol(a.ForwardType, a.Protocol)) {
 				if !cleanupUnknownManagedListener(cfg, port, a.SourcePort, a.ForwardType, gostRuntimeListenProtocol(a.ForwardType, a.Protocol), actionMessage) {
 					return staleRuntimeCleanupResult{}
 				}
@@ -6728,7 +6728,7 @@ func cleanupStaleRuntimeBeforeApply(cfg Config, a action, actionMessage *actionM
 				waitForActionListenPortFree(a, 2*time.Second)
 			}
 		}
-		if actionUsesManagedListener(a) && unknownManagedListenerCleanupNeeded(a.SourcePort, gostRuntimeListenProtocol(a.ForwardType, a.Protocol)) {
+		if actionUsesManagedListener(a) && !fxpActionListenerOwnedByRuntime(a) && unknownManagedListenerCleanupNeeded(a.SourcePort, gostRuntimeListenProtocol(a.ForwardType, a.Protocol)) {
 			if !cleanupUnknownManagedListener(cfg, port, a.SourcePort, a.ForwardType, gostRuntimeListenProtocol(a.ForwardType, a.Protocol), actionMessage) {
 				return staleRuntimeCleanupResult{}
 			}
@@ -10005,6 +10005,29 @@ func fxpProcessMatchesCurrentRuntime(process *fxpProcess) bool {
 		return false
 	}
 	return fxpProcessUsesCurrentExecutable(process) && fxpProcessUsesPanelCredentialDigest(process, "")
+}
+
+/*
+fxpActionListenerOwnedByRuntime：动作要的端口正由本机「同一身份」的 FXP 运行时监听着——
+隧道动作是这条隧道自己的出口 / 中转，规则动作是这条规则在入口（组）里的那一路。
+
+这种端口不是来历不明的监听，只是配置旧了（出口的目标表多了 / 少了规则、入口换了目标）：
+交给 startFXP 原地热更新（热更新不了它自己会换进程）。以前执行前的清理把它当未知监听先杀掉，
+规则换隧道时出口机上新旧两条隧道的出口进程都被重启，两条隧道上所有连接全断，热更新形同虚设。
+V2（WireGuard）的运行时和代理端口绑在一起、从来不热更新，保持原来的清理。
+*/
+func fxpActionListenerOwnedByRuntime(a action) bool {
+	if a.Fxp == nil || !validActionPort(a.SourcePort) {
+		return false
+	}
+	if normalizeFXPSpec(*a.Fxp).TransportVersion == forwardXWireGuardVersion {
+		return false
+	}
+	listenSnapshot := readLocalRuntimeReadinessCached().listenSnapshot
+	if strings.TrimSpace(a.StatusType) == "tunnel" || (a.TunnelID > 0 && a.RuleID <= 0) {
+		return a.TunnelID > 0 && fxpRuntimeReadyForTunnelPort(a.TunnelID, a.SourcePort, listenSnapshot)
+	}
+	return a.RuleID > 0 && fxpRuntimeReadyForRulePort(a.RuleID, a.SourcePort, a.Protocol, listenSnapshot)
 }
 
 func fxpRuntimeReadyForRulePort(ruleID int, port int, protocol string, listenSnapshot *runtimeListenSnapshot) bool {

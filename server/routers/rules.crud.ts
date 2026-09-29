@@ -2884,10 +2884,15 @@ export const crudRulesRouter = router({
         input.failoverEnabled !== undefined ||
         routeChanged
       ) {
-        const proxySource = routeChanged
-          ? {}
-          : nextTunnelIdForRule && selectedTunnelForRule
+        /*
+          隧道规则的这些开关以隧道为准（和新建时一样取隧道的，见 tunnelRuntimeOptionInput）。换到另一条
+          隧道时也要取新隧道的：以前换线路一律清空，换过去的规则和直接建在那条隧道上的不一样
+          （比如入口不开 TCP Fast Open）。只有换成不走隧道时才清空。
+        */
+        const proxySource = nextTunnelIdForRule && selectedTunnelForRule
           ? tunnelRuntimeOptionInput(selectedTunnelForRule)
+          : routeChanged
+          ? {}
           : {
               proxyProtocolReceive: input.proxyProtocolReceive ?? (rule as any).proxyProtocolReceive,
               proxyProtocolSend: input.proxyProtocolSend ?? (rule as any).proxyProtocolSend,
@@ -2910,10 +2915,10 @@ export const crudRulesRouter = router({
         input.forwardType !== undefined ||
         routeChanged
       ) {
-        const transportSource = routeChanged
-          ? {}
-          : nextTunnelIdForRule && selectedTunnelForRule
+        const transportSource = nextTunnelIdForRule && selectedTunnelForRule
           ? tunnelRuntimeOptionInput(selectedTunnelForRule)
+          : routeChanged
+          ? {}
           : {
               tcpFastOpen: input.tcpFastOpen ?? (rule as any).tcpFastOpen,
               zeroCopy: input.zeroCopy ?? (rule as any).zeroCopy,
