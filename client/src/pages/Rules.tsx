@@ -5783,6 +5783,19 @@ function RulesContent() {
     return rows;
   };
 
+  /*
+    卡片上入口只写第一个地址（专属域名排第一），后面的挤成「+N」。用户要挑着复制 IP 或域名，
+    所以「+N」是个开关：点开把每个地址各自列一行，各带复制；再点收起。按规则 id 记，翻页不丢。
+  */
+  const [expandedEntryRuleIds, setExpandedEntryRuleIds] = useState<Set<number>>(() => new Set());
+  const toggleEntryAddresses = (ruleId: number) => {
+    setExpandedEntryRuleIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(ruleId)) next.delete(ruleId); else next.add(ruleId);
+      return next;
+    });
+  };
+
   /** 复制入口 IP:端口 到剪贴板 */
   const copyTargetAddress = async (text: string) => {
     if (await copyTextToClipboard(text)) toast.success(`已复制目标地址: ${text}`);
@@ -6682,6 +6695,7 @@ function RulesContent() {
     const { entryAddresses, targetAddress, entryTitle } = getRuleTransferDisplay(rule);
     const primaryEntry = entryAddresses[0];
     const extraEntries = Math.max(0, entryAddresses.length - 1);
+    const entriesExpanded = extraEntries > 0 && expandedEntryRuleIds.has(Number(rule.id));
     const hops = decideRuleFlowLayout(category) === "flow" && category !== "group" ? getRuleHopNames(rule) : [];
     const forwardLabel = FORWARD_TYPE_LABELS[rule?.forwardType as ForwardType] || "";
     const subtitleParts = [
@@ -6838,18 +6852,57 @@ function RulesContent() {
 
           <div className="fx-rule-path" title={`${entryAddresses.map((entry) => entry.text).join(" / ")} → ${targetAddress}`}>
             {/* 入口和目标都是点一下就复制（用户要的）；小复制图标常驻，不用悬停才显出来 */}
-            {primaryEntry ? (
-              <button
-                type="button"
-                onClick={() => primaryEntry.copyable && copyEntryAddress(rule, primaryEntry.value)}
-                disabled={!primaryEntry.copyable}
-                className="fx-rule-addr"
-                title={primaryEntry.copyable ? entryTitle : primaryEntry.text}
-              >
-                <span className="truncate">{primaryEntry.text}</span>
-                {extraEntries > 0 ? <span className="fx-rule-addr-more">+{extraEntries}</span> : null}
-                {primaryEntry.copyable ? <Copy className="fx-rule-addr-copy" aria-hidden="true" /> : null}
-              </button>
+            {primaryEntry && !entriesExpanded ? (
+              <span className="fx-rule-addr-group">
+                <button
+                  type="button"
+                  onClick={() => primaryEntry.copyable && copyEntryAddress(rule, primaryEntry.value)}
+                  disabled={!primaryEntry.copyable}
+                  className="fx-rule-addr"
+                  title={primaryEntry.copyable ? entryTitle : primaryEntry.text}
+                >
+                  <span className="truncate">{primaryEntry.text}</span>
+                  {primaryEntry.copyable ? <Copy className="fx-rule-addr-copy" aria-hidden="true" /> : null}
+                </button>
+                {extraEntries > 0 ? (
+                  <button
+                    type="button"
+                    className="fx-rule-addr-more"
+                    onClick={() => toggleEntryAddresses(Number(rule.id))}
+                    aria-expanded={false}
+                    title={`展开全部 ${entryAddresses.length} 个入口地址`}
+                  >
+                    +{extraEntries}
+                  </button>
+                ) : null}
+              </span>
+            ) : null}
+            {primaryEntry && entriesExpanded ? (
+              <span className="fx-rule-addr-list">
+                {entryAddresses.map((entry) => (
+                  <button
+                    key={`${entry.label}:${entry.value}`}
+                    type="button"
+                    onClick={() => entry.copyable && copyEntryAddress(rule, entry.value)}
+                    disabled={!entry.copyable}
+                    className="fx-rule-addr"
+                    title={entry.copyable ? `${entryTitle} (${entry.label})` : entry.text}
+                  >
+                    <span className="fx-rule-addr-label">{entry.label}</span>
+                    <span className="truncate">{entry.text}</span>
+                    {entry.copyable ? <Copy className="fx-rule-addr-copy" aria-hidden="true" /> : null}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="fx-rule-addr-more"
+                  onClick={() => toggleEntryAddresses(Number(rule.id))}
+                  aria-expanded={true}
+                  title="收起"
+                >
+                  收起
+                </button>
+              </span>
             ) : null}
             <span className="fx-rule-path-to">
               <ArrowRight className="fx-rule-path-arrow" aria-hidden="true" />
