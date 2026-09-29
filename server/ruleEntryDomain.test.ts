@@ -13,6 +13,7 @@ import { normalizeRuleEntryDomainSuffixInput, ruleEntryDomainWebhookGroupId } fr
  *
  *   · 绑了订阅节点的规则拿到 r<ID>.<后缀>，A 记录指向入口机 1；
  *   · 规则换到入口在机器 2 的隧道：记录改指机器 2，订阅里的地址一个字不变；
+ *   · 对话框里关掉「专属域名」：域名进待删表、订阅立刻退回入口地址（DNS 删失败也不等）；再打开重新发布；
  *   · 服务商报错：错误记在规则上，退避重试后恢复；
  *   · 解绑、删除（含规则行被真正删掉）：记录删掉；
  *   · 改后缀：旧域名删掉、新域名发布；关掉功能：记录全删，订阅退回 IP。
@@ -94,7 +95,7 @@ function run(): Outcome {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = "http://127.0.0.1:" + server.address().port;
     const subscription = async () => Buffer.from(await (await fetch(base + "/api/sub/sub-token")).text(), "base64").toString("utf8");
-    const rows = async () => Object.fromEntries((await query('SELECT id, "hostId", "entryDomain", "entryDomainValue", "entryDomainError", "entryDomainAt" FROM forward_rules ORDER BY id')).map((row) => [row.id, row]));
+    const rows = async () => Object.fromEntries((await query('SELECT id, "hostId", "entryDomainEnabled", "entryDomain", "entryDomainValue", "entryDomainError", "entryDomainAt" FROM forward_rules ORDER BY id')).map((row) => [row.id, row]));
     const cleanups = () => query("SELECT domain, recordType, ruleId, attempts FROM rule_entry_domain_cleanups ORDER BY id");
     const takeCalls = () => dnsCalls.splice(0, dnsCalls.length);
     const snapshot = async () => ({ rows: await rows(), calls: takeCalls(), cleanups: await cleanups(), subscription: await subscription() });
@@ -119,13 +120,29 @@ function run(): Outcome {
     out.bind = await snapshot();
 
     // 3. 规则 10 从隧道 A 换到隧道 B（入口 Po0 → Po01）。
-    out.update = await rules.update({
+    const rule10Input = {
       id: 10, hostId: 1, name: "rule-10", forwardType: "gost", protocol: "both", gostMode: "direct", gostRelayHost: null, gostRelayPort: null,
       tunnelId: 2, forwardGroupId: null, sourcePort: 40981, isEnabled: true, targetIp: target, targetPort: 19001,
       telegramErrorNotifyEnabled: false, failoverEnabled: false, routeGroup: null,
-    });
+    };
+    out.update = await rules.update(rule10Input);
     await idle();
     out.switched = await snapshot();
+
+    // 3b. 对话框里关掉规则 10 的「专属域名」，正赶上服务商不可用：域名先进待删表、列清空，
+    //     订阅立刻退回入口地址，不等 DNS 删完；服务商恢复后对账补删；再打开开关就重新发布。
+    failing = true;
+    out.switchOff = await rules.update({ ...rule10Input, entryDomainEnabled: false });
+    await idle();
+    out.switchedOff = await snapshot();
+    failing = false;
+    await exec('UPDATE rule_entry_domain_cleanups SET "nextRetryAt" = NULL');
+    out.switchedOffReconcile = await domain.reconcileRuleEntryDomains("test-switch-off");
+    await idle();
+    out.switchedOffCleaned = await snapshot();
+    out.switchOn = await rules.update({ ...rule10Input, entryDomainEnabled: true });
+    await idle();
+    out.switchedOn = await snapshot();
 
     // 4. 服务商出错：机器 2 换了 IP，同步失败记在规则上；恢复后退避重试补上。
     failing = true;
@@ -264,6 +281,44 @@ test("规则换到另一台入口的隧道：记录改指新入口，订阅地�
   assert.ok(!subscription.includes("203.0.113.2:40981"), subscription);
 });
 
+test("对话框里关掉「专属域名」：域名进待删表、订阅立刻退回入口地址；再打开重新发布", () => {
+  assert.equal(outcome.switchOff.success, true);
+  const off = outcome.switchedOff;
+  assert.equal(Number(off.rows[10].entryDomainEnabled), 0);
+  // 服务商还没删成功，规则上的列已经清了、域名挂在待删表里。
+  assert.equal(off.rows[10].entryDomain, null);
+  assert.equal(off.rows[10].entryDomainValue, null);
+  assert.equal(off.rows[10].entryDomainError, null);
+  assert.deepEqual(off.cleanups.map((row: any) => [row.domain, row.recordType, Number(row.ruleId)]), [["r10.node.example.com", "A", 10]]);
+  assert.ok(Number(off.cleanups[0].attempts) >= 1, JSON.stringify(off.cleanups));
+  assert.equal(deletes(off.calls).length, 0, JSON.stringify(off.calls));
+  // 订阅不等 DNS：立刻改回入口地址。
+  assert.ok(off.subscription.includes("@203.0.113.2:40981"), off.subscription);
+  assert.ok(!off.subscription.includes("r10.node.example.com"), off.subscription);
+  // 别的规则不受影响。
+  assert.equal(off.rows[12].entryDomain, "r12.node.example.com");
+  assert.equal(off.rows[13].entryDomain, "r13.node.example.com");
+
+  assert.equal(outcome.switchedOffReconcile.deleted, 1);
+  const cleaned = outcome.switchedOffCleaned;
+  assert.deepEqual(deletes(cleaned.calls), [
+    { action: "delete", domain: "r10.node.example.com", recordType: "A", values: [], groupId: -1_000_000_010 },
+  ]);
+  assert.deepEqual(cleaned.cleanups, []);
+  assert.equal(cleaned.rows[10].entryDomain, null);
+
+  assert.equal(outcome.switchOn.success, true);
+  const on = outcome.switchedOn;
+  assert.equal(Number(on.rows[10].entryDomainEnabled), 1);
+  assert.equal(on.rows[10].entryDomain, "r10.node.example.com");
+  assert.equal(on.rows[10].entryDomainValue, "203.0.113.2");
+  assert.deepEqual(upserts(on.calls), [
+    { action: "replace", domain: "r10.node.example.com", recordType: "A", values: ["203.0.113.2"], groupId: -1_000_000_010 },
+  ]);
+  assert.deepEqual(on.cleanups, []);
+  assert.ok(on.subscription.includes("@r10.node.example.com:40981"), on.subscription);
+});
+
 test("服务商出错：错误记在规则上、订阅照用域名；恢复后退避重试补上", () => {
   const failed = outcome.failed;
   assert.match(String(failed.rows[10].entryDomainError), /provider exploded/);
@@ -340,7 +395,7 @@ test("后缀格式不对：设置接口直接报错", () => {
   assert.match(String(outcome.badSuffix), /后缀格式不正确/);
 });
 
-test("升级旧库：forward_rules 补上四列、待删表建出来，已有规则不受影响", () => {
+test("升级旧库：forward_rules 补上开关和四列、待删表建出来，已有规则不受影响、开关缺省开着", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-rule-entry-domain-upgrade-"));
   try {
     const script = String.raw`
@@ -352,7 +407,7 @@ test("升级旧库：forward_rules 补上四列、待删表建出来，已有规
       await runtime.connectDatabase({ type: "sqlite", sqlite: { path: process.env.FORWARDX_TEST_DB } });
       await schema.ensureDatabaseSchema();
       // 退回到加这个功能之前的样子。
-      for (const column of ["entryDomain", "entryDomainValue", "entryDomainAt", "entryDomainError"]) {
+      for (const column of ["entryDomainEnabled", "entryDomain", "entryDomainValue", "entryDomainAt", "entryDomainError"]) {
         await runtime.executeRaw('ALTER TABLE "forward_rules" DROP COLUMN "' + column + '"');
       }
       await runtime.executeRaw('DROP TABLE "rule_entry_domain_cleanups"');
@@ -360,7 +415,7 @@ test("升级旧库：forward_rules 补上四列、待删表建出来，已有规
       await schema.ensureDatabaseSchema();
       const columns = (await runtime.queryRaw('PRAGMA table_info("forward_rules")')).map((row) => row.name);
       const tables = (await runtime.queryRaw("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'rule_entry_domain_cleanups'")).map((row) => row.name);
-      const [rule] = await runtime.queryRaw('SELECT name, "entryDomain", "entryDomainValue" FROM forward_rules WHERE id = 1');
+      const [rule] = await runtime.queryRaw('SELECT name, "entryDomainEnabled", "entryDomain", "entryDomainValue" FROM forward_rules WHERE id = 1');
       console.log("OUTCOME " + JSON.stringify({ columns, tables, rule }));
       process.exit(0);
     `;
@@ -374,11 +429,12 @@ test("升级旧库：forward_rules 补上四列、待删表建出来，已有规
     const line = result.stdout.split("\n").find((row) => row.startsWith("OUTCOME "));
     assert.ok(line, result.stdout + result.stderr);
     const upgraded = JSON.parse(line!.slice("OUTCOME ".length));
-    for (const column of ["entryDomain", "entryDomainValue", "entryDomainAt", "entryDomainError"]) {
+    for (const column of ["entryDomainEnabled", "entryDomain", "entryDomainValue", "entryDomainAt", "entryDomainError"]) {
       assert.ok(upgraded.columns.includes(column), "forward_rules 缺列: " + column);
     }
     assert.deepEqual(upgraded.tables, ["rule_entry_domain_cleanups"]);
-    assert.deepEqual(upgraded.rule, { name: "legacy", entryDomain: null, entryDomainValue: null });
+    // 老规则的开关补出来就是开着的：升级前后行为不变。
+    assert.deepEqual({ ...upgraded.rule, entryDomainEnabled: Number(upgraded.rule.entryDomainEnabled) }, { name: "legacy", entryDomainEnabled: 1, entryDomain: null, entryDomainValue: null });
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

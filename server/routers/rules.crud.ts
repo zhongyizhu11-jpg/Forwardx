@@ -1880,6 +1880,8 @@ export const crudRulesRouter = router({
       targetPort: z.number().int().min(1).max(65535),
       isEnabled: z.boolean().optional().default(true),
       telegramErrorNotifyEnabled: z.boolean().optional().default(false),
+      // 规则专属域名开关（shared/ruleEntryDomain.ts）：不传按列缺省开着。
+      entryDomainEnabled: z.boolean().optional(),
       ...failoverInputShape,
       ...proxyProtocolInputShape,
       ...transportTuningInputShape,
@@ -2036,6 +2038,7 @@ export const crudRulesRouter = router({
           targetPort: input.targetPort,
           isEnabled: input.isEnabled,
           telegramErrorNotifyEnabled: !!input.telegramErrorNotifyEnabled,
+          entryDomainEnabled: input.entryDomainEnabled ?? true,
           ...RULE_PROTOCOL_BLOCK_COLUMNS,
           ...normalizeProxyProtocolInput(
             input,
@@ -2096,6 +2099,8 @@ export const crudRulesRouter = router({
       ).optional(),
       targetPort: z.number().int().min(1).max(65535).optional(),
       telegramErrorNotifyEnabled: z.boolean().optional(),
+      // 规则专属域名开关：改了由仓库层通知同步（关 → 域名进待删表、订阅立刻退回入口地址；开 → 重新发布）。
+      entryDomainEnabled: z.boolean().optional(),
       ...failoverInputShape,
       ...proxyProtocolInputShape,
       ...transportTuningInputShape,
@@ -2408,6 +2413,7 @@ export const crudRulesRouter = router({
             targetIp: normalizeRuleTargetIp(input.targetIp ?? (rule as any).targetIp, { tunnelId: nextTunnelId }),
             targetPort: Number(input.targetPort ?? (rule as any).targetPort),
             telegramErrorNotifyEnabled: input.telegramErrorNotifyEnabled ?? (rule as any).telegramErrorNotifyEnabled,
+            entryDomainEnabled: input.entryDomainEnabled ?? (rule as any).entryDomainEnabled ?? true,
             ...RULE_PROTOCOL_BLOCK_COLUMNS,
             ...normalizeProxyProtocolInput({}, nextProtocol, nextForwardType, false, { clearUnsupported: true, tunnelRoute: !!nextTunnelId }),
             ...normalizeTransportTuningInput({}, nextProtocol, nextForwardType, false, {
@@ -2688,6 +2694,7 @@ export const crudRulesRouter = router({
           targetIp: normalizeRuleTargetIp(input.targetIp ?? (rule as any).targetIp, { tunnelId: !isForwardChain && (group as any).groupType === "tunnel" ? 1 : null }),
           targetPort: Number(input.targetPort ?? (rule as any).targetPort),
           telegramErrorNotifyEnabled: input.telegramErrorNotifyEnabled ?? (rule as any).telegramErrorNotifyEnabled,
+          entryDomainEnabled: input.entryDomainEnabled ?? (rule as any).entryDomainEnabled ?? true,
           ...RULE_PROTOCOL_BLOCK_COLUMNS,
           ...normalizeProxyProtocolInput(
             {},

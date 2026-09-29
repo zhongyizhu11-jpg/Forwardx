@@ -89,7 +89,15 @@ export type RuleEntryDomainRuleFields = {
   routeParentRuleId?: unknown;
   proxyNodeId?: unknown;
   proxyNodeVisible?: unknown;
+  /** 规则对话框里的「专属域名」开关；缺省（undefined / null）算开着，和 proxyNodeVisible 一个口径。 */
+  entryDomainEnabled?: unknown;
 };
+
+/** 规则上的「专属域名」开关：没查这一列、列为空都算开着。 */
+export function ruleEntryDomainEnabled(rule: { entryDomainEnabled?: unknown } | null | undefined): boolean {
+  const value = rule?.entryDomainEnabled;
+  return value === undefined || value === null || flag(value);
+}
 
 /**
  * 这条规则该不该有专属域名。
@@ -97,6 +105,7 @@ export type RuleEntryDomainRuleFields = {
  * 只给真的会出现在订阅里的规则发：启用、没在删、不是转发组模板（模板不在任何机器
  * 上监听），而且绑了节点模板并且没被隐藏。别的规则发了也没人用，只是在 DNS 里多
  * 一堆要维护的记录。线路组生成的中转规则由面板维护、不进订阅，一并排除。
+ * 用户在规则上把「专属域名」关掉的也不发：不是每条转发都需要固定域名。
  */
 export function ruleQualifiesForEntryDomain(rule: RuleEntryDomainRuleFields | null | undefined): boolean {
   if (!rule) return false;
@@ -108,6 +117,7 @@ export function ruleQualifiesForEntryDomain(rule: RuleEntryDomainRuleFields | nu
   if (!(Number(rule.proxyNodeId || 0) > 0)) return false;
   // 列缺省是 true；调用方没查这一列时按显示处理，和订阅组装的口径一致。
   if (rule.proxyNodeVisible !== undefined && rule.proxyNodeVisible !== null && !flag(rule.proxyNodeVisible)) return false;
+  if (!ruleEntryDomainEnabled(rule)) return false;
   return true;
 }
 
@@ -115,15 +125,16 @@ export function ruleQualifiesForEntryDomain(rule: RuleEntryDomainRuleFields | nu
  * 这条规则已经发布成功、可以拿来给客户端用的专属域名；没有返回空串。
  *
  * 条件是「至少发布成功过一次」（entryDomainValue 非空），而且域名就是按当前后缀
- * 算出来的那个。后缀一改、功能一关，这里立刻退回入口地址，不必等 DNS 那边删完：
- * 删记录可能失败、要重试，订阅不能跟着等。按 ID 精确比对，也挡住了「面板迁移后
- * 规则 ID 重排、旧域名其实属于另一条规则」这种情况。
+ * 算出来的那个。后缀一改、功能一关、规则上的开关一关，这里立刻退回入口地址，不必等
+ * DNS 那边删完：删记录可能失败、要重试，订阅不能跟着等。按 ID 精确比对，也挡住了
+ * 「面板迁移后规则 ID 重排、旧域名其实属于另一条规则」这种情况。
  */
 export function publishedRuleEntryDomain(
-  rule: { id?: unknown; entryDomain?: unknown; entryDomainValue?: unknown } | null | undefined,
+  rule: { id?: unknown; entryDomain?: unknown; entryDomainValue?: unknown; entryDomainEnabled?: unknown } | null | undefined,
   activeSuffix: unknown,
 ): string {
   if (!rule) return "";
+  if (!ruleEntryDomainEnabled(rule)) return "";
   const domain = String(rule.entryDomain ?? "").trim().toLowerCase();
   const value = String(rule.entryDomainValue ?? "").trim();
   if (!domain || !value) return "";

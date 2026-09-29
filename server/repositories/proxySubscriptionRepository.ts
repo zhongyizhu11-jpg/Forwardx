@@ -1030,7 +1030,8 @@ async function buildProxySubscriptionContextForUser(userId: number): Promise<{
       hostId: forwardRules.hostId,
       name: forwardRules.name,
       sourcePort: forwardRules.sourcePort,
-      // 规则专属域名：发布成功过就用它当节点地址，换入口时客户端不用刷新订阅。
+      // 规则专属域名：开关开着、发布成功过就用它当节点地址，换入口时客户端不用刷新订阅。
+      entryDomainEnabled: forwardRules.entryDomainEnabled,
       entryDomain: forwardRules.entryDomain,
       entryDomainValue: forwardRules.entryDomainValue,
       // QUIC 系节点绑到只放行 TCP 的转发上会静默连不上，订阅组装时要据此排除。
