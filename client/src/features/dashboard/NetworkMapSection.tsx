@@ -1,149 +1,17 @@
-import { useMemo } from "react";
-
-import { NetworkMap, type NetworkMapLink, type NetworkMapNode } from "@/components/network/NetworkMap";
-import { tunnelHealthFromAvailability } from "@/features/links/tunnelHealth";
-import { hostGeoCoordinate } from "@/lib/hostGeo";
-import { countryCodeToEmoji } from "@/lib/linkTestNodeMeta";
-import { pollingInterval } from "@/lib/polling";
-import { getTunnelHopIds } from "@/lib/tunnelDisplay";
-import { trpc } from "@/lib/trpc";
-import { TUNNEL_PROTOCOLS, normalizeForwardProtocolSettings } from "@shared/forwardTypes";
-import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
-import { formatAgo } from "@shared/dashboardAttention";
-import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
+import { NetworkMap } from "@/components/network/NetworkMap";
+import { useNetworkMapModel } from "@/features/network/networkMapModel";
 
 /**
  * 首页的「网络地图」：这个账号看得到的主机和它们之间的隧道。
  *
- * 数据用的是各页已经在用的两条轻量列表（hosts.options / tunnels.options），不新加接口。
- * 隧道的状态和隧道页一样从 linkAvailability 算 —— 这里红的，点进隧道页也是红的。
+ * 模型（buildNetworkMapModel / useNetworkMapModel）在 features/network/networkMapModel.ts，
+ * 和 /map 整页共用一份 —— 这里红的，整页上也是红的。这里只是那张 SVG 示意图加一个
+ * 「打开地图」入口。
  *
  * 一台主机都没有时整块不出现：那是「快速开始」的事，一张空地图什么也说不了。
  */
-function hostNote(host: any, now: number, linkCount: number): string | null {
-  if (host?.isOnline === false || host?.isOnline === 0) {
-    const seen = host?.lastHeartbeat ? new Date(host.lastHeartbeat).getTime() : NaN;
-    return Number.isFinite(seen) && seen > 0 ? `离线 · ${formatAgo(now - seen)}` : "离线";
-  }
-  if (host?.lastHeartbeat == null && host?.isOnline !== true) return "还没接入";
-  return linkCount > 0 ? `${linkCount} 条线路` : "在线";
-}
-
-function hostHealth(host: any): NetworkHealth {
-  if (host?.isOnline === true || host?.isOnline === 1) return "healthy";
-  if (host?.lastHeartbeat == null) return "unknown";
-  return "down";
-}
-
-export type NetworkMapModel = {
-  nodes: NetworkMapNode[];
-  links: NetworkMapLink[];
-  /** 隧道总数，包括画不出来的那些 —— 页头「N 条线路」用这个数 */
-  linkTotal: number;
-  /** 两端里至少一端是这个账号看不到的主机的隧道数；它们存在、有状态，只是没法画成线 */
-  hiddenLinkCount: number;
-  legend: { healthy: number; degraded: number; down: number; standby: number };
-};
-
-/**
- * 纯函数：把 hosts.options / tunnels.options 变成地图要画的点和线。
- *
- * 两条规则和隧道页保持一致，否则同一条隧道在首页和隧道页会是两种颜色：
- *
- * 一、协议开关。管理员在设置里停用了某个隧道协议时，隧道页把那条隧道标成红的
- *     （isTunnelSupported → down），这里也一样，所以 supported 要一路传进去。
- *
- * 二、看不见的主机。普通用户用共享隧道时，服务端会把不在他主机范围里的那一端
- *     抹掉（linkAccessView），但 availability 还在。这种隧道**不能当不存在**：
- *     它照样计入线路数和图例，只是画不成一条线（线要两个点）。看得见的那一端的
- *     「N 条线路」注脚也照样算上它。
- */
-export function buildNetworkMapModel(input: {
-  hosts: any[];
-  tunnels: any[];
-  now?: number;
-  isTunnelSupported?: (tunnel: any) => boolean;
-}): NetworkMapModel {
-  const { hosts, tunnels, isTunnelSupported } = input;
-  const now = input.now ?? Date.now();
-  const index = buildLinkAvailabilityIndex({ hosts, tunnels, now, isTunnelSupported });
-  const linkCountByHost = new Map<number, number>();
-  const links: NetworkMapLink[] = [];
-  const legend = { healthy: 0, degraded: 0, down: 0, standby: 0 };
-  let hiddenLinkCount = 0;
-  for (const tunnel of tunnels) {
-    const path: number[] = getTunnelHopIds(tunnel).map((id: unknown) => Number(id)).filter((id: number) => Number.isFinite(id) && id > 0);
-    const state = index.tunnelAvailabilityById.get(Number(tunnel.id));
-    const health = tunnelHealthFromAvailability(state?.status ?? tunnel?.availability?.status, {
-      enabled: tunnel?.isEnabled !== false,
-      supported: isTunnelSupported ? isTunnelSupported(tunnel) !== false : undefined,
-    });
-    const token = describeNetworkHealth(health).token;
-    if (token === "healthy") legend.healthy += 1;
-    else if (token === "warn") legend.degraded += 1;
-    else if (token === "down") legend.down += 1;
-    else legend.standby += 1;
-    for (const hostId of new Set(path)) linkCountByHost.set(hostId, (linkCountByHost.get(hostId) || 0) + 1);
-    if (path.length < 2) {
-      hiddenLinkCount += 1;
-      continue;
-    }
-    links.push({
-      id: Number(tunnel.id),
-      name: String(tunnel.name || `隧道 #${tunnel.id}`),
-      path,
-      health,
-      latencyMs: typeof tunnel?.lastLatencyMs === "number" ? tunnel.lastLatencyMs : null,
-    });
-  }
-  const nodes: NetworkMapNode[] = hosts.map((host) => {
-    // 名字下面那行前面带上地区（「香港 · 2 条线路」）；国旗画在圆盘里
-    const region = String(host?.geoRegion || host?.geoCountryName || "").trim();
-    const note = hostNote(host, now, linkCountByHost.get(Number(host.id)) || 0);
-    return {
-      id: Number(host.id),
-      name: String(host.name || host.ip || host.ipv4 || `主机 #${host.id}`),
-      health: hostHealth(host),
-      note: [region, note].filter(Boolean).join(" · ") || null,
-      geo: hostGeoCoordinate(host),
-      emoji: countryCodeToEmoji(host?.geoCountryCode) || null,
-    };
-  });
-  return { nodes, links, linkTotal: tunnels.length, hiddenLinkCount, legend };
-}
-
-export function useNetworkMapModel(enabled: boolean) {
-  const hostsQuery = trpc.hosts.options.useQuery(undefined, {
-    enabled,
-    refetchInterval: pollingInterval("normal"),
-    staleTime: 5000,
-    placeholderData: (previous) => previous,
-  });
-  const tunnelsQuery = trpc.tunnels.options.useQuery(undefined, {
-    enabled,
-    refetchInterval: pollingInterval("normal"),
-    staleTime: 5000,
-    placeholderData: (previous) => previous,
-  });
-  // 协议开关和隧道页读同一份设置；隧道页那边 staleTime 是 0，这里跟着不缓存。
-  const settingsQuery = trpc.system.getSettings.useQuery(undefined, { enabled, staleTime: 0 });
-  const hosts = (hostsQuery.data as any[] | undefined) || [];
-  const tunnels = (tunnelsQuery.data as any[] | undefined) || [];
-  const forwardProtocols = (settingsQuery.data as any)?.forwardProtocols;
-
-  return useMemo(() => {
-    const protocolSettings = normalizeForwardProtocolSettings(forwardProtocols);
-    const isTunnelSupported = (tunnel: any) => {
-      const key = String(tunnel?.mode || "").toLowerCase();
-      return (TUNNEL_PROTOCOLS as readonly string[]).includes(key)
-        && protocolSettings[key as keyof typeof protocolSettings] !== false;
-    };
-    return {
-      ...buildNetworkMapModel({ hosts, tunnels, isTunnelSupported }),
-      loading: hostsQuery.isLoading || tunnelsQuery.isLoading,
-    };
-  }, [hosts, tunnels, forwardProtocols, hostsQuery.isLoading, tunnelsQuery.isLoading]);
-}
+export { buildNetworkMapModel, useNetworkMapModel } from "@/features/network/networkMapModel";
+export type { NetworkMapModel } from "@/features/network/networkMapModel";
 
 export function NetworkMapSection({ enabled = true, onOpen }: { enabled?: boolean; onOpen: (href: string) => void }) {
   const model = useNetworkMapModel(enabled);
@@ -165,7 +33,18 @@ export function NetworkMapSection({ enabled = true, onOpen }: { enabled?: boolea
         「N 台主机 · N 条线路」页头已经说过，这里说的是颜色各代表什么、各几条。
       */}
       <div className="flex items-center justify-between gap-2 px-4 pt-3.5">
-        <span className="text-primary-type font-semibold text-foreground">网络地图</span>
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="text-primary-type font-semibold text-foreground">网络地图</span>
+          {/* 整页地图的入口：真实地理位置、可以点进主机和隧道看详情 */}
+          <button
+            type="button"
+            onClick={() => onOpen("/map")}
+            className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-[var(--fx-stroke-weak)] bg-[var(--fx-l3-control-fill)] px-2 py-0.5 text-meta font-medium text-[var(--fx-accent)] hover:bg-[var(--fx-hover)]"
+          >
+            打开地图
+            <span aria-hidden="true">›</span>
+          </button>
+        </span>
         {legendItems.length > 0 ? (
           <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-0.5 text-meta text-[var(--fx-text-secondary)]">
             {legendItems.map((item) => (
