@@ -30,6 +30,8 @@ const VOLATILE_KEYS = new Set([
   "mimicRuntimeCheckedAt", "agentRecoveryStartedAt", "agentRecoveryCompletedAt",
   "agentRecoveryExpected", "agentRecoveryReady", "agentLastReceivedRevision",
   "agentLastAppliedRevision", "agentLastReceivedHash", "agentLastAppliedHash",
+  // 规则专属域名是面板对 DNS 的簿记，和 Agent 跑的配置无关，不能让它改动配置摘要。
+  "entryDomain", "entryDomainValue", "entryDomainAt", "entryDomainError",
 ]);
 
 type SecretMode = "redact" | "hash" | "plain";

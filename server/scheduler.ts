@@ -23,9 +23,11 @@ import { cleanOldAddressGeoCache } from "./hostGeo";
 import { pruneStaleAuthSessions } from "./repositories/sessionRepository";
 import { pruneDispatchConfigAuditEvents } from "./configAudit";
 import { reconcileHostDdnsRecords } from "./hostDdns";
+import { reconcileRuleEntryDomains } from "./ruleEntryDomain";
 import { checkPanelUpdateTask } from "./_core/systemRouter";
 import { createNonOverlappingScheduledTask } from "./scheduledTask";
 import { healAutoStoppedRules } from "./forwardRuleAutoRecovery";
+import { sweepExpiredRuleEntryBridges } from "./ruleEntryBridges";
 import {
   SELF_TEST_TIMEOUT_SECONDS,
   selfTestTimeoutSeconds,
@@ -830,6 +832,17 @@ export async function runHostDdnsReconcile() {
   }
 }
 
+export async function runRuleEntryDomainReconcile() {
+  try {
+    const result = await reconcileRuleEntryDomains();
+    if (result.synced > 0 || result.deleted > 0 || result.failed > 0) {
+      console.log(`[Scheduler] Rule entry domain reconcile: synced ${result.synced}, deleted ${result.deleted}, failed ${result.failed}`);
+    }
+  } catch (error) {
+    console.error("[Scheduler] Rule entry domain reconcile error:", error);
+  }
+}
+
 async function runHostStatusSweep() {
   try {
     if (hostStatusPrimePromise) await hostStatusPrimePromise;
@@ -941,11 +954,26 @@ export function startScheduler() {
     await runForwardGroupFailover();
     await runHostDdnsReconcile();
   });
+  const ruleEntryDomainMaintenance = createNonOverlappingScheduledTask("rule entry domain reconcile", async () => {
+    await runRuleEntryDomainReconcile();
+  }, { slowTaskMs: 30_000 });
   const autoStoppedRuleRecovery = createNonOverlappingScheduledTask("auto-stopped rule recovery", async () => {
     try {
       await healAutoStoppedRules("scheduled-auto-heal");
     } catch (error) {
       console.error("[Scheduler] Auto-stopped rule recovery error:", error);
+    }
+  });
+  /*
+    换隧道后旧入口的临时桥接到期：删行并推一次刷新，Agent 才会马上撤掉监听。只靠心跳里
+    「读的时候过滤掉」不够 —— 没有别的改动时 Agent 一直拿稳定心跳计划，要等到整轮对账才撤。
+    默认只留 1 小时，所以一分钟扫一次；没有到期的行时就是一条带索引的查询。
+  */
+  const entryBridgeExpiry = createNonOverlappingScheduledTask("rule entry bridge expiry", async () => {
+    try {
+      await sweepExpiredRuleEntryBridges();
+    } catch (error) {
+      console.error("[Scheduler] Rule entry bridge expiry error:", error);
     }
   });
   const hostStatusSweep = createNonOverlappingScheduledTask("host status sweep", async () => {
@@ -1006,6 +1034,8 @@ export function startScheduler() {
   // Let the liveness prime's startup grace accept a live Agent presence before
   // the broad recovery sweep evaluates persisted heartbeat timestamps.
   repeatAfter(forwardingMaintenance, 5 * 60 * 1000, 20_000);
+  // 规则专属域名：保存时已经立刻同步，这里三分钟一轮补漏（批量改库、面板重启前没做完的）并删待删记录。
+  repeatAfter(ruleEntryDomainMaintenance, 3 * 60 * 1000, 50_000);
   repeatAfter(expirationCheck, 60 * 60 * 1000, 16_000);
   // 被隧道/转发资源/账户暂停/授权失效连带停掉的规则：原因消除后最迟两分钟自己恢复。
   repeatAfter(autoStoppedRuleRecovery, 2 * 60 * 1000, 40_000);
@@ -1016,6 +1046,7 @@ export function startScheduler() {
   runAtBillingMidnight(monthlyTrafficReset);
   repeatAfter(databasePoolSizing, 5 * 60 * 1000, 25_000);
   repeatAfter(paymentMaintenance, 60 * 1000, 35_000);
+  repeatAfter(entryBridgeExpiry, 60 * 1000, 50_000);
   repeatAfter(reminderSweep, 6 * 60 * 60 * 1000, 30_000);
   repeatAfter(updateCheck, UPDATE_AUTO_CHECK_INTERVAL_MS, 45_000);
   repeatAfter(historyCleanup, 60 * 60 * 1000, 2 * 60_000);

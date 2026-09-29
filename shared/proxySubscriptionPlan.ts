@@ -8,6 +8,7 @@
  */
 
 import { getHostEntryAddress, hostNeverConnected, type HostEntryAddressSource } from "./hostEntryAddress";
+import { publishedRuleEntryDomain } from "./ruleEntryDomain";
 import { proxyNodeBindingTruth } from "./proxyNodeAutoBind";
 import {
   buildProxyRulePlan,
@@ -90,6 +91,9 @@ export type ProxySubscriptionRuleRow = {
    */
   targetIp?: unknown;
   targetPort?: unknown;
+  /** 规则专属域名（发布出去的域名和记录值），见 shared/ruleEntryDomain.ts。 */
+  entryDomain?: unknown;
+  entryDomainValue?: unknown;
 };
 
 export type ProxySubscriptionHostRow = HostEntryAddressSource & {
@@ -251,6 +255,11 @@ export type BuildProxySubscriptionPlanInput = {
   rules: readonly ProxySubscriptionRuleRow[];
   templates: readonly ProxyNodeTemplateRow[];
   hosts: readonly ProxySubscriptionHostRow[];
+  /**
+   * 当前生效的规则专属域名后缀（DNS 服务商可用且设置了后缀时才非空）。
+   * 规则的域名发布成功过、且正是按这个后缀算出来的那个，节点地址就用域名。
+   */
+  ruleEntryDomainSuffix?: string;
 };
 
 /**
@@ -286,6 +295,9 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
     const address = getHostEntryAddress(host);
     const port = toPort(rule.sourcePort);
     if (address && port) ownForwardEntries.add(entryKey(address, port));
+    // 第一跳的目标可能写的是第二跳的专属域名，同样算自己的入口。
+    const domain = publishedRuleEntryDomain(rule, input.ruleEntryDomainSuffix);
+    if (domain && port) ownForwardEntries.add(entryKey(domain, port));
   }
 
   /**
@@ -375,7 +387,11 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
     }
 
     const host = hostsById.get(Number(rule.hostId || 0));
-    const address = getHostEntryAddress(host);
+    /*
+      规则专属域名发布成功过就用域名：它跟着规则当前的入口走，规则换隧道、换入口机，
+      客户端手里的地址都不用变。没发布成功过（功能没开、服务商报错）照旧用入口地址。
+    */
+    const address = publishedRuleEntryDomain(rule, input.ruleEntryDomainSuffix) || getHostEntryAddress(host);
     const port = toPort(rule.sourcePort);
     if (!address || !port) {
       skip("no-entry-address");

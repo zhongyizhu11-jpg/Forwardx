@@ -315,10 +315,29 @@ const tables: TableDef[] = [
       c("isRunning", "bool", { notNull: true, default: false }), c("pendingDelete", "bool", { notNull: true, default: false }),
       c("sortOrder", "int", { notNull: true, default: 0 }),
       c("proxyNodeId", "int"), c("proxyNodeVisible", "bool", { notNull: true, default: true }), c("proxyNodeName", "text"),
+      // 规则专属域名（见 shared/ruleEntryDomain.ts）：记的是**实际发布出去的**域名和值，
+      // 后缀改了、功能关了也能照着它把旧记录删掉。
+      c("entryDomain", "varchar", { length: 255 }), c("entryDomainValue", "varchar", { length: 255 }),
+      c("entryDomainAt", "epoch"), c("entryDomainError", "text"),
       c("userId", "int", { notNull: true }), c("createdAt", "epoch", { notNull: true, default: "now" }),
       c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],
     indexes: [["hostId"], ["hostId", "createdAt"], ["hostId", "sourcePort", "pendingDelete", "isEnabled"], ["userId"], ["userId", "sortOrder"], ["userId", "createdAt"], ["userId", "pendingDelete", "createdAt"], ["tunnelId"], ["forwardGroupId"], ["forwardGroupId", "isForwardGroupTemplate", "pendingDelete"], ["forwardGroupRuleId"], ["forwardGroupRuleId", "pendingDelete"], ["forwardGroupMemberId"], ["forwardGroupMemberId", "pendingDelete"], ["proxyNodeId"], ["userId", "proxyNodeId", "pendingDelete"], ["routeParentRuleId"], ["routeParentRuleId", "pendingDelete"]],
+  },
+  {
+    /*
+      待删除的规则专属域名。规则行被真正删掉（或不再需要域名、后缀改了）时，发布过的
+      域名记到这里，删成功才去掉；删失败留着给定时对账重试。不进面板迁移：换库后规则
+      ID 会重排，旧 ID 的清理对新库没有意义。
+    */
+    name: "rule_entry_domain_cleanups",
+    columns: [
+      c("id", "id"), c("domain", "varchar", { length: 255, notNull: true }), c("recordType", "varchar", { length: 8 }),
+      c("ruleId", "int", { notNull: true }), c("attempts", "int", { notNull: true, default: 0 }), c("lastError", "text"),
+      c("nextRetryAt", "epoch"), c("createdAt", "epoch", { notNull: true, default: "now" }),
+      c("updatedAt", "epoch", { notNull: true, default: "now" }),
+    ],
+    unique: [["domain"]],
   },
   {
     // 客户端订阅的节点模板；与计费的 subscription_plans 无关，命名一律用 proxy 前缀。
@@ -504,6 +523,25 @@ const tables: TableDef[] = [
     indexes: [["ruleId", "createdAt"], ["createdAt"]],
   },
   {
+    /*
+      换隧道后旧入口的临时桥接（shared/ruleEntryBridge）：规则换到别的入口主机后，在旧入口的老端口
+      上临时把流量转到规则当前的入口，等客户端刷新订阅。一条规则在一台主机上最多一条。
+      runtimeTarget 记最近一次下发时的目标「地址:端口」，目标变了（规则又换了入口）就重新下发；
+      isRunning 由 Agent 的状态上报写。到期即失效，调度器定期删掉。
+      不进面板迁移（MIGRATION_TABLES）：它只活几个小时，而且记的是这个面板的主机、规则 id。
+    */
+    name: "forward_rule_entry_bridges",
+    columns: [
+      c("id", "id"), c("ruleId", "int", { notNull: true }), c("hostId", "int", { notNull: true }),
+      c("sourcePort", "int", { notNull: true }), c("protocol", "varchar", { length: 16, notNull: true, default: "both" }),
+      c("isRunning", "bool", { notNull: true, default: false }), c("runtimeTarget", "text"),
+      c("createdAt", "epoch", { notNull: true, default: "now" }), c("expiresAt", "epoch", { notNull: true }),
+      c("updatedAt", "epoch", { notNull: true, default: "now" }),
+    ],
+    unique: [["ruleId", "hostId"]],
+    indexes: [["hostId", "expiresAt"], ["hostId", "sourcePort"], ["expiresAt"]],
+  },
+  {
     name: "tunnels",
     columns: [
       c("id", "id"), c("name", "text", { notNull: true }), c("entryGroupId", "int"), c("exitGroupId", "int"), c("entryHostId", "int", { notNull: true }),
@@ -610,6 +648,10 @@ const seedSettings = [
   ["pluginsEnabled", "false"],
   ["twoFactorEnabled", "false"],
   ["ddnsTtl", "60"],
+  // 规则专属域名后缀，空 = 不开（见 server/ruleEntryDomain.ts）。
+  ["ruleEntryDomainSuffix", ""],
+  // 换隧道后旧入口临时桥接保留的小时数，0 为关闭（shared/ruleEntryBridge）。
+  ["ruleSwitchBridgeHours", "1"],
 ] as const;
 
 export function getDatabaseTableDefs(): readonly TableDef[] {

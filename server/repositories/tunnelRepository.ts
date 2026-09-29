@@ -23,6 +23,7 @@ import { combineHostPortPolicyWithRange, combinePortPolicies, isPortAllowedByPol
 import { releaseHostPortReservations, reserveAvailableHostPort, reserveSpecificHostPort, reserveSpecificHostPortOnHosts, type HostPortReservation } from "../portReservations";
 import { getHostById } from "./hostRepository";
 import { getForwardRulesByTunnel } from "./forwardRuleRepository";
+import { getActiveEntryBridgesOnHost } from "./ruleEntryBridgeRepository";
 import { dbBool, sqlBool } from "./repositoryUtils";
 import { reorderWithinSortOrderScope } from "./sortOrderSlots";
 import { mapWithConcurrency } from "../asyncPool";
@@ -788,6 +789,14 @@ export async function resetAgentRuntimeStateForHost(hostId: number) {
          )
        )`,
     [boolValue(false), now, boolValue(true), id, id, id, id, id, "entry", boolValue(true), "host", id, boolValue(true)],
+  );
+
+  // 换隧道后留在这台机器上的旧入口桥接也一样按「未运行」重来（Agent 重启后 iptables 规则可能已经没了）。
+  await executeRaw(
+    `UPDATE ${quoteIdentifier("forward_rule_entry_bridges")}
+     SET ${quoteIdentifier("isRunning")} = ?, ${quoteIdentifier("updatedAt")} = ?
+     WHERE ${quoteIdentifier("hostId")} = ? AND ${quoteIdentifier("isRunning")} = ?`,
+    [boolValue(false), now, id, boolValue(true)],
   );
 }
 
@@ -2114,6 +2123,9 @@ export async function getUsedPortsOnHost(
     addPort(row.mimicPort);
   });
   for (const port of await getProxyInboundPortsOnHost(hostId)) addPort(port);
+  // 换隧道后旧入口的临时桥接也在这台机器上真实监听着（见 shared/ruleEntryBridge）；
+  // 桥接所属规则自己不算（excludedIds）：规则换回来时老端口要能还给它。
+  for (const bridge of await getActiveEntryBridgesOnHost(hostId, excludedIds)) addPort(bridge.sourcePort);
   return used;
 }
 
@@ -2191,6 +2203,8 @@ export async function isPortUsedOnHost(
   if ((Number(entryGroupRows[0]?.count) || 0) > 0) return true;
   // 落地节点（sing-box 入站）也在这台机器上真实监听着 —— 见 getProxyInboundPortsOnHost。
   if ((await getProxyInboundPortsOnHost(hostId, Number(excludeProxyInboundId || 0))).includes(Number(sourcePort))) return true;
+  // 换隧道后旧入口的临时桥接占着的端口，到期前别的规则不能拿（规则自己换回来时除外）。
+  if ((await getActiveEntryBridgesOnHost(hostId, excludedIds, Number(sourcePort))).length > 0) return true;
   const primaryExitConds: any[] = [
     eq(tunnels.exitHostId, hostId),
     eq(forwardRules.tunnelExitPort, sourcePort),

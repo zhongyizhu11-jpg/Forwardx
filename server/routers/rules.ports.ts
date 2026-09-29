@@ -189,13 +189,18 @@ export const portsRulesRouter = router({
         : [];
       // 隧道挂了入口组时，组里每台主机也要在这个端口上监听，任一台被占就算占用。
       let used = false;
-      for (const listenHostId of await db.forwardRuleListenHostIds(hostId, input.tunnelId)) {
+      const listenHostIds = await db.forwardRuleListenHostIds(hostId, input.tunnelId);
+      for (const listenHostId of listenHostIds) {
         if (await db.isPortUsedOnHost(listenHostId, input.sourcePort, excludeRuleIds, input.protocol, undefined, false)) {
           used = true;
           break;
         }
       }
-      return { used };
+      // 被换隧道后的临时桥接占着：告诉用户这是暂时的、多久后放开（server/ruleEntryBridges）。
+      const bridgeReason = used
+        ? await db.entryBridgePortConflictMessageForHosts(listenHostIds, input.sourcePort, excludeRuleIds)
+        : null;
+      return bridgeReason ? { used, reason: bridgeReason } : { used };
     }),
   randomPort: protectedProcedure
     .input(randomPortInputSchema)

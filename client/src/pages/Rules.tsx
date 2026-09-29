@@ -230,10 +230,17 @@ import {
 import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { useIsMobile } from "@/hooks/useMobile";
+import { formatEntryBridgeNote } from "@shared/ruleEntryBridge";
 
 const ReactGlobe = lazy(loadReactGlobe) as typeof import("react-globe.gl").default;
 // 延迟详情里的曲线图要用 recharts（约 100 kB gzip）；只有点开某条规则的延迟才需要，不跟规则页一起下
 const TcpingDetailDialog = lazy(() => import("@/components/rules/TcpingDetailDialog").then((module) => ({ default: module.TcpingDetailDialog })));
+
+/** 换隧道后旧入口还在替这条规则转发（服务端带的 entryBridges）：卡片上说一句，到点自己消失。 */
+function entryBridgeNotes(rule: any): string[] {
+  const bridges = Array.isArray(rule?.entryBridges) ? rule.entryBridges : [];
+  return bridges.map((bridge: any) => formatEntryBridgeNote(bridge));
+}
 
 /*
   对话框开着的时候，背后的列表不跟着重渲染。
@@ -5624,8 +5631,17 @@ function RulesContent() {
   const getRuleEntries = (rule: any): EntryAddress[] => {
     const tunnel = rule.tunnelId ? tunnelById.get(Number(rule.tunnelId)) : null;
     const tunnelEntries = getTunnelEntryAddresses(tunnel);
-    if (tunnelEntries.length > 0) return tunnelEntries;
-    return getHostEntryAddresses(getRuleEntryHost(rule));
+    const entries = tunnelEntries.length > 0 ? tunnelEntries : getHostEntryAddresses(getRuleEntryHost(rule));
+    /*
+      规则专属域名发布成功过（值非空）就排第一个：订阅里给客户端的就是它，复制也该复制它。
+      原来的入口地址留在后面（卡片上是「+N」和悬停提示），换线路时对得上是哪台机器。
+    */
+    const entryDomain = String(rule?.entryDomain || "").trim();
+    if (!entryDomain || !String(rule?.entryDomainValue || "").trim()) return entries;
+    const rows: EntryAddress[] = [];
+    pushUniqueEntryAddress(rows, "规则域名", entryDomain);
+    for (const entry of entries) pushUniqueEntryAddress(rows, entry.label, entry.value);
+    return rows;
   };
 
   const getTunnelEntryHostForDisplay = (tunnel: any | null | undefined, hostId: number) => {
@@ -6578,6 +6594,9 @@ function RulesContent() {
               <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">{stop.detail}</span>
             ) : null;
           })()}
+          {entryBridgeNotes(rule).map((note) => (
+            <span key={note} className="mt-1 block text-[11px] leading-4 text-muted-foreground">{note}</span>
+          ))}
         </TableCell>
         {user?.role === "admin" && (
           <TableCell className="px-3 py-2">
@@ -6802,12 +6821,20 @@ function RulesContent() {
               {rule.protocolBlockReason || revokedResourceTitle}
             </div>
           )}
+          {rule.entryDomainError ? (
+            <div className="line-clamp-1 text-[11px] leading-4 text-[var(--fx-warn-text)]" title={String(rule.entryDomainError)}>
+              规则域名未同步：{String(rule.entryDomainError)}（面板会自动重试）
+            </div>
+          ) : null}
           {(() => {
             const stop = !rule.protocolBlockReason && rule.resourceAccessAllowed !== false ? resolveForwardRuleStopReason(rule) : null;
             return stop?.autoResume ? (
               <div className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{stop.detail}</div>
             ) : null;
           })()}
+          {entryBridgeNotes(rule).map((note) => (
+            <div key={note} className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{note}</div>
+          ))}
 
           <div className="fx-rule-path" title={`${entryAddresses.map((entry) => entry.text).join(" / ")} → ${targetAddress}`}>
             {/* 入口和目标都是点一下就复制（用户要的）；小复制图标常驻，不用悬停才显出来 */}

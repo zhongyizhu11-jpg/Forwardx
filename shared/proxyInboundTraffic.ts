@@ -39,10 +39,15 @@ export function proxyInboundTrafficRuleId(inboundId: number): number {
   return PROXY_INBOUND_TRAFFIC_RULE_ID_BASE + id;
 }
 
-/** 这个上报的 ruleId 是落地入站吗？ */
+/**
+ * 这个上报的 ruleId 是落地入站吗？
+ *
+ * 上界不能省：入站最大编成 2×基数 − 1，再往上那一段是换隧道后旧入口桥接用的编号
+ * （shared/ruleEntryBridge）。只判下界的话，桥接的流量会被当成某个入站的去查主人。
+ */
 export function isProxyInboundTrafficRuleId(ruleId: unknown): boolean {
   const id = Number(ruleId);
-  return Number.isInteger(id) && id > PROXY_INBOUND_TRAFFIC_RULE_ID_BASE;
+  return Number.isInteger(id) && id > PROXY_INBOUND_TRAFFIC_RULE_ID_BASE && id < PROXY_INBOUND_TRAFFIC_RULE_ID_BASE * 2;
 }
 
 /** 从上报的 ruleId 还原出入站 id；不是入站时返回 0。 */

@@ -116,6 +116,7 @@ import { useMemo, useRef, useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { BRAND_LOGO_MAX_BYTES } from "@shared/avatar";
+import { DEFAULT_RULE_SWITCH_BRIDGE_HOURS, MAX_RULE_SWITCH_BRIDGE_HOURS, normalizeRuleSwitchBridgeHours } from "@shared/ruleEntryBridge";
 import { DOCS_BASE_URL } from "@/lib/docsLinks";
 import {
   BUILTIN_WALLPAPERS,
@@ -3162,7 +3163,8 @@ type SystemSettingsSaveKey =
   | "hostMonitor"
   | "forwardProtocols"
   | "sidebarMenu"
-  | "agentInstall";
+  | "agentInstall"
+  | "entryBridge";
 
 function isValidWebPort(value: string | number) {
   const port = Math.floor(Number(value));
@@ -4521,6 +4523,7 @@ function SystemInfoSection() {
   const [githubAcceleratorPanelUpdateEnabled, setGithubAcceleratorPanelUpdateEnabled] = useState(false);
   const [githubAcceleratorUrlInput, setGithubAcceleratorUrlInput] = useState(defaultGithubAcceleratorUrl);
   const [agentPreferPanelInstall, setAgentPreferPanelInstall] = useState(false);
+  const [ruleSwitchBridgeHours, setRuleSwitchBridgeHours] = useState(String(DEFAULT_RULE_SWITCH_BRIDGE_HOURS));
   const [ddnsEnabled, setDdnsEnabled] = useState(false);
   const [ddnsProvider, setDdnsProvider] = useState<DdnsProvider>("disabled");
   const [ddnsTtl, setDdnsTtl] = useState("60");
@@ -4544,6 +4547,7 @@ function SystemInfoSection() {
   const [ddnsWebhookUrl, setDdnsWebhookUrl] = useState("");
   const [ddnsWebhookMethod, setDdnsWebhookMethod] = useState<"POST" | "PUT" | "GET">("POST");
   const [ddnsWebhookHeaders, setDdnsWebhookHeaders] = useState("");
+  const [ruleEntryDomainSuffix, setRuleEntryDomainSuffix] = useState("");
   const [publicHostMonitorEnabled, setPublicHostMonitorEnabled] = useState(false);
   const [publicHostMonitorPath, setPublicHostMonitorPath] = useState("dev");
   const [publicHostMonitorTitle, setPublicHostMonitorTitle] = useState("");
@@ -4590,6 +4594,7 @@ function SystemInfoSection() {
       setGithubAcceleratorPanelUpdateEnabled(!!settings.githubAccelerator?.panelUpdateEnabled);
       setGithubAcceleratorUrlInput(settings.githubAccelerator?.url || "");
       setAgentPreferPanelInstall(!!settings.agentPreferPanelInstall);
+      setRuleSwitchBridgeHours(String(normalizeRuleSwitchBridgeHours((settings as any).ruleSwitchBridgeHours)));
       setDdnsEnabled(!!settings.ddns?.enabled);
       setDdnsProvider(isDdnsProvider(settings.ddns?.provider) ? settings.ddns.provider : "disabled");
       const ddnsUnifiedTtl = String(settings.ddns?.ttl || settings.ddns?.huaweicloudTtl || settings.ddns?.aliyunTtl || settings.ddns?.tencentcloudTtl || 60);
@@ -4610,6 +4615,7 @@ function SystemInfoSection() {
       setDdnsWebhookUrl(settings.ddns?.webhookUrl || "");
       setDdnsWebhookMethod((settings.ddns?.webhookMethod === "PUT" || settings.ddns?.webhookMethod === "GET") ? settings.ddns.webhookMethod : "POST");
       setDdnsWebhookHeaders(settings.ddns?.webhookHeaders || "");
+      setRuleEntryDomainSuffix(settings.ddns?.ruleEntryDomainSuffix || "");
       if (settings.publicHostMonitor) {
         setPublicHostMonitorEnabled(!!settings.publicHostMonitor.enabled);
         setPublicHostMonitorPath(settings.publicHostMonitor.path || "dev");
@@ -4909,6 +4915,7 @@ function SystemInfoSection() {
         webhookUrl: ddnsWebhookUrl,
         webhookMethod: ddnsWebhookMethod,
         webhookHeaders: ddnsWebhookHeaders,
+        ruleEntryDomainSuffix: ruleEntryDomainSuffix.trim(),
       },
     }, {
       onSuccess: () => {
@@ -4944,6 +4951,16 @@ function SystemInfoSection() {
 
   const handleSaveSessionPolicy = () => {
     saveSystemSettings("sessionPolicy", { allowMultiDeviceLogin });
+  };
+
+  const handleSaveEntryBridge = () => {
+    const raw = ruleSwitchBridgeHours.trim();
+    const value = Number(raw);
+    if (!raw || !Number.isInteger(value) || value < 0 || value > MAX_RULE_SWITCH_BRIDGE_HOURS) {
+      toast.error(`请输入 0 到 ${MAX_RULE_SWITCH_BRIDGE_HOURS} 之间的整数小时`);
+      return;
+    }
+    saveSystemSettings("entryBridge", { ruleSwitchBridgeHours: value });
   };
 
   const resetForwardProtocolDraft = () => {
@@ -5277,6 +5294,40 @@ function SystemInfoSection() {
           </CardContent>
         </Card>
       </div>
+      {/* 换隧道后旧入口的临时桥接（shared/ruleEntryBridge）。单独一张卡，不和协议开关挤在一起。 */}
+      <Card className="border-border bg-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <MoveRight className="h-4 w-4 text-primary" />
+            换隧道旧入口桥接
+          </CardTitle>
+          <CardDescription>
+            规则换到别的入口后，旧入口的老端口继续把流量转到新入口，这么多小时后自动撤掉；填 0 关闭。
+            规则开了专属入口域名时（DNS 几分钟内就跟过去）1 小时足够；没有域名的话，这段时间内没刷新订阅的客户端会连不上，建议调长。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <FormField className="space-y-2 sm:max-w-[16rem]">
+              <Label htmlFor="rule-switch-bridge-hours">保留时长（小时）</Label>
+              <Input
+                id="rule-switch-bridge-hours"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={MAX_RULE_SWITCH_BRIDGE_HOURS}
+                step={1}
+                value={ruleSwitchBridgeHours}
+                onChange={(e) => setRuleSwitchBridgeHours(e.target.value)}
+              />
+            </FormField>
+            <Button onClick={handleSaveEntryBridge} disabled={isSavingSetting("entryBridge")}>
+              {isSavingSetting("entryBridge") && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              保存
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
       <div className="grid gap-4 @[58rem]:grid-cols-2">
         {/* 面板公开访问地址 */}
         <Card className="border-border bg-card">
@@ -5651,6 +5702,20 @@ function SystemInfoSection() {
             />
             <p className="text-xs text-muted-foreground">
               TTL 范围：60-86400 秒，默认 60 秒；入口组故障切换最迟在一个 TTL 后被客户端看到。阿里云 / DNSPod 免费版最低 600 秒，设得更低时会自动按 600 秒提交。Webhook 会原样传递该值。
+            </p>
+          </FormField>
+
+          <FormField className="space-y-2">
+            <Label>规则专属域名后缀</Label>
+            <Input
+              value={ruleEntryDomainSuffix}
+              onChange={(e) => setRuleEntryDomainSuffix(e.target.value)}
+              placeholder="留空不启用，例如 node.example.com"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <p className="text-xs text-muted-foreground">
+              填写后，绑定了订阅节点的规则各自获得一个 r&lt;规则ID&gt;.后缀 的域名，订阅里的节点地址改用它；规则换隧道或换入口主机时只改解析，客户端不用刷新订阅。后缀必须在上面服务商已托管的域名（区域）下；需要启用 DDNS 才生效，清空后会删除这些记录并改回入口地址。
             </p>
           </FormField>
 

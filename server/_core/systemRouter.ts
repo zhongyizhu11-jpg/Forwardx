@@ -6,6 +6,7 @@ import { z } from "zod";
 import * as db from "../db";
 import { ENV } from "../env";
 import { compareVersions, normalizeVersion } from "../../shared/version";
+import { MAX_RULE_SWITCH_BRIDGE_HOURS, RULE_SWITCH_BRIDGE_HOURS_SETTING, normalizeRuleSwitchBridgeHours } from "../../shared/ruleEntryBridge";
 import { spawn } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
@@ -34,6 +35,7 @@ import { withKeyedTaskLock } from "../keyedTaskLock";
 import { AGENT_ASSET_NAMES } from "../agentAssets";
 import { DEFAULT_DDNS_TTL, maskSecret } from "../ddns";
 import { reconcileHostDdnsRecords } from "../hostDdns";
+import { normalizeRuleEntryDomainSuffixInput, scheduleRuleEntryDomainReconcile } from "../ruleEntryDomain";
 import type { DatabaseConfig } from "../dbRuntime";
 import { defaultSqlitePath } from "../dbRuntime";
 import {
@@ -1707,6 +1709,7 @@ function publicSystemSettings(all: Record<string, string | null>, activeProtocol
       webhookUrl: "",
       webhookMethod: "POST",
       webhookHeaders: "",
+      ruleEntryDomainSuffix: "",
     },
     agentEncryption: "aes-256-ctr+hmac-sha256",
     upgrade: {
@@ -1826,6 +1829,7 @@ export const systemRouter = router({
       sidebarMenu: readSidebarMenuSettings(all),
       customSidebarPages: readCustomSidebarPages(all),
       tunnelRuntimeDefault: all.tunnelRuntimeDefault === "gost" ? "gost" : "forwardx",
+      ruleSwitchBridgeHours: normalizeRuleSwitchBridgeHours(all[RULE_SWITCH_BRIDGE_HOURS_SETTING]),
       githubAccelerator: {
         enabled: all.githubAcceleratorEnabled === "true",
         url: all.githubAcceleratorUrl ?? "",
@@ -1886,6 +1890,7 @@ export const systemRouter = router({
         webhookUrl: all.ddnsWebhookUrl ?? "",
         webhookMethod: all.ddnsWebhookMethod ?? "POST",
         webhookHeaders: all.ddnsWebhookHeaders ?? "",
+        ruleEntryDomainSuffix: all.ruleEntryDomainSuffix ?? "",
       },
       agentEncryption: "aes-256-ctr+hmac-sha256", // 加密方案标识
       upgrade: {
@@ -2054,6 +2059,7 @@ export const systemRouter = router({
         sidebarMenu: sidebarMenuSettingsSchema.optional(),
         customSidebarPages: customSidebarPagesSchema.optional(),
         tunnelRuntimeDefault: z.enum(["forwardx", "gost"]).optional(),
+        ruleSwitchBridgeHours: z.number().int().min(0).max(MAX_RULE_SWITCH_BRIDGE_HOURS).optional(),
         githubAccelerator: z.object({
           enabled: z.boolean().optional(),
           url: githubAcceleratorUrlSchema.optional(),
@@ -2132,6 +2138,7 @@ export const systemRouter = router({
           webhookUrl: z.string().max(1000).optional(),
           webhookMethod: z.enum(["POST", "PUT", "GET"]).optional(),
           webhookHeaders: z.string().max(2000).optional(),
+          ruleEntryDomainSuffix: z.string().max(255).optional(),
         }).optional(),
       })
     )
@@ -2260,6 +2267,12 @@ export const systemRouter = router({
         const runtime = input.tunnelRuntimeDefault === "gost" ? "gost" : "forwardx";
         await db.setSetting("tunnelRuntimeDefault", runtime);
         console.info(`[Settings] tunnel runtime default set to ${runtime}`);
+      }
+      if (input.ruleSwitchBridgeHours !== undefined) {
+        const hours = normalizeRuleSwitchBridgeHours(input.ruleSwitchBridgeHours);
+        // 只影响之后的换隧道；已经留着的桥接按当时定的到期时间走。
+        await db.setSetting(RULE_SWITCH_BRIDGE_HOURS_SETTING, String(hours));
+        console.info(`[Settings] rule switch bridge hours set to ${hours}`);
       }
       if (input.githubAccelerator) {
         const next: Record<string, string | null> = {};
@@ -2470,6 +2483,10 @@ export const systemRouter = router({
         if (input.ddns.webhookUrl !== undefined) next.ddnsWebhookUrl = input.ddns.webhookUrl.trim() || null;
         if (input.ddns.webhookMethod !== undefined) next.ddnsWebhookMethod = input.ddns.webhookMethod;
         if (input.ddns.webhookHeaders !== undefined) next.ddnsWebhookHeaders = input.ddns.webhookHeaders.trim() || null;
+        if (input.ddns.ruleEntryDomainSuffix !== undefined) {
+          next.ruleEntryDomainSuffix = normalizeRuleEntryDomainSuffixInput(input.ddns.ruleEntryDomainSuffix) || null;
+        }
+        const previousDdnsProvider = String((await db.getAllSettings()).ddnsProvider || "disabled");
         await db.setSettings(next);
         db.runForwardGroupFailoverSweep({ manual: true }).catch((error) => {
           console.warn(`[Settings] forward group DDNS refresh failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -2477,6 +2494,13 @@ export const systemRouter = router({
         reconcileHostDdnsRecords("ddns-settings-updated", { force: true }).catch((error) => {
           console.warn(`[Settings] host DDNS refresh failed: ${error instanceof Error ? error.message : String(error)}`);
         });
+        /*
+          规则专属域名：后缀改了、功能开关了、DNS 开关了都在这一轮里对齐（旧域名删掉、新域名发布）。
+          只有换了服务商才强制全量重发：记录在旧服务商那边，新服务商里本来就没有；
+          其余时候按差异来，规则一多，每存一次设置就全量打一遍服务商 API 不划算。
+        */
+        const ddnsProviderChanged = next.ddnsProvider !== undefined && next.ddnsProvider !== previousDdnsProvider;
+        scheduleRuleEntryDomainReconcile("ddns-settings-updated", { force: ddnsProviderChanged });
         console.info("[Settings] ddns settings updated");
       }
       return { success: true };

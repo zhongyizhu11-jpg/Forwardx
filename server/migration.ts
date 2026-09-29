@@ -186,7 +186,8 @@ const MIGRATION_RUNTIME_TIMEOUT_MS = Math.max(
     : 15 * 60 * 1000,
 );
 const MIGRATION_RUNTIME_POLL_MS = 2_000;
-const DIRECT_SQLITE_OPTIONAL_SOURCE_TABLES = new Set(["agent_traffic_reports", "forward_rule_route_events"]);
+// 旧版本面板的库里还没有这些表（换隧道桥接是后加的，只活几小时），直接搬 SQLite 时缺了不算错。
+const DIRECT_SQLITE_OPTIONAL_SOURCE_TABLES = new Set(["agent_traffic_reports", "forward_rule_route_events", "forward_rule_entry_bridges"]);
 
 function normalizePanelUrl(url: string) {
   const value = url.trim().replace(/\/+$/, "");

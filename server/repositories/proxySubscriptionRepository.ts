@@ -23,6 +23,8 @@ import { normalizeProxyRulePreset } from "../../shared/proxyRuleset";
 import { shareProxyNodeRow } from "../../shared/proxyNodeShare";
 import { proxyInboundSupportsMultiUser } from "../../shared/proxyInbound";
 import { type ProxySubTokenFailureReason } from "../../shared/proxySubTokenStatus";
+import { getRuleEntryDomainRuntimeSettings } from "./ruleEntryDomainRepository";
+import { signalRuleEntryDomainChanged } from "../ruleEntryDomainSignals";
 
 // ==================== 客户端订阅：节点模板 ====================
 
@@ -87,10 +89,16 @@ export async function updateProxyNode(id: number, data: Partial<InsertProxyNode>
 export async function deleteProxyNode(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const unboundRules = await db
+    .select({ id: forwardRules.id })
+    .from(forwardRules)
+    .where(eq(forwardRules.proxyNodeId, id));
   await db
     .update(forwardRules)
     .set({ proxyNodeId: null, updatedAt: nowDate() } as any)
     .where(eq(forwardRules.proxyNodeId, id));
+  // 这些规则不再进订阅，它们的专属域名要撤掉（见 server/ruleEntryDomain.ts；漏了有定时对账兜底）。
+  for (const rule of unboundRules as Array<{ id: number }>) signalRuleEntryDomainChanged(Number(rule.id), "proxy-node-deleted");
   // 分享记录跟着一起删：留着的话对方订阅里会指向一个不存在的节点 id，
   // 而管理端的「已分享给谁」还照旧显示，看不出人已经拿不到了。
   await db.delete(proxyNodeShares).where(eq(proxyNodeShares.nodeId, id));
@@ -1022,6 +1030,9 @@ async function buildProxySubscriptionContextForUser(userId: number): Promise<{
       hostId: forwardRules.hostId,
       name: forwardRules.name,
       sourcePort: forwardRules.sourcePort,
+      // 规则专属域名：发布成功过就用它当节点地址，换入口时客户端不用刷新订阅。
+      entryDomain: forwardRules.entryDomain,
+      entryDomainValue: forwardRules.entryDomainValue,
       // QUIC 系节点绑到只放行 TCP 的转发上会静默连不上，订阅组装时要据此排除。
       protocol: forwardRules.protocol,
       proxyNodeId: forwardRules.proxyNodeId,
@@ -1092,11 +1103,13 @@ async function buildProxySubscriptionContextForUser(userId: number): Promise<{
       .where(inArray(hosts.id, hostIds))
     : [];
 
+  const { activeSuffix } = await getRuleEntryDomainRuntimeSettings();
   return {
     plan: buildProxySubscriptionPlan({
       rules: rules as any,
       templates: templates as any,
       hosts: hostRows as any,
+      ruleEntryDomainSuffix: activeSuffix,
     }),
     templates,
   };
