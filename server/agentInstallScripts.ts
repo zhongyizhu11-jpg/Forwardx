@@ -236,14 +236,14 @@ upgrade_agent_and_fxp_binaries() {
     elif fxp_version_wire_compatible "$CURRENT_FXP"; then
       echo ""
       echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-      echo "[警告] 新 FXP 下载失败，保留现有 FXP（$CURRENT_FXP）：它还能和其它节点握手"
+      echo "[警告] 新 FXP 下载失败，保留现有 FXP（${"$"}{CURRENT_FXP}）：它还能和其它节点握手"
       echo "[警告] 面板会把这台标成「FXP 可升级」，网络恢复后再升级一次即可"
       echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
       echo ""
     else
       rm -f "$AGENT_STAGE"
       echo ""
-      echo "[错误] 新 FXP 下载失败，而现有 FXP（$CURRENT_FXP）太旧，和已升级的节点握不上手"
+      echo "[错误] 新 FXP 下载失败，而现有 FXP（${"$"}{CURRENT_FXP}）太旧，和已升级的节点握不上手"
       echo "[错误] 只升级 Agent 会得到一台「版本是新的、NEX 隧道却不通」的机器，所以本次升级中止"
       echo "[错误] 现有 Agent 和 FXP 都没有改动；请检查到 GitHub / 面板的网络后重新升级"
       return 1
@@ -592,7 +592,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '  if mv -f "$TUNING_TMP" "$TUNING_FILE" 2>/dev/null; then',
     '    chmod 644 "$TUNING_FILE" 2>/dev/null || true',
     '    sysctl -p "$TUNING_FILE" >/dev/null 2>&1 || true',
-    '    echo "[信息] 网络调优已写入 $TUNING_FILE（拥塞控制: $(tuning_current net.ipv4.tcp_congestion_control)）"',
+    '    echo "[信息] 网络调优已写入 ${TUNING_FILE}（拥塞控制: $(tuning_current net.ipv4.tcp_congestion_control)）"',
     '  else',
     '    rm -f "$TUNING_TMP"',
     '  fi',
@@ -1040,7 +1040,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '    RC=$?',
     '  fi',
     '  if [ "$RC" = "2" ] && [ "$URL" != "$RAW_URL" ]; then',
-    '    echo "[信息] 加速源未找到 $LABEL，正在验证 GitHub 原始地址..."',
+    '    echo "[信息] 加速源未找到 ${LABEL}，正在验证 GitHub 原始地址..."',
     '    if download_url_binary "$RAW_URL" "$DST" "$LABEL"; then',
     '      return 0',
     '    else',
@@ -1071,7 +1071,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '    else',
     '      PANEL_RC=$?',
     '    fi',
-    '    echo "[信息] 面板端暂未提供 $LABEL，尝试从 GitHub 下载..."',
+    '    echo "[信息] 面板端暂未提供 ${LABEL}，尝试从 GitHub 下载..."',
     '  fi',
     '  URL="https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v${RELEASE_VERSION}/${ASSET}"',
     '  if download_github_binary "$URL" "$DST" "$LABEL"; then',
@@ -1301,7 +1301,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '  # 包管理器日志尾部，用于解释依赖为何没装上',
     '  dump_deps_log() {',
     '    if [ "$FORWARDX_DEPS_LOG" != "/dev/null" ] && [ -s "$FORWARDX_DEPS_LOG" ]; then',
-    '      echo "$1 包管理器最后输出（完整日志: $FORWARDX_DEPS_LOG）:"',
+    '      echo "$1 包管理器最后输出（完整日志: ${FORWARDX_DEPS_LOG}）:"',
     '      tail -n 20 "$FORWARDX_DEPS_LOG" | sed "s/^/    /"',
     '    fi',
     '  }',
@@ -1558,7 +1558,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     "  case \"$ARCH\" in",
     "    x86_64|amd64) GOST_ARCHS=\"amd64v1 amd64 amd64v2 amd64v3\" ;;",
     "    aarch64|arm64) GOST_ARCHS=\"arm64\" ;;",
-    "    *) echo \"[警告] 不支持的 CPU 架构: $ARCH，跳过 gost 安装\"; return 1 ;;",
+    "    *) echo \"[警告] 不支持的 CPU 架构: ${ARCH}，跳过 gost 安装\"; return 1 ;;",
     "  esac",
     "  TMP=$(mktemp -d)",
     "  for GOST_ARCH in $GOST_ARCHS; do",
@@ -1606,7 +1606,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     "      echo \"[信息] gost runtime 已安装且版本匹配: $RUNTIME_BIN\"",
     "      return 0",
     "    fi",
-    "    echo \"[警告] 已有 gost runtime 版本不匹配或不可用，正在重新安装: $RUNTIME_BIN（失败时保留旧文件）\"",
+    "    echo \"[警告] 已有 gost runtime 版本不匹配或不可用，正在重新安装: ${RUNTIME_BIN}（失败时保留旧文件）\"",
     "  fi",
     "  for BIN in /usr/local/bin/gost \"$(command -v gost 2>/dev/null || true)\"; do",
     "    [ -n \"$BIN\" ] || continue",
@@ -1683,7 +1683,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '    return 0',
     '  else',
     '    RC=$?',
-    '    echo "[错误] Agent 注册失败（退出码: $RC）"',
+    '    echo "[错误] Agent 注册失败（退出码: ${RC}）"',
     '    [ -n "$OUT" ] && printf "%s\\n" "$OUT"',
     '    echo "[提示] 请检查 Token 是否来自当前面板、面板地址/反代是否指向当前实例，以及服务器时间是否正常"',
     '    return "$RC"',

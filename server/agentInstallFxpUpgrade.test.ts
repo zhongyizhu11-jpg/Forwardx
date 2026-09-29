@@ -70,6 +70,7 @@ function runUpgrade(scenario: Scenario) {
       encoding: "utf8",
       env: {
         PATH: process.env.PATH || "/usr/bin:/bin",
+        HOME: os.tmpdir(),
         WORK: work,
         GO_AGENT_BIN: agentBin,
         FXP_BIN: fxpBin,
@@ -195,4 +196,9 @@ test("全新安装拿不到 FXP 时照旧继续，但警告要醒目", () => {
   assert.match(install, /stage_release_binary "forwardx-fxp-linux-\$\{GO_ARCH\}" "\$FXP_BIN" "ForwardX FXP" "0"/);
   assert.match(install, /warn_fxp_unavailable "安装"/);
   assert.match(install, /return 0/);
+});
+
+test("脚本里变量后面紧跟中文时要加花括号（bash 3.2 会把多字节字符吞进变量名）", () => {
+  const offenders = script.split("\n").filter((line) => /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]/.test(line));
+  assert.deepEqual(offenders, []);
 });
