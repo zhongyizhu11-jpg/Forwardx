@@ -59,6 +59,8 @@ export type NetworkMapHostNode = NetworkMapNode & {
   lastHeartbeat: number | null;
   agentVersion: string | null;
   fxpVersion: string | null;
+  /** 内存总量（字节），节点抽屉的内存条要写「已用 / 总量」 */
+  memoryTotal: number | null;
   linkCount: number;
 };
 
@@ -268,6 +270,7 @@ export function buildNetworkMapModel(input: {
       lastHeartbeat: Number.isFinite(seen) && seen > 0 ? seen : null,
       agentVersion: host?.agentVersion ? String(host.agentVersion) : null,
       fxpVersion: host?.fxpVersion ? String(host.fxpVersion) : null,
+      memoryTotal: Number(host?.memoryTotal) > 0 ? Number(host.memoryTotal) : null,
       linkCount,
     };
   });
