@@ -36,6 +36,7 @@ import { AGENT_ASSET_NAMES } from "../agentAssets";
 import { DEFAULT_DDNS_TTL, maskSecret } from "../ddns";
 import { reconcileHostDdnsRecords } from "../hostDdns";
 import { normalizeRuleEntryDomainSuffixInput, scheduleRuleEntryDomainReconcile } from "../ruleEntryDomain";
+import { resolveRuleEntryDomainRuntimeSettings } from "../repositories/ruleEntryDomainRepository";
 import type { DatabaseConfig } from "../dbRuntime";
 import { defaultSqlitePath } from "../dbRuntime";
 import {
@@ -1710,6 +1711,9 @@ function publicSystemSettings(all: Record<string, string | null>, activeProtocol
       webhookMethod: "POST",
       webhookHeaders: "",
       ruleEntryDomainSuffix: "",
+      // 规则专属域名此刻能不能用（DNS 服务商启用且后缀有效）：规则对话框据此决定显不显示「专属域名」开关。
+      // 普通用户也要知道 —— 他们自己的规则也能关掉域名。
+      ruleEntryDomainActive: resolveRuleEntryDomainRuntimeSettings(all).activeSuffix !== "",
     },
     agentEncryption: "aes-256-ctr+hmac-sha256",
     upgrade: {
@@ -1891,6 +1895,7 @@ export const systemRouter = router({
         webhookMethod: all.ddnsWebhookMethod ?? "POST",
         webhookHeaders: all.ddnsWebhookHeaders ?? "",
         ruleEntryDomainSuffix: all.ruleEntryDomainSuffix ?? "",
+        ruleEntryDomainActive: resolveRuleEntryDomainRuntimeSettings(all).activeSuffix !== "",
       },
       agentEncryption: "aes-256-ctr+hmac-sha256", // 加密方案标识
       upgrade: {

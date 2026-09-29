@@ -12,6 +12,7 @@ export const routeChunks: Record<string, () => Promise<unknown>> = {
   "/hosts": () => import("@/pages/Hosts"),
   "/rules": () => import("@/pages/Rules"),
   "/tunnels": () => import("@/pages/Tunnels"),
+  "/map": () => import("@/pages/NetworkMapPage"),
   "/more": () => import("@/pages/More"),
   "/client-subscriptions": () => import("@/pages/ClientSubscriptions"),
   "/profile": () => import("@/pages/Profile"),

@@ -13,12 +13,13 @@ import { recordRuleEntryDomainCleanupsBeforeDelete } from "./ruleEntryDomainRepo
 import { signalRuleEntryDomainChanged, signalRuleEntryDomainCleanup } from "../ruleEntryDomainSignals";
 
 /*
-  规则专属域名（server/ruleEntryDomain.ts）跟着这几列走：入口主机、开关、删除、订阅绑定。
-  在仓库这一层挂钩，面板、Telegram 机器人、转发组各条改规则的路都不用各自记得通知；
-  只是尽力通知，漏了有定时对账兜底。
+  规则专属域名（server/ruleEntryDomain.ts）跟着这几列走：入口主机、开关、删除、订阅绑定、
+  规则上的「专属域名」开关。在仓库这一层挂钩，面板、Telegram 机器人、转发组各条改规则的路
+  都不用各自记得通知；只是尽力通知，漏了有定时对账兜底。
 */
 const RULE_ENTRY_DOMAIN_FIELDS = [
   "hostId", "isEnabled", "pendingDelete", "isForwardGroupTemplate", "routeParentRuleId", "proxyNodeId", "proxyNodeVisible",
+  "entryDomainEnabled",
 ] as const;
 
 // ==================== Forward Rule Queries ====================

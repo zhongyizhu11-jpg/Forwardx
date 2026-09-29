@@ -91,7 +91,8 @@ export type ProxySubscriptionRuleRow = {
    */
   targetIp?: unknown;
   targetPort?: unknown;
-  /** 规则专属域名（发布出去的域名和记录值），见 shared/ruleEntryDomain.ts。 */
+  /** 规则专属域名（规则上的开关、发布出去的域名和记录值），见 shared/ruleEntryDomain.ts。 */
+  entryDomainEnabled?: unknown;
   entryDomain?: unknown;
   entryDomainValue?: unknown;
 };
@@ -389,7 +390,8 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
     const host = hostsById.get(Number(rule.hostId || 0));
     /*
       规则专属域名发布成功过就用域名：它跟着规则当前的入口走，规则换隧道、换入口机，
-      客户端手里的地址都不用变。没发布成功过（功能没开、服务商报错）照旧用入口地址。
+      客户端手里的地址都不用变。没发布成功过（功能没开、规则上关了开关、服务商报错）
+      照旧用入口地址。
     */
     const address = publishedRuleEntryDomain(rule, input.ruleEntryDomainSuffix) || getHostEntryAddress(host);
     const port = toPort(rule.sourcePort);

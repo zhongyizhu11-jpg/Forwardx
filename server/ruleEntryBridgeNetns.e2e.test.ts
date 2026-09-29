@@ -465,6 +465,9 @@ test("换隧道后旧入口桥接：真 Agent + 真 FXP + 真 iptables（netns�
       { label: "1: B → A", tunnelId: tunnelAId, from: lab.hosts.B, to: lab.hosts.A },
       { label: "2: A → B（规则回到还留着桥接的 hostB）", tunnelId: tunnelBId, from: lab.hosts.A, to: lab.hosts.B },
       { label: "3: B → A", tunnelId: tunnelAId, from: lab.hosts.B, to: lab.hosts.A },
+      // 再来一个来回：两台机器各自都经历过「有桥接 → 规则回来 → 又留桥接 → 规则又回来」。
+      { label: "4: A → B", tunnelId: tunnelBId, from: lab.hosts.A, to: lab.hosts.B },
+      { label: "5: B → A", tunnelId: tunnelAId, from: lab.hosts.B, to: lab.hosts.A },
     ];
     const failures: string[] = [];
     // 换之前就有客户端在用同一个 UDP 源端口连着旧入口（hy2 / tuic 这类）：换隧道后它不刷新订阅，还往旧入口发。

@@ -26,12 +26,16 @@ export type RuleEntryDomainRuntimeSettings = {
   activeSuffix: string;
 };
 
-export async function getRuleEntryDomainRuntimeSettings(): Promise<RuleEntryDomainRuntimeSettings> {
-  const all = await getAllSettings();
+/** 从一份系统设置里算出功能状态（设置接口已经拿到全部设置时直接用，不再查一次库）。 */
+export function resolveRuleEntryDomainRuntimeSettings(all: Record<string, string | null | undefined>): RuleEntryDomainRuntimeSettings {
   const provider = String(all.ddnsProvider || "disabled");
   const ddnsActive = all.ddnsEnabled === "true" && RULE_ENTRY_DOMAIN_DDNS_PROVIDERS.has(provider);
   const suffix = normalizeRuleEntryDomainSuffix(all.ruleEntryDomainSuffix);
   return { ddnsActive, suffix, activeSuffix: ddnsActive ? suffix : "" };
+}
+
+export async function getRuleEntryDomainRuntimeSettings(): Promise<RuleEntryDomainRuntimeSettings> {
+  return resolveRuleEntryDomainRuntimeSettings(await getAllSettings());
 }
 
 const RULE_COLUMNS = {
@@ -44,6 +48,7 @@ const RULE_COLUMNS = {
   routeParentRuleId: forwardRules.routeParentRuleId,
   proxyNodeId: forwardRules.proxyNodeId,
   proxyNodeVisible: forwardRules.proxyNodeVisible,
+  entryDomainEnabled: forwardRules.entryDomainEnabled,
   entryDomain: forwardRules.entryDomain,
   entryDomainValue: forwardRules.entryDomainValue,
   entryDomainAt: forwardRules.entryDomainAt,
@@ -60,6 +65,7 @@ export type RuleEntryDomainRuleRow = {
   routeParentRuleId: number | null;
   proxyNodeId: number | null;
   proxyNodeVisible: unknown;
+  entryDomainEnabled: unknown;
   entryDomain: string | null;
   entryDomainValue: string | null;
   entryDomainAt: Date | null;
