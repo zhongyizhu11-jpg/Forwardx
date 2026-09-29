@@ -315,10 +315,29 @@ const tables: TableDef[] = [
       c("isRunning", "bool", { notNull: true, default: false }), c("pendingDelete", "bool", { notNull: true, default: false }),
       c("sortOrder", "int", { notNull: true, default: 0 }),
       c("proxyNodeId", "int"), c("proxyNodeVisible", "bool", { notNull: true, default: true }), c("proxyNodeName", "text"),
+      // 规则专属域名（见 shared/ruleEntryDomain.ts）：记的是**实际发布出去的**域名和值，
+      // 后缀改了、功能关了也能照着它把旧记录删掉。
+      c("entryDomain", "varchar", { length: 255 }), c("entryDomainValue", "varchar", { length: 255 }),
+      c("entryDomainAt", "epoch"), c("entryDomainError", "text"),
       c("userId", "int", { notNull: true }), c("createdAt", "epoch", { notNull: true, default: "now" }),
       c("updatedAt", "epoch", { notNull: true, default: "now" }),
     ],
     indexes: [["hostId"], ["hostId", "createdAt"], ["hostId", "sourcePort", "pendingDelete", "isEnabled"], ["userId"], ["userId", "sortOrder"], ["userId", "createdAt"], ["userId", "pendingDelete", "createdAt"], ["tunnelId"], ["forwardGroupId"], ["forwardGroupId", "isForwardGroupTemplate", "pendingDelete"], ["forwardGroupRuleId"], ["forwardGroupRuleId", "pendingDelete"], ["forwardGroupMemberId"], ["forwardGroupMemberId", "pendingDelete"], ["proxyNodeId"], ["userId", "proxyNodeId", "pendingDelete"], ["routeParentRuleId"], ["routeParentRuleId", "pendingDelete"]],
+  },
+  {
+    /*
+      待删除的规则专属域名。规则行被真正删掉（或不再需要域名、后缀改了）时，发布过的
+      域名记到这里，删成功才去掉；删失败留着给定时对账重试。不进面板迁移：换库后规则
+      ID 会重排，旧 ID 的清理对新库没有意义。
+    */
+    name: "rule_entry_domain_cleanups",
+    columns: [
+      c("id", "id"), c("domain", "varchar", { length: 255, notNull: true }), c("recordType", "varchar", { length: 8 }),
+      c("ruleId", "int", { notNull: true }), c("attempts", "int", { notNull: true, default: 0 }), c("lastError", "text"),
+      c("nextRetryAt", "epoch"), c("createdAt", "epoch", { notNull: true, default: "now" }),
+      c("updatedAt", "epoch", { notNull: true, default: "now" }),
+    ],
+    unique: [["domain"]],
   },
   {
     // 客户端订阅的节点模板；与计费的 subscription_plans 无关，命名一律用 proxy 前缀。
@@ -610,6 +629,8 @@ const seedSettings = [
   ["pluginsEnabled", "false"],
   ["twoFactorEnabled", "false"],
   ["ddnsTtl", "60"],
+  // 规则专属域名后缀，空 = 不开（见 server/ruleEntryDomain.ts）。
+  ["ruleEntryDomainSuffix", ""],
 ] as const;
 
 export function getDatabaseTableDefs(): readonly TableDef[] {

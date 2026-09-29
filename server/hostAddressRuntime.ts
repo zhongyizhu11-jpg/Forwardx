@@ -4,6 +4,7 @@ import { pushAgentRefresh } from "./agentEvents";
 import * as hopRepo from "./repositories/tunnelRepository";
 import { clearTunnelRuntimeStatusForHost } from "./tunnelRuntimeStatus";
 import { scheduleHostDdnsUpdate } from "./hostDdns";
+import { scheduleRuleEntryDomainSyncForHost } from "./ruleEntryDomain";
 
 export function hostIngressAddress(hostLike: any) {
   return String(hostLike?.entryIp || hostLike?.ipv4 || hostLike?.ipv6 || hostLike?.ip || "").trim();
@@ -68,6 +69,8 @@ export async function refreshHostAddressRuntime(hostId: number, previousHost: an
 
 export async function handleHostAddressChanged(hostId: number, currentHost: any, previousHost: any, reason: string) {
   scheduleHostDdnsUpdate(currentHost, reason);
+  // 以这台机器为入口的规则，专属域名的记录值要跟着新地址走。
+  void scheduleRuleEntryDomainSyncForHost(hostId, reason);
   await db.runForwardGroupsForHostAddressChange(hostId, reason).catch((error) => {
     console.warn(`[HostAddress] Forward group DDNS refresh failed host=${hostId}: ${error instanceof Error ? error.message : String(error)}`);
   });

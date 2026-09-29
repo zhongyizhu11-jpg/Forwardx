@@ -5624,8 +5624,17 @@ function RulesContent() {
   const getRuleEntries = (rule: any): EntryAddress[] => {
     const tunnel = rule.tunnelId ? tunnelById.get(Number(rule.tunnelId)) : null;
     const tunnelEntries = getTunnelEntryAddresses(tunnel);
-    if (tunnelEntries.length > 0) return tunnelEntries;
-    return getHostEntryAddresses(getRuleEntryHost(rule));
+    const entries = tunnelEntries.length > 0 ? tunnelEntries : getHostEntryAddresses(getRuleEntryHost(rule));
+    /*
+      规则专属域名发布成功过（值非空）就排第一个：订阅里给客户端的就是它，复制也该复制它。
+      原来的入口地址留在后面（卡片上是「+N」和悬停提示），换线路时对得上是哪台机器。
+    */
+    const entryDomain = String(rule?.entryDomain || "").trim();
+    if (!entryDomain || !String(rule?.entryDomainValue || "").trim()) return entries;
+    const rows: EntryAddress[] = [];
+    pushUniqueEntryAddress(rows, "规则域名", entryDomain);
+    for (const entry of entries) pushUniqueEntryAddress(rows, entry.label, entry.value);
+    return rows;
   };
 
   const getTunnelEntryHostForDisplay = (tunnel: any | null | undefined, hostId: number) => {
@@ -6802,6 +6811,11 @@ function RulesContent() {
               {rule.protocolBlockReason || revokedResourceTitle}
             </div>
           )}
+          {rule.entryDomainError ? (
+            <div className="line-clamp-1 text-[11px] leading-4 text-[var(--fx-warn-text)]" title={String(rule.entryDomainError)}>
+              规则域名未同步：{String(rule.entryDomainError)}（面板会自动重试）
+            </div>
+          ) : null}
           {(() => {
             const stop = !rule.protocolBlockReason && rule.resourceAccessAllowed !== false ? resolveForwardRuleStopReason(rule) : null;
             return stop?.autoResume ? (

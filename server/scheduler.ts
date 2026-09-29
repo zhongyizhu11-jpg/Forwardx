@@ -23,6 +23,7 @@ import { cleanOldAddressGeoCache } from "./hostGeo";
 import { pruneStaleAuthSessions } from "./repositories/sessionRepository";
 import { pruneDispatchConfigAuditEvents } from "./configAudit";
 import { reconcileHostDdnsRecords } from "./hostDdns";
+import { reconcileRuleEntryDomains } from "./ruleEntryDomain";
 import { checkPanelUpdateTask } from "./_core/systemRouter";
 import { createNonOverlappingScheduledTask } from "./scheduledTask";
 import { healAutoStoppedRules } from "./forwardRuleAutoRecovery";
@@ -830,6 +831,17 @@ export async function runHostDdnsReconcile() {
   }
 }
 
+export async function runRuleEntryDomainReconcile() {
+  try {
+    const result = await reconcileRuleEntryDomains();
+    if (result.synced > 0 || result.deleted > 0 || result.failed > 0) {
+      console.log(`[Scheduler] Rule entry domain reconcile: synced ${result.synced}, deleted ${result.deleted}, failed ${result.failed}`);
+    }
+  } catch (error) {
+    console.error("[Scheduler] Rule entry domain reconcile error:", error);
+  }
+}
+
 async function runHostStatusSweep() {
   try {
     if (hostStatusPrimePromise) await hostStatusPrimePromise;
@@ -941,6 +953,9 @@ export function startScheduler() {
     await runForwardGroupFailover();
     await runHostDdnsReconcile();
   });
+  const ruleEntryDomainMaintenance = createNonOverlappingScheduledTask("rule entry domain reconcile", async () => {
+    await runRuleEntryDomainReconcile();
+  }, { slowTaskMs: 30_000 });
   const autoStoppedRuleRecovery = createNonOverlappingScheduledTask("auto-stopped rule recovery", async () => {
     try {
       await healAutoStoppedRules("scheduled-auto-heal");
@@ -1006,6 +1021,8 @@ export function startScheduler() {
   // Let the liveness prime's startup grace accept a live Agent presence before
   // the broad recovery sweep evaluates persisted heartbeat timestamps.
   repeatAfter(forwardingMaintenance, 5 * 60 * 1000, 20_000);
+  // 规则专属域名：保存时已经立刻同步，这里三分钟一轮补漏（批量改库、面板重启前没做完的）并删待删记录。
+  repeatAfter(ruleEntryDomainMaintenance, 3 * 60 * 1000, 50_000);
   repeatAfter(expirationCheck, 60 * 60 * 1000, 16_000);
   // 被隧道/转发资源/账户暂停/授权失效连带停掉的规则：原因消除后最迟两分钟自己恢复。
   repeatAfter(autoStoppedRuleRecovery, 2 * 60 * 1000, 40_000);

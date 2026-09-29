@@ -28,6 +28,8 @@ import {
 } from "../../drizzle/schema";
 import { executeRaw, getDb, insertAndGetId, nowDate, queryRaw, rawAffectedRows, refreshDatabasePoolSettings, withDatabaseTransaction } from "../dbRuntime";
 import { boolValue, inList, quoteIdentifier, sqlCountAll } from "../dbCompat";
+import { recordRuleEntryDomainCleanupsBeforeDelete } from "./ruleEntryDomainRepository";
+import { signalRuleEntryDomainCleanup } from "../ruleEntryDomainSignals";
 import { repairPortForwardRuleHostReferences } from "../portForwardRuleHosts";
 import { sqlBool } from "./repositoryUtils";
 import { repairForwardGroupRuleIntegrity } from "../forwardGroupRuleIntegrity";
@@ -711,7 +713,10 @@ export async function deleteHost(id: number) {
   for (const inbound of await getProxyInboundsByHost(id)) {
     await deleteProxyInbound(Number((inbound as any).id));
   }
+  // 这台机器上的规则整批删行：先把它们发布过的专属域名记进待删表（见 ruleEntryDomainRepository）。
+  const retiredRuleDomains = await recordRuleEntryDomainCleanupsBeforeDelete({ hostId: id }).catch(() => 0);
   await db.delete(forwardRules).where(eq(forwardRules.hostId, id));
+  if (retiredRuleDomains > 0) signalRuleEntryDomainCleanup("host-deleted");
   await db.delete(forwardRuleTunnelExits).where(eq(forwardRuleTunnelExits.exitHostId, id));
   await db.delete(agentTokens).where(eq(agentTokens.hostId, id));
   await db.delete(userHostPermissions).where(eq(userHostPermissions.hostId, id));

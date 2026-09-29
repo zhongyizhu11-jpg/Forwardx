@@ -447,12 +447,35 @@ export const forwardRules = table("forward_rules", {
   proxyNodeVisible: boolean("proxyNodeVisible").notNull().default(true),
   // 覆盖自动生成的节点名，为空时按「入口主机 → 模板名」生成
   proxyNodeName: text("proxyNodeName"),
+  /*
+    规则专属域名（见 shared/ruleEntryDomain.ts 和 server/ruleEntryDomain.ts）：
+    entryDomain / entryDomainValue 是**实际发布出去的**域名和记录值，只有同步逻辑写。
+    entryDomainValue 为空表示还没发布成功过，订阅照旧用入口主机地址。
+  */
+  entryDomain: varchar("entryDomain", { length: 255 }),
+  entryDomainValue: varchar("entryDomainValue", { length: 255 }),
+  entryDomainAt: epoch("entryDomainAt"),
+  entryDomainError: text("entryDomainError"),
   userId: int("userId").notNull(),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
   updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
 });
 export type ForwardRule = typeof forwardRules.$inferSelect;
 export type InsertForwardRule = typeof forwardRules.$inferInsert;
+
+/** 待删除的规则专属域名：删成功才去掉，失败留给定时对账重试。 */
+export const ruleEntryDomainCleanups = table("rule_entry_domain_cleanups", {
+  id: serial("id"),
+  domain: varchar("domain", { length: 255 }).notNull(),
+  // 为空表示不知道发布时用的类型（发布半途失败），删的时候 A / AAAA / CNAME 都删一遍。
+  recordType: varchar("recordType", { length: 8 }),
+  ruleId: int("ruleId").notNull(),
+  attempts: int("attempts").notNull().default(0),
+  lastError: text("lastError"),
+  nextRetryAt: epoch("nextRetryAt"),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
 
 /**
  * 客户端订阅的节点模板。

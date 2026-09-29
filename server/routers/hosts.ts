@@ -15,6 +15,7 @@ import { normalizeVersion } from "@shared/version";
 import { scheduleHostGeoRefresh } from "../hostGeo";
 import { refreshHostAddressRuntime } from "../hostAddressRuntime";
 import { scheduleHostDdnsUpdate } from "../hostDdns";
+import { scheduleRuleEntryDomainSyncForHost } from "../ruleEntryDomain";
 import { clearTunnelRuntimeStatusForHost } from "../tunnelRuntimeStatus";
 import { createQueryCache } from "../queryCache";
 import { describePortPolicy, normalizePortAllowlist, portPolicyFrom, portPolicyHasRestriction } from "@shared/portPolicy";
@@ -1530,6 +1531,8 @@ export const hostsRouter = router({
         if (entryChanged) {
           await refreshHostAddressRuntime(id, host, "host-address-updated");
         }
+        // 手填入口、主机 DDNS 都会改变首选入口地址，规则专属域名的记录值跟着改。
+        if (entryChanged || ddnsConfigChanged) void scheduleRuleEntryDomainSyncForHost(id, "host-entry-updated");
         if (portRangeChanged) {
           const nextPolicy = portPolicyFrom({
             portRangeStart: pStart,

@@ -34,6 +34,7 @@ import { withKeyedTaskLock } from "../keyedTaskLock";
 import { AGENT_ASSET_NAMES } from "../agentAssets";
 import { DEFAULT_DDNS_TTL, maskSecret } from "../ddns";
 import { reconcileHostDdnsRecords } from "../hostDdns";
+import { normalizeRuleEntryDomainSuffixInput, scheduleRuleEntryDomainReconcile } from "../ruleEntryDomain";
 import type { DatabaseConfig } from "../dbRuntime";
 import { defaultSqlitePath } from "../dbRuntime";
 import {
@@ -1707,6 +1708,7 @@ function publicSystemSettings(all: Record<string, string | null>, activeProtocol
       webhookUrl: "",
       webhookMethod: "POST",
       webhookHeaders: "",
+      ruleEntryDomainSuffix: "",
     },
     agentEncryption: "aes-256-ctr+hmac-sha256",
     upgrade: {
@@ -1886,6 +1888,7 @@ export const systemRouter = router({
         webhookUrl: all.ddnsWebhookUrl ?? "",
         webhookMethod: all.ddnsWebhookMethod ?? "POST",
         webhookHeaders: all.ddnsWebhookHeaders ?? "",
+        ruleEntryDomainSuffix: all.ruleEntryDomainSuffix ?? "",
       },
       agentEncryption: "aes-256-ctr+hmac-sha256", // 加密方案标识
       upgrade: {
@@ -2132,6 +2135,7 @@ export const systemRouter = router({
           webhookUrl: z.string().max(1000).optional(),
           webhookMethod: z.enum(["POST", "PUT", "GET"]).optional(),
           webhookHeaders: z.string().max(2000).optional(),
+          ruleEntryDomainSuffix: z.string().max(255).optional(),
         }).optional(),
       })
     )
@@ -2470,6 +2474,10 @@ export const systemRouter = router({
         if (input.ddns.webhookUrl !== undefined) next.ddnsWebhookUrl = input.ddns.webhookUrl.trim() || null;
         if (input.ddns.webhookMethod !== undefined) next.ddnsWebhookMethod = input.ddns.webhookMethod;
         if (input.ddns.webhookHeaders !== undefined) next.ddnsWebhookHeaders = input.ddns.webhookHeaders.trim() || null;
+        if (input.ddns.ruleEntryDomainSuffix !== undefined) {
+          next.ruleEntryDomainSuffix = normalizeRuleEntryDomainSuffixInput(input.ddns.ruleEntryDomainSuffix) || null;
+        }
+        const previousDdnsProvider = String((await db.getAllSettings()).ddnsProvider || "disabled");
         await db.setSettings(next);
         db.runForwardGroupFailoverSweep({ manual: true }).catch((error) => {
           console.warn(`[Settings] forward group DDNS refresh failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -2477,6 +2485,13 @@ export const systemRouter = router({
         reconcileHostDdnsRecords("ddns-settings-updated", { force: true }).catch((error) => {
           console.warn(`[Settings] host DDNS refresh failed: ${error instanceof Error ? error.message : String(error)}`);
         });
+        /*
+          规则专属域名：后缀改了、功能开关了、DNS 开关了都在这一轮里对齐（旧域名删掉、新域名发布）。
+          只有换了服务商才强制全量重发：记录在旧服务商那边，新服务商里本来就没有；
+          其余时候按差异来，规则一多，每存一次设置就全量打一遍服务商 API 不划算。
+        */
+        const ddnsProviderChanged = next.ddnsProvider !== undefined && next.ddnsProvider !== previousDdnsProvider;
+        scheduleRuleEntryDomainReconcile("ddns-settings-updated", { force: ddnsProviderChanged });
         console.info("[Settings] ddns settings updated");
       }
       return { success: true };

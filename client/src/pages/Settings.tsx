@@ -4544,6 +4544,7 @@ function SystemInfoSection() {
   const [ddnsWebhookUrl, setDdnsWebhookUrl] = useState("");
   const [ddnsWebhookMethod, setDdnsWebhookMethod] = useState<"POST" | "PUT" | "GET">("POST");
   const [ddnsWebhookHeaders, setDdnsWebhookHeaders] = useState("");
+  const [ruleEntryDomainSuffix, setRuleEntryDomainSuffix] = useState("");
   const [publicHostMonitorEnabled, setPublicHostMonitorEnabled] = useState(false);
   const [publicHostMonitorPath, setPublicHostMonitorPath] = useState("dev");
   const [publicHostMonitorTitle, setPublicHostMonitorTitle] = useState("");
@@ -4610,6 +4611,7 @@ function SystemInfoSection() {
       setDdnsWebhookUrl(settings.ddns?.webhookUrl || "");
       setDdnsWebhookMethod((settings.ddns?.webhookMethod === "PUT" || settings.ddns?.webhookMethod === "GET") ? settings.ddns.webhookMethod : "POST");
       setDdnsWebhookHeaders(settings.ddns?.webhookHeaders || "");
+      setRuleEntryDomainSuffix(settings.ddns?.ruleEntryDomainSuffix || "");
       if (settings.publicHostMonitor) {
         setPublicHostMonitorEnabled(!!settings.publicHostMonitor.enabled);
         setPublicHostMonitorPath(settings.publicHostMonitor.path || "dev");
@@ -4909,6 +4911,7 @@ function SystemInfoSection() {
         webhookUrl: ddnsWebhookUrl,
         webhookMethod: ddnsWebhookMethod,
         webhookHeaders: ddnsWebhookHeaders,
+        ruleEntryDomainSuffix: ruleEntryDomainSuffix.trim(),
       },
     }, {
       onSuccess: () => {
@@ -5651,6 +5654,20 @@ function SystemInfoSection() {
             />
             <p className="text-xs text-muted-foreground">
               TTL 范围：60-86400 秒，默认 60 秒；入口组故障切换最迟在一个 TTL 后被客户端看到。阿里云 / DNSPod 免费版最低 600 秒，设得更低时会自动按 600 秒提交。Webhook 会原样传递该值。
+            </p>
+          </FormField>
+
+          <FormField className="space-y-2">
+            <Label>规则专属域名后缀</Label>
+            <Input
+              value={ruleEntryDomainSuffix}
+              onChange={(e) => setRuleEntryDomainSuffix(e.target.value)}
+              placeholder="留空不启用，例如 node.example.com"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <p className="text-xs text-muted-foreground">
+              填写后，绑定了订阅节点的规则各自获得一个 r&lt;规则ID&gt;.后缀 的域名，订阅里的节点地址改用它；规则换隧道或换入口主机时只改解析，客户端不用刷新订阅。后缀必须在上面服务商已托管的域名（区域）下；需要启用 DDNS 才生效，清空后会删除这些记录并改回入口地址。
             </p>
           </FormField>
 

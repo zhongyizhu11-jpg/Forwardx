@@ -9,6 +9,17 @@ import { pageResult, pageWindowForTotal, type PageRequest } from "../../shared/p
 import { recordConfigAuditEvent, shouldAuditConfigPatch } from "../configAudit";
 import { withKeyedTaskLock } from "../keyedTaskLock";
 import { reorderWithinSortOrderScope } from "./sortOrderSlots";
+import { recordRuleEntryDomainCleanupsBeforeDelete } from "./ruleEntryDomainRepository";
+import { signalRuleEntryDomainChanged, signalRuleEntryDomainCleanup } from "../ruleEntryDomainSignals";
+
+/*
+  规则专属域名（server/ruleEntryDomain.ts）跟着这几列走：入口主机、开关、删除、订阅绑定。
+  在仓库这一层挂钩，面板、Telegram 机器人、转发组各条改规则的路都不用各自记得通知；
+  只是尽力通知，漏了有定时对账兜底。
+*/
+const RULE_ENTRY_DOMAIN_FIELDS = [
+  "hostId", "isEnabled", "pendingDelete", "isForwardGroupTemplate", "routeParentRuleId", "proxyNodeId", "proxyNodeVisible",
+] as const;
 
 // ==================== Forward Rule Queries ====================
 
@@ -1129,6 +1140,7 @@ export async function createForwardRule(rule: InsertForwardRule) {
   const id = await insertAndGetId("forward_rules", payload);
   const created = await getForwardRuleById(id).catch(() => undefined);
   await recordConfigAuditEvent({ resourceType: "forward_rule", resourceId: id, hostId: Number((created as any)?.hostId || 0), action: "create", after: created });
+  if (Number(payload.proxyNodeId || 0) > 0) signalRuleEntryDomainChanged(id, "rule-created");
   return id;
 }
 
@@ -1325,6 +1337,7 @@ export async function updateForwardRule(id: number, data: Partial<InsertForwardR
     const after = await getForwardRuleById(id).catch(() => undefined);
     await recordConfigAuditEvent({ resourceType: "forward_rule", resourceId: id, hostId: Number((after as any)?.hostId || (before as any)?.hostId || 0), action: "update", before, after });
   }
+  if (RULE_ENTRY_DOMAIN_FIELDS.some((key) => (data as any)?.[key] !== undefined)) signalRuleEntryDomainChanged(id, "rule-updated");
 }
 
 export async function resetForwardRulesForUserSync(userId: number) {
@@ -1467,6 +1480,7 @@ export async function deleteForwardRule(id: number) {
     updatedAt: nowDate(),
   }).where(eq(forwardRules.id, id));
   if (before) await recordConfigAuditEvent({ resourceType: "forward_rule", resourceId: id, hostId: Number((before as any).hostId || 0), action: "delete", before });
+  signalRuleEntryDomainChanged(id, "rule-deleted");
 }
 
 export async function markForwardRulePendingDelete(id: number) {
@@ -1479,6 +1493,7 @@ export async function markForwardRulePendingDelete(id: number) {
     pendingDelete: true,
     updatedAt: nowDate(),
   }).where(eq(forwardRules.id, id));
+  signalRuleEntryDomainChanged(id, "rule-deleted");
 }
 
 export async function finalizeForwardRuleDelete(id: number) {
@@ -1489,10 +1504,13 @@ export async function finalizeForwardRuleDelete(id: number) {
     ruleId: null,
     updatedAt: nowDate(),
   } as any).where(eq(forwardGroupMembers.ruleId, id));
+  // 行删掉之前把发布过的专属域名记进待删表，否则 DNS 里那条记录就没人认领了。
+  const retiredDomains = await recordRuleEntryDomainCleanupsBeforeDelete({ ruleId: id }).catch(() => 0);
   await db.delete(forwardRules).where(and(
     eq(forwardRules.id, id),
     eq(forwardRules.pendingDelete, true),
   ));
+  if (retiredDomains > 0) signalRuleEntryDomainCleanup("rule-deleted");
 }
 
 export async function purgeSettledPendingForwardRuleDeletes() {
@@ -1576,6 +1594,7 @@ export async function toggleForwardRule(id: number, isEnabled: boolean) {
     const after = await getForwardRuleById(id).catch(() => undefined);
     await recordConfigAuditEvent({ resourceType: "forward_rule", resourceId: id, hostId: Number((after as any)?.hostId || (before as any).hostId || 0), action: "update", before, after });
   }
+  signalRuleEntryDomainChanged(id, isEnabled ? "rule-enabled" : "rule-disabled");
 }
 
 /**
