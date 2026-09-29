@@ -315,8 +315,9 @@ const tables: TableDef[] = [
       c("isRunning", "bool", { notNull: true, default: false }), c("pendingDelete", "bool", { notNull: true, default: false }),
       c("sortOrder", "int", { notNull: true, default: 0 }),
       c("proxyNodeId", "int"), c("proxyNodeVisible", "bool", { notNull: true, default: true }), c("proxyNodeName", "text"),
-      // 规则专属域名（见 shared/ruleEntryDomain.ts）：记的是**实际发布出去的**域名和值，
-      // 后缀改了、功能关了也能照着它把旧记录删掉。
+      // 规则专属域名（见 shared/ruleEntryDomain.ts）：entryDomainEnabled 是规则上的开关（缺省开，
+      // 老规则不变）；后面几列记的是**实际发布出去的**域名和值，后缀改了、功能关了也能照着它把旧记录删掉。
+      c("entryDomainEnabled", "bool", { notNull: true, default: true }),
       c("entryDomain", "varchar", { length: 255 }), c("entryDomainValue", "varchar", { length: 255 }),
       c("entryDomainAt", "epoch"), c("entryDomainError", "text"),
       c("userId", "int", { notNull: true }), c("createdAt", "epoch", { notNull: true, default: "now" }),

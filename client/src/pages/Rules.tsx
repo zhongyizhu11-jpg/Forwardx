@@ -292,6 +292,8 @@ type RuleFormData = {
   targetIp: string;
   targetPort: number;
   telegramErrorNotifyEnabled: boolean;
+  /** 规则专属域名开关（shared/ruleEntryDomain.ts）：关掉订阅直接用入口地址。缺省开。 */
+  entryDomainEnabled: boolean;
   failoverEnabled: boolean;
   /**
    * 线路组：路径清单 + 调度策略，整份一个字段（shared/routeGroup）。
@@ -317,6 +319,7 @@ const defaultForm: RuleFormData = {
   targetIp: "",
   targetPort: 0,
   telegramErrorNotifyEnabled: false,
+  entryDomainEnabled: true,
   failoverEnabled: false,
   routeGroup: null,
 };
@@ -2011,6 +2014,12 @@ function RulesContent() {
     staleTime: 60000,
     refetchOnWindowFocus: false,
   });
+  /*
+    规则专属域名此刻能不能用（设置 → DDNS 启用了服务商、填了后缀）。不能用时对话框里不显示
+    「专属域名」开关：一个开了也没效果的开关只会让人以为哪里坏了。值照样随表单提交，功能
+    之后开启时按规则上存的来。
+  */
+  const ruleEntryDomainAvailable = !!systemSettings?.ddns?.ruleEntryDomainActive;
   const { data: wallet, isLoading: walletLoading } = trpc.billing.me.useQuery(undefined, {
     enabled: user?.role !== "admin" && secondaryQueriesReady,
     staleTime: 30000,
@@ -2689,6 +2698,7 @@ function RulesContent() {
       targetIp: rule.targetIp,
       targetPort: rule.targetPort,
       telegramErrorNotifyEnabled: !!rule.telegramErrorNotifyEnabled,
+      entryDomainEnabled: rule.entryDomainEnabled !== false,
       failoverEnabled: !!rule.failoverEnabled,
       // 老主备（2.3.376 之前配的）在这里被读成路径清单：备用各是一条直连的路径。
       routeGroup: routeGroupOf(rule),
@@ -3075,8 +3085,10 @@ function RulesContent() {
     const trimmedName = form.name.trim();
     if (trimmedName) parts.push(trimmedName);
     if (form.telegramErrorNotifyEnabled) parts.push("异常提醒");
+    // 专属域名缺省是开的，只有关了才值得写出来。
+    if (ruleEntryDomainAvailable && !form.entryDomainEnabled) parts.push("不用专属域名");
     return parts;
-  }, [effectiveRouteForwardType, form.name, form.telegramErrorNotifyEnabled]);
+  }, [effectiveRouteForwardType, form.name, form.telegramErrorNotifyEnabled, form.entryDomainEnabled, ruleEntryDomainAvailable]);
   /** 线路组的入口机器：路径里的中转不能是它自己。隧道转发的入口是隧道的出口机（调度在那儿）。 */
   const routeEntryHostId = useMemo(() => {
     if (form.routeMode === "tunnel" && form.tunnelId) {
@@ -3416,6 +3428,7 @@ function RulesContent() {
       targetIp: String(rule.targetIp || ""),
       targetPort: Number(rule.targetPort || 0),
       telegramErrorNotifyEnabled: telegramBotReady && !!rule.telegramErrorNotifyEnabled,
+      entryDomainEnabled: rule.entryDomainEnabled !== false,
       proxyProtocolReceive: !!rule.proxyProtocolReceive,
       proxyProtocolSend: !!rule.proxyProtocolSend,
       proxyProtocolExitReceive: !!rule.proxyProtocolExitReceive,
@@ -3800,6 +3813,7 @@ function RulesContent() {
         targetIp: form.targetIp,
         targetPort: form.targetPort,
         telegramErrorNotifyEnabled: form.telegramErrorNotifyEnabled,
+        entryDomainEnabled: form.entryDomainEnabled,
         ...failoverPayload,
       });
     } else {
@@ -3817,6 +3831,7 @@ function RulesContent() {
         targetIp: form.targetIp,
         targetPort: form.targetPort,
         telegramErrorNotifyEnabled: form.telegramErrorNotifyEnabled,
+        entryDomainEnabled: form.entryDomainEnabled,
         ...failoverPayload,
       });
     }
@@ -5635,9 +5650,10 @@ function RulesContent() {
     /*
       规则专属域名发布成功过（值非空）就排第一个：订阅里给客户端的就是它，复制也该复制它。
       原来的入口地址留在后面（卡片上是「+N」和悬停提示），换线路时对得上是哪台机器。
+      规则上关了开关的不显示：订阅已经改回入口地址，不等 DNS 那边删完（和订阅组装同一口径）。
     */
     const entryDomain = String(rule?.entryDomain || "").trim();
-    if (!entryDomain || !String(rule?.entryDomainValue || "").trim()) return entries;
+    if (rule?.entryDomainEnabled === false || !entryDomain || !String(rule?.entryDomainValue || "").trim()) return entries;
     const rows: EntryAddress[] = [];
     pushUniqueEntryAddress(rows, "规则域名", entryDomain);
     for (const entry of entries) pushUniqueEntryAddress(rows, entry.label, entry.value);
@@ -7875,6 +7891,24 @@ function RulesContent() {
             onCheckedChange={(checked) => setForm({ ...form, telegramErrorNotifyEnabled: checked })}
             />
             </FormField>
+            {/*
+              规则专属域名（shared/ruleEntryDomain.ts）按规则开关：不是每条转发都需要固定域名。
+              只在功能可用时显示（见 ruleEntryDomainAvailable）。
+            */}
+            {ruleEntryDomainAvailable && (
+            <FormField className="flex min-h-10 flex-col gap-2 rounded-md bg-muted/35 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 space-y-0.5">
+            <Label className="text-sm font-medium">专属域名</Label>
+            <p className="text-xs text-muted-foreground">
+            开着时订阅里用固定域名 r&lt;规则ID&gt;.&lt;后缀&gt;，换隧道 / 换入口不用刷新订阅；关掉就直接用入口地址。
+            </p>
+            </div>
+            <Checkbox
+            checked={form.entryDomainEnabled}
+            onCheckedChange={(checked) => setForm({ ...form, entryDomainEnabled: checked })}
+            />
+            </FormField>
+            )}
               </div>
               )}
             </div>

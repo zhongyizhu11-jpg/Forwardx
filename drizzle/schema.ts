@@ -449,9 +449,12 @@ export const forwardRules = table("forward_rules", {
   proxyNodeName: text("proxyNodeName"),
   /*
     规则专属域名（见 shared/ruleEntryDomain.ts 和 server/ruleEntryDomain.ts）：
+    entryDomainEnabled 是规则对话框里的开关，关掉这条规则就不发域名、订阅直接用入口地址
+    （不是每条转发都要域名）；缺省开着，老规则行为不变。
     entryDomain / entryDomainValue 是**实际发布出去的**域名和记录值，只有同步逻辑写。
     entryDomainValue 为空表示还没发布成功过，订阅照旧用入口主机地址。
   */
+  entryDomainEnabled: boolean("entryDomainEnabled").notNull().default(true),
   entryDomain: varchar("entryDomain", { length: 255 }),
   entryDomainValue: varchar("entryDomainValue", { length: 255 }),
   entryDomainAt: epoch("entryDomainAt"),
