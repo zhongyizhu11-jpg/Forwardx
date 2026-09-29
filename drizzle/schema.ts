@@ -872,6 +872,24 @@ export const forwardRuleRouteEvents = table("forward_rule_route_events", {
 export type ForwardRuleRouteEvent = typeof forwardRuleRouteEvents.$inferSelect;
 export type InsertForwardRuleRouteEvent = typeof forwardRuleRouteEvents.$inferInsert;
 
+/*
+  换隧道后旧入口的临时桥接：规则换到别的入口主机后，旧入口的老端口在这段时间里继续把流量转到
+  规则当前的入口（见 shared/ruleEntryBridge 与 server/repositories/ruleEntryBridgeRepository）。
+*/
+export const forwardRuleEntryBridges = table("forward_rule_entry_bridges", {
+  id: serial("id"),
+  ruleId: int("ruleId").notNull(),
+  hostId: int("hostId").notNull(),
+  sourcePort: int("sourcePort").notNull(),
+  protocol: varchar("protocol", { length: 16 }).notNull().default("both"),
+  isRunning: boolean("isRunning").notNull().default(false),
+  runtimeTarget: text("runtimeTarget"),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  expiresAt: epoch("expiresAt").notNull(),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type ForwardRuleEntryBridge = typeof forwardRuleEntryBridges.$inferSelect;
+
 // ===== gost 隧道配置（两台公网 Agent 组建链路） =====
 export const tunnels = table("tunnels", {
   id: serial("id"),

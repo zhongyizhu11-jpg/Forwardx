@@ -6,6 +6,7 @@ import { z } from "zod";
 import * as db from "../db";
 import { ENV } from "../env";
 import { compareVersions, normalizeVersion } from "../../shared/version";
+import { MAX_RULE_SWITCH_BRIDGE_HOURS, RULE_SWITCH_BRIDGE_HOURS_SETTING, normalizeRuleSwitchBridgeHours } from "../../shared/ruleEntryBridge";
 import { spawn } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
@@ -1828,6 +1829,7 @@ export const systemRouter = router({
       sidebarMenu: readSidebarMenuSettings(all),
       customSidebarPages: readCustomSidebarPages(all),
       tunnelRuntimeDefault: all.tunnelRuntimeDefault === "gost" ? "gost" : "forwardx",
+      ruleSwitchBridgeHours: normalizeRuleSwitchBridgeHours(all[RULE_SWITCH_BRIDGE_HOURS_SETTING]),
       githubAccelerator: {
         enabled: all.githubAcceleratorEnabled === "true",
         url: all.githubAcceleratorUrl ?? "",
@@ -2057,6 +2059,7 @@ export const systemRouter = router({
         sidebarMenu: sidebarMenuSettingsSchema.optional(),
         customSidebarPages: customSidebarPagesSchema.optional(),
         tunnelRuntimeDefault: z.enum(["forwardx", "gost"]).optional(),
+        ruleSwitchBridgeHours: z.number().int().min(0).max(MAX_RULE_SWITCH_BRIDGE_HOURS).optional(),
         githubAccelerator: z.object({
           enabled: z.boolean().optional(),
           url: githubAcceleratorUrlSchema.optional(),
@@ -2264,6 +2267,12 @@ export const systemRouter = router({
         const runtime = input.tunnelRuntimeDefault === "gost" ? "gost" : "forwardx";
         await db.setSetting("tunnelRuntimeDefault", runtime);
         console.info(`[Settings] tunnel runtime default set to ${runtime}`);
+      }
+      if (input.ruleSwitchBridgeHours !== undefined) {
+        const hours = normalizeRuleSwitchBridgeHours(input.ruleSwitchBridgeHours);
+        // 只影响之后的换隧道；已经留着的桥接按当时定的到期时间走。
+        await db.setSetting(RULE_SWITCH_BRIDGE_HOURS_SETTING, String(hours));
+        console.info(`[Settings] rule switch bridge hours set to ${hours}`);
       }
       if (input.githubAccelerator) {
         const next: Record<string, string | null> = {};

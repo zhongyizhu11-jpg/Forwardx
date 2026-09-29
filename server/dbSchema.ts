@@ -523,6 +523,25 @@ const tables: TableDef[] = [
     indexes: [["ruleId", "createdAt"], ["createdAt"]],
   },
   {
+    /*
+      换隧道后旧入口的临时桥接（shared/ruleEntryBridge）：规则换到别的入口主机后，在旧入口的老端口
+      上临时把流量转到规则当前的入口，等客户端刷新订阅。一条规则在一台主机上最多一条。
+      runtimeTarget 记最近一次下发时的目标「地址:端口」，目标变了（规则又换了入口）就重新下发；
+      isRunning 由 Agent 的状态上报写。到期即失效，调度器定期删掉。
+      不进面板迁移（MIGRATION_TABLES）：它只活几个小时，而且记的是这个面板的主机、规则 id。
+    */
+    name: "forward_rule_entry_bridges",
+    columns: [
+      c("id", "id"), c("ruleId", "int", { notNull: true }), c("hostId", "int", { notNull: true }),
+      c("sourcePort", "int", { notNull: true }), c("protocol", "varchar", { length: 16, notNull: true, default: "both" }),
+      c("isRunning", "bool", { notNull: true, default: false }), c("runtimeTarget", "text"),
+      c("createdAt", "epoch", { notNull: true, default: "now" }), c("expiresAt", "epoch", { notNull: true }),
+      c("updatedAt", "epoch", { notNull: true, default: "now" }),
+    ],
+    unique: [["ruleId", "hostId"]],
+    indexes: [["hostId", "expiresAt"], ["hostId", "sourcePort"], ["expiresAt"]],
+  },
+  {
     name: "tunnels",
     columns: [
       c("id", "id"), c("name", "text", { notNull: true }), c("entryGroupId", "int"), c("exitGroupId", "int"), c("entryHostId", "int", { notNull: true }),
@@ -631,6 +650,8 @@ const seedSettings = [
   ["ddnsTtl", "60"],
   // 规则专属域名后缀，空 = 不开（见 server/ruleEntryDomain.ts）。
   ["ruleEntryDomainSuffix", ""],
+  // 换隧道后旧入口临时桥接保留的小时数，0 为关闭（shared/ruleEntryBridge）。
+  ["ruleSwitchBridgeHours", "1"],
 ] as const;
 
 export function getDatabaseTableDefs(): readonly TableDef[] {

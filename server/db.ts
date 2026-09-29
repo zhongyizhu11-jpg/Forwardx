@@ -50,6 +50,7 @@ export * from "./repositories/hostGroupRepository";
 export * from "./repositories/pluginRepository";
 export * from "./repositories/proxySubscriptionRepository";
 export * from "./repositories/proxyInboundRepository";
+export * from "./repositories/ruleEntryBridgeRepository";
 
 // ==================== Initialization ====================
 

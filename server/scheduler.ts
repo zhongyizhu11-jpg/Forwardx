@@ -27,6 +27,7 @@ import { reconcileRuleEntryDomains } from "./ruleEntryDomain";
 import { checkPanelUpdateTask } from "./_core/systemRouter";
 import { createNonOverlappingScheduledTask } from "./scheduledTask";
 import { healAutoStoppedRules } from "./forwardRuleAutoRecovery";
+import { sweepExpiredRuleEntryBridges } from "./ruleEntryBridges";
 import {
   SELF_TEST_TIMEOUT_SECONDS,
   selfTestTimeoutSeconds,
@@ -963,6 +964,18 @@ export function startScheduler() {
       console.error("[Scheduler] Auto-stopped rule recovery error:", error);
     }
   });
+  /*
+    换隧道后旧入口的临时桥接到期：删行并推一次刷新，Agent 才会马上撤掉监听。只靠心跳里
+    「读的时候过滤掉」不够 —— 没有别的改动时 Agent 一直拿稳定心跳计划，要等到整轮对账才撤。
+    默认只留 1 小时，所以一分钟扫一次；没有到期的行时就是一条带索引的查询。
+  */
+  const entryBridgeExpiry = createNonOverlappingScheduledTask("rule entry bridge expiry", async () => {
+    try {
+      await sweepExpiredRuleEntryBridges();
+    } catch (error) {
+      console.error("[Scheduler] Rule entry bridge expiry error:", error);
+    }
+  });
   const hostStatusSweep = createNonOverlappingScheduledTask("host status sweep", async () => {
     await runHostStatusSweep();
   });
@@ -1033,6 +1046,7 @@ export function startScheduler() {
   runAtBillingMidnight(monthlyTrafficReset);
   repeatAfter(databasePoolSizing, 5 * 60 * 1000, 25_000);
   repeatAfter(paymentMaintenance, 60 * 1000, 35_000);
+  repeatAfter(entryBridgeExpiry, 60 * 1000, 50_000);
   repeatAfter(reminderSweep, 6 * 60 * 60 * 1000, 30_000);
   repeatAfter(updateCheck, UPDATE_AUTO_CHECK_INTERVAL_MS, 45_000);
   repeatAfter(historyCleanup, 60 * 60 * 1000, 2 * 60_000);

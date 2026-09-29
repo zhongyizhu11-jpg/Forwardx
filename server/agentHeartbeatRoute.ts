@@ -151,6 +151,7 @@ import { selectResolvedTargetIp } from "./dnsTargetResolution";
 import { createResolvedTargetGate } from "./ruleTargetPolicy";
 import { buildForwardXMimicConfig } from "./mimicConfig";
 import { gateForwardRulesForRuntime } from "./linkAccessView";
+import { isEntryBridgeRuntimeRule, loadEntryBridgeRuntimeRules, markRuntimeRulesNotRunning, setRuntimeRuleRunning } from "./ruleEntryBridges";
 import { runAgentRuntimeRecovery } from "./agentRuntimeRecovery";
 import { observePresenceCapableHostActivity, registerPresenceCapableHost } from "./agentFastLiveness";
 import { recordAuthenticatedAgentActivity } from "./agentActivity";
@@ -1908,7 +1909,13 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       getForwardProtocolSettings(),
       latestConfigRevision(),
     ]);
-    const rules = await gateForwardRulesForRuntime(rawRules as any[]);
+    const gatedRules = await gateForwardRulesForRuntime(rawRules as any[]);
+    /*
+      换隧道后旧入口的临时桥接（server/ruleEntryBridges）：合成成普通的 iptables 规则行接在
+      后面，下面整条下发流程原样生成动作、计数、孤儿清理。桥接到期或删掉后这一行消失，
+      Agent 上报的那个监听随即被当成孤儿撤掉。
+    */
+    const rules = [...gatedRules, ...await loadEntryBridgeRuntimeRules(Number(host.id), gatedRules)];
     const actions: any[] = [];
     const dnsWatches = new Map<string, AgentDnsWatch>();
     const responseIssuedAt = Date.now();
@@ -3706,6 +3713,9 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       });
     };
     const shouldUseRuleGuard = async (rule: any) => {
+      // 旧入口桥接只是把流量原样递给新入口，限速、协议封禁由新入口上的规则本身执行；
+      // 这里再套一层守卫会多一个用户态进程，还会让同一份限速串联两次。
+      if (isEntryBridgeRuntimeRule(rule)) return false;
       const tunnel = tunnelForRule(rule);
       const nginxTunnelEntry = isNginxTunnelEntryRule(rule, tunnel);
       const rateLimits = guardRateLimitForRule(rule);
@@ -5005,7 +5015,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       if (runtimeBool((rule as any).pendingDelete)) {
         await db.finalizeForwardRuleDelete(id);
       } else {
-        await db.updateRuleRunningStatus(id, false);
+        await setRuntimeRuleRunning(id, false);
       }
       rule.isRunning = false;
     };
@@ -5232,7 +5242,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     for (const rule of rules) {
       if ((rule as any)._skipRuntimeApply) continue;
       const ruleTunnel = (rule as any).tunnelId ? tunnelById.get((rule as any).tunnelId) as any : null;
-      const ruleProtocolEnabled = isRuleProtocolEnabled(forwardProtocolSettings, rule, ruleTunnel);
+      // 旧入口桥接不是用户选的转发方式，协议总开关管不到它（关掉 iptables 不该让换隧道的规则断流）。
+      const ruleProtocolEnabled = isEntryBridgeRuntimeRule(rule) || isRuleProtocolEnabled(forwardProtocolSettings, rule, ruleTunnel);
       const useRuleGuard = await shouldUseRuleGuard(rule);
       const ruleGuardPolicy = useRuleGuard ? await ruleProtocolPolicy(rule) : emptyProtocolPolicy;
       if (runtimeBool(rule.isEnabled) && ruleProtocolEnabled && rule.forwardType === "gost" && ruleTunnel && isForwardXTunnel(ruleTunnel)) {
@@ -5860,7 +5871,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     }
 
     // 取走该主机的 pending 转发自测任务并标为 running
-    if (runtimeDriftedRuleIds.length > 0) await db.markForwardRulesNotRunning(runtimeDriftedRuleIds);
+    if (runtimeDriftedRuleIds.length > 0) await markRuntimeRulesNotRunning(runtimeDriftedRuleIds);
 
     for (const rule of tunnelExitRules) {
       const tunnel = tunnelById.get((rule as any).tunnelId) as any;
@@ -6634,7 +6645,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       ));
       if (recoverableRules.length > 0) {
         await mapWithConcurrency(recoverableRules, 16, async (rule: any) => {
-          await db.updateRuleRunningStatus(Number(rule.id), true);
+          await setRuntimeRuleRunning(Number(rule.id), true);
           rule.isRunning = true;
         });
         appendPanelLog(

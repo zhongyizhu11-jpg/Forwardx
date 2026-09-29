@@ -230,10 +230,17 @@ import {
 import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { useIsMobile } from "@/hooks/useMobile";
+import { formatEntryBridgeNote } from "@shared/ruleEntryBridge";
 
 const ReactGlobe = lazy(loadReactGlobe) as typeof import("react-globe.gl").default;
 // 延迟详情里的曲线图要用 recharts（约 100 kB gzip）；只有点开某条规则的延迟才需要，不跟规则页一起下
 const TcpingDetailDialog = lazy(() => import("@/components/rules/TcpingDetailDialog").then((module) => ({ default: module.TcpingDetailDialog })));
+
+/** 换隧道后旧入口还在替这条规则转发（服务端带的 entryBridges）：卡片上说一句，到点自己消失。 */
+function entryBridgeNotes(rule: any): string[] {
+  const bridges = Array.isArray(rule?.entryBridges) ? rule.entryBridges : [];
+  return bridges.map((bridge: any) => formatEntryBridgeNote(bridge));
+}
 
 /*
   对话框开着的时候，背后的列表不跟着重渲染。
@@ -6587,6 +6594,9 @@ function RulesContent() {
               <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">{stop.detail}</span>
             ) : null;
           })()}
+          {entryBridgeNotes(rule).map((note) => (
+            <span key={note} className="mt-1 block text-[11px] leading-4 text-muted-foreground">{note}</span>
+          ))}
         </TableCell>
         {user?.role === "admin" && (
           <TableCell className="px-3 py-2">
@@ -6822,6 +6832,9 @@ function RulesContent() {
               <div className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{stop.detail}</div>
             ) : null;
           })()}
+          {entryBridgeNotes(rule).map((note) => (
+            <div key={note} className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{note}</div>
+          ))}
 
           <div className="fx-rule-path" title={`${entryAddresses.map((entry) => entry.text).join(" / ")} → ${targetAddress}`}>
             {/* 入口和目标都是点一下就复制（用户要的）；小复制图标常驻，不用悬停才显出来 */}

@@ -75,6 +75,8 @@ function run(): Outcome {
     await insertRule(10, 1, 1, 40981, target, 19001, { proxyNodeId: 1 });
     await insertRule(11, 2, 2, 40990, "198.51.100.50", 443, { tcpFastOpen: true });
     await exec('UPDATE tunnels SET "isRunning" = 1');
+    // 这里验的是「旧入口直接撤掉」：关掉换隧道后的旧入口桥接（开着的情形见 ruleEntryBridgeSwitch.test.ts）。
+    await exec("UPDATE system_settings SET value = '0' WHERE key = 'ruleSwitchBridgeHours'");
 
     const heartbeat = await import(url("server/agentHeartbeatRoute.ts"));
     const subscriptions = await import(url("server/proxySubscriptionRoute.ts"));

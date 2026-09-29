@@ -69,6 +69,39 @@ async function withRuleResourceAccess<T extends any>(value: T, user: { id: numbe
   return (value ? decorate(value) : value) as T;
 }
 
+/**
+ * 给规则带上换隧道后仍在生效的旧入口桥接（server/ruleEntryBridges），卡片上据此说一句
+ * 「旧入口 Po0 仍在转发（桥接至 …）」。只带界面要的几样：主机 id、主机名、到期时间。
+ */
+async function withRuleEntryBridges<T extends any>(value: T): Promise<T> {
+  const list: any[] = Array.isArray(value)
+    ? value
+    : value && Array.isArray((value as any).items)
+      ? (value as any).items
+      : value ? [value] : [];
+  const ruleIds = list.map((rule: any) => Number(rule?.id || 0)).filter((id) => id > 0);
+  if (ruleIds.length === 0) return value;
+  const bridgesByRule = await db.getActiveRuleEntryBridgesForRules(ruleIds).catch(() => new Map());
+  if (bridgesByRule.size === 0) return value;
+  const decorate = (rule: any) => {
+    const bridges = bridgesByRule.get(Number(rule?.id || 0)) || [];
+    if (!rule || bridges.length === 0) return rule;
+    return {
+      ...rule,
+      entryBridges: bridges.map((bridge: any) => ({
+        hostId: bridge.hostId,
+        hostName: bridge.hostName,
+        sourcePort: bridge.sourcePort,
+        expiresAt: bridge.expiresAt,
+      })),
+    };
+  };
+  if (Array.isArray(value)) return value.map(decorate) as T;
+  if (value && Array.isArray((value as any).items)) {
+    return { ...value, items: (value as any).items.map(decorate) } as T;
+  }
+  return decorate(value) as T;
+}
 
 type RuleListCategory = "all" | "local" | "tunnel" | "chain" | "group";
 type RuleResourceType = "local" | "tunnel" | "chain" | "group";
@@ -269,7 +302,7 @@ export const rulesRouter = router({
         : input.tunnelId === null
           ? rules.filter((rule: any) => !rule.tunnelId)
           : rules.filter((rule: any) => Number(rule.tunnelId || 0) === Number(input.tunnelId));
-      return withRuleResourceAccess(filtered, ctx.user);
+      return withRuleResourceAccess(await withRuleEntryBridges(filtered), ctx.user);
     }),
   listPage: protectedProcedure
     .input(z.object({
@@ -286,7 +319,7 @@ export const rulesRouter = router({
     .query(async ({ input, ctx }) => {
       const repositoryInput = await getRuleListRepositoryInput(input, ctx.user);
       const page = await db.getForwardRulesPage({ ...repositoryInput, page: input.page, pageSize: input.pageSize });
-      return withRuleResourceAccess(page, ctx.user);
+      return withRuleResourceAccess(await withRuleEntryBridges(page), ctx.user);
     }),
   mapItems: protectedProcedure
     .input(z.object({
@@ -353,7 +386,7 @@ export const rulesRouter = router({
       if (!rule) return null;
       if (ctx.user.role !== "admin" && rule.userId !== ctx.user.id) return null;
       if (ctx.user.role !== "admin" && isManagedForwardGroupChildRule(rule)) return null;
-      return withRuleResourceAccess(rule, ctx.user);
+      return withRuleResourceAccess(await withRuleEntryBridges(rule), ctx.user);
     }),
   /**
    * 能当「备用线路」用的中转。

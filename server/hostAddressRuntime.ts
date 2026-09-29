@@ -39,6 +39,11 @@ export async function refreshAgentsAffectedByHostAddress(hostId: number, reason:
     }
   }));
 
+  // 换隧道后留在旧入口的桥接拨的是这台机器的入口地址：地址变了，那些旧入口要跟着重下。
+  for (const bridgeHostId of await db.getEntryBridgeHostIdsForRulesOnHost(id).catch(() => [] as number[])) {
+    affected.add(bridgeHostId);
+  }
+
   for (const affectedHostId of affected) {
     pushAgentRefresh(affectedHostId, reason);
   }

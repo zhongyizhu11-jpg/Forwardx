@@ -21,6 +21,7 @@ import {
   isProxyInboundTrafficRuleId,
   proxyInboundIdFromTrafficRuleId,
 } from "../shared/proxyInboundTraffic";
+import { isEntryBridgeRuleId } from "../shared/ruleEntryBridge";
 import { recordForwardGroupAutoHopLatency } from "./forwardGroupAutoLatencyState";
 import { getTunnelAutoHopAggregate, recordTunnelAutoHopLatency } from "./tunnelAutoLatencyState";
 import { getTunnelMultiEntryLatency, recordTunnelMultiEntryLatency } from "./tunnelMultiEntryLatencyState";
@@ -762,8 +763,15 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       ? req.body.stats.filter(isAgentTrafficStat)
       : [];
     const compactStats = compactTrafficStats(req.body?.s);
-    const stats: AgentTrafficStat[] = objectStats.length > 0 ? objectStats : compactStats;
-    reportedStatCount = stats.length;
+    const reportedStats: AgentTrafficStat[] = objectStats.length > 0 ? objectStats : compactStats;
+    reportedStatCount = reportedStats.length;
+    /*
+      换隧道后旧入口桥接（shared/ruleEntryBridge）的计数一进门就丢掉：这份流量随即到达新入口，
+      新入口上的规则本身会再记一遍、再计一次费；这里再记就是同一份流量扣两次。
+      丢掉的也不能拿去查规则 —— 那个编号不是规则 id。
+    */
+    const stats = reportedStats.filter((stat) => !isEntryBridgeRuleId(stat.ruleId));
+    ignoredStatCount += reportedStats.length - stats.length;
     const hostTraffic: AgentHostTrafficStat | null = isAgentHostTrafficStat(req.body?.hostTraffic)
       ? req.body.hostTraffic
       : compactHostTraffic(req.body?.h);

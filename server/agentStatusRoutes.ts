@@ -1,5 +1,7 @@
 import { Router, Request, Response } from "express";
 import * as db from "./db";
+import { isEntryBridgeRuleId } from "../shared/ruleEntryBridge";
+import { applyEntryBridgeStatus } from "./ruleEntryBridges";
 import { appendPanelLog } from "./_core/panelLogger";
 import { pushAgentRefresh, requestHostTcping } from "./agentEvents";
 import * as hopRepo from "./repositories/tunnelRepository";
@@ -286,6 +288,8 @@ async function applyAgentRuleStatus(host: any, payload: any, lookups?: AgentStat
   if (typeof ruleId !== "number") {
     return { status: 400, body: { error: "ruleId is required" } };
   }
+  // 换隧道后旧入口的桥接：编号不是规则 id，状态记在桥接表上（server/ruleEntryBridges）。
+  if (isEntryBridgeRuleId(ruleId)) return applyEntryBridgeStatus(host, payload);
 
   const rule = await db.getForwardRuleById(ruleId);
   if (!rule) {

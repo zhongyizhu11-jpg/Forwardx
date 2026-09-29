@@ -74,6 +74,12 @@ import { trafficBillingUserLockKey, withKeyedTaskLock, withTrafficBillingUserLoc
 import { mapWithConcurrency } from "../asyncPool";
 import { reserveRuleCreateQuota, type RuleQuotaReservation } from "../ruleQuotaReservations";
 import { assertRuleTargetsAllowedForActor } from "../ruleTargetPolicy";
+import {
+  applyRuleEntryBridgeSwitch,
+  entryBridgeAwarePortError,
+  prepareRuleEntryBridgeSwitch,
+  refreshRuleEntryBridgeHosts,
+} from "../ruleEntryBridges";
 
 /**
  * 规则行上的协议封禁三列永远写 false。
@@ -1413,6 +1419,8 @@ export async function deleteForwardRuleForActor(
     collectBilling(await settleTrafficBillingForDeletedRule(rule));
     // 线路组：中转机上的中继规则跟着走，切换记录一并清掉。
     await retireRouteRelayRulesForRule(ruleId, { reason: `${reasonPrefix}-deleted` });
+    // 换隧道后留在旧入口的桥接一起删，那几台机器随即撤掉监听。
+    await refreshRuleEntryBridgeHosts(ruleId, `${reasonPrefix}-deleted`, { deleteBridges: true });
     if ((rule as any).tunnelId) {
       const tunnel = await db.getTunnelById((rule as any).tunnelId);
       await db.updateTunnel((rule as any).tunnelId, { isRunning: false } as any);
@@ -1541,7 +1549,14 @@ export async function toggleForwardRuleForActor(
           protocol: (rule as any).protocol,
           isUsed: (hostId, port) => db.isPortUsedOnHost(hostId, port, Number(rule.id), (rule as any).protocol, undefined, false),
         });
-        if (!sourcePortReservation) throw new Error(`端口 ${rule.sourcePort} 已被占用，请更换端口后再启用`);
+        if (!sourcePortReservation) {
+          throw await entryBridgeAwarePortError(
+            await db.forwardRuleListenHostIds(rule.hostId, (rule as any).tunnelId),
+            Number(rule.sourcePort),
+            [Number(rule.id)],
+            `端口 ${rule.sourcePort} 已被占用，请更换端口后再启用`,
+          );
+        }
         // 出口端口同理：停用期间它不算占用，可能已被别的规则/隧道拿走。重新预留一次，
         // 端口变了就写回（和 rules.update 的启用路径一致）。
         let nextTunnelExitPort: number | null = null;
@@ -1601,6 +1616,8 @@ export async function toggleForwardRuleForActor(
       // 写库之后再通知隧道各端：先推的话 Agent 可能拉到开关之前的配置。
       if (toggleTunnelForRule) await pushTunnelEndpointRefresh(toggleTunnelForRule, `${reasonPrefix}-toggled`);
       pushAgentRefresh(Number(rule.hostId), `${reasonPrefix}-${isEnabled ? "enabled" : "disabled"}`);
+      // 换隧道后留在旧入口的桥接跟着规则开关：停用时撤、启用时（没到期的话）接着转。
+      await refreshRuleEntryBridgeHosts(ruleId, `${reasonPrefix}-${isEnabled ? "enabled" : "disabled"}`);
       // 中转机上的中继规则跟着入口这条开关。
       await syncRouteGroupAfterSave(ruleId, `${reasonPrefix}-${isEnabled ? "enabled" : "disabled"}`);
       return { success: true, rule };
@@ -1699,7 +1716,7 @@ export async function createDirectForwardRuleForActor(
       if (used) {
         sourcePortReservation.release();
         sourcePortReservation = null;
-        throw new Error(`端口 ${sourcePort} 已被其他规则占用`);
+        throw await entryBridgeAwarePortError([hostId], sourcePort, [], `端口 ${sourcePort} 已被其他规则占用`);
       }
       const otherListenHostIds = listenHostIds.filter((listenHostId) => listenHostId !== hostId);
       if (otherListenHostIds.length > 0) {
@@ -1712,7 +1729,7 @@ export async function createDirectForwardRuleForActor(
         if (!groupReservation) {
           sourcePortReservation.release();
           sourcePortReservation = null;
-          throw new Error(`端口 ${sourcePort} 已被隧道入口组内其他主机上的规则占用或正在分配`);
+          throw await entryBridgeAwarePortError(otherListenHostIds, sourcePort, [], `端口 ${sourcePort} 已被隧道入口组内其他主机上的规则占用或正在分配`);
         }
         sourcePortReservation = combineHostPortReservations([sourcePortReservation, groupReservation]);
       }
@@ -2832,7 +2849,12 @@ export const crudRulesRouter = router({
           }
           const sourceReservation = await reserveRulePort(nextHostIdForRule, nextSourcePortForRule, nextProtocolForRule, rule.id, nextTunnelIdForRule);
           if (!sourceReservation) {
-            throw new Error(`端口 ${nextSourcePortForRule} 已被其他规则占用`);
+            throw await entryBridgeAwarePortError(
+              await db.forwardRuleListenHostIds(nextHostIdForRule, nextTunnelIdForRule),
+              nextSourcePortForRule,
+              [rule.id],
+              `端口 ${nextSourcePortForRule} 已被其他规则占用`,
+            );
           }
         }
       }
@@ -3039,7 +3061,14 @@ export const crudRulesRouter = router({
           });
         }
         const sourceReservation = await reserveRulePort(nextHostIdForRule, sourcePort, nextProtocolForRule, rule.id, nextTunnelIdForRule);
-        if (!sourceReservation) throw new Error(`端口 ${sourcePort} 已被占用，请更换端口后再启用`);
+        if (!sourceReservation) {
+          throw await entryBridgeAwarePortError(
+            await db.forwardRuleListenHostIds(nextHostIdForRule, nextTunnelIdForRule),
+            sourcePort,
+            [rule.id],
+            `端口 ${sourcePort} 已被占用，请更换端口后再启用`,
+          );
+        }
         (data as any).disabledByUser = false;
         (data as any).disabledByTunnel = false;
         (data as any).disabledByGroup = false;
@@ -3100,6 +3129,14 @@ export const crudRulesRouter = router({
         && isFailoverHotUpdate(data as any, rule as any, nextHostIdForRule, nextTunnelIdForRule);
       const oldHostIdForRule = Number(rule.hostId);
       const hostChanged = Number(oldHostIdForRule) !== Number(nextHostIdForRule);
+      // 换到别的入口主机：旧入口上的老端口先占住，写库后在那里留一条到新入口的临时桥接
+      // （server/ruleEntryBridges），客户端不刷新订阅也不断。
+      const entryBridgePlan = await prepareRuleEntryBridgeSwitch({
+        rule,
+        nextHostId: Number(nextHostIdForRule),
+        nextTunnelId: nextTunnelIdForRule ? Number(nextTunnelIdForRule) : null,
+        reservations: heldReservations,
+      });
       const affectedTunnelIds = new Set<number>();
       if (keyFieldChanged && !failoverHotUpdate) {
         (data as any).isRunning = false;
@@ -3149,6 +3186,8 @@ export const crudRulesRouter = router({
       } else {
         await db.clearForwardRuleTunnelExits(id);
       }
+      // 桥接要在通知旧入口之前落库：旧入口下一次心跳就该拿到「撤规则 + 起桥接」，中间不留空档。
+      await applyRuleEntryBridgeSwitch(entryBridgePlan, "forward-rule-entry-bridge");
       // 规则和出口映射都写完之后再通知隧道各端（推送会顺带作废出口机缓存的稳定心跳计划）：
       // 先推的话，Agent 或心跳缓存可能在写入前就按旧规则算好配置，出口机之后不会再被提醒。
       for (const affectedTunnelId of affectedTunnelIds) {
