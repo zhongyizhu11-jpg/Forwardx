@@ -398,7 +398,8 @@ export function useNetworkMapPageModel(options: { enabled: boolean; withTargets:
     enabled,
     refetchInterval: pollingInterval("slow"),
     staleTime: 15_000,
-    placeholderData: (previous) => previous,
+    // rules.list 的返回是个联合类型，推不出 previous 的类型，显式标一下
+    placeholderData: (previous: any) => previous,
   });
   const isTunnelSupported = useTunnelSupportCheck(enabled);
   const hosts = (hostsQuery.data as any[] | undefined) || [];

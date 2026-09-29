@@ -400,6 +400,7 @@ function compactHostOption(host: any) {
     lastHeartbeat: host?.lastHeartbeat,
     agentVersion: host?.agentVersion,
     fxpVersion: host?.fxpVersion,
+    memoryTotal: host?.memoryTotal,
     ddnsEnabled: host?.ddnsEnabled,
     ddnsDomain: host?.ddnsDomain,
     portRangeStart: host?.portRangeStart,
@@ -460,6 +461,11 @@ export async function getHostOptions(ownerUserId?: number, allowedHostIds?: numb
         isOnline: hosts.isOnline,
         lastHeartbeat: hosts.lastHeartbeat,
         agentVersion: hosts.agentVersion,
+        // compactHostOption 会带上 fxpVersion，但这条投影原来没选它：主机选项里的 FXP 版本
+        // 一直是 undefined，网络地图的节点抽屉和 FxpRuntimeBadge 就都看不到「FXP 过旧」。
+        fxpVersion: hosts.fxpVersion,
+        // 节点抽屉的内存条要写「2.1G / 4.0G」：已用在 host_metrics 里，总量只有主机表有
+        memoryTotal: hosts.memoryTotal,
         ddnsEnabled: hosts.ddnsEnabled,
         ddnsDomain: hosts.ddnsDomain,
         portRangeStart: hosts.portRangeStart,
