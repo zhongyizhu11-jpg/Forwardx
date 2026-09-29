@@ -1718,10 +1718,14 @@ html[data-personalization-background="image"] .auth-divider-label, html[data-per
 button.fx-rule-addr:enabled:hover { color: var(--fx-text); }
 .fx-rule-addr-group { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: 4px; }
 /* 「+N」是开关：点开列出全部入口地址各自复制。做成小药丸，看得出能点 */
-.fx-rule-addr-more { flex: none; padding: 0 6px; border-radius: 999px; font: inherit; font-size: 11px; line-height: 18px; color: var(--fx-text-muted); background: color-mix(in srgb, var(--fx-text-muted) 12%, transparent); }
+/* 和旁边的地址一样高（16px 行高的一行），只是个小灰药丸；命中区靠周围留白，不撑 44 */
+.fx-rule-addr-more { display: inline-flex; flex: none; align-items: center; height: 16px; min-height: 0; padding: 0 5px; border: 0; border-radius: 999px; font: inherit; font-size: 10px; line-height: 16px; color: var(--fx-text-muted); background: color-mix(in srgb, var(--fx-text-muted) 14%, transparent); cursor: pointer; }
 button.fx-rule-addr-more:hover { color: var(--fx-accent); background: color-mix(in srgb, var(--fx-primary-fill) 13%, transparent); }
-.fx-rule-addr-list { display: flex; min-width: 0; max-width: 100%; flex-direction: column; align-items: flex-start; gap: 2px; }
-.fx-rule-addr-label { flex: none; font-size: 10px; color: var(--fx-text-muted); }
+/* 点开后每个地址一行（标签 + 地址 + 复制），「收起」跟在最后一行后面，不单占一行 */
+.fx-rule-addr-list { display: flex; min-width: 0; max-width: 100%; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.fx-rule-addr-list > .fx-rule-addr { flex: 0 1 auto; }
+.fx-rule-addr-list > .fx-rule-addr-more { flex: none; }
+.fx-rule-addr-label { flex: none; font-family: var(--fx-font); font-size: 10px; color: var(--fx-text-muted); }
 .fx-rule-addr-copy { flex: none; width: 12px; height: 12px; color: var(--fx-text-muted); opacity: .7; }
 button.fx-rule-addr:enabled:hover .fx-rule-addr-copy, button.fx-rule-addr:enabled:active .fx-rule-addr-copy { opacity: 1; color: var(--fx-accent); }
 /* 箭头和目标绑在一起：折行时整段「→ 目标」下去，不会箭头留在上一行末尾 */
@@ -1784,7 +1788,7 @@ button.fx-rule-tag:hover { filter: brightness(.96); }
   触摸屏上全局 button 有 44px 的最小高度（index.css）。这些是行内的小按钮，命中区靠周围留白，
   不能各自撑成 44 高：地址那一行会把路径条顶高 30px，卡底那一行会变成两倍高。
 */
-.fx-pathstrip-node button, .fx-rule-foot button, .fx-rule-foot-link, .fx-rule-addr, .fx-rule-tag, .fx-chip { min-height: 0; }
+.fx-pathstrip-node button, .fx-rule-foot button, .fx-rule-foot-link, .fx-rule-addr, .fx-rule-addr-more, .fx-rule-tag, .fx-chip { min-height: 0; }
 .fx-chip { min-height: 32px; }
 /* 搜索栏那一行最右边的「新建 / 添加」：和 36px 的搜索胶囊一样高，触摸屏的 44 最小高度不套在它身上 */
 .fx-row-action { height: 36px; min-height: 36px; }
