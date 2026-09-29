@@ -69,7 +69,7 @@ build_one() {
   (
     cd "$ROOT_DIR/agent"
     CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" \
-      go build -trimpath -ldflags "-s -w -X main.Version=$VERSION" -o "$OUT_DIR/$out" .
+      go build -trimpath -buildvcs=false -ldflags "-s -w -X main.Version=$VERSION" -o "$OUT_DIR/$out" .
   )
 }
 
@@ -83,7 +83,7 @@ build_fxp() {
   (
     cd "$ROOT_DIR/forwardx-fxp"
     CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" \
-      go build -trimpath -ldflags "-s -w" -o "$OUT_DIR/$out" .
+      go build -trimpath -buildvcs=false -ldflags "-s -w" -o "$OUT_DIR/$out" .
   )
 }
 
@@ -127,7 +127,8 @@ fi
 if compgen -G "$OUT_DIR/forwardx-runtime-linux-*" >/dev/null; then
   artifacts+=("$OUT_DIR"/forwardx-runtime-linux-*)
 fi
-sha256sum "${artifacts[@]}" > "$OUT_DIR"/SHA256SUMS
+# 只写文件名：SHA256SUMS 是给装机脚本和面板按资产名查的，带上 CI 机器上的绝对路径就对不上了。
+(cd "$OUT_DIR" && sha256sum "${artifacts[@]##*/}") > "$OUT_DIR"/SHA256SUMS
 
 echo "[agent] release artifacts:"
 ls -lh "$OUT_DIR"

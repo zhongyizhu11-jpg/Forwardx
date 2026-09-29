@@ -216,13 +216,15 @@ export function getMissingBundledAgentAssets(version = APP_VERSION) {
 
 const RELEASE_CHECKSUM_TTL_MS = 6 * 60 * 60 * 1000;
 const RELEASE_CHECKSUM_FAILURE_TTL_MS = 5 * 60 * 1000;
-const releaseChecksumCache = new Map<string, { at: number; sums: Record<string, string> | null }>();
+const releaseChecksumCache = new Map<string, { at: number; sums: Record<string, string[]> | null; complete: boolean }>();
 
 export function parseSha256Sums(text: string) {
   const sums: Record<string, string> = {};
   for (const line of String(text || "").split(/\r?\n/)) {
     const match = line.trim().match(/^([0-9a-f]{64})\s+\*?(\S+)$/i);
-    if (match && AGENT_ASSET_NAME_SET.has(match[2])) sums[match[2]] = match[1].toLowerCase();
+    // 旧版本发布的 SHA256SUMS 里写的是 CI 机器上的绝对路径，按文件名比对。
+    const name = match ? match[2].split("/").pop() || "" : "";
+    if (match && AGENT_ASSET_NAME_SET.has(name)) sums[name] = match[1].toLowerCase();
   }
   return sums;
 }
@@ -237,36 +239,43 @@ export function parseSha256Sums(text: string) {
  * 优先用面板自带（发布包里打进来的）二进制现算，其次去 GitHub 取 SHA256SUMS；
  * 都拿不到就返回 null，安装脚本会自己再去 GitHub 取一次。
  */
-export async function getAgentReleaseChecksums(version: string): Promise<Record<string, string> | null> {
+export async function getAgentReleaseChecksums(version: string): Promise<Record<string, string[]> | null> {
   const normalized = normalizeVersion(version);
   if (!isSemver(normalized)) return null;
   const cached = releaseChecksumCache.get(normalized);
-  if (cached && Date.now() - cached.at < (cached.sums ? RELEASE_CHECKSUM_TTL_MS : RELEASE_CHECKSUM_FAILURE_TTL_MS)) {
+  if (cached && Date.now() - cached.at < (cached.complete ? RELEASE_CHECKSUM_TTL_MS : RELEASE_CHECKSUM_FAILURE_TTL_MS)) {
     return cached.sums;
   }
-  let sums: Record<string, string> | null = null;
-  const bundled: Record<string, string> = {};
+  /*
+    面板自带的二进制和 GitHub 发布页上的二进制是两次构建出来的，哈希不一定相同
+    （老版本构建带了 VCS 信息，工作区状态不同就不同）。装机脚本可能从面板下，也可能
+    从 GitHub / 加速镜像下，所以两份都嵌进去，下到哪一份都认；两份都是可信来源。
+  */
+  const sums: Record<string, string[]> = {};
+  const add = (asset: string, hash: string) => {
+    const list = sums[asset] || (sums[asset] = []);
+    if (!list.includes(hash)) list.push(hash);
+  };
   for (const asset of AGENT_ASSET_NAMES) {
     const filePath = getBundledAgentAssetPath(normalized, asset);
     if (!filePath) continue;
     const { createHash } = await import("crypto");
-    bundled[asset] = createHash("sha256").update(await fsp.readFile(filePath)).digest("hex");
+    add(asset, createHash("sha256").update(await fsp.readFile(filePath)).digest("hex"));
   }
-  if (Object.keys(bundled).length === AGENT_ASSET_NAMES.length) {
-    sums = bundled;
-  } else {
-    try {
-      const response = await fetch(`${REPO_URL}/releases/download/v${normalized}/SHA256SUMS`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (response.ok) {
-        const parsed = { ...parseSha256Sums(await response.text()), ...bundled };
-        if (Object.keys(parsed).length > 0) sums = parsed;
-      }
-    } catch {
-      sums = Object.keys(bundled).length > 0 ? bundled : null;
+  let githubOk = false;
+  try {
+    const response = await fetch(`${REPO_URL}/releases/download/v${normalized}/SHA256SUMS`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (response.ok) {
+      const parsed = parseSha256Sums(await response.text());
+      for (const [asset, hash] of Object.entries(parsed)) add(asset, hash);
+      githubOk = Object.keys(parsed).length > 0;
     }
+  } catch {
+    // 连不上 GitHub（或者发布页的二进制还没传完）：先只用面板自带的，过一会儿再试。
   }
-  releaseChecksumCache.set(normalized, { at: Date.now(), sums });
-  return sums;
+  const result = Object.keys(sums).length > 0 ? sums : null;
+  releaseChecksumCache.set(normalized, { at: Date.now(), sums: result, complete: githubOk });
+  return result;
 }

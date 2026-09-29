@@ -63,6 +63,62 @@ test("downloaded agent binaries are verified against the release SHA-256", () =>
   }
 });
 
+test("a binary from either trusted build passes: panel-bundled hash or GitHub SHA256SUMS", () => {
+  /*
+    2.3.391 实际发生的情况：面板自带的 Agent 和 GitHub 发布页上的是两次构建，哈希不同，
+    脚本只嵌了面板那份，从 GitHub / 加速镜像下载的主机全部校验失败、升级卡住。
+    另外发布页 SHA256SUMS 里写的是 CI 机器上的绝对路径，按资产名比对永远对不上。
+  */
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-install-checksum-multi-"));
+  try {
+    const panelBuild = path.join(directory, "panel-build");
+    const githubBuild = path.join(directory, "github-build");
+    fs.writeFileSync(panelBuild, "agent built with the panel");
+    fs.writeFileSync(githubBuild, "agent built by the release workflow");
+    const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+    const panelHash = sha("agent built with the panel");
+    const githubHash = sha("agent built by the release workflow");
+    const scriptWith = (sums: Record<string, string | string[]>) => generateInstallScript("http://panel.example", {
+      releaseChecksums: { "9.9.9": sums },
+    });
+    const prelude = (script: string, curlBody: string) => [
+      "FORWARDX_CURL_CONNECT_TIMEOUT=1",
+      shellFunction(script, "is_enabled_value"),
+      shellFunction(script, "expected_release_sha256"),
+      shellFunction(script, "file_sha256"),
+      shellFunction(script, "verify_release_checksum"),
+      `curl() { ${curlBody}; }`,
+    ].join("\n");
+    const run = (script: string, curlBody: string, body: string) => spawnSync("bash", ["-c", `${prelude(script, curlBody)}\n${body}`], { encoding: "utf8" });
+
+    // 面板把两份哈希都嵌进来：两份构建都能过，被换的不行。
+    const both = scriptWith({ "forwardx-agent-linux-amd64": [panelHash, githubHash] });
+    const offline = "return 1";
+    assert.equal(run(both, offline, `verify_release_checksum forwardx-agent-linux-amd64 ${panelBuild} 9.9.9 A`).status, 0);
+    assert.equal(run(both, offline, `verify_release_checksum forwardx-agent-linux-amd64 ${githubBuild} 9.9.9 A`).status, 0);
+    const evil = path.join(directory, "evil");
+    fs.writeFileSync(evil, "evil");
+    assert.equal(run(both, offline, `verify_release_checksum forwardx-agent-linux-amd64 ${evil} 9.9.9 A`).status, 1);
+
+    // 面板只嵌了自己那份（连不上 GitHub）：主机再按发布页 SHA256SUMS 比一次，绝对路径也认。
+    const panelOnly = scriptWith({ "forwardx-agent-linux-amd64": panelHash });
+    const sumsWithPaths = `${githubHash}  /home/runner/work/Forwardx/Forwardx/dist/agent/forwardx-agent-linux-amd64`;
+    const githubCurl = `printf '%s\\n' '${sumsWithPaths}'`;
+    const fromGithub = run(panelOnly, githubCurl, `verify_release_checksum forwardx-agent-linux-amd64 ${githubBuild} 9.9.9 A`);
+    assert.equal(fromGithub.status, 0, fromGithub.stdout + fromGithub.stderr);
+    fs.writeFileSync(evil, "evil");
+    assert.equal(run(panelOnly, githubCurl, `verify_release_checksum forwardx-agent-linux-amd64 ${evil} 9.9.9 A`).status, 1);
+    assert.equal(spawnSync("bash", ["-n"], { input: both }).status, 0);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("SHA256SUMS written with CI absolute paths still maps to asset names", () => {
+  const sums = parseSha256Sums(`${"d".repeat(64)}  /home/runner/work/Forwardx/Forwardx/dist/agent/forwardx-agent-linux-amd64`);
+  assert.deepEqual(sums, { "forwardx-agent-linux-amd64": "d".repeat(64) });
+});
+
 test("SHA256SUMS parsing keeps only known agent assets", () => {
   const sums = parseSha256Sums([
     `${"a".repeat(64)}  forwardx-agent-linux-amd64`,

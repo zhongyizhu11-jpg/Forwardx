@@ -26,7 +26,7 @@ type AgentInstallScriptOptions = {
   panelMigrationId?: string | null;
   panelMigrationStartedAt?: number | null;
   /** 版本 → 资产名 → SHA-256。面板嵌进脚本，下载的二进制按它校验。 */
-  releaseChecksums?: Record<string, Record<string, string> | null | undefined>;
+  releaseChecksums?: Record<string, Record<string, string | string[]> | null | undefined>;
 };
 
 /**
@@ -41,9 +41,12 @@ function releaseChecksumShellLines(checksums: AgentInstallScriptOptions["release
   const cases: string[] = [];
   for (const [version, sums] of Object.entries(checksums || {})) {
     if (!/^\d+\.\d+\.\d+$/.test(version) || !sums) continue;
-    for (const [asset, hash] of Object.entries(sums)) {
-      if (!/^[a-z0-9-]+$/.test(asset) || !/^[0-9a-f]{64}$/.test(hash)) continue;
-      cases.push(`    ${version}/${asset}) echo ${hash} ;;`);
+    for (const [asset, value] of Object.entries(sums)) {
+      if (!/^[a-z0-9-]+$/.test(asset)) continue;
+      // 一个资产可以有多份可信哈希（面板自带的构建、GitHub 发布页的构建），空格分隔。
+      const hashes = (Array.isArray(value) ? value : [value]).filter((hash) => /^[0-9a-f]{64}$/.test(String(hash)));
+      if (hashes.length === 0) continue;
+      cases.push(`    ${version}/${asset}) echo "${hashes.join(" ")}" ;;`);
     }
   }
   return [
@@ -61,11 +64,21 @@ function releaseChecksumShellLines(checksums: AgentInstallScriptOptions["release
     "}",
     "",
     "verify_release_checksum() {",
-    '  local ASSET="$1" DST="$2" VERSION="$3" LABEL="$4" EXPECTED="" ACTUAL="" SUMS=""',
+    '  local ASSET="$1" DST="$2" VERSION="$3" LABEL="$4" EXPECTED="" ACTUAL="" SUMS="" HASH=""',
     '  EXPECTED="$(expected_release_sha256 "$VERSION" "$ASSET")"',
-    '  if [ -z "$EXPECTED" ] && [ -n "$VERSION" ]; then',
+    '  if [ -n "$EXPECTED" ]; then',
+    '    ACTUAL="$(file_sha256 "$DST")"',
+    '    for HASH in $EXPECTED; do',
+    '      if [ "$ACTUAL" = "$HASH" ]; then echo "[信息] $LABEL 校验通过"; return 0; fi',
+    '    done',
+    '  fi',
+    // 面板嵌进来的哈希没对上（或者没有）：再拿 GitHub 发布页的 SHA256SUMS 比一次。
+    // 面板自带的二进制和发布页的可能是两次构建，哈希不同，两份都是可信来源。
+    // 旧版本的 SHA256SUMS 里写的是 CI 机器上的绝对路径，按文件名比对。
+    '  if [ -n "$VERSION" ]; then',
     '    SUMS="$(curl -fsSL --connect-timeout "$FORWARDX_CURL_CONNECT_TIMEOUT" --max-time 20 "https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v${VERSION}/SHA256SUMS" 2>/dev/null || true)"',
-    "    EXPECTED=\"$(printf '%s\\n' \"$SUMS\" | awk -v a=\"$ASSET\" '$2==a || $2==(\"*\" a) {print tolower($1); exit}')\"",
+    "    HASH=\"$(printf '%s\\n' \"$SUMS\" | awk -v a=\"$ASSET\" '{n=$2; sub(/^\\*/, \"\", n); sub(/.*\\//, \"\", n)} n==a {print tolower($1); exit}')\"",
+    '    if [ -n "$HASH" ]; then EXPECTED="${EXPECTED:+$EXPECTED }$HASH"; fi',
     "  fi",
     '  if [ -z "$EXPECTED" ]; then',
     '    if is_enabled_value "${FORWARDX_REQUIRE_CHECKSUM:-}"; then',
@@ -77,15 +90,14 @@ function releaseChecksumShellLines(checksums: AgentInstallScriptOptions["release
     "    return 0",
     "  fi",
     '  ACTUAL="$(file_sha256 "$DST")"',
-    '  if [ "$ACTUAL" != "$EXPECTED" ]; then',
-    '    echo "[错误] $LABEL 校验失败：下载到的文件和发布版本不一致（可能被镜像或中间人替换），已删除"',
-    '    echo "       期望 $EXPECTED"',
-    '    echo "       实际 ${ACTUAL:-无法计算}"',
-    '    rm -f "$DST"',
-    "    return 1",
-    "  fi",
-    '  echo "[信息] $LABEL 校验通过"',
-    "  return 0",
+    '  for HASH in $EXPECTED; do',
+    '    if [ "$ACTUAL" = "$HASH" ]; then echo "[信息] $LABEL 校验通过"; return 0; fi',
+    '  done',
+    '  echo "[错误] $LABEL 校验失败：下载到的文件和发布版本不一致（可能被镜像或中间人替换），已删除"',
+    '  echo "       期望 $EXPECTED"',
+    '  echo "       实际 ${ACTUAL:-无法计算}"',
+    '  rm -f "$DST"',
+    "  return 1",
     "}",
     "",
   ];
