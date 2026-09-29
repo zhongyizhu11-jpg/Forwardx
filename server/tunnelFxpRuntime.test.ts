@@ -54,7 +54,10 @@ test("共享隧道给别人用时：看不到的主机不报名字和版本，�
 test("升级完成要 Agent 到版本、FXP 也不再需要重装；回滚只看 Agent 版本", () => {
   assert.equal(isAgentUpgradeCompleted({ agentVersion: AGENT_VERSION, fxpVersion: FXP_RUNTIME_VERSION }, AGENT_VERSION, AGENT_VERSION), true);
   assert.equal(isAgentUpgradeCompleted({ agentVersion: AGENT_VERSION, fxpVersion: "legacy-v2" }, AGENT_VERSION, AGENT_VERSION), false);
-  assert.equal(isAgentUpgradeCompleted({ agentVersion: AGENT_VERSION, fxpVersion: null }, AGENT_VERSION, AGENT_VERSION), true, "旧 Agent 不报 FXP，不能卡住升级");
+  // 早于 2.2.205 的 Agent 不报 FXP 版本：升到它自己的目标版本就算完成，不能被 FXP 卡住。
+  assert.equal(isAgentUpgradeCompleted({ agentVersion: "2.2.204", fxpVersion: null }, "2.2.204", "2.2.204"), true, "旧 Agent 不报 FXP，不能卡住升级");
+  // 2.2.205 起必须报：到了版本却没报，说明 FXP 没装好，不算完成。
+  assert.equal(isAgentUpgradeCompleted({ agentVersion: "2.2.205", fxpVersion: null }, "2.2.205", "2.2.205"), false);
   assert.equal(isAgentUpgradeCompleted({ agentVersion: "2.2.100", fxpVersion: FXP_RUNTIME_VERSION }, AGENT_VERSION, AGENT_VERSION), false);
   assert.equal(isAgentUpgradeCompleted({ agentVersion: "2.2.100", fxpVersion: "legacy-v2" }, "2.2.100", AGENT_VERSION), true);
 
