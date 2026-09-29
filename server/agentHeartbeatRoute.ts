@@ -73,6 +73,7 @@ import {
   buildCountingChainCmds,
   buildCountingCleanupCmds,
   buildKernelForwardTransitionCleanupCmds,
+  buildEntryBridgeConntrackFlushCmds,
   buildIptablesForwardCleanupCmds,
   buildIptablesForwardCmds,
   buildIptablesTransitionCleanupCmds,
@@ -128,7 +129,7 @@ import {
   isForwardXWireGuardV2,
   type ForwardXWireGuardNodePlan,
 } from "./forwardXWireGuard";
-import { agentStatusOrderGuard, agentStatusOrderingKey } from "./agentStatusOrdering";
+import { agentActionIssueTracker, agentStatusOrderGuard, agentStatusOrderingKey } from "./agentStatusOrdering";
 import { forwardGroupProbeTopologyKey, tunnelProbeTopologyKey } from "./probeTopology";
 import { resolveLocalForwardXTransportVersion, resolveRuleTrafficPortForHost } from "./agentRuntimeRuleState";
 import { isTunnelRelayAggregate, isTunnelRelayFailover, tunnelRelayCandidates, tunnelRelayUsesParallelRelays } from "@shared/tunnelRelay";
@@ -152,6 +153,7 @@ import { createResolvedTargetGate } from "./ruleTargetPolicy";
 import { buildForwardXMimicConfig } from "./mimicConfig";
 import { gateForwardRulesForRuntime } from "./linkAccessView";
 import { isEntryBridgeRuntimeRule, loadEntryBridgeRuntimeRules, markRuntimeRulesNotRunning, setRuntimeRuleRunning } from "./ruleEntryBridges";
+import { isEntryBridgeRuleId } from "../shared/ruleEntryBridge";
 import { runAgentRuntimeRecovery } from "./agentRuntimeRecovery";
 import { observePresenceCapableHostActivity, registerPresenceCapableHost } from "./agentFastLiveness";
 import { recordAuthenticatedAgentActivity } from "./agentActivity";
@@ -239,6 +241,7 @@ export function pruneAgentHeartbeatCaches(now = Date.now()) {
   }
   pruneMapEntries(mimicRuntimeLogCache, (entry) => stale(entry.loggedAt));
   pruneMapEntries(agentActionBatchCache, (entry) => stale(entry.seenAt));
+  agentActionIssueTracker.prune(now);
   pruneMapEntries(agentDesiredStateSendCache, (entry) => stale(entry.sentAt));
   pruneMapEntries(agentRuntimeSyncActionCache, (entry) => stale(entry.sentAt));
   pruneMapEntries(agentPluginSyncActionCache, (entry) => stale(entry.sentAt));
@@ -805,6 +808,7 @@ export function invalidateAgentDesiredStateCache(
   if (!Number.isFinite(id) || id <= 0) return;
   agentStableHeartbeatPlanCache.invalidate(id);
   agentActionBatchCache.delete(id);
+  agentActionIssueTracker.forgetPrefix(`agent-status:${id}:`);
   agentDesiredStateSendCache.delete(id);
   if (!options.preserveLocalRuntimeState) agentLocalRuntimeStateCache.delete(id);
   for (const key of Array.from(agentRuntimeSyncActionCache.keys())) {
@@ -6655,6 +6659,21 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       }
     }
 
+    /*
+      规则换回还留着桥接的机器：这个端口的 conntrack 里还有被桥接 DNAT 出去的老流（换之前就连着
+      的 UDP 客户端）。Agent 接管端口时会删掉桥接的 DNAT 规则，但不会动这些记录，老客户端的包
+      会继续被送去另一台入口绕一圈，等那边的桥接到期就断。规则的下发里先把它们清掉
+      （Agent 是先删 DNAT 规则再跑 preCommands，顺序正好）。
+    */
+    for (const action of actions) {
+      if (action?.op !== "apply" || action?.statusType === "runtime") continue;
+      const ruleId = Number(action?.ruleId || 0);
+      const port = Number(action?.sourcePort || 0);
+      if (ruleId <= 0 || isEntryBridgeRuleId(ruleId) || port <= 0) continue;
+      const bridgeOnPort = reportedLocalRules.some((local: AgentLocalRuntimeRuleState) => Number(local?.port || 0) === port && isEntryBridgeRuleId(local?.ruleId));
+      if (!bridgeOnPort) continue;
+      action.preCommands = [...buildEntryBridgeConntrackFlushCmds(port, action.protocol), ...(Array.isArray(action.preCommands) ? action.preCommands : [])];
+    }
     const effectiveActions = dropStalePortRemoveActions(actions, protectedRuleRemoveActionKeys);
     const actionBatchIssuedAt = resolveActionBatchIssuedAt(Number(host.id), effectiveActions, responseIssuedAt);
     const ruleByIdForDesired = new Map((rules as any[]).map((rule: any) => [Number(rule.id), rule]));
@@ -6791,11 +6810,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       && shouldSendDesiredState(Number(host.id), orderedActions, activeWorkActions, responseIssuedAt, configRevision);
     if (sendDesiredState) {
       for (const action of orderedActions) {
-        agentStatusOrderGuard.expect(
-          agentStatusOrderingKey(Number(host.id), action),
-          action.issuedAt,
-          responseIssuedAt,
-        );
+        const statusKey = agentStatusOrderingKey(Number(host.id), action);
+        // 内容没变的原样重发不抬高期望：Agent 对上一份的结果仍然算数（见 AgentActionIssueTracker）。
+        if (!agentActionIssueTracker.shouldExpect(statusKey, stableActionSignatureHash([action]), responseIssuedAt)) continue;
+        agentStatusOrderGuard.expect(statusKey, action.issuedAt, responseIssuedAt);
       }
     }
     const desiredStateHash = stableDesiredStateHash(orderedActions, desiredStatePieceByAction);
