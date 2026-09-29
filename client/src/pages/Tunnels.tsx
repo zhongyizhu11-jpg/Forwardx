@@ -10,6 +10,7 @@ import { NetworkPath } from "@/components/network/NetworkPath";
 import { StatusDot } from "@/components/network/StatusDot";
 import { buildTunnelPath } from "@/features/links/tunnelPath";
 import { tunnelHealthFromAvailability } from "@/features/links/tunnelHealth";
+import { TunnelFxpIssueNotice } from "@/features/links/TunnelFxpIssueNotice";
 import DataSectionError from "@/components/DataSectionError";
 import { sameNullableStringArray } from "@/lib/multiHopAddress";
 import { normalizeLatencySeriesKey } from "@shared/latencyProbe";
@@ -3894,6 +3895,7 @@ function TunnelsContent() {
               {!supported && (
                 <p className="mt-1 text-[11px] text-destructive">{tunnelProtocolLabel(protocolKey)} 当前不支持</p>
               )}
+              <TunnelFxpIssueNotice tunnel={tunnel} />
             </div>
             <div className="fx-rule-head-actions">
               <SortableDragHandle
@@ -4127,6 +4129,7 @@ function TunnelsContent() {
                             {tunnelProtocolLabel(protocolKey)} 当前不支持
                           </span>
                         )}
+                        <TunnelFxpIssueNotice tunnel={tunnel} as="span" />
                       </TableCell>
                       <TableCell className="py-3">
                         <div className="line-clamp-2 max-w-[25rem] text-xs leading-5 text-muted-foreground" title={tunnelTableRouteText(tunnel)}>

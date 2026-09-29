@@ -753,12 +753,44 @@ func logListenerConnGateRejection(role string, cfg config, remoteAddr net.Addr, 
 	log.Printf("%s tcp rejected by connection gate tunnel=%d client=%s reason=%s handshake=%d/%d handshakeIPs=%d handshakeForIP=%d/%d pending=%d/%d pendingIPs=%d pendingForIP=%d/%d active=%d/%d activeIPs=%d activeForIP=%d/%d", role, cfg.TunnelID, remoteAddr, reason, handshake, gates.handshake.maxConnections, handshakeIPs, handshakeForIP, gates.handshake.maxPerIP, pending, gates.pending.maxConnections, pendingIPs, pendingForIP, gates.pending.maxPerIP, active, gates.active.maxConnections, activeIPs, activeForIP, gates.active.maxPerIP)
 }
 
+/*
+parseRuntimeFlags 解析命令行。
+
+-version 打印运行时版本后退出：Agent 和安装脚本据此判断装着的 FXP 能不能和别的机器握手
+（隧道协议有过不兼容的升级，Agent 升上去了而 FXP 还是旧的，这条隧道就连不通）。不认识这个
+参数的旧版本会报 "flag provided but not defined" 并以退出码 2 结束，调用方据此认出旧版本。
+*/
+func parseRuntimeFlags(args []string, output io.Writer) (configPath string, showVersion bool, err error) {
+	flags := flag.NewFlagSet("forwardx-fxp", flag.ContinueOnError)
+	flags.SetOutput(output)
+	config := flags.String("config", "", "config file")
+	version := flags.Bool("version", false, "print the runtime version and exit")
+	if err := flags.Parse(args); err != nil {
+		return "", false, err
+	}
+	return *config, *version, nil
+}
+
+func printRuntimeVersion(output io.Writer) {
+	fmt.Fprintln(output, fxpRuntimeVersion)
+}
+
 func main() {
+	configPathValue, showVersion, flagErr := parseRuntimeFlags(os.Args[1:], os.Stderr)
+	if errors.Is(flagErr, flag.ErrHelp) {
+		os.Exit(0)
+	}
+	if flagErr != nil {
+		os.Exit(2)
+	}
+	if showVersion {
+		printRuntimeVersion(os.Stdout)
+		return
+	}
 	ignoreBrokenPipeSignal()
 	configureFXPLogging()
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	configPath := flag.String("config", "", "config file")
-	flag.Parse()
+	configPath := &configPathValue
 	if *configPath == "" {
 		log.Fatal("missing -config")
 	}

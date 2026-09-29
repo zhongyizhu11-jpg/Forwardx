@@ -1,4 +1,6 @@
 import { APP_VERSION } from "./_core/systemRouter";
+import { FXP_MIN_WIRE_VERSION } from "../shared/versions";
+import { FXP_HANDSHAKE_V3_MARKER } from "../shared/fxpRuntime";
 
 /**
  * 「上一个版本」的猜测值：补丁号减一。
@@ -103,6 +105,164 @@ function releaseChecksumShellLines(checksums: AgentInstallScriptOptions["release
   ];
 }
 
+/**
+ * 安装脚本里装 Agent + FXP 的那几段 bash。
+ *
+ * 以前升级是：Agent 直接下载到 /usr/local/bin/forwardx-agent，接着下 FXP，FXP 下不来（网络、
+ * 校验值对不上）就警告一句、留着旧 FXP 继续升。结果是新 Agent 配一个握手 v2 的旧 FXP ——
+ * 面板看 Agent 版本一切正常，走这台的 NEX 隧道 tcping 能通、真实流量全超时。
+ *
+ * 现在：
+ *   - 两个二进制都先下到旁边的 *.forwardx-new（校验 SHA-256，最多试 FORWARDX_DOWNLOAD_ATTEMPTS 次），
+ *     都拿到了才替换，先换 FXP 再换 Agent；
+ *   - FXP 拿不到时看现有的 FXP：还能和当前协议握手（>= FXP_MIN_WIRE_VERSION）就大声警告、
+ *     保留它；握不上（或说不清）就整个升级失败退出，Agent 也不换 —— 旧 Agent 配旧 FXP
+ *     至少和原来一样，比新 Agent 配旧 FXP 的「看着正常、其实不通」好；
+ *   - 全新安装拿不到 FXP 时照旧继续（其它转发方式不受影响），但打一段醒目的警告。
+ */
+function fxpInstallShellLines() {
+  return String.raw`
+# 下载 release 二进制，失败时重试（网络抖动、镜像偶发 5xx 都常见）。
+download_release_binary_with_retry() {
+  local ATTEMPT=1 MAX="${"$"}{FORWARDX_DOWNLOAD_ATTEMPTS:-3}"
+  case "$MAX" in ''|*[!0-9]*) MAX=3 ;; esac
+  [ "$MAX" -ge 1 ] || MAX=1
+  while :; do
+    download_release_binary "$@" && return 0
+    if [ "$ATTEMPT" -ge "$MAX" ]; then
+      echo "[警告] $3 下载 $ATTEMPT 次都没成功"
+      return 1
+    fi
+    ATTEMPT=$((ATTEMPT + 1))
+    echo "[信息] $3 下载失败，第 $ATTEMPT/$MAX 次重试..."
+    sleep "${"$"}{FORWARDX_DOWNLOAD_RETRY_DELAY:-3}"
+  done
+}
+
+# 下到 DST 旁边的 DST.forwardx-new（同目录，替换时 mv 是原子的），校验通过才算成功。
+stage_release_binary() {
+  local ASSET="$1" DST="$2" LABEL="$3" ALLOW_FALLBACK="${"$"}{4:-0}" STAGE="$2.forwardx-new"
+  rm -f "$STAGE"
+  if download_release_binary_with_retry "$ASSET" "$STAGE" "$LABEL" "$ALLOW_FALLBACK" && [ -s "$STAGE" ]; then
+    chmod 0755 "$STAGE" 2>/dev/null || true
+    return 0
+  fi
+  rm -f "$STAGE"
+  return 1
+}
+
+promote_staged_binary() {
+  local DST="$1" LABEL="$2" STAGE="$1.forwardx-new"
+  if [ ! -s "$STAGE" ]; then
+    echo "[错误] 找不到已下载的 $LABEL: $STAGE"
+    return 1
+  fi
+  if ! mv -f "$STAGE" "$DST"; then
+    rm -f "$STAGE"
+    echo "[错误] $LABEL 替换失败: $DST"
+    return 1
+  fi
+  echo "[信息] $LABEL 已更新"
+  return 0
+}
+
+# a >= b（x.y.z）
+version_at_least() {
+  awk -v a="$1" -v b="$2" 'BEGIN { n = split(a, x, "."); m = split(b, y, "."); for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 } exit 0 }'
+}
+
+# 装着的 FXP 是什么版本：x.y.z；不认识 -version 的旧版本里，已经说握手 v3 的回 legacy，
+# 只会 v2 的回 legacy-v2；没装回 missing。和 Agent 上报给面板的取值一致。
+fxp_binary_version() {
+  local BIN="$1" OUT=""
+  if [ ! -f "$BIN" ]; then
+    echo "missing"
+    return 0
+  fi
+  if command -v timeout >/dev/null 2>&1; then
+    OUT="$(timeout 5 "$BIN" -version 2>/dev/null)" || OUT=""
+  else
+    OUT="$("$BIN" -version 2>/dev/null)" || OUT=""
+  fi
+  OUT="$(printf '%s\n' "$OUT" | head -n 1 | tr -d '[:space:]')"
+  OUT="${"$"}{OUT#v}"
+  if printf '%s\n' "$OUT" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "$OUT"
+    return 0
+  fi
+  if grep -a -q -F "$FXP_HANDSHAKE_V3_MARKER" "$BIN" 2>/dev/null; then
+    echo "legacy"
+  else
+    echo "legacy-v2"
+  fi
+}
+
+# 这个版本的 FXP 能不能和当前协议握手。
+fxp_version_wire_compatible() {
+  case "$1" in
+    legacy) return 0 ;;
+    legacy-v2|missing|'') return 1 ;;
+  esac
+  printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+  version_at_least "$1" "$FXP_MIN_WIRE_VERSION"
+}
+
+warn_fxp_unavailable() {
+  echo ""
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "[警告] ForwardX FXP ${"$"}{1:-安装}失败（已重试 ${"$"}{FORWARDX_DOWNLOAD_ATTEMPTS:-3} 次）"
+  echo "[警告] 这台机器上 NEX 加密隧道不可用；iptables/realm/socat/gost 转发不受影响"
+  echo "[警告] 网络恢复后在面板上对这台主机点「升级 Agent」即可补装 FXP"
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo ""
+}
+
+# 升级：先把 Agent 和 FXP 都下好、校验好，再一起替换。返回非 0 时什么都没换。
+upgrade_agent_and_fxp_binaries() {
+  local AGENT_STAGE="$GO_AGENT_BIN.forwardx-new" FXP_STAGE="$FXP_BIN.forwardx-new" CURRENT_FXP="" NEW_FXP=""
+  DOWNLOADED_RELEASE_VERSION=""
+  if ! stage_release_binary "forwardx-agent-linux-${"$"}{GO_ARCH}" "$GO_AGENT_BIN" "Go Agent" "0"; then
+    echo "[错误] Go Agent 下载失败，升级中止（现有 Agent 和 FXP 都没有改动）"
+    return 1
+  fi
+  FXP_RELEASE_VERSION="${"$"}{DOWNLOADED_RELEASE_VERSION:-$RELEASE_VERSION}"
+  if RELEASE_VERSION="$FXP_RELEASE_VERSION" stage_release_binary "forwardx-fxp-linux-${"$"}{GO_ARCH}" "$FXP_BIN" "ForwardX FXP" "0"; then
+    NEW_FXP="$(fxp_binary_version "$FXP_STAGE")"
+    echo "[信息] 新 FXP 版本: $NEW_FXP"
+  else
+    CURRENT_FXP="$(fxp_binary_version "$FXP_BIN")"
+    if [ "$CURRENT_FXP" = "missing" ]; then
+      warn_fxp_unavailable "升级"
+    elif fxp_version_wire_compatible "$CURRENT_FXP"; then
+      echo ""
+      echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+      echo "[警告] 新 FXP 下载失败，保留现有 FXP（$CURRENT_FXP）：它还能和其它节点握手"
+      echo "[警告] 面板会把这台标成「FXP 可升级」，网络恢复后再升级一次即可"
+      echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+      echo ""
+    else
+      rm -f "$AGENT_STAGE"
+      echo ""
+      echo "[错误] 新 FXP 下载失败，而现有 FXP（$CURRENT_FXP）太旧，和已升级的节点握不上手"
+      echo "[错误] 只升级 Agent 会得到一台「版本是新的、NEX 隧道却不通」的机器，所以本次升级中止"
+      echo "[错误] 现有 Agent 和 FXP 都没有改动；请检查到 GitHub / 面板的网络后重新升级"
+      return 1
+    fi
+  fi
+  if [ -s "$FXP_STAGE" ] && ! promote_staged_binary "$FXP_BIN" "ForwardX FXP"; then
+    rm -f "$AGENT_STAGE"
+    echo "[错误] FXP 替换失败，升级中止（Agent 没有改动）"
+    return 1
+  fi
+  if ! promote_staged_binary "$GO_AGENT_BIN" "Go Agent"; then
+    echo "[错误] Go Agent 替换失败，升级中止"
+    return 1
+  fi
+  return 0
+}
+`.split("\n");
+}
+
 function shellQuote(value: string) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
@@ -186,6 +346,10 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '',
     'GO_AGENT_BIN="/usr/local/bin/forwardx-agent"',
     'FXP_BIN="/usr/local/bin/forwardx-fxp"',
+    // 能和当前隧道协议握手的最旧 FXP，以及区分不认识 -version 的旧 FXP 用的文案（见 shared/fxpRuntime.ts）。
+    `FXP_MIN_WIRE_VERSION="${FXP_MIN_WIRE_VERSION}"`,
+    `FXP_HANDSHAKE_V3_MARKER="${FXP_HANDSHAKE_V3_MARKER}"`,
+    'FORWARDX_DOWNLOAD_ATTEMPTS="${FORWARDX_DOWNLOAD_ATTEMPTS:-3}"',
     'RUNTIME_BIN="/usr/local/bin/forwardx-runtime"',
     'NGINX_BIN="/usr/local/bin/forwardx-nginx"',
     'NGINX_SERVICE_NAME="forwardx-nginx"',
@@ -1007,6 +1171,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '  return 1',
     '}',
     '',
+    ...fxpInstallShellLines(),
     '# ============ 卸载 ============',
     '',
     'do_uninstall() {',
@@ -1499,9 +1664,12 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '',
     '  echo "[步骤 4/6] 安装 ForwardX Tunnel Runtime..."',
     '  FXP_RELEASE_VERSION="${DOWNLOADED_RELEASE_VERSION:-$RELEASE_VERSION}"',
-    '  RELEASE_VERSION="$FXP_RELEASE_VERSION" download_release_binary "forwardx-fxp-linux-${GO_ARCH}" "$FXP_BIN" "ForwardX FXP" "0" || \\',
-    '    echo "[警告] FXP 安装失败，加密隧道功能将不可用（iptables/realm/socat/gost 转发不受影响）"',
-    '',
+    '  if RELEASE_VERSION="$FXP_RELEASE_VERSION" stage_release_binary "forwardx-fxp-linux-${GO_ARCH}" "$FXP_BIN" "ForwardX FXP" "0" \\',
+    '    && promote_staged_binary "$FXP_BIN" "ForwardX FXP"; then',
+    '    echo "[信息] ForwardX FXP 版本: $(fxp_binary_version "$FXP_BIN")"',
+    '  else',
+    '    warn_fxp_unavailable "安装"',
+    '  fi',
     '',
     '  return 0',
     '}',
@@ -1674,12 +1842,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '  fi',
     '',
     '  echo "[信息] 升级 Go Agent（Release v${RELEASE_VERSION}）..."',
-    '  DOWNLOADED_RELEASE_VERSION=""',
-    '  if download_release_binary "forwardx-agent-linux-${GO_ARCH}" "$GO_AGENT_BIN" "Go Agent" "0"; then',
-    '    FXP_RELEASE_VERSION="${DOWNLOADED_RELEASE_VERSION:-$RELEASE_VERSION}"',
-    '    if ! RELEASE_VERSION="$FXP_RELEASE_VERSION" download_release_binary "forwardx-fxp-linux-${GO_ARCH}" "$FXP_BIN" "ForwardX FXP" "0"; then',
-    '      echo "[警告] FXP 资产下载失败，保留现有 runtime；本次升级不会删除可用的旧 FXP"',
-    '    fi',
+    '  if upgrade_agent_and_fxp_binaries; then',
 
     '    install_deps',
     '    if is_enabled_value "${FORWARDX_INSTALL_NGINX:-}"; then',

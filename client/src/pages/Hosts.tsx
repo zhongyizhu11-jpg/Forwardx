@@ -25,6 +25,8 @@ import HostCard, { HostActionButtons } from "@/components/hosts/HostCard";
 // 本页 902 行已有一个同名的统计小卡，这里取别名区分：这个是主机列表里的实体卡
 import HostEntitySummaryCard from "@/components/hosts/HostSummaryCard";
 import HostDetailDialog from "@/components/hosts/HostDetailDialog";
+import { FxpRuntimeBadge, fxpRuntimeDetailText } from "@/components/hosts/FxpRuntimeBadge";
+import { hostNeedsAgentUpgrade } from "@shared/fxpRuntime";
 import HostGroupManager, { compareHostGroupDisplayOrder, type HostGroupView, type HostGroupViewMode } from "@/components/hosts/HostGroupManager";
 import HostProbeServiceManager, { type HostProbeServiceViewMode } from "@/components/hosts/HostProbeServiceManager";
 import HostProbeServiceLatencyDialog from "@/components/hosts/HostProbeServiceLatencyDialog";
@@ -2016,7 +2018,7 @@ function HostsContent() {
           metrics={hostLatestMetricSeriesById.get(host.id) ?? null}
           traffic={hostTrafficById.get(host.id)}
           canUpgrade={user?.role === "admin"}
-          upgradeAvailable={user?.role === "admin" && !!host?.agentVersion && !!latestAgentVersion && !isAgentLatest(host)}
+          upgradeAvailable={user?.role === "admin" && !!latestAgentVersion && hostNeedsAgentUpgrade(host, latestAgentVersion)}
           resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
           onOpenDetail={setDetailHost}
           onEdit={openEdit}
@@ -2086,9 +2088,10 @@ function HostsContent() {
     }
     correctHostTrafficMutation.mutate({ hostId, usedBytes });
   };
+  // 「已是最新」要 Agent 和 FXP 都是最新：Agent 新、FXP 旧的机器也要能一键升级（会重装 FXP）。
   const isAgentLatest = (host: any) => {
     if (!latestAgentVersion || !host?.agentVersion) return false;
-    return compareVersions(host.agentVersion, latestAgentVersion) >= 0;
+    return compareVersions(host.agentVersion, latestAgentVersion) >= 0 && !hostNeedsAgentUpgrade(host, latestAgentVersion);
   };
   const requestAgentUpgrade = (host: any) => {
     if (!host?.isOnline) {
@@ -2144,7 +2147,7 @@ function HostsContent() {
       const latestHosts = await utils.hosts.list.fetch();
       const latestSettings = await utils.system.getSettings.fetch();
       const agentVersion = latestSettings?.agentVersion || "";
-      const count = latestHosts.filter((host: any) => isAgentVersionBehind(host.agentVersion, agentVersion)).length;
+      const count = latestHosts.filter((host: any) => hostNeedsAgentUpgrade(host, agentVersion)).length;
       toast.success(count > 0 ? `发现 ${count} 台 Agent 有新版本` : "Agent 版本检查完成，暂无新版本");
     } catch (err: any) {
       toast.error(err?.message || "检查 Agent 更新失败");
@@ -2630,6 +2633,7 @@ function HostsContent() {
                                     新版本
                                   </Badge>
                                 )}
+                                <FxpRuntimeBadge host={host} className="h-4 px-1 text-[9px] leading-none" />
                                 {host.agentUpgradeRequested && (
                                   <Badge variant="outline" className={`h-4 shrink-0 px-1 py-0 text-[9px] leading-none ${agentUpgradeTimedOut ? "border-destructive/30 text-destructive" : "border-primary/25 text-primary"}`}>
                                     {agentUpgradeTimedOut ? "升级失败" : "升级中"}
@@ -2978,6 +2982,10 @@ function HostsContent() {
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">当前 Agent</span>
                 <span className="font-mono">{upgradeHost.agentVersion ? `v${upgradeHost.agentVersion}` : "未上报"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">当前 FXP</span>
+                <span className="font-mono">{fxpRuntimeDetailText(upgradeHost)}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">目标版本</span>

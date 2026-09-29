@@ -44,6 +44,7 @@ import {
   selectTunnelHopDialAddress,
 } from "../tunnelAddressSelection";
 import { planManualTunnelTestRefresh } from "../tunnelRuntimePlan";
+import { isForwardXTunnel, tunnelFxpMemberHostIds, tunnelFxpRuntimeIssues, tunnelFxpRuntimeIssueSummary } from "../tunnelFxpRuntime";
 import {
   filterTunnelFieldsForUser,
   getLinkAccessScope,
@@ -600,7 +601,20 @@ async function attachTunnelEndpointHosts(tunnels: any[], options: { includeLaten
       host: hostSummary(hostMap.get(Number(member.hostId || 0))),
     })),
   } : null;
+  const enabledGroupHostIds = (group: any) => (group?.members || [])
+    .filter((member: any) => member?.memberType === "host" && dbBool(member.isEnabled, true))
+    .map((member: any) => Number(member.hostId || 0));
   return tunnels.map((tunnel) => {
+    const fxpIssues = tunnelFxpRuntimeIssues(tunnel, tunnelFxpMemberHostIds(tunnel, {
+      hopHostIds: hopHostIdsByTunnel.get(Number(tunnel.id)) || [],
+      extraExitHostIds: (extraExitNodesByTunnel.get(Number(tunnel.id)) || [])
+        .filter((node) => node.isEnabled)
+        .map((node) => node.hostId),
+      groupHostIds: [
+        ...enabledGroupHostIds(endpointGroupById.get(Number(tunnel.entryGroupId || 0))),
+        ...enabledGroupHostIds(endpointGroupById.get(Number(tunnel.exitGroupId || 0))),
+      ],
+    }), hostMap);
     const latestLatency = latestLatencyByTunnel.get(Number(tunnel.id));
     const latestLatencySeries = latestLatencySeriesByTunnel.get(Number(tunnel.id)) || [];
     const fallbackLatency = typeof (tunnel as any).lastLatencyMs === "number" && Number.isFinite((tunnel as any).lastLatencyMs)
@@ -629,6 +643,8 @@ async function attachTunnelEndpointHosts(tunnels: any[], options: { includeLaten
       exitHost: hostSummary(hostMap.get(Number(tunnel.exitHostId || 0))),
       entryGroup: groupSummary(endpointGroupById.get(Number(tunnel.entryGroupId || 0))),
       exitGroup: groupSummary(endpointGroupById.get(Number(tunnel.exitGroupId || 0))),
+      // 成员主机里 FXP 握不上当前协议的（见 server/tunnelFxpRuntime.ts）。
+      fxpIssues,
     };
   });
 }
@@ -1816,6 +1832,26 @@ export const tunnelsRouter = router({
           .filter((hostId: number) => Number.isFinite(hostId) && hostId > 0);
         const entryTestHostIds = await getTunnelEntryTestHostIds(tunnel);
         const hasEntryGroupTest = entryTestHostIds.length > 1;
+        /*
+          成员里有 FXP 握不上当前协议的主机：tcping 仍然会通（端口是 Agent 在听），诊断显示
+          正常而流量全超时。直接判失败，把哪台、什么版本、怎么修写清楚。
+        */
+        const fxpMemberHostIds = tunnelFxpMemberHostIds(tunnel, {
+          hopHostIds: tunnelHopHostIds,
+          extraExitHostIds: tunnelExtraExitHostIds,
+          groupHostIds: entryTestHostIds,
+        });
+        const fxpMemberHosts = isForwardXTunnel(tunnel)
+          ? new Map(((await db.getHostsByIds(fxpMemberHostIds)) as any[]).map((host) => [Number(host.id), host]))
+          : new Map<number, any>();
+        const fxpIssues = tunnelFxpRuntimeIssues(tunnel, fxpMemberHostIds, fxpMemberHosts);
+        if (fxpIssues.length > 0) {
+          const message = tunnelFxpRuntimeIssueSummary(fxpIssues);
+          await db.updateTunnelTestResult(tunnel.id, { status: "failed", latencyMs: null, message });
+          await db.insertTunnelLatencyStat({ tunnelId: tunnel.id, latencyMs: null, isTimeout: true }, { message });
+          appendPanelLog("error", `[TunnelTest] tunnel=${tunnel.id} FXP runtime incompatible: ${fxpIssues.map((issue) => `host=${issue.hostId} fxp=${issue.fxpVersion || "-"}`).join(" ")}`);
+          return { success: false, latencyMs: null, message };
+        }
         const runtimeRefreshMode = planManualTunnelTestRefresh({
           isRunning: dbBool(tunnel.isRunning),
           hopHostCount: tunnelHopHostIds.length,

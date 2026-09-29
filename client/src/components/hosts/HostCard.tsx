@@ -40,6 +40,7 @@ import {
 } from "@shared/hostTrafficQuota";
 import { parseHostOs } from "@shared/hostOs";
 import { HostOsGlyph } from "./HostOsBadge";
+import { FxpRuntimeBadge } from "./FxpRuntimeBadge";
 import {
   formatBytes,
   formatCpuPercent,
@@ -627,6 +628,7 @@ export default function HostCard({
                     新版
                   </Badge>
                 )}
+                <FxpRuntimeBadge host={host} />
               </div>
               {host.agentUpgradeRequested && (
                 <div className="mt-1 flex flex-wrap gap-1.5">
@@ -659,6 +661,7 @@ export default function HostCard({
                     新版
                   </Badge>
                 )}
+                <FxpRuntimeBadge host={host} />
               </div>
               {host.agentUpgradeRequested && (
                 <div className="mt-1 flex flex-wrap gap-1.5">

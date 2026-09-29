@@ -8,6 +8,37 @@ import { requireRuleProtocolEnabled } from "../forwardProtocolSettings";
 import { createHopTestBatch, registerHopTest } from "../hopTestState";
 import { linkProbeMethodForRule } from "@shared/latencyProbe";
 import { ruleLatencySeriesQueryCache as selfTestQueryCache } from "../ruleLatencyQueryCache";
+import * as hopRepo from "../repositories/tunnelRepository";
+import { dbBool } from "../repositories/repositoryUtils";
+import { isForwardXTunnel, tunnelFxpMemberHostIds, tunnelFxpRuntimeIssues, tunnelFxpRuntimeIssueSummary } from "../tunnelFxpRuntime";
+
+/*
+  走 NEX 隧道的规则：隧道上任何一台的 FXP 握不上当前协议，自检里的 tcping 照样会通（端口是
+  Agent 在听），可真实流量全超时。先查成员主机报上来的 FXP 版本，有问题就直接给一条失败的
+  自检结果，把哪台、什么版本、怎么修写清楚。
+*/
+async function forwardXTunnelFxpIssueMessage(tunnel: any) {
+  if (!isForwardXTunnel(tunnel)) return "";
+  const [hops, extraExits] = await Promise.all([
+    hopRepo.getTunnelHops(Number(tunnel.id)),
+    hopRepo.getTunnelExitNodes(Number(tunnel.id)),
+  ]);
+  const groupHostIds: number[] = [];
+  for (const groupId of [Number(tunnel.entryGroupId || 0), Number(tunnel.exitGroupId || 0)]) {
+    if (groupId <= 0) continue;
+    const group = await db.getForwardGroupById(groupId) as any;
+    for (const member of group?.members || []) {
+      if (member?.memberType === "host" && dbBool(member.isEnabled, true)) groupHostIds.push(Number(member.hostId || 0));
+    }
+  }
+  const memberHostIds = tunnelFxpMemberHostIds(tunnel, {
+    hopHostIds: (hops as any[] || []).map((hop) => hop.hostId),
+    extraExitHostIds: (extraExits as any[] || []).filter((node) => dbBool(node.isEnabled, true)).map((node) => node.hostId),
+    groupHostIds,
+  });
+  const hosts = new Map(((await db.getHostsByIds(memberHostIds)) as any[]).map((host) => [Number(host.id), host]));
+  return tunnelFxpRuntimeIssueSummary(tunnelFxpRuntimeIssues(tunnel, memberHostIds, hosts));
+}
 
 export const selfTestRulesRouter = router({
   tcpingSeries: protectedProcedure
@@ -97,6 +128,21 @@ export const selfTestRulesRouter = router({
       if ((rule as any).tunnelId) {
         const tunnel = await db.getTunnelById((rule as any).tunnelId);
         if (!tunnel) throw new Error("隧道不存在");
+        const fxpIssueMessage = await forwardXTunnelFxpIssueMessage(tunnel);
+        if (fxpIssueMessage) {
+          const id = await db.createForwardTest({
+            ruleId: rule.id,
+            hostId: Number(tunnel.entryHostId || rule.hostId),
+            userId: rule.userId,
+            status: "failed",
+            listenOk: false,
+            targetReachable: false,
+            forwardOk: false,
+            message: fxpIssueMessage,
+          });
+          appendPanelLog("warn", `[SelfTest] rule=${rule.id} tunnel=${tunnel.id} FXP runtime incompatible: ${fxpIssueMessage}`);
+          return { id };
+        }
         hostId = tunnel.exitHostId;
         const targetIp = rule.targetIp;
         if (!targetIp) throw new Error("目标地址不可用，请检查规则目标地址");

@@ -284,20 +284,22 @@ export async function getHostsPage(input: HostListQuery) {
   const versionQuery = db
     .select({
       agentVersion: hosts.agentVersion,
+      fxpVersion: hosts.fxpVersion,
       count: sql<number>`COUNT(*)`,
       onlineCount: sql<number>`COALESCE(SUM(${onlineExpression}), 0)`,
     })
     .from(hosts);
+  // 按 Agent + FXP 版本一起分组：Agent 已是最新、FXP 却旧了的主机也要算进「可升级」。
   const versionRows = condition
-    ? await versionQuery.where(condition).groupBy(hosts.agentVersion)
-    : await versionQuery.groupBy(hosts.agentVersion);
+    ? await versionQuery.where(condition).groupBy(hosts.agentVersion, hosts.fxpVersion)
+    : await versionQuery.groupBy(hosts.agentVersion, hosts.fxpVersion);
   const versionCounts = versionRows.flatMap((row: any) => {
     const count = Math.max(0, Number(row.count || 0));
     const onlineCount = Math.min(count, Math.max(0, Number(row.onlineCount || 0)));
     const offlineCount = count - onlineCount;
     return [
-      ...(onlineCount > 0 ? [{ agentVersion: row.agentVersion || null, online: true, count: onlineCount }] : []),
-      ...(offlineCount > 0 ? [{ agentVersion: row.agentVersion || null, online: false, count: offlineCount }] : []),
+      ...(onlineCount > 0 ? [{ agentVersion: row.agentVersion || null, fxpVersion: row.fxpVersion || null, online: true, count: onlineCount }] : []),
+      ...(offlineCount > 0 ? [{ agentVersion: row.agentVersion || null, fxpVersion: row.fxpVersion || null, online: false, count: offlineCount }] : []),
     ];
   });
   return {
@@ -350,6 +352,7 @@ export async function getHostStatusRows(input: Omit<HostListQuery, keyof PageReq
       isOnline: hosts.isOnline,
       lastHeartbeat: hosts.lastHeartbeat,
       agentVersion: hosts.agentVersion,
+      fxpVersion: hosts.fxpVersion,
       agentUpgradeRequested: hosts.agentUpgradeRequested,
       agentUpgradeTargetVersion: hosts.agentUpgradeTargetVersion,
       agentUpgradeRequestedAt: hosts.agentUpgradeRequestedAt,
@@ -370,6 +373,7 @@ export async function getHostUpgradeCandidates(input: Omit<HostListQuery, keyof 
       isOnline: hosts.isOnline,
       lastHeartbeat: hosts.lastHeartbeat,
       agentVersion: hosts.agentVersion,
+      fxpVersion: hosts.fxpVersion,
       agentUpgradeRequested: hosts.agentUpgradeRequested,
       agentUpgradeTargetVersion: hosts.agentUpgradeTargetVersion,
       agentUpgradeRequestedAt: hosts.agentUpgradeRequestedAt,
@@ -393,6 +397,7 @@ function compactHostOption(host: any) {
     isOnline: host?.isOnline,
     lastHeartbeat: host?.lastHeartbeat,
     agentVersion: host?.agentVersion,
+    fxpVersion: host?.fxpVersion,
     ddnsEnabled: host?.ddnsEnabled,
     ddnsDomain: host?.ddnsDomain,
     portRangeStart: host?.portRangeStart,

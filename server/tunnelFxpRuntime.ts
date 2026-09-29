@@ -1,0 +1,76 @@
+import { fxpRuntimeIncompatible, fxpRuntimeIssueMessage } from "../shared/fxpRuntime";
+
+/*
+  NEX（forwardx）隧道上每一台 Agent 都要跑 forwardx-fxp，任何一台的 FXP 握不上当前协议，
+  整条隧道就不通：tcping 到入口端口是通的（那是 Agent 自己在听），真实流量在握手时被丢掉。
+  以前面板只看 Agent 版本，这种隧道在列表里一切正常、诊断也过。这里按成员主机报上来的
+  fxpVersion 找出握不上的那几台，给隧道列表、规则列表和诊断用。
+*/
+
+export type TunnelFxpRuntimeIssue = {
+  hostId: number | null;
+  hostName: string | null;
+  fxpVersion: string | null;
+  message: string;
+};
+
+export function isForwardXTunnel(tunnel: any) {
+  return String(tunnel?.mode || "").trim().toLowerCase() === "forwardx";
+}
+
+export function tunnelFxpRuntimeIssues(
+  tunnel: any,
+  memberHostIds: readonly unknown[],
+  hostById: ReadonlyMap<number, any>,
+): TunnelFxpRuntimeIssue[] {
+  if (!isForwardXTunnel(tunnel)) return [];
+  const issues: TunnelFxpRuntimeIssue[] = [];
+  const seen = new Set<number>();
+  for (const value of memberHostIds) {
+    const hostId = Number(value || 0);
+    if (!Number.isFinite(hostId) || hostId <= 0 || seen.has(hostId)) continue;
+    seen.add(hostId);
+    const host = hostById.get(hostId);
+    if (!host || !fxpRuntimeIncompatible(host)) continue;
+    const hostName = String(host.name || "").trim() || `主机 ${hostId}`;
+    issues.push({
+      hostId,
+      hostName,
+      fxpVersion: host.fxpVersion ? String(host.fxpVersion) : null,
+      message: fxpRuntimeIssueMessage(hostName, host),
+    });
+  }
+  return issues;
+}
+
+/** 隧道上所有要跑 FXP 的主机：入口、出口、中转、负载均衡出口、入口/出口组成员。 */
+export function tunnelFxpMemberHostIds(tunnel: any, extras: {
+  hopHostIds?: readonly unknown[];
+  extraExitHostIds?: readonly unknown[];
+  groupHostIds?: readonly unknown[];
+} = {}) {
+  return [
+    tunnel?.entryHostId,
+    ...(extras.groupHostIds || []),
+    ...(extras.hopHostIds || []),
+    tunnel?.exitHostId,
+    ...(extras.extraExitHostIds || []),
+  ].map((value) => Number(value || 0)).filter((id) => Number.isFinite(id) && id > 0);
+}
+
+/** 一句话，诊断和自检直接拿去当失败原因。 */
+export function tunnelFxpRuntimeIssueSummary(issues: readonly TunnelFxpRuntimeIssue[]) {
+  if (issues.length === 0) return "";
+  return `${issues.map((issue) => issue.message).join("；")}。升级前这条 NEX 隧道握不上手，流量会超时。`;
+}
+
+/** 非管理员看不到的主机：只说「有一台节点」，不报名字和版本。 */
+export function redactTunnelFxpRuntimeIssue(issue: TunnelFxpRuntimeIssue, visible: boolean): TunnelFxpRuntimeIssue {
+  if (visible) return issue;
+  return {
+    hostId: null,
+    hostName: null,
+    fxpVersion: null,
+    message: "隧道中有一台节点的 FXP 版本过旧，需要管理员升级 Agent",
+  };
+}

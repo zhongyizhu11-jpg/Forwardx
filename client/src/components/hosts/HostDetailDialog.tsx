@@ -9,6 +9,7 @@ import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { formatCpuPercent, hostAddressText, hostRegionText } from "./hostDisplay";
 import { HostOsAvatar, HostOsGlyph, hostOsOf } from "./HostOsBadge";
+import { fxpRuntimeBadgeTitle, fxpRuntimeDetailText } from "./FxpRuntimeBadge";
 import { buildHostActions, type HostSummaryCardProps } from "./HostSummaryCard";
 import { useHostVitals } from "./useHostVitals";
 
@@ -130,6 +131,7 @@ export default function HostDetailDialog(props: HostDetailDialogProps) {
               }
             />
             <Row label="Agent" value={host.agentVersion ? `v${host.agentVersion}` : "—"} />
+            <Row label="FXP" value={<span title={fxpRuntimeBadgeTitle(host)}>{fxpRuntimeDetailText(host)}</span>} />
             <Row label="地址" value={hostAddressText(host) || "—"} />
             <Row label="地区" value={hostRegionText(host) || "—"} />
             <Row label={vitals.uptimeLabel} value={vitals.uptimeText} />

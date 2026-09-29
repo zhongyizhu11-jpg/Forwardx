@@ -3744,6 +3744,7 @@ func register(cfg Config) error {
 		"cpuInfo":      cpuInfo(),
 		"memoryTotal":  memTotal(),
 		"agentVersion": Version,
+		"fxpVersion":   reportedFXPVersion(),
 	}
 	var out map[string]any
 	return post(cfg, "/api/agent/register", payload, &out)
@@ -4090,6 +4091,7 @@ func heartbeat(cfg Config, forceReconcile ...bool) (heartbeatResult, error) {
 	payload["pluginVersions"] = pluginVersions
 	payload["pluginSyncSignatures"] = pluginSyncSignatures
 	payload["mimicEnvironment"] = mimicEnvironment(false)
+	payload["fxpVersion"] = reportedFXPVersion()
 	if (!compactEnabled || shouldReportStatic) && primaryIP != "" {
 		payload["ip"] = primaryIP
 	}
@@ -4276,6 +4278,7 @@ func heartbeatKeepalive(cfg Config) (heartbeatResult, error) {
 		"failoverStats":             failoverStatsSnapshot(),
 	}
 	payload["mimicEnvironment"] = mimicEnvironment(false)
+	payload["fxpVersion"] = reportedFXPVersion()
 	if compactAgentReports.Load() {
 		payload["m"] = []any{
 			cpuUsage(),
@@ -4956,7 +4959,7 @@ func agentEventStream(cfg Config) {
 }
 
 func runAgentEventStream(cfg Config) error {
-	env, err := encrypt(map[string]any{"agentVersion": Version}, cfg.Token)
+	env, err := encrypt(map[string]any{"agentVersion": Version, "fxpVersion": reportedFXPVersion()}, cfg.Token)
 	if err != nil {
 		return err
 	}
@@ -7479,6 +7482,10 @@ func runtimePortOccupiedByProtocol(port int, protocol string) bool {
 
 func fxpMatchesRunning(spec *fxpSpec, desiredGroups ...*fxpSpec) bool {
 	if spec == nil {
+		return false
+	}
+	// 装着的 FXP 太旧时不能算“已在运行”，否则动作会被当成成功跳过，面板看不到原因。
+	if fxpVersionWireIncompatible(installedFXPVersion()) {
 		return false
 	}
 	normalized := normalizeFXPSpec(*spec)
@@ -10487,6 +10494,11 @@ func startFXPProcessLockedWithPersistence(cfg Config, spec fxpSpec, actionMessag
 	runtimePath, err := resolveFXPRuntimeExecutable()
 	if err != nil || runtimePath == "" {
 		actionMessage.set("fxp runtime missing: install /usr/local/bin/forwardx-fxp to use custom encrypted tunnels")
+		return false
+	}
+	// 旧 FXP 握不上新协议：宁可让动作失败、在面板上写清楚原因，也不要跑一个注定连不通的进程。
+	if err := fxpRuntimeCompatibilityError(); err != nil {
+		actionMessage.set("%v", err)
 		return false
 	}
 	originalSpec := spec

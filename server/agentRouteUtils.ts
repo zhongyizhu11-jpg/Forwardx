@@ -10,6 +10,7 @@ export const AGENT_PANEL_MIGRATION_VERSION = "2.2.153";
 // 都从 agentRouteUtils 拿 isAgentVersionAtLeast，没必要为了搬家改一圈 import。
 export { normalizeVersion, compareVersions, isAgentVersionAtLeast, isAgentVersionBehind } from "../shared/version";
 import { compareVersions, normalizeVersion } from "../shared/version";
+import { fxpRuntimeNeedsUpgrade } from "../shared/fxpRuntime";
 
 export function isAgentUpgradeTargetSatisfied(
   version: string | null | undefined,
@@ -24,6 +25,49 @@ export function isAgentUpgradeTargetSatisfied(
     return normalizedVersion === normalizedTarget;
   }
   return compareVersions(normalizedVersion, normalizedTarget) >= 0;
+}
+
+/**
+ * 一键升级算不算完成：Agent 到了目标版本，并且（升到当前版本时）FXP 也不再需要重装。
+ *
+ * 以前只看 Agent 版本。升级脚本下载 FXP 失败时留着旧 FXP，Agent 却已经是新版本 ——
+ * 面板第一个心跳就把升级请求清掉，再也不会重跑安装脚本；已经是最新 Agent、只是 FXP
+ * 旧了的主机，点「升级」也会在下发前就被当成完成。回滚到旧版本时只看 Agent 版本：
+ * 旧版本的安装包里本来就是旧 FXP。
+ */
+export function isAgentUpgradeCompleted(
+  host: { agentVersion?: string | null; fxpVersion?: string | null },
+  target: string | null | undefined,
+  currentSupportedVersion?: string | null,
+) {
+  if (!isAgentUpgradeTargetSatisfied(host.agentVersion, target, currentSupportedVersion)) return false;
+  if (currentSupportedVersion && compareVersions(normalizeVersion(target), currentSupportedVersion) < 0) return true;
+  return !fxpRuntimeNeedsUpgrade(host);
+}
+
+/**
+ * 这台主机现在点「升级」是不是白跑：Agent 已经不低于目标版本，并且（目标是当前版本时）
+ * FXP 也不需要重装。FXP 旧了的主机即使 Agent 已是最新，也要能一键重跑安装脚本。
+ */
+export function isHostAgentUpgradeUnnecessary(
+  host: { agentVersion?: string | null; fxpVersion?: string | null },
+  target: string | null | undefined,
+  currentSupportedVersion?: string | null,
+) {
+  if (!host.agentVersion || !target || compareVersions(host.agentVersion, target) < 0) return false;
+  if (currentSupportedVersion && compareVersions(normalizeVersion(target), currentSupportedVersion) < 0) return true;
+  return !fxpRuntimeNeedsUpgrade(host);
+}
+
+/**
+ * 主机上报的 fxpVersion：x.y.z 或 legacy / legacy-v2 / missing，其它一律丢掉（回空串，调用方
+ * 就保留库里的值）。unknown 是 Agent 这一次没问出来（超时之类），不该盖掉上次问到的版本。
+ */
+export function normalizeReportedFxpVersion(value: unknown) {
+  const text = String(value ?? "").trim().replace(/^v/i, "").toLowerCase();
+  if (/^\d{1,5}\.\d{1,5}\.\d{1,6}$/.test(text)) return text;
+  if (text === "legacy" || text === "legacy-v2" || text === "missing") return text;
+  return "";
 }
 
 export function hasAgentVersionChanged(
