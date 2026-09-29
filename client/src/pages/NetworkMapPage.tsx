@@ -22,6 +22,7 @@ import {
   type SheetSnap,
 } from "@/features/network/networkMapPageState";
 import { summarizeHostSeries, summarizeLatencySeries, sumTraffic } from "@/features/network/networkMapSeries";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import { hostNeedsAgentUpgrade } from "@shared/fxpRuntime";
 import {
@@ -295,12 +296,8 @@ function NetworkMapPageBody() {
   });
 
   const copyText = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast(`已复制 ${text}`);
-    } catch {
-      toast("这个浏览器不让复制，长按选中吧");
-    }
+    if (await copyTextToClipboard(text)) toast(`已复制 ${text}`);
+    else toast("这个浏览器不让复制，长按选中吧");
   };
 
   // ---- 抽屉内容 ----
