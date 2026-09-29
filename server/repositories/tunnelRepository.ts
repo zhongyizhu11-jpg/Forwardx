@@ -790,6 +790,14 @@ export async function resetAgentRuntimeStateForHost(hostId: number) {
        )`,
     [boolValue(false), now, boolValue(true), id, id, id, id, id, "entry", boolValue(true), "host", id, boolValue(true)],
   );
+
+  // 换隧道后留在这台机器上的旧入口桥接也一样按「未运行」重来（Agent 重启后 iptables 规则可能已经没了）。
+  await executeRaw(
+    `UPDATE ${quoteIdentifier("forward_rule_entry_bridges")}
+     SET ${quoteIdentifier("isRunning")} = ?, ${quoteIdentifier("updatedAt")} = ?
+     WHERE ${quoteIdentifier("hostId")} = ? AND ${quoteIdentifier("isRunning")} = ?`,
+    [boolValue(false), now, id, boolValue(true)],
+  );
 }
 
 /**
