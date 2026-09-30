@@ -492,7 +492,7 @@ function DashboardLayoutContent({
     retry: false,
   });
   const { data: upgradeStatus, refetch: refetchUpgradeStatus, isError: upgradeStatusUnreachable } = upgradeStatusQuery;
-  const acknowledgeUpgradeMutation = trpc.system.acknowledgeUpgrade.useMutation();
+  const { mutate: acknowledgeUpgrade } = trpc.system.acknowledgeUpgrade.useMutation();
   const acknowledgedUpgradeRef = useRef(false);
   const upgradeRefreshDeadlineRef = useRef<number | null>(null);
   // 安排刷新那一刻的任务快照：服务端确认后会把任务清成 idle，页面刷新前还要接着显示「升级完成，用时…」。
@@ -679,10 +679,10 @@ function DashboardLayoutContent({
     // 面板已经带着新版本重启回来：告诉服务端「看到了」，它才把状态清掉；不然刷新后又看到 success 再刷新，没完没了。
     if (upgradeStatus.restarted && !acknowledgedUpgradeRef.current) {
       acknowledgedUpgradeRef.current = true;
-      acknowledgeUpgradeMutation.mutate({ targetVersion: upgradeStatus.job.targetVersion || undefined });
+      acknowledgeUpgrade({ targetVersion: upgradeStatus.job.targetVersion || undefined });
     }
     scheduleUpgradeRefresh();
-  }, [acknowledgeUpgradeMutation, scheduleUpgradeRefresh, upgradeStatus?.elapsedMs, upgradeStatus?.job, upgradeStatus?.restarted]);
+  }, [acknowledgeUpgrade, scheduleUpgradeRefresh, upgradeStatus?.elapsedMs, upgradeStatus?.job, upgradeStatus?.restarted]);
 
   useEffect(() => {
     if (!backgroundUpgrade?.targetVersion || !upgradeStatus?.currentVersion) return;
