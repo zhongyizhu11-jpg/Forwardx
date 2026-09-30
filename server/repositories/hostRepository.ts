@@ -416,6 +416,7 @@ function compactHostOption(host: any) {
     geoLatitudeMicro: host?.geoLatitudeMicro,
     geoLongitudeMicro: host?.geoLongitudeMicro,
     geoUpdatedAt: host?.geoUpdatedAt,
+    geoManual: !!host?.geoManual,
   };
 }
 
@@ -481,6 +482,7 @@ export async function getHostOptions(ownerUserId?: number, allowedHostIds?: numb
         geoLatitudeMicro: hosts.geoLatitudeMicro,
         geoLongitudeMicro: hosts.geoLongitudeMicro,
         geoUpdatedAt: hosts.geoUpdatedAt,
+        geoManual: hosts.geoManual,
       })
       .from(hosts);
     const rows = condition
@@ -880,6 +882,24 @@ export async function getStaleOnlineHosts(timeoutMs = HOST_ONLINE_TTL_MS) {
     AND ${hosts.lastHeartbeat} IS NOT NULL
     AND ${hosts.lastHeartbeat} < ${cutoffSec}
   `);
+}
+
+/**
+ * 还没定到位、也不是手动指定位置的主机。
+ *
+ * 给定时补漏用：以前只有打开主机列表才会触发一次定位，ipapi.co 限流那阵子
+ * 没定到的机器就一直空着，直到有人再翻列表。选整行是因为定位要用 ipv4/ipv6/
+ * entryIp 挑地址，跟 scheduleHostGeoRefresh 吃的是同一种行。
+ */
+export async function getHostsMissingGeo(limit = 200) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select().from(hosts).where(sql`
+    ${hosts.geoManual} = ${sqlBool(false)}
+    AND (${hosts.geoCountryCode} IS NULL OR ${hosts.geoCountryCode} = ''
+      OR ${hosts.geoLatitudeMicro} IS NULL OR ${hosts.geoLongitudeMicro} IS NULL)
+  `).orderBy(asc(hosts.id)).limit(Math.max(1, Math.floor(limit)));
+  return rows.map(withComputedOnline);
 }
 
 export async function markHostsOffline(hostIds: number[]) {
