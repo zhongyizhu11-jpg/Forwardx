@@ -69,6 +69,21 @@ export const CLUSTER_MAX_ZOOM = 6;
 export const CLUSTER_RADIUS_PX = 44;
 export const SPREAD_RADIUS_PX = 30;
 
+export type MapLayoutOptions = {
+  /** 首页那块小图：永远不聚簇，挨着的点错开成环，每台主机都看得见（等于 mode: "spread"） */
+  spreadOnly?: boolean;
+  /** 不按级别自动切：cluster 永远聚、spread 永远错开 */
+  mode?: "auto" | "cluster" | "spread";
+  /** 离组心多近算一组（像素）；不传按上面两个常量 */
+  clusterRadius?: number;
+  spreadRadius?: number;
+  /** 错开成环时的半径：n 个点时多大（像素） */
+  ringRadius?: (n: number) => number;
+};
+
+/** 默认的环半径：随点数长一点，四台以上不会挤成一团 */
+export const defaultRingRadius = (n: number) => 24 + n * 4;
+
 /**
  * 按屏幕像素距离分组：44px 以内聚成簇（缩小时），30px 以内错开成一圈（放大时）。
  *
@@ -79,10 +94,12 @@ export function computeMapLayout(
   points: readonly LayoutPoint[],
   project: (lngLat: LngLat) => { x: number; y: number },
   zoom: number,
-  options: { /** 首页那块小图：永远不聚簇，挨着的点错开成环，每台主机都看得见 */ spreadOnly?: boolean } = {},
+  options: MapLayoutOptions = {},
 ): MapLayout {
-  const mode: MapLayout["mode"] = !options.spreadOnly && zoom < CLUSTER_MAX_ZOOM ? "cluster" : "spread";
-  const radius = mode === "cluster" ? CLUSTER_RADIUS_PX : SPREAD_RADIUS_PX;
+  const forced = options.mode ?? (options.spreadOnly ? "spread" : "auto");
+  const mode: MapLayout["mode"] = forced === "auto" ? (zoom < CLUSTER_MAX_ZOOM ? "cluster" : "spread") : forced;
+  const radius = mode === "cluster" ? options.clusterRadius ?? CLUSTER_RADIUS_PX : options.spreadRadius ?? SPREAD_RADIUS_PX;
+  const ringRadius = options.ringRadius ?? defaultRingRadius;
   const groups: Array<{ items: LayoutPoint[]; px: Array<{ x: number; y: number }>; cx: number; cy: number }> = [];
   for (const p of points) {
     const pt = project(p.lngLat);
@@ -112,9 +129,9 @@ export function computeMapLayout(
       outGroups.push({ id: gi, keys: g.items.map((it) => it.key), center, cx: g.cx, cy: g.cy });
       return;
     }
-    // 错开成一圈：半径随点数长一点，四台以上不会挤成一团
+    // 错开成一圈
     const n = g.items.length;
-    const R = 24 + n * 4;
+    const R = ringRadius(n);
     g.items.forEach((it, i) => {
       const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n;
       pos[it.key] = { lngLat: center, offset: [Math.round(Math.cos(angle) * R), Math.round(Math.sin(angle) * R)], clusterId: null };
@@ -170,4 +187,137 @@ export function arrowTriangleAlong(projected: readonly PixelPoint[], size: numbe
   const base = { x: apex.x - dx * size, y: apex.y - dy * size };
   const half = size * 0.55;
   return [apex, { x: base.x - dy * half, y: base.y + dx * half }, { x: base.x + dy * half, y: base.y - dx * half }];
+}
+
+export type PixelBox = { x: number; y: number; w: number; h: number };
+
+export function boxesIntersect(a: PixelBox, b: PixelBox): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+/** 两个盒子重叠的面积（不重叠是 0） */
+export function boxOverlapArea(a: PixelBox, b: PixelBox): number {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+/** 盒子露在区域外面的面积 */
+export function boxOutsideArea(box: PixelBox, area: PixelBox): number {
+  return box.w * box.h - boxOverlapArea(box, area);
+}
+
+export function unionBox(boxes: readonly PixelBox[]): PixelBox | null {
+  if (boxes.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const box of boxes) {
+    minX = Math.min(minX, box.x); minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.w); maxY = Math.max(maxY, box.y + box.h);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+export type FitItem = {
+  /** 随缩放走的那个点：经纬度投影出来的像素（环上的点也是簇心，不含像素偏移） */
+  anchor: PixelPoint;
+  /** 画出来占的屏幕盒子：圆盘 + 名字 + 环偏移这些不随缩放变的部分都算在内 */
+  box: PixelBox;
+};
+
+export type FitInset = { top: number; right: number; bottom: number; left: number };
+
+export type FitResult = {
+  /** 地图要乘的比例：< 1 缩小、> 1 放大 */
+  scale: number;
+  /** 等价的 zoom 增量（log2 scale） */
+  zoomDelta: number;
+  /** 现在屏幕上的这个点变换后应该落在容器正中 —— 反投影它就是新的 center */
+  centerPx: PixelPoint;
+  /** 按这个比例所有盒子都能放进留白之内（放不进说明缩到 minScale 也不够） */
+  fits: boolean;
+};
+
+/**
+ * 把一批 marker 完整框进容器：算出该缩放多少、中心挪到哪。
+ *
+ * fitBounds 只知道经纬度，不知道圆盘有 26px、名字有 90px 宽、环上的点还往外偏了 40px ——
+ * 这些像素尺寸不随缩放变，于是贴边的主机总被裁掉半个盘。这里把每个 marker 拆成「随缩放
+ * 走的锚点」和「不随缩放变的盒子边距」：整体宽度 W(k) = max(k·ax + 右边距) − min(k·ax − 左边距)
+ * 是 k 的凸函数，二分就能找到最大的还放得下的 k（放得下就往里放大到 maxScale，放不下
+ * 就缩小）。然后把所有盒子的并集挪到留白区域正中。
+ *
+ * 返回的是「当前屏幕上哪个点该成为新中心」+ 缩放比例；调用方 jumpTo(unproject(centerPx), zoom + zoomDelta)
+ * 一次到位。marker 的分组随缩放会变（缩小后两台并成一组），所以调用方量一次、跳一次、再量一次，
+ * 几轮就收敛。
+ */
+export function fitViewToBoxes(
+  container: { width: number; height: number },
+  items: readonly FitItem[],
+  inset: FitInset,
+  options: { /** 最多放大到这个比例（默认 1：只缩不放） */ maxScale?: number; /** 最多缩小到这个比例（默认 0） */ minScale?: number } = {},
+): FitResult | null {
+  if (items.length === 0) return null;
+  const maxScale = Math.max(options.maxScale ?? 1, 1e-6);
+  const minScale = Math.min(Math.max(options.minScale ?? 0, 0), maxScale);
+  const availW = Math.max(1, container.width - inset.left - inset.right);
+  const availH = Math.max(1, container.height - inset.top - inset.bottom);
+  const c0 = { x: container.width / 2, y: container.height / 2 };
+  const parts = items.map((item) => ({
+    ax: item.anchor.x - c0.x, ay: item.anchor.y - c0.y,
+    l: item.anchor.x - item.box.x, r: item.box.x + item.box.w - item.anchor.x,
+    t: item.anchor.y - item.box.y, b: item.box.y + item.box.h - item.anchor.y,
+  }));
+  const extent = (k: number) => {
+    let minX = Infinity; let maxX = -Infinity; let minY = Infinity; let maxY = -Infinity;
+    for (const p of parts) {
+      minX = Math.min(minX, k * p.ax - p.l); maxX = Math.max(maxX, k * p.ax + p.r);
+      minY = Math.min(minY, k * p.ay - p.t); maxY = Math.max(maxY, k * p.ay + p.b);
+    }
+    return { minX, maxX, minY, maxY };
+  };
+  const feasible = (k: number) => { const e = extent(k); return e.maxX - e.minX <= availW && e.maxY - e.minY <= availH; };
+  let scale: number;
+  let fits = true;
+  if (feasible(maxScale)) scale = maxScale;
+  else if (!feasible(minScale)) { scale = minScale; fits = false; }
+  else {
+    let lo = minScale;
+    let hi = maxScale;
+    for (let i = 0; i < 48; i += 1) {
+      const mid = (lo + hi) / 2;
+      if (feasible(mid)) lo = mid; else hi = mid;
+    }
+    scale = lo;
+  }
+  const e = extent(scale);
+  // 并集（相对容器中心）的中点要挪到留白区域的中点
+  const unionCenter = { x: (e.minX + e.maxX) / 2, y: (e.minY + e.maxY) / 2 };
+  const target = { x: inset.left + availW / 2 - c0.x, y: inset.top + availH / 2 - c0.y };
+  const pan = { x: target.x - unionCenter.x, y: target.y - unionCenter.y };
+  // 变换：p' = c0 + k(p − c0) + pan；要让 q 变到 c0：q = c0 − pan / k
+  return {
+    scale,
+    zoomDelta: Math.log2(scale),
+    centerPx: { x: c0.x - pan.x / scale, y: c0.y - pan.y / scale },
+    fits,
+  };
+}
+
+/**
+ * 两个盒子之间的引线：从各自中心连一条线，掐掉落在盒子里面的两截。盒子挨着 / 套着时不画（null）。
+ */
+export function leaderBetweenBoxes(from: PixelBox, to: PixelBox): [PixelPoint, PixelPoint] | null {
+  const a = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
+  const b = { x: to.x + to.w / 2, y: to.y + to.h / 2 };
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (Math.hypot(dx, dy) < 1e-6) return null;
+  const exitT = (box: PixelBox) => Math.min(dx === 0 ? Infinity : (box.w / 2) / Math.abs(dx), dy === 0 ? Infinity : (box.h / 2) / Math.abs(dy));
+  const tA = exitT(from);
+  const tB = 1 - exitT(to);
+  if (!(tA < tB)) return null;
+  return [{ x: a.x + dx * tA, y: a.y + dy * tA }, { x: a.x + dx * tB, y: a.y + dy * tB }];
 }
