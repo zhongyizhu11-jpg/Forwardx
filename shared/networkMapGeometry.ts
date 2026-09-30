@@ -75,8 +75,13 @@ export const SPREAD_RADIUS_PX = 30;
  * 贪心：按顺序把每个点归到第一个够近的组里，组心随之更新。点少（几十上百）时够用，
  * 而且是确定的 —— 同样的输入永远得到同样的簇，marker 不会在两次 relayout 之间跳。
  */
-export function computeMapLayout(points: readonly LayoutPoint[], project: (lngLat: LngLat) => { x: number; y: number }, zoom: number): MapLayout {
-  const mode: MapLayout["mode"] = zoom < CLUSTER_MAX_ZOOM ? "cluster" : "spread";
+export function computeMapLayout(
+  points: readonly LayoutPoint[],
+  project: (lngLat: LngLat) => { x: number; y: number },
+  zoom: number,
+  options: { /** 首页那块小图：永远不聚簇，挨着的点错开成环，每台主机都看得见 */ spreadOnly?: boolean } = {},
+): MapLayout {
+  const mode: MapLayout["mode"] = !options.spreadOnly && zoom < CLUSTER_MAX_ZOOM ? "cluster" : "spread";
   const radius = mode === "cluster" ? CLUSTER_RADIUS_PX : SPREAD_RADIUS_PX;
   const groups: Array<{ items: LayoutPoint[]; px: Array<{ x: number; y: number }>; cx: number; cy: number }> = [];
   for (const p of points) {
@@ -138,4 +143,31 @@ export function boundsForPoints(points: readonly LngLat[]): [[number, number], [
   if (maxX - minX < 0.6) { minX -= 0.3; maxX += 0.3; }
   if (maxY - minY < 0.6) { minY -= 0.3; maxY += 0.3; }
   return [[minX, minY], [maxX, maxY]];
+}
+
+export type PixelPoint = { x: number; y: number };
+
+/**
+ * 弧线末端的箭头（屏幕像素里的三角形）：让方向不靠动画也看得出来。
+ *
+ * 方向取弧线最后一小段的切线 —— 从末端往回找到离末端至少 minTangentPx 远的顶点再算，
+ * 缩到全球时最后一段可能不到一像素，直接用它方向会抖。backoff 把箭尖从主机的圆盘下
+ * 挪出来，不然盘子把箭头盖住。太短的弧（整条不到 minTangentPx）不画，返回 null。
+ * 返回 [箭尖, 左底角, 右底角]。
+ */
+export function arrowTriangleAlong(projected: readonly PixelPoint[], size: number, backoff: number, minTangentPx = 8): [PixelPoint, PixelPoint, PixelPoint] | null {
+  if (projected.length < 2) return null;
+  const tip = projected[projected.length - 1];
+  let from: PixelPoint | null = null;
+  for (let index = projected.length - 2; index >= 0; index -= 1) {
+    if (Math.hypot(tip.x - projected[index].x, tip.y - projected[index].y) >= minTangentPx) { from = projected[index]; break; }
+  }
+  if (!from) return null;
+  const length = Math.hypot(tip.x - from.x, tip.y - from.y);
+  const dx = (tip.x - from.x) / length;
+  const dy = (tip.y - from.y) / length;
+  const apex = { x: tip.x - dx * backoff, y: tip.y - dy * backoff };
+  const base = { x: apex.x - dx * size, y: apex.y - dy * size };
+  const half = size * 0.55;
+  return [apex, { x: base.x - dy * half, y: base.y + dx * half }, { x: base.x + dy * half, y: base.y - dx * half }];
 }

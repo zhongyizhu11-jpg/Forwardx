@@ -52,20 +52,9 @@ export function normalizeValue(value: number, ceiling: number, log: boolean): nu
   return Math.max(0, Math.min(1, value / (ceiling || 1)));
 }
 
-/** #rrggbb → rgba(r,g,b,a)；别的格式原样返回（调用方已经用 canvas 归一过颜色） */
-export function withAlpha(color: string, alpha: number): string {
-  const hex = /^#([0-9a-f]{6})$/i.exec(color.trim());
-  if (hex) {
-    const n = parseInt(hex[1], 16);
-    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
-  }
-  const rgb = /^rgba?\(([^)]+)\)$/i.exec(color.trim());
-  if (rgb) {
-    const parts = rgb[1].split(/[\s,\/]+/).filter(Boolean).slice(0, 3);
-    if (parts.length === 3) return `rgba(${parts.join(",")},${alpha})`;
-  }
-  return color;
-}
+/** #rrggbb → rgba(r,g,b,a)；地图样式那边（彗星尾巴的渐变）也要用，就一份 */
+import { withAlpha } from "./networkMapStyle";
+export { withAlpha };
 
 type Prepared = { ctx: CanvasRenderingContext2D; width: number; height: number };
 

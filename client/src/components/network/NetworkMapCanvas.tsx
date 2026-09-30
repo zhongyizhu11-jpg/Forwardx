@@ -1,12 +1,15 @@
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap, type Marker } from "maplibre-gl";
+import { isCountryCodeLabel } from "@/lib/flagEmojiSupport";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef } from "react";
 
+import { MINI_CAP_MIN_ARC_PX, MINI_FIT_MAX_ZOOM } from "@/features/network/networkMapMini";
 import type { NetworkMapModel, NetworkMapTarget } from "@/features/network/networkMapModel";
 import { isClusterDimmed, isFlowDimmed, isHostDimmed, isTargetDimmed, isTunnelDimmed, type MapFocus, type MapPadding } from "@/features/network/networkMapPageState";
 import { wgs84ToGcj02 } from "@shared/gcj02";
 import { NETWORK_MAP_BASE_LAYERS, type NetworkMapBaseLayerId } from "@shared/networkMapBaseLayers";
-import { boundsForPoints, computeMapLayout, greatCircleArc, type LayoutPoint, type LngLat, type MapLayout } from "@shared/networkMapGeometry";
+import { advanceCometPhase, buildCometPath, cometPeriodMs, cometProgress, mercatorUnitsPerPixel, sampleComet, type CometPath } from "@shared/networkMapComet";
+import { arrowTriangleAlong, boundsForPoints, computeMapLayout, greatCircleArc, type LayoutPoint, type LngLat, type MapLayout } from "@shared/networkMapGeometry";
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
 
 import { readCssColor } from "./mapCharts";
@@ -17,6 +20,7 @@ import {
   NETWORK_MAP_SOURCES,
   baseLayerPaintPatch,
   buildNetworkMapStyle,
+  cometPaint,
   healthColorExpression,
   rasterSourceIds,
   type NetworkMapLineColors,
@@ -34,6 +38,12 @@ import {
  *
  * 高德底图下每个点先过 WGS-84 → GCJ-02（shared/gcj02.ts），暗黑网格用 Natural Earth
  * 的国界（WGS-84）不转 —— 所以坐标转换在这里做、按当前底图做，模型里存的永远是原始坐标。
+ *
+ * 两种用法（variant）：
+ *   page  /map 整页：能拖能缩，缩小时聚簇，有簇 pill、看不到的主机的灰线。
+ *   mini  首页那块卡片：不能拖不能缩（不跟页面滚动抢手势），永远不聚簇（每台主机都画，
+ *         挨着的错开成环），主机的圆盘小一号、不写备注，框住所有主机时留白更宽；点哪里
+ *         都交给页面去开整页。同一个画家，不另写一份。
  */
 
 export type NetworkMapCameraApi = {
@@ -46,6 +56,8 @@ export type NetworkMapCameraApi = {
   getZoom(): number;
 };
 
+export type NetworkMapCanvasVariant = "page" | "mini";
+
 export type NetworkMapCanvasProps = {
   model: NetworkMapModel;
   baseLayer: NetworkMapBaseLayerId;
@@ -55,6 +67,10 @@ export type NetworkMapCanvasProps = {
   reduceMotion: boolean;
   /** 页面不可见 / 地图被盖住时停掉流动光点 */
   paused: boolean;
+  /** 整页还是首页那块小图（默认整页） */
+  variant?: NetworkMapCanvasVariant;
+  /** 正常线路上跑的彗星（默认开；减少动态时不画） */
+  comets?: boolean;
   onSelectNode: (hostId: number) => void;
   onSelectLink: (tunnelId: number) => void;
   onSelectTarget: (key: string) => void;
@@ -78,9 +94,18 @@ const COUNTRY_LABELS: Array<[string, number, number]> = [
 
 /** 框住几个点时在地图留白之外再让出的边：marker 下面的名字和备注有百来像素宽，贴边会被裁掉半截 */
 const FIT_PADDING = { top: 36, bottom: 36, left: 64, right: 64 };
+/** 小图：没有抽屉压着，但卡片本身就小，名字在圆盘下面，底边多让一点 */
+const MINI_FIT_PADDING = { top: 34, bottom: 44, left: 52, right: 52 };
 
-/** 一跳的两端在屏幕上至少隔这么远才挂延迟胶囊 */
+/** 一跳的两端在屏幕上至少隔这么远才挂延迟胶囊（小图的阈值在 features/network/networkMapMini） */
 const CAP_MIN_ARC_PX = 110;
+
+/** 出口端箭头的大小，和箭尖从主机圆盘边缘退开的距离（盘半径 + 一点缝） */
+const ARROW = { page: { size: 9, backoff: 22 }, mini: { size: 8, backoff: 17 } };
+/** 彗星尾巴在屏幕上的长度 */
+const COMET_TAIL_PX = 46;
+/** 一帧最多按这么多毫秒推进：切回标签页时不让彗星一下跳半圈 */
+const COMET_MAX_FRAME_MS = 100;
 
 const FALLBACK_COLORS: NetworkMapLineColors = { healthy: "#06b6d4", warn: "#f59e0b", down: "#ef4444", standby: "#94a3b8" };
 
@@ -145,7 +170,17 @@ type Live = {
   layout: MapLayout | null;
   linkFeatureIds: Array<{ fid: string; tunnelId: number }>;
   flowFeatureIds: Array<{ fid: string; targetKey: string; ruleIds: number[] }>;
+  tipFeatureIds: Array<{ fid: string; tunnelId: number }>;
+  /** 正在跑的彗星：每条正常隧道一颗（跳与跳之间断开时拆成几段各一颗） */
+  comets: Array<{ key: string; tunnelId: number; path: CometPath; periodMs: number; tailLength: number }>;
+  /** 彗星的相位按 key 记着，relayout 重算路径时接着跑，不从头来 */
+  cometPhase: Map<string, number>;
+  cometLast: number;
+  /** 上一帧有没有往彗星源里写过东西：停下来时要清一次，别留一颗不动的点 */
+  cometDrawn: boolean;
   didInitialFit: boolean;
+  /** 小图上一次框住的是哪些点：主机集合变了才重新框 */
+  fitSignature: string;
   rasterErrorReported: boolean;
   relayoutFrame: number;
   dashFrame: number;
@@ -160,12 +195,14 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     liveRef.current = {
       props, map: null, loaded: false, colors: FALLBACK_COLORS,
       hostMarkers: new Map(), targetMarkers: new Map(), clusterMarkers: [], capMarkers: new Map(), stubMarkers: new Map(), countryMarkers: [],
-      layout: null, linkFeatureIds: [], flowFeatureIds: [], didInitialFit: false, rasterErrorReported: false,
+      layout: null, linkFeatureIds: [], flowFeatureIds: [], tipFeatureIds: [], comets: [], cometPhase: new Map(), cometLast: 0, cometDrawn: false,
+      didInitialFit: false, fitSignature: "", rasterErrorReported: false,
       relayoutFrame: 0, dashFrame: 0, dashStep: 0, dashLast: 0,
     };
   }
   const live = liveRef.current;
   live.props = props;
+  const isMini = () => live.props.variant === "mini";
 
   // ---- 坐标：底图决定转不转 ----
   const display = (lngLat: LngLat): LngLat => (NETWORK_MAP_BASE_LAYERS[live.props.baseLayer].amap ? wgs84ToGcj02(lngLat[0], lngLat[1]) : lngLat);
@@ -177,6 +214,9 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     if (showFlows) for (const target of model.targets) if (target.geo) points.push({ key: `t:${target.key}`, lngLat: display([target.geo.lng, target.geo.lat]) });
     return points;
   };
+
+  /** 小图要框住的点的集合（key 排序后拼起来）：变了才重新框，轮询回来同样的主机不动相机 */
+  const fitSignature = () => layoutPoints().map((point) => point.key).sort().join("|");
 
   /** 错开成环的点：簇心加像素偏移换算回经纬度，线才能连到 marker 真正画的地方 */
   const displayLngLat = (key: string): LngLat | null => {
@@ -213,7 +253,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         entry.element.className = `nm-mk nm-mk-host ${healthClass(node.health)}`;
         const disc = entry.element.querySelector(".nm-mk-disc") as HTMLElement;
         disc.setAttribute("aria-label", `${node.name}${node.note ? `，${node.note}` : ""}`);
-        disc.innerHTML = node.emoji ? `<span>${escapeHtml(node.emoji)}</span>` : `<span class="nm-mk-flag-dot"></span>`;
+        disc.innerHTML = node.emoji ? `<span${isCountryCodeLabel(node.emoji) ? ' class="nm-mk-code"' : ""}>${escapeHtml(node.emoji)}</span>` : `<span class="nm-mk-flag-dot"></span>`;
         (entry.element.querySelector(".nm-mk-name") as HTMLElement).textContent = node.name;
         (entry.element.querySelector(".nm-mk-note") as HTMLElement).textContent = node.note || "";
       }
@@ -272,13 +312,71 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     }
   };
 
+  /**
+   * 小图上主机名的摆法：默认在圆盘下面；会压到别的名字或圆盘时翻到上面去；贴着卡片边的
+   * 往里挪。按从上到下的顺序贪心放，量的是名字元素的真实宽度（它已经在 DOM 里）。
+   * 整页不做这个：那里缩小时会聚簇，名字很少撞；小图永远不聚簇，港日两台就隔几十像素。
+   */
+  const placeMiniLabels = (capsAt: LngLat[]) => {
+    const map = live.map;
+    const layout = live.layout;
+    if (!map || !layout) return;
+    const width = map.getContainer().clientWidth;
+    // project() 按给的经度投影，美国的 -118° 可能落在左边那份世界副本上（x 为负）；marker 自己会
+    // 挪到离视口最近的一份，这里也挪过去，不然按负的 x 算出来的「贴边」是假的
+    const worldSize = 512 * 2 ** map.getZoom();
+    const wrapX = (x: number) => {
+      let wrapped = ((x % worldSize) + worldSize) % worldSize;
+      if (wrapped - width / 2 > worldSize / 2) wrapped -= worldSize;
+      return wrapped;
+    };
+    type Box = { x: number; y: number; w: number; h: number };
+    const R = 13;
+    const GAP = 15;
+    const items: Array<{ name: HTMLElement; x: number; y: number; w: number; h: number }> = [];
+    for (const [id, entry] of live.hostMarkers) {
+      const position = layout.pos[`h${id}`];
+      if (!position || position.clusterId !== null) continue;
+      const point = map.project(position.lngLat as [number, number]);
+      const name = entry.element.querySelector(".nm-mk-name") as HTMLElement | null;
+      if (!name) continue;
+      // 量真实尺寸：行高比字号高，按 11px 估会漏掉挨着的那几像素
+      items.push({ name, x: wrapX(point.x) + position.offset[0], y: point.y + position.offset[1], w: name.offsetWidth || 60, h: name.offsetHeight || 20 });
+    }
+    items.sort((a, b) => a.y - b.y || a.x - b.x);
+    // 别的圆盘和延迟胶囊都是障碍；两边都躲不开时选压得少的那边
+    const obstacles: Box[] = items.map((item) => ({ x: item.x - R, y: item.y - R, w: R * 2, h: R * 2 }));
+    for (const at of capsAt) {
+      const point = map.project(at as [number, number]);
+      obstacles.push({ x: wrapX(point.x) - 28, y: point.y - 13, w: 56, h: 26 });
+    }
+    const overlapArea = (box: Box) => obstacles.reduce((sum, other) => {
+      const w = Math.min(box.x + box.w, other.x + other.w) - Math.max(box.x, other.x);
+      const h = Math.min(box.y + box.h, other.y + other.h) - Math.max(box.y, other.y);
+      return w > 0 && h > 0 ? sum + w * h : sum;
+    }, 0);
+    for (const item of items) {
+      const half = item.w / 2;
+      let dx = 0;
+      if (item.x - half < 4) dx = 4 - (item.x - half);
+      else if (item.x + half > width - 4) dx = width - 4 - (item.x + half);
+      const below: Box = { x: item.x - half + dx, y: item.y + GAP, w: item.w, h: item.h };
+      const above: Box = { ...below, y: item.y - GAP - item.h };
+      const up = overlapArea(above) < overlapArea(below);
+      obstacles.push(up ? above : below);
+      item.name.classList.toggle("is-up", up);
+      item.name.style.marginLeft = dx ? `${dx}px` : "";
+    }
+  };
+
   // ---- 布局：簇 / 错开，再把线和胶囊挂上去 ----
   const relayout = () => {
     const map = live.map;
     if (!map || !live.loaded || !map.getSource(NETWORK_MAP_SOURCES.links)) return;
     const { model, showFlows } = live.props;
+    const mini = isMini();
     const zoom = map.getZoom();
-    live.layout = computeMapLayout(layoutPoints(), (lngLat) => map.project(lngLat as [number, number]), zoom);
+    live.layout = computeMapLayout(layoutPoints(), (lngLat) => map.project(lngLat as [number, number]), zoom, { spreadOnly: mini });
     const layout = live.layout;
     updateCountryLabels();
     for (const [id, entry] of live.hostMarkers) {
@@ -319,7 +417,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         }
       }
       const label = cities.slice(0, 3).join(" · ") || "落地目标";
-      const element = el(`<div class="nm-mk nm-mk-cluster ${healthClass(worstHealth(healths))}"><button type="button" class="nm-mk-pill" aria-label="${escapeHtml(label)}，${group.keys.length} 个，点击放大"><span>${escapeHtml(flags.slice(0, 3).join(""))}</span><b>${group.keys.length}</b></button><div class="nm-mk-name">${escapeHtml(label)}</div></div>`);
+      const element = el(`<div class="nm-mk nm-mk-cluster ${healthClass(worstHealth(healths))}"><button type="button" class="nm-mk-pill" aria-label="${escapeHtml(label)}，${group.keys.length} 个，点击放大"><span>${flags.slice(0, 3).map((flag) => (isCountryCodeLabel(flag) ? `<i class="nm-mk-code">${escapeHtml(flag)}</i>` : escapeHtml(flag))).join("")}</span><b>${group.keys.length}</b></button><div class="nm-mk-name">${escapeHtml(label)}</div></div>`);
       const center = group.center;
       (element.firstElementChild as HTMLElement).addEventListener("click", (event) => {
         event.stopPropagation();
@@ -337,36 +435,68 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
 
     // 线：每一跳一条大圆弧；两端在同一个簇里就不画（簇 pill 已经说明它们在一起）
     const linkFeatures: any[] = [];
+    const tipFeatures: any[] = [];
     const caps: Array<{ tunnelId: number; at: LngLat; health: NetworkHealth; text: string }> = [];
+    const capMinArcPx = mini ? MINI_CAP_MIN_ARC_PX : CAP_MIN_ARC_PX;
+    const arrow = mini ? ARROW.mini : ARROW.page;
+    const unitsPerPixel = mercatorUnitsPerPixel(zoom);
+    const comets: Live["comets"] = [];
     live.linkFeatureIds = [];
+    live.tipFeatureIds = [];
     for (const link of model.links) {
       const capIndex = Math.floor((link.path.length - 2) / 2);
+      // 正常的隧道跑彗星：把画出来的各跳首尾相接；中间有一跳没画（两端同簇）就断开成两段
+      const healthy = lineHealth(link.health) === "healthy";
+      let hopRun: LngLat[][] = [];
+      let hopRunStart = 0;
+      const flushComet = () => {
+        const path = hopRun.length > 0 ? buildCometPath(hopRun) : null;
+        if (path) {
+          comets.push({ key: `${link.id}:${hopRunStart}`, tunnelId: link.id, path, periodMs: cometPeriodMs(path.total / unitsPerPixel), tailLength: COMET_TAIL_PX * unitsPerPixel });
+        }
+        hopRun = [];
+      };
       for (let index = 0; index < link.path.length - 1; index += 1) {
         const keyA = `h${link.path[index]}`;
         const keyB = `h${link.path[index + 1]}`;
         const posA = layout.pos[keyA];
         const posB = layout.pos[keyB];
-        if (!posA || !posB) continue;
-        if (posA.clusterId !== null && posA.clusterId === posB.clusterId) continue;
+        if (!posA || !posB) { flushComet(); continue; }
+        if (posA.clusterId !== null && posA.clusterId === posB.clusterId) { flushComet(); continue; }
         const a = displayLngLat(keyA);
         const b = displayLngLat(keyB);
-        if (!a || !b) continue;
+        if (!a || !b) { flushComet(); continue; }
         const points = greatCircleArc(a, b);
         const fid = `t:${link.id}:${index}`;
         live.linkFeatureIds.push({ fid, tunnelId: link.id });
         linkFeatures.push({ type: "Feature", properties: { fid, tunnel: link.id, health: lineHealth(link.health) }, geometry: { type: "LineString", coordinates: points } });
+        if (healthy) { if (hopRun.length === 0) hopRunStart = index; hopRun.push(points); }
+        // 出口端的箭头：像素里算好三角形再反投影回经纬度，跟着线一起缩放
+        const projected = points.map((point) => map.project(point as [number, number]));
+        const triangle = arrowTriangleAlong(projected, arrow.size, arrow.backoff);
+        if (triangle) {
+          const ring = triangle.map((corner) => { const at = map.unproject([corner.x, corner.y]); return [at.lng, at.lat]; });
+          ring.push(ring[0]);
+          const tipFid = `a:${link.id}:${index}`;
+          live.tipFeatureIds.push({ fid: tipFid, tunnelId: link.id });
+          tipFeatures.push({ type: "Feature", properties: { fid: tipFid, health: lineHealth(link.health) }, geometry: { type: "Polygon", coordinates: [ring] } });
+        }
         // 两端在屏幕上挨得太近（缩到全球时的港日新）胶囊会盖住 marker，线短到放不下就不挂
-        const pa = map.project(a as [number, number]);
-        const pb = map.project(b as [number, number]);
-        if (index === capIndex && Math.hypot(pa.x - pb.x, pa.y - pb.y) >= CAP_MIN_ARC_PX) {
+        const pa = projected[0];
+        const pb = projected[projected.length - 1];
+        if (index === capIndex && Math.hypot(pa.x - pb.x, pa.y - pb.y) >= capMinArcPx) {
           const text = typeof link.latencyMs === "number" ? `${Math.round(link.latencyMs)} ms` : lineHealth(link.health) === "down" ? "中断" : lineHealth(link.health) === "standby" ? describeNetworkHealth(link.health).label : "";
           if (text) caps.push({ tunnelId: link.id, at: points[Math.floor(points.length / 2)], health: link.health, text });
         }
       }
+      flushComet();
     }
-    // 看不到一端的隧道：从看得见的那一端伸出一小截灰线
+    live.comets = comets;
+    for (const key of Array.from(live.cometPhase.keys())) if (!comets.some((comet) => comet.key === key)) live.cometPhase.delete(key);
+    (map.getSource(NETWORK_MAP_SOURCES.tips) as GeoJSONSource).setData({ type: "FeatureCollection", features: tipFeatures });
+    // 看不到一端的隧道：从看得见的那一端伸出一小截灰线（小图上省掉，卡片底下有一句「N 条没画出来」）
     const seenStubs = new Set<number>();
-    for (const stub of model.stubs) {
+    for (const stub of mini ? [] : model.stubs) {
       const key = `h${stub.hostId}`;
       const position = layout.pos[key];
       if (!position || position.clusterId !== null) continue;
@@ -444,6 +574,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       entry.marker.remove();
       live.capMarkers.delete(tunnelId);
     }
+    if (mini) placeMiniLabels(caps.map((cap) => cap.at));
     applyFocus();
   };
 
@@ -459,6 +590,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const { focus } = live.props;
     for (const feature of live.linkFeatureIds) map.setFeatureState({ source: NETWORK_MAP_SOURCES.links, id: feature.fid }, { dim: isTunnelDimmed(focus, feature.tunnelId) });
     for (const feature of live.flowFeatureIds) map.setFeatureState({ source: NETWORK_MAP_SOURCES.flows, id: feature.fid }, { dim: isFlowDimmed(focus, feature.targetKey, feature.ruleIds) });
+    for (const feature of live.tipFeatureIds) map.setFeatureState({ source: NETWORK_MAP_SOURCES.tips, id: feature.fid }, { dim: isTunnelDimmed(focus, feature.tunnelId) });
     for (const [id, entry] of live.hostMarkers) entry.element.classList.toggle("is-dim", isHostDimmed(focus, id));
     for (const [key, entry] of live.targetMarkers) entry.element.classList.toggle("is-dim", isTargetDimmed(focus, key));
     for (const [tunnelId, entry] of live.capMarkers) entry.element.classList.toggle("is-dim", isTunnelDimmed(focus, tunnelId));
@@ -488,8 +620,22 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       if (!map) return;
       const points = layoutPoints().map((point) => point.lngLat);
       if (points.length === 0) { map.jumpTo({ center: [110, 25], zoom: 1.6 }); return; }
+      if (isMini()) {
+        // 小图没法拖：大圆弧往高纬度弯出去的那一段也得框进来，不然日美那条线的弧顶在卡片外面
+        const nodeById = new Map(live.props.model.nodes.map((node) => [node.id, node]));
+        for (const link of live.props.model.links) {
+          for (let index = 0; index < link.path.length - 1; index += 1) {
+            const a = nodeById.get(link.path[index])?.geo;
+            const b = nodeById.get(link.path[index + 1])?.geo;
+            if (a && b) points.push(...greatCircleArc(display([a.lng, a.lat]), display([b.lng, b.lat]), 12));
+          }
+        }
+      }
       const bounds = boundsForPoints(points);
-      if (bounds) map.fitBounds(bounds, { maxZoom: 5, padding: FIT_PADDING, duration: live.props.reduceMotion ? 0 : 1200, essential: true });
+      if (!bounds) return;
+      // 小图：直接跳过去不飞（卡片刚出现 / 主机集合变了 / 卡片变宽了，飞一下反而像出了错），最多放到 9 级
+      if (isMini()) map.fitBounds(bounds, { maxZoom: MINI_FIT_MAX_ZOOM, padding: MINI_FIT_PADDING, duration: 0 });
+      else map.fitBounds(bounds, { maxZoom: 5, padding: FIT_PADDING, duration: live.props.reduceMotion ? 0 : 1200, essential: true });
     },
     hostLngLat(hostId) {
       const node = live.props.model.nodes.find((item) => item.id === hostId);
@@ -502,17 +648,50 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     getZoom() { return live.map?.getZoom() ?? 0; },
   };
 
-  // ---- 流动光点：只改 dasharray，交给 GPU；页面不可见 / 减少动态时停 ----
-  const tickDash = (timestamp: number) => {
+  // ---- 动画：一个 rAF 管两样。流动光点只改 dasharray，交给 GPU；彗星每帧按相位采样一次写进
+  //      GeoJSON 源（≤ 几十条隧道，一帧几十个点，便宜）。页面不可见 / 卡片滚出视野 / 减少动态时停 ----
+  const clearComets = () => {
     const map = live.map;
-    if (map && live.loaded && !live.props.paused && !live.props.reduceMotion && document.visibilityState === "visible" && map.getLayer(NETWORK_MAP_LAYERS.linkFlow)) {
+    if (!map || !live.loaded || !live.cometDrawn) return;
+    const source = map.getSource(NETWORK_MAP_SOURCES.comets) as GeoJSONSource | undefined;
+    source?.setData({ type: "FeatureCollection", features: [] });
+    live.cometDrawn = false;
+  };
+  const tickAnimation = (timestamp: number) => {
+    const map = live.map;
+    const running = live.loaded && !live.props.paused && !live.props.reduceMotion && document.visibilityState === "visible";
+    if (map && running && !isMini() && map.getLayer(NETWORK_MAP_LAYERS.linkFlow)) {
       if (timestamp - live.dashLast > NETWORK_MAP_DASH_INTERVAL_MS) {
         live.dashLast = timestamp;
         live.dashStep = (live.dashStep + 1) % NETWORK_MAP_DASH_STEPS.length;
         map.setPaintProperty(NETWORK_MAP_LAYERS.linkFlow, "line-dasharray", NETWORK_MAP_DASH_STEPS[live.dashStep]);
       }
     }
-    live.dashFrame = requestAnimationFrame(tickDash);
+    const cometsOn = map && running && live.props.comets !== false && live.comets.length > 0;
+    if (map && cometsOn) {
+      const source = map.getSource(NETWORK_MAP_SOURCES.comets) as GeoJSONSource | undefined;
+      if (source) {
+        const dt = live.cometLast ? Math.min(COMET_MAX_FRAME_MS, timestamp - live.cometLast) : 0;
+        const features: any[] = [];
+        for (const comet of live.comets) {
+          // 每条隧道错开出发时刻（按 id 取相位），不然所有彗星齐刷刷一起飞、一起停
+          const phase = advanceCometPhase(live.cometPhase.get(comet.key) ?? ((comet.tunnelId * 0.37) % 1), dt, comet.periodMs);
+          live.cometPhase.set(comet.key, phase);
+          const progress = cometProgress(phase);
+          if (progress === null) continue;
+          const sample = sampleComet(comet.path, progress, comet.tailLength);
+          if (sample.tail.length >= 2) features.push({ type: "Feature", properties: { tunnel: comet.tunnelId }, geometry: { type: "LineString", coordinates: sample.tail } });
+          features.push({ type: "Feature", properties: { tunnel: comet.tunnelId }, geometry: { type: "Point", coordinates: sample.head } });
+        }
+        source.setData({ type: "FeatureCollection", features });
+        live.cometDrawn = true;
+      }
+      live.cometLast = timestamp;
+    } else {
+      live.cometLast = 0;
+      clearComets();
+    }
+    live.dashFrame = requestAnimationFrame(tickAnimation);
   };
 
   // ---- 底图：改颜色和可见性；高德瓦片拉不下来时页面会切到暗黑网格，这里把瓦片层关掉，不再白请求 ----
@@ -535,6 +714,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     if (!container) return undefined;
     live.colors = readColors(container.parentElement);
     const rasterIds = new Set(rasterSourceIds());
+    const mini = isMini();
     let map: MapLibreMap;
     try {
       map = new maplibregl.Map({
@@ -542,7 +722,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         style: buildNetworkMapStyle(live.props.baseLayer, COUNTRIES_URL, live.colors) as any,
         center: [110, 25],
         zoom: 1.6,
-        minZoom: 0.5,
+        // 小图在 340px 宽的手机卡片里要框住横跨太平洋的线，0.5 级放不下（世界 724px 宽），放开到 0 级
+        minZoom: mini ? 0 : 0.5,
         maxZoom: 14,
         attributionControl: false,
         renderWorldCopies: true,
@@ -550,6 +731,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         dragRotate: false,
         touchPitch: false,
         fadeDuration: 0,
+        // 小图不能拖不能缩：手机上它嵌在首页里，手势得留给页面滚动；点击照样有（MapEventHandler 不看这个开关）
+        interactive: !mini,
       });
     } catch (error) {
       // 没有 WebGL（远程桌面、老浏览器）：告诉页面画兜底文案
@@ -567,15 +750,23 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     map.once("style.load", () => {
       live.loaded = true;
       applyBaseLayer(live.props.baseLayer);
-      if (live.props.reduceMotion) map.setLayoutProperty(NETWORK_MAP_LAYERS.linkFlow, "visibility", "none");
+      // 小图上白虚线和彗星叠在一起太闹，只留彗星和箭头说方向
+      if (live.props.reduceMotion || mini) map.setLayoutProperty(NETWORK_MAP_LAYERS.linkFlow, "visibility", "none");
       syncStaticMarkers();
       relayout();
-      if (!live.didInitialFit && layoutPoints().length > 0) { live.didInitialFit = true; api.fitAll(); }
+      if (!live.didInitialFit && layoutPoints().length > 0) { live.didInitialFit = true; live.fitSignature = fitSignature(); api.fitAll(); }
       map.on("zoom", scheduleRelayout);
       // 动画最后一帧的 zoom 事件可能撞上数据源还在重算，zoomend 再算一次兜底
       map.on("zoomend", relayout);
-      map.on("click", () => live.props.onMapClick());
-      live.dashFrame = requestAnimationFrame(tickDash);
+      map.on("click", (event) => {
+        // 点在线上（光晕那层有 10px 宽，好点）就当点了这条隧道；点空处交给页面
+        const { x, y } = event.point;
+        const hits = map.getLayer(NETWORK_MAP_LAYERS.linkHalo) ? map.queryRenderedFeatures([[x - 4, y - 4], [x + 4, y + 4]], { layers: [NETWORK_MAP_LAYERS.linkHalo] }) : [];
+        const tunnelId = Number(hits[0]?.properties?.tunnel);
+        if (Number.isFinite(tunnelId) && tunnelId > 0) live.props.onSelectLink(tunnelId);
+        else live.props.onMapClick();
+      });
+      live.dashFrame = requestAnimationFrame(tickAnimation);
       live.props.onReady(api);
     });
     map.on("error", (event: any) => {
@@ -593,7 +784,12 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       live.rasterErrorReported = true;
       live.props.onRasterError();
     });
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => { map.resize(); scheduleRelayout(); }) : null;
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
+      map.resize();
+      // 小图：卡片变宽变窄（转屏、侧栏收起）就重新框一遍，不然一半主机跑到边外
+      if (mini && live.loaded && live.didInitialFit) api.fitAll();
+      scheduleRelayout();
+    }) : null;
     observer?.observe(container);
     return () => {
       observer?.disconnect();
@@ -601,6 +797,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       if (live.dashFrame) cancelAnimationFrame(live.dashFrame);
       live.loaded = false;
       live.map = null;
+      live.comets = [];
+      live.cometDrawn = false;
       live.hostMarkers.clear();
       live.targetMarkers.clear();
       live.capMarkers.clear();
@@ -617,7 +815,12 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     if (!live.loaded) return;
     syncStaticMarkers();
     relayout();
-    if (!live.didInitialFit && layoutPoints().length > 0) { live.didInitialFit = true; api.fitAll(); }
+    if (!live.didInitialFit && layoutPoints().length > 0) { live.didInitialFit = true; live.fitSignature = fitSignature(); api.fitAll(); return; }
+    // 小图没有「回到全局」按钮，主机多了一台 / 少了一台就自己重新框
+    if (isMini() && live.didInitialFit) {
+      const signature = fitSignature();
+      if (signature !== live.fitSignature) { live.fitSignature = signature; api.fitAll(); }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.model, props.showFlows]);
 
@@ -636,6 +839,11 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       for (const layer of [NETWORK_MAP_LAYERS.flow, NETWORK_MAP_LAYERS.linkHalo, NETWORK_MAP_LAYERS.linkDashed, NETWORK_MAP_LAYERS.linkSolid]) {
         live.map.setPaintProperty(layer, "line-color", expression);
       }
+      live.map.setPaintProperty(NETWORK_MAP_LAYERS.tip, "fill-color", expression);
+      const comet = cometPaint(live.colors);
+      live.map.setPaintProperty(NETWORK_MAP_LAYERS.cometTail, "line-gradient", comet.tail["line-gradient"]);
+      live.map.setPaintProperty(NETWORK_MAP_LAYERS.cometGlow, "circle-color", comet.glow["circle-color"]);
+      live.map.setPaintProperty(NETWORK_MAP_LAYERS.cometHead, "circle-stroke-color", comet.head["circle-stroke-color"]);
     });
     for (const [id, entry] of live.hostMarkers) {
       const node = props.model.nodes.find((item) => item.id === id);
@@ -658,9 +866,12 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
   useEffect(() => {
     const map = live.map;
     if (!map || !live.loaded || !map.getLayer(NETWORK_MAP_LAYERS.linkFlow)) return;
-    // 减少动态效果：流动光点这一层直接不显示，静止的白虚线压在实线上反而像坏了
-    map.setLayoutProperty(NETWORK_MAP_LAYERS.linkFlow, "visibility", props.reduceMotion ? "none" : "visible");
+    // 减少动态效果：流动光点这一层直接不显示，静止的白虚线压在实线上反而像坏了（小图本来就不显示）
+    map.setLayoutProperty(NETWORK_MAP_LAYERS.linkFlow, "visibility", props.reduceMotion || isMini() ? "none" : "visible");
+    // 彗星也停：箭头还在，方向照样看得出
+    if (props.reduceMotion) clearComets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.reduceMotion]);
 
-  return <div ref={containerRef} className="nm-map" aria-label="网络地图：主机、隧道与落地目标" />;
+  return <div ref={containerRef} className={`nm-map${props.variant === "mini" ? " nm-map-mini" : ""}`} aria-label="网络地图：主机、隧道与落地目标" />;
 }

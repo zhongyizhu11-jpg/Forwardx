@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import type { NetworkMapLink, NetworkMapNode } from "@/components/network/NetworkMap";
 import { tunnelHealthFromAvailability } from "@/features/links/tunnelHealth";
 import { hostGeoCoordinate } from "@/lib/hostGeo";
-import { countryCodeToEmoji } from "@/lib/linkTestNodeMeta";
+import { countryFlagLabel } from "@/lib/flagEmojiSupport";
 import { resolveForwardRuleStopReason } from "@/lib/forwardRuleStatus";
 import { pollingInterval } from "@/lib/polling";
 import { getTunnelHopIds } from "@/lib/tunnelDisplay";
@@ -261,7 +261,8 @@ export function buildNetworkMapModel(input: {
       health: hostHealth(host),
       note: [region, note].filter(Boolean).join(" · ") || null,
       geo: hostGeoCoordinate(host),
-      emoji: countryCodeToEmoji(host?.geoCountryCode) || null,
+      // 这台设备画不出的旗（iOS 国行没有 🇹🇼）退回两字母代码，见 lib/flagEmojiSupport
+      emoji: countryFlagLabel(host?.geoCountryCode) || null,
       countryCode: String(host?.geoCountryCode || "").trim().toUpperCase() || null,
       city: region || name,
       region: region || null,
@@ -322,7 +323,7 @@ export function buildNetworkMapModel(input: {
         geo: Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null,
         countryCode,
         city,
-        emoji: countryCodeToEmoji(countryCode) || null,
+        emoji: countryFlagLabel(countryCode) || null,
         ruleIds: [],
         sourceHostIds: [],
         health: "healthy",

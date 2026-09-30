@@ -13,6 +13,7 @@ import {
   mapPaddingForSheet,
   nextSheetSnap,
   overviewHeadline,
+  parseMapOpenQuery,
   sheetSnapY,
 } from "./networkMapPageState";
 
@@ -102,4 +103,13 @@ test("聚焦一个目标：亮它的出口、入口和走的隧道", () => {
 test("页头那句话：有告警才带「N 项需要关注」", () => {
   assert.deepEqual(overviewHeadline(model, 0), { main: "3 台主机 · 2 条线路", attention: null });
   assert.equal(overviewHeadline(model, 2).attention, "2 项需要关注");
+});
+
+test("首页小图带过来的 ?host= / ?link=：正整数才算，主机优先，坏值当没带", () => {
+  assert.deepEqual(parseMapOpenQuery("?host=3"), { view: "node", id: 3 });
+  assert.deepEqual(parseMapOpenQuery("link=12"), { view: "link", id: 12 });
+  assert.deepEqual(parseMapOpenQuery("?host=3&link=12"), { view: "node", id: 3 });
+  assert.equal(parseMapOpenQuery("?host=abc"), null);
+  assert.equal(parseMapOpenQuery("?link=0"), null);
+  assert.equal(parseMapOpenQuery(""), null);
 });

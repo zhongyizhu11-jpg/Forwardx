@@ -8,6 +8,7 @@ import { NetworkMapSheet } from "@/components/network/NetworkMapSheet";
 import { LinkDetailView, NodeDetailView, OverviewView, Pill, SheetHead, TargetDetailView, linkHeadTitle, nodeHeadSubtitle } from "@/components/network/NetworkMapSheetViews";
 import "@/components/network/networkMap.css";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { buildNetworkMapAlerts, type NetworkMapAlert } from "@/features/network/networkMapAlerts";
 import { useNetworkMapPageModel } from "@/features/network/networkMapModel";
 import {
@@ -17,6 +18,7 @@ import {
   focusForTarget,
   mapPaddingForSheet,
   overviewHeadline,
+  parseMapOpenQuery,
   type MapFocus,
   type MapSheetView,
   type SheetSnap,
@@ -47,18 +49,6 @@ import { AGENT_VERSION } from "@shared/versions";
  */
 
 const NetworkMapCanvas = lazy(() => import("@/components/network/NetworkMapCanvas"));
-
-function useMediaQuery(query: string) {
-  const [matches, setMatches] = useState(() => (typeof window !== "undefined" ? window.matchMedia(query).matches : false));
-  useEffect(() => {
-    const mql = window.matchMedia(query);
-    const onChange = () => setMatches(mql.matches);
-    onChange();
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
-  }, [query]);
-  return matches;
-}
 
 /**
  * 让这一块铺满工作区：DashboardLayout 的 main 有内边距和 1280px 的最大宽度，
@@ -248,6 +238,20 @@ function NetworkMapPageBody() {
     if (view.view === "target" && !model.targets.some((target) => target.key === view.id)) setView({ view: "overview" });
   }, [model, view]);
 
+  // ---- 首页小图带着 ?host= / ?link= 过来：模型里有它、相机也就位了就开一次详情并飞过去 ----
+  const [pendingOpen, setPendingOpen] = useState(() => (typeof window !== "undefined" ? parseMapOpenQuery(window.location.search) : null));
+  const [cameraReady, setCameraReady] = useState(false);
+  useEffect(() => {
+    if (!pendingOpen || !cameraReady || model.loading) return;
+    const exists = pendingOpen.view === "node" ? model.nodes.some((node) => node.id === pendingOpen.id) : model.links.some((link) => link.id === pendingOpen.id);
+    // 模型到了但没有这个东西（被删了、不是自己的）：不再等，留在总览
+    setPendingOpen(null);
+    if (!exists) return;
+    if (pendingOpen.view === "node") openNode(pendingOpen.id);
+    else openLink(pendingOpen.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingOpen, cameraReady, model]);
+
   // ---- 页面不可见时停掉流动光点 ----
   const [paused, setPaused] = useState(() => typeof document !== "undefined" && document.visibilityState !== "visible");
   useEffect(() => {
@@ -389,9 +393,10 @@ function NetworkMapPageBody() {
               onSelectTarget={openTarget}
               onSelectCluster={() => { if (!rail && snap !== "peek") setSnap("peek"); }}
               onMapClick={() => { if (layerMenuOpen) { setLayerMenuOpen(false); return; } if (!rail && snap !== "peek") setSnap("peek"); }}
+              comets
               onRasterError={onRasterError}
               onUnavailable={() => setMapUnavailable(true)}
-              onReady={(api) => { cameraRef.current = api; }}
+              onReady={(api) => { cameraRef.current = api; setCameraReady(true); }}
             />
           </Suspense>
           {mapUnavailable ? (
