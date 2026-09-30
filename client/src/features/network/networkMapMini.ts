@@ -1,10 +1,12 @@
-import { boxOutsideArea, boxOverlapArea, boxesIntersect, unionBox, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
+import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
+import { boxOutsideArea, boxOverlapArea, boxesIntersect, leaderBetweenBoxes, unionBox, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
 
 import type { NetworkMapModel } from "./networkMapModel";
 
 /**
- * 首页那块「网络地图」小图的规则：什么时候画真地图、框哪些点、点了往哪儿跳、挨着的主机怎么
- * 并成一组、局部放大的小窗摆在哪、名字怎么躲开彼此。
+ * 首页那块「网络地图」小图的规则：什么时候画真地图、框哪些点、什么时候重新框、用户拖过之后
+ * 小窗怎么跟、挨着的主机怎么并成一组、局部放大的小窗摆在哪、名字怎么躲开彼此、点一下提示
+ * 什么字。
  *
  * 纯函数（detectWebGL 除外），画布和卡片各自只管照着做；在 node 里能测。
  */
@@ -47,8 +49,68 @@ export const INSET_MAX_ZOOM_OUT = 1.5;
 
 /** 主图上并成一组的主机：组员的真实位置、叠起来的 marker（含名字）占的盒子 */
 export type MiniLayoutGroup = { hostIds: number[]; label: string; members: PixelPoint[]; markerBox: PixelBox };
-/** 主图每次布局完报给卡片的东西：卡片据此挑组开小窗、找空地摆小窗 */
-export type MiniLayoutReport = { width: number; height: number; groups: MiniLayoutGroup[]; boxes: PixelBox[]; points: PixelPoint[] };
+/**
+ * 主图每次布局完报给卡片的东西：卡片据此挑组开小窗、找空地摆小窗。
+ * settled：这次是框好之后（首次、卡片变宽、主机集合变了、回到全览）报的 —— 卡片这时才重新
+ * 摆小窗；用户拖图、缩放时报的是 false，卡片只挪圈和引线，小窗钉在原地。
+ * userMoved：用户拖过 / 缩过、还没回到全览 —— 卡片据此显示「回到全览」。
+ */
+export type MiniLayoutReport = { width: number; height: number; groups: MiniLayoutGroup[]; boxes: PixelBox[]; points: PixelPoint[]; reserved: PixelBox[]; settled: boolean; userMoved: boolean };
+
+// ---- 用户能拖能缩之后：什么时候还自动框、能缩到多小 ----
+
+/** 为什么要重新框住全部主机 */
+export type MiniFitTrigger = "initial" | "resize" | "hosts" | "reset";
+
+/**
+ * 要不要重新框：首次、点「回到全览」一定框；卡片变宽变窄、主机多了少了一台只在用户没动过图
+ * 时框 —— 用户刚拖到想看的地方，轮询回来多了台主机就把视角抢回去，比不框糟得多。
+ */
+export function shouldRefit(trigger: MiniFitTrigger, userMoved: boolean): boolean {
+  return trigger === "initial" || trigger === "reset" || !userMoved;
+}
+
+/** 用户最多能缩到多小：框住全部之后再缩一级，别缩成一条世界的细带子 */
+export function miniMinZoom(fittedZoom: number): number {
+  return Math.max(0, fittedZoom - 1);
+}
+
+/**
+ * 钉住的小窗对应现在主图上的哪一组：组员一个不少的那组（缩小之后并进了更多台也算）。
+ * 用户放大到组员在屏幕上分开了（组散了）就是 null，卡片藏起小窗和圈，缩回去又出现。
+ */
+export function matchInsetGroup<T extends { hostIds: number[] }>(hostIds: readonly number[], groups: readonly T[]): T | null {
+  if (hostIds.length === 0) return null;
+  return groups.find((group) => hostIds.every((id) => group.hostIds.includes(id))) ?? null;
+}
+
+/** 圈到小窗的引线：圈整个滚出图外就不拉（小窗还在，引线指向图外像画坏了） */
+export function insetLeader(coverage: PixelBox | null, panel: PixelBox, container: { width: number; height: number }): [PixelPoint, PixelPoint] | null {
+  if (!coverage) return null;
+  if (!boxesIntersect(coverage, { x: 0, y: 0, w: container.width, h: container.height })) return null;
+  return leaderBetweenBoxes(coverage, panel);
+}
+
+// ---- 点一下的提示（不跳整页，只说一句是谁）----
+
+/** 主机：「HK entry 01 · 香港 · 在线」 */
+export function hostTipText(node: { name: string; region: string | null; city: string; isOnline: boolean }): string {
+  const place = node.region || node.city;
+  return [node.name, place && place !== node.name ? place : null, node.isOnline ? "在线" : "离线"].filter(Boolean).join(" · ");
+}
+
+/** 线路：「HK → JP · 46 ms」；没测过延迟就写状态 */
+export function linkTipText(link: { path: number[]; latencyMs?: number | null; health: NetworkHealth }, nodes: ReadonlyArray<{ id: number; name: string }>): string {
+  const nameOf = (id: number) => nodes.find((node) => node.id === id)?.name || `#${id}`;
+  const ends = link.path.length >= 2 ? `${nameOf(link.path[0])} → ${nameOf(link.path[link.path.length - 1])}` : nameOf(link.path[0] ?? 0);
+  const tail = typeof link.latencyMs === "number" ? `${Math.round(link.latencyMs)} ms` : describeNetworkHealth(link.health).label;
+  return `${ends} · ${tail}`;
+}
+
+/** 组（叠起来的 marker）：「香港 · 深圳 · 5 台」 */
+export function groupTipText(label: string, count: number): string {
+  return `${label} · ${count} 台`;
+}
 
 export type Quadrant = "tl" | "tr" | "bl" | "br";
 export type InsetSize = { w: number; h: number };
@@ -73,6 +135,8 @@ export type MiniOccupancy = {
   boxes: readonly PixelBox[];
   /** 弧线采样点 */
   points: readonly PixelPoint[];
+  /** 角上的小标签、+ / − 按钮：小窗绝不压上去，角被占了就往里挪一点（不传当没有） */
+  reserved?: readonly PixelBox[];
 };
 
 const QUADRANTS: Quadrant[] = ["bl", "br", "tl", "tr"];
@@ -96,13 +160,25 @@ export function scoreQuadrants(container: { width: number; height: number }, occ
   return scores;
 }
 
-function cornerBox(container: { width: number; height: number }, quadrant: Quadrant, size: InsetSize, margin: number): PixelBox {
-  return {
+/**
+ * 小窗在某个角的盒子。角上有保留的东西（右下的 + / −、右上的「N 台未定位」）就往里挪到不压它为止：
+ * 上下挪和左右挪挑挪得少的那个方向。
+ */
+export function cornerBox(container: { width: number; height: number }, quadrant: Quadrant, size: InsetSize, margin: number, reserved: readonly PixelBox[] = []): PixelBox {
+  let box: PixelBox = {
     x: quadrant.endsWith("r") ? container.width - margin - size.w : margin,
     y: quadrant.startsWith("b") ? container.height - margin - size.h : margin,
     w: size.w,
     h: size.h,
   };
+  for (const other of reserved) {
+    if (!boxesIntersect(box, other)) continue;
+    const dy = quadrant.startsWith("b") ? box.y + box.h - other.y : other.y + other.h - box.y;
+    const dx = quadrant.endsWith("r") ? box.x + box.w - other.x : other.x + other.w - box.x;
+    if (dy <= dx) box = { ...box, y: box.y + (quadrant.startsWith("b") ? -dy : dy) };
+    else box = { ...box, x: box.x + (quadrant.endsWith("r") ? -dx : dx) };
+  }
+  return box;
 }
 
 /**
@@ -121,12 +197,13 @@ export function placeInsets(
   const scores = scoreQuadrants(container, occupancy);
   const order = [...QUADRANTS].sort((a, b) => scores[a] - scores[b] || QUADRANTS.indexOf(a) - QUADRANTS.indexOf(b));
   const sizes = insetSizes(container, desktop);
+  const reserved = occupancy.reserved ?? [];
   for (let index = 0; index < count; index += 1) {
     const blocked = [...occupancy.boxes, ...placed.map((item) => item.box)];
     let choice: InsetPlacement | null = null;
     for (const size of [sizes.full, sizes.min]) {
       for (const quadrant of order) {
-        const box = cornerBox(container, quadrant, size, margin);
+        const box = cornerBox(container, quadrant, size, margin, reserved);
         if (placed.some((item) => item.quadrant === quadrant)) continue;
         if (blocked.some((other) => boxesIntersect(box, other))) continue;
         choice = { box, quadrant, shrunk: size === sizes.min };
@@ -140,7 +217,7 @@ export function placeInsets(
       let bestArea = Infinity;
       for (const quadrant of order) {
         if (placed.some((item) => item.quadrant === quadrant)) continue;
-        const box = cornerBox(container, quadrant, sizes.min, margin);
+        const box = cornerBox(container, quadrant, sizes.min, margin, reserved);
         const area = blocked.reduce((sum, other) => sum + boxOverlapArea(box, other), 0);
         if (area < bestArea) { bestArea = area; best = { box, quadrant, shrunk: true }; }
       }

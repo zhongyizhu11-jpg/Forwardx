@@ -3,7 +3,7 @@ import { isCountryCodeLabel } from "@/lib/flagEmojiSupport";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef } from "react";
 
-import { INSET_MAX_ZOOM_OUT, INSET_SPREAD_RADIUS_PX, MINI_CAP_MIN_ARC_PX, MINI_FIT_INSET_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, insetJitterRadius, placeLabelBoxes, shouldAbsorbIntoGroup, type LabelItem, type MiniLayoutGroup, type MiniLayoutReport } from "@/features/network/networkMapMini";
+import { INSET_MAX_ZOOM_OUT, INSET_SPREAD_RADIUS_PX, MINI_CAP_MIN_ARC_PX, MINI_FIT_INSET_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, insetJitterRadius, miniMinZoom, placeLabelBoxes, shouldAbsorbIntoGroup, shouldRefit, type LabelItem, type MiniFitTrigger, type MiniLayoutGroup, type MiniLayoutReport } from "@/features/network/networkMapMini";
 import type { NetworkMapModel, NetworkMapTarget } from "@/features/network/networkMapModel";
 import { isClusterDimmed, isFlowDimmed, isHostDimmed, isTargetDimmed, isTunnelDimmed, type MapFocus, type MapPadding } from "@/features/network/networkMapPageState";
 import { wgs84ToGcj02 } from "@shared/gcj02";
@@ -41,11 +41,13 @@ import {
  *
  * 三种用法（variant）：
  *   page  /map 整页：能拖能缩，缩小时聚簇，有簇 pill、看不到的主机的灰线。
- *   mini  首页那块卡片的主图：不能拖不能缩（不跟页面滚动抢手势），每台主机画在真实坐标上，
- *         圆盘会压在一起的（28px 内）并成一枚叠起来的 marker；主机的圆盘小一号、不写备注；
- *         框住所有主机后按 marker 真正占的像素再精确框一遍，谁都不会被边裁掉；把分组、
- *         占用情况报给卡片（onMiniLayout），卡片据此摆局部放大的小窗。点哪里都交给页面去开整页。
- *   inset 卡片里局部放大的小窗：和 mini 一样的画法，只框 fitHostIds 那几台（最多 9 级），
+ *   mini  首页那块卡片的主图：能拖能捏合缩放、双击放大（滚轮不缩：滚轮要留给页面滚动，
+ *         卡片角上有 + / − 按钮），每台主机画在真实坐标上，圆盘会压在一起的（28px 内）并成
+ *         一枚叠起来的 marker；主机的圆盘小一号、不写备注；框住所有主机后按 marker 真正占的
+ *         像素再精确框一遍，谁都不会被边裁掉；用户拖过 / 缩过之后（userMoved）就不再自动框，
+ *         直到卡片叫 fitAll（「回到全览」）。把分组、占用情况报给卡片（onMiniLayout），卡片
+ *         据此摆局部放大的小窗。点主机 / 线只回调，不开整页 —— 卡片自己决定提示什么。
+ *   inset 卡片里局部放大的小窗：和 mini 一样的画法，不能拖，只框 fitHostIds 那几台（最多 9 级），
  *         永远不并组 —— 9 级上还叠着的才错开一点点。
  * 同一个画家，不另写一份。
  */
@@ -53,7 +55,10 @@ import {
 export type NetworkMapCameraApi = {
   flyTo(lngLat: LngLat, zoom: number): void;
   fitPoints(points: LngLat[], maxZoom?: number): void;
+  /** 框住全部；小图上同时清掉 userMoved（这是用户点了「回到全览」，或者首次 / 卡片变宽 / 主机集合变了） */
   fitAll(): void;
+  /** 小图角上的 + / −：放大 / 缩小一级，算用户动过图 */
+  zoomBy(delta: number): void;
   /** 一台主机 / 一个目标当前画在哪（原始坐标；没画出来是 null） */
   hostLngLat(hostId: number): LngLat | null;
   targetLngLat(key: string): LngLat | null;
@@ -200,10 +205,16 @@ type Live = {
   /** 小图 / 小窗：上一次布局里每个 marker 占的像素（精确框住、报给卡片都用它） */
   fitItems: FitItem[];
   keepOut: PixelBox[];
+  /** 小图：角上的小标签、+ / − 按钮占的盒子 */
+  reserved: PixelBox[];
   arcPx: PixelPoint[];
   miniGroups: MiniLayoutGroup[];
   /** 正在精确框住：中间几轮布局不报给卡片，收敛了报一次 */
   settling: boolean;
+  /** 这次报告是框好之后报的（卡片这时才重新摆小窗） */
+  settledReport: boolean;
+  /** 小图：用户拖过 / 缩过、还没回到全览 —— 不再自动框，报给卡片显示「回到全览」 */
+  userMoved: boolean;
   lastReport: string;
   rasterErrorReported: boolean;
   relayoutFrame: number;
@@ -220,7 +231,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       props, map: null, loaded: false, colors: FALLBACK_COLORS,
       hostMarkers: new Map(), targetMarkers: new Map(), clusterMarkers: [], capMarkers: new Map(), stubMarkers: new Map(), countryMarkers: [],
       layout: null, linkFeatureIds: [], flowFeatureIds: [], tipFeatureIds: [], comets: [], cometPhase: new Map(), cometLast: 0, cometDrawn: false,
-      didInitialFit: false, fitSignature: "", fitItems: [], keepOut: [], arcPx: [], miniGroups: [], settling: false, lastReport: "", rasterErrorReported: false,
+      didInitialFit: false, fitSignature: "", fitItems: [], keepOut: [], reserved: [], arcPx: [], miniGroups: [], settling: false, settledReport: false, userMoved: false, lastReport: "", rasterErrorReported: false,
       relayoutFrame: 0, dashFrame: 0, dashStep: 0, dashLast: 0,
     };
   }
@@ -396,6 +407,12 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       const name = element.querySelector(".nm-mk-name") as HTMLElement | null;
       if (!pill || !name) continue;
       const anchor = viewProject(map, cluster.center);
+      // 用户把图拖 / 放大到这组跑出图外了：不参与摆名字，不然「贴边往里挪」会把名字拖回图里、覆盖框跟着拉到几百像素宽
+      if (anchor.x < -60 || anchor.y < -60 || anchor.x > width + 60 || anchor.y > height + 60) {
+        name.classList.remove("is-up", "is-tight");
+        name.style.marginLeft = "";
+        continue;
+      }
       const w = pill.offsetWidth || 60;
       const h = pill.offsetHeight || 24;
       entries.push({ key: `g${cluster.members.map((member) => (member.kind === "host" ? member.id : member.key)).join(",")}`, name, anchor, body: { x: anchor.x - w / 2, y: anchor.y - h / 2, w, h }, gap: h / 2 + 2, counts: true });
@@ -421,9 +438,12 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       obstacles.push(box);
     }
     const frame = container.getBoundingClientRect();
+    const reservedBoxes: PixelBox[] = [];
     for (const reserved of Array.from(container.parentElement?.querySelectorAll(":scope > .nm-reserved") ?? [])) {
       const rect = reserved.getBoundingClientRect();
-      obstacles.push({ x: rect.left - frame.left - 4, y: rect.top - frame.top - 4, w: rect.width + 8, h: rect.height + 8 });
+      const box = { x: rect.left - frame.left - 4, y: rect.top - frame.top - 4, w: rect.width + 8, h: rect.height + 8 };
+      obstacles.push(box);
+      reservedBoxes.push(box);
     }
     const placements = new Map(placeLabelBoxes(items, obstacles, area).map((placement) => [placement.key, placement]));
     const fitItems: FitItem[] = [];
@@ -449,13 +469,19 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     for (const point of live.arcPx) fitItems.push({ anchor: point, box: { x: point.x - 2, y: point.y - 2, w: 4, h: 4 } });
     live.fitItems = fitItems;
     live.keepOut = keepOut;
+    // 角上的小标签和 + / − 按钮另报一份：小窗绝不压上去（placeInsets 会把角上的盒子往里挪）
+    live.reserved = reservedBoxes;
     // 分组报给卡片：组员的真实位置 + 叠起来的 marker（含名字）占的盒子
     const nodeById = new Map(live.props.model.nodes.map((node) => [node.id, node]));
     live.miniGroups = live.clusterMarkers.map((cluster) => {
       const hostIds = cluster.members.flatMap((member) => (member.kind === "host" ? [member.id] : []));
       const entry = entries.find((item) => item.key === `g${cluster.members.map((member) => (member.kind === "host" ? member.id : member.key)).join(",")}`);
       const placement = entry ? placements.get(entry.key) : undefined;
-      const markerBox = entry ? unionBox(placement ? [entry.body, placement.box] : [entry.body])! : { x: 0, y: 0, w: 0, h: 0 };
+      // 跑出图外没参与摆名字的组：盒子按 pill 本身算（不能给个 0,0 的空盒，覆盖框会被拉到左上角去）
+      const pill = cluster.marker.getElement().querySelector(".nm-mk-pill") as HTMLElement | null;
+      const anchor = viewProject(map, cluster.center);
+      const pillBox: PixelBox = { x: anchor.x - (pill?.offsetWidth || 60) / 2, y: anchor.y - (pill?.offsetHeight || 24) / 2, w: pill?.offsetWidth || 60, h: pill?.offsetHeight || 24 };
+      const markerBox = entry ? unionBox(placement ? [entry.body, placement.box] : [entry.body])! : pillBox;
       const members = hostIds.map((id) => { const node = nodeById.get(id); return node?.geo ? viewProject(map, display([node.geo.lng, node.geo.lat])) : null; }).filter((point): point is PixelPoint => !!point);
       return { hostIds, label: cluster.label, members, markerBox };
     });
@@ -477,6 +503,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const inset = isInset() ? FIT_INSET.inset : FIT_INSET.mini;
     // 小窗：圈和名字这些像素尺寸不随缩放变，实在放不下时再缩也没用，别缩成一张世界图
     const floorZoom = isInset() ? Math.max(0, map.getZoom() - INSET_MAX_ZOOM_OUT) : 0;
+    // 上一次框好之后把 minZoom 抬到了「再缩一级」，这次框可能要更小：先放开
+    if (isMini()) map.setMinZoom(0);
     live.settling = true;
     try {
       for (let round = 0; round < 6; round += 1) {
@@ -493,6 +521,21 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     } finally {
       live.settling = false;
     }
+    // 用户最多能缩到框好的再小一级
+    if (isMini()) map.setMinZoom(miniMinZoom(map.getZoom()));
+    reportSettled();
+  };
+
+  /** 框好 / 卡片变宽但用户动过图不重框 / 主机集合变了：报一次「可以重新摆小窗了」 */
+  const reportSettled = () => {
+    live.settledReport = true;
+    try { reportMiniLayout(); } finally { live.settledReport = false; }
+  };
+
+  /** 用户自己拖了 / 缩了：以后不再自动框，卡片显示「回到全览」 */
+  const markUserMoved = () => {
+    if (!isMini() || live.userMoved) return;
+    live.userMoved = true;
     reportMiniLayout();
   };
 
@@ -509,6 +552,9 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       groups: live.miniGroups.map((group) => ({ ...group, members: group.members.map((point) => ({ x: round(point.x), y: round(point.y) })), markerBox: roundBox(group.markerBox) })),
       boxes: live.keepOut.map(roundBox),
       points: live.arcPx.map((point) => ({ x: round(point.x), y: round(point.y) })),
+      reserved: live.reserved.map(roundBox),
+      settled: live.settledReport,
+      userMoved: live.userMoved,
     };
     const signature = JSON.stringify(report);
     if (signature === live.lastReport) return;
@@ -610,7 +656,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         const target = live.map;
         if (!target) return;
         const zoom = Math.max(6.3, target.getZoom() + 2.2);
-        // 小图不能缩：交给页面去开整页；整页上簇心已经是显示坐标（高德下转过 GCJ-02 的），直接飞，不走 api.flyTo 再转一次
+        // 小图不飞：只回调（卡片提示这组是谁）；整页上簇心已经是显示坐标（高德下转过 GCJ-02 的），直接飞，不走 api.flyTo 再转一次
         if (!compact()) {
           if (live.props.reduceMotion) target.jumpTo({ center: center as [number, number], zoom });
           else target.flyTo({ center: center as [number, number], zoom, speed: 0.9, curve: 1.42, maxDuration: 1800, essential: true });
@@ -818,12 +864,14 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     fitAll() {
       const map = live.map;
       if (!map) return;
+      // 小图：不管是首次、卡片变宽、主机集合变了还是「回到全览」，框住全部就是回到了自动的视角
+      live.userMoved = false;
       const framed = framedHostIds();
       // 小窗只框它那几台；主图和整页框全部
       const points = layoutPoints().filter((point) => !framed || (point.key.startsWith("h") && framed.has(Number(point.key.slice(1))))).map((point) => point.lngLat);
       if (points.length === 0) { map.jumpTo({ center: [110, 25], zoom: 1.6 }); return; }
       if (isMini()) {
-        // 小图没法拖：大圆弧往高纬度弯出去的那一段也得框进来，不然日美那条线的弧顶在卡片外面
+        // 大圆弧往高纬度弯出去的那一段也得框进来，不然日美那条线的弧顶一打开就在卡片外面
         const nodeById = new Map(live.props.model.nodes.map((node) => [node.id, node]));
         for (const link of live.props.model.links) {
           for (let index = 0; index < link.path.length - 1; index += 1) {
@@ -842,6 +890,13 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         settleFit();
       } else map.fitBounds(bounds, { maxZoom: 5, padding: FIT_PADDING, duration: live.props.reduceMotion ? 0 : 1200, essential: true });
     },
+    zoomBy(delta) {
+      const map = live.map;
+      if (!map) return;
+      markUserMoved();
+      const zoom = Math.min(map.getMaxZoom(), Math.max(map.getMinZoom(), map.getZoom() + delta));
+      map.easeTo({ zoom, duration: live.props.reduceMotion ? 0 : 240, essential: true });
+    },
     hostLngLat(hostId) {
       const node = live.props.model.nodes.find((item) => item.id === hostId);
       return node?.geo ? [node.geo.lng, node.geo.lat] : null;
@@ -851,6 +906,12 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       return target?.geo ? [target.geo.lng, target.geo.lat] : null;
     },
     getZoom() { return live.map?.getZoom() ?? 0; },
+  };
+
+  /** 小图 / 小窗要不要重新框（规则在 shouldRefit）：不框的话也要报一次，卡片好按新尺寸 / 新主机重新摆小窗 */
+  const refit = (trigger: MiniFitTrigger) => {
+    if (shouldRefit(trigger, live.userMoved)) api.fitAll();
+    else { relayout(); reportSettled(); }
   };
 
   // ---- 动画：一个 rAF 管两样。流动光点只改 dasharray，交给 GPU；彗星每帧按相位采样一次写进
@@ -920,6 +981,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     live.colors = readColors(container.parentElement);
     const rasterIds = new Set(rasterSourceIds());
     const mini = compact();
+    const pannable = isMini();
     let map: MapLibreMap;
     try {
       map = new maplibregl.Map({
@@ -936,8 +998,14 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         dragRotate: false,
         touchPitch: false,
         fadeDuration: 0,
-        // 小图不能拖不能缩：手机上它嵌在首页里，手势得留给页面滚动；点击照样有（MapEventHandler 不看这个开关）
-        interactive: !mini,
+        // 主图能拖、捏合缩放、双击放大；滚轮不缩（滚到卡片上页面还得能往下滚，缩放用角上的 + / −）、
+        // 键盘不管（卡片不是焦点）。小窗不能动。点击两种都有（MapEventHandler 不看这个开关）
+        interactive: pannable,
+        scrollZoom: false,
+        keyboard: false,
+        dragPan: pannable,
+        doubleClickZoom: pannable,
+        touchZoomRotate: pannable,
       });
     } catch (error) {
       // 没有 WebGL（远程桌面、老浏览器）：告诉页面画兜底文案
@@ -963,6 +1031,14 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       map.on("zoom", scheduleRelayout);
       // 动画最后一帧的 zoom 事件可能撞上数据源还在重算，zoomend 再算一次兜底
       map.on("zoomend", relayout);
+      if (pannable) {
+        // 拖图时圈、引线、胶囊的躲让都得跟着（每帧一次 rAF 合并的重排）
+        map.on("move", scheduleRelayout);
+        map.on("moveend", relayout);
+        // 只有用户手上的动作算「动过」：jumpTo / fitBounds / easeTo 发的事件没有 originalEvent
+        map.on("dragstart", (event) => { if (event.originalEvent) markUserMoved(); });
+        map.on("zoomstart", (event) => { if (event.originalEvent) markUserMoved(); });
+      }
       map.on("click", (event) => {
         // 点在线上（光晕那层有 10px 宽，好点）就当点了这条隧道；点空处交给页面
         const { x, y } = event.point;
@@ -991,8 +1067,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     });
     const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
       map.resize();
-      // 小图：卡片变宽变窄（转屏、侧栏收起）就重新框一遍，不然一半主机跑到边外
-      if (mini && live.loaded && live.didInitialFit) api.fitAll();
+      // 小图：卡片变宽变窄（转屏、侧栏收起）就重新框一遍，不然一半主机跑到边外；用户动过图就不抢视角，只让卡片重新摆小窗
+      if (mini && live.loaded && live.didInitialFit) refit("resize");
       scheduleRelayout();
     }) : null;
     observer?.observe(container);
@@ -1021,10 +1097,10 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     syncStaticMarkers();
     relayout();
     if (!live.didInitialFit && layoutPoints().length > 0) { live.didInitialFit = true; live.fitSignature = fitSignature(); api.fitAll(); return; }
-    // 小图没有「回到全局」按钮，主机多了一台 / 少了一台就自己重新框；小窗要框的那组变了也一样
+    // 主机多了一台 / 少了一台就重新框（用户动过图就不抢，新 marker 照画）；小窗要框的那组变了也一样
     if (compact() && live.didInitialFit) {
       const signature = fitSignature();
-      if (signature !== live.fitSignature) { live.fitSignature = signature; api.fitAll(); }
+      if (signature !== live.fitSignature) { live.fitSignature = signature; refit("hosts"); }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.model, props.showFlows, (props.fitHostIds ?? []).join(",")]);
