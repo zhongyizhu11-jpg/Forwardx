@@ -147,13 +147,32 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-mini .nm-mk-disc { left: -13px; top: -13px; width: 26px; height: 26px; border-width: 2px; font-size: 13px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--c, var(--nm-ok)) 18%, transparent), 0 3px 10px rgba(0, 0, 0, 0.25); }
 .nm-mini .nm-mk-code { font-size: 9px; }
 .nm-mini .nm-mk-flag-dot { width: 8px; height: 8px; }
-.nm-mini .nm-mk-name { top: 15px; font-size: 11px; }
+/* 名字：最宽 96px 省略号截断，「Jinx(29.9y)」这种长名不会拖成一行盖住邻居 */
+.nm-mini .nm-mk-name { top: 15px; font-size: 10.5px; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+/* 翻侧、左右挪都躲不开时最后缩一号字（由画布算） */
+.nm-mini .nm-mk-name.is-tight { font-size: 9.5px; }
 .nm-mini .nm-mk-note { display: none; }
 .nm-mini .nm-mk-cap { padding: 2px 7px; font-size: 10px; }
 /* 小图不写国家名：卡片就巴掌大，「印度尼西亚」会压在主机名上，还老被边裁掉半个字 */
 .nm-mini .nm-mk-country { display: none; }
 /* 名字挤在一起时（手机上港日两台只隔几十像素）其中一个翻到圆盘上面去；贴边的往里挪（marginLeft 由画布算） */
 .nm-mini .nm-mk-name.is-up { top: auto; bottom: 15px; }
+/* 圆盘会压在一起的几台叠成一枚 marker（≤3 面旗 + 数量）：比整页的簇 pill 小一号 */
+.nm-mini .nm-mk-cluster .nm-mk-pill { gap: 4px; padding: 3px 7px 3px 6px; border-width: 2px; font-size: 12px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--c, var(--nm-ok)) 16%, transparent), 0 3px 10px rgba(0, 0, 0, 0.25); }
+.nm-mini .nm-mk-cluster .nm-mk-pill b { font-size: 11px; }
+.nm-mini .nm-mk-pill .nm-mk-code { font-size: 8.5px; }
+.nm-mini .nm-mk-cluster .nm-mk-name { top: 14px; }
+.nm-mini .nm-mk-cluster .nm-mk-name.is-up { top: auto; bottom: 14px; }
+
+/* ---- 局部放大的小窗 ---- */
+/* 主图上圈出这组盖住的范围 + 到小窗的引线：画在主图和小窗之间那一层，不挡点击 */
+.nm-inset-links { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: visible; }
+.nm-inset-links rect { fill: none; stroke: var(--nm-accent); stroke-width: 1; stroke-dasharray: 3 2; opacity: 0.85; }
+.nm-inset-links line { stroke: var(--nm-accent); stroke-width: 1; opacity: 0.6; }
+.nm-inset { position: absolute; z-index: 4; overflow: hidden; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--nm-accent) 70%, transparent); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); background: var(--nm-bg); cursor: pointer; }
+.nm-inset > .nm-map { position: absolute; inset: 0; background: var(--nm-bg); cursor: pointer; }
+.nm-inset .maplibregl-canvas-container { cursor: pointer; }
+.nm-inset-title { position: absolute; top: 5px; left: 5px; z-index: 3; max-width: calc(100% - 10px); padding: 1px 6px; border-radius: 999px; font-size: 9.5px; font-weight: 700; line-height: 1.4; color: var(--nm-fg); background: var(--nm-glass); border: 1px solid var(--nm-glass-border); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /*
   触摸设备上全局给 button / [role=button] 定了 min-height:44px（index.css 的命中区规则），会把
@@ -166,8 +185,8 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
   .fx-netmap .nm-mk-disc::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; }
   .fx-netmap .nm-mk-cap::after { content: ""; position: absolute; inset: -11px -4px; }
 }
-/* 卡片角上「N 台未定位」：没有坐标的主机画不到图上，得说一声 */
-.nm-mini .nm-mini-unlocated { position: absolute; right: 8px; bottom: 8px; z-index: 3; padding: 3px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; color: var(--nm-muted); background: var(--nm-glass); border: 1px solid var(--nm-glass-border); pointer-events: none; white-space: nowrap; }
+/* 右上角「N 台未定位」：没有坐标的主机画不到图上，得说一声。小而半透明，名字和小窗都会躲开它（.nm-reserved） */
+.nm-mini .nm-mini-unlocated { position: absolute; right: 8px; top: 8px; z-index: 5; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; color: var(--nm-muted); background: color-mix(in srgb, var(--nm-glass) 75%, transparent); border: 1px solid var(--nm-glass-border); pointer-events: none; white-space: nowrap; opacity: 0.9; }
 /* 地图引擎还没到 / 起不来时的位置：示意图铺在同一块地方，不跳版 */
 .nm-mini .nm-mini-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 .nm-mini .nm-mini-fallback > * { width: 100%; }
