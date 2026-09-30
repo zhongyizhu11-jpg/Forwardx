@@ -335,12 +335,6 @@ export function shouldRenderRealMap(input: { webgl: boolean; locatedHosts: numbe
   return input.webgl && input.locatedHosts > 0;
 }
 
-/** 小图上点了主机 / 线路要跳去的整页地址（整页一打开就弹那个详情） */
-export function miniOpenHref(target: { kind: "host" | "link"; id: number } | null): string {
-  if (!target) return "/map";
-  return target.kind === "host" ? `/map?host=${target.id}` : `/map?link=${target.id}`;
-}
-
 let webglSupported: boolean | null = null;
 
 /**

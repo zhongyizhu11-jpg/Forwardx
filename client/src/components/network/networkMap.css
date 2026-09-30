@@ -142,8 +142,10 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 /* 皮肤变量跟整页一样挂在 .fx-netmap[data-skin] 上；卡片里要圆角，手机端整页那条「圆角归零」不适用 */
 .fx-netmap.nm-mini { height: 300px; margin: 10px 12px 12px; border-radius: 12px; border: 1px solid var(--nm-line); }
 @media (min-width: 900px) { .fx-netmap.nm-mini { height: 380px; } }
-.nm-mini > .nm-map { cursor: pointer; }
-.nm-mini .nm-map .maplibregl-canvas-container { cursor: pointer; }
+/* 图能拖，但底图不是链接：默认指针，按住拖的时候才变抓手（MapLibre 自己的 .maplibregl-interactive 是常驻抓手） */
+.nm-mini > .nm-map { cursor: default; }
+.nm-mini .nm-map .maplibregl-canvas-container.maplibregl-interactive { cursor: default; }
+.nm-mini .nm-map .maplibregl-canvas-container.maplibregl-interactive:active { cursor: grabbing; }
 .nm-mini .nm-mk-disc { left: -13px; top: -13px; width: 26px; height: 26px; border-width: 2px; font-size: 13px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--c, var(--nm-ok)) 18%, transparent), 0 3px 10px rgba(0, 0, 0, 0.25); }
 .nm-mini .nm-mk-code { font-size: 9px; }
 .nm-mini .nm-mk-flag-dot { width: 8px; height: 8px; }
@@ -169,9 +171,10 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-inset-links { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: visible; }
 .nm-inset-links rect { fill: none; stroke: var(--nm-accent); stroke-width: 1; stroke-dasharray: 3 2; opacity: 0.85; }
 .nm-inset-links line { stroke: var(--nm-accent); stroke-width: 1; opacity: 0.6; }
-.nm-inset { position: absolute; z-index: 4; overflow: hidden; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--nm-accent) 70%, transparent); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); background: var(--nm-bg); cursor: pointer; }
-.nm-inset > .nm-map { position: absolute; inset: 0; background: var(--nm-bg); cursor: pointer; }
-.nm-inset .maplibregl-canvas-container { cursor: pointer; }
+.nm-inset { position: absolute; z-index: 4; overflow: hidden; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--nm-accent) 70%, transparent); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); background: var(--nm-bg); }
+.nm-inset > .nm-map { position: absolute; inset: 0; background: var(--nm-bg); }
+/* 用户把主图放大到这组散开了：小窗藏起来但尺寸不变（引擎不用重算），缩回去立刻又有 */
+.nm-inset.is-off { visibility: hidden; }
 .nm-inset-title { position: absolute; top: 5px; left: 5px; z-index: 3; max-width: calc(100% - 10px); padding: 1px 6px; border-radius: 999px; font-size: 9.5px; font-weight: 700; line-height: 1.4; color: var(--nm-fg); background: var(--nm-glass); border: 1px solid var(--nm-glass-border); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /*
@@ -184,7 +187,17 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
   .fx-netmap .nm-mk, .fx-netmap .nm-mk-disc, .fx-netmap .nm-mk-cap, .fx-netmap .nm-mk-pill { min-height: 0; }
   .fx-netmap .nm-mk-disc::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; }
   .fx-netmap .nm-mk-cap::after { content: ""; position: absolute; inset: -11px -4px; }
+  /* 小图角上 28px 的 + / − 也一样：看着小，命中区撑到 40px 上下 */
+  .nm-mini .nm-mini-zoom button::after { content: ""; position: absolute; inset: -6px; }
 }
+/* 右下角 + / −：滚轮留给页面滚动，缩放靠这两个键。整页那种玻璃浮键的缩小版（28px）；名字和小窗都会躲开它（.nm-reserved） */
+.nm-mini .nm-mini-zoom { position: absolute; right: 8px; bottom: 8px; z-index: 5; display: flex; flex-direction: column; gap: 4px; }
+.nm-mini .nm-mini-zoom button { position: relative; width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 8px; border: 1px solid var(--nm-glass-border); background: var(--nm-glass); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14); display: grid; place-items: center; font-size: 16px; font-weight: 600; line-height: 1; color: var(--nm-fg); cursor: pointer; }
+.nm-mini .nm-mini-zoom button:hover { background: var(--nm-glass-strong); }
+/* 左上角「回到全览」：用户拖过 / 缩过之后才出现，点了重新框住全部 */
+.nm-mini .nm-mini-reset { position: absolute; left: 8px; top: 8px; z-index: 5; min-height: 0; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--nm-glass-border); background: var(--nm-glass-strong); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14); font-size: 10.5px; font-weight: 700; line-height: 1.4; color: var(--nm-accent); cursor: pointer; white-space: nowrap; }
+/* 底部居中一闪而过的提示（点了主机 / 线 / 组）：不挡点击，给右下角的 + / − 留位 */
+.nm-mini .nm-mini-tip { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 6; max-width: calc(100% - 96px); padding: 3px 9px; border-radius: 999px; border: 1px solid var(--nm-glass-border); background: var(--nm-glass-strong); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); font-size: 10.5px; font-weight: 600; line-height: 1.4; color: var(--nm-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 /* 右上角「N 台未定位」：没有坐标的主机画不到图上，得说一声。小而半透明，名字和小窗都会躲开它（.nm-reserved） */
 .nm-mini .nm-mini-unlocated { position: absolute; right: 8px; top: 8px; z-index: 5; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; color: var(--nm-muted); background: color-mix(in srgb, var(--nm-glass) 75%, transparent); border: 1px solid var(--nm-glass-border); pointer-events: none; white-space: nowrap; opacity: 0.9; }
 /* 地图引擎还没到 / 起不来时的位置：示意图铺在同一块地方，不跳版 */

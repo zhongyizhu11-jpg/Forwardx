@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import NetworkMapCanvas from "@/components/network/NetworkMapCanvas";
+import NetworkMapCanvas, { type NetworkMapCameraApi } from "@/components/network/NetworkMapCanvas";
 import "@/components/network/networkMap.css";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePageVisible } from "@/hooks/usePageVisible";
-import { groupCoverageBox, miniOpenHref, pickInsetGroups, placeInsets, unlocatedHostCount, type MiniLayoutReport } from "@/features/network/networkMapMini";
+import { groupCoverageBox, groupTipText, hostTipText, insetLeader, linkTipText, matchInsetGroup, pickInsetGroups, placeInsets, unlocatedHostCount, type InsetPlacement, type MiniLayoutReport } from "@/features/network/networkMapMini";
 import type { NetworkMapModel } from "@/features/network/networkMapModel";
 import { NETWORK_MAP_BASE_LAYERS, NETWORK_MAP_LAYER_STORAGE_KEY, resolveNetworkMapBaseLayer, type NetworkMapBaseLayerId } from "@shared/networkMapBaseLayers";
-import { leaderBetweenBoxes } from "@shared/networkMapGeometry";
+
+import { NetworkMapMiniChrome } from "./NetworkMapMiniChrome";
 
 /**
- * 首页卡片里的真地图：/map 那台画布的 mini 模式，不能拖不能缩，点哪里都跳去整页。
+ * 首页卡片里的真地图：/map 那台画布的 mini 模式，能拖、能捏合缩放、双击放大，角上有 + / −；
+ * 点哪里都不跳整页 —— 点主机 / 线 / 组只在底部闪一句「是谁、什么状态」，整页的入口只有卡片
+ * 标题旁的「打开地图」。
  *
  * 这个文件由卡片 lazy() 引入 —— 它静态引用画布（连着 MapLibre 那几百 KB），首页的首屏
  * 包不该带上它；引擎没到之前卡片先画原来的 SVG 示意图。
@@ -19,21 +22,29 @@ import { leaderBetweenBoxes } from "@shared/networkMapGeometry";
  * 主图上每台主机都画在真实坐标上，圆盘会压在一起的（港粤几台）并成一枚叠起来的 marker；
  * 最大的那组（桌面上最大的两组）在图上开一扇「局部放大」的小窗：第二个不能拖的 MapLibre，
  * 只框那几台，26px 的圆盘、名字、弧线、彗星都照画。小窗摆在主图最空的那个角（placeInsets），
- * 主图上用一个细虚线框圈出这组盖住的范围，再拉一根引线到小窗。摆哪由主图每次布局完报上来的
- * 占用情况决定（onMiniLayout），所以小窗永远不压主机、名字和胶囊。
+ * 主图上用一个细虚线框圈出这组盖住的范围，再拉一根引线到小窗。
+ *
+ * 用户拖图 / 缩放时：圈和引线跟着主图走（每次布局报告都重算），小窗钉在框好时定下的角上不
+ * 跟着跑 —— 摆位只在框好之后的报告（settled）上重算：首次、卡片变宽、主机集合变了、回到全览。
+ * 圈整个滚出图外就不拉引线；用户放大到这组在屏幕上散开了，小窗和圈一起藏起来，缩回去再出现。
+ * 画布自己记着用户动没动过（userMoved），动过就不再自动框，这里显示「回到全览」。
  *
  * 底图跟 /map 一样：用户在整页选过的优先（同一个 localStorage 键），没选过就跟面板主题。
  * 高德瓦片拉不下来时悄悄切到暗黑网格（主图和小窗一起切）—— 首页上不弹提示，那是整页的事。
  */
 const NO_PADDING = { top: 0, bottom: 0, left: 0, right: 0 };
+/** 点一下的提示停多久 */
+const TIP_MS = 2500;
 
 function readStoredLayer(): unknown {
   try { return window.localStorage.getItem(NETWORK_MAP_LAYER_STORAGE_KEY); } catch { return null; }
 }
 
-export default function NetworkMapMini({ model, onOpen, fallback }: {
+/** 框好时定下来的一扇小窗：哪几台、叫什么、摆哪 —— 用户拖图时这些不变 */
+type InsetSlot = { hostIds: number[]; label: string; placement: InsetPlacement };
+
+export default function NetworkMapMini({ model, fallback }: {
   model: NetworkMapModel;
-  onOpen: (href: string) => void;
   /** 引擎起不来（没有 WebGL）时画这个：原来的示意图 */
   fallback: ReactNode;
 }) {
@@ -43,8 +54,14 @@ export default function NetworkMapMini({ model, onOpen, fallback }: {
   const pageVisible = usePageVisible();
   const [baseLayer, setBaseLayer] = useState<NetworkMapBaseLayerId>(() => resolveNetworkMapBaseLayer(readStoredLayer(), resolvedTheme));
   const [unavailable, setUnavailable] = useState(false);
+  /** 主图最近一次布局（拖图时每帧一份）：圈、引线、「回到全览」都看它 */
   const [report, setReport] = useState<MiniLayoutReport | null>(null);
+  /** 最近一次框好之后的布局：小窗摆位只看它 */
+  const [fitReport, setFitReport] = useState<MiniLayoutReport | null>(null);
+  const [tip, setTip] = useState<string | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
+  const apiRef = useRef<NetworkMapCameraApi | null>(null);
+  const tipTimer = useRef<number>(0);
 
   // 卡片滚出视野就停掉彗星：首页往下翻到流量图时，看不见的地图不该还在每帧写数据
   const [inView, setInView] = useState(true);
@@ -55,26 +72,50 @@ export default function NetworkMapMini({ model, onOpen, fallback }: {
     observer.observe(frame);
     return () => observer.disconnect();
   }, []);
+  useEffect(() => () => { if (tipTimer.current) window.clearTimeout(tipTimer.current); }, []);
 
   const onRasterError = useCallback(() => setBaseLayer("dark"), []);
-  const onMiniLayout = useCallback((next: MiniLayoutReport) => setReport(next), []);
+  const onMiniLayout = useCallback((next: MiniLayoutReport) => {
+    setReport(next);
+    if (next.settled) setFitReport(next);
+  }, []);
+  const onReady = useCallback((api: NetworkMapCameraApi) => { apiRef.current = api; }, []);
+  const showTip = useCallback((text: string) => {
+    setTip(text);
+    if (tipTimer.current) window.clearTimeout(tipTimer.current);
+    tipTimer.current = window.setTimeout(() => setTip(null), TIP_MS);
+  }, []);
   const unlocated = unlocatedHostCount(model);
   const paused = !pageVisible || !inView;
 
-  // 哪几组开小窗、小窗摆哪、圈哪、引线怎么拉：都从主图报上来的布局算
-  const insets = useMemo(() => {
-    if (!report) return [];
-    const groups = pickInsetGroups(report.groups, desktop);
+  // 点主机 / 线 / 组：只提示，不跳整页
+  const onSelectNode = useCallback((id: number) => {
+    const node = model.nodes.find((item) => item.id === id);
+    if (node) showTip(hostTipText(node));
+  }, [model, showTip]);
+  const onSelectLink = useCallback((id: number) => {
+    const link = model.links.find((item) => item.id === id);
+    if (link) showTip(linkTipText(link, model.nodes));
+  }, [model, showTip]);
+  const noop = useCallback(() => {}, []);
+
+  // 哪几组开小窗、小窗摆哪：框好之后定一次，拖图时不动
+  const slots = useMemo<InsetSlot[]>(() => {
+    if (!fitReport) return [];
+    const groups = pickInsetGroups(fitReport.groups, desktop);
     if (groups.length === 0) return [];
-    const placements = placeInsets({ width: report.width, height: report.height }, { boxes: report.boxes, points: report.points }, groups.length, desktop);
-    return placements.map((placement, index) => {
-      const group = groups[index];
-      const coverage = groupCoverageBox(group.members, group.markerBox);
-      return { group, placement, coverage, leader: coverage ? leaderBetweenBoxes(coverage, placement.box) : null };
-    });
-  }, [report, desktop]);
+    const placements = placeInsets({ width: fitReport.width, height: fitReport.height }, { boxes: fitReport.boxes, points: fitReport.points, reserved: fitReport.reserved }, groups.length, desktop);
+    return placements.map((placement, index) => ({ hostIds: groups[index].hostIds, label: groups[index].label, placement }));
+  }, [fitReport, desktop]);
+  // 圈哪、引线怎么拉：跟着主图最近一次布局走；这组在屏幕上散开了（放大了）就藏起来
+  const insets = useMemo(() => slots.map((slot) => {
+    const group = report ? matchInsetGroup(slot.hostIds, report.groups) : null;
+    const coverage = group ? groupCoverageBox(group.members, group.markerBox) : null;
+    const leader = report && coverage ? insetLeader(coverage, slot.placement.box, report) : null;
+    return { ...slot, shown: !!group, coverage, leader };
+  }), [slots, report]);
   // 主图上的延迟胶囊要躲开小窗（小窗摆位不看胶囊，所以不会互相追着跑）
-  const avoidBoxes = useMemo(() => insets.map((item) => item.placement.box), [insets]);
+  const avoidBoxes = useMemo(() => insets.filter((item) => item.shown).map((item) => item.placement.box), [insets]);
 
   if (unavailable) return <>{fallback}</>;
   return (
@@ -89,58 +130,64 @@ export default function NetworkMapMini({ model, onOpen, fallback }: {
         reduceMotion={reduceMotion}
         paused={paused}
         comets
-        onSelectNode={(id) => onOpen(miniOpenHref({ kind: "host", id }))}
-        onSelectLink={(id) => onOpen(miniOpenHref({ kind: "link", id }))}
-        onSelectTarget={() => onOpen(miniOpenHref(null))}
-        onSelectCluster={(_center, _zoom, hostIds) => onOpen(miniOpenHref(hostIds.length > 0 ? { kind: "host", id: hostIds[0] } : null))}
-        onMapClick={() => onOpen(miniOpenHref(null))}
+        onSelectNode={onSelectNode}
+        onSelectLink={onSelectLink}
+        onSelectTarget={noop}
+        onSelectCluster={(_center, _zoom, hostIds) => {
+          const group = report?.groups.find((item) => item.hostIds.join(",") === hostIds.join(","));
+          if (group) showTip(groupTipText(group.label, group.hostIds.length));
+        }}
+        onMapClick={noop}
         onRasterError={onRasterError}
         onUnavailable={() => setUnavailable(true)}
         onMiniLayout={onMiniLayout}
         avoidBoxes={avoidBoxes}
-        onReady={() => {}}
+        onReady={onReady}
       />
-      {report && insets.length > 0 ? (
+      {report && insets.some((item) => item.shown) ? (
         <svg className="nm-inset-links" width={report.width} height={report.height} viewBox={`0 0 ${report.width} ${report.height}`} aria-hidden="true">
-          {insets.map(({ group, coverage, leader }) => (
-            <g key={group.hostIds.join(",")}>
+          {insets.filter((item) => item.shown).map(({ hostIds, coverage, leader }) => (
+            <g key={hostIds.join(",")}>
               {coverage ? <rect x={coverage.x} y={coverage.y} width={coverage.w} height={coverage.h} rx={7} /> : null}
               {leader ? <line x1={leader[0].x} y1={leader[0].y} x2={leader[1].x} y2={leader[1].y} /> : null}
             </g>
           ))}
         </svg>
       ) : null}
-      {insets.map(({ group, placement }) => {
-        const first = group.hostIds[0];
-        const open = () => onOpen(miniOpenHref({ kind: "host", id: first }));
-        return (
-          // 组员变了（key 变）就整扇窗重建：旧的 MapLibre 实例随之销毁
-          <div key={group.hostIds.join(",")} className={`nm-inset${placement.shrunk ? " is-small" : ""}`} style={{ left: placement.box.x, top: placement.box.y, width: placement.box.w, height: placement.box.h }} aria-label={`局部放大：${group.label}，${group.hostIds.length} 台`}>
-            <NetworkMapCanvas
-              variant="inset"
-              fitHostIds={group.hostIds}
-              model={model}
-              baseLayer={baseLayer}
-              focus={null}
-              showFlows={false}
-              padding={NO_PADDING}
-              reduceMotion={reduceMotion}
-              paused={paused}
-              comets
-              onSelectNode={(id) => onOpen(miniOpenHref({ kind: "host", id }))}
-              onSelectLink={(id) => onOpen(miniOpenHref({ kind: "link", id }))}
-              onSelectTarget={open}
-              onSelectCluster={open}
-              onMapClick={open}
-              onRasterError={onRasterError}
-              onUnavailable={() => {}}
-              onReady={() => {}}
-            />
-            <span className="nm-inset-title nm-reserved">{group.label} ×{group.hostIds.length}</span>
-          </div>
-        );
-      })}
-      {unlocated > 0 ? <span className="nm-mini-unlocated nm-reserved nm-num">{unlocated} 台未定位</span> : null}
+      {insets.map(({ hostIds, label, placement, shown }) => (
+        // 组员变了（key 变）就整扇窗重建：旧的 MapLibre 实例随之销毁。组散了只是藏起来（visibility，尺寸不变，
+        // 引擎不用重算），缩回去立刻又有
+        <div key={hostIds.join(",")} className={`nm-inset${placement.shrunk ? " is-small" : ""}${shown ? "" : " is-off"}`} style={{ left: placement.box.x, top: placement.box.y, width: placement.box.w, height: placement.box.h }} aria-label={`局部放大：${label}，${hostIds.length} 台`}>
+          <NetworkMapCanvas
+            variant="inset"
+            fitHostIds={hostIds}
+            model={model}
+            baseLayer={baseLayer}
+            focus={null}
+            showFlows={false}
+            padding={NO_PADDING}
+            reduceMotion={reduceMotion}
+            paused={paused || !shown}
+            comets
+            onSelectNode={onSelectNode}
+            onSelectLink={onSelectLink}
+            onSelectTarget={noop}
+            onSelectCluster={noop}
+            onMapClick={noop}
+            onRasterError={onRasterError}
+            onUnavailable={noop}
+            onReady={noop}
+          />
+          <span className="nm-inset-title nm-reserved">{label} ×{hostIds.length}</span>
+        </div>
+      ))}
+      <NetworkMapMiniChrome
+        userMoved={!!report?.userMoved}
+        tip={tip}
+        unlocated={unlocated}
+        onZoom={(delta) => apiRef.current?.zoomBy(delta)}
+        onReset={() => apiRef.current?.fitAll()}
+      />
     </div>
   );
 }
