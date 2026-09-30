@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildNetworkMapModel } from "./networkMapModel";
-import type { PixelBox } from "@shared/networkMapGeometry";
+import { computeMapLayout, type LngLat, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
 
-import { MINI_CAP_MIN_ARC_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, cornerBox, detectWebGL, groupCoverageBox, groupTipText, hostTipText, insetLeader, insetSizes, linkTipText, locatedHostCount, matchInsetGroup, miniFitPoints, miniMinZoom, pickInsetGroups, placeInsets, placeLabelBoxes, scoreQuadrants, shouldAbsorbIntoGroup, shouldRefit, shouldRenderRealMap, unlocatedHostCount, type LabelItem } from "./networkMapMini";
+import { INSET_LABEL_MARGIN_PX, MINI_CAP_MIN_ARC_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, cornerBox, densestInsetMembers, detectWebGL, groupCoverageBox, groupPlaceLabel, groupTipText, hostTipText, insetLabelArea, insetLeader, insetSizes, linkTipText, locatedHostCount, matchInsetGroup, miniFitPoints, miniGroupLayoutOptions, miniMinZoom, pickInsetGroups, pickInsetSlots, placeInsetLabels, placeInsets, placeLabelBoxes, scoreQuadrants, shouldAbsorbIntoGroup, shouldRefit, shouldRenderRealMap, unlocatedHostCount, type LabelItem } from "./networkMapMini";
 
 const now = 1_700_000_000_000;
 const host = (id: number, geo?: [number, number]) => ({
@@ -175,4 +175,186 @@ test("名字不互压：挨着的两台翻到两侧、再挤就左右挪或缩�
   // 环上的点：朝外的那侧优先
   const ring = placeLabelBoxes([{ key: "top", x: 100, y: 60, w: 40, h: 14, tightW: 36, gap: 15, preferUp: true }], [], area);
   assert.equal(ring[0].up, true);
+});
+
+// ---- 小窗：挑哪几台、窗里再并组、名字摆不下就藏 ----
+
+/** 墨卡托投影（和 MapLibre 一样 512px 一张世界图）：center 落在容器正中 */
+function projector(center: LngLat, zoom: number, container: { width: number; height: number }) {
+  const world = 512 * 2 ** zoom;
+  const toWorld = (p: LngLat) => {
+    const sin = Math.sin((p[1] * Math.PI) / 180);
+    return { x: ((p[0] + 180) / 360) * world, y: (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * world };
+  };
+  const c = toWorld(center);
+  return (p: LngLat): PixelPoint => { const w = toWorld(p); return { x: w.x - c.x + container.width / 2, y: w.y - c.y + container.height / 2 }; };
+}
+
+type TopoHost = { id: number; lngLat: LngLat; flag: string; city: string };
+/** 本地截图用的八台：港深广莞 + 东京 + 新加坡 + 洛杉矶 + 悉尼 */
+const DENSE: TopoHost[] = [
+  { id: 1, lngLat: [114.169, 22.319], flag: "HK", city: "Central" },
+  { id: 2, lngLat: [139.65, 35.676], flag: "JP", city: "Tokyo" },
+  { id: 3, lngLat: [103.85, 1.29], flag: "SG", city: "Singapore" },
+  { id: 4, lngLat: [-118.244, 34.052], flag: "US", city: "Los Angeles" },
+  { id: 5, lngLat: [114.058, 22.543], flag: "CN", city: "Shenzhen" },
+  { id: 6, lngLat: [113.264, 23.129], flag: "CN", city: "Guangzhou" },
+  { id: 7, lngLat: [113.752, 23.021], flag: "CN", city: "Dongguan" },
+  { id: 8, lngLat: [151.209, -33.868], flag: "AU", city: "Sydney" },
+];
+/** 用户的拓扑：港粤台五台 + 悉尼一台 */
+const USER: TopoHost[] = [
+  { id: 1, lngLat: [114.2, 22.3], flag: "HK", city: "香港" },
+  { id: 2, lngLat: [113.3, 23.1], flag: "CN", city: "广东" },
+  { id: 3, lngLat: [121.5, 25.0], flag: "TW", city: "台湾" },
+  { id: 4, lngLat: [114.0, 22.5], flag: "HK", city: "香港" },
+  { id: 5, lngLat: [113.6, 22.9], flag: "CN", city: "广东" },
+  { id: 6, lngLat: [151.2, -33.9], flag: "AU", city: "悉尼" },
+];
+
+/** 按主图 / 小窗同一套并组规则布局，返回组（含组员的真实像素位置） */
+function groupsAt(hosts: readonly TopoHost[], project: (p: LngLat) => PixelPoint, zoom: number) {
+  const flagOf = new Map(hosts.map((item) => [`h${item.id}`, item.flag]));
+  const layout = computeMapLayout(hosts.map((item) => ({ key: `h${item.id}`, lngLat: item.lngLat })), project, zoom, miniGroupLayoutOptions(flagOf));
+  const byKey = new Map(hosts.map((item) => [`h${item.id}`, item]));
+  return {
+    layout,
+    groups: layout.groups.map((group) => ({
+      hostIds: group.keys.map((key) => Number(key.slice(1))),
+      members: group.keys.map((key) => project(byKey.get(key)!.lngLat)),
+      label: groupPlaceLabel(group.keys.map((key) => byKey.get(key)!.city)),
+    })),
+  };
+}
+
+test("小窗挑组员：八台拓扑的手机主图上东京被 pill 吸进港粤一组，小窗只框港深广莞四台", () => {
+  const container = { width: 340, height: 300 };
+  const zoom = 0.2;
+  const { groups } = groupsAt(DENSE, projector([165, 15], zoom, container), zoom);
+  const main = groups.find((group) => group.hostIds.includes(1))!;
+  assert.deepEqual([...main.hostIds].sort(), [1, 2, 5, 6, 7], "主图上五台一组（东京压在 pill 上被并进来）");
+  assert.deepEqual(densestInsetMembers(main), [1, 5, 6, 7], "小窗只框真正叠在一起的四台");
+  const [slot] = pickInsetSlots(groups, false);
+  assert.deepEqual(slot.hostIds, [1, 5, 6, 7]);
+  assert.equal(slot.group, main, "圈和引线还跟着主图上的整组");
+  // 标题按小窗真正框的几台写
+  const cities = slot.hostIds.map((id) => DENSE.find((item) => item.id === id)!.city);
+  assert.equal(groupPlaceLabel(cities), "Central · Shenzhen · Guangzhou");
+});
+
+test("小窗挑组员：用户的港粤台 + 悉尼，台北被 pill 吸进来时小窗框港粤四台；组员都挤在一起时整组照框", () => {
+  const container = { width: 340, height: 300 };
+  const zoom = 1.6;
+  const { groups } = groupsAt(USER, projector([132, -6], zoom, container), zoom);
+  const main = groups.find((group) => group.hostIds.includes(1))!;
+  assert.ok(main.hostIds.includes(3), "台北压在 pill 上并进组");
+  assert.deepEqual(densestInsetMembers(main), [1, 2, 4, 5]);
+  // 四台两两都压在一起：不挑，整组
+  assert.deepEqual(densestInsetMembers({ hostIds: [1, 2, 3, 4], members: [{ x: 0, y: 0 }, { x: 4, y: 3 }, { x: 8, y: 1 }, { x: 3, y: 7 }] }), [1, 2, 3, 4]);
+  // 同一机房（同一个点）两台 + 一台 40px 外（被 pill 吸进来的）：一团的宽按至少 2px 算，挑出同机房两台
+  assert.deepEqual(densestInsetMembers({ hostIds: [4, 5, 6], members: [{ x: 50, y: 50 }, { x: 50, y: 50 }, { x: 90, y: 50 }] }), [4, 5]);
+  // 一串互相不压、只是被 pill 吸进来的：没有能框的一团，照框整组
+  assert.deepEqual(densestInsetMembers({ hostIds: [1, 2, 3], members: [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 60, y: 0 }] }), [1, 2, 3]);
+  // 远的那台不算远（外接范围不到那一团的 4 倍）：整组
+  assert.deepEqual(densestInsetMembers({ hostIds: [1, 2, 3], members: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 45, y: 0 }] }), [1, 2, 3]);
+  // 两台的组不挑
+  assert.deepEqual(densestInsetMembers({ hostIds: [7, 8], members: [{ x: 0, y: 0 }, { x: 40, y: 0 }] }), [7, 8]);
+});
+
+test("桌面两扇小窗：按真正挤在一起的台数排，一样多时更紧的在前", () => {
+  const groups = [
+    { hostIds: [1, 2], members: [{ x: 0, y: 0 }, { x: 20, y: 0 }] },
+    { hostIds: [3, 4, 9], members: [{ x: 100, y: 0 }, { x: 102, y: 0 }, { x: 140, y: 0 }] },
+    { hostIds: [5, 6], members: [{ x: 200, y: 0 }, { x: 201, y: 0 }] },
+  ];
+  assert.deepEqual(pickInsetSlots(groups, true).map((slot) => slot.hostIds), [[5, 6], [3, 4]]);
+  assert.deepEqual(pickInsetSlots(groups, false).map((slot) => slot.hostIds), [[5, 6]]);
+  // 台数多的在前：三台挤在一起的那组比两台的优先
+  const three = { hostIds: [10, 11, 12], members: [{ x: 300, y: 0 }, { x: 310, y: 0 }, { x: 305, y: 8 }] };
+  assert.deepEqual(pickInsetSlots([...groups, three], false).map((slot) => slot.hostIds), [[10, 11, 12]]);
+});
+
+test("小窗里再并组：要框的几台里有东京（窗放不大）时港深广莞在窗里并成一枚 pill，画在真正的组心", () => {
+  // 手机小窗大约 156×174；框住港 ↔ 东京差不多是 2 级
+  const inset = { width: 156, height: 174 };
+  const zoom = 2;
+  const { layout } = groupsAt(DENSE, projector([127, 29], zoom, inset), zoom);
+  assert.equal(layout.mode, "cluster");
+  const prd = layout.groups.find((group) => group.keys.includes("h1"))!;
+  assert.deepEqual([...prd.keys].sort(), ["h1", "h5", "h6", "h7"]);
+  const mean = (index: 0 | 1) => [1, 5, 6, 7].reduce((sum, id) => sum + DENSE.find((item) => item.id === id)!.lngLat[index], 0) / 4;
+  assert.ok(Math.abs(prd.center[0] - mean(0)) < 1e-9 && Math.abs(prd.center[1] - mean(1)) < 1e-9, "pill 在组员真实坐标的平均处");
+  assert.equal(layout.pos.h2.clusterId, null, "东京单独画");
+  for (const key of Object.keys(layout.pos)) assert.deepEqual(layout.pos[key].offset, [0, 0], "谁都不错开成环");
+  // 只框港深广莞时窗能放到 6.5 级上下：四台都分开，不并组
+  const close = groupsAt(DENSE, projector([113.72, 22.72], 6.5, inset), 6.5);
+  for (const id of [1, 5, 6, 7]) assert.equal(close.layout.pos[`h${id}`].clusterId, null);
+  // 用户的拓扑：框港粤台时（约 4 级）港粤四台并成一枚、台北单独
+  const user = groupsAt(USER, projector([117.5, 23.5], 4, inset), 4);
+  assert.deepEqual([...user.layout.groups[0].keys].sort(), ["h1", "h2", "h4", "h5"]);
+  assert.equal(user.layout.pos.h3.clusterId, null);
+});
+
+test("小窗的名字：以窗让出 8px 为边界、标题条是障碍；摆不干净的藏起来（不画成被切的、压着的）", () => {
+  const size = { width: 156, height: 174 };
+  assert.equal(INSET_LABEL_MARGIN_PX, 8);
+  const area = insetLabelArea(size);
+  assert.deepEqual(area, { x: 8, y: 8, w: 140, h: 158 });
+  const title: PixelBox = { x: 1, y: 1, w: 150, h: 24 };
+  const disc = (x: number, y: number): PixelBox => ({ x: x - 13, y: y - 13, w: 26, h: 26 });
+  // 港深广莞在 6.5 级上的样子（只框这四台时窗放到的级别），名字按 10.5px 字粗算的宽
+  const project = projector([113.72, 22.72], 6.5, size);
+  const names: Record<number, string> = { 1: "HK entry 01", 5: "SZ relay 05", 6: "GZ relay 06", 7: "DG relay 07" };
+  const items: LabelItem[] = [1, 5, 6, 7].map((id) => {
+    const at = project(DENSE.find((item) => item.id === id)!.lngLat);
+    return { key: `h${id}`, x: at.x, y: at.y, w: names[id].length * 6.4, h: 14, tightW: names[id].length * 5.8, gap: 15 };
+  });
+  const obstacles = [...items.map((item) => disc(item.x, item.y)), title];
+  const placed = placeInsetLabels(items, obstacles, size);
+  assert.equal(placed.length, 4);
+  const shown = placed.filter((item) => !item.hidden);
+  // 156px 宽的窗里摆四个 70px 的名字：摆得下的画、摆不下的藏，没有第三种
+  assert.ok(shown.length >= 2 && shown.length < 4, `摆下一部分、藏一部分：${JSON.stringify(placed)}`);
+  for (const item of shown) {
+    const box = item.box;
+    assert.ok(box.x >= area.x - 1e-6 && box.y >= area.y - 1e-6 && box.x + box.w <= area.x + area.w + 1e-6 && box.y + box.h <= area.y + area.h + 1e-6, `${item.key} 出了窗 ${JSON.stringify(box)}`);
+    for (const other of obstacles) assert.ok(!overlap(box, other), `${item.key} 压着圆盘 / 标题`);
+    for (const other of shown) if (other !== item) assert.ok(!overlap(box, other.box), `${item.key} 压着 ${other.key}`);
+  }
+  // 上下都被占满（上面一条胶囊、下面一排名字）：藏起来，不当后面的障碍
+  const boxed: LabelItem[] = [{ key: "x", x: 78, y: 90, w: 80, h: 14, tightW: 72, gap: 15 }, { key: "y", x: 78, y: 150, w: 60, h: 14, tightW: 54, gap: 15 }];
+  const walls: PixelBox[] = [{ x: 0, y: 55, w: 156, h: 22 }, { x: 0, y: 104, w: 156, h: 16 }, disc(78, 90), disc(78, 150)];
+  const hid = placeInsetLabels(boxed, walls, size);
+  const byKey = Object.fromEntries(hid.map((item) => [item.key, item]));
+  assert.equal(byKey.x.hidden, true, "x 上下都没地方");
+  assert.ok(!byKey.y.hidden, "y 翻到上面还摆得下");
+  // 同样的输入不开 hideUnplaceable（主图精确框住时）：还是给一个压得最少的位置
+  assert.ok(!placeLabelBoxes(boxed, walls, area)[0].hidden);
+  // 贴着窗左边的名字往里挪到 8px 线以内，不被切
+  const edge = placeInsetLabels([{ key: "e", x: 20, y: 80, w: 70, h: 14, tightW: 63, gap: 15 }], [disc(20, 80)], size);
+  assert.ok(!edge[0].hidden && edge[0].box.x >= 8, JSON.stringify(edge[0]));
+  // priority：要框的那几台先挑位置
+  const prio = placeLabelBoxes([
+    { key: "other", x: 78, y: 60, w: 60, h: 14, tightW: 54, gap: 15, priority: 1 },
+    { key: "mine", x: 78, y: 110, w: 60, h: 14, tightW: 54, gap: 15, preferUp: true },
+  ], [], area);
+  assert.equal(prio[0].key, "mine");
+});
+
+test("手机小窗放大：同一个角上试 52% × 62%，压到主图 marker 就不放大", () => {
+  const container = { width: 340, height: 300 };
+  const sizes = insetSizes(container, false);
+  assert.deepEqual(sizes.large, { w: Math.round(340 * 0.52), h: Math.round(300 * 0.62) });
+  assert.deepEqual(insetSizes(container, true).large, insetSizes(container, true).full, "桌面不放大");
+  const occupancy = { boxes: [{ x: 250, y: 20, w: 60, h: 40 }], points: [] };
+  const [normal] = placeInsets(container, occupancy, 1, false);
+  const [grown] = placeInsets(container, occupancy, 1, false, 10, [true]);
+  assert.equal(grown.quadrant, normal.quadrant, "不换角");
+  assert.equal(grown.grown, true);
+  assert.deepEqual({ w: grown.box.w, h: grown.box.h }, sizes.large);
+  // 放大后会压到的地方有台主机：保持标准尺寸
+  const tight = { boxes: [...occupancy.boxes, { x: normal.box.x + normal.box.w + 4, y: normal.box.y + 20, w: 26, h: 26 }], points: [] };
+  const [kept] = placeInsets(container, tight, 1, false, 10, [true]);
+  assert.ok(!kept.grown);
+  assert.deepEqual({ w: kept.box.w, h: kept.box.h }, sizes.full);
 });

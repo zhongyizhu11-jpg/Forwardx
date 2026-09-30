@@ -3,7 +3,7 @@ import { isCountryCodeLabel } from "@/lib/flagEmojiSupport";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef } from "react";
 
-import { INSET_MAX_ZOOM_OUT, INSET_SPREAD_RADIUS_PX, MINI_CAP_MIN_ARC_PX, MINI_FIT_INSET_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, insetJitterRadius, miniMinZoom, placeLabelBoxes, shouldAbsorbIntoGroup, shouldRefit, type LabelItem, type MiniFitTrigger, type MiniLayoutGroup, type MiniLayoutReport } from "@/features/network/networkMapMini";
+import { INSET_LABEL_MARGIN_PX, INSET_MAX_ZOOM_OUT, MINI_CAP_MIN_ARC_PX, MINI_FIT_INSET_PX, MINI_FIT_MAX_ZOOM, groupPlaceLabel, insetLabelArea, miniGroupLayoutOptions, miniMinZoom, placeInsetLabels, placeLabelBoxes, shouldRefit, type LabelItem, type MiniFitTrigger, type MiniLayoutGroup, type MiniLayoutReport } from "@/features/network/networkMapMini";
 import type { NetworkMapModel, NetworkMapTarget } from "@/features/network/networkMapModel";
 import { isClusterDimmed, isFlowDimmed, isHostDimmed, isTargetDimmed, isTunnelDimmed, type MapFocus, type MapPadding } from "@/features/network/networkMapPageState";
 import { wgs84ToGcj02 } from "@shared/gcj02";
@@ -597,16 +597,10 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const { model, showFlows } = live.props;
     const mini = compact();
     const zoom = map.getZoom();
-    // 主图：圆盘会压在一起的并成一组（每台都在真实坐标上，不错开）；小窗：永远不并组，9 级上还叠着的才错开一点
+    // 主图和小窗：圆盘会压在一起的并成一组（每台都在真实坐标上，不错开）。小窗里还叠着的（要框的几台里
+    // 有一台远，窗放不大）照样并成一枚小 pill 画在真正的组心，不再错开成一圈 —— 圈上的名字互相压、被窗边切掉
     const flagOf = new Map(model.nodes.map((node) => [`h${node.id}`, node.emoji]));
-    const layoutOptions: MapLayoutOptions = isMini()
-      ? {
-        mode: "cluster",
-        clusterRadius: MINI_GROUP_RADIUS_PX,
-        // 圆盘会压到 pill 上的那台也并进组：pill 有几面旗就有多宽
-        absorb: (keys, offset) => shouldAbsorbIntoGroup(new Set(keys.map((key) => flagOf.get(key)).filter(Boolean)).size, keys.length + 1, offset),
-      }
-      : isInset() ? { mode: "spread", spreadRadius: INSET_SPREAD_RADIUS_PX, ringRadius: insetJitterRadius } : {};
+    const layoutOptions: MapLayoutOptions = mini ? miniGroupLayoutOptions(flagOf) : {};
     live.layout = computeMapLayout(layoutPoints(), (lngLat) => map.project(lngLat as [number, number]), zoom, layoutOptions);
     const layout = live.layout;
     updateCountryLabels();

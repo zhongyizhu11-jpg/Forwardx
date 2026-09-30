@@ -1,5 +1,5 @@
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
-import { boxOutsideArea, boxOverlapArea, boxesIntersect, leaderBetweenBoxes, unionBox, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
+import { boxOutsideArea, boxOverlapArea, boxesIntersect, leaderBetweenBoxes, unionBox, type MapLayoutOptions, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
 
 import type { NetworkMapModel } from "./networkMapModel";
 
@@ -32,16 +32,34 @@ export function estimateGroupPillWidth(flags: number, count: number): number {
 export function shouldAbsorbIntoGroup(flags: number, count: number, offset: { dx: number; dy: number }): boolean {
   return Math.abs(offset.dx) < estimateGroupPillWidth(flags, count) / 2 + 13 + 4 && Math.abs(offset.dy) < 11 + 13 + 4;
 }
+/**
+ * 主图和小窗共用的并组规则：28px 内的并成一组，圆盘会压到 pill 上的那台也并进去。小窗里也这样
+ * 并 —— 小窗要框的几台里有一台离得远（窗放不大），剩下几台在窗里还是叠着，就再并成一枚小 pill
+ * 画在它们真正的组心上；以前是错开成一圈，名字转着圈互相压、还被窗边切掉。
+ * flagOf：layout 点的 key → 这台的旗（pill 有几面旗就有多宽）。
+ */
+export function miniGroupLayoutOptions(flagOf: ReadonlyMap<string, string | null | undefined>): MapLayoutOptions {
+  return {
+    mode: "cluster",
+    clusterRadius: MINI_GROUP_RADIUS_PX,
+    absorb: (keys, offset) => shouldAbsorbIntoGroup(new Set(keys.map((key) => flagOf.get(key)).filter(Boolean)).size, keys.length + 1, offset),
+  };
+}
+
+/** 一组主机的地名：去重后的城市，最多三个（叠起来的 marker 和小窗标题都这么写） */
+export function groupPlaceLabel(cities: readonly string[]): string {
+  const unique: string[] = [];
+  for (const city of cities) if (city && !unique.includes(city)) unique.push(city);
+  return unique.slice(0, 3).join(" · ");
+}
+
 /** 主图、小窗上 marker 离卡片边至少留这么多像素 */
 export const MINI_FIT_INSET_PX = 10;
 /**
- * 小窗里主机不并组，但离得太近（组里还有台更远的，窗放不到 9 级）圆盘和名字挤成一团，
- * 就把 34px 内的错开成一圈：这是小窗，本来就是「这几台在同一个地方」的放大，圈半径几十
- * 像素在小窗的级别上不到几十公里，不会像主图那样把人挪到上千公里外。同一机房的几台
- * （地理库给的是同一个点）放到 9 级还叠着，也靠这个错开。
+ * 小窗里名字离窗边至少留这么多像素：名字摆不进这个框、又不压别人时宁可藏起来（点圆盘的提示里
+ * 还有名字），不画成一截被窗边切掉的字。
  */
-export const INSET_SPREAD_RADIUS_PX = 34;
-export const insetJitterRadius = (n: number) => 20 + n * 4;
+export const INSET_LABEL_MARGIN_PX = 8;
 /** 小窗精确框住时最多在 fitBounds 的基础上再缩这么多级：圈和名字实在放不下也别缩成一张世界图 */
 export const INSET_MAX_ZOOM_OUT = 1.5;
 
@@ -114,20 +132,24 @@ export function groupTipText(label: string, count: number): string {
 
 export type Quadrant = "tl" | "tr" | "bl" | "br";
 export type InsetSize = { w: number; h: number };
-export type InsetPlacement = { box: PixelBox; quadrant: Quadrant; shrunk: boolean };
+/** grown：手机上放大到了 52% × 62%（标准尺寸下有名字摆不下、放大后都摆得下时） */
+export type InsetPlacement = { box: PixelBox; quadrant: Quadrant; shrunk: boolean; grown?: boolean };
 
 /**
  * 小窗多大：手机上卡片宽的 46% × 高的 58%（五台一圈加上下的名字要 130px 高，48% 放不下），
- * 桌面 34% × 50%；挤不下时缩到最小
+ * 桌面 34% × 50%；挤不下时缩到最小。手机上标准尺寸里有名字摆不下时可以试着放大到
+ * 52% × 62%（large）：只在放大后不压主图的 marker、而且名字真的都摆得下时才留着。
  */
-export function insetSizes(container: { width: number; height: number }, desktop: boolean): { full: InsetSize; min: InsetSize } {
+export function insetSizes(container: { width: number; height: number }, desktop: boolean): { full: InsetSize; min: InsetSize; large: InsetSize } {
   const full = desktop
     ? { w: Math.round(container.width * 0.34), h: Math.round(container.height * 0.5) }
     : { w: Math.round(container.width * 0.46), h: Math.round(container.height * 0.58) };
   const min = desktop
     ? { w: Math.round(container.width * 0.24), h: Math.round(container.height * 0.38) }
     : { w: Math.round(container.width * 0.36), h: Math.round(container.height * 0.44) };
-  return { full, min };
+  // 桌面的小窗本来就够大，不放大
+  const large = desktop ? full : { w: Math.round(container.width * 0.52), h: Math.round(container.height * 0.62) };
+  return { full, min, large };
 }
 
 export type MiniOccupancy = {
@@ -184,6 +206,8 @@ export function cornerBox(container: { width: number; height: number }, quadrant
 /**
  * 小窗摆哪：象限按空的程度排（一样空时左下优先），先试标准尺寸，四个角都压到 marker 就缩到
  * 最小尺寸再试；还是没有空位就挑压得最少的角。第二个小窗（桌面）还要躲开第一个。
+ * grow[i]：第 i 个小窗想放大（卡片发现标准尺寸里有名字摆不下）—— 只在同一个角上试放大尺寸，
+ * 压到主图的 marker、别的小窗就不放大（不换角：换了角引线和圈都要跳，用户看着像乱了）。
  */
 export function placeInsets(
   container: { width: number; height: number },
@@ -191,6 +215,7 @@ export function placeInsets(
   count: number,
   desktop: boolean,
   margin = MINI_FIT_INSET_PX,
+  grow: readonly boolean[] = [],
 ): InsetPlacement[] {
   const placed: InsetPlacement[] = [];
   if (count <= 0 || container.width < 40 || container.height < 40) return placed;
@@ -224,6 +249,12 @@ export function placeInsets(
       if (!best) break;
       choice = best;
     }
+    if (grow[index] && !choice.shrunk && (sizes.large.w > choice.box.w || sizes.large.h > choice.box.h)) {
+      const box = cornerBox(container, choice.quadrant, sizes.large, margin, reserved);
+      const clear = !blocked.some((other) => boxesIntersect(box, other)) && !reserved.some((other) => boxesIntersect(box, other))
+        && box.x >= 0 && box.y >= 0 && box.x + box.w <= container.width && box.y + box.h <= container.height;
+      if (clear) choice = { box, quadrant: choice.quadrant, shrunk: false, grown: true };
+    }
     placed.push(choice);
   }
   return placed;
@@ -246,6 +277,67 @@ export function pickInsetGroups<T extends { hostIds: number[] }>(groups: readonl
     .slice(0, desktop ? 2 : 1);
 }
 
+/**
+ * 小窗该框哪几台：主图上并成一组的不一定都挤在一块 —— pill 比圆盘宽，离得稍远的那台（港粤旁边的
+ * 东京、台北）也会因为压到 pill 被并进来。小窗要框住它，就只能放到能同时看见两地的级别，真正叠在
+ * 一起的港深莞几台在窗里还是一团。
+ *
+ * 所以：组员在主图上的外接范围比「真正压在一起的那一团」的范围大 4 倍以上时，小窗只框那一团
+ * （圆心距离 < 28px 连起来的最大一簇；一样大挑更紧的），远的那台还算在主图 pill 的数里，只是不再
+ * 要求出现在小窗里。那一团少于两台（组员两两都不压、只是被 pill 吸进来）就照旧框整组。
+ * points 与 hostIds 一一对应（主图上的真实位置）。
+ */
+export function densestInsetMembers(group: { hostIds: readonly number[]; members: readonly PixelPoint[] }, radius = MINI_GROUP_RADIUS_PX): number[] {
+  const ids = group.hostIds;
+  const points = group.members;
+  if (ids.length <= 2 || points.length !== ids.length) return [...ids];
+  // 连通分量：两台圆心距离 < radius 就算压在一起
+  const parent = ids.map((_, index) => index);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < points.length; i += 1) {
+    for (let j = i + 1; j < points.length; j += 1) {
+      if (Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) < radius) parent[find(i)] = find(j);
+    }
+  }
+  const clusters = new Map<number, number[]>();
+  for (let i = 0; i < points.length; i += 1) clusters.set(find(i), [...(clusters.get(find(i)) ?? []), i]);
+  const extentOf = (indexes: readonly number[]) => {
+    const xs = indexes.map((i) => points[i].x);
+    const ys = indexes.map((i) => points[i].y);
+    return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  };
+  let best: number[] | null = null;
+  for (const members of clusters.values()) {
+    if (!best || members.length > best.length || (members.length === best.length && extentOf(members) < extentOf(best))) best = members;
+  }
+  if (!best || best.length < 2 || best.length === ids.length) return [...ids];
+  // 一团本身就有个几像素宽：别让 0 宽的一团（同一机房）把任何一点距离都放大成「远」
+  const whole = extentOf(ids.map((_, index) => index));
+  if (whole <= 4 * Math.max(extentOf(best), 2)) return [...ids];
+  return best.map((i) => ids[i]).sort((a, b) => a - b);
+}
+
+/**
+ * 开哪几扇小窗、各框哪几台：每组先挑出真正挤在一起的那一团（densestInsetMembers），按这团的台数
+ * 从多到少、一样多时更紧的在前，手机 1 扇、桌面 2 扇。group 原样带着（卡片拿它找圈、拉引线）。
+ */
+export function pickInsetSlots<T extends { hostIds: number[]; members: PixelPoint[] }>(groups: readonly T[], desktop: boolean): Array<{ group: T; hostIds: number[] }> {
+  const extent = (points: readonly PixelPoint[]) => (points.length === 0 ? 0 : Math.max(
+    Math.max(...points.map((p) => p.x)) - Math.min(...points.map((p) => p.x)),
+    Math.max(...points.map((p) => p.y)) - Math.min(...points.map((p) => p.y)),
+  ));
+  return groups
+    .filter((group) => group.hostIds.length >= 2)
+    .map((group) => {
+      const hostIds = densestInsetMembers(group);
+      const points = hostIds.map((id) => group.members[group.hostIds.indexOf(id)]).filter(Boolean);
+      return { group, hostIds, extent: extent(points) };
+    })
+    .sort((a, b) => b.hostIds.length - a.hostIds.length || a.extent - b.extent || a.hostIds[0] - b.hostIds[0])
+    .slice(0, desktop ? 2 : 1)
+    .map(({ group, hostIds }) => ({ group, hostIds }));
+}
+
 // ---- 名字怎么摆 ----
 
 export type LabelItem = {
@@ -260,21 +352,27 @@ export type LabelItem = {
   tightW: number;
   /** 名字离锚点多远（圆盘半径 + 一点缝） */
   gap: number;
-  /** 先试上面还是下面（环上朝外的那一侧；默认下面） */
+  /** 先试上面还是下面（默认下面） */
   preferUp?: boolean;
+  /** 先放谁：小的先放（小窗里要框的那几台先挑位置，窗边路过的别的主机后放）；默认 0 */
+  priority?: number;
 };
 
-export type LabelPlacement = { key: string; up: boolean; dx: number; tight: boolean; box: PixelBox };
+/** hidden：摆不出一个干净的位置（只在 hideUnplaceable 时出现）—— 名字不画，圆盘照画 */
+export type LabelPlacement = { key: string; up: boolean; dx: number; tight: boolean; box: PixelBox; hidden?: boolean };
 
 const LABEL_SHIFTS = [0, -4, 4, -8, 8, -14, 14];
 
 /**
- * 小图上主机名的摆法：默认在圆盘下面（环上的点朝外）；会压到别的名字、圆盘、胶囊或露出卡片
- * 边时依次试：翻到另一侧 → 左右挪最多 14px → 缩小一号字。按从上到下的顺序贪心放，先放的
- * 名字成为后面的障碍。挑不出一个完全干净的位置时选压得最少的（宁可露出边也不压别人）。
+ * 小图上主机名的摆法：默认在圆盘下面；会压到别的名字、圆盘、胶囊或露出卡片边时依次试：
+ * 翻到另一侧 → 左右挪最多 14px → 缩小一号字。按 priority、再从上到下的顺序贪心放，先放的
+ * 名字成为后面的障碍。挑不出一个完全干净的位置时：
+ *   默认选压得最少的（宁可露出边也不压别人）—— 主图精确框住时靠这个把图缩一点补回来；
+ *   hideUnplaceable 时直接藏起来（hidden）、也不当后面的障碍 —— 小窗框好之后用：窗不能拖，
+ *   露出窗边的那截永远补不回来，压着别人更难看；点圆盘的提示里还有名字。
  */
-export function placeLabelBoxes(items: readonly LabelItem[], obstacles: readonly PixelBox[], area: PixelBox): LabelPlacement[] {
-  const sorted = [...items].sort((a, b) => a.y - b.y || a.x - b.x);
+export function placeLabelBoxes(items: readonly LabelItem[], obstacles: readonly PixelBox[], area: PixelBox, options: { hideUnplaceable?: boolean } = {}): LabelPlacement[] {
+  const sorted = [...items].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.y - b.y || a.x - b.x);
   const placedBoxes: PixelBox[] = [];
   const result: LabelPlacement[] = [];
   for (const item of sorted) {
@@ -305,10 +403,25 @@ export function placeLabelBoxes(items: readonly LabelItem[], obstacles: readonly
       if (bestScore === 0) break;
     }
     if (!best) continue;
+    // 亚像素的擦边看不出来，不算压
+    if (options.hideUnplaceable && bestScore > 1) { result.push({ ...best, hidden: true }); continue; }
     placedBoxes.push(best.box);
     result.push(best);
   }
   return result;
+}
+
+/** 小窗里名字能用的范围：窗本身四边各让出 8px */
+export function insetLabelArea(size: { width: number; height: number }, margin = INSET_LABEL_MARGIN_PX): PixelBox {
+  return { x: margin, y: margin, w: Math.max(0, size.width - margin * 2), h: Math.max(0, size.height - margin * 2) };
+}
+
+/**
+ * 小窗框好之后的名字：以窗（让出 8px）为边界、标题条算障碍，和主图同一套摆法；摆不干净的藏起来。
+ * 返回的每个 hidden 都是「这台的名字没画」，卡片据此决定要不要把窗放大一号再试。
+ */
+export function placeInsetLabels(items: readonly LabelItem[], obstacles: readonly PixelBox[], size: { width: number; height: number }): LabelPlacement[] {
+  return placeLabelBoxes(items, obstacles, insetLabelArea(size), { hideUnplaceable: true });
 }
 
 export function locatedHostCount(model: Pick<NetworkMapModel, "nodes">): number {
