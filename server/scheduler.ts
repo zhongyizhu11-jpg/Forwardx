@@ -19,7 +19,7 @@ import { primeHostStatusNotifier, sweepOfflineHostsAndNotify } from "./hostStatu
 import { normalizeLinkProbeMethod } from "@shared/latencyProbe";
 import { clearRuleLatencyQueryCache } from "./ruleLatencyQueryCache";
 import { structuredLinkTestMessage, tunnelHopLatencyMode, tunnelHopModeText } from "./linkTestMessages";
-import { cleanOldAddressGeoCache } from "./hostGeo";
+import { cleanOldAddressGeoCache, runHostGeoSweep } from "./hostGeo";
 import { pruneStaleAuthSessions } from "./repositories/sessionRepository";
 import { pruneDispatchConfigAuditEvents } from "./configAudit";
 import { reconcileHostDdnsRecords } from "./hostDdns";
@@ -823,6 +823,21 @@ async function runForwardGroupFailover() {
   }
 }
 
+/**
+ * 主机定位补漏。
+ *
+ * 自动定位原来只在有人翻主机列表时触发一次；ipapi.co 限流那阵子没定到的机器
+ * 就一直「地区获取中」，直到下次有人翻列表还得碰巧不限流。这里定时把没定到位
+ * 的再试一遍，退避和三家服务的兜底都在 hostGeo 里。
+ */
+export async function runHostGeoRetrySweep() {
+  try {
+    await runHostGeoSweep();
+  } catch (error) {
+    console.error("[Scheduler] Host geo sweep error:", error);
+  }
+}
+
 export async function runHostDdnsReconcile() {
   try {
     const queued = await reconcileHostDdnsRecords();
@@ -979,6 +994,9 @@ export function startScheduler() {
   const hostStatusSweep = createNonOverlappingScheduledTask("host status sweep", async () => {
     await runHostStatusSweep();
   });
+  const hostGeoSweep = createNonOverlappingScheduledTask("host geo retry sweep", async () => {
+    await runHostGeoRetrySweep();
+  }, { slowTaskMs: 60_000 });
   const reminderSweep = createNonOverlappingScheduledTask("email and Telegram reminders", async () => {
     await runEmailReminders();
     await runTelegramReminders();
@@ -1050,6 +1068,8 @@ export function startScheduler() {
   repeatAfter(reminderSweep, 6 * 60 * 60 * 1000, 30_000);
   repeatAfter(updateCheck, UPDATE_AUTO_CHECK_INTERVAL_MS, 45_000);
   repeatAfter(historyCleanup, 60 * 60 * 1000, 2 * 60_000);
+  // 没定到位的主机五分钟看一次；真正的重试间隔由 hostGeo 里的退避（10 分钟起、封顶 6 小时）决定。
+  repeatAfter(hostGeoSweep, 5 * 60 * 1000, 90_000);
 
   console.log("[Scheduler] Scheduled tasks started with overlap guards and staggered startup");
 }

@@ -310,6 +310,11 @@ export const hosts = table("hosts", {
   geoLatitudeMicro: int("geoLatitudeMicro"),
   geoLongitudeMicro: int("geoLongitudeMicro"),
   geoUpdatedAt: epoch("geoUpdatedAt"),
+  /*
+    位置是人手填的（见 hosts.setLocation）：为 true 时上面几列由用户说了算，
+    按 IP 的自动定位不得覆盖 —— 机房 IP 段的库经常把香港机器放到深圳。
+  */
+  geoManual: boolean("geoManual").notNull().default(false),
   // ===== 端口区间限制 =====
   portRangeStart: int("portRangeStart"),  // 允许转发的起始端口，null = 不限制
   portRangeEnd: int("portRangeEnd"),      // 允许转发的结束端口，null = 不限制
