@@ -295,6 +295,12 @@ test("subscription traffic cycles follow the user's configured monthly reset day
         'INSERT INTO "user_traffic_addons" ("id", "userId", "subscriptionId", "planId", "trafficBytes", "status", "cycleResetAt", "expiresAt", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [402, 4, 41, 1, 300, "active", epoch(localDate(2026, 9, 3)), epoch(localDate(2026, 9, 3)), epoch(localDate(2026, 8, 3)), epoch(localDate(2026, 8, 3))],
       );
+      // 边界（8/3 00:00）之后、巡检跑到之前加上的加油包，周期末尾还停在刚过去的边界上
+      // （比如管理员照着没来得及推进的订阅发的）。它属于新周期，不能被当成「已到期」收走。
+      await runtime.executeRaw(
+        'INSERT INTO "user_traffic_addons" ("id", "userId", "subscriptionId", "planId", "trafficBytes", "status", "cycleResetAt", "expiresAt", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [403, 4, 41, 1, 200, "active", epoch(localDate(2026, 8, 3)), epoch(localDate(2026, 8, 3)), epoch(localDate(2026, 8, 3, 0, 30)), epoch(localDate(2026, 8, 3, 0, 30))],
+      );
       const [, purchase] = await Promise.all([
         billing.rechargeSubscriptionTrafficCycles(),
         billing.purchaseTrafficAddonWithBalance(4, 1, 41),
@@ -315,6 +321,8 @@ test("subscription traffic cycles follow the user's configured monthly reset day
       assert.equal(addonById.get(401).status, "expired", "the previous-cycle add-on must expire");
       assert.equal(addonById.get(402).status, "active", "an add-on created exactly at the boundary belongs to the new cycle");
       assert.equal(Number(addonById.get(402).expiresAt), epoch(localDate(2026, 9, 3)));
+      assert.equal(addonById.get(403).status, "active", "an add-on created after the boundary with a stale cycle end must move to the new cycle, not expire");
+      assert.equal(Number(addonById.get(403).expiresAt), epoch(localDate(2026, 9, 3)));
       assert.equal(addonById.get(Number(purchase.id)).status, "active", "the newly purchased add-on must survive settlement");
       assert.equal(Number(addonById.get(Number(purchase.id)).expiresAt), epoch(localDate(2026, 9, 3)));
       const [purchaseCount] = await runtime.queryRaw(
@@ -336,7 +344,7 @@ test("subscription traffic cycles follow the user's configured monthly reset day
         'SELECT "id" FROM "user_traffic_addons" WHERE "userId" = ? AND "status" = ? ORDER BY "id"',
         [4, "active"],
       );
-      assert.deepEqual(activeAddonRows.map((addon) => Number(addon.id)), [402, Number(purchase.id)].sort((a, b) => a - b));
+      assert.deepEqual(activeAddonRows.map((addon) => Number(addon.id)), [402, 403, Number(purchase.id)].sort((a, b) => a - b));
 
       // A failed purchase must not strand access after its pre-purchase cycle
       // settlement has already reset traffic and advanced the subscription.
