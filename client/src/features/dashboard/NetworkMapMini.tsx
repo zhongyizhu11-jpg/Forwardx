@@ -5,7 +5,7 @@ import "@/components/network/networkMap.css";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePageVisible } from "@/hooks/usePageVisible";
-import { groupCoverageBox, groupPlaceLabel, groupTipText, hostTipText, insetLeader, linkTipText, matchInsetGroup, nextInsetGrowStage, pickInsetSlots, placeInsets, unlocatedHostCount, type InsetGrowStage, type InsetLayoutReport, type InsetPlacement, type MiniLayoutReport } from "@/features/network/networkMapMini";
+import { groupCoverageBox, groupPlaceLabel, groupTipText, hostTipText, insetLeader, insetSizes, linkTipText, matchInsetGroup, nextInsetGrowStage, pickInsetSlots, placeInsets, unlocatedHostCount, type InsetGrowStage, type InsetLayoutReport, type InsetPlacement, type MiniLayoutReport } from "@/features/network/networkMapMini";
 import type { NetworkMapModel } from "@/features/network/networkMapModel";
 import { NETWORK_MAP_BASE_LAYERS, NETWORK_MAP_LAYER_STORAGE_KEY, resolveNetworkMapBaseLayer, type NetworkMapBaseLayerId } from "@shared/networkMapBaseLayers";
 
@@ -43,7 +43,7 @@ function readStoredLayer(): unknown {
 }
 
 /** 框好时定下来的一扇小窗：哪几台、叫什么、摆哪 —— 用户拖图时这些不变。growKey：放大状态机按它记 */
-type InsetSlot = { hostIds: number[]; label: string; placement: InsetPlacement; growKey: string };
+type InsetSlot = { hostIds: number[]; label: string; placement: InsetPlacement; growKey: string; largeSize: { w: number; h: number } };
 
 export default function NetworkMapMini({ model, fallback }: {
   model: NetworkMapModel;
@@ -116,11 +116,12 @@ export default function NetworkMapMini({ model, fallback }: {
     const growKeys = picks.map((pick) => `${pick.hostIds.join(",")}@${fitReport.width}x${fitReport.height}`);
     const grow = growKeys.map((key) => !desktop && (growStages[key] === "try" || growStages[key] === "keep"));
     const placements = placeInsets({ width: fitReport.width, height: fitReport.height }, { boxes: fitReport.boxes, points: fitReport.points, reserved: fitReport.reserved }, picks.length, desktop, undefined, grow);
-    return placements.map((placement, index) => ({ hostIds: picks[index].hostIds, label: placeLabelOf(picks[index].hostIds) || picks[index].group.label, placement, growKey: growKeys[index] }));
+    const largeSize = insetSizes({ width: fitReport.width, height: fitReport.height }, desktop).large;
+    return placements.map((placement, index) => ({ hostIds: picks[index].hostIds, label: placeLabelOf(picks[index].hostIds) || picks[index].group.label, placement, growKey: growKeys[index], largeSize }));
   }, [fitReport, desktop, growStages, placeLabelOf]);
   const onInsetLayout = useCallback((slot: InsetSlot, next: InsetLayoutReport) => {
     setGrowStages((stages) => {
-      const stage = nextInsetGrowStage(stages[slot.growKey], next, slot.placement.box, desktop);
+      const stage = nextInsetGrowStage(stages[slot.growKey], next, { normal: slot.placement.box, large: slot.largeSize }, desktop);
       return stage === stages[slot.growKey] ? stages : { ...stages, [slot.growKey]: stage as InsetGrowStage };
     });
   }, [desktop]);

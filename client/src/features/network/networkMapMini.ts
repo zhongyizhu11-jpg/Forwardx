@@ -80,20 +80,23 @@ export type InsetLayoutReport = { width: number; height: number; hiddenLabels: n
  * 手机上小窗要不要放大一号，一扇窗一个小状态机（窗的组员 / 卡片尺寸变了就从头来）：
  *   没试过（undefined）+ 标准尺寸下藏了名字 → try（卡片按 52% × 62% 重摆）；
  *   try + 放大后的报告：名字都摆下了 → keep，还是有藏的 → no（缩回标准尺寸，别白占主图）。
- * 尺寸对不上的报告是换尺寸之前那一轮的，不算。桌面不放大。
+ * 每一步只认对应尺寸的报告：没试过时只认标准尺寸的，try 时只认放大尺寸的 —— 小窗刚建出来会连着
+ * 框两次（首次 + ResizeObserver 的第一下），第二份标准尺寸的报告要是被当成「放大后的结果」，
+ * 还没放大就判了 no。放大被主图的 marker 挡住（placeInsets 不放大）就一直停在 try，窗保持标准尺寸。
+ * 桌面不放大。
  */
 export type InsetGrowStage = "try" | "keep" | "no";
 export function nextInsetGrowStage(
   stage: InsetGrowStage | undefined,
   report: InsetLayoutReport,
-  shownSize: { w: number; h: number },
+  sizes: { normal: InsetSize; large: InsetSize },
   desktop: boolean,
 ): InsetGrowStage | undefined {
   if (desktop) return stage;
   // 窗有 1px 的边框，画布比窗小 2px；标准和放大两档差着十几像素，差 3px 以内算同一档
-  if (Math.abs(report.width - shownSize.w) > 3 || Math.abs(report.height - shownSize.h) > 3) return stage;
-  if (stage === undefined) return report.hiddenLabels > 0 ? "try" : undefined;
-  if (stage === "try") return report.hiddenLabels === 0 ? "keep" : "no";
+  const matches = (size: InsetSize) => Math.abs(report.width - size.w) <= 3 && Math.abs(report.height - size.h) <= 3;
+  if (stage === undefined) return matches(sizes.normal) && report.hiddenLabels > 0 ? "try" : undefined;
+  if (stage === "try" && matches(sizes.large)) return report.hiddenLabels === 0 ? "keep" : "no";
   return stage;
 }
 
@@ -186,6 +189,8 @@ export type MiniOccupancy = {
 };
 
 const QUADRANTS: Quadrant[] = ["bl", "br", "tl", "tr"];
+/** 标准尺寸放不下时，宽和高各在「标准 → 最小」之间分这么多档试 */
+const INSET_SIZE_STEPS = 8;
 
 function quadrantBox(container: { width: number; height: number }, quadrant: Quadrant): PixelBox {
   const w = container.width / 2;
@@ -228,8 +233,9 @@ export function cornerBox(container: { width: number; height: number }, quadrant
 }
 
 /**
- * 小窗摆哪：象限按空的程度排（一样空时左下优先），先试标准尺寸，四个角都压到 marker 就缩到
- * 最小尺寸再试；还是没有空位就挑压得最少的角。第二个小窗（桌面）还要躲开第一个。
+ * 小窗摆哪：象限按空的程度排（一样空时左下优先），先试标准尺寸；四个角都压到 marker 就在标准和
+ * 最小之间找每个角放得下的最大尺寸，挑面积最大的；最小都放不下就挑压得最少的角。第二个小窗（桌面）
+ * 还要躲开第一个。
  * grow[i]：第 i 个小窗想放大（卡片发现标准尺寸里有名字摆不下）—— 只在同一个角上试放大尺寸，
  * 压到主图的 marker、别的小窗就不放大（不换角：换了角引线和圈都要跳，用户看着像乱了）。
  */
@@ -250,15 +256,31 @@ export function placeInsets(
   for (let index = 0; index < count; index += 1) {
     const blocked = [...occupancy.boxes, ...placed.map((item) => item.box)];
     let choice: InsetPlacement | null = null;
-    for (const size of [sizes.full, sizes.min]) {
+    for (const quadrant of order) {
+      const box = cornerBox(container, quadrant, sizes.full, margin, reserved);
+      if (placed.some((item) => item.quadrant === quadrant)) continue;
+      if (blocked.some((other) => boxesIntersect(box, other))) continue;
+      choice = { box, quadrant, shrunk: false };
+      break;
+    }
+    if (!choice) {
+      // 标准尺寸哪个角都压到 marker：在标准和最小之间找每个角放得下的最大尺寸，挑面积最大的那个角
+      // （一样大按空的程度）—— 手机卡片里悉尼的名字只占了右下角的一条边，没必要直接缩到最小
+      let bestArea = 0;
       for (const quadrant of order) {
-        const box = cornerBox(container, quadrant, size, margin, reserved);
         if (placed.some((item) => item.quadrant === quadrant)) continue;
-        if (blocked.some((other) => boxesIntersect(box, other))) continue;
-        choice = { box, quadrant, shrunk: size === sizes.min };
-        break;
+        for (let i = 0; i <= INSET_SIZE_STEPS; i += 1) {
+          const w = Math.round(sizes.full.w - ((sizes.full.w - sizes.min.w) * i) / INSET_SIZE_STEPS);
+          for (let j = 0; j <= INSET_SIZE_STEPS; j += 1) {
+            const h = Math.round(sizes.full.h - ((sizes.full.h - sizes.min.h) * j) / INSET_SIZE_STEPS);
+            if (w * h <= bestArea) continue;
+            const box = cornerBox(container, quadrant, { w, h }, margin, reserved);
+            if (blocked.some((other) => boxesIntersect(box, other))) continue;
+            bestArea = w * h;
+            choice = { box, quadrant, shrunk: true };
+          }
+        }
       }
-      if (choice) break;
     }
     if (!choice) {
       // 没有空角：最小尺寸放到压得最少的角
@@ -380,16 +402,23 @@ export type LabelItem = {
   preferUp?: boolean;
   /** 先放谁：小的先放（小窗里要框的那几台先挑位置，窗边路过的别的主机后放）；默认 0 */
   priority?: number;
+  /** 上下都摆不下时还能摆到圆盘左右两侧：名字离锚点的水平距离（圆盘 / pill 半宽 + 一点缝）；不传就不试 */
+  sideGap?: number;
 };
 
-/** hidden：摆不出一个干净的位置（只在 hideUnplaceable 时出现）—— 名字不画，圆盘照画 */
-export type LabelPlacement = { key: string; up: boolean; dx: number; tight: boolean; box: PixelBox; hidden?: boolean };
+/**
+ * hidden：摆不出一个干净的位置（只在 hideUnplaceable 时出现）—— 名字不画，圆盘照画。
+ * side：摆在了圆盘右边 / 左边（垂直居中），这时 dx 是名字左边缘相对锚点的偏移；否则 dx 是名字中线的左右挪动
+ */
+export type LabelPlacement = { key: string; up: boolean; dx: number; tight: boolean; box: PixelBox; hidden?: boolean; side?: "left" | "right" };
 
-const LABEL_SHIFTS = [0, -4, 4, -8, 8, -14, 14];
+// 左右挪最多 22px：再远名字就不像是这个圆盘的了
+const LABEL_SHIFTS = [0, -4, 4, -8, 8, -14, 14, -22, 22];
 
 /**
  * 小图上主机名的摆法：默认在圆盘下面；会压到别的名字、圆盘、胶囊或露出卡片边时依次试：
- * 翻到另一侧 → 左右挪最多 14px → 缩小一号字。按 priority、再从上到下的顺序贪心放，先放的
+ * 翻到另一侧 → 左右挪最多 22px → 缩小一号字 → 摆到圆盘右边 / 左边（给了 sideGap 时）。按 priority、
+ * 再从上到下的顺序贪心放，先放的
  * 名字成为后面的障碍。挑不出一个完全干净的位置时：
  *   默认选压得最少的（宁可露出边也不压别人）—— 主图精确框住时靠这个把图缩一点补回来；
  *   hideUnplaceable 时直接藏起来（hidden）、也不当后面的障碍 —— 小窗框好之后用：窗不能拖，
@@ -426,6 +455,23 @@ export function placeLabelBoxes(items: readonly LabelItem[], obstacles: readonly
       }
       if (bestScore === 0) break;
     }
+    // 上下怎么挪都压着别人（两台上下挨着、中间还挂着胶囊）：摆到圆盘旁边，离窗边远的那侧先试
+    if (bestScore > 0 && item.sideGap !== undefined) {
+      const center = area.x + area.w / 2;
+      const order: Array<"left" | "right"> = item.x > center ? ["left", "right"] : ["right", "left"];
+      for (const tight of [false, true]) {
+        const w = tight ? item.tightW : item.w;
+        for (const side of order) {
+          const box: PixelBox = { x: side === "right" ? item.x + item.sideGap : item.x - item.sideGap - w, y: item.y - item.h / 2, w, h: item.h };
+          let score = boxOutsideArea(box, area);
+          for (const other of obstacles) score += boxOverlapArea(box, other) * 10;
+          for (const other of placedBoxes) score += boxOverlapArea(box, other) * 10;
+          if (score < bestScore - 1e-9) { bestScore = score; best = { key: item.key, up: false, dx: box.x - item.x, tight, box, side }; }
+          if (score === 0) break;
+        }
+        if (bestScore === 0) break;
+      }
+    }
     if (!best) continue;
     // 亚像素的擦边看不出来，不算压
     if (options.hideUnplaceable && bestScore > 1) { result.push({ ...best, hidden: true }); continue; }
@@ -433,6 +479,29 @@ export function placeLabelBoxes(items: readonly LabelItem[], obstacles: readonly
     result.push(best);
   }
   return result;
+}
+
+/** 小窗试的一档缩放：画成了几枚 marker、藏了几个名字、要框的圆盘是不是都在窗里 */
+export type InsetZoomCandidate = { zoom: number; markers: number; hidden: number; valid: boolean };
+
+/**
+ * 小窗挑哪一档缩放（返回下标，没有可用的是 -1）：圆盘都在窗里的档里，按「画出来几枚 marker − 0.6 × 藏掉
+ * 几个名字」挑最高的，一样高挑放得更大的。
+ * 为什么这么算：分开的圆盘本身就是这扇窗的意义，藏一个名字（4 枚藏 1 个：3.4）比为了它把两台并起来
+ * （3 枚都有名字：3）好；可一个名字都没有的四枚（4 − 2.4 = 1.6）不如两枚名字都在的 pill（2）——
+ * 藏掉的名字得一个个点才知道是谁。全并成一枚（1）永远最后。
+ */
+export function pickInsetZoom(candidates: readonly InsetZoomCandidate[]): number {
+  let best = -1;
+  let bestScore = -Infinity;
+  candidates.forEach((candidate, index) => {
+    if (!candidate.valid) return;
+    const score = candidate.markers - candidate.hidden * 0.6;
+    if (score > bestScore + 1e-9 || (Math.abs(score - bestScore) < 1e-9 && best >= 0 && candidate.zoom > candidates[best].zoom)) { best = index; bestScore = score; }
+  });
+  if (best >= 0) return best;
+  // 哪一档都有圆盘露出窗边（缩到底也放不下）：挑缩得最小的那档，至少别更糟
+  return candidates.length > 0 ? candidates.reduce((low, candidate, index) => (candidate.zoom < candidates[low].zoom ? index : low), 0) : -1;
 }
 
 /** 小窗里名字能用的范围：窗本身四边各让出 8px */

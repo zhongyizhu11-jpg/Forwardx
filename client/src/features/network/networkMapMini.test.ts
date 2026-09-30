@@ -4,7 +4,7 @@ import test from "node:test";
 import { buildNetworkMapModel } from "./networkMapModel";
 import { computeMapLayout, type LngLat, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
 
-import { INSET_LABEL_MARGIN_PX, MINI_CAP_MIN_ARC_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, cornerBox, densestInsetMembers, detectWebGL, nextInsetGrowStage, groupCoverageBox, groupPlaceLabel, groupTipText, hostTipText, insetLabelArea, insetLeader, insetSizes, linkTipText, locatedHostCount, matchInsetGroup, miniFitPoints, miniGroupLayoutOptions, miniMinZoom, pickInsetGroups, pickInsetSlots, placeInsetLabels, placeInsets, placeLabelBoxes, scoreQuadrants, shouldAbsorbIntoGroup, shouldRefit, shouldRenderRealMap, unlocatedHostCount, type LabelItem } from "./networkMapMini";
+import { INSET_LABEL_MARGIN_PX, MINI_CAP_MIN_ARC_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, cornerBox, densestInsetMembers, detectWebGL, nextInsetGrowStage, groupCoverageBox, groupPlaceLabel, groupTipText, hostTipText, insetLabelArea, insetLeader, insetSizes, linkTipText, locatedHostCount, matchInsetGroup, miniFitPoints, miniGroupLayoutOptions, miniMinZoom, pickInsetGroups, pickInsetSlots, pickInsetZoom, placeInsetLabels, placeInsets, placeLabelBoxes, scoreQuadrants, shouldAbsorbIntoGroup, shouldRefit, shouldRenderRealMap, unlocatedHostCount, type LabelItem } from "./networkMapMini";
 
 const now = 1_700_000_000_000;
 const host = (id: number, geo?: [number, number]) => ({
@@ -363,12 +363,77 @@ test("手机小窗放大的状态机：藏了名字才试放大，放大后都�
   const normal = { w: 156, h: 174 };
   const large = { w: 177, h: 186 };
   // 画布比窗小 2px（1px 边框）
-  assert.equal(nextInsetGrowStage(undefined, { width: 154, height: 172, hiddenLabels: 0 }, normal, false), undefined, "都摆下了：不放大");
-  assert.equal(nextInsetGrowStage(undefined, { width: 154, height: 172, hiddenLabels: 2 }, normal, false), "try");
-  assert.equal(nextInsetGrowStage("try", { width: 154, height: 172, hiddenLabels: 2 }, large, false), "try", "放大前那一轮的报告不算");
-  assert.equal(nextInsetGrowStage("try", { width: 175, height: 184, hiddenLabels: 0 }, large, false), "keep");
-  assert.equal(nextInsetGrowStage("try", { width: 175, height: 184, hiddenLabels: 1 }, large, false), "no", "放大了也摆不下：缩回去");
-  assert.equal(nextInsetGrowStage("no", { width: 154, height: 172, hiddenLabels: 1 }, normal, false), "no", "不再来回试");
-  assert.equal(nextInsetGrowStage("keep", { width: 175, height: 184, hiddenLabels: 0 }, large, false), "keep");
-  assert.equal(nextInsetGrowStage(undefined, { width: 354, height: 188, hiddenLabels: 3 }, { w: 356, h: 190 }, true), undefined, "桌面");
+  const sizes = { normal, large };
+  assert.equal(nextInsetGrowStage(undefined, { width: 154, height: 172, hiddenLabels: 0 }, sizes, false), undefined, "都摆下了：不放大");
+  assert.equal(nextInsetGrowStage(undefined, { width: 154, height: 172, hiddenLabels: 2 }, sizes, false), "try");
+  assert.equal(nextInsetGrowStage("try", { width: 154, height: 172, hiddenLabels: 2 }, sizes, false), "try", "放大前那一轮（ResizeObserver 的第一下）的报告不算");
+  assert.equal(nextInsetGrowStage("try", { width: 175, height: 184, hiddenLabels: 0 }, sizes, false), "keep");
+  assert.equal(nextInsetGrowStage("try", { width: 175, height: 184, hiddenLabels: 1 }, sizes, false), "no", "放大了也摆不下：缩回去");
+  assert.equal(nextInsetGrowStage("no", { width: 154, height: 172, hiddenLabels: 1 }, sizes, false), "no", "不再来回试");
+  assert.equal(nextInsetGrowStage("keep", { width: 175, height: 184, hiddenLabels: 0 }, sizes, false), "keep");
+  assert.equal(nextInsetGrowStage(undefined, { width: 175, height: 184, hiddenLabels: 2 }, sizes, false), undefined, "尺寸对不上的报告不算");
+  assert.equal(nextInsetGrowStage(undefined, { width: 354, height: 188, hiddenLabels: 3 }, { normal: { w: 356, h: 190 }, large: { w: 356, h: 190 } }, true), undefined, "桌面");
+});
+
+test("小窗挑缩放档：分开的圆盘优先，藏一个名字也不并；一个名字都没有时宁可并成两枚；圆盘出窗的档不要", () => {
+  // 桌面：四台分开藏一个（3.4）好过并成三枚都有名字（3）
+  assert.equal(pickInsetZoom([
+    { zoom: 6.4, markers: 4, hidden: 1, valid: true },
+    { zoom: 6.1, markers: 3, hidden: 0, valid: true },
+  ]), 0);
+  // 手机：四台分开但名字全藏（1.6）不如两枚 pill 名字都在（2）；全并成一枚（1）最后
+  assert.equal(pickInsetZoom([
+    { zoom: 6.4, markers: 4, hidden: 4, valid: true },
+    { zoom: 5.9, markers: 3, hidden: 3, valid: true },
+    { zoom: 5.4, markers: 2, hidden: 0, valid: true },
+    { zoom: 4.9, markers: 1, hidden: 0, valid: true },
+  ]), 2);
+  // 一样好：挑放得更大的
+  assert.equal(pickInsetZoom([{ zoom: 6, markers: 3, hidden: 0, valid: true }, { zoom: 6.25, markers: 3, hidden: 0, valid: true }]), 1);
+  // 圆盘露出窗边的档不算
+  assert.equal(pickInsetZoom([{ zoom: 7, markers: 4, hidden: 0, valid: false }, { zoom: 6.5, markers: 4, hidden: 2, valid: true }]), 1);
+  // 哪档都放不下：挑缩得最小的；没有候选：-1
+  assert.equal(pickInsetZoom([{ zoom: 7, markers: 4, hidden: 0, valid: false }, { zoom: 6.5, markers: 4, hidden: 0, valid: false }]), 1);
+  assert.equal(pickInsetZoom([]), -1);
+});
+
+test("名字上下都摆不下时摆到圆盘旁边（离窗边远的那侧先试）；不给 sideGap 就不试", () => {
+  const disc = (x: number, y: number): PixelBox => ({ x: x - 13, y: y - 13, w: 26, h: 26 });
+  // 上面一条胶囊、下面一枚圆盘，把上下都堵死；左右空着
+  const walls: PixelBox[] = [{ x: 30, y: 40, w: 100, h: 24 }, { x: 30, y: 104, w: 100, h: 26 }, disc(60, 84)];
+  const item: LabelItem = { key: "dg", x: 60, y: 84, w: 58, h: 20, tightW: 52, gap: 15, sideGap: 16 };
+  const [side] = placeInsetLabels([item], walls, { width: 176, height: 186 });
+  assert.equal(side.hidden, undefined);
+  assert.equal(side.side, "right", "圆盘在窗左半边：先试右边");
+  assert.equal(side.box.x, 60 + 16);
+  assert.equal(side.dx, 16, "dx 是名字左边缘离锚点多远");
+  assert.ok(Math.abs(side.box.y + side.box.h / 2 - 84) < 1e-9, "竖直居中在锚点上");
+  for (const wall of walls) assert.ok(!overlap(side.box, wall));
+  // 靠右的圆盘先试左边
+  const right = placeInsetLabels([{ ...item, x: 150 }], [{ x: 110, y: 40, w: 60, h: 24 }, { x: 110, y: 104, w: 60, h: 26 }, disc(150, 84)], { width: 176, height: 186 });
+  assert.equal(right[0].side, "left");
+  // 不给 sideGap：还是藏
+  const { sideGap: _unused, ...plain } = item;
+  assert.equal(placeInsetLabels([plain], walls, { width: 176, height: 186 })[0].hidden, true);
+});
+
+test("小窗标准尺寸哪个角都压到 marker 时，找放得下的最大尺寸，不直接缩到最小", () => {
+  // 手机主图：右下角左边有悉尼的名字（x 102..159），标准尺寸（156 宽）挪开 + / − 后会压上它
+  const container = { width: 338, height: 298 };
+  const occupancy = {
+    boxes: [
+      { x: 36, y: 131, w: 26, h: 26 }, { x: 16, y: 159, w: 57, h: 20 }, // 新加坡
+      { x: 274, y: 70, w: 26, h: 26 }, { x: 252, y: 98, w: 69, h: 20 }, // 美国
+      { x: 118, y: 196, w: 26, h: 26 }, { x: 102, y: 224, w: 57, h: 20 }, // 悉尼
+      { x: 39, y: 90, w: 73, h: 22 }, { x: 23, y: 67, w: 96, h: 20 }, // 港粤的组
+    ],
+    points: [],
+    reserved: [{ x: 298, y: 226, w: 36, h: 68 }, { x: 258, y: 4, w: 76, h: 29 }],
+  };
+  const sizes = insetSizes(container, false);
+  const [inset] = placeInsets(container, occupancy, 1, false);
+  assert.equal(inset.shrunk, true);
+  assert.ok(inset.box.w * inset.box.h > sizes.min.w * sizes.min.h, `比最小尺寸大：${JSON.stringify(inset.box)}`);
+  assert.ok(inset.box.w <= sizes.full.w && inset.box.h <= sizes.full.h);
+  for (const box of [...occupancy.boxes, ...occupancy.reserved]) assert.ok(!overlap(inset.box, box), `压着 ${JSON.stringify(box)}`);
 });
