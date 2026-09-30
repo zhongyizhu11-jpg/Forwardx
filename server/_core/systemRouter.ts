@@ -8,6 +8,17 @@ import { ENV } from "../env";
 import { compareVersions, normalizeVersion } from "../../shared/version";
 import { MAX_RULE_SWITCH_BRIDGE_HOURS, RULE_SWITCH_BRIDGE_HOURS_SETTING, normalizeRuleSwitchBridgeHours } from "../../shared/ruleEntryBridge";
 import { spawn } from "child_process";
+import {
+  appendUpgradeJobLog,
+  createUpgradeJobStore,
+  idleUpgradeJob,
+  isUpgradeLogFlushPoint,
+  reconcileRestoredUpgradeJob,
+  resolveUpgradeJobStatePath,
+  upgradeJobElapsedMs,
+  UPGRADE_JOB_RESTARTED_TTL_MS,
+  type UpgradeJob,
+} from "../panelUpgradeJob";
 import crypto from "crypto";
 import fs from "fs";
 import net from "net";
@@ -364,29 +375,50 @@ type DeploymentInfo = {
   manualUpgradeCommand: string;
 };
 
-type UpgradeJob = {
-  status: "idle" | "running" | "success" | "error" | "waiting_assets";
-  mode: "upgrade" | "rollback" | null;
-  startedAt: string | null;
-  finishedAt: string | null;
-  targetVersion: string | null;
-  logs: string[];
-  error: string | null;
-};
-
 let lastUpdateInfo: UpdateInfo | null = null;
 let updateCheckInFlight: Promise<UpdateInfo> | null = null;
 let rollbackVersionInfo: RollbackVersionInfo | null = null;
 let rollbackVersionCheckInFlight: Promise<RollbackVersionInfo> | null = null;
-let upgradeJob: UpgradeJob = {
-  status: "idle",
-  mode: null,
-  startedAt: null,
-  finishedAt: null,
-  targetVersion: null,
-  logs: [],
-  error: null,
-};
+/*
+  升级任务落盘到 SQLite 旁边，面板被升级脚本重启后读回来判断成功没有；见 server/panelUpgradeJob.ts。
+*/
+const upgradeJobStore = createUpgradeJobStore(resolveUpgradeJobStatePath(ENV));
+let upgradeJob: UpgradeJob = restoreUpgradeJob();
+
+function restoreUpgradeJob(): UpgradeJob {
+  const saved = upgradeJobStore.load();
+  if (!saved) return idleUpgradeJob();
+  const job = reconcileRestoredUpgradeJob(saved, {
+    currentVersion: APP_VERSION,
+    manualHintLines: [
+      "[ForwardX] Run a one-click script on the server to upgrade manually:",
+      `[ForwardX] Local: ${panelManualUpgradeCommand("local", null)}`,
+      `[ForwardX] Docker: ${panelManualUpgradeCommand("docker", null)}`,
+    ],
+  });
+  if (job.status === "idle") {
+    upgradeJobStore.clear();
+  } else {
+    console.info(`[Upgrade] Restored ${job.mode || "upgrade"} job target=${job.targetVersion} status=${job.status}${job.restarted ? " restarted=true" : ""}`);
+    upgradeJobStore.save(job, { immediate: true });
+  }
+  return job;
+}
+
+function persistUpgradeJob(options?: { immediate?: boolean }) {
+  if (upgradeJob.status === "idle") {
+    upgradeJobStore.clear();
+    return;
+  }
+  upgradeJobStore.save(upgradeJob, options);
+}
+
+function clearUpgradeJob() {
+  upgradeJob = idleUpgradeJob();
+  upgradeJobStore.clear();
+}
+
+process.once("beforeExit", () => upgradeJobStore.flush());
 
 
 function isValidBackgroundImageDataUrl(value: string) {
@@ -1105,10 +1137,18 @@ export async function checkPanelUpdateTask(force = false): Promise<UpdateInfo> {
 function appendUpgradeLog(line: string) {
   const text = line.trimEnd();
   if (!text) return;
-  upgradeJob.logs.push(text);
-  if (upgradeJob.logs.length > 300) {
-    upgradeJob.logs = upgradeJob.logs.slice(-300);
+  // 脚本一次可能吐好几行（pnpm 的输出），逐行进，下载进度行只留最新一条。
+  const lines = text.split(/\r?\n/);
+  let flushNow = false;
+  for (const item of lines) {
+    // docker pull 用 \r 刷同一行，只留最后一段。
+    const segments = item.split("\r");
+    const last = segments[segments.length - 1].trimEnd() || segments.find((segment) => segment.trim()) || "";
+    if (!last) continue;
+    appendUpgradeJobLog(upgradeJob.logs, last);
+    if (isUpgradeLogFlushPoint(last)) flushNow = true;
   }
+  persistUpgradeJob({ immediate: flushNow });
 }
 
 function normalizeUpgradeCommand(
@@ -1153,7 +1193,10 @@ function setUpgradeWaitingForAssets(targetVersion: string, reason: string, mode:
       `[ForwardX] ${reason}`,
     ],
     error: reason,
+    restarted: false,
+    restartedAt: null,
   };
+  persistUpgradeJob({ immediate: true });
 }
 
 async function startPanelVersionTask(targetVersionInput: string | null | undefined, mode: "upgrade" | "rollback") {
@@ -1222,7 +1265,10 @@ async function startPanelVersionTask(targetVersionInput: string | null | undefin
       `[ForwardX] Starting panel ${operationText} to ${targetVersion}`,
     ],
     error: null,
+    restarted: false,
+    restartedAt: null,
   };
+  persistUpgradeJob({ immediate: true });
   const child = spawn(command, {
     shell: true,
     cwd: process.cwd(),
@@ -1245,13 +1291,15 @@ async function startPanelVersionTask(targetVersionInput: string | null | undefin
     console.error(`[Upgrade] Failed to start upgrade command: ${err.message}`);
     appendUpgradeLog(`[ForwardX] Upgrade command failed to start: ${err.message}`);
     appendManualUpgradeHint(accelerator);
+    persistUpgradeJob({ immediate: true });
   });
   child.on("close", (code) => {
     upgradeJob.finishedAt = new Date().toISOString();
     if (code === 0) {
       upgradeJob.status = "success";
       console.info(`[Upgrade] Panel ${mode} command completed target=${targetVersion}`);
-      appendUpgradeLog(`[ForwardX] Panel ${operationText} command completed. The service may be restarting, refresh the page later.`);
+      const elapsed = upgradeJobElapsedMs(upgradeJob);
+      appendUpgradeLog(`[ForwardX] Panel ${operationText} command completed${elapsed !== null ? ` in ${Math.round(elapsed / 1000)}s` : ""}. The service may be restarting, refresh the page later.`);
     } else if (code === UPGRADE_ASSETS_PENDING_EXIT_CODE) {
       const reason = `v${normalizeVersion(targetVersion)} 的发布资产仍在 GitHub Actions 构建或上传中，请稍后重新检查更新。`;
       upgradeJob.status = "waiting_assets";
@@ -1265,6 +1313,7 @@ async function startPanelVersionTask(targetVersionInput: string | null | undefin
       appendUpgradeLog(`[ForwardX] Upgrade failed, exit code: ${code}`);
       appendManualUpgradeHint(accelerator);
     }
+    persistUpgradeJob({ immediate: true });
   });
 
   return { success: true, targetVersion };
@@ -2802,18 +2851,42 @@ export const systemRouter = router({
     const all = await db.getAllSettings();
     const githubAccelerator = githubAcceleratorSettingsFromRecord(all);
     const deploymentInfo = getDeploymentInfo(panelUpdateGithubAccelerator(githubAccelerator));
+    const now = Date.now();
+    // 重启成功的状态等客户端 acknowledgeUpgrade 来清；一直没人来（没开着页面）就到期自动清。
+    if (upgradeJob.restarted && upgradeJob.restartedAt && now - new Date(upgradeJob.restartedAt).getTime() > UPGRADE_JOB_RESTARTED_TTL_MS) {
+      clearUpgradeJob();
+    }
     return {
       currentVersion: APP_VERSION,
       currentAgentVersion: AGENT_VERSION,
       repoUrl: REPO_URL,
       update: lastUpdateInfo,
       job: upgradeJob,
+      startedAt: upgradeJob.startedAt,
+      elapsedMs: upgradeJobElapsedMs(upgradeJob, now),
+      restarted: !!upgradeJob.restarted,
+      serverTime: new Date(now).toISOString(),
       upgradeEnabled: !!ENV.upgradeCommand.trim(),
       autoCheckEnabled: isUpdateAutoCheckEnabled(all),
       githubAccelerator,
       ...deploymentInfo,
     };
   }),
+
+  /**
+   * 客户端看到「面板已带着新版本重启」并安排刷新之后来确认一下，状态才清掉；
+   * 不然刷新后的页面又看到 success，再刷新，没完没了。
+   */
+  acknowledgeUpgrade: adminProcedure
+    .input(z.object({ targetVersion: z.string().max(64).optional() }).optional())
+    .mutation(async ({ input }) => {
+      const target = normalizeVersion(input?.targetVersion || "");
+      if (upgradeJob.status !== "success") return { cleared: false };
+      if (target && upgradeJob.targetVersion && normalizeVersion(upgradeJob.targetVersion) !== target) return { cleared: false };
+      console.info(`[Upgrade] ${upgradeJob.mode || "upgrade"} job acknowledged target=${upgradeJob.targetVersion} status=${upgradeJob.status}`);
+      clearUpgradeJob();
+      return { cleared: true };
+    }),
 
   rollbackVersions: adminProcedure
     .input(z.object({ force: z.boolean().optional() }).optional())

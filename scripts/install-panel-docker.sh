@@ -10,6 +10,9 @@ PORT="${EXPLICIT_PORT:-9810}"
 REPO_SLUG="${FORWARDX_GITHUB_REPO:-zhongyizhu11-jpg/Forwardx}"
 IMAGE_REPO="${FORWARDX_IMAGE_REPO:-ghcr.io/zhongyizhu11-jpg/forwardx}"
 ASSETS_PENDING_EXIT_CODE=12
+# 面板端靠 "[ForwardX] step N/M …" 行画进度条，改动格式要连 client/src/lib/panelUpgrade.ts 一起改。
+PANEL_STEP_TOTAL=4
+SCRIPT_STARTED_AT="$(date +%s)"
 ENABLE_ADMIN_ACCOUNT="false"
 EXPLICIT_FORWARDX_IMAGE="${FORWARDX_IMAGE:-}"
 DATA_VOLUME_REUSE_NOTIFIED="false"
@@ -223,6 +226,16 @@ release_tag_from_url() {
   curl -fsSL --retry 3 --connect-timeout 10 "$url" \
     | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/p' \
     | head -1 || true
+}
+
+panel_step() {
+  echo "[ForwardX] step $1/$PANEL_STEP_TOTAL $2"
+}
+
+elapsed_seconds() {
+  local now=""
+  now="$(date +%s)"
+  printf "%s\n" "$((now - SCRIPT_STARTED_AT))"
 }
 
 get_compose_host_port() {
@@ -877,6 +890,7 @@ start_panel() {
   local expected_version="${2:-}"
   local pulled_image_id=""
   cd "$APP_DIR"
+  panel_step 2 "拉取镜像"
   echo "[INFO] Pulling image: $image"
   if ! docker pull "$image"; then
     echo "[INFO] Docker image $image is not available yet."
@@ -890,9 +904,13 @@ start_panel() {
     echo "[INFO] Check Docker daemon storage and retry the upgrade."
     return 1
   fi
+  panel_step 3 "重建容器"
   remove_existing_panel_containers
   ensure_data_volume
+  # 容器里点的升级（挂了 docker.sock 时）会随旧容器一起被杀，后面的行到不了面板日志，用时先报一次。
+  echo "[ForwardX] restarting panel service (elapsed $(elapsed_seconds)s)"
   compose_cmd --env-file "$APP_DIR/.env" -p "$PROJECT_NAME" up -d --remove-orphans forwardx
+  panel_step 4 "等待面板就绪"
   assert_running_panel_ready "$pulled_image_id" "$expected_version"
   cleanup_old_panel_images "$image"
 }
@@ -904,13 +922,15 @@ install_panel() {
   load_existing_env
   resolve_github_accelerator
   read_database_config_json
+  panel_step 1 "检查镜像"
   resolve_image_selection
   image="$RESOLVED_IMAGE"
   write_compose_file
   write_env "$image"
   write_database_config_to_volume
   start_panel "$image" "$EXPECTED_PANEL_VERSION"
-  echo "[DONE] ForwardX Docker panel started: http://SERVER_IP:$PORT"
+  echo "[ForwardX] elapsed $(elapsed_seconds)s"
+  echo "[DONE] ForwardX Docker panel started in $(elapsed_seconds)s: http://SERVER_IP:$PORT"
   echo "[INFO] Image: $image"
 }
 
@@ -920,12 +940,14 @@ upgrade_panel() {
   load_existing_env
   resolve_github_accelerator
   install_docker
+  panel_step 1 "检查镜像"
   resolve_image_selection
   image="$RESOLVED_IMAGE"
   write_compose_file
   write_env "$image"
   start_panel "$image" "$EXPECTED_PANEL_VERSION"
-  echo "[DONE] ForwardX Docker panel upgraded and restarted"
+  echo "[ForwardX] elapsed $(elapsed_seconds)s"
+  echo "[DONE] ForwardX Docker panel upgraded and restarted in $(elapsed_seconds)s"
   echo "[INFO] Image: $image"
 }
 

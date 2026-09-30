@@ -230,6 +230,7 @@ curl() {
   local output=""
   local url=""
   local expect_output="false"
+  local head_request="false"
   local arg=""
   for arg in "$@"; do
     if [ "$expect_output" = "true" ]; then
@@ -239,9 +240,15 @@ curl() {
     fi
     case "$arg" in
       --output|-o) expect_output="true" ;;
+      -sIL|-I|--head) head_request="true" ;;
       http://*|https://*) url="$arg" ;;
     esac
   done
+  # 下载前先 HEAD 一次拿 Content-Length 给进度条用，不算下载调用。
+  if [ "$head_request" = "true" ]; then
+    printf 'HTTP/2 200\\r\\ncontent-length: 4096\\r\\n\\r\\n'
+    return 0
+  fi
   printf '%s\\n' "$url" >> "$CALL_LOG"
   case "$url" in
     "$GITHUB_ACCELERATOR_URL"/*) printf '<html>mirror error</html>' > "$output"; printf '200'; return 0 ;;
@@ -261,6 +268,8 @@ printf 'CODE=%s\\n' "$code"
     "https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v9.8.7/forwardx-panel-v9.8.7.tar.gz",
   ]);
   assert.match(result.stderr, /invalid-archive/);
+  // 下载结束时报一次最终字节数，面板据此把进度条推到这一步的末尾。
+  assert.match(result.stderr, /\[ForwardX\] progress download \d+\/4096 \d+%/);
 });
 
 test("both installers persist the accelerator and Docker keeps GHCR image pulls unchanged", () => {
