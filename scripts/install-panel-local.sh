@@ -212,8 +212,12 @@ remote_content_length() {
 report_download_progress() {
   local downloaded="$1"
   local total="$2"
+  local percent=0
   if [ -n "$total" ] && [ "$total" -gt 0 ] 2>/dev/null; then
-    echo "[ForwardX] progress download ${downloaded}/${total} $((downloaded * 100 / total))%" >&2
+    percent=$((downloaded * 100 / total))
+    # HEAD 探测拿到的长度可能和实际下载的不一样（镜像站返回错误页之类），不让百分比超过 100。
+    if [ "$percent" -gt 100 ]; then percent=100; fi
+    echo "[ForwardX] progress download ${downloaded}/${total} ${percent}%" >&2
   else
     echo "[ForwardX] progress download ${downloaded}/- -%" >&2
   fi
