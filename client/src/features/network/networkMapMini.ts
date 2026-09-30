@@ -337,30 +337,36 @@ export function densestInsetMembers(group: { hostIds: readonly number[]; members
   const ids = group.hostIds;
   const points = group.members;
   if (ids.length <= 2 || points.length !== ids.length) return [...ids];
-  // 连通分量：两台圆心距离 < radius 就算压在一起
-  const parent = ids.map((_, index) => index);
-  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-  for (let i = 0; i < points.length; i += 1) {
-    for (let j = i + 1; j < points.length; j += 1) {
-      if (Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) < radius) parent[find(i)] = find(j);
-    }
-  }
-  const clusters = new Map<number, number[]>();
-  for (let i = 0; i < points.length; i += 1) clusters.set(find(i), [...(clusters.get(find(i)) ?? []), i]);
   const extentOf = (indexes: readonly number[]) => {
     const xs = indexes.map((i) => points[i].x);
     const ys = indexes.map((i) => points[i].y);
     return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
   };
-  let best: number[] | null = null;
-  for (const members of clusters.values()) {
-    if (!best || members.length > best.length || (members.length === best.length && extentOf(members) < extentOf(best))) best = members;
-  }
-  if (!best || best.length < 2 || best.length === ids.length) return [...ids];
-  // 一团本身就有个几像素宽：别让 0 宽的一团（同一机房）把任何一点距离都放大成「远」
   const whole = extentOf(ids.map((_, index) => index));
-  if (whole <= 4 * Math.max(extentOf(best), 2)) return [...ids];
-  return best.map((i) => ids[i]).sort((a, b) => a - b);
+  // 连通半径从 28px 往下收：远的那台恰好离某个组员 27px（主图的缩放差一点）时，28px 会把它连进来，
+  // 小窗就又得框到能看见台北的级别；收到 20、14 还能把真正叠在一起的那团分出来
+  for (const r of [radius, radius * 0.7, radius * 0.5]) {
+    // 连通分量：两台圆心距离 < r 就算压在一起
+    const parent = ids.map((_, index) => index);
+    const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    for (let i = 0; i < points.length; i += 1) {
+      for (let j = i + 1; j < points.length; j += 1) {
+        if (Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) < r) parent[find(i)] = find(j);
+      }
+    }
+    const clusters = new Map<number, number[]>();
+    for (let i = 0; i < points.length; i += 1) clusters.set(find(i), [...(clusters.get(find(i)) ?? []), i]);
+    let best: number[] | null = null;
+    for (const members of clusters.values()) {
+      if (!best || members.length > best.length || (members.length === best.length && extentOf(members) < extentOf(best))) best = members;
+    }
+    if (!best || best.length < 2) break;
+    if (best.length === ids.length) continue;
+    // 一团本身就有个几像素宽：别让 0 宽的一团（同一机房）把任何一点距离都放大成「远」
+    if (whole <= 4 * Math.max(extentOf(best), 2)) continue;
+    return best.map((i) => ids[i]).sort((a, b) => a - b);
+  }
+  return [...ids];
 }
 
 /**

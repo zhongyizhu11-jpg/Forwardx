@@ -249,6 +249,8 @@ test("小窗挑组员：用户的港粤台 + 悉尼，台北被 pill 吸进来�
   const main = groups.find((group) => group.hostIds.includes(1))!;
   assert.ok(main.hostIds.includes(3), "台北压在 pill 上并进组");
   assert.deepEqual(densestInsetMembers(main), [1, 2, 4, 5]);
+  // 主图缩放差一点、台北恰好离广州 26px（< 28 连得上）：连通半径往下收，还是只框港粤四台
+  assert.deepEqual(densestInsetMembers({ hostIds: [1, 2, 3, 4, 5], members: [{ x: 100, y: 100 }, { x: 97, y: 98 }, { x: 123, y: 94 }, { x: 99, y: 99 }, { x: 98, y: 99 }] }), [1, 2, 4, 5]);
   // 四台两两都压在一起：不挑，整组
   assert.deepEqual(densestInsetMembers({ hostIds: [1, 2, 3, 4], members: [{ x: 0, y: 0 }, { x: 4, y: 3 }, { x: 8, y: 1 }, { x: 3, y: 7 }] }), [1, 2, 3, 4]);
   // 同一机房（同一个点）两台 + 一台 40px 外（被 pill 吸进来的）：一团的宽按至少 2px 算，挑出同机房两台
