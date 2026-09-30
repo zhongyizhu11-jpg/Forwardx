@@ -4,7 +4,7 @@ import test from "node:test";
 import { buildNetworkMapModel } from "./networkMapModel";
 import { computeMapLayout, type LngLat, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
 
-import { INSET_LABEL_MARGIN_PX, MINI_CAP_MIN_ARC_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, cornerBox, densestInsetMembers, detectWebGL, groupCoverageBox, groupPlaceLabel, groupTipText, hostTipText, insetLabelArea, insetLeader, insetSizes, linkTipText, locatedHostCount, matchInsetGroup, miniFitPoints, miniGroupLayoutOptions, miniMinZoom, pickInsetGroups, pickInsetSlots, placeInsetLabels, placeInsets, placeLabelBoxes, scoreQuadrants, shouldAbsorbIntoGroup, shouldRefit, shouldRenderRealMap, unlocatedHostCount, type LabelItem } from "./networkMapMini";
+import { INSET_LABEL_MARGIN_PX, MINI_CAP_MIN_ARC_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, cornerBox, densestInsetMembers, detectWebGL, nextInsetGrowStage, groupCoverageBox, groupPlaceLabel, groupTipText, hostTipText, insetLabelArea, insetLeader, insetSizes, linkTipText, locatedHostCount, matchInsetGroup, miniFitPoints, miniGroupLayoutOptions, miniMinZoom, pickInsetGroups, pickInsetSlots, placeInsetLabels, placeInsets, placeLabelBoxes, scoreQuadrants, shouldAbsorbIntoGroup, shouldRefit, shouldRenderRealMap, unlocatedHostCount, type LabelItem } from "./networkMapMini";
 
 const now = 1_700_000_000_000;
 const host = (id: number, geo?: [number, number]) => ({
@@ -357,4 +357,18 @@ test("手机小窗放大：同一个角上试 52% × 62%，压到主图 marker �
   const [kept] = placeInsets(container, tight, 1, false, 10, [true]);
   assert.ok(!kept.grown);
   assert.deepEqual({ w: kept.box.w, h: kept.box.h }, sizes.full);
+});
+
+test("手机小窗放大的状态机：藏了名字才试放大，放大后都摆下才留着；尺寸对不上的旧报告不算；桌面不放大", () => {
+  const normal = { w: 156, h: 174 };
+  const large = { w: 177, h: 186 };
+  // 画布比窗小 2px（1px 边框）
+  assert.equal(nextInsetGrowStage(undefined, { width: 154, height: 172, hiddenLabels: 0 }, normal, false), undefined, "都摆下了：不放大");
+  assert.equal(nextInsetGrowStage(undefined, { width: 154, height: 172, hiddenLabels: 2 }, normal, false), "try");
+  assert.equal(nextInsetGrowStage("try", { width: 154, height: 172, hiddenLabels: 2 }, large, false), "try", "放大前那一轮的报告不算");
+  assert.equal(nextInsetGrowStage("try", { width: 175, height: 184, hiddenLabels: 0 }, large, false), "keep");
+  assert.equal(nextInsetGrowStage("try", { width: 175, height: 184, hiddenLabels: 1 }, large, false), "no", "放大了也摆不下：缩回去");
+  assert.equal(nextInsetGrowStage("no", { width: 154, height: 172, hiddenLabels: 1 }, normal, false), "no", "不再来回试");
+  assert.equal(nextInsetGrowStage("keep", { width: 175, height: 184, hiddenLabels: 0 }, large, false), "keep");
+  assert.equal(nextInsetGrowStage(undefined, { width: 354, height: 188, hiddenLabels: 3 }, { w: 356, h: 190 }, true), undefined, "桌面");
 });

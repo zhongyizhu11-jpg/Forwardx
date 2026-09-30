@@ -73,7 +73,31 @@ export type MiniLayoutGroup = { hostIds: number[]; label: string; members: Pixel
  * 摆小窗；用户拖图、缩放时报的是 false，卡片只挪圈和引线，小窗钉在原地。
  * userMoved：用户拖过 / 缩过、还没回到全览 —— 卡片据此显示「回到全览」。
  */
-export type MiniLayoutReport = { width: number; height: number; groups: MiniLayoutGroup[]; boxes: PixelBox[]; points: PixelPoint[]; reserved: PixelBox[]; settled: boolean; userMoved: boolean };
+/** 小窗框好之后报给卡片的：窗多大（卡片据此认出这是哪个尺寸下的结果）、藏了几个要框的名字 */
+export type InsetLayoutReport = { width: number; height: number; hiddenLabels: number };
+
+/**
+ * 手机上小窗要不要放大一号，一扇窗一个小状态机（窗的组员 / 卡片尺寸变了就从头来）：
+ *   没试过（undefined）+ 标准尺寸下藏了名字 → try（卡片按 52% × 62% 重摆）；
+ *   try + 放大后的报告：名字都摆下了 → keep，还是有藏的 → no（缩回标准尺寸，别白占主图）。
+ * 尺寸对不上的报告是换尺寸之前那一轮的，不算。桌面不放大。
+ */
+export type InsetGrowStage = "try" | "keep" | "no";
+export function nextInsetGrowStage(
+  stage: InsetGrowStage | undefined,
+  report: InsetLayoutReport,
+  shownSize: { w: number; h: number },
+  desktop: boolean,
+): InsetGrowStage | undefined {
+  if (desktop) return stage;
+  // 窗有 1px 的边框，画布比窗小 2px；标准和放大两档差着十几像素，差 3px 以内算同一档
+  if (Math.abs(report.width - shownSize.w) > 3 || Math.abs(report.height - shownSize.h) > 3) return stage;
+  if (stage === undefined) return report.hiddenLabels > 0 ? "try" : undefined;
+  if (stage === "try") return report.hiddenLabels === 0 ? "keep" : "no";
+  return stage;
+}
+
+export type MiniLayoutReport ={ width: number; height: number; groups: MiniLayoutGroup[]; boxes: PixelBox[]; points: PixelPoint[]; reserved: PixelBox[]; settled: boolean; userMoved: boolean };
 
 // ---- 用户能拖能缩之后：什么时候还自动框、能缩到多小 ----
 

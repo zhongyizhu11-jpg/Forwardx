@@ -3,7 +3,7 @@ import { isCountryCodeLabel } from "@/lib/flagEmojiSupport";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef } from "react";
 
-import { INSET_LABEL_MARGIN_PX, INSET_MAX_ZOOM_OUT, MINI_CAP_MIN_ARC_PX, MINI_FIT_INSET_PX, MINI_FIT_MAX_ZOOM, groupPlaceLabel, insetLabelArea, miniGroupLayoutOptions, miniMinZoom, placeInsetLabels, placeLabelBoxes, shouldRefit, type LabelItem, type MiniFitTrigger, type MiniLayoutGroup, type MiniLayoutReport } from "@/features/network/networkMapMini";
+import { INSET_MAX_ZOOM_OUT, MINI_CAP_MIN_ARC_PX, MINI_FIT_INSET_PX, MINI_FIT_MAX_ZOOM, groupPlaceLabel, insetLabelArea, miniGroupLayoutOptions, miniMinZoom, placeInsetLabels, placeLabelBoxes, shouldRefit, type InsetLayoutReport, type LabelItem, type MiniFitTrigger, type MiniLayoutGroup, type MiniLayoutReport } from "@/features/network/networkMapMini";
 import type { NetworkMapModel, NetworkMapTarget } from "@/features/network/networkMapModel";
 import { isClusterDimmed, isFlowDimmed, isHostDimmed, isTargetDimmed, isTunnelDimmed, type MapFocus, type MapPadding } from "@/features/network/networkMapPageState";
 import { wgs84ToGcj02 } from "@shared/gcj02";
@@ -47,8 +47,10 @@ import {
  *         像素再精确框一遍，谁都不会被边裁掉；用户拖过 / 缩过之后（userMoved）就不再自动框，
  *         直到卡片叫 fitAll（「回到全览」）。把分组、占用情况报给卡片（onMiniLayout），卡片
  *         据此摆局部放大的小窗。点主机 / 线只回调，不开整页 —— 卡片自己决定提示什么。
- *   inset 卡片里局部放大的小窗：和 mini 一样的画法，不能拖，只框 fitHostIds 那几台（最多 9 级），
- *         永远不并组 —— 9 级上还叠着的才错开一点点。
+ *   inset 卡片里局部放大的小窗：和 mini 一样的画法，不能拖，只框 fitHostIds 那几台（最多 9 级）；
+ *         窗里还叠着的照样并成一枚小 pill（画在真实组心，不错开）。名字以窗为边界摆，摆不干净的
+ *         藏起来（点圆盘的提示里有名字）；不在框里的主机圆盘露不全就不画。框好之后把藏了几个
+ *         名字报给卡片（onInsetLayout），手机上卡片据此试着把窗放大一号。
  * 同一个画家，不另写一份。
  */
 
@@ -82,6 +84,8 @@ export type NetworkMapCanvasProps = {
   fitHostIds?: number[];
   /** mini：每次布局完把分组和占用情况报给卡片，卡片据此摆小窗 */
   onMiniLayout?: (report: MiniLayoutReport) => void;
+  /** inset：框好之后报一次窗多大、藏了几个要框的主机的名字 */
+  onInsetLayout?: (report: InsetLayoutReport) => void;
   /** mini：卡片把小窗摆在了这些地方，延迟胶囊沿着弧线挪开，别被小窗盖住 */
   avoidBoxes?: PixelBox[];
   /** 正常线路上跑的彗星（默认开；减少动态时不画） */
@@ -207,6 +211,8 @@ type Live = {
   keepOut: PixelBox[];
   /** 小图：角上的小标签、+ / − 按钮占的盒子 */
   reserved: PixelBox[];
+  /** 小窗：要框的主机 / 组里有几个名字摆不下藏起来了 */
+  hiddenLabels: number;
   arcPx: PixelPoint[];
   miniGroups: MiniLayoutGroup[];
   /** 正在精确框住：中间几轮布局不报给卡片，收敛了报一次 */
@@ -231,7 +237,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       props, map: null, loaded: false, colors: FALLBACK_COLORS,
       hostMarkers: new Map(), targetMarkers: new Map(), clusterMarkers: [], capMarkers: new Map(), stubMarkers: new Map(), countryMarkers: [],
       layout: null, linkFeatureIds: [], flowFeatureIds: [], tipFeatureIds: [], comets: [], cometPhase: new Map(), cometLast: 0, cometDrawn: false,
-      didInitialFit: false, fitSignature: "", fitItems: [], keepOut: [], reserved: [], arcPx: [], miniGroups: [], settling: false, settledReport: false, userMoved: false, lastReport: "", rasterErrorReported: false,
+      didInitialFit: false, fitSignature: "", fitItems: [], keepOut: [], reserved: [], hiddenLabels: 0, arcPx: [], miniGroups: [], settling: false, settledReport: false, userMoved: false, lastReport: "", rasterErrorReported: false,
       relayoutFrame: 0, dashFrame: 0, dashStep: 0, dashLast: 0,
     };
   }
@@ -380,50 +386,75 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const container = map.getContainer();
     const width = container.clientWidth;
     const height = container.clientHeight;
-    const area: PixelBox = { x: 0, y: 0, w: width, h: height };
+    const inset = isInset();
+    // 小窗：名字以窗为边界（四边让出 8px）；框好之后摆不干净的藏起来 —— 窗不能拖，露出窗边的那截永远补不回来。
+    // 精确框住的中间几轮还按「压得最少」摆，露出边的那点让 settleFit 缩一点补回来
+    const area: PixelBox = inset ? insetLabelArea({ width, height }) : { x: 0, y: 0, w: width, h: height };
+    const hideMode = inset && !live.settling;
     const framed = framedHostIds();
-    type Entry = { key: string; name: HTMLElement; anchor: PixelPoint; body: PixelBox; gap: number; preferUp?: boolean; counts: boolean };
+    const fullyInside = (box: PixelBox) => box.x >= 0 && box.y >= 0 && box.x + box.w <= width && box.y + box.h <= height;
+    const resetName = (name: HTMLElement) => {
+      name.classList.remove("is-up", "is-tight", "is-off");
+      name.style.marginLeft = "";
+    };
+    type Entry = { key: string; name: HTMLElement; anchor: PixelPoint; body: PixelBox; gap: number; counts: boolean };
     const entries: Entry[] = [];
     for (const [id, entry] of live.hostMarkers) {
+      entry.element.classList.remove("is-clipped");
       const position = layout.pos[`h${id}`];
       if (!position || position.clusterId !== null) continue;
       const name = entry.element.querySelector(".nm-mk-name") as HTMLElement | null;
       if (!name) continue;
       const anchor = viewProject(map, position.lngLat);
       const at = { x: anchor.x + position.offset[0], y: anchor.y + position.offset[1] };
+      const body = { x: at.x - MINI_DISC_R, y: at.y - MINI_DISC_R, w: MINI_DISC_R * 2, h: MINI_DISC_R * 2 };
+      const counts = !framed || framed.has(id);
       // 小窗外面老远的主机（悉尼在港粤的小窗里）不参与摆名字：贴边的规则会把它的名字拖进窗里来
       if (at.x < -60 || at.y < -60 || at.x > width + 60 || at.y > height + 60) {
-        name.classList.remove("is-up", "is-tight");
-        name.style.marginLeft = "";
+        resetName(name);
         continue;
       }
-      // 错开成环的点，名字先试朝外的那一侧
-      const preferUp = position.offset[1] < 0 ? true : position.offset[1] > 0 ? false : undefined;
-      entries.push({ key: `h${id}`, name, anchor, body: { x: at.x - MINI_DISC_R, y: at.y - MINI_DISC_R, w: MINI_DISC_R * 2, h: MINI_DISC_R * 2 }, gap: MINI_LABEL_GAP, preferUp, counts: !framed || framed.has(id) });
+      // 小窗里路过的别的主机（东京在港粤的窗边）：圆盘露不全就整个不画 —— 半个盘卡在窗边像画坏了，
+      // 线照样伸出窗外，它在主图上也看得见
+      if (inset && !counts && !fullyInside(body)) {
+        entry.element.classList.add("is-clipped");
+        resetName(name);
+        continue;
+      }
+      entries.push({ key: `h${id}`, name, anchor, body, gap: MINI_LABEL_GAP, counts });
     }
     for (const cluster of live.clusterMarkers) {
       const element = cluster.marker.getElement();
+      element.classList.remove("is-clipped");
       const pill = element.querySelector(".nm-mk-pill") as HTMLElement | null;
       const name = element.querySelector(".nm-mk-name") as HTMLElement | null;
       if (!pill || !name) continue;
       const anchor = viewProject(map, cluster.center);
       // 用户把图拖 / 放大到这组跑出图外了：不参与摆名字，不然「贴边往里挪」会把名字拖回图里、覆盖框跟着拉到几百像素宽
       if (anchor.x < -60 || anchor.y < -60 || anchor.x > width + 60 || anchor.y > height + 60) {
-        name.classList.remove("is-up", "is-tight");
-        name.style.marginLeft = "";
+        resetName(name);
         continue;
       }
       const w = pill.offsetWidth || 60;
       const h = pill.offsetHeight || 24;
-      entries.push({ key: `g${cluster.members.map((member) => (member.kind === "host" ? member.id : member.key)).join(",")}`, name, anchor, body: { x: anchor.x - w / 2, y: anchor.y - h / 2, w, h }, gap: h / 2 + 2, counts: true });
+      const body = { x: anchor.x - w / 2, y: anchor.y - h / 2, w, h };
+      const counts = !framed || cluster.members.some((member) => member.kind === "host" && framed.has(member.id));
+      if (inset && !counts && !fullyInside(body)) {
+        element.classList.add("is-clipped");
+        resetName(name);
+        continue;
+      }
+      entries.push({ key: `g${cluster.members.map((member) => (member.kind === "host" ? member.id : member.key)).join(",")}`, name, anchor, body, gap: h / 2 + 2, counts });
     }
     // 量名字：先按缩小一号的字号量一遍，再按正常的量（两次回流，marker 就几十个）
-    for (const entry of entries) entry.name.classList.add("is-tight");
+    for (const entry of entries) { entry.name.classList.remove("is-off"); entry.name.classList.add("is-tight"); }
     const tightWidths = entries.map((entry) => entry.name.offsetWidth || 50);
     for (const entry of entries) { entry.name.classList.remove("is-tight"); entry.name.style.marginLeft = ""; }
     const items: LabelItem[] = entries.map((entry, index) => ({
       key: entry.key, x: entry.body.x + entry.body.w / 2, y: entry.body.y + entry.body.h / 2,
-      w: entry.name.offsetWidth || 60, h: entry.name.offsetHeight || 16, tightW: tightWidths[index], gap: entry.gap, preferUp: entry.preferUp,
+      w: entry.name.offsetWidth || 60, h: entry.name.offsetHeight || 16, tightW: tightWidths[index], gap: entry.gap,
+      // 小窗里要框的那几台先挑位置，窗边路过的别的主机后放
+      priority: entry.counts ? 0 : 1,
     }));
     // 障碍：圆盘 / 叠起来的 marker、延迟胶囊、角上的小标签（「N 台未定位」、小窗标题）
     const obstacles: PixelBox[] = entries.map((entry) => entry.body);
@@ -445,12 +476,21 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       obstacles.push(box);
       reservedBoxes.push(box);
     }
-    const placements = new Map(placeLabelBoxes(items, obstacles, area).map((placement) => [placement.key, placement]));
+    const placed = hideMode ? placeInsetLabels(items, obstacles, { width, height }) : placeLabelBoxes(items, obstacles, area);
+    const placements = new Map(placed.map((placement) => [placement.key, placement]));
     const fitItems: FitItem[] = [];
     const keepOut: PixelBox[] = [];
+    let hiddenLabels = 0;
     for (const entry of entries) {
       const placement = placements.get(entry.key);
       if (!placement) continue;
+      if (placement.hidden) {
+        // 摆不下的名字不画（圆盘照画，点一下提示里有名字）；框的时候只算圆盘
+        entry.name.classList.add("is-off");
+        keepOut.push(entry.body);
+        if (entry.counts) { fitItems.push({ anchor: entry.anchor, box: entry.body }); hiddenLabels += 1; }
+        continue;
+      }
       entry.name.classList.toggle("is-up", placement.up);
       entry.name.classList.toggle("is-tight", placement.tight);
       entry.name.style.marginLeft = placement.dx ? `${placement.dx}px` : "";
@@ -469,6 +509,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     for (const point of live.arcPx) fitItems.push({ anchor: point, box: { x: point.x - 2, y: point.y - 2, w: 4, h: 4 } });
     live.fitItems = fitItems;
     live.keepOut = keepOut;
+    live.hiddenLabels = hiddenLabels;
     // 角上的小标签和 + / − 按钮另报一份：小窗绝不压上去（placeInsets 会把角上的盒子往里挪）
     live.reserved = reservedBoxes;
     // 分组报给卡片：组员的真实位置 + 叠起来的 marker（含名字）占的盒子
@@ -482,7 +523,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       const anchor = viewProject(map, cluster.center);
       const pillBox: PixelBox = { x: anchor.x - (pill?.offsetWidth || 60) / 2, y: anchor.y - (pill?.offsetHeight || 24) / 2, w: pill?.offsetWidth || 60, h: pill?.offsetHeight || 24 };
       const markerBox = entry ? unionBox(placement ? [entry.body, placement.box] : [entry.body])! : pillBox;
-      const members = hostIds.map((id) => { const node = nodeById.get(id); return node?.geo ? viewProject(map, display([node.geo.lng, node.geo.lat])) : null; }).filter((point): point is PixelPoint => !!point);
+      // 和 hostIds 一一对应（卡片按下标找组员的位置挑小窗框哪几台）；组员一定有坐标，兜底用组心
+      const members = hostIds.map((id) => { const node = nodeById.get(id); return node?.geo ? viewProject(map, display([node.geo.lng, node.geo.lat])) : anchor; });
       return { hostIds, label: cluster.label, members, markerBox };
     });
   };
@@ -520,6 +562,11 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       relayout();
     } finally {
       live.settling = false;
+    }
+    if (isInset()) {
+      // 框好了：再摆一遍名字，这回摆不干净的藏起来；报给卡片藏了几个（手机上它据此试着把窗放大一号）
+      relayout();
+      live.props.onInsetLayout?.({ width: size.width, height: size.height, hiddenLabels: live.hiddenLabels });
     }
     // 用户最多能缩到框好的再小一级
     if (isMini()) map.setMinZoom(miniMinZoom(map.getZoom()));
@@ -641,7 +688,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
           healths.push(target.health);
         }
       }
-      const label = cities.slice(0, 3).join(" · ") || "落地目标";
+      const label = groupPlaceLabel(cities) || "落地目标";
       const element = el(`<div class="nm-mk nm-mk-cluster ${healthClass(worstHealth(healths))}"><button type="button" class="nm-mk-pill" aria-label="${escapeHtml(label)}，${group.keys.length} 个，${mini ? "点击查看" : "点击放大"}"><span>${flags.slice(0, 3).map((flag) => (isCountryCodeLabel(flag) ? `<i class="nm-mk-code">${escapeHtml(flag)}</i>` : escapeHtml(flag))).join("")}</span><b>${group.keys.length}</b></button><div class="nm-mk-name">${escapeHtml(label)}</div></div>`);
       const center = group.center;
       const hostIds = members.flatMap((member) => (member.kind === "host" ? [member.id] : []));

@@ -165,6 +165,10 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-mini .nm-mk-pill .nm-mk-code { font-size: 8.5px; }
 .nm-mini .nm-mk-cluster .nm-mk-name { top: 14px; }
 .nm-mini .nm-mk-cluster .nm-mk-name.is-up { top: auto; bottom: 14px; }
+/* 小窗里摆不干净的名字不画（点圆盘的提示里有名字）：宁可少一个名字，也不画成被窗边切掉的半截或压在别人身上 */
+.nm-mini .nm-mk-name.is-off { visibility: hidden; }
+/* 小窗边上路过的、不归这扇窗框的主机：圆盘露不全就整个不画（线照样伸出窗外） */
+.nm-mini .nm-mk.is-clipped { visibility: hidden; }
 
 /* ---- 局部放大的小窗 ---- */
 /* 主图上圈出这组盖住的范围 + 到小窗的引线：画在主图和小窗之间那一层，不挡点击 */

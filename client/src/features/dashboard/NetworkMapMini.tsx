@@ -5,7 +5,7 @@ import "@/components/network/networkMap.css";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePageVisible } from "@/hooks/usePageVisible";
-import { groupCoverageBox, groupTipText, hostTipText, insetLeader, linkTipText, matchInsetGroup, pickInsetGroups, placeInsets, unlocatedHostCount, type InsetPlacement, type MiniLayoutReport } from "@/features/network/networkMapMini";
+import { groupCoverageBox, groupPlaceLabel, groupTipText, hostTipText, insetLeader, linkTipText, matchInsetGroup, nextInsetGrowStage, pickInsetSlots, placeInsets, unlocatedHostCount, type InsetGrowStage, type InsetLayoutReport, type InsetPlacement, type MiniLayoutReport } from "@/features/network/networkMapMini";
 import type { NetworkMapModel } from "@/features/network/networkMapModel";
 import { NETWORK_MAP_BASE_LAYERS, NETWORK_MAP_LAYER_STORAGE_KEY, resolveNetworkMapBaseLayer, type NetworkMapBaseLayerId } from "@shared/networkMapBaseLayers";
 
@@ -21,8 +21,10 @@ import { NetworkMapMiniChrome } from "./NetworkMapMiniChrome";
  *
  * 主图上每台主机都画在真实坐标上，圆盘会压在一起的（港粤几台）并成一枚叠起来的 marker；
  * 最大的那组（桌面上最大的两组）在图上开一扇「局部放大」的小窗：第二个不能拖的 MapLibre，
- * 只框那几台，26px 的圆盘、名字、弧线、彗星都照画。小窗摆在主图最空的那个角（placeInsets），
- * 主图上用一个细虚线框圈出这组盖住的范围，再拉一根引线到小窗。
+ * 只框那组里真正挤在一起的那几台（pill 顺带吸进来的远一点的东京 / 台北不强求，pickInsetSlots），
+ * 26px 的圆盘、名字、弧线、彗星都照画；标题写窗里真正框的那几台。小窗摆在主图最空的那个角
+ * （placeInsets），主图上用一个细虚线框圈出这组盖住的范围，再拉一根引线到小窗。
+ * 手机上窗里有名字摆不下（被藏了）时试着把窗放大到 52% × 62%：放大后都摆得下才留着，否则缩回去。
  *
  * 用户拖图 / 缩放时：圈和引线跟着主图走（每次布局报告都重算），小窗钉在框好时定下的角上不
  * 跟着跑 —— 摆位只在框好之后的报告（settled）上重算：首次、卡片变宽、主机集合变了、回到全览。
@@ -40,8 +42,8 @@ function readStoredLayer(): unknown {
   try { return window.localStorage.getItem(NETWORK_MAP_LAYER_STORAGE_KEY); } catch { return null; }
 }
 
-/** 框好时定下来的一扇小窗：哪几台、叫什么、摆哪 —— 用户拖图时这些不变 */
-type InsetSlot = { hostIds: number[]; label: string; placement: InsetPlacement };
+/** 框好时定下来的一扇小窗：哪几台、叫什么、摆哪 —— 用户拖图时这些不变。growKey：放大状态机按它记 */
+type InsetSlot = { hostIds: number[]; label: string; placement: InsetPlacement; growKey: string };
 
 export default function NetworkMapMini({ model, fallback }: {
   model: NetworkMapModel;
@@ -59,6 +61,8 @@ export default function NetworkMapMini({ model, fallback }: {
   /** 最近一次框好之后的布局：小窗摆位只看它 */
   const [fitReport, setFitReport] = useState<MiniLayoutReport | null>(null);
   const [tip, setTip] = useState<string | null>(null);
+  /** 手机上每扇小窗试没试过放大、结果如何（nextInsetGrowStage） */
+  const [growStages, setGrowStages] = useState<Record<string, InsetGrowStage>>({});
   const frameRef = useRef<HTMLDivElement | null>(null);
   const apiRef = useRef<NetworkMapCameraApi | null>(null);
   const tipTimer = useRef<number>(0);
@@ -99,18 +103,33 @@ export default function NetworkMapMini({ model, fallback }: {
   }, [model, showTip]);
   const noop = useCallback(() => {}, []);
 
-  // 哪几组开小窗、小窗摆哪：框好之后定一次，拖图时不动
+  const placeLabelOf = useCallback((hostIds: readonly number[]) => {
+    const cities = hostIds.map((id) => model.nodes.find((node) => node.id === id)?.city ?? "");
+    return groupPlaceLabel(cities);
+  }, [model]);
+
+  // 哪几组开小窗、各框哪几台、小窗摆哪：框好之后定一次，拖图时不动
   const slots = useMemo<InsetSlot[]>(() => {
     if (!fitReport) return [];
-    const groups = pickInsetGroups(fitReport.groups, desktop);
-    if (groups.length === 0) return [];
-    const placements = placeInsets({ width: fitReport.width, height: fitReport.height }, { boxes: fitReport.boxes, points: fitReport.points, reserved: fitReport.reserved }, groups.length, desktop);
-    return placements.map((placement, index) => ({ hostIds: groups[index].hostIds, label: groups[index].label, placement }));
-  }, [fitReport, desktop]);
-  // 圈哪、引线怎么拉：跟着主图最近一次布局走；这组在屏幕上散开了（放大了）就藏起来
+    const picks = pickInsetSlots(fitReport.groups, desktop);
+    if (picks.length === 0) return [];
+    const growKeys = picks.map((pick) => `${pick.hostIds.join(",")}@${fitReport.width}x${fitReport.height}`);
+    const grow = growKeys.map((key) => !desktop && (growStages[key] === "try" || growStages[key] === "keep"));
+    const placements = placeInsets({ width: fitReport.width, height: fitReport.height }, { boxes: fitReport.boxes, points: fitReport.points, reserved: fitReport.reserved }, picks.length, desktop, undefined, grow);
+    return placements.map((placement, index) => ({ hostIds: picks[index].hostIds, label: placeLabelOf(picks[index].hostIds) || picks[index].group.label, placement, growKey: growKeys[index] }));
+  }, [fitReport, desktop, growStages, placeLabelOf]);
+  const onInsetLayout = useCallback((slot: InsetSlot, next: InsetLayoutReport) => {
+    setGrowStages((stages) => {
+      const stage = nextInsetGrowStage(stages[slot.growKey], next, slot.placement.box, desktop);
+      return stage === stages[slot.growKey] ? stages : { ...stages, [slot.growKey]: stage as InsetGrowStage };
+    });
+  }, [desktop]);
+  // 圈哪、引线怎么拉：跟着主图最近一次布局走；这组在屏幕上散开了（放大了）就藏起来。
+  // 圈只圈小窗真正框的那几台（加上主图上的叠起来的 marker）
   const insets = useMemo(() => slots.map((slot) => {
     const group = report ? matchInsetGroup(slot.hostIds, report.groups) : null;
-    const coverage = group ? groupCoverageBox(group.members, group.markerBox) : null;
+    const points = group ? slot.hostIds.map((id) => group.members[group.hostIds.indexOf(id)]).filter(Boolean) : [];
+    const coverage = group ? groupCoverageBox(points, group.markerBox) : null;
     const leader = report && coverage ? insetLeader(coverage, slot.placement.box, report) : null;
     return { ...slot, shown: !!group, coverage, leader };
   }), [slots, report]);
@@ -154,10 +173,12 @@ export default function NetworkMapMini({ model, fallback }: {
           ))}
         </svg>
       ) : null}
-      {insets.map(({ hostIds, label, placement, shown }) => (
+      {insets.map((slot) => {
+        const { hostIds, label, placement, shown } = slot;
+        return (
         // 组员变了（key 变）就整扇窗重建：旧的 MapLibre 实例随之销毁。组散了只是藏起来（visibility，尺寸不变，
         // 引擎不用重算），缩回去立刻又有
-        <div key={hostIds.join(",")} className={`nm-inset${placement.shrunk ? " is-small" : ""}${shown ? "" : " is-off"}`} style={{ left: placement.box.x, top: placement.box.y, width: placement.box.w, height: placement.box.h }} aria-label={`局部放大：${label}，${hostIds.length} 台`}>
+        <div key={hostIds.join(",")} className={`nm-inset${placement.shrunk ? " is-small" : ""}${placement.grown ? " is-grown" : ""}${shown ? "" : " is-off"}`} style={{ left: placement.box.x, top: placement.box.y, width: placement.box.w, height: placement.box.h }} aria-label={`局部放大：${label}，${hostIds.length} 台`}>
           <NetworkMapCanvas
             variant="inset"
             fitHostIds={hostIds}
@@ -172,15 +193,17 @@ export default function NetworkMapMini({ model, fallback }: {
             onSelectNode={onSelectNode}
             onSelectLink={onSelectLink}
             onSelectTarget={noop}
-            onSelectCluster={noop}
+            onSelectCluster={(_center, _zoom, ids) => showTip(groupTipText(placeLabelOf(ids), ids.length))}
             onMapClick={noop}
             onRasterError={onRasterError}
             onUnavailable={noop}
             onReady={noop}
+            onInsetLayout={(next) => onInsetLayout(slot, next)}
           />
           <span className="nm-inset-title nm-reserved">{label} ×{hostIds.length}</span>
         </div>
-      ))}
+        );
+      })}
       <NetworkMapMiniChrome
         userMoved={!!report?.userMoved}
         tip={tip}
