@@ -20,6 +20,10 @@ export const NETWORK_MAP_SOURCES = {
   graticule: "nm-graticule",
   links: "nm-links",
   flows: "nm-flows",
+  /** 每一跳出口端的小箭头（三角形面） */
+  tips: "nm-tips",
+  /** 飞线上跑的彗星：头是点、尾是带 line-progress 的线，每帧 setData */
+  comets: "nm-comets",
 } as const;
 
 export const NETWORK_MAP_LAYERS = {
@@ -32,6 +36,10 @@ export const NETWORK_MAP_LAYERS = {
   linkDashed: "nm-link-dashed",
   linkSolid: "nm-link-solid",
   linkFlow: "nm-link-flow",
+  tip: "nm-tip",
+  cometTail: "nm-comet-tail",
+  cometGlow: "nm-comet-glow",
+  cometHead: "nm-comet-head",
 } as const;
 
 /** 画线用的颜色：由页面从 CSS 变量里读出来再传进来（MapLibre 不认 var()） */
@@ -79,6 +87,35 @@ export const NETWORK_MAP_DASH_STEPS: number[][] = [
 
 export const NETWORK_MAP_DASH_INTERVAL_MS = 70;
 
+/** `#rrggbb` / `rgb()` 加一个透明度（MapLibre 的渐变要具体的颜色，认不了 color-mix） */
+export function withAlpha(color: string, alpha: number): string {
+  const hex = /^#([0-9a-f]{6})$/i.exec(color.trim());
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+  }
+  const rgb = /^rgba?\(([^)]+)\)$/i.exec(color.trim());
+  if (rgb) {
+    const parts = rgb[1].split(/[\s,/]+/).filter(Boolean).slice(0, 3);
+    if (parts.length === 3) return `rgba(${parts.join(",")},${alpha})`;
+  }
+  return color;
+}
+
+/** 彗星尾巴：从尾端透明渐到头部实色（line-progress 0 → 1），源要开 lineMetrics */
+export function cometTailGradient(colors: NetworkMapLineColors) {
+  return ["interpolate", ["linear"], ["line-progress"], 0, withAlpha(colors.healthy, 0), 0.6, withAlpha(colors.healthy, 0.55), 1, colors.healthy];
+}
+
+/** 彗星那三层要跟着皮肤换的颜色 */
+export function cometPaint(colors: NetworkMapLineColors) {
+  return {
+    tail: { "line-gradient": cometTailGradient(colors) },
+    glow: { "circle-color": colors.healthy },
+    head: { "circle-stroke-color": colors.healthy },
+  };
+}
+
 export function buildNetworkMapStyle(active: NetworkMapBaseLayerId, countriesUrl: string, colors: NetworkMapLineColors) {
   const base = NETWORK_MAP_BASE_LAYERS[active];
   const visibility = rasterVisibility(active);
@@ -89,6 +126,9 @@ export function buildNetworkMapStyle(active: NetworkMapBaseLayerId, countriesUrl
     // promoteId：feature-state 要按 fid 找要素，不用 generateId 那种会随 setData 变的序号
     [NETWORK_MAP_SOURCES.links]: { type: "geojson", data: emptyCollection, promoteId: "fid" },
     [NETWORK_MAP_SOURCES.flows]: { type: "geojson", data: emptyCollection, promoteId: "fid" },
+    [NETWORK_MAP_SOURCES.tips]: { type: "geojson", data: emptyCollection, promoteId: "fid" },
+    // lineMetrics：尾巴的渐变按 line-progress 画，要源算好每条线的长度
+    [NETWORK_MAP_SOURCES.comets]: { type: "geojson", data: emptyCollection, lineMetrics: true },
   };
   const rasterLayers: any[] = [];
   for (const id of NETWORK_MAP_BASE_LAYER_ORDER) {
@@ -126,6 +166,12 @@ export function buildNetworkMapStyle(active: NetworkMapBaseLayerId, countriesUrl
       { id: NETWORK_MAP_LAYERS.linkDashed, type: "line", source: NETWORK_MAP_SOURCES.links, filter: ["!=", ["get", "health"], "healthy"], paint: { "line-color": healthColor, "line-width": 2.4, "line-opacity": dimOpacityExpression(1), "line-dasharray": [2.4, 2] } },
       { id: NETWORK_MAP_LAYERS.linkSolid, type: "line", source: NETWORK_MAP_SOURCES.links, filter: ["==", ["get", "health"], "healthy"], paint: { "line-color": healthColor, "line-width": 2.4, "line-opacity": dimOpacityExpression(1) } },
       { id: NETWORK_MAP_LAYERS.linkFlow, type: "line", source: NETWORK_MAP_SOURCES.links, filter: ["==", ["get", "health"], "healthy"], paint: { "line-color": "#ffffff", "line-width": 2.2, "line-opacity": dimOpacityExpression(0.85), "line-dasharray": NETWORK_MAP_DASH_STEPS[0] } },
+      // 出口端的箭头：不靠动画也看得出这一跳往哪儿去
+      { id: NETWORK_MAP_LAYERS.tip, type: "fill", source: NETWORK_MAP_SOURCES.tips, paint: { "fill-color": healthColor, "fill-opacity": dimOpacityExpression(0.95), "fill-antialias": true } },
+      // 彗星：渐隐的尾巴、一圈柔光、白色的亮头
+      { id: NETWORK_MAP_LAYERS.cometTail, type: "line", source: NETWORK_MAP_SOURCES.comets, filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-width": 3, "line-gradient": cometTailGradient(colors) } },
+      { id: NETWORK_MAP_LAYERS.cometGlow, type: "circle", source: NETWORK_MAP_SOURCES.comets, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 8, "circle-color": colors.healthy, "circle-opacity": 0.4, "circle-blur": 0.9 } },
+      { id: NETWORK_MAP_LAYERS.cometHead, type: "circle", source: NETWORK_MAP_SOURCES.comets, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 3, "circle-color": "#ffffff", "circle-stroke-width": 1.5, "circle-stroke-color": colors.healthy } },
     ],
   };
 }

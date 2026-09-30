@@ -149,6 +149,20 @@ export function isClusterDimmed(focus: MapFocus | null, members: ReadonlyArray<{
   return !members.some((member) => (member.kind === "host" ? focus.hosts.includes(member.id) : focus.targets.includes(member.key)));
 }
 
+/**
+ * 首页小图点了一台主机 / 一条线，带着 `/map?host=3` 或 `/map?link=12` 过来：整页一打开就
+ * 把那个详情弹出来。两个都带以主机为准；不是正整数就当没带。
+ */
+export function parseMapOpenQuery(search: string): { view: "node"; id: number } | { view: "link"; id: number } | null {
+  let params: URLSearchParams;
+  try { params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search); } catch { return null; }
+  const host = Number(params.get("host"));
+  if (Number.isInteger(host) && host > 0) return { view: "node", id: host };
+  const link = Number(params.get("link"));
+  if (Number.isInteger(link) && link > 0) return { view: "link", id: link };
+  return null;
+}
+
 /** 页头那句「5 台主机 · 3 条线路 · 2 项需要关注」 */
 export function overviewHeadline(model: Pick<NetworkMapModel, "nodes" | "linkTotal">, alertCount: number): { main: string; attention: string | null } {
   const main = `${model.nodes.length} 台主机 · ${model.linkTotal} 条线路`;

@@ -6,6 +6,8 @@ import {
   NETWORK_MAP_LAYERS,
   baseLayerPaintPatch,
   buildNetworkMapStyle,
+  cometPaint,
+  cometTailGradient,
   dimOpacityExpression,
   rasterSourceIds,
   rasterVisibility,
@@ -48,6 +50,21 @@ test("换底图的补丁：卫星不画国界、标准图不画网格、暗黑�
   assert.equal(baseLayerPaintPatch("light").graticule, "none");
   assert.equal(baseLayerPaintPatch("dark").landOpacity, 1);
   assert.equal(baseLayerPaintPatch("dark").raster["amap-road"], "none");
+});
+
+test("箭头和彗星压在线的上面：尾巴的渐变从透明到正常色，源开了 lineMetrics", () => {
+  const style = buildNetworkMapStyle("dark", "/globe/x.geojson", colors);
+  const order = style.layers.map((layer: any) => layer.id);
+  const index = (id: string) => order.indexOf(id);
+  assert.ok(index(NETWORK_MAP_LAYERS.linkFlow) < index(NETWORK_MAP_LAYERS.tip));
+  assert.ok(index(NETWORK_MAP_LAYERS.tip) < index(NETWORK_MAP_LAYERS.cometTail));
+  assert.ok(index(NETWORK_MAP_LAYERS.cometTail) < index(NETWORK_MAP_LAYERS.cometGlow));
+  assert.ok(index(NETWORK_MAP_LAYERS.cometGlow) < index(NETWORK_MAP_LAYERS.cometHead));
+  assert.equal((style.sources["nm-comets"] as any).lineMetrics, true);
+  const tail = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.cometTail) as any;
+  assert.deepEqual(tail.paint["line-gradient"], cometTailGradient(colors));
+  assert.deepEqual(cometTailGradient(colors), ["interpolate", ["linear"], ["line-progress"], 0, "rgba(6,182,212,0)", 0.6, "rgba(6,182,212,0.55)", 1, "#06b6d4"]);
+  assert.equal(cometPaint(colors).head["circle-stroke-color"], "#06b6d4");
 });
 
 test("流动光点的 dasharray 一圈 14 步，每步都是合法的 dash 数组", () => {
