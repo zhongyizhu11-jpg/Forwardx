@@ -1,5 +1,8 @@
 import fs from "fs";
 import path from "path";
+import { formatUpgradeDuration } from "../shared/upgradeDuration";
+
+export { formatUpgradeDuration };
 
 /*
   面板升级任务的状态原来只在内存里。升级脚本最后一步 systemctl restart 把面板连同脚本一起杀掉，
@@ -64,13 +67,6 @@ export function appendUpgradeJobLog(logs: string[], line: string) {
     logs.splice(0, logs.length - UPGRADE_JOB_MAX_LOG_LINES);
   }
   return logs;
-}
-
-export function formatUpgradeDuration(ms: number) {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return minutes > 0 ? `${minutes} 分 ${seconds} 秒` : `${seconds} 秒`;
 }
 
 export function upgradeJobElapsedMs(job: UpgradeJob | null | undefined, now = Date.now()) {

@@ -4498,10 +4498,16 @@ function PersonalizationSettingsSection() {
 function SystemInfoSection() {
   const utils = trpc.useUtils();
   const { data: settings, isLoading } = trpc.system.getSettings.useQuery();
-  const { data: upgradeStatus, refetch: refetchUpgradeStatus } = trpc.system.upgradeStatus.useQuery(
+  // 和侧栏是同一个查询（同 key 共享缓存）。升级进行中要熬过面板重启和手机锁屏，见 DashboardLayout 里那段说明。
+  const { data: upgradeStatus, refetch: refetchUpgradeStatus, isError: upgradeStatusUnreachable } = trpc.system.upgradeStatus.useQuery(
     undefined,
-    { refetchInterval: pollingInterval("fast") }
+    {
+      refetchInterval: (query) => ((query.state.data as any)?.job?.status === "running" ? 2000 : pollingInterval("fast")),
+      refetchIntervalInBackground: true,
+      refetchOnWindowFocus: (query) => (query.state.data as any)?.job?.status === "running",
+    }
   );
+  const [upgradeClock, setUpgradeClock] = useState(() => Date.now());
   const [panelUrlInput, setPanelUrlInput] = useState("");
   const [webPortInput, setWebPortInput] = useState("");
   const [panelSslEnabled, setPanelSslEnabled] = useState(false);
@@ -5210,7 +5216,31 @@ function SystemInfoSection() {
     }] : []),
   ];
   const isUpgradeRunning = upgradeStatus?.job.status === "running";
-  const upgradeProgress = getPanelUpgradeProgress(upgradeStatus?.job);
+  const upgradeProgress = getPanelUpgradeProgress(upgradeStatus?.job, {
+    now: upgradeClock,
+    elapsedMs: isUpgradeRunning ? null : (upgradeStatus?.elapsedMs ?? null),
+    disconnected: isUpgradeRunning && upgradeStatusUnreachable,
+  });
+  useEffect(() => {
+    if (!isUpgradeRunning) return;
+    setUpgradeClock(Date.now());
+    const timer = window.setInterval(() => setUpgradeClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isUpgradeRunning]);
+  useEffect(() => {
+    if (!isUpgradeRunning) return;
+    // 手机锁屏 / 切走再回来立刻拉一次状态，不等下一个轮询周期。
+    const wake = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void refetchUpgradeStatus();
+    };
+    document.addEventListener("visibilitychange", wake);
+    window.addEventListener("online", wake);
+    return () => {
+      document.removeEventListener("visibilitychange", wake);
+      window.removeEventListener("online", wake);
+    };
+  }, [isUpgradeRunning, refetchUpgradeStatus]);
   const upgradeErrorLogs = (upgradeStatus?.job?.logs || []).slice(-80).join("\n");
   const directProtocolEnabledCount = directForwardProtocolKeys.filter((key) => forwardProtocols[key]).length;
   const tunnelProtocolEnabledCount = tunnelForwardProtocolKeys.filter((key) => forwardProtocols[key]).length;
@@ -6290,7 +6320,9 @@ function SystemInfoSection() {
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {upgradeStatus.job.status === "success"
-                        ? `已完成 ${upgradeStatus.job.targetVersion || ""} ${upgradeStatus.job.mode === "rollback" ? "回退" : "升级"}，${PANEL_UPGRADE_REFRESH_DELAY_SECONDS} 秒后自动刷新`
+                        ? (upgradeStatus.restarted
+                          ? `${upgradeProgress.label}，${PANEL_UPGRADE_REFRESH_DELAY_SECONDS} 秒后自动刷新`
+                          : `已完成 ${upgradeStatus.job.targetVersion || ""} ${upgradeStatus.job.mode === "rollback" ? "回退" : "升级"}，${PANEL_UPGRADE_REFRESH_DELAY_SECONDS} 秒后自动刷新`)
                         : upgradeStatus.job.status === "waiting_assets"
                           ? "GitHub Actions 仍在生成面板安装包或镜像，请稍后重新检查更新"
                         : upgradeStatus.job.status === "error"
@@ -6305,12 +6337,15 @@ function SystemInfoSection() {
               </div>
 
               <div className="mt-4 space-y-3">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{upgradeProgress.label}</span>
-                  <span>{upgradeProgress.percent}%</span>
+                <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                  <span className="min-w-0">{upgradeProgress.label}</span>
+                  <span className="shrink-0 tabular-nums">{upgradeProgress.percent}%</span>
                 </div>
+                {upgradeProgress.detail && (
+                  <p className="text-xs tabular-nums text-muted-foreground">{upgradeProgress.detail}</p>
+                )}
                 <Progress value={upgradeProgress.percent} className="h-2" />
-                <div className="grid gap-2 sm:grid-cols-4">
+                <div className={`grid gap-2 ${upgradeProgress.steps.length === 5 ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
                   {upgradeProgress.steps.map((step) => (
                     <div
                       key={step.label}

@@ -475,15 +475,29 @@ function DashboardLayoutContent({
   const [twoFactorSetupTick, setTwoFactorSetupTick] = useState(Date.now());
   const [twoFactorPassword, setTwoFactorPassword] = useState("");
   const [twoFactorCode, setTwoFactorCode] = useState("");
-  const { data: upgradeStatus, refetch: refetchUpgradeStatus } = trpc.system.upgradeStatus.useQuery(undefined, {
+  /*
+    升级进行中的轮询要熬过面板重启和 iOS 锁屏：
+    - 面板重启那几秒请求全失败，data 留着上一次的（react-query 出错不清 data），isError 用来把文案换成「等待恢复」；
+    - iOS 锁屏 / 切走时定时器被冻住，回来靠 refetchOnWindowFocus 和下面的 visibilitychange / online 立刻拉一次；
+    - refetchIntervalInBackground 让标签页在后台（桌面端切到别的标签）也继续轮询。
+  */
+  const upgradeStatusQuery = trpc.system.upgradeStatus.useQuery(undefined, {
     enabled: isAdmin,
     refetchInterval: (query) => {
       const status = (query.state.data as any)?.job?.status;
       return status === "running" || backgroundUpgrade ? 2000 : false;
     },
-    refetchOnWindowFocus: false,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: (query) => (query.state.data as any)?.job?.status === "running" || !!backgroundUpgrade,
     retry: false,
   });
+  const { data: upgradeStatus, refetch: refetchUpgradeStatus, isError: upgradeStatusUnreachable } = upgradeStatusQuery;
+  const acknowledgeUpgradeMutation = trpc.system.acknowledgeUpgrade.useMutation();
+  const acknowledgedUpgradeRef = useRef(false);
+  const upgradeRefreshDeadlineRef = useRef<number | null>(null);
+  // 安排刷新那一刻的任务快照：服务端确认后会把任务清成 idle，页面刷新前还要接着显示「升级完成，用时…」。
+  const completedUpgradeJobRef = useRef<{ job: NonNullable<typeof upgradeStatus>["job"]; elapsedMs: number | null } | null>(null);
+  const [upgradeClock, setUpgradeClock] = useState(() => Date.now());
 
   const startUpgradeMutation = trpc.system.startUpgrade.useMutation({
     onSuccess: (data) => {
@@ -507,10 +521,16 @@ function DashboardLayoutContent({
   const scheduleUpgradeRefresh = useCallback(() => {
     if (upgradeRefreshTimerRef.current !== null) return;
     clearPanelUpgradeSession();
+    // 倒计时按截止时刻算而不是每秒减一：iOS 把定时器冻住再放开时，直接跳到正确的剩余秒数；
+    // 到点了定时器还没触发（被冻住那种），visibilitychange / 下一次轮询会看这个截止时刻直接刷新。
+    const deadline = Date.now() + PANEL_UPGRADE_REFRESH_DELAY_MS;
+    upgradeRefreshDeadlineRef.current = deadline;
     setUpgradeRefreshScheduled(true);
     setUpgradeRefreshCountdown(PANEL_UPGRADE_REFRESH_DELAY_SECONDS);
     upgradeRefreshIntervalRef.current = window.setInterval(() => {
-      setUpgradeRefreshCountdown((value) => (value === null ? null : Math.max(0, value - 1)));
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setUpgradeRefreshCountdown(remaining);
+      if (remaining <= 0) window.location.reload();
     }, 1000);
     upgradeRefreshTimerRef.current = window.setTimeout(() => {
       if (upgradeRefreshIntervalRef.current !== null) {
@@ -653,8 +673,16 @@ function DashboardLayoutContent({
 
   useEffect(() => {
     if (upgradeStatus?.job?.status !== "success") return;
+    if (!completedUpgradeJobRef.current) {
+      completedUpgradeJobRef.current = { job: upgradeStatus.job, elapsedMs: upgradeStatus.elapsedMs ?? null };
+    }
+    // 面板已经带着新版本重启回来：告诉服务端「看到了」，它才把状态清掉；不然刷新后又看到 success 再刷新，没完没了。
+    if (upgradeStatus.restarted && !acknowledgedUpgradeRef.current) {
+      acknowledgedUpgradeRef.current = true;
+      acknowledgeUpgradeMutation.mutate({ targetVersion: upgradeStatus.job.targetVersion || undefined });
+    }
     scheduleUpgradeRefresh();
-  }, [scheduleUpgradeRefresh, upgradeStatus?.job?.status]);
+  }, [acknowledgeUpgradeMutation, scheduleUpgradeRefresh, upgradeStatus?.elapsedMs, upgradeStatus?.job, upgradeStatus?.restarted]);
 
   useEffect(() => {
     if (!backgroundUpgrade?.targetVersion || !upgradeStatus?.currentVersion) return;
@@ -675,6 +703,11 @@ function DashboardLayoutContent({
 
     clearPanelUpgradeSession();
     setBackgroundUpgrade(null);
+    if (upgradeRefreshDeadlineRef.current !== null && Date.now() >= upgradeRefreshDeadlineRef.current) {
+      // 倒计时早就该到了（定时器被 iOS 冻住），这次轮询回来直接刷新。
+      window.location.reload();
+      return;
+    }
     scheduleUpgradeRefresh();
   }, [
     backgroundUpgrade?.startedAt,
@@ -1096,14 +1129,17 @@ function DashboardLayoutContent({
   const upgradeJob = upgradeStatus?.job;
   const displayUpgradeJob = useMemo(() => {
     if (upgradeRefreshScheduled) {
+      const completed = completedUpgradeJobRef.current?.job;
       return {
         status: "success",
-        startedAt: upgradeJob?.startedAt || (backgroundUpgrade?.startedAt ? new Date(backgroundUpgrade.startedAt).toISOString() : null),
-        finishedAt: upgradeJob?.finishedAt || new Date().toISOString(),
-        targetVersion: upgradeJob?.targetVersion || backgroundUpgrade?.targetVersion || upgradeStatus?.currentVersion || "",
-        logs: upgradeJob?.logs || ["[NEX] Upgrade completed; browser refresh scheduled"],
+        startedAt: completed?.startedAt || upgradeJob?.startedAt || (backgroundUpgrade?.startedAt ? new Date(backgroundUpgrade.startedAt).toISOString() : null),
+        finishedAt: completed?.finishedAt || upgradeJob?.finishedAt || new Date().toISOString(),
+        targetVersion: completed?.targetVersion || upgradeJob?.targetVersion || backgroundUpgrade?.targetVersion || upgradeStatus?.currentVersion || "",
+        logs: completed?.logs || upgradeJob?.logs || ["[NEX] Upgrade completed; browser refresh scheduled"],
         error: null,
-        mode: upgradeJob?.mode || backgroundUpgrade?.mode || "upgrade",
+        mode: completed?.mode || upgradeJob?.mode || backgroundUpgrade?.mode || "upgrade",
+        restarted: completed?.restarted ?? upgradeJob?.restarted ?? false,
+        restartedAt: completed?.restartedAt ?? upgradeJob?.restartedAt ?? null,
       };
     }
     if (upgradeJob?.status && upgradeJob.status !== "idle") return upgradeJob;
@@ -1118,7 +1154,40 @@ function DashboardLayoutContent({
       mode: backgroundUpgrade.mode || "upgrade",
     };
   }, [backgroundUpgrade, upgradeJob, upgradeRefreshScheduled, upgradeStatus?.currentVersion]);
-  const upgradeProgress = getPanelUpgradeProgress(displayUpgradeJob);
+  const isUpgradeJobRunning = displayUpgradeJob?.status === "running";
+  const upgradeProgress = getPanelUpgradeProgress(displayUpgradeJob, {
+    now: upgradeClock,
+    // 跑着的时候按本地时钟每秒走；结束了用服务端定格的用时（安排刷新后任务可能已经被清掉，用快照里的）。
+    elapsedMs: isUpgradeJobRunning ? null : (completedUpgradeJobRef.current?.elapsedMs ?? upgradeStatus?.elapsedMs ?? null),
+    disconnected: isUpgradeJobRunning && upgradeStatusUnreachable,
+  });
+  useEffect(() => {
+    if (!isUpgradeJobRunning) return;
+    setUpgradeClock(Date.now());
+    const timer = window.setInterval(() => setUpgradeClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isUpgradeJobRunning]);
+  useEffect(() => {
+    if (!isAdmin || (!isUpgradeJobRunning && !upgradeRefreshScheduled)) return;
+    // 手机锁屏 / 切走再回来：定时器可能一直没跑，回来先看该不该直接刷新，否则立刻拉一次状态。
+    const wake = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const deadline = upgradeRefreshDeadlineRef.current;
+      if (deadline !== null && Date.now() >= deadline) {
+        window.location.reload();
+        return;
+      }
+      void refetchUpgradeStatus();
+    };
+    document.addEventListener("visibilitychange", wake);
+    window.addEventListener("online", wake);
+    window.addEventListener("pageshow", wake);
+    return () => {
+      document.removeEventListener("visibilitychange", wake);
+      window.removeEventListener("online", wake);
+      window.removeEventListener("pageshow", wake);
+    };
+  }, [isAdmin, isUpgradeJobRunning, refetchUpgradeStatus, upgradeRefreshScheduled]);
   const isPanelVersionTaskVisible = !!displayUpgradeJob?.status && displayUpgradeJob.status !== "idle";
   const isPanelRollbackTask = displayUpgradeJob?.mode === "rollback";
   const panelVersionActionLabel = isPanelRollbackTask ? "回退" : "升级";
@@ -1576,7 +1645,7 @@ function DashboardLayoutContent({
                     {displayUpgradeJob?.status === "running"
                       ? `正在${panelVersionActionLabel}`
                       : displayUpgradeJob?.status === "success"
-                        ? `${panelVersionActionLabel}完成，正在重启`
+                        ? (displayUpgradeJob.restarted ? upgradeProgress.label : `${panelVersionActionLabel}完成，正在重启`)
                         : displayUpgradeJob?.status === "waiting_assets"
                           ? "发布资产构建中"
                         : displayUpgradeJob?.status === "error"
@@ -1594,6 +1663,9 @@ function DashboardLayoutContent({
                           ? (displayUpgradeJob.error || "点击查看详情")
                           : `可升级到 ${upgradeTargetVersion}`}
                   </p>
+                  {displayUpgradeJob?.status === "running" && upgradeProgress.detail && (
+                    <p className="mt-0.5 truncate text-[10px] tabular-nums text-primary/60">{upgradeProgress.detail}</p>
+                  )}
                   {(displayUpgradeJob?.status === "running" || displayUpgradeJob?.status === "waiting_assets") && (
                     <div className="mt-2 space-y-2">
                       <Progress value={upgradeProgress.percent} className="h-1" />
@@ -1772,9 +1844,12 @@ function DashboardLayoutContent({
                 {(isRunning || isSuccess || isWaitingAssets || isError) && (
                   <div className="space-y-3 rounded-lg border border-border/40 bg-background/60 p-3">
                     <div className="flex items-center justify-between gap-3 text-sm">
-                      <span className="font-medium">{progress.label}</span>
-                      <span className="text-xs text-muted-foreground">{progress.percent}%</span>
+                      <span className="min-w-0 font-medium">{progress.label}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{progress.percent}%</span>
                     </div>
+                    {progress.detail && (
+                      <p className="text-xs tabular-nums text-muted-foreground">{progress.detail}</p>
+                    )}
                     <Progress value={progress.percent} className="h-2" />
                     <div className="grid min-w-0 gap-2 sm:grid-cols-2">
                       {progress.steps.map((step) => (

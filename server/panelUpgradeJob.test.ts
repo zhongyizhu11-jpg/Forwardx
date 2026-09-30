@@ -268,7 +268,7 @@ test("面板重启后版本没变且任务已经很老 → error 带手动命令
   assert.equal(out.first.status, "error");
   assert.equal(out.first.restarted, false);
   assert.match(out.first.error, /升级没有生效/);
-  assert.ok(out.first.logs.some((line) => /install-panel-local\.sh.*bash -s -- upgrade/.test(line)), out.first.logs.join("\n"));
+  assert.ok(out.first.logs.some((line: string) => /install-panel-local\.sh.*bash -s -- upgrade/.test(line)), out.first.logs.join("\n"));
   assert.deepEqual(out.ack, { cleared: false });
   assert.equal(stateFileExists, true);
 });
