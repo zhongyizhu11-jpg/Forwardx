@@ -1,4 +1,5 @@
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap, type Marker } from "maplibre-gl";
+import { isCountryCodeLabel } from "@/lib/flagEmojiSupport";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef } from "react";
 
@@ -213,7 +214,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         entry.element.className = `nm-mk nm-mk-host ${healthClass(node.health)}`;
         const disc = entry.element.querySelector(".nm-mk-disc") as HTMLElement;
         disc.setAttribute("aria-label", `${node.name}${node.note ? `，${node.note}` : ""}`);
-        disc.innerHTML = node.emoji ? `<span>${escapeHtml(node.emoji)}</span>` : `<span class="nm-mk-flag-dot"></span>`;
+        disc.innerHTML = node.emoji ? `<span${isCountryCodeLabel(node.emoji) ? ' class="nm-mk-code"' : ""}>${escapeHtml(node.emoji)}</span>` : `<span class="nm-mk-flag-dot"></span>`;
         (entry.element.querySelector(".nm-mk-name") as HTMLElement).textContent = node.name;
         (entry.element.querySelector(".nm-mk-note") as HTMLElement).textContent = node.note || "";
       }
@@ -319,7 +320,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         }
       }
       const label = cities.slice(0, 3).join(" · ") || "落地目标";
-      const element = el(`<div class="nm-mk nm-mk-cluster ${healthClass(worstHealth(healths))}"><button type="button" class="nm-mk-pill" aria-label="${escapeHtml(label)}，${group.keys.length} 个，点击放大"><span>${escapeHtml(flags.slice(0, 3).join(""))}</span><b>${group.keys.length}</b></button><div class="nm-mk-name">${escapeHtml(label)}</div></div>`);
+      const element = el(`<div class="nm-mk nm-mk-cluster ${healthClass(worstHealth(healths))}"><button type="button" class="nm-mk-pill" aria-label="${escapeHtml(label)}，${group.keys.length} 个，点击放大"><span>${flags.slice(0, 3).map((flag) => (isCountryCodeLabel(flag) ? `<i class="nm-mk-code">${escapeHtml(flag)}</i>` : escapeHtml(flag))).join("")}</span><b>${group.keys.length}</b></button><div class="nm-mk-name">${escapeHtml(label)}</div></div>`);
       const center = group.center;
       (element.firstElementChild as HTMLElement).addEventListener("click", (event) => {
         event.stopPropagation();

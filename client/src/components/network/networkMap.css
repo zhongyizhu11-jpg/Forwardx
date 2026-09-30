@@ -108,6 +108,9 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
   100% { box-shadow: 0 0 0 16px color-mix(in srgb, var(--c) 0%, transparent), 0 4px 12px rgba(0, 0, 0, 0.25); }
 }
 .nm-mk-flag-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--nm-ok)); }
+/* 画不出国旗 emoji 的设备（iOS 国行没有 🇹🇼）退回两字母代码：小字加粗，别按 emoji 的字号撑开 */
+.nm-mk-code { font-family: var(--fx-font, inherit); font-style: normal; font-size: 11px; font-weight: 800; letter-spacing: 0.02em; color: var(--nm-text); }
+.nm-mk-pill .nm-mk-code { font-size: 10px; margin: 0 1px; }
 .nm-mk-name { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 12px; font-weight: 700; color: var(--nm-fg); text-shadow: 0 0 4px var(--nm-bg), 0 0 8px var(--nm-bg); pointer-events: none; }
 .nm-mk-note { position: absolute; top: 36px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 11px; font-weight: 600; color: var(--nm-muted); text-shadow: 0 0 4px var(--nm-bg), 0 0 8px var(--nm-bg); pointer-events: none; }
 .nm-mk-target i { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; transform: rotate(45deg); border-radius: 3px; background: var(--nm-glass-strong); border: 2px solid var(--nm-standby); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); cursor: pointer; }

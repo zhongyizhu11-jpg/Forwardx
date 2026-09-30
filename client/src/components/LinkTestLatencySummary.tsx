@@ -1,6 +1,7 @@
 import { LatencyRating } from "@/components/LatencyRating";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { countryCodeToEmoji, type LinkTestNodeMeta } from "@/lib/linkTestNodeMeta";
+import { type LinkTestNodeMeta } from "@/lib/linkTestNodeMeta";
+import { countryFlagLabel } from "@/lib/flagEmojiSupport";
 import { cn } from "@/lib/utils";
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 
@@ -805,7 +806,7 @@ export function LinkTestProbeView({
     const countryCode = String(meta?.countryCode || "").trim().toUpperCase();
     const flagUrl = /^[A-Z]{2}$/.test(countryCode) ? `https://flagcdn.com/24x18/${countryCode.toLowerCase()}.png` : "";
     const metaEmoji = String(meta?.emoji || "").trim();
-    const fallbackFlag = countryCodeToEmoji(countryCode)
+    const fallbackFlag = countryFlagLabel(countryCode)
       || (/^\p{Regional_Indicator}{2}$/u.test(metaEmoji) ? metaEmoji : "");
     if (!flagUrl) {
       return fallbackFlag
