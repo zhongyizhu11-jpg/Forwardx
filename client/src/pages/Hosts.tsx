@@ -24,6 +24,13 @@ import HostTrafficBillingDialog from "@/components/hosts/HostTrafficBillingDialo
 import HostCard, { HostActionButtons } from "@/components/hosts/HostCard";
 // 本页 902 行已有一个同名的统计小卡，这里取别名区分：这个是主机列表里的实体卡
 import HostEntitySummaryCard from "@/components/hosts/HostSummaryCard";
+import {
+  HostLocationPicker,
+  emptyHostLocationValue,
+  hostLocationPayload,
+  hostLocationValueFromHost,
+  type HostLocationFormValue,
+} from "@/components/hosts/HostLocationPicker";
 import HostDetailDialog from "@/components/hosts/HostDetailDialog";
 import { FxpRuntimeBadge, fxpRuntimeDetailText } from "@/components/hosts/FxpRuntimeBadge";
 import { hostNeedsAgentUpgrade } from "@shared/fxpRuntime";
@@ -583,6 +590,7 @@ type HostFormData = {
   blockHttp: boolean;
   blockSocks: boolean;
   blockTls: boolean;
+  location: HostLocationFormValue;
 };
 
 const defaultFormData: HostFormData = {
@@ -615,6 +623,7 @@ const defaultFormData: HostFormData = {
   blockHttp: false,
   blockSocks: false,
   blockTls: false,
+  location: emptyHostLocationValue,
 };
 
 function clampMonthlyResetDay(value: number) {
@@ -1342,6 +1351,8 @@ function HostsContent() {
 
   const [showDialog, setShowDialog] = useState(false);
   const [hostDialogTab, setHostDialogTab] = useState<HostDialogTab>("basic");
+  // 从卡片上的「未定位 · 点此设置」进来：对话框打开后滚到位置那一行
+  const [locationHighlight, setLocationHighlight] = useState(false);
   const [upgradeHost, setUpgradeHost] = useState<any>(null);
   const [probeLatencyHost, setProbeLatencyHost] = useState<any>(null);
   /*
@@ -1574,6 +1585,23 @@ function HostsContent() {
     onError: (err) => toast.error(err.message || "更新失败"),
   });
 
+  const relocateMutation = trpc.hosts.relocate.useMutation({
+    onSuccess: (result) => {
+      utils.hosts.list.invalidate();
+      utils.hosts.options.invalidate();
+      utils.hosts.listPage.invalidate();
+      utils.hosts.mapPoints.invalidate();
+      utils.hosts.getById.invalidate();
+      setForm((current) => ({ ...current, location: emptyHostLocationValue }));
+      if (result.geoSource === "auto") {
+        toast.success(`已按 IP 重新定位：${[result.geoCountryName || result.geoCountryCode, result.geoRegion].filter(Boolean).join(" / ")}`);
+      } else {
+        toast.warning("暂时没定到位：定位服务都没答上来，后台会按间隔重试");
+      }
+    },
+    onError: (err) => toast.error(err.message || "重新定位失败"),
+  });
+
   const deleteMutation = trpc.hosts.delete.useMutation({
     onSuccess: () => {
       utils.hosts.list.invalidate();
@@ -1688,8 +1716,10 @@ function HostsContent() {
     setTokenCreateSignal((value) => value + 1);
   };
 
-  const openEdit = (host: any) => {
+  const openEdit = (host: any, options: { focusLocation?: boolean } = {}) => {
+    setLocationHighlight(!!options.focusLocation);
     setForm({
+      location: hostLocationValueFromHost(host),
       name: host.name,
       ip: host.ip,
       hostType: host.hostType,
@@ -1724,6 +1754,7 @@ function HostsContent() {
     setHostDialogTab("basic");
     setShowDialog(true);
   };
+  const openLocationEdit = (host: any) => openEdit(host, { focusLocation: true });
 
   const openingMapHostIds = useRef(new Set<number>());
   const openMapHostEdit = async (host: any) => {
@@ -1820,11 +1851,20 @@ function HostsContent() {
     const protocolPolicyPayload = user?.role === "admin"
       ? { blockHttp: form.blockHttp, blockSocks: form.blockSocks, blockTls: form.blockTls }
       : {};
+    const location = hostLocationPayload(form.location);
+    if (!location.ok) { toast.error(location.error); return; }
+    /*
+      「自动」是缺省，不带位置字段：编辑时服务端就不碰位置；只有原来是手动、
+      现在改回自动的才带 geoManual=false（relocate 通常已经先做过了，这是兜底）。
+    */
+    const editingHost = editingId ? displayHosts.find((host: any) => host.id === editingId) : null;
+    const locationPayload = form.location.mode !== "auto" || editingHost?.geoManual ? location.payload : {};
 
     if (editingId) {
       updateMutation.mutate({
         id: editingId,
         name,
+        ...locationPayload,
         hostType: form.hostType,
         networkInterface: ni || null,
         entryIp: entry || null,
@@ -1840,6 +1880,7 @@ function HostsContent() {
       createMutation.mutate({
         name,
         ip,
+        ...locationPayload,
         hostType: form.hostType,
         networkInterface: ni || undefined,
         entryIp: entry || undefined,
@@ -2022,6 +2063,7 @@ function HostsContent() {
           resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
           onOpenDetail={setDetailHost}
           onEdit={openEdit}
+          onEditLocation={openLocationEdit}
           onDelete={(id: number) => deleteMutation.mutate({ id })}
           onUpgrade={requestAgentUpgrade}
           onResetTraffic={user?.role === "admin" ? requestResetHostTraffic : undefined}
@@ -2036,6 +2078,7 @@ function HostsContent() {
       key={host.id}
       host={host}
       onEdit={openEdit}
+      onEditLocation={openLocationEdit}
       onDelete={(id) => deleteMutation.mutate({ id })}
       onUpgrade={requestAgentUpgrade}
       canUpgrade={user?.role === "admin"}
@@ -2639,7 +2682,7 @@ function HostsContent() {
                                     {agentUpgradeTimedOut ? "升级失败" : "升级中"}
                                   </Badge>
                                 )}
-                                <HostRegionBadge host={host} compact />
+                                <HostRegionBadge host={host} compact onSetLocation={() => openLocationEdit(host)} />
                               </div>
                               <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground" title={primaryAddressText}>
                                 <RadioTower className="h-3 w-3 shrink-0" />
@@ -3058,7 +3101,13 @@ function HostsContent() {
       </Dialog>
 
       {/* 编辑主机对话框 */}
-      <Dialog open={showDialog} onOpenChange={setShowDialog}>
+      <Dialog
+        open={showDialog}
+        onOpenChange={(open) => {
+          setShowDialog(open);
+          if (!open) setLocationHighlight(false);
+        }}
+      >
         <DialogContent className="flex h-[min(720px,86vh)] max-h-[86vh] flex-col overflow-hidden sm:max-w-[44rem]">
           <DialogHeader className="shrink-0 space-y-1">
             <DialogTitle>编辑主机</DialogTitle>
@@ -3135,6 +3184,21 @@ function HostsContent() {
                       />
                     </FormField>
                   </div>
+                </section>
+
+                <section className="space-y-3 border-t border-border/40 pt-3">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <Label className="text-sm font-semibold">位置</Label>
+                    <span className="text-xs text-muted-foreground">地图上画在哪</span>
+                  </div>
+                  <HostLocationPicker
+                    host={editingId ? displayHosts.find((host: any) => host.id === editingId) || null : null}
+                    value={form.location}
+                    onChange={(location) => setForm({ ...form, location })}
+                    onRelocate={editingId ? () => relocateMutation.mutate({ id: editingId }) : undefined}
+                    relocating={relocateMutation.isPending}
+                    highlight={locationHighlight}
+                  />
                 </section>
 
                 <section className="space-y-3 border-t border-border/40 pt-3">
