@@ -4,7 +4,7 @@ import test from "node:test";
 import { buildNetworkMapModel } from "./networkMapModel";
 import type { PixelBox } from "@shared/networkMapGeometry";
 
-import { MINI_CAP_MIN_ARC_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, detectWebGL, groupCoverageBox, insetSizes, locatedHostCount, miniFitPoints, miniOpenHref, pickInsetGroups, placeInsets, placeLabelBoxes, scoreQuadrants, shouldRenderRealMap, unlocatedHostCount, type LabelItem } from "./networkMapMini";
+import { MINI_CAP_MIN_ARC_PX, MINI_FIT_MAX_ZOOM, MINI_GROUP_RADIUS_PX, detectWebGL, groupCoverageBox, insetSizes, locatedHostCount, miniFitPoints, miniOpenHref, pickInsetGroups, placeInsets, placeLabelBoxes, scoreQuadrants, shouldAbsorbIntoGroup, shouldRenderRealMap, unlocatedHostCount, type LabelItem } from "./networkMapMini";
 
 const now = 1_700_000_000_000;
 const host = (id: number, geo?: [number, number]) => ({
@@ -83,6 +83,10 @@ test("覆盖框、选哪几组开小窗", () => {
   assert.deepEqual(pickInsetGroups(groups, false).map((g) => g.hostIds), [[1, 2, 5, 6]]);
   assert.deepEqual(pickInsetGroups(groups, true).map((g) => g.hostIds), [[1, 2, 5, 6], [3, 4]]);
   assert.equal(MINI_GROUP_RADIUS_PX, 28);
+  // pill 有两面旗、数字 4：半宽 30 上下；紧挨着右边 36px 的那台并进来，上下 40px 的不并
+  assert.ok(shouldAbsorbIntoGroup(2, 4, { dx: 36, dy: 4 }));
+  assert.ok(!shouldAbsorbIntoGroup(2, 4, { dx: 60, dy: 4 }));
+  assert.ok(!shouldAbsorbIntoGroup(2, 4, { dx: 10, dy: 40 }));
 });
 
 test("名字不互压：挨着的两台翻到两侧、再挤就左右挪或缩小字号；贴边的往里挪", () => {

@@ -19,28 +19,52 @@ export const MINI_CAP_MIN_ARC_PX = 90;
  * 像连错了。
  */
 export const MINI_GROUP_RADIUS_PX = 28;
+/**
+ * 叠起来的 marker（pill）大概多宽：左右内边距 + 每面旗 + 旗和数字的缝 + 数字。按圆心距离分组
+ * 够不着、但圆盘会压在 pill 上的那台也并进组（computeMapLayout 的 absorb）。
+ */
+export function estimateGroupPillWidth(flags: number, count: number): number {
+  return 6 + 7 + 16 * Math.min(3, Math.max(1, flags)) + 4 + 7 * String(count).length;
+}
+/** 单独一台离组心多近会压到 pill：pill 半宽 / 半高 + 圆盘半径 + 一点缝 */
+export function shouldAbsorbIntoGroup(flags: number, count: number, offset: { dx: number; dy: number }): boolean {
+  return Math.abs(offset.dx) < estimateGroupPillWidth(flags, count) / 2 + 13 + 4 && Math.abs(offset.dy) < 11 + 13 + 4;
+}
 /** 主图、小窗上 marker 离卡片边至少留这么多像素 */
 export const MINI_FIT_INSET_PX = 10;
 /**
- * 小窗放到 9 级还叠在一起的主机（同一机房的几台，地理库给的是同一个点）才错开一点点：
- * 9 级上 30px 不到 10 公里，说的仍是「同一个地方」。
+ * 小窗里主机不并组，但离得太近（组里还有台更远的，窗放不到 9 级）圆盘和名字挤成一团，
+ * 就把 34px 内的错开成一圈：这是小窗，本来就是「这几台在同一个地方」的放大，圈半径几十
+ * 像素在小窗的级别上不到几十公里，不会像主图那样把人挪到上千公里外。同一机房的几台
+ * （地理库给的是同一个点）放到 9 级还叠着，也靠这个错开。
  */
-export const insetJitterRadius = (n: number) => 16 + n * 3;
+export const INSET_SPREAD_RADIUS_PX = 34;
+export const insetJitterRadius = (n: number) => 20 + n * 4;
+/** 小窗精确框住时最多在 fitBounds 的基础上再缩这么多级：圈和名字实在放不下也别缩成一张世界图 */
+export const INSET_MAX_ZOOM_OUT = 1.5;
 
 // ---- 局部放大的小窗 ----
+
+/** 主图上并成一组的主机：组员的真实位置、叠起来的 marker（含名字）占的盒子 */
+export type MiniLayoutGroup = { hostIds: number[]; label: string; members: PixelPoint[]; markerBox: PixelBox };
+/** 主图每次布局完报给卡片的东西：卡片据此挑组开小窗、找空地摆小窗 */
+export type MiniLayoutReport = { width: number; height: number; groups: MiniLayoutGroup[]; boxes: PixelBox[]; points: PixelPoint[] };
 
 export type Quadrant = "tl" | "tr" | "bl" | "br";
 export type InsetSize = { w: number; h: number };
 export type InsetPlacement = { box: PixelBox; quadrant: Quadrant; shrunk: boolean };
 
-/** 小窗多大：手机上卡片宽的 46% × 高的 48%，桌面 34% × 50%；挤不下时缩到最小 */
+/**
+ * 小窗多大：手机上卡片宽的 46% × 高的 58%（五台一圈加上下的名字要 130px 高，48% 放不下），
+ * 桌面 34% × 50%；挤不下时缩到最小
+ */
 export function insetSizes(container: { width: number; height: number }, desktop: boolean): { full: InsetSize; min: InsetSize } {
   const full = desktop
     ? { w: Math.round(container.width * 0.34), h: Math.round(container.height * 0.5) }
-    : { w: Math.round(container.width * 0.46), h: Math.round(container.height * 0.48) };
+    : { w: Math.round(container.width * 0.46), h: Math.round(container.height * 0.58) };
   const min = desktop
     ? { w: Math.round(container.width * 0.24), h: Math.round(container.height * 0.38) }
-    : { w: Math.round(container.width * 0.36), h: Math.round(container.height * 0.36) };
+    : { w: Math.round(container.width * 0.36), h: Math.round(container.height * 0.44) };
   return { full, min };
 }
 
@@ -170,7 +194,7 @@ const LABEL_SHIFTS = [0, -4, 4, -8, 8, -14, 14];
 /**
  * 小图上主机名的摆法：默认在圆盘下面（环上的点朝外）；会压到别的名字、圆盘、胶囊或露出卡片
  * 边时依次试：翻到另一侧 → 左右挪最多 14px → 缩小一号字。按从上到下的顺序贪心放，先放的
- * 名字成为后面的障碍。挑不出一个完全干净的位置时选压得最少的。
+ * 名字成为后面的障碍。挑不出一个完全干净的位置时选压得最少的（宁可露出边也不压别人）。
  */
 export function placeLabelBoxes(items: readonly LabelItem[], obstacles: readonly PixelBox[], area: PixelBox): LabelPlacement[] {
   const sorted = [...items].sort((a, b) => a.y - b.y || a.x - b.x);
@@ -191,9 +215,10 @@ export function placeLabelBoxes(items: readonly LabelItem[], obstacles: readonly
         for (const up of sides) {
           const dx = edge + shift;
           const box: PixelBox = { x: item.x - half + dx, y: up ? item.y - item.gap - item.h : item.y + item.gap, w, h: item.h };
-          let score = boxOutsideArea(box, area) * 3;
-          for (const other of obstacles) score += boxOverlapArea(box, other);
-          for (const other of placedBoxes) score += boxOverlapArea(box, other);
+          // 压到别人比露出边糟得多：露出边的话精确框住（settleFit）下一轮会把图缩一点补回来，压到别人就没救了
+          let score = boxOutsideArea(box, area);
+          for (const other of obstacles) score += boxOverlapArea(box, other) * 10;
+          for (const other of placedBoxes) score += boxOverlapArea(box, other) * 10;
           // 完全干净就要它；否则记着最好的，缩小字号只在没有干净位置时才用
           if (score < bestScore - 1e-9) { bestScore = score; best = { key: item.key, up, dx, tight, box }; }
           if (score === 0) break;

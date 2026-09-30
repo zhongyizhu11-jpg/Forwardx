@@ -208,6 +208,21 @@ test("小图主图：mode cluster + 28px 半径，港粤四台并成一组、台
   assert.deepEqual(withUs.pos.h1.lngLat, withUs.groups[0].center, "组员的位置就是组心，弧线从这里连到美国");
 });
 
+test("absorb：紧挨着簇 pill 右边、按圆心距离够不着的那台也并进组里（pill 比圆盘宽）", () => {
+  const points = [
+    { key: "h1", lngLat: [0, 0] as LngLat }, { key: "h2", lngLat: [1, 0] as LngLat },
+    // 离组心 36px：超过 28 的分组半径，但 pill 半宽 30 + 圆盘 13 会压上
+    { key: "h3", lngLat: [4.1, 0] as LngLat },
+    { key: "h4", lngLat: [12, 0] as LngLat },
+  ];
+  const plain = computeMapLayout(points, project, 2, { mode: "cluster", clusterRadius: 28 });
+  assert.equal(plain.pos.h3.clusterId, null);
+  const absorbed = computeMapLayout(points, project, 2, { mode: "cluster", clusterRadius: 28, absorb: (_keys, d) => Math.abs(d.dx) < 30 + 13 && Math.abs(d.dy) < 11 + 13 });
+  assert.equal(absorbed.groups.length, 1);
+  assert.deepEqual(absorbed.groups[0].keys, ["h1", "h2", "h3"]);
+  assert.equal(absorbed.pos.h4.clusterId, null, "远的那台不受影响");
+});
+
 test("小窗：mode spread + 自定义环半径，只有叠在一起的点才错开", () => {
   const layout = computeMapLayout([
     { key: "a", lngLat: [114.17, 22.32] }, { key: "b", lngLat: [114.17, 22.32] }, { key: "c", lngLat: [118.3, 22.4] },

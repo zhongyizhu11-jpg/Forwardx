@@ -79,6 +79,12 @@ export type MapLayoutOptions = {
   spreadRadius?: number;
   /** 错开成环时的半径：n 个点时多大（像素） */
   ringRadius?: (n: number) => number;
+  /**
+   * 聚簇之后再吸一遍：单独的点离某个组的组心 (dx, dy) 像素时要不要并进去。簇 pill 比圆盘宽
+   * （几面旗 + 数量），按圆心距离分组会让紧挨着 pill 右边的那台压在 pill 上；调用方知道 pill
+   * 多宽，由它来判断。只在 cluster 模式下用。
+   */
+  absorb?: (groupKeys: string[], offset: { dx: number; dy: number }) => boolean;
 };
 
 /** 默认的环半径：随点数长一点，四台以上不会挤成一团 */
@@ -112,6 +118,27 @@ export function computeMapLayout(
     group.px.push(pt);
     group.cx = group.px.reduce((s, q) => s + q.x, 0) / group.px.length;
     group.cy = group.px.reduce((s, q) => s + q.y, 0) / group.px.length;
+  }
+  if (mode === "cluster" && options.absorb) {
+    // 组心会随着吸进来的点挪，挪完可能又够到下一台，所以吸到没有变化为止（最多点数那么多轮）
+    for (let changed = true; changed;) {
+      changed = false;
+      for (let i = 0; i < groups.length && !changed; i += 1) {
+        const single = groups[i];
+        if (single.items.length !== 1) continue;
+        for (const g of groups) {
+          if (g === single || g.items.length < 2) continue;
+          if (!options.absorb(g.items.map((it) => it.key), { dx: single.px[0].x - g.cx, dy: single.px[0].y - g.cy })) continue;
+          g.items.push(single.items[0]);
+          g.px.push(single.px[0]);
+          g.cx = g.px.reduce((s, q) => s + q.x, 0) / g.px.length;
+          g.cy = g.px.reduce((s, q) => s + q.y, 0) / g.px.length;
+          groups.splice(i, 1);
+          changed = true;
+          break;
+        }
+      }
+    }
   }
   const pos: Record<string, LayoutPosition> = {};
   const outGroups: LayoutGroup[] = [];
