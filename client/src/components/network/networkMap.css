@@ -94,7 +94,12 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-focus-exit .nm-sev { flex: none; width: 8px; height: 8px; border-radius: 50%; }
 
 /* ---- 图上元素（HTML marker）---- */
-.nm-mk { position: relative; width: 0; height: 0; transition: opacity 0.45s ease; }
+/*
+  marker 壳必须是 absolute：MapLibre 自己的 .maplibregl-marker 也是 absolute，但两份 CSS 谁后到
+  谁赢（首页小图那个 chunk 里 maplibre-gl.css 先到、这份后到），写成 relative 会让 marker
+  排进文档流 —— 胶囊掉到卡片底下 700px 外、画布容器被撑高。absolute 同样是子元素的定位基准。
+*/
+.nm-mk { position: absolute; top: 0; left: 0; width: 0; height: 0; transition: opacity 0.45s ease; }
 .nm-mk.is-dim { opacity: 0.18; }
 .nm-mk.is-hidden { display: none; }
 .nm-mk-disc { position: absolute; left: -17px; top: -17px; width: 34px; height: 34px; border-radius: 50%; background: var(--nm-glass-strong); border: 2.5px solid var(--c, var(--nm-ok)); display: grid; place-items: center; font-size: 17px; line-height: 1; box-shadow: 0 0 0 6px color-mix(in srgb, var(--c, var(--nm-ok)) 18%, transparent), 0 4px 12px rgba(0, 0, 0, 0.25); cursor: pointer; padding: 0; }
@@ -145,7 +150,22 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-mini .nm-mk-name { top: 15px; font-size: 11px; }
 .nm-mini .nm-mk-note { display: none; }
 .nm-mini .nm-mk-cap { padding: 2px 7px; font-size: 10px; }
-.nm-mini .nm-mk-country { font-size: 10px; letter-spacing: 0.24em; }
+/* 小图不写国家名：卡片就巴掌大，「印度尼西亚」会压在主机名上，还老被边裁掉半个字 */
+.nm-mini .nm-mk-country { display: none; }
+/* 名字挤在一起时（手机上港日两台只隔几十像素）其中一个翻到圆盘上面去；贴边的往里挪（marginLeft 由画布算） */
+.nm-mini .nm-mk-name.is-up { top: auto; bottom: 15px; }
+
+/*
+  触摸设备上全局给 button / [role=button] 定了 min-height:44px（index.css 的命中区规则），会把
+  34px 的圆盘拉成 34×44 的椭圆、把延迟胶囊撑成一块砖；MapLibre 还给每个 marker 壳加了
+  role="button"，0 高的壳会被撑到 44px，按 bottom 定位的名字就错位。这里收回视觉尺寸，
+  命中区用 ::after 撑回 44px 左右。
+*/
+@media (pointer: coarse) {
+  .fx-netmap .nm-mk, .fx-netmap .nm-mk-disc, .fx-netmap .nm-mk-cap, .fx-netmap .nm-mk-pill { min-height: 0; }
+  .fx-netmap .nm-mk-disc::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; }
+  .fx-netmap .nm-mk-cap::after { content: ""; position: absolute; inset: -11px -4px; }
+}
 /* 卡片角上「N 台未定位」：没有坐标的主机画不到图上，得说一声 */
 .nm-mini .nm-mini-unlocated { position: absolute; right: 8px; bottom: 8px; z-index: 3; padding: 3px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; color: var(--nm-muted); background: var(--nm-glass); border: 1px solid var(--nm-glass-border); pointer-events: none; white-space: nowrap; }
 /* 地图引擎还没到 / 起不来时的位置：示意图铺在同一块地方，不跳版 */

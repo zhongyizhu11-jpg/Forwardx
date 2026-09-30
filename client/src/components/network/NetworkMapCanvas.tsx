@@ -312,6 +312,63 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     }
   };
 
+  /**
+   * 小图上主机名的摆法：默认在圆盘下面；会压到别的名字或圆盘时翻到上面去；贴着卡片边的
+   * 往里挪。按从上到下的顺序贪心放，量的是名字元素的真实宽度（它已经在 DOM 里）。
+   * 整页不做这个：那里缩小时会聚簇，名字很少撞；小图永远不聚簇，港日两台就隔几十像素。
+   */
+  const placeMiniLabels = (capsAt: LngLat[]) => {
+    const map = live.map;
+    const layout = live.layout;
+    if (!map || !layout) return;
+    const width = map.getContainer().clientWidth;
+    // project() 按给的经度投影，美国的 -118° 可能落在左边那份世界副本上（x 为负）；marker 自己会
+    // 挪到离视口最近的一份，这里也挪过去，不然按负的 x 算出来的「贴边」是假的
+    const worldSize = 512 * 2 ** map.getZoom();
+    const wrapX = (x: number) => {
+      let wrapped = ((x % worldSize) + worldSize) % worldSize;
+      if (wrapped - width / 2 > worldSize / 2) wrapped -= worldSize;
+      return wrapped;
+    };
+    type Box = { x: number; y: number; w: number; h: number };
+    const R = 13;
+    const GAP = 15;
+    const items: Array<{ name: HTMLElement; x: number; y: number; w: number; h: number }> = [];
+    for (const [id, entry] of live.hostMarkers) {
+      const position = layout.pos[`h${id}`];
+      if (!position || position.clusterId !== null) continue;
+      const point = map.project(position.lngLat as [number, number]);
+      const name = entry.element.querySelector(".nm-mk-name") as HTMLElement | null;
+      if (!name) continue;
+      // 量真实尺寸：行高比字号高，按 11px 估会漏掉挨着的那几像素
+      items.push({ name, x: wrapX(point.x) + position.offset[0], y: point.y + position.offset[1], w: name.offsetWidth || 60, h: name.offsetHeight || 20 });
+    }
+    items.sort((a, b) => a.y - b.y || a.x - b.x);
+    // 别的圆盘和延迟胶囊都是障碍；两边都躲不开时选压得少的那边
+    const obstacles: Box[] = items.map((item) => ({ x: item.x - R, y: item.y - R, w: R * 2, h: R * 2 }));
+    for (const at of capsAt) {
+      const point = map.project(at as [number, number]);
+      obstacles.push({ x: wrapX(point.x) - 28, y: point.y - 13, w: 56, h: 26 });
+    }
+    const overlapArea = (box: Box) => obstacles.reduce((sum, other) => {
+      const w = Math.min(box.x + box.w, other.x + other.w) - Math.max(box.x, other.x);
+      const h = Math.min(box.y + box.h, other.y + other.h) - Math.max(box.y, other.y);
+      return w > 0 && h > 0 ? sum + w * h : sum;
+    }, 0);
+    for (const item of items) {
+      const half = item.w / 2;
+      let dx = 0;
+      if (item.x - half < 4) dx = 4 - (item.x - half);
+      else if (item.x + half > width - 4) dx = width - 4 - (item.x + half);
+      const below: Box = { x: item.x - half + dx, y: item.y + GAP, w: item.w, h: item.h };
+      const above: Box = { ...below, y: item.y - GAP - item.h };
+      const up = overlapArea(above) < overlapArea(below);
+      obstacles.push(up ? above : below);
+      item.name.classList.toggle("is-up", up);
+      item.name.style.marginLeft = dx ? `${dx}px` : "";
+    }
+  };
+
   // ---- 布局：簇 / 错开，再把线和胶囊挂上去 ----
   const relayout = () => {
     const map = live.map;
@@ -517,6 +574,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       entry.marker.remove();
       live.capMarkers.delete(tunnelId);
     }
+    if (mini) placeMiniLabels(caps.map((cap) => cap.at));
     applyFocus();
   };
 
@@ -562,6 +620,17 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       if (!map) return;
       const points = layoutPoints().map((point) => point.lngLat);
       if (points.length === 0) { map.jumpTo({ center: [110, 25], zoom: 1.6 }); return; }
+      if (isMini()) {
+        // 小图没法拖：大圆弧往高纬度弯出去的那一段也得框进来，不然日美那条线的弧顶在卡片外面
+        const nodeById = new Map(live.props.model.nodes.map((node) => [node.id, node]));
+        for (const link of live.props.model.links) {
+          for (let index = 0; index < link.path.length - 1; index += 1) {
+            const a = nodeById.get(link.path[index])?.geo;
+            const b = nodeById.get(link.path[index + 1])?.geo;
+            if (a && b) points.push(...greatCircleArc(display([a.lng, a.lat]), display([b.lng, b.lat]), 12));
+          }
+        }
+      }
       const bounds = boundsForPoints(points);
       if (!bounds) return;
       // 小图：直接跳过去不飞（卡片刚出现 / 主机集合变了 / 卡片变宽了，飞一下反而像出了错），最多放到 9 级
@@ -653,7 +722,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         style: buildNetworkMapStyle(live.props.baseLayer, COUNTRIES_URL, live.colors) as any,
         center: [110, 25],
         zoom: 1.6,
-        minZoom: 0.5,
+        // 小图在 340px 宽的手机卡片里要框住横跨太平洋的线，0.5 级放不下（世界 724px 宽），放开到 0 级
+        minZoom: mini ? 0 : 0.5,
         maxZoom: 14,
         attributionControl: false,
         renderWorldCopies: true,
