@@ -1485,14 +1485,25 @@ export const hostsRouter = router({
         if (!host) throw new Error("主机不存在");
         if (ctx.user.role !== "admin" && host.userId !== ctx.user.id) throw new Error("无权操作此主机");
         /*
-          位置字段单独拎出来：geoManual=true 时校验并整包写入；geoManual=false 时
-          只清标记、不清坐标（换回自动定位走 hosts.relocate，那条会立刻重查）。
-          没带 geoManual 的请求不碰位置。
+          位置字段单独拎出来：geoManual=true 时校验并整包写入；geoManual=false 且
+          原来是手动的，标记和坐标一起清（界面通常已先调 hosts.relocate 立刻重查，
+          这里是兜底）。没带 geoManual 的请求不碰位置。
         */
         const { geoManual, geoCountryCode, geoRegion, geoLatitude, geoLongitude, ...input } = rawInput;
+        const clearedLocation = {
+          geoManual: false,
+          geoCountryCode: null,
+          geoCountryName: null,
+          geoRegion: null,
+          geoEmoji: null,
+          geoLatitudeMicro: null,
+          geoLongitudeMicro: null,
+          geoUpdatedAt: null,
+        };
         const manualLocation = geoManual === true
           ? manualLocationPayload({ geoCountryCode, geoRegion, geoLatitude, geoLongitude })
-          : geoManual === false ? { geoManual: false } : {};
+          // 从手动改回自动：连坐标一起清，下次翻列表就重新按 IP 查；留着人手填的坐标会被当成自动结果展示。
+          : geoManual === false && (host as any).geoManual ? clearedLocation : {};
         const willBeManual = geoManual === undefined ? !!(host as any).geoManual : geoManual;
         // 验证端口区间
         const pStart = input.portRangeStart !== undefined ? input.portRangeStart : (host as any).portRangeStart;

@@ -33,6 +33,7 @@ type Probe = {
   backoff: { attemptsAfterFail: number; delayMinutes: number; secondDelayMinutes: number };
   relocate: { manualAfter: boolean; source: string | null; fetchHosts: string[]; region: string | null };
   entryChange: { manualKept: boolean; region: string | null };
+  autoReset: { manual: boolean; country: string | null; source: string | null };
 };
 
 function runProbe(): Probe {
@@ -199,6 +200,13 @@ function runProbe(): Probe {
     const afterEntry = await db.getHostById(2);
     out.entryChange = { manualKept: !!afterEntry?.geoManual, region: afterEntry?.geoRegion ?? null };
 
+    // ---- update 带 geoManual=false：标记和人手填的坐标一起清，等下次自动定位 ----
+    plan = {};
+    await caller(admin).update({ id: 2, geoManual: false });
+    const afterReset = await db.getHostById(2);
+    const resetRow = (await caller(admin).list()).find((row) => Number(row.id) === 2);
+    out.autoReset = { manual: !!afterReset?.geoManual, country: afterReset?.geoCountryCode ?? null, source: resetRow?.geoSource ?? null };
+
     console.log("GEOPROBE " + JSON.stringify(out));
     await runtime.closeDatabase().catch(() => undefined);
     process.exit(0);
@@ -274,4 +282,10 @@ test("relocate：清掉手动标记并立刻按 IP 重查", () => {
 test("换入口地址不清手动位置", () => {
   assert.equal(probe.entryChange.manualKept, true);
   assert.equal(probe.entryChange.region, "香港");
+});
+
+test("update 带 geoManual=false：手动坐标一起清掉，不能当成自动结果展示", () => {
+  assert.equal(probe.autoReset.manual, false);
+  assert.equal(probe.autoReset.country, null);
+  assert.equal(probe.autoReset.source, null, "清掉之后 geoSource 是 null，卡片上显示「未定位 · 点此设置」");
 });

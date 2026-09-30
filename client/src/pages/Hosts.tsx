@@ -1366,6 +1366,8 @@ function HostsContent() {
   const [trafficCorrectionInput, setTrafficCorrectionInput] = useState("0");
   const [trafficCorrectionCurrentBytes, setTrafficCorrectionCurrentBytes] = useState(0);
   const [editingId, setEditingId] = useState<number | null>(null);
+  // 打开编辑时那台机器的快照：从地图进来的主机不一定在当前这页列表里，位置行还得知道它定到哪了
+  const [editingHostSnapshot, setEditingHostSnapshot] = useState<any>(null);
   const [hostCardModeTransitionKey, setHostCardModeTransitionKey] = useState(0);
   const [tokenViewMode, setTokenViewMode] = useState<AgentTokenViewMode>(() => getStoredAgentTokenViewMode());
   const [serviceViewMode, setServiceViewMode] = useState<HostProbeServiceViewMode>(() => getStoredHostProbeServiceViewMode());
@@ -1694,6 +1696,7 @@ function HostsContent() {
   const resetForm = () => {
     setForm(defaultFormData);
     setEditingId(null);
+    setEditingHostSnapshot(null);
   };
 
   const openCreate = () => {
@@ -1751,6 +1754,7 @@ function HostsContent() {
       blockTls: !!host.blockTls,
     });
     setEditingId(host.id);
+    setEditingHostSnapshot(host);
     setHostDialogTab("basic");
     setShowDialog(true);
   };
@@ -1857,7 +1861,7 @@ function HostsContent() {
       「自动」是缺省，不带位置字段：编辑时服务端就不碰位置；只有原来是手动、
       现在改回自动的才带 geoManual=false（relocate 通常已经先做过了，这是兜底）。
     */
-    const editingHost = editingId ? displayHosts.find((host: any) => host.id === editingId) : null;
+    const editingHost = editingId ? displayHosts.find((host: any) => host.id === editingId) || editingHostSnapshot : null;
     const locationPayload = form.location.mode !== "auto" || editingHost?.geoManual ? location.payload : {};
 
     if (editingId) {
@@ -3192,7 +3196,7 @@ function HostsContent() {
                     <span className="text-xs text-muted-foreground">地图上画在哪</span>
                   </div>
                   <HostLocationPicker
-                    host={editingId ? displayHosts.find((host: any) => host.id === editingId) || null : null}
+                    host={editingId ? displayHosts.find((host: any) => host.id === editingId) || editingHostSnapshot : null}
                     value={form.location}
                     onChange={(location) => setForm({ ...form, location })}
                     onRelocate={editingId ? () => relocateMutation.mutate({ id: editingId }) : undefined}
