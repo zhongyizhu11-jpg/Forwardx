@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { NetworkMapMiniChrome } from "./NetworkMapMiniChrome";
 import { NetworkMapSectionView, buildNetworkMapModel } from "./NetworkMapSection";
 
 const now = 1_700_000_000_000;
@@ -39,4 +40,28 @@ test("卡片：一条线也没有时写一句怎么连，经过看不到的主�
     tunnels: [{ id: 5, name: "shared", mode: "tls", isEnabled: true, entryHostId: 1, exitHostId: null, hopHostIds: [1], availability: { status: "available", available: true, source: "hosts", message: "ok" } }],
   });
   assert.match(renderToStaticMarkup(<NetworkMapSectionView model={hidden} onOpen={() => {}} realMap={false} />), /1 条经过你看不到的主机，没有画出来/);
+});
+
+test("小图上漂浮的东西：+ / − 常在，「回到全览」只在用户动过图之后出现，提示只在点过之后出现；没有一个是链接", () => {
+  const still = renderToStaticMarkup(<NetworkMapMiniChrome userMoved={false} tip={null} unlocated={0} onZoom={() => {}} onReset={() => {}} />);
+  assert.match(still, /aria-label="放大"/);
+  assert.match(still, /aria-label="缩小"/);
+  assert.doesNotMatch(still, /回到全览/, "没动过图不出现");
+  assert.doesNotMatch(still, /nm-mini-tip/);
+  assert.doesNotMatch(still, /未定位/);
+  const moved = renderToStaticMarkup(<NetworkMapMiniChrome userMoved tip="HK entry 01 · 香港 · 在线" unlocated={2} onZoom={() => {}} onReset={() => {}} />);
+  assert.match(moved, /<button type="button" class="nm-mini-reset">回到全览<\/button>/);
+  assert.match(moved, /class="nm-mini-tip"[^>]*>HK entry 01 · 香港 · 在线</);
+  assert.match(moved, /2 台未定位/);
+  // 小图上点哪儿都不跳整页：这里只有 type=button，没有 href，也没有 /map
+  assert.doesNotMatch(moved, /href=/);
+  assert.doesNotMatch(moved, /\/map/);
+  assert.equal((moved.match(/<button/g) || []).length, 3);
+});
+
+test("卡片：整页的入口只有标题旁的「打开地图」", () => {
+  const model = buildNetworkMapModel({ now, hosts: [host(1, "HK", [22.32, 114.17]), host(2, "JP", [35.68, 139.65])], tunnels: [{ id: 1, name: "live", mode: "forwardx", isEnabled: true, entryHostId: 1, exitHostId: 2 }] });
+  const html = renderToStaticMarkup(<NetworkMapSectionView model={model} onOpen={() => {}} realMap={false} />);
+  assert.equal((html.match(/打开地图/g) || []).length, 1);
+  assert.doesNotMatch(html, /href="\/map/);
 });

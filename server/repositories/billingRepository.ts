@@ -2536,7 +2536,7 @@ async function rechargeSubscriptionTrafficCyclesForUserUnlocked(userId: number, 
     await subscriptionCycleRows({ userId }),
   );
   let dueBoundary = Number.NEGATIVE_INFINITY;
-  const cycleUpdates: Array<{ id: number; dueBoundary: Date; nextTrafficResetAt: Date | null }> = [];
+  const cycleUpdates: Array<{ id: number; dueBoundary: Date; nextTrafficResetAt: Date | null; expiresAt: Date | null }> = [];
   for (const sub of due as any[]) {
     const expiresAt = sub.expiresAt ? new Date(sub.expiresAt) : null;
     let next = sub.nextTrafficResetAt ? new Date(sub.nextTrafficResetAt) : null;
@@ -2557,6 +2557,7 @@ async function rechargeSubscriptionTrafficCyclesForUserUnlocked(userId: number, 
       id: Number(sub.id),
       dueBoundary: new Date(subscriptionDueBoundary),
       nextTrafficResetAt: boundedNext,
+      expiresAt,
     });
     if (sub.trafficAutoReset || Number(sub.id) === primarySubscriptionId) {
       dueBoundary = Math.max(dueBoundary, subscriptionDueBoundary);
@@ -2572,6 +2573,15 @@ async function rechargeSubscriptionTrafficCyclesForUserUnlocked(userId: number, 
       nextTrafficResetAt: cycle.nextTrafficResetAt,
       lastTrafficResetAt: now,
     } as any);
+    /*
+      上面只把「上一周期」的加油包（开通时刻早于这次重置边界的）判了过期。
+      边界之后才加上的加油包（比如 1 号 00:00 已过、每小时的巡检还没跑到时管理员
+      发的流量包，或订阅刚开、下次重置时刻还没对齐过）属于新周期，周期末尾却还
+      停在刚刚过去的那个边界上 —— 不跟着改，紧接着 expireDueTrafficAddons 就按
+      「已到期」把它收走，用户白丢一个刚到手的流量包。这里把幸存的加油包对齐到
+      新周期的末尾。
+    */
+    await updateActiveTrafficAddonCycleEnd(cycle.id, cycle.nextTrafficResetAt, cycle.expiresAt);
   }
   return { resetCount: reset ? 1 : 0, settled: true };
 }

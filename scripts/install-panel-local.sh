@@ -9,6 +9,11 @@ REPO_SLUG="${FORWARDX_GITHUB_REPO:-zhongyizhu11-jpg/Forwardx}"
 PANEL_BUNDLE_PREFIX="${FORWARDX_PANEL_BUNDLE_PREFIX:-forwardx-panel-v}"
 PNPM_VERSION="${FORWARDX_PNPM_VERSION:-10.28.1}"
 ASSETS_PENDING_EXIT_CODE=12
+# 面板端靠这些 "[ForwardX] step N/M …" / "progress download …" 行画进度条，改动格式要连 client/src/lib/panelUpgrade.ts 一起改。
+PANEL_STEP_TOTAL=5
+SCRIPT_STARTED_AT="$(date +%s)"
+# 上一次安装成功时依赖输入的指纹放在 node_modules 里：node_modules 被删掉指纹也跟着没了，不会误判「没变」。
+DEPS_FINGERPRINT_NAME=".forwardx-deps-fingerprint"
 ENABLE_ADMIN_ACCOUNT="false"
 GITHUB_ACCELERATOR_URL=""
 GITHUB_ACCELERATOR_EXPLICIT="false"
@@ -171,14 +176,91 @@ release_tag_from_url() {
     | head -1 || true
 }
 
+panel_step() {
+  # 进度标记：面板按「第几步 / 共几步」画条，标签直接显示给用户看。
+  echo "[ForwardX] step $1/$PANEL_STEP_TOTAL $2"
+}
+
+elapsed_seconds() {
+  local now=""
+  now="$(date +%s)"
+  printf "%s\n" "$((now - SCRIPT_STARTED_AT))"
+}
+
+file_size_bytes() {
+  local file="$1"
+  local size=""
+  if [ ! -f "$file" ]; then
+    printf "0\n"
+    return
+  fi
+  # GNU/busybox stat 用 -c，macOS/BSD 用 -f；都没有就数字节。
+  size="$(stat -c %s "$file" 2>/dev/null || stat -f %z "$file" 2>/dev/null || wc -c < "$file" 2>/dev/null || true)"
+  size="${size//[^0-9]/}"
+  printf "%s\n" "${size:-0}"
+}
+
+remote_content_length() {
+  # 跟随跳转后最后一个响应的 Content-Length；拿不到就输出空，进度只报已下载字节数。
+  local url="$1"
+  curl -sIL --retry 1 --connect-timeout 10 "$url" 2>/dev/null \
+    | tr -d '\r' \
+    | sed -nE 's/^[Cc]ontent-[Ll]ength:[[:space:]]*([0-9]+).*$/\1/p' \
+    | tail -1 || true
+}
+
+report_download_progress() {
+  local downloaded="$1"
+  local total="$2"
+  local percent=0
+  if [ -n "$total" ] && [ "$total" -gt 0 ] 2>/dev/null; then
+    percent=$((downloaded * 100 / total))
+    # HEAD 探测拿到的长度可能和实际下载的不一样（镜像站返回错误页之类），不让百分比超过 100。
+    if [ "$percent" -gt 100 ]; then percent=100; fi
+    echo "[ForwardX] progress download ${downloaded}/${total} ${percent}%" >&2
+  else
+    echo "[ForwardX] progress download ${downloaded}/- -%" >&2
+  fi
+}
+
 download_url_to_file() {
   local url="$1"
   local output="$2"
   local partial="${output}.part"
+  local code_file="${output}.code"
   local http_code=""
-  rm -f "$partial"
-  http_code="$(curl -fsSL --retry 3 --connect-timeout 10 --write-out "%{http_code}" --output "$partial" "$url" 2>/dev/null || true)"
+  local total=""
+  local size=""
+  local last_size="-1"
+  local idle_ticks=0
+  local pid=""
+  rm -f "$partial" "$code_file"
+  total="$(remote_content_length "$url")"
+  # curl 放到后台跑，前台每秒看一眼 .part 文件长了多少，面板那边的进度条才动得起来；
+  # 之前 -s 静默下载几十 MB，面板整段时间停在同一个百分比。
+  curl -fsSL --retry 3 --connect-timeout 10 --write-out "%{http_code}" --output "$partial" "$url" > "$code_file" 2>/dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    size="$(file_size_bytes "$partial")"
+    # 字节数没变就不刷屏，但每 10 秒报一次让人知道没死。
+    if [ "$size" != "$last_size" ] || [ "$idle_ticks" -ge 10 ]; then
+      report_download_progress "$size" "$total"
+      last_size="$size"
+      idle_ticks=0
+    else
+      idle_ticks=$((idle_ticks + 1))
+    fi
+  done
+  wait "$pid" 2>/dev/null || true
+  http_code="$(tr -d '[:space:]' < "$code_file" 2>/dev/null || true)"
+  rm -f "$code_file"
   if [ "$http_code" = "200" ]; then
+    size="$(file_size_bytes "$partial")"
+    report_download_progress "$size" "${total:-$size}"
     mv -f "$partial" "$output"
   else
     rm -f "$partial"
@@ -497,6 +579,10 @@ EOF
 }
 
 restart_service() {
+  panel_step 5 "重启面板"
+  # 面板里点的升级是面板进程的子进程，systemctl restart 会连本脚本一起杀掉，后面的 [DONE] 行
+  # 到不了面板日志，所以用时在重启前先报一次。
+  echo "[ForwardX] restarting panel service (elapsed $(elapsed_seconds)s)"
   if is_systemd_host; then
     systemctl restart "$SERVICE_NAME"
   elif command -v rc-service >/dev/null 2>&1; then
@@ -679,6 +765,7 @@ download_panel_bundle() {
   archive="$tmp_dir/panel.tar.gz"
   url="$(panel_bundle_url "$version")"
 
+  panel_step 2 "下载面板包"
   echo "[INFO] Downloading panel bundle: $url"
   http_code="$(download_github_archive "$url" "$archive")"
   if [ "$http_code" = "404" ]; then
@@ -697,6 +784,7 @@ download_panel_bundle() {
     exit 1
   fi
 
+  panel_step 3 "解压文件"
   mkdir -p "$APP_DIR"
   rm -rf "$APP_DIR/dist" "$APP_DIR/client" "$APP_DIR/drizzle" "$APP_DIR/plugins" "$APP_DIR/scripts"
   rm -f "$APP_DIR/package.json" "$APP_DIR/pnpm-lock.yaml" "$APP_DIR/pnpm-workspace.yaml"
@@ -709,13 +797,80 @@ download_panel_bundle() {
   rm -rf "$tmp_dir"
 }
 
-install_runtime_dependencies() {
-  cd "$APP_DIR"
-  rm -rf node_modules
-  if [ -f pnpm-lock.yaml ]; then
-    pnpm install --prod --frozen-lockfile
+sha256_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
   else
+    openssl dgst -sha256 | sed -E 's/^.*= *//'
+  fi
+}
+
+dependency_fingerprint() {
+  # 决定 node_modules 内容的全部输入：锁文件、package.json 里和依赖有关的段、pnpm 的 workspace 配置、
+  # 补丁文件、以及 node / pnpm 版本（原生模块要按 node 版本重编，pnpm 大版本换了布局也不一样）。
+  # 两次补丁发布之间这些几乎从不变，变了才值得花几分钟重装。
+  local dir="$1"
+  local file=""
+  {
+    printf "node=%s\n" "$(node --version 2>/dev/null || echo unknown)"
+    printf "pnpm=%s\n" "$(pnpm --version 2>/dev/null || echo unknown)"
+    printf "lock:\n"
+    cat "$dir/pnpm-lock.yaml" 2>/dev/null || true
+    printf "\nworkspace:\n"
+    cat "$dir/pnpm-workspace.yaml" 2>/dev/null || true
+    printf "\npackage:\n"
+    (cd "$dir" && node -e '
+      const pkg = require("./package.json");
+      const picked = {};
+      for (const key of ["dependencies", "optionalDependencies", "peerDependencies", "pnpm", "packageManager", "overrides", "resolutions", "engines"]) {
+        if (pkg[key] !== undefined) picked[key] = pkg[key];
+      }
+      process.stdout.write(JSON.stringify(picked));
+    ' 2>/dev/null) || cat "$dir/package.json" 2>/dev/null || true
+    printf "\npatches:\n"
+    if [ -d "$dir/patches" ]; then
+      find "$dir/patches" -type f 2>/dev/null | LC_ALL=C sort | while IFS= read -r file; do
+        printf "%s\n" "${file#"$dir"/}"
+        cat "$file"
+        printf "\n"
+      done
+    fi
+  } | sha256_stdin
+}
+
+install_runtime_dependencies() {
+  local fingerprint=""
+  local stored=""
+  local fingerprint_file=""
+  cd "$APP_DIR"
+  fingerprint_file="$APP_DIR/node_modules/$DEPS_FINGERPRINT_NAME"
+  if [ ! -f pnpm-lock.yaml ]; then
+    panel_step 4 "安装依赖"
+    rm -rf node_modules
     npm install --omit=dev
+    return
+  fi
+  fingerprint="$(dependency_fingerprint "$APP_DIR" 2>/dev/null || true)"
+  stored="$(cat "$fingerprint_file" 2>/dev/null || true)"
+  if [ -n "$fingerprint" ] && [ "$fingerprint" = "$stored" ] \
+    && [ -d node_modules/.pnpm ] && [ -f node_modules/.modules.yaml ]; then
+    panel_step 4 "依赖未变化，跳过安装"
+    echo "[ForwardX] Dependencies unchanged since last install, skipping pnpm install"
+    return
+  fi
+  panel_step 4 "安装依赖"
+  rm -f "$fingerprint_file"
+  # 不再先删 node_modules：pnpm 自己会对着锁文件增删，绝大多数包已经在，几十秒就完；
+  # 对不上（node_modules 损坏之类）再退回删掉重装。
+  if ! pnpm install --prod --frozen-lockfile --prefer-offline; then
+    echo "[WARN] pnpm install could not reconcile the existing node_modules; reinstalling from scratch"
+    rm -rf node_modules
+    pnpm install --prod --frozen-lockfile
+  fi
+  if [ -n "$fingerprint" ] && [ -d node_modules ]; then
+    printf "%s\n" "$fingerprint" > "$fingerprint_file" 2>/dev/null || true
   fi
 }
 
@@ -744,6 +899,7 @@ install_panel() {
   require_root
   resolve_runtime_env
   read_install_port
+  panel_step 1 "检查发布资产"
   install_deps
   release_version="$(resolve_release_version)"
   download_panel_bundle "$release_version"
@@ -752,13 +908,15 @@ install_panel() {
   read_database_config
   write_service
   restart_service
-  echo "[DONE] ForwardX panel started (release v$release_version): http://SERVER_IP:$PORT"
+  echo "[ForwardX] elapsed $(elapsed_seconds)s"
+  echo "[DONE] ForwardX panel started (release v$release_version) in $(elapsed_seconds)s: http://SERVER_IP:$PORT"
 }
 
 upgrade_panel() {
   local release_version
   require_root
   resolve_runtime_env
+  panel_step 1 "检查发布资产"
   install_deps
   release_version="$(resolve_release_version)"
   download_panel_bundle "$release_version"
@@ -766,7 +924,8 @@ upgrade_panel() {
   write_env
   write_service
   restart_service
-  echo "[DONE] ForwardX panel upgraded to release v$release_version and restarted"
+  echo "[ForwardX] elapsed $(elapsed_seconds)s"
+  echo "[DONE] ForwardX panel upgraded to release v$release_version and restarted in $(elapsed_seconds)s"
 }
 
 uninstall_panel() {

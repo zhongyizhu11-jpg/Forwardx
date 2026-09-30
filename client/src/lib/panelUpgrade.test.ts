@@ -64,7 +64,7 @@ test("pnpm 安装的日志特征也认（原来只有设置页认）", () => {
 test("各个状态给出的进度", () => {
   assert.deepEqual(
     getPanelUpgradeProgress({ status: "idle", mode: "upgrade", logs: [] }),
-    { percent: 0, label: "等待升级", steps: [
+    { percent: 0, label: "等待升级", detail: null, steps: [
       { label: "准备升级", done: false, active: false },
       { label: "检查发布资产", done: false, active: false },
       { label: "下载或拉取资产", done: false, active: false },
@@ -117,4 +117,134 @@ test("升级进度只有一处实现", () => {
   };
   walk(root);
   assert.deepEqual(hits, ["lib/panelUpgrade.ts"], `升级进度的步骤文案出现在多个文件里，说明逻辑又被抄了一份：\n  ${hits.join("\n  ")}`);
+});
+
+/*
+  2.3.398 起脚本自己报步骤。用户在手机上看到的「74% 卡好几分钟」就是老办法的毛病：
+  「Downloading panel bundle」一行同时判完两步，下载、解压、装依赖整段停在同一个数。
+*/
+
+const 新脚本升级中 = (...logs: string[]) => ({
+  status: "running",
+  mode: "upgrade",
+  startedAt: "2026-09-30T08:00:00.000Z",
+  logs: ["[ForwardX] Current version v2.3.397", "[ForwardX] Starting panel 升级 to 2.3.398", ...logs],
+});
+const 时刻 = (seconds: number) => ({ now: Date.parse("2026-09-30T08:00:00.000Z") + seconds * 1000 });
+
+test("按脚本报的 step N/M 算：五步均匀铺开 10 / 28 / 46 / 64 / 82", () => {
+  const first = getPanelUpgradeProgress(新脚本升级中("[ForwardX] step 1/5 检查发布资产"), 时刻(3));
+  assert.equal(first.percent, 10);
+  assert.equal(first.label, "检查发布资产");
+  assert.equal(first.detail, "已用 3 秒");
+  assert.deepEqual(first.steps.map((step) => step.label), ["检查发布资产", "下载面板包", "解压文件", "安装依赖", "重启面板"]);
+  assert.deepEqual(first.steps.map((step) => step.active), [true, false, false, false, false]);
+
+  const percents = [1, 2, 3, 4, 5].map((n) =>
+    getPanelUpgradeProgress(新脚本升级中(...Array.from({ length: n }, (_, i) => `[ForwardX] step ${i + 1}/5 x`)), 时刻(0)).percent,
+  );
+  assert.deepEqual(percents, [10, 28, 46, 64, 82]);
+
+  const docker = getPanelUpgradeProgress(新脚本升级中("[ForwardX] step 1/4 检查镜像", "[ForwardX] step 2/4 拉取镜像"), 时刻(0));
+  assert.equal(docker.label, "拉取镜像");
+  assert.deepEqual(docker.steps.map((step) => step.done), [true, false, false, false]);
+  assert.equal(docker.steps.length, 4);
+});
+
+test("下载那一步的条真的随字节数走，小字写着「已下载 / 总量」", () => {
+  const at = (line: string) => getPanelUpgradeProgress(
+    新脚本升级中("[ForwardX] step 1/5 检查发布资产", "[ForwardX] step 2/5 下载面板包", "[INFO] Downloading panel bundle: https://…", line),
+    时刻(80),
+  );
+  const quarter = at("[ForwardX] progress download 12845056/51380224 25%");
+  assert.equal(quarter.percent, 33); // 28 + 18 * 0.25 = 32.5
+  assert.equal(quarter.label, "下载面板包");
+  assert.equal(quarter.detail, "12.25 MB / 49 MB · 已用 1 分 20 秒");
+  const done = at("[ForwardX] progress download 51380224/51380224 100%");
+  assert.equal(done.percent, 46);
+  // 总长度不知道：百分比不动（不能瞎猜），只说已下载多少
+  const unknown = at("[ForwardX] progress download 4194304/- -%");
+  assert.equal(unknown.percent, 28);
+  assert.equal(unknown.detail, "已下载 4 MB · 已用 1 分 20 秒");
+  // 进入下一步后，上一步留下的进度行不再影响条
+  const extracting = getPanelUpgradeProgress(
+    新脚本升级中("[ForwardX] step 2/5 下载面板包", "[ForwardX] progress download 1/2 50%", "[ForwardX] step 3/5 解压文件"),
+    时刻(0),
+  );
+  assert.equal(extracting.percent, 46);
+  assert.equal(extracting.detail, "已用 0 秒");
+});
+
+test("「依赖未变化，跳过安装」那一步立刻完成，条推到重启那一步", () => {
+  const progress = getPanelUpgradeProgress(
+    新脚本升级中("[ForwardX] step 3/5 解压文件", "[ForwardX] step 4/5 依赖未变化，跳过安装"),
+    时刻(40),
+  );
+  assert.equal(progress.percent, 82);
+  assert.equal(progress.label, "依赖未变化，跳过安装");
+  assert.deepEqual(progress.steps.map((step) => step.done), [true, true, true, true, false]);
+  assert.deepEqual(progress.steps.map((step) => step.active), [false, false, false, false, true]);
+  assert.equal(progress.steps[3].label, "依赖未变化，跳过安装");
+});
+
+test("轮询失败（面板在重启）：文案换成等待恢复，最后一步转圈，百分比不掉", () => {
+  const job = 新脚本升级中("[ForwardX] step 5/5 重启面板", "[ForwardX] restarting panel service (elapsed 95s)");
+  const connected = getPanelUpgradeProgress(job, 时刻(100));
+  assert.equal(connected.percent, 82);
+  assert.equal(connected.label, "重启面板");
+  const lost = getPanelUpgradeProgress(job, { ...时刻(130), disconnected: true });
+  assert.equal(lost.percent, 82);
+  assert.equal(lost.label, "面板正在重启，等待恢复…");
+  assert.equal(lost.detail, "已用 2 分 10 秒");
+  assert.deepEqual(lost.steps.map((step) => step.active), [false, false, false, false, true]);
+
+  // 断线时才走到第 2 步（脚本被杀的那种）：也把最后一步点亮，条不后退
+  const early = getPanelUpgradeProgress(新脚本升级中("[ForwardX] step 2/5 下载面板包"), { ...时刻(10), disconnected: true });
+  assert.equal(early.percent, 82);
+  assert.equal(early.steps[4].active, true);
+
+  // 老脚本的日志同样处理
+  const legacy = getPanelUpgradeProgress(升级中("开始升级", "Downloading panel bundle"), { disconnected: true });
+  assert.equal(legacy.label, "面板正在重启，等待恢复…");
+  assert.equal(legacy.percent, 74);
+  assert.equal(legacy.steps[3].active, true);
+
+  // 不在跑的任务谈不上断线
+  assert.equal(getPanelUpgradeProgress({ status: "error", logs: [] }, { disconnected: true }).label, "升级异常");
+});
+
+test("面板带着新版本回来：100%，标签写用时；服务端给的用时优先", () => {
+  const restarted = getPanelUpgradeProgress(
+    { ...新脚本升级中("[ForwardX] step 5/5 重启面板"), status: "success", restarted: true, restartedAt: "2026-09-30T08:01:42.000Z" },
+  );
+  assert.equal(restarted.percent, 100);
+  assert.equal(restarted.label, "升级完成，用时 1 分 42 秒");
+  assert.equal(restarted.detail, null);
+  assert.ok(restarted.steps.every((step) => step.done));
+
+  const serverElapsed = getPanelUpgradeProgress({ status: "success", mode: "rollback", restarted: true, logs: [] }, { elapsedMs: 59_000 });
+  assert.equal(serverElapsed.label, "回退完成，用时 59 秒");
+
+  // 脚本报了成功但面板还没重启：还是「等待面板恢复」，用时放小字
+  const pending = getPanelUpgradeProgress({ status: "success", startedAt: "2026-09-30T08:00:00.000Z", finishedAt: "2026-09-30T08:00:30.000Z", logs: [] });
+  assert.equal(pending.label, "升级完成，正在等待面板恢复");
+  assert.equal(pending.detail, "用时 30 秒");
+});
+
+test("老脚本的日志（这版升级时跑的还是上一版装好的脚本）照旧按里程碑猜，多了已用时间", () => {
+  const legacy = getPanelUpgradeProgress(
+    { ...升级中("[ForwardX] Starting panel 升级", "[INFO] Downloading panel bundle: https://…"), startedAt: "2026-09-30T08:00:00.000Z" },
+    时刻(200),
+  );
+  assert.equal(legacy.percent, 74);
+  assert.equal(legacy.label, "安装并重启");
+  assert.equal(legacy.detail, "已用 3 分 20 秒");
+  // 没有 startedAt 也不炸，小字留空
+  assert.equal(getPanelUpgradeProgress(升级中("开始升级")).detail, null);
+});
+
+test("坏掉的标记不认：越界的 step、没有 step 的 progress 行", () => {
+  const bad = getPanelUpgradeProgress(新脚本升级中("[ForwardX] step 9/5 x", "[ForwardX] progress download 1/2 50%"), 时刻(0));
+  assert.equal(bad.label, "检查发布资产"); // 退回老办法（Starting panel 判完第 1 步）
+  assert.equal(bad.steps.length, 4);
 });

@@ -12,8 +12,9 @@ import { useNetworkMapModel, type NetworkMapModel } from "@/features/network/net
  *
  * 卡片身子是 /map 那台画布的 mini 模式（NetworkMapMini，lazy 进来，首屏包不带地图引擎）：
  * 真实底图、每台主机一枚带国旗的圆盘、每条隧道一道大圆弧，正常的线上有从入口飞向出口的
- * 彗星、出口端有箭头 —— 一眼看出流量往哪儿走。点哪里都进整页。引擎没到、没有 WebGL、
- * 或者一台主机都没定位时，留着原来的 SVG 示意图，不会比以前差。
+ * 彗星、出口端有箭头 —— 一眼看出流量往哪儿走。图能拖能缩，点主机 / 线只闪一句提示，不跳
+ * 整页 —— 整页的入口只有标题旁的「打开地图」。引擎没到、没有 WebGL、或者一台主机都没定位时，
+ * 留着原来的 SVG 示意图（点主机 / 线去主机页 / 隧道页），不会比以前差。
  *
  * 一台主机都没有时整块不出现：那是「快速开始」的事，一张空地图什么也说不了。
  */
@@ -57,7 +58,7 @@ export function NetworkMapSectionView({ model, onOpen, realMap }: { model: Netwo
       <div className="flex items-center justify-between gap-2 px-4 pt-3.5">
         <span className="flex min-w-0 items-center gap-2.5">
           <span className="text-primary-type font-semibold text-foreground">网络地图</span>
-          {/* 整页地图的入口：能拖能缩、可以点进主机和隧道看详情 */}
+          {/* 整页地图的唯一入口：可以点进主机和隧道看详情、换底图、看告警 */}
           <button
             type="button"
             onClick={() => onOpen("/map")}
@@ -82,7 +83,7 @@ export function NetworkMapSectionView({ model, onOpen, realMap }: { model: Netwo
       </div>
       {realMap ? (
         <Suspense fallback={schematic}>
-          <NetworkMapMini model={model} onOpen={onOpen} fallback={schematic} />
+          <NetworkMapMini model={model} fallback={schematic} />
         </Suspense>
       ) : schematic}
       {model.hiddenLinkCount > 0 ? (

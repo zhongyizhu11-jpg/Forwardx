@@ -114,16 +114,55 @@ export function hostRegionText(host: any) {
   return parts.join(" / ");
 }
 
-export function HostRegionBadge({ host, compact = false }: { host: any; compact?: boolean }) {
+/** 手动指定位置的小标签：卡片、表格、注脚里都用这一个 */
+export function HostGeoManualTag({ className = "" }: { className?: string }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center rounded border border-primary/30 px-1 text-[9px] leading-[14px] text-primary ${className}`}
+      title="位置是手动指定的，自动定位不会覆盖"
+    >
+      手动
+    </span>
+  );
+}
+
+/**
+ * 没定到位时的占位。传了 onSetLocation 就画成「未定位 · 点此设置」，点进去直接到
+ * 位置那一行 —— 「地区获取中」原来会一直挂着，用户不知道能自己填。
+ */
+export function HostUnlocatedText({ onSetLocation, compact = false }: { onSetLocation?: () => void; compact?: boolean }) {
+  if (!onSetLocation) return <span className="min-w-0 truncate">地区获取中</span>;
+  return (
+    <button
+      type="button"
+      className={`min-w-0 truncate text-[var(--fx-warn-text)] underline-offset-2 hover:underline ${compact ? "text-[10px]" : "text-xs"}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onSetLocation();
+      }}
+    >
+      未定位 · 点此设置
+    </button>
+  );
+}
+
+export function HostRegionBadge({ host, compact = false, onSetLocation }: { host: any; compact?: boolean; onSetLocation?: () => void }) {
   const countryCode = String(host.geoCountryCode || "").trim().toLowerCase();
   const flagUrl = /^[a-z]{2}$/.test(countryCode) ? `https://flagcdn.com/24x18/${countryCode}.png` : "";
   const fallbackCode = countryCode.toUpperCase();
   const regionText = hostRegionText(host);
   const hasGeo = !!(flagUrl || regionText);
-  const title = hasGeo ? [fallbackCode, regionText].filter(Boolean).join(" ") : "地区获取中";
+  const title = hasGeo ? [fallbackCode, regionText, host.geoManual ? "（手动指定）" : ""].filter(Boolean).join(" ") : "地区获取中";
+  if (!hasGeo) {
+    return (
+      <span className={`inline-flex min-w-0 max-w-full shrink items-center gap-1 text-muted-foreground ${onSetLocation ? "" : "opacity-70"} ${compact ? "text-[10px]" : "text-xs"}`}>
+        <HostUnlocatedText onSetLocation={onSetLocation} compact={compact} />
+      </span>
+    );
+  }
   return (
     <span
-      className={`inline-flex min-w-0 max-w-full shrink items-center gap-1 text-muted-foreground ${hasGeo ? "" : "opacity-70"} ${compact ? "text-[10px]" : "text-xs"}`}
+      className={`inline-flex min-w-0 max-w-full shrink items-center gap-1 text-muted-foreground ${compact ? "text-[10px]" : "text-xs"}`}
       title={title}
     >
       {flagUrl && (
@@ -143,7 +182,8 @@ export function HostRegionBadge({ host, compact = false }: { host: any; compact?
           <span className="hidden shrink-0 font-mono leading-none">{fallbackCode}</span>
         </>
       )}
-      <span className="min-w-0 truncate">{regionText || "地区获取中"}</span>
+      <span className="min-w-0 truncate">{regionText}</span>
+      {host.geoManual ? <HostGeoManualTag /> : null}
     </span>
   );
 }
