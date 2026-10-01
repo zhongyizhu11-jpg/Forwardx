@@ -1671,6 +1671,46 @@ export const hostsRouter = router({
         for (const hostId of newlyWatched) pushAgentRefresh(hostId, "metrics-watch");
         return { success: true, count: allowed.length };
       }),
+    /*
+      主机列表当前这一页的实时数据，一次拿齐：在线状态、累计流量、最新指标，顺带续上「正在看」。
+
+      原来是 statusSummary / trafficSummary / latestMetricsSummary 三个查询加一个 watchMetrics
+      各自定时，每个响应到了都把整页重渲一遍。合成一个请求、一次渲染。
+      看得见哪些机器只按列表同一套可见范围算，范围外的 id 直接略过，不整个报错。
+    */
+    pageLive: protectedProcedure
+      .input(z.object({
+        hostIds: z.array(z.number().int().positive()).max(100),
+        watch: z.boolean().optional(),
+      }))
+      .query(async ({ input, ctx }) => {
+        const requestedIds = Array.from(new Set(input.hostIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)));
+        const empty = {
+          status: [] as Array<ReturnType<typeof compactHostStatus>>,
+          traffic: [] as Array<ReturnType<typeof compactHostTrafficSummary>>,
+          metrics: [] as Array<ReturnType<typeof compactHostMetricSummary>>,
+        };
+        if (requestedIds.length === 0) return empty;
+        const scope = await visibleHostQueryScope(ctx.user);
+        const status = (await db.getHostStatusRows({ ...scope, hostIds: requestedIds }))
+          .map(compactHostStatus)
+          .filter((host: ReturnType<typeof compactHostStatus>) => host.id > 0);
+        const hostIds = status.map((host: ReturnType<typeof compactHostStatus>) => host.id);
+        if (hostIds.length === 0) return empty;
+        const [trafficRows, metricRows] = await Promise.all([
+          db.getHostTrafficSummary(hostIds),
+          db.getLatestHostMetricRows(hostIds),
+        ]);
+        if (input.watch) {
+          // 手机上 5 秒一轮，默认 6 秒的「正在看」会在两轮之间断掉、每轮都重新叫一次 Agent；放宽到 15 秒。
+          for (const hostId of markHostMetricsWatching(hostIds, 15_000)) pushAgentRefresh(hostId, "metrics-watch");
+        }
+        return {
+          status,
+          traffic: (trafficRows as any[]).map(compactHostTrafficSummary).filter((row) => row.hostId > 0),
+          metrics: (metricRows as any[]).map(compactHostMetricSummary).filter((row) => row.hostId > 0),
+        };
+      }),
     requestAgentUpgrade: adminProcedure
       .input(z.object({ hostId: z.number(), targetVersion: z.string().max(64).nullable().optional() }))
       .mutation(async ({ input }) => {
