@@ -39,6 +39,9 @@ export function NetworkMapSheet({ snap, onSnapChange, rail, open = true, contain
     if (!sheet || rail || dragRef.current) return;
     sheet.style.transition = reduceMotion ? "none" : "transform .38s cubic-bezier(.2,.8,.2,1)";
     sheet.style.transform = `translateY(${sheetSnapY(snap, containerHeight)}px)`;
+    // 抽屉是整个容器那么高、往下平移出去的：平移出去的那截在屏幕外。告诉 CSS 这截多高，
+    // 正文底下留出这么多、「查看详情」贴在看得见的底边上，而不是贴在屏幕外的真底边上
+    sheet.style.setProperty("--nm-sheet-hidden", `${sheetSnapY(snap, containerHeight)}px`);
   }, [snap, containerHeight, rail, reduceMotion]);
 
   useEffect(() => {
@@ -76,6 +79,7 @@ export function NetworkMapSheet({ snap, onSnapChange, rail, open = true, contain
     if (sheet && !latest.current.rail) {
       sheet.style.transition = latest.current.reduceMotion ? "none" : "transform .38s cubic-bezier(.2,.8,.2,1)";
       sheet.style.transform = `translateY(${sheetSnapY(next, latest.current.containerHeight)}px)`;
+      sheet.style.setProperty("--nm-sheet-hidden", `${sheetSnapY(next, latest.current.containerHeight)}px`);
     }
     latest.current.onSnapChange(next);
   };

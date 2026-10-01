@@ -391,7 +391,7 @@
 .nm-tab:hover { color: var(--nm-fg); }
 .nm-tab.is-active { color: var(--nm-fg); font-weight: 600; }
 .nm-tab.is-active::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--nm-accent); box-shadow: 0 0 8px var(--nm-accent); }
-.nm-sheet-body { flex: 1; min-height: 0; overflow: auto; padding: 0 16px calc(24px + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.nm-sheet-body { flex: 1; min-height: 0; overflow: auto; padding: 0 16px calc(24px + var(--nm-sheet-hidden, 0px) + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .nm-sheet[data-snap="peek"] .nm-sheet-body { overflow: hidden; }
 
 .nm-pill { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: var(--nm-card); border: 1px solid var(--nm-line); white-space: nowrap; }
@@ -462,7 +462,8 @@
 .nm-live-card canvas { display: block; width: 100%; height: 34px; margin-top: 6px; }
 
 /* 「查看详情」：总览最底下一个整宽的主按钮；手机上贴着抽屉底边 */
-.nm-cta { position: sticky; bottom: calc(-24px - env(safe-area-inset-bottom, 0px)); margin: 18px -16px 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); background: linear-gradient(180deg, transparent, var(--nm-glass-strong) 30%); }
+/* 贴着看得见的底边：sticky 的底边从正文的内容区算起（扣掉了底部留白），而底部留白 = 24px + 抽屉平移出屏幕的那截（--nm-sheet-hidden），所以往下让回 24px 正好落在看得见的底边上 */
+.nm-cta { position: sticky; bottom: calc(-24px - env(safe-area-inset-bottom, 0px)); z-index: 1; margin: 18px -16px 0; padding: 14px 16px 12px; background: linear-gradient(180deg, transparent, var(--nm-glass-strong) 26%); }
 .nm-primary { width: 100%; height: 42px; border: 0; border-radius: 12px; background: var(--nm-accent); color: #fff !important; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--nm-accent) 70%, transparent); }
 .fx-netmap[data-skin="dark"] .nm-primary { background: #2563eb; }
 .nm-primary:hover { filter: brightness(1.08); }
@@ -575,6 +576,7 @@
   .nm-sheet .nm-handle { display: none; }
   .nm-sheet-grip { cursor: default; padding-top: 12px; }
   .nm-sheet[data-snap="peek"] .nm-sheet-body { overflow: auto; }
+  .nm-sheet { --nm-sheet-hidden: 0px !important; }
   .nm-layout.has-panel .nm-seg, .nm-layout.has-panel .nm-toolbar { right: 416px; }
   .nm-layout.has-panel .nm-pop { right: 484px; }
   .nm-toast { bottom: 32px; }
