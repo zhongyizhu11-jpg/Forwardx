@@ -11,8 +11,8 @@ import { trpc } from "@/lib/trpc";
 import { FORWARD_PROTOCOL_LABELS, TUNNEL_PROTOCOLS, normalizeForwardProtocolSettings } from "@shared/forwardTypes";
 import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { formatAgo } from "@shared/dashboardAttention";
-import { geoCountryNameZh, matchGeoCity } from "@shared/geoCities";
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
+import { countryNameZh, hostPlaceNameZh, resolvePlaceNameZh } from "@shared/placeNameZh";
 import type { RouteMode } from "@shared/routeGroup";
 
 import { buildRouteLines, lineKindOfHealth, lineLegend, readRuleRouteGroup, type LineKind, type NetworkMapRouteLine } from "./networkMapLines";
@@ -37,16 +37,17 @@ function hostNote(host: any, now: number, linkCount: number): string | null {
 }
 
 /**
- * 图上写的城市名：IP 定位给的地区多半是英文（「Tokyo」「Central」），图上要中文 —— 先查随包的城市表
- * （shared/geoCities，中英文名都认）；查不到时，香港、澳门、新加坡这种一城一地的写地区名（「香港」），
- * 别的照原样。查不到也不猜。
+ * 图上写的地名：一律中文（规则在 shared/placeNameZh：手动定位原样 → 城市表 → 坐标最近的城市 → 省 / 州
+ * 对照表 → 国家 / 地区的中文名 → 实在没有才写原文）。IP 定位给的 region 多半是英文的省名
+ * （「Guangdong」「New South Wales」），以前原样写上图，就成了「Guangdong · 香港」。
  */
-export function mapCityName(host: { geoCountryCode?: string | null; geoRegion?: string | null } | null | undefined): string | null {
-  const matched = matchGeoCity(host);
-  if (matched) return matched.name;
-  const code = String(host?.geoCountryCode || "").trim().toUpperCase();
-  if (code === "HK" || code === "MO" || code === "SG") return geoCountryNameZh(code).replace(/^中国/, "");
-  return null;
+export function mapCityName(host: Parameters<typeof hostPlaceNameZh>[0]): string | null {
+  return hostPlaceNameZh(host);
+}
+
+/** 抽屉、提示里那行地区：和图上同一个中文地名；连地名都没有（只有国家代码）时写国家 / 地区名 */
+export function mapRegionText(host: Parameters<typeof hostPlaceNameZh>[0]): string | null {
+  return hostPlaceNameZh(host) || countryNameZh(host?.geoCountryCode) || null;
 }
 
 function hostHealth(host: any): NetworkHealth {
@@ -311,8 +312,8 @@ export function buildNetworkMapModel(input: {
     });
   }
   const nodes: NetworkMapHostNode[] = hosts.map((host) => {
-    // 名字下面那行前面带上地区（「香港 · 2 条线路」）；国旗画在圆盘里
-    const region = String(host?.geoRegion || host?.geoCountryName || "").trim();
+    // 名字下面那行前面带上地区（「香港 · 2 条线路」）；国旗画在圆盘里。地名都换成中文（shared/placeNameZh）
+    const region = mapRegionText(host) || "";
     const linkCount = linkCountByHost.get(Number(host.id)) || 0;
     const note = hostNote(host, now, linkCount);
     const name = String(host.name || host.ip || host.ipv4 || `主机 #${host.id}`);
@@ -326,7 +327,7 @@ export function buildNetworkMapModel(input: {
       // 这台设备画不出的旗（iOS 国行没有 🇹🇼）退回两字母代码，见 lib/flagEmojiSupport
       emoji: countryFlagLabel(host?.geoCountryCode) || null,
       countryCode: String(host?.geoCountryCode || "").trim().toUpperCase() || null,
-      city: mapCityName(host) || region || name,
+      city: mapCityName(host) || name,
       region: region || null,
       ip: String(host?.ipv4 || host?.ip || "").trim() || null,
       isOnline: host?.isOnline === true || host?.isOnline === 1,
@@ -377,7 +378,7 @@ export function buildNetworkMapModel(input: {
     if (!target) {
       const place = readTargetGeo(geoByKey.get(rule.targetKey));
       const countryCode = place.countryCode;
-      const city = mapCityName({ geoCountryCode: place.countryCode, geoRegion: place.city }) || place.city || rule.targetIp;
+      const city = resolvePlaceNameZh({ countryCode: place.countryCode, region: place.city, lat: place.geo?.lat, lng: place.geo?.lng }) || rule.targetIp;
       target = {
         key: rule.targetKey,
         address: rule.targetIp,
