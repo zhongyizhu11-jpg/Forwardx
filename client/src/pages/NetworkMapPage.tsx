@@ -34,8 +34,9 @@ import {
   NETWORK_MAP_AMAP_TERMS_NOTE,
   NETWORK_MAP_BASE_LAYERS,
   NETWORK_MAP_BASE_LAYER_ORDER,
-  NETWORK_MAP_LAYER_STORAGE_KEY,
-  resolveNetworkMapBaseLayer,
+  browserLayerStorage,
+  readNetworkMapBaseLayer,
+  rememberNetworkMapBaseLayer,
   type NetworkMapBaseLayerId,
 } from "@shared/networkMapBaseLayers";
 import { describeNetworkHealth } from "@shared/networkHealth";
@@ -107,10 +108,6 @@ function useFullBleedFrame(ref: React.RefObject<HTMLDivElement | null>) {
   return frame;
 }
 
-function readStoredLayer(): unknown {
-  try { return window.localStorage.getItem(NETWORK_MAP_LAYER_STORAGE_KEY); } catch { return null; }
-}
-
 type IconName = "layers" | "fit" | "flow" | "filter" | "server" | "link" | "alert" | "pulse" | "back";
 const ICON_PATHS: Record<IconName, ReactNode> = {
   layers: <><path d="M12 3 2.5 8 12 13l9.5-5L12 3z" /><path d="m2.5 12.5 9.5 5 9.5-5" /><path d="m2.5 17 9.5 5 9.5-5" /></>,
@@ -160,14 +157,14 @@ function NetworkMapPageBody() {
   }, [frame]);
 
   // ---- 底图：记住的优先，默认标准地图（夜晚的地球）；地图永远深色，抽屉跟面板主题 ----
-  const [baseLayer, setBaseLayer] = useState<NetworkMapBaseLayerId>(() => resolveNetworkMapBaseLayer(readStoredLayer()));
+  const [baseLayer, setBaseLayer] = useState<NetworkMapBaseLayerId>(() => readNetworkMapBaseLayer(browserLayerStorage()));
   const [menu, setMenu] = useState<"layers" | "filter" | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const chooseLayer = (id: NetworkMapBaseLayerId) => {
     setBaseLayer(id);
     setMenu(null);
-    try { window.localStorage.setItem(NETWORK_MAP_LAYER_STORAGE_KEY, id); } catch { /* 存不了就下次再默认 */ }
+    rememberNetworkMapBaseLayer(browserLayerStorage(), id);
   };
   useEffect(() => {
     if (!menu) return undefined;

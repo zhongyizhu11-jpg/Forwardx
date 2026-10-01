@@ -6,8 +6,12 @@ import {
   NETWORK_MAP_BASE_LAYERS,
   NETWORK_MAP_BASE_LAYER_ORDER,
   NETWORK_MAP_EXTRA_BASE_LAYERS,
+  NETWORK_MAP_LAYER_STORAGE_KEY,
+  NETWORK_MAP_LEGACY_LAYER_STORAGE_KEYS,
   NETWORK_MAP_TEXTURE_URLS,
   defaultNetworkMapBaseLayer,
+  readNetworkMapBaseLayer,
+  rememberNetworkMapBaseLayer,
   resolveNetworkMapBaseLayer,
   textureTileUrl,
 } from "./networkMapBaseLayers";
@@ -51,4 +55,30 @@ test("默认是夜晚的地球；老版本记住的值换成现在的叫法，�
   assert.equal(resolveNetworkMapBaseLayer("sat"), "sat");
   assert.equal(resolveNetworkMapBaseLayer("grid"), "grid");
   assert.equal(resolveNetworkMapBaseLayer("osm"), "night");
+});
+
+function memoryStorage(initial: Record<string, string> = {}) {
+  const data = new Map(Object.entries(initial));
+  return {
+    data,
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => { data.set(key, value); },
+    removeItem: (key: string) => { data.delete(key); },
+  };
+}
+
+test("记住的底图换了带版本的新键：旧键里的「卫星」不再算数，所有人先回到标准地图一次", () => {
+  assert.notEqual(NETWORK_MAP_LAYER_STORAGE_KEY, NETWORK_MAP_LEGACY_LAYER_STORAGE_KEYS[0]);
+  const storage = memoryStorage({ "forwardx.networkMap.baseLayer": "sat" });
+  assert.equal(readNetworkMapBaseLayer(storage), "night");
+  assert.equal(storage.data.has("forwardx.networkMap.baseLayer"), false, "旧键读到就删");
+  // 之后亲手点的记在新键下，下次（首页和整页都）读得到
+  rememberNetworkMapBaseLayer(storage, "sat");
+  assert.equal(storage.data.get(NETWORK_MAP_LAYER_STORAGE_KEY), "sat");
+  assert.equal(readNetworkMapBaseLayer(storage), "sat");
+  // 存储不可用：当没记过
+  assert.equal(readNetworkMapBaseLayer(null), "night");
+  const broken = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); }, removeItem: () => { throw new Error("denied"); } };
+  assert.equal(readNetworkMapBaseLayer(broken), "night");
+  rememberNetworkMapBaseLayer(broken, "grid");
 });

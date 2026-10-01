@@ -8,7 +8,7 @@ import { usePageVisible } from "@/hooks/usePageVisible";
 import { groupCoverageBox, groupPlaceLabel, groupTipText, hostTipText, insetLeader, insetSizes, linkTipText, matchInsetGroup, nextInsetGrowStage, pickInsetSlots, placeInsets, unlocatedHostCount, type InsetGrowStage, type InsetLayoutReport, type InsetPlacement, type MiniLayoutReport } from "@/features/network/networkMapMini";
 import { pickHubNode } from "@/features/network/networkMapLines";
 import type { NetworkMapModel } from "@/features/network/networkMapModel";
-import { NETWORK_MAP_LAYER_STORAGE_KEY, resolveNetworkMapBaseLayer, type NetworkMapBaseLayerId } from "@shared/networkMapBaseLayers";
+import { browserLayerStorage, readNetworkMapBaseLayer, type NetworkMapBaseLayerId } from "@shared/networkMapBaseLayers";
 
 import { NetworkMapMiniChrome } from "./NetworkMapMiniChrome";
 
@@ -32,17 +32,13 @@ import { NetworkMapMiniChrome } from "./NetworkMapMiniChrome";
  * 圈整个滚出图外就不拉引线；用户放大到这组在屏幕上散开了，小窗和圈一起藏起来，缩回去再出现。
  * 画布自己记着用户动没动过（userMoved），动过就不再自动框，这里显示「回到全览」。
  *
- * 底图跟 /map 一样：用户在整页选过的优先（同一个 localStorage 键），没选过就是标准地图（夜晚的地球）；
+ * 底图跟 /map 一样：用户在整页选过的优先（同一个 localStorage 键，readNetworkMapBaseLayer），没选过就是标准地图（夜晚的地球）；
  * 图这块永远深色（.nm-surface），卡片的标题行跟面板主题。高德瓦片拉不下来时悄悄切回标准地图
  * （主图和小窗一起切）—— 首页上不弹提示，那是整页的事。
  */
 const NO_PADDING = { top: 0, bottom: 0, left: 0, right: 0 };
 /** 点一下的提示停多久 */
 const TIP_MS = 2500;
-
-function readStoredLayer(): unknown {
-  try { return window.localStorage.getItem(NETWORK_MAP_LAYER_STORAGE_KEY); } catch { return null; }
-}
 
 /** 框好时定下来的一扇小窗：哪几台、叫什么、摆哪 —— 用户拖图时这些不变。growKey：放大状态机按它记 */
 type InsetSlot = { hostIds: number[]; label: string; placement: InsetPlacement; growKey: string; largeSize: { w: number; h: number } };
@@ -56,7 +52,7 @@ export default function NetworkMapMini({ model, fallback }: {
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const desktop = useMediaQuery("(min-width: 900px)");
   const pageVisible = usePageVisible();
-  const [baseLayer, setBaseLayer] = useState<NetworkMapBaseLayerId>(() => resolveNetworkMapBaseLayer(readStoredLayer()));
+  const [baseLayer, setBaseLayer] = useState<NetworkMapBaseLayerId>(() => readNetworkMapBaseLayer(browserLayerStorage()));
   const skin = resolvedTheme;
   const [unavailable, setUnavailable] = useState(false);
   /** 主图最近一次布局（拖图时每帧一份）：圈、引线、「回到全览」都看它 */
