@@ -11,6 +11,7 @@ import { trpc } from "@/lib/trpc";
 import { FORWARD_PROTOCOL_LABELS, TUNNEL_PROTOCOLS, normalizeForwardProtocolSettings } from "@shared/forwardTypes";
 import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { formatAgo } from "@shared/dashboardAttention";
+import { geoCountryNameZh, matchGeoCity } from "@shared/geoCities";
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
 import type { RouteMode } from "@shared/routeGroup";
 
@@ -33,6 +34,19 @@ function hostNote(host: any, now: number, linkCount: number): string | null {
   }
   if (host?.lastHeartbeat == null && host?.isOnline !== true) return "还没接入";
   return linkCount > 0 ? `${linkCount} 条线路` : "在线";
+}
+
+/**
+ * 图上写的城市名：IP 定位给的地区多半是英文（「Tokyo」「Central」），图上要中文 —— 先查随包的城市表
+ * （shared/geoCities，中英文名都认）；查不到时，香港、澳门、新加坡这种一城一地的写地区名（「香港」），
+ * 别的照原样。查不到也不猜。
+ */
+export function mapCityName(host: { geoCountryCode?: string | null; geoRegion?: string | null } | null | undefined): string | null {
+  const matched = matchGeoCity(host);
+  if (matched) return matched.name;
+  const code = String(host?.geoCountryCode || "").trim().toUpperCase();
+  if (code === "HK" || code === "MO" || code === "SG") return geoCountryNameZh(code).replace(/^中国/, "");
+  return null;
 }
 
 function hostHealth(host: any): NetworkHealth {
@@ -312,7 +326,7 @@ export function buildNetworkMapModel(input: {
       // 这台设备画不出的旗（iOS 国行没有 🇹🇼）退回两字母代码，见 lib/flagEmojiSupport
       emoji: countryFlagLabel(host?.geoCountryCode) || null,
       countryCode: String(host?.geoCountryCode || "").trim().toUpperCase() || null,
-      city: region || name,
+      city: mapCityName(host) || region || name,
       region: region || null,
       ip: String(host?.ipv4 || host?.ip || "").trim() || null,
       isOnline: host?.isOnline === true || host?.isOnline === 1,
@@ -363,7 +377,7 @@ export function buildNetworkMapModel(input: {
     if (!target) {
       const place = readTargetGeo(geoByKey.get(rule.targetKey));
       const countryCode = place.countryCode;
-      const city = place.city || rule.targetIp;
+      const city = mapCityName({ geoCountryCode: place.countryCode, geoRegion: place.city }) || place.city || rule.targetIp;
       target = {
         key: rule.targetKey,
         address: rule.targetIp,

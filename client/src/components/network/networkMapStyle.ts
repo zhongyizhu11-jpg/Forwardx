@@ -109,14 +109,22 @@ export function rasterVisibility(active: NetworkMapBaseLayerId): Record<string, 
 }
 
 /**
+ * 地球图只有 4096 像素宽，放大到 6 级以上就是一片糊掉的色块（首页的小窗常在 8、9 级）。所以放大时让它
+ * 慢慢淡掉，底下自绘的深色陆地和国界慢慢显出来：远看是夜晚的地球，近看是干净的深色地图。
+ */
+export function zoomFade(from: number, to: number) {
+  return ["interpolate", ["linear"], ["zoom"], 5, from, 8, to];
+}
+
+/**
  * 栅格的压色：
- *   夜光图  原样略提对比，透明度 0.94 —— 黑色的海透出一点底下的深海军蓝，城市灯光不受影响
+ *   夜光图  提对比和饱和度，城市灯光更橙更亮；透明度 0.84 —— 黑色的海透出底下的深海军蓝
  *   卫星图  压暗到四成多、降饱和：白天的图太亮，线路和光点压不住
  *   高德    反相（brightness-min > max）再转 180° 色相：白底街道图变成深底亮路，颜色还是原来的意思
  */
-export function rasterTonePaint(rasterId: string): Record<string, number> {
-  if (rasterId === TEXTURE_LAYER_IDS.night) return { "raster-opacity": 0.94, "raster-contrast": 0.12, "raster-saturation": 0.1, "raster-brightness-min": 0, "raster-brightness-max": 1 };
-  if (rasterId === TEXTURE_LAYER_IDS.day) return { "raster-opacity": 1, "raster-contrast": 0.05, "raster-saturation": -0.3, "raster-brightness-min": 0, "raster-brightness-max": 0.46 };
+export function rasterTonePaint(rasterId: string): Record<string, unknown> {
+  if (rasterId === TEXTURE_LAYER_IDS.night) return { "raster-opacity": zoomFade(0.84, 0.3), "raster-contrast": 0.32, "raster-saturation": 0.35, "raster-brightness-min": 0, "raster-brightness-max": 1 };
+  if (rasterId === TEXTURE_LAYER_IDS.day) return { "raster-opacity": zoomFade(1, 0.35), "raster-contrast": 0.05, "raster-saturation": -0.3, "raster-brightness-min": 0, "raster-brightness-max": 0.46 };
   return { "raster-opacity": 1, "raster-contrast": -0.1, "raster-saturation": -0.65, "raster-brightness-min": 0.9, "raster-brightness-max": 0.06, "raster-hue-rotate": 180 };
 }
 
@@ -214,8 +222,9 @@ export function buildNetworkMapStyle(active: NetworkMapBaseLayerId, countriesUrl
       { id: NETWORK_MAP_LAYERS.flow, type: "line", source: NETWORK_MAP_SOURCES.flows, paint: { "line-color": colors.flow, "line-width": 1.2, "line-opacity": dimOpacityExpression(0.75), "line-dasharray": [1.5, 2.5] } },
       { id: NETWORK_MAP_LAYERS.linkHit, type: "line", source: NETWORK_MAP_SOURCES.links, paint: { "line-color": kindColor, "line-width": 14, "line-opacity": 0 } },
       { id: NETWORK_MAP_LAYERS.linkGlow, type: "line", source: NETWORK_MAP_SOURCES.links, layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": kindColor, "line-width": ["match", ["get", "kind"], "main", 9, 7], "line-blur": 6, "line-opacity": glowOpacity() } },
-      { id: NETWORK_MAP_LAYERS.linkDashed, type: "line", source: NETWORK_MAP_SOURCES.links, filter: ["!=", ["get", "kind"], "main"], layout: { "line-join": "round" }, paint: { "line-color": kindColor, "line-width": 1.6, "line-opacity": dimOpacityExpression(["match", ["get", "kind"], "backup", 0.75, 1]), "line-dasharray": [3, 2.5] } },
       { id: NETWORK_MAP_LAYERS.linkMain, type: "line", source: NETWORK_MAP_SOURCES.links, filter: ["==", ["get", "kind"], "main"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-gradient": linkGradient(colors), "line-width": 2, "line-opacity": dimOpacityExpression(1) } },
+      // 虚线压在主线路上面：出问题的线、备用线和主线路走同一段时不能被盖住
+      { id: NETWORK_MAP_LAYERS.linkDashed, type: "line", source: NETWORK_MAP_SOURCES.links, filter: ["!=", ["get", "kind"], "main"], layout: { "line-join": "round" }, paint: { "line-color": kindColor, "line-width": 1.6, "line-opacity": dimOpacityExpression(["match", ["get", "kind"], "backup", 0.75, 1]), "line-dasharray": [3, 2.5] } },
       { id: NETWORK_MAP_LAYERS.waypoints, type: "circle", source: NETWORK_MAP_SOURCES.waypoints, paint: { "circle-radius": 2.6, "circle-color": colors.backup, "circle-opacity": dimOpacityExpression(0.85), "circle-stroke-width": 1, "circle-stroke-color": base.water, "circle-stroke-opacity": dimOpacityExpression(0.9) } },
       // 光点：一圈淡淡的光 + 一颗近白的芯
       { id: NETWORK_MAP_LAYERS.particleGlow, type: "circle", source: NETWORK_MAP_SOURCES.particles, paint: { "circle-radius": 6, "circle-color": colors.main, "circle-opacity": 0.45, "circle-blur": 1 } },
@@ -228,11 +237,13 @@ export function buildNetworkMapStyle(active: NetworkMapBaseLayerId, countriesUrl
 export function baseLayerPaintPatch(active: NetworkMapBaseLayerId) {
   const base = NETWORK_MAP_BASE_LAYERS[active];
   const raster = rasterVisibility(active);
+  // 地球图上：远看不画陆地、国界淡淡一道（夜光）或不画（卫星）；放大到地球图糊掉时陆地和国界接上来
+  const landOpacity: unknown = base.land ? 1 : base.texture ? zoomFade(0, 1) : 0;
+  const borderOpacity: unknown = base.land ? 1 : base.texture === "night" ? zoomFade(0.5, 1) : base.texture === "day" ? zoomFade(0, 1) : 0;
   return {
-    landOpacity: base.land ? 1 : 0,
-    borderWidth: base.borderWidth,
-    // 夜光图上的国界只是帮着认国家，压到一半；暗黑网格上它就是陆地的轮廓
-    borderOpacity: base.land ? 1 : base.borderWidth > 0 ? 0.5 : 0,
+    landOpacity,
+    borderWidth: base.texture ? 0.5 : base.borderWidth,
+    borderOpacity,
     graticule: (base.graticule ? "visible" : "none") as "visible" | "none",
     raster,
     rasterPaint: Object.fromEntries(Object.keys(raster).map((id) => [id, rasterTonePaint(id)])),

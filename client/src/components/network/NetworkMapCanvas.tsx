@@ -948,6 +948,32 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const arcPx: PixelPoint[] = [];
     live.linkFeatureIds = [];
     live.waypointFeatureIds = [];
+    /*
+      同一对主机之间不止一条线（主线路和它的备用隧道、一来一回两条隧道、线路组的路径）：同一条大圆弧
+      上叠好几条，虚线压在实线上根本看不出来。第二条起往两边各弯开一点（屏幕上 14px 一档），
+      弯的方向按主机 id 小的那头定，一来一回的两条不会弯到同一边。
+    */
+    const pairSlots = new Map<string, number>();
+    const bend = (points: LngLat[], from: number, to: number): LngLat[] => {
+      const key = from < to ? `${from}-${to}` : `${to}-${from}`;
+      const slot = pairSlots.get(key) ?? 0;
+      pairSlots.set(key, slot + 1);
+      if (slot === 0 || points.length < 3) return points;
+      const offset = Math.ceil(slot / 2) * 14 * (slot % 2 === 1 ? 1 : -1) * (from < to ? 1 : -1);
+      const px = points.map((point) => map.project(point as [number, number]));
+      const first = px[0];
+      const last = px[px.length - 1];
+      const length = Math.hypot(last.x - first.x, last.y - first.y) || 1;
+      const nx = -(last.y - first.y) / length;
+      const ny = (last.x - first.x) / length;
+      return px.map((point, index) => {
+        const o = Math.sin((Math.PI * index) / (px.length - 1)) * offset;
+        const at = map.unproject([point.x + nx * o, point.y + ny * o]);
+        // unproject 可能把经度绕回 [-180, 180]：跨太平洋的弧要和原来那点在同一份世界里
+        const lng = at.lng + Math.round((points[index][0] - at.lng) / 360) * 360;
+        return [lng, at.lat] as LngLat;
+      });
+    };
     /** 一条线（隧道或线路组的一条路径）按经过的主机一跳一跳画 */
     const drawLine = (line: LineRef, hosts: readonly number[], prefix: string, latencyText: string | null, label: string) => {
       const capIndex = Math.floor((hosts.length - 2) / 2);
@@ -972,7 +998,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         const a = displayLngLat(keyA);
         const b = displayLngLat(keyB);
         if (!a || !b) { flush(); continue; }
-        const points = greatCircleArc(a, b);
+        const points = bend(greatCircleArc(a, b), hosts[index], hosts[index + 1]);
         const fid = `${prefix}:${index}`;
         live.linkFeatureIds.push({ fid, ...line });
         // 虚线按主机 id 小的那头起笔：同一跳上一来一回的两条虚线相位对得上、重成一条，

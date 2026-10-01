@@ -13,7 +13,7 @@ import {
   overallAvailability,
   pickHubNode,
 } from "./networkMapLines";
-import { buildNetworkMapModel, readTargetGeo } from "./networkMapModel";
+import { buildNetworkMapModel, mapCityName, readTargetGeo } from "./networkMapModel";
 
 const now = 1_700_000_000_000;
 const host = (id: number, name: string, extra: Record<string, unknown> = {}) => ({ id, name, isOnline: true, lastHeartbeat: now - 1000, geoCountryCode: "HK", geoRegion: name, geoLatitudeMicro: 22e6 + id * 1e6, geoLongitudeMicro: 114e6 + id * 1e6, ...extra });
@@ -133,4 +133,11 @@ test("落地目标的定位：认服务端 lookupAddressGeo 那一行（微度�
   assert.deepEqual(readTargetGeo({ latitude: 1.3, longitude: 103.8, countryCode: "SG" }), { geo: { lat: 1.3, lng: 103.8 }, countryCode: "SG", city: "" });
   assert.equal(readTargetGeo(null).geo, null);
   assert.equal(readTargetGeo({ geoLatitudeMicro: null, geoLongitudeMicro: null }).geo, null);
+});
+
+test("图上的城市名：查城市表写中文；香港、新加坡这种一城一地写地区名；查不到不猜", () => {
+  assert.equal(mapCityName({ geoCountryCode: "JP", geoRegion: "Tokyo" }), "东京");
+  assert.equal(mapCityName({ geoCountryCode: "HK", geoRegion: "Central" }), "香港");
+  assert.equal(mapCityName({ geoCountryCode: "SG", geoRegion: "Singapore" }), "新加坡");
+  assert.equal(mapCityName({ geoCountryCode: "XX", geoRegion: "Nowhere" }), null);
 });

@@ -185,7 +185,8 @@ export function parseMapOpenQuery(search: string): { view: "node"; id: number } 
 }
 
 /** 页头那句「5 台主机 · 3 条线路 · 2 项需要关注」 */
-export function overviewHeadline(model: Pick<NetworkMapModel, "nodes" | "linkTotal">, alertCount: number): { main: string; attention: string | null } {
-  const main = `${model.nodes.length} 台主机 · ${model.linkTotal} 条线路`;
+export function overviewHeadline(model: Pick<NetworkMapModel, "nodes" | "linkTotal"> & { routes?: readonly unknown[] }, alertCount: number): { main: string; attention: string | null } {
+  // 线路数和统计卡「链路线路」同一个数：隧道 + 线路组里画成线的路径
+  const main = `${model.nodes.length} 台主机 · ${model.linkTotal + (model.routes?.length ?? 0)} 条线路`;
   return { main, attention: alertCount > 0 ? `${alertCount} 项需要关注` : null };
 }

@@ -508,7 +508,7 @@ function NetworkMapPageBody() {
             </div>
           ) : null}
           <div className={`nm-focus-mask${focus ? " is-show" : ""}`} aria-hidden="true" />
-          <div className="nm-hud-tl">
+          <div className={`nm-hud-tl${compare ? " is-compare" : ""}`}>
             {compare && currentLink ? (
               <div className="nm-compare nm-glass nm-reserved">
                 <button type="button" className="nm-back-chip" onClick={fitAll} aria-label={`退出主备线路对比：${currentLink.name}`}><Icon name="back" /><span>{currentLink.name}</span></button>
@@ -554,7 +554,7 @@ function NetworkMapPageBody() {
             <button type="button" className={menu === "filter" || lineFilter !== "all" ? "is-active" : ""} aria-expanded={menu === "filter"} onClick={() => setMenu((open) => (open === "filter" ? null : "filter"))}><Icon name="filter" />筛选{lineFilter !== "all" ? <i className="nm-badge" aria-hidden="true" /> : null}</button>
           </div>
           {menu === "layers" ? (
-            <div ref={menuRef} className="nm-pop nm-glass" role="menu" aria-label="底图" style={{ top: rail ? 64 : 12 }}>
+            <div ref={menuRef} className="nm-pop nm-glass" role="menu" aria-label="底图" style={{ top: rail ? 64 : 146 }}>
               <div className="nm-menu-title">底图</div>
               {NETWORK_MAP_ALL_BASE_LAYERS.map((id) => {
                 const layer = NETWORK_MAP_BASE_LAYERS[id];
@@ -570,7 +570,7 @@ function NetworkMapPageBody() {
             </div>
           ) : null}
           {menu === "filter" ? (
-            <div ref={menuRef} className="nm-pop nm-glass" role="menu" aria-label="筛选线路" style={{ top: rail ? 190 : 140 }}>
+            <div ref={menuRef} className="nm-pop nm-glass" role="menu" aria-label="筛选线路" style={{ top: rail ? 190 : 270 }}>
               <div className="nm-menu-title">只看这些线</div>
               {LINE_FILTER_OPTIONS.map((option) => (
                 <button key={option.id} type="button" role="menuitemradio" aria-checked={lineFilter === option.id} className="nm-opt" onClick={() => { setLineFilter(option.id); setMenu(null); }}>
