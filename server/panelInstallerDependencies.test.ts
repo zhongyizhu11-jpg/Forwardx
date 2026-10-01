@@ -117,6 +117,7 @@ test("upgrading an install made by the pre-fingerprint script skips pnpm when th
       fs.writeFileSync(path.join(appDir, "node_modules/.modules.yaml"), "layoutVersion: 5\n");
     },
     body: `${fakePnpm}
+cd "$APP_DIR"
 seed_dependency_fingerprint
 echo "--- new bundle extracted: only the version changed"
 node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));p.version="2.3.399";fs.writeFileSync("package.json",JSON.stringify(p))'
