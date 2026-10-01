@@ -1128,8 +1128,21 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         const target = live.map;
         if (!target) return;
         const nextZoom = Math.max(6.3, target.getZoom() + 2.2);
-        // 小图不飞：只回调（卡片提示这组是谁）；整页上簇心已经是显示坐标（高德下转过 GCJ-02 的），直接飞，不走 api.flyTo 再转一次
-        if (!compact()) {
+        if (isMini()) {
+          // 首页小图：点一组就把这组的主机整组框进画面（不再开局部放大小窗）。往簇心飞一个固定级数
+          // 会把组里离得远的（台北）甩出去，所以按组员实际坐标框；坐标完全相同的几台仍是一枚带数量的环。
+          const points = members.flatMap((member) => {
+            if (member.kind !== "host") return [];
+            const node = live.props.model.nodes.find((item) => item.id === member.id);
+            return node?.geo ? [display([node.geo.lng, node.geo.lat] as LngLat)] : [];
+          });
+          const bounds = points.length > 1 ? boundsForPoints(points) : null;
+          markUserMoved();
+          if (bounds) target.fitBounds(bounds, { maxZoom: 9, padding: 56, duration: live.props.reduceMotion ? 0 : 900, essential: true });
+          else if (live.props.reduceMotion) target.jumpTo({ center: center as [number, number], zoom: nextZoom });
+          else target.flyTo({ center: center as [number, number], zoom: nextZoom, speed: 0.9, curve: 1.42, maxDuration: 1800, essential: true });
+        } else if (!isInset()) {
+          // 整页：簇心已经是显示坐标（高德下转过 GCJ-02 的），直接飞，不走 api.flyTo 再转一次
           leaveAutoFit();
           if (live.props.reduceMotion) target.jumpTo({ center: center as [number, number], zoom: nextZoom });
           else target.flyTo({ center: center as [number, number], zoom: nextZoom, speed: 0.9, curve: 1.42, maxDuration: 1800, essential: true });
