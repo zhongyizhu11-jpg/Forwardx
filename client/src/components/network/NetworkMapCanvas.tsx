@@ -18,6 +18,7 @@ import { readCssColor } from "./mapCharts";
 import {
   NETWORK_MAP_LAYERS,
   NETWORK_MAP_SOURCES,
+  baseColorsFor,
   baseLayerPaintPatch,
   buildNetworkMapStyle,
   kindColorExpression,
@@ -162,7 +163,7 @@ const PARTICLES_LONG = 3;
 const PARTICLES_LONG_PX = 220;
 
 const FALLBACK_COLORS: NetworkMapLineColors = { main: "#3b82f6", backup: "#cbd5e1", degraded: "#f59e0b", down: "#ef4444", flow: "#a855f7", particle: "#e0f2fe" };
-const FALLBACK_BASE: NetworkMapBaseColors = { water: "#050b16", land: "#0c1625", border: "rgba(56,189,248,0.22)", graticule: "rgba(34,211,238,0.08)" };
+const FALLBACK_BASE: NetworkMapBaseColors = { water: "#050b16", land: "#0c1625", border: "rgba(56,189,248,0.22)", graticule: "rgba(34,211,238,0.08)", nightWater: "#000213", nightLand: "#060a1d" };
 
 /** 状态 → 落地目标、组、延迟牌子用的那几档 CSS 类 */
 function healthClass(health: NetworkHealth) {
@@ -191,6 +192,8 @@ function readBaseColors(container: HTMLElement | null): NetworkMapBaseColors {
     land: readCssColor(container, "--nm-land", FALLBACK_BASE.land),
     border: readCssColor(container, "--nm-border-line", FALLBACK_BASE.border),
     graticule: readCssColor(container, "--nm-graticule", FALLBACK_BASE.graticule),
+    nightWater: readCssColor(container, "--nm-night-water", FALLBACK_BASE.nightWater!),
+    nightLand: readCssColor(container, "--nm-night-land", FALLBACK_BASE.nightLand!),
   };
 }
 
@@ -297,8 +300,11 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
   /** 小窗要框住的主机；主图是全部 */
   const framedHostIds = () => (isInset() && live.props.fitHostIds ? new Set(live.props.fitHostIds) : null);
 
-  // ---- 坐标：底图决定转不转 ----
-  const display = (lngLat: LngLat): LngLat => (NETWORK_MAP_BASE_LAYERS[live.props.baseLayer].amap ? wgs84ToGcj02(lngLat[0], lngLat[1]) : lngLat);
+  /** 小窗只画矢量的陆地和水（不画地球图、不画高德瓦片）：7 ~ 9 级的地球图是一片糊 */
+  const baseOptions = () => ({ vectorOnly: isInset() });
+
+  // ---- 坐标：底图决定转不转（小窗不画高德瓦片，底下是 WGS-84 的矢量陆地，不转）----
+  const display = (lngLat: LngLat): LngLat => (!isInset() && NETWORK_MAP_BASE_LAYERS[live.props.baseLayer].amap ? wgs84ToGcj02(lngLat[0], lngLat[1]) : lngLat);
 
   const layoutPoints = (): LayoutPoint[] => {
     const { model, showFlows } = live.props;
@@ -1313,7 +1319,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
   const applyBaseLayer = (baseLayer: NetworkMapBaseLayerId) => {
     const map = live.map;
     if (!map || !live.loaded) return;
-    const patch = baseLayerPaintPatch(baseLayer);
+    const patch = baseLayerPaintPatch(baseLayer, baseOptions());
     map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-opacity", patch.landOpacity);
     map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-width", patch.borderWidth);
     map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-opacity", patch.borderOpacity);
@@ -1331,7 +1337,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     if (!map || !live.loaded) return;
     const holder = containerRef.current?.parentElement ?? null;
     live.colors = readColors(holder);
-    const base = readBaseColors(holder);
+    // 地球图（夜光 / 卫星）淡出后接上来的矢量底图、小窗：用夜光那套近黑的水和陆地；暗黑网格、高德用自己的
+    const base = baseColorsFor(live.props.baseLayer, readBaseColors(holder), baseOptions());
     map.setPaintProperty(NETWORK_MAP_LAYERS.background, "background-color", base.water);
     map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-color", base.land);
     map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-color", base.border);
@@ -1361,7 +1368,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     try {
       map = new maplibregl.Map({
         container,
-        style: buildNetworkMapStyle(live.props.baseLayer, COUNTRIES_URL, live.colors, baseColors) as any,
+        style: buildNetworkMapStyle(live.props.baseLayer, COUNTRIES_URL, live.colors, baseColors, baseOptions()) as any,
         center: [110, 25],
         zoom: 1.6,
         // 小图在 340px 宽的手机卡片里要框住横跨太平洋的线，0.5 级放不下（世界 724px 宽），放开到 0 级
