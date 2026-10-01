@@ -66,7 +66,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { App as CapacitorApp } from "@capacitor/app";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { IosTabBar } from "@/components/ios/TabBar";
 import { MobileNavContext, type MobileNavEntry } from "@/components/ios/navigationContext";
 import { MORE_TAB_PATH, pickTabBarItems } from "@/components/ios/tabBarModel";
@@ -98,6 +98,12 @@ import { navigateAfterPrefetch, prefetchRoute, prefetchRoutesWhenIdle } from "@/
 import { docsUrl } from "@/lib/docsLinks";
 
 const TWO_FACTOR_SETUP_SECONDS = 5 * 60;
+/*
+  外壳上的配置类查询（站点信息、侧栏页面、商店开关、公告、2FA/TG 绑定状态……）
+  一天也变不了几次，改了的地方都会 invalidate。全局默认 5 秒就过期，
+  别的页面一挂同 key 的查询就要重拉一轮，这里放宽到 5 分钟。
+*/
+const SHELL_META_STALE_MS = 5 * 60 * 1000;
 const SITE_LOGO_CACHE_KEY = "forwardx.siteLogoDataUrl";
 type SidebarNavItem = {
   icon: LucideIcon;
@@ -305,12 +311,41 @@ function readPanelUpgradeSession(): PanelUpgradeSession | null {
   }
 }
 
+/*
+  外壳常驻：App 在登录后的路由外面挂一次 <AppShell>，换页时侧边栏、标签栏、
+  弹窗状态和外壳的十几个查询都不再拆了重建；页面代码还在下载时，转圈只出现在
+  内容区里。
+
+  各页面仍然自己包一层 <DashboardLayout> —— 在 AppShell 里面它只原样渲染
+  children；不在里面（未登录、或者某个没登记进 App 外壳路由表的页面）时
+  它退回原来的整套外壳，行为不变。
+*/
+const AppShellContext = createContext(false);
+
+/** 常驻外壳。只有已登录时才画；未登录交给页面自己（公开首页 / 跳登录）。 */
+export function AppShell({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (!user) return null;
+  return (
+    <AppShellContext.Provider value={true}>
+      <SidebarProvider className="workspace-layout">
+        <DashboardLayoutContent>
+          {children}
+        </DashboardLayoutContent>
+      </SidebarProvider>
+    </AppShellContext.Provider>
+  );
+}
+
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const insideShell = useContext(AppShellContext);
   const { loading, user } = useAuth();
+
+  if (insideShell) return <>{children}</>;
 
   if (loading) return null;
 
@@ -321,13 +356,7 @@ export default function DashboardLayout({
     return null;
   }
 
-  return (
-    <SidebarProvider className="workspace-layout">
-      <DashboardLayoutContent>
-        {children}
-      </DashboardLayoutContent>
-    </SidebarProvider>
-  );
+  return <AppShell>{children}</AppShell>;
 }
 
 function DashboardLayoutContent({
@@ -340,6 +369,19 @@ function DashboardLayoutContent({
   const { state, toggleSidebar, isMobile, openMobile, setOpenMobile } = useSidebar();
   const openMobileRef = useRef(openMobile);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  /*
+    外壳常驻以后换页不再整页重挂，原来顺带「归零」的东西要自己做：滚动位置回到
+    顶部（不然从规则页底部点到主机页会落在半中间），手机抽屉和账户菜单收起。
+    只改 ?tab= 不算换页；首次挂载也不动。
+  */
+  const shellPathRef = useRef(location);
+  useLayoutEffect(() => {
+    if (shellPathRef.current === location) return;
+    shellPathRef.current = location;
+    setOpenMobile(false);
+    setAccountMenuOpen(false);
+    if (!window.location.hash) window.scrollTo(0, 0);
+  }, [location, setOpenMobile]);
   const [commandOpen, setCommandOpen] = useState(false);
   const commandOpenRef = useRef(commandOpen);
   const accountMenuOpenRef = useRef(accountMenuOpen);
@@ -354,16 +396,19 @@ function DashboardLayoutContent({
     return () => window.clearTimeout(timer);
   }, []);
   const { data: publicInfo } = trpc.system.publicInfo.useQuery(undefined, {
+    staleTime: SHELL_META_STALE_MS,
     enabled: !!user,
     refetchOnWindowFocus: false,
     retry: false,
   });
   const { data: customSidebarPages = [] } = trpc.system.sidebarPages.useQuery(undefined, {
+    staleTime: SHELL_META_STALE_MS,
     enabled: !!user,
     refetchOnWindowFocus: false,
     retry: false,
   });
   const { data: pluginSidebarPages = [] } = trpc.plugins.sidebarPages.useQuery(undefined, {
+    staleTime: SHELL_META_STALE_MS,
     enabled: isAdmin && publicInfo?.pluginsEnabled === true,
     refetchOnWindowFocus: false,
     retry: false,
@@ -378,6 +423,7 @@ function DashboardLayoutContent({
     staleTime: 60 * 1000,
   });
   const { data: storeStatus } = trpc.plans.storeStatus.useQuery(undefined, {
+    staleTime: SHELL_META_STALE_MS,
     enabled: !!user && !isAdmin,
     refetchOnWindowFocus: false,
     retry: false,
@@ -392,7 +438,7 @@ function DashboardLayoutContent({
     enabled: !!user && !isAdmin,
     refetchOnWindowFocus: false,
     retry: false,
-    staleTime: 5 * 60 * 1000,
+    staleTime: SHELL_META_STALE_MS,
   });
   /**
    * 只在提醒档位覆盖到的天数里显示，跟邮件 / TG 用的是同一份配置 —— 三处各有
@@ -403,16 +449,19 @@ function DashboardLayoutContent({
     && expiryDaysLeft >= 0
     && expiryDaysLeft <= Math.max(0, ...(expiryNotice?.reminderDays || [7]));
   const { data: popupAnnouncement } = trpc.announcements.popup.useQuery(undefined, {
+    staleTime: SHELL_META_STALE_MS,
     enabled: !!user,
     refetchOnWindowFocus: false,
     retry: false,
   });
   const { data: upgradeAnnouncement, isFetched: upgradeAnnouncementFetched } = trpc.announcements.upgradePopup.useQuery(undefined, {
+    staleTime: SHELL_META_STALE_MS,
     enabled: !!user && isAdmin,
     refetchOnWindowFocus: false,
     retry: false,
   });
   const { data: telegramStatus } = trpc.telegram.status.useQuery(undefined, {
+    staleTime: SHELL_META_STALE_MS,
     enabled: !!user,
     refetchInterval: (query) => {
       const status = query.state.data;
@@ -784,6 +833,7 @@ function DashboardLayoutContent({
   });
 
   const { data: avatarQuota } = trpc.users.avatarQuota.useQuery(undefined, {
+    staleTime: SHELL_META_STALE_MS,
     enabled: !!user,
     refetchOnWindowFocus: false,
     retry: false,
@@ -879,6 +929,7 @@ function DashboardLayoutContent({
   };
 
   const { data: twoFactorStatus } = trpc.auth.twoFactorStatus.useQuery(undefined, {
+    staleTime: SHELL_META_STALE_MS,
     enabled: !!user,
     refetchOnWindowFocus: false,
     retry: false,

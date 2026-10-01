@@ -15,10 +15,13 @@ import { AttentionSection } from "@/features/dashboard/AttentionSection";
 import { NetworkMapSection } from "@/features/dashboard/NetworkMapSection";
 import { QuickStartSection } from "@/features/dashboard/QuickStartSection";
 import { TrafficSurface, type TrafficChartPoint } from "@/features/dashboard/TrafficSurface";
-import { useEffect, useMemo, useState } from "react";
+import { lazy, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
-import PublicHome, { CustomPublicHome } from "./PublicHome";
+
+// 未登录才用得到的落地页不进入口包；外面 App 的 Suspense 兜着。
+const PublicHome = lazy(() => import("./PublicHome"));
+const CustomPublicHome = lazy(() => import("./PublicHome").then((mod) => ({ default: mod.CustomPublicHome })));
 
 const LOGIN_WELCOME_TOAST_KEY = "forwardx.loginWelcome";
 

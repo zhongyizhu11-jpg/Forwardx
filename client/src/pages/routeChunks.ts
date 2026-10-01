@@ -52,12 +52,26 @@ export function prefetchRoute(path: string): Promise<unknown> | undefined {
   return pending;
 }
 
+type NetworkInformationLike = { saveData?: boolean; effectiveType?: string };
+
+/**
+ * 省流量模式或慢网（3G 及以下）不做空闲批量预取：那一批加起来四百多 KB（gzip），
+ * 在按流量计费的手机上是替用户花钱，慢网上还会跟首屏的数据请求抢带宽。
+ * 点击 / 悬停时的单页预取不受影响。
+ */
+export function shouldSkipIdlePrefetch(connection: NetworkInformationLike | null | undefined) {
+  if (!connection) return false;
+  if (connection.saveData === true) return true;
+  return connection.effectiveType === "slow-2g" || connection.effectiveType === "2g" || connection.effectiveType === "3g";
+}
+
 /**
  * 空闲时把一批页面拉下来。用 requestIdleCallback：首屏的数据请求和渲染先走，
  * 页面包排在它们后面 —— 预取是为了让第二屏快，不能让第一屏慢。
  */
 export function prefetchRoutesWhenIdle(paths: string[]) {
   if (typeof window === "undefined") return () => undefined;
+  if (shouldSkipIdlePrefetch((navigator as any).connection)) return () => undefined;
   const run = () => { for (const path of paths) void prefetchRoute(path); };
   const idle = (window as any).requestIdleCallback as undefined | ((cb: () => void, opts?: { timeout: number }) => number);
   if (idle) {

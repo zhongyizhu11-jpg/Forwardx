@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { prefetchRoute, routeChunks } from "./routeChunks";
+import { prefetchRoute, routeChunks, shouldSkipIdlePrefetch } from "./routeChunks";
+
+test("省流量或 3G 及以下不做空闲批量预取，其余照常", () => {
+  assert.equal(shouldSkipIdlePrefetch(undefined), false, "不支持 navigator.connection 的浏览器照常预取");
+  assert.equal(shouldSkipIdlePrefetch({ effectiveType: "4g" }), false);
+  assert.equal(shouldSkipIdlePrefetch({ effectiveType: "4g", saveData: true }), true);
+  for (const effectiveType of ["slow-2g", "2g", "3g"]) {
+    assert.equal(shouldSkipIdlePrefetch({ effectiveType }), true, effectiveType);
+  }
+});
 
 /**
  * 预取还在路上时用户就点了：navigateAfterPrefetch 要等的是**那一次**下载。
