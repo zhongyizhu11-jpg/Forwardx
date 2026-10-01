@@ -10,7 +10,7 @@ import { isClusterDimmed, isFlowDimmed, isHostDimmed, isRouteDimmed, isTargetDim
 import { wgs84ToGcj02 } from "@shared/gcj02";
 import { NETWORK_MAP_BASE_LAYERS, type NetworkMapBaseLayerId, type NetworkMapSkin } from "@shared/networkMapBaseLayers";
 import { advanceCometPhase, buildCometPath, cometPeriodMs, mercatorUnitsPerPixel, pointAt, type CometPath } from "@shared/networkMapComet";
-import { boundsForPoints, computeMapLayout, fitViewToBoxes, greatCircleArc, unionBox, type FitItem, type LayoutPoint, type LngLat, type MapLayout, type MapLayoutOptions, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
+import { boundsForPoints, computeFanLayout, computeMapLayout, fitViewToBoxes, greatCircleArc, unionBox, type FitItem, type LayoutPoint, type LngLat, type MapLayout, type MapLayoutOptions, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
 
 import { registerEarthTiles } from "./earthTiles";
@@ -337,7 +337,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       const signature = [node.name, node.city, tone, subline].join("\u0001");
       let entry = live.hostMarkers.get(node.id);
       if (!entry) {
-        const element = el(`<div class="nm-mk nm-mk-host" data-host="${node.id}"><button type="button" class="nm-mk-disc"><i class="nm-mk-pulse"></i><i class="nm-mk-glyph"></i></button><div class="nm-mk-name"><b class="nm-mk-city"></b><span class="nm-mk-lat"></span></div></div>`);
+        // nm-mk-tether：小窗里扇开的主机从圆盘拉回真实位置的那根细线（排在圆盘前面，被圆盘盖住起点）
+        const element = el(`<div class="nm-mk nm-mk-host" data-host="${node.id}"><i class="nm-mk-tether" hidden></i><button type="button" class="nm-mk-disc"><i class="nm-mk-pulse"></i><i class="nm-mk-glyph"></i></button><div class="nm-mk-name"><b class="nm-mk-city"></b><span class="nm-mk-lat"></span></div></div>`);
         const disc = element.querySelector(".nm-mk-disc") as HTMLButtonElement;
         disc.addEventListener("click", (event) => { event.stopPropagation(); live.props.onSelectNode(node.id); });
         const marker = new maplibregl.Marker({ element, anchor: "center" }).setLngLat(display([node.geo.lng, node.geo.lat])).addTo(map);
@@ -351,8 +352,9 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         entry.element.dataset.tone = tone;
         const disc = entry.element.querySelector(".nm-mk-disc") as HTMLElement;
         disc.setAttribute("aria-label", [node.name, node.city !== node.name ? node.city : null, subline || null].filter(Boolean).join("，"));
-        // 图上写城市（「东京」），主机名在抽屉、提示和读屏文字里
-        (entry.element.querySelector(".nm-mk-city") as HTMLElement).textContent = node.city;
+        // 图上写城市（「东京」），主机名在抽屉、提示和读屏文字里。小窗例外：窗的标题已经写了这几台在哪，
+        // 窗里同一个地方常有两三台（同机房、IP 定位到同一个城市中心），写城市就是两个一样的「香港」—— 写主机名
+        (entry.element.querySelector(".nm-mk-city") as HTMLElement).textContent = isInset() ? node.name : node.city;
         const lat = entry.element.querySelector(".nm-mk-lat") as HTMLElement;
         lat.textContent = subline;
         lat.hidden = !subline;
@@ -861,13 +863,31 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     // 有一台远，窗放不大）照样并成一枚小 pill 画在真正的组心，不再错开成一圈 —— 圈上的名字互相压、被窗边切掉
     const flagOf = new Map(model.nodes.map((node) => [`h${node.id}`, node.emoji]));
     const layoutOptions: MapLayoutOptions = mini ? miniGroupLayoutOptions(flagOf) : {};
-    live.layout = computeMapLayout(layoutPoints(), (lngLat) => map.project(lngLat as [number, number]), zoom, layoutOptions);
+    const projectPoint = (lngLat: LngLat) => map.project(lngLat as [number, number]);
+    if (isInset()) {
+      // 小窗：每台都画出来、各带名字 —— 屏幕上比圆盘还近的（坐标一模一样的也算）围着真实位置扇开（2 台并排、
+      // 3 ~ 6 台一圈），细线连回真实位置；超过 6 台才留一枚带数量的 pill。扇出去的圆盘不出窗（标题条下面）
+      const container = map.getContainer();
+      const margin = FIT_INSET.inset;
+      const bounds: PixelBox = { x: margin.left, y: margin.top, w: Math.max(0, container.clientWidth - margin.left - margin.right), h: Math.max(0, container.clientHeight - margin.top - margin.bottom) };
+      live.layout = computeFanLayout(layoutPoints(), projectPoint, { discSize: MINI_DISC_R * 2, bounds });
+    } else live.layout = computeMapLayout(layoutPoints(), projectPoint, zoom, layoutOptions);
     const layout = live.layout;
     for (const [id, entry] of live.hostMarkers) {
       const position = layout.pos[`h${id}`];
       if (!position) continue;
       entry.element.classList.toggle("is-hidden", position.clusterId !== null);
       entry.marker.setLngLat(position.lngLat as [number, number]).setOffset(position.offset);
+      // 扇开的：从圆盘心拉一根细线回真实位置（offset 的反方向），末端一个小点 —— 一眼看出「这几台在同一个地方」
+      const tether = entry.element.querySelector(".nm-mk-tether") as HTMLElement | null;
+      if (tether) {
+        const length = position.fanned ? Math.hypot(position.offset[0], position.offset[1]) : 0;
+        tether.hidden = length < 1;
+        if (length >= 1) {
+          tether.style.width = `${length.toFixed(1)}px`;
+          tether.style.transform = `rotate(${Math.atan2(-position.offset[1], -position.offset[0]).toFixed(4)}rad)`;
+        }
+      }
     }
     for (const [key, entry] of live.targetMarkers) {
       const position = layout.pos[`t:${key}`];

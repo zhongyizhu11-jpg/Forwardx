@@ -318,6 +318,13 @@
 .nm-mini .nm-mk-name.is-side, .nm-mini .nm-mk-cluster .nm-mk-name.is-side { top: 0; bottom: auto; transform: translateY(-50%); text-align: left; }
 /* 小窗里摆不干净的名字不画（点的提示里有名字）：宁可少一个名字，也不画成被窗边切掉的半截或压在别人身上 */
 .nm-mini .nm-mk-name.is-off { visibility: hidden; }
+/*
+  小窗里扇开的主机（坐标相同 / 挨得比圆盘还近的几台围着真实位置并排或围一圈）：从圆盘心拉一根 1px 的
+  细线回真实位置，末端一个小点。长度和角度由画布写（width + rotate），起点被圆盘盖住
+*/
+.nm-mk-tether { position: absolute; left: 0; top: -0.5px; height: 1px; transform-origin: 0 50%; background: rgba(186, 230, 253, 0.55); pointer-events: none; }
+.nm-mk-tether[hidden] { display: none; }
+.nm-mk-tether::after { content: ""; position: absolute; right: -1.5px; top: -1px; width: 3px; height: 3px; border-radius: 50%; background: rgba(224, 242, 254, 0.85); }
 /* 小窗边上路过的、不归这扇窗框的主机：环露不全就整个不画（线照样伸出窗外） */
 .nm-mini .nm-mk.is-clipped { visibility: hidden; }
 .nm-mini .nm-mk-country { font-size: 9.5px; }

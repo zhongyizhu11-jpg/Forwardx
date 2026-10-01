@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { arrowTriangleAlong, boundsForPoints, boxOverlapArea, boxesIntersect, computeMapLayout, fitViewToBoxes, greatCircleArc, leaderBetweenBoxes, unionBox, type FitItem, type LngLat, type PixelBox } from "./networkMapGeometry";
+import { arrowTriangleAlong, boundsForPoints, boxOverlapArea, boxesIntersect, computeFanLayout, computeMapLayout, defaultFanRingRadius, fitViewToBoxes, greatCircleArc, leaderBetweenBoxes, unionBox, type FitItem, type LngLat, type PixelBox } from "./networkMapGeometry";
 
 test("大圆弧：两端落在起止点上，中点往高纬度弯，跨日界线不绕地球", () => {
   const pts = greatCircleArc([113.264, 23.129], [-118.243, 34.052], 40);
@@ -230,4 +230,107 @@ test("小窗：mode spread + 自定义环半径，只有叠在一起的点才错
   assert.equal(layout.groups.length, 0);
   assert.equal(Math.round(Math.hypot(...layout.pos.a.offset)), 22);
   assert.deepEqual(layout.pos.c.offset, [0, 0]);
+});
+
+// ---- 小窗里的扇开（computeFanLayout）----
+
+/** 画出来的位置：投影点 + 偏移 */
+function drawnAt(layout: ReturnType<typeof computeFanLayout>, key: string, lngLat: LngLat) {
+  const p = project(lngLat);
+  const offset = layout.pos[key].offset;
+  return { x: p.x + offset[0], y: p.y + offset[1] };
+}
+
+function assertNoOverlap(layout: ReturnType<typeof computeFanLayout>, points: Array<{ key: string; lngLat: LngLat }>, disc: number) {
+  const drawn = points.filter((point) => layout.pos[point.key].clusterId === null).map((point) => ({ key: point.key, ...drawnAt(layout, point.key, point.lngLat) }));
+  for (let i = 0; i < drawn.length; i += 1) {
+    for (let j = i + 1; j < drawn.length; j += 1) {
+      const d = Math.hypot(drawn[i].x - drawn[j].x, drawn[i].y - drawn[j].y);
+      assert.ok(d >= disc - 0.2, `${drawn[i].key} 和 ${drawn[j].key} 压在一起（${d.toFixed(1)}px）`);
+    }
+  }
+  return drawn;
+}
+
+test("小窗扇开：坐标一模一样的两台左右并排、隔 22px，id 小的在左，细线连回真实位置", () => {
+  // 用户的拓扑：香港两台同坐标、广东两台同坐标
+  const hk: LngLat = [11.4, -2.2];
+  const gd: LngLat = [11.3, -2.3 - 6];
+  const points = [
+    { key: "h5", lngLat: hk },
+    { key: "h1", lngLat: hk },
+    { key: "h6", lngLat: gd },
+    { key: "h2", lngLat: gd },
+  ];
+  const layout = computeFanLayout(points, project, { discSize: 20 });
+  assert.deepEqual(layout.groups, [], "没有 pill");
+  for (const point of points) {
+    assert.equal(layout.pos[point.key].clusterId, null);
+    assert.equal(layout.pos[point.key].fanned, true);
+    assert.deepEqual(layout.pos[point.key].lngLat, point.lngLat, "lngLat 还是真实位置（细线的另一头）");
+  }
+  const h1 = drawnAt(layout, "h1", hk);
+  const h5 = drawnAt(layout, "h5", hk);
+  assert.ok(h1.x < h5.x, "id 小的在左");
+  assert.ok(Math.abs(h5.x - h1.x - 22) < 0.3 && Math.abs(h5.y - h1.y) < 0.3, "并排、隔 22px");
+  // 两台的中点就是真实位置
+  const truth = project(hk);
+  assert.ok(Math.abs((h1.x + h5.x) / 2 - truth.x) < 0.3 && Math.abs((h1.y + h5.y) / 2 - truth.y) < 0.3);
+  assertNoOverlap(layout, points, 20);
+  // 输入顺序打乱结果不变
+  const again = computeFanLayout([...points].reverse(), project, { discSize: 20 });
+  assert.deepEqual(again, layout);
+});
+
+test("小窗扇开：3 ~ 6 台围一圈（半径 16 ~ 22px，从正上方顺时针按 id），谁都不压谁", () => {
+  for (let count = 3; count <= 6; count += 1) {
+    const at: LngLat = [5, 5];
+    const points = Array.from({ length: count }, (_, index) => ({ key: `h${10 + index}`, lngLat: at }));
+    const layout = computeFanLayout(points, project, { discSize: 20 });
+    assert.equal(layout.groups.length, 0, `${count} 台不并成 pill`);
+    const drawn = assertNoOverlap(layout, points, 20);
+    const truth = project(at);
+    for (const item of drawn) assert.ok(Math.abs(Math.hypot(item.x - truth.x, item.y - truth.y) - defaultFanRingRadius(count)) < 0.3, `${count} 台：半径 ${defaultFanRingRadius(count)}`);
+    assert.ok(defaultFanRingRadius(count) >= 16 && defaultFanRingRadius(count) <= 22);
+    // 第一台（id 最小）在正上方
+    const first = drawn.find((item) => item.key === "h10")!;
+    assert.ok(Math.abs(first.x - truth.x) < 0.3 && first.y < truth.y);
+  }
+});
+
+test("小窗扇开：超过 6 台留一枚带数量的 pill；离得远的不动", () => {
+  const at: LngLat = [0, 0];
+  const points = [
+    ...Array.from({ length: 7 }, (_, index) => ({ key: `h${index + 1}`, lngLat: at })),
+    { key: "h99", lngLat: [20, 0] as LngLat },
+  ];
+  const layout = computeFanLayout(points, project, { discSize: 20 });
+  assert.equal(layout.groups.length, 1);
+  assert.equal(layout.groups[0].keys.length, 7);
+  assert.equal(layout.pos.h99.clusterId, null);
+  assert.deepEqual(layout.pos.h99.offset, [0, 0]);
+  assert.equal(layout.pos.h99.fanned, undefined);
+});
+
+test("小窗扇开：扇出去压到旁边一台就并成一组重扇；贴边的整组挪进框里", () => {
+  // 两台同坐标 + 一台在 25px 外：两台并排后右边那台离它只剩 14px，三台并成一组围一圈
+  const points = [
+    { key: "h1", lngLat: [10, 10] as LngLat },
+    { key: "h2", lngLat: [10, 10] as LngLat },
+    { key: "h3", lngLat: [12.5, 10] as LngLat },
+  ];
+  const layout = computeFanLayout(points, project, { discSize: 20 });
+  assertNoOverlap(layout, points, 20);
+  assert.ok(points.every((point) => layout.pos[point.key].fanned), "三台扇成一圈");
+  // 贴着框的左上角：整组挪进 bounds
+  const bounds = { x: 0, y: 0, w: 160, h: 120 };
+  const corner: LngLat = [0.2, -0.2];
+  const edge = [{ key: "h7", lngLat: corner }, { key: "h8", lngLat: corner }, { key: "h9", lngLat: corner }, { key: "h4", lngLat: corner }];
+  const inside = computeFanLayout(edge, project, { discSize: 20, bounds });
+  const drawn = assertNoOverlap(inside, edge, 20);
+  for (const item of drawn) {
+    assert.ok(item.x - 10 >= bounds.x - 0.2 && item.y - 10 >= bounds.y - 0.2 && item.x + 10 <= bounds.x + bounds.w + 0.2 && item.y + 10 <= bounds.y + bounds.h + 0.2, `${item.key} 在框里 (${item.x}, ${item.y})`);
+  }
+  // 细线的另一头还是真实位置
+  for (const item of edge) assert.deepEqual(inside.pos[item.key].lngLat, corner);
 });
