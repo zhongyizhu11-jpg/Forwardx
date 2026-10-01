@@ -3,7 +3,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { NetworkMapMiniChrome } from "./NetworkMapMiniChrome";
-import { NetworkMapSectionView, buildNetworkMapModel } from "./NetworkMapSection";
+import { NetworkMapSectionView, buildNetworkMapModel, legendItems } from "./NetworkMapSection";
 
 const now = 1_700_000_000_000;
 const host = (id: number, name: string, geo?: [number, number]) => ({
@@ -11,7 +11,7 @@ const host = (id: number, name: string, geo?: [number, number]) => ({
   ...(geo ? { geoLatitudeMicro: Math.round(geo[0] * 1e6), geoLongitudeMicro: Math.round(geo[1] * 1e6) } : {}),
 });
 
-test("卡片：没有画布（node 里没有 WebGL）时照样画出标题、入口、图例和 SVG 示意图", () => {
+test("卡片：没有画布（node 里没有 WebGL）时照样画出标题、图例和 SVG 示意图，没有任何去整页的入口", () => {
   const model = buildNetworkMapModel({
     now,
     hosts: [host(1, "HK", [22.32, 114.17]), host(2, "JP", [35.68, 139.65]), host(3, "无坐标")],
@@ -23,14 +23,22 @@ test("卡片：没有画布（node 里没有 WebGL）时照样画出标题、入
   const html = renderToStaticMarkup(<NetworkMapSectionView model={model} onOpen={() => {}} realMap={false} />);
   assert.match(html, /aria-label="网络地图"/);
   assert.match(html, />网络地图</);
-  assert.match(html, /打开地图/);
-  // 图例是四类线（主线路 / 备用 / 降级 / 中断），只列有的；数字单独一个等宽、正文色的 span
+  // 整页地图已经去掉：标题旁不再有「打开地图」，也没有任何指向 /map 的东西
+  assert.doesNotMatch(html, /打开地图/);
+  assert.doesNotMatch(html, /\/map/);
+  // 图例：主线路 / 降级 / 中断一直列（0 也写），备用有才列；数字单独一个等宽、正文色的 span
   assert.match(html, /主线路 <span[^>]*tabular-nums[^>]*>1<\/span>/);
+  assert.match(html, /降级 <span[^>]*>0<\/span>/);
+  assert.match(html, /中断 <span[^>]*>0<\/span>/);
   assert.match(html, /备用 <span[^>]*>1<\/span>/);
-  assert.doesNotMatch(html, /中断 <span/);
   assert.match(html, /<svg/, "兜底是 SVG 示意图");
   assert.match(html, /aria-label="网络地图：3 台主机，2 条线路"/);
   assert.doesNotMatch(html, /nm-mini/, "没要真地图就不出现小图的壳");
+});
+
+test("图例：备用为 0 时不列，另外三类按 主线路 → 降级 → 中断 排", () => {
+  assert.deepEqual(legendItems({ main: 2, backup: 0, degraded: 1, down: 0 }).map((item) => `${item.label} ${item.count}`), ["主线路 2", "降级 1", "中断 0"]);
+  assert.deepEqual(legendItems({ main: 0, backup: 3, degraded: 0, down: 1 }).map((item) => item.label), ["主线路", "降级", "中断", "备用"]);
 });
 
 test("卡片：一条线也没有时写一句怎么连，经过看不到的主机的隧道说明没画出来", () => {
@@ -55,15 +63,7 @@ test("小图上漂浮的东西：+ / − 常在，「回到全览」只在用户
   assert.match(moved, /<button type="button" class="nm-mini-reset">回到全览<\/button>/);
   assert.match(moved, /class="nm-mini-tip"[^>]*>HK entry 01 · 香港 · 在线</);
   assert.match(moved, /2 台未定位/);
-  // 小图上点哪儿都不跳整页：这里只有 type=button，没有 href，也没有 /map
+  // 小图上点哪儿都不跳：这里只有 type=button，没有 href
   assert.doesNotMatch(moved, /href=/);
-  assert.doesNotMatch(moved, /\/map/);
   assert.equal((moved.match(/<button/g) || []).length, 3);
-});
-
-test("卡片：整页的入口只有标题旁的「打开地图」", () => {
-  const model = buildNetworkMapModel({ now, hosts: [host(1, "HK", [22.32, 114.17]), host(2, "JP", [35.68, 139.65])], tunnels: [{ id: 1, name: "live", mode: "forwardx", isEnabled: true, entryHostId: 1, exitHostId: 2 }] });
-  const html = renderToStaticMarkup(<NetworkMapSectionView model={model} onOpen={() => {}} realMap={false} />);
-  assert.equal((html.match(/打开地图/g) || []).length, 1);
-  assert.doesNotMatch(html, /href="\/map/);
 });

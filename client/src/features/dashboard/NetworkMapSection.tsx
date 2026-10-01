@@ -2,20 +2,19 @@ import { lazy, Suspense } from "react";
 
 import { NetworkMap } from "@/components/network/NetworkMap";
 import { detectWebGL, locatedHostCount, shouldRenderRealMap } from "@/features/network/networkMapMini";
-import { LINE_KINDS, LINE_KIND_SHORT, type LineKind } from "@/features/network/networkMapLines";
+import { LINE_KIND_SHORT, type LineKind } from "@/features/network/networkMapLines";
 import { useNetworkMapModel, type NetworkMapModel } from "@/features/network/networkMapModel";
 
 /**
- * 首页的「网络地图」：这个账号看得到的主机和它们之间的隧道，画在真地图上。
+ * 首页的「网络地图」：这个账号看得到的主机和它们之间的隧道，画在一张简单的真地图上。
  *
- * 模型（buildNetworkMapModel / useNetworkMapModel）在 features/network/networkMapModel.ts，
- * 和 /map 整页共用一份 —— 这里红的，整页上也是红的。
+ * 这是面板里唯一的一张地图（整页 /map 已经去掉）：夜晚的地球做底图、每台主机在真实坐标上一圈
+ * 发光的环、每条隧道一道大圆弧，颜色说状态（蓝主线路、橙虚线降级、红虚线中断），出口那头一个
+ * 小箭头，正常的线上有往出口流的光点 —— 一眼看出谁连着谁、哪条断了。标题行右边是图例（主线路 /
+ * 降级 / 中断，备用有才列），各几条。图能拖能缩，点主机 / 线 / 组只闪一句提示，哪儿都不跳。
  *
- * 卡片身子是 /map 那台画布的 mini 模式（NetworkMapMini，lazy 进来，首屏包不带地图引擎）：
- * 夜晚的地球做底图、每台主机一圈发光的环、每条隧道一道霓虹大圆弧，主线路上有往出口流的光点
- * —— 一眼看出流量往哪儿走。标题行右边是四类线的图例（主线路 / 备用 / 降级 / 中断，各几条）。图能拖能缩，点主机 / 线只闪一句提示，不跳
- * 整页 —— 整页的入口只有标题旁的「打开地图」。引擎没到、没有 WebGL、或者一台主机都没定位时，
- * 留着原来的 SVG 示意图（点主机 / 线去主机页 / 隧道页），不会比以前差。
+ * 地图引擎（NetworkMapMini，lazy 进来，首屏包不带）没到、没有 WebGL、或者一台主机都没定位时，
+ * 留着原来的 SVG 示意图（点主机 / 线去主机页 / 隧道页）。
  *
  * 一台主机都没有时整块不出现：那是「快速开始」的事，一张空地图什么也说不了。
  */
@@ -39,10 +38,20 @@ export function NetworkMapSection({ enabled = true, onOpen }: { enabled?: boolea
   return <NetworkMapSectionView model={model} onOpen={onOpen} realMap={shouldRenderRealMap({ webgl: detectWebGL(), locatedHosts: locatedHostCount(model) })} />;
 }
 
+/**
+ * 图例列哪几类线：主线路、降级、中断三类一直列（0 条也写 0 —— 「没有中断」本身就是要看的信息），
+ * 备用（停用 / 还没探出结论的隧道）只在有的时候列，不然它只是一个永远是 0 的格子。
+ */
+const LEGEND_ORDER: LineKind[] = ["main", "degraded", "down"];
+export function legendItems(lines: Record<LineKind, number>): Array<{ key: LineKind; label: string; count: number }> {
+  const kinds: LineKind[] = lines.backup > 0 ? [...LEGEND_ORDER, "backup"] : LEGEND_ORDER;
+  return kinds.map((kind) => ({ key: kind, label: LINE_KIND_SHORT[kind], count: lines[kind] }));
+}
+
 /** 卡片本身：拿到模型就能画，node 里 renderToStaticMarkup 也能测（realMap 为 false 时不碰引擎） */
 export function NetworkMapSectionView({ model, onOpen, realMap }: { model: NetworkMapModel; onOpen: (href: string) => void; realMap: boolean }) {
-  // 图例：和整页同样的四类线（networkMapLines），各几条；只列有的
-  const legendItems = LINE_KINDS.map((kind) => ({ key: kind, label: LINE_KIND_SHORT[kind], count: model.lines[kind] })).filter((item) => item.count > 0);
+  const hasLines = model.lines.main + model.lines.backup + model.lines.degraded + model.lines.down > 0;
+  const legend = hasLines ? legendItems(model.lines) : [];
   const schematic = (
     <NetworkMap
       nodes={model.nodes}
@@ -57,26 +66,12 @@ export function NetworkMapSectionView({ model, onOpen, realMap }: { model: Netwo
       aria-label="网络地图"
       className="fx-netmap-card fx-card-face flex min-w-0 flex-col overflow-hidden"
     >
-      {/*
-        图例放在标题那一行右边（「● 正常 2  ● 离线 1」），不再在图下面单占一行：
-        「N 台主机 · N 条线路」页头已经说过，这里说的是颜色各代表什么、各几条。
-      */}
+      {/* 标题 + 图例一行：图例说的是颜色各代表什么、各几条（「N 台主机 · N 条线路」页头已经说过） */}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-4 pt-3.5">
-        <span className="flex shrink-0 items-center gap-2.5 whitespace-nowrap">
-          <span className="text-primary-type font-semibold text-foreground">网络地图</span>
-          {/* 整页地图的唯一入口：可以点进主机和隧道看详情、换底图、看告警 */}
-          <button
-            type="button"
-            onClick={() => onOpen("/map")}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-[var(--fx-stroke-weak)] bg-[var(--fx-l3-control-fill)] px-2 py-0.5 text-meta font-medium text-[var(--fx-accent)] hover:bg-[var(--fx-hover)]"
-          >
-            打开地图
-            <span aria-hidden="true">›</span>
-          </button>
-        </span>
-        {legendItems.length > 0 ? (
+        <span className="shrink-0 whitespace-nowrap text-primary-type font-semibold text-foreground">网络地图</span>
+        {legend.length > 0 ? (
           <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-0.5 text-meta text-[var(--fx-text-secondary)]">
-            {legendItems.map((item) => (
+            {legend.map((item) => (
               // 一小截线样 + 名字 + 等宽的数：和图上的线同一套画法（主线路实线、其余虚线），一眼扫得到「几条」
               <span key={item.key} className="inline-flex items-center gap-1.5">
                 <span aria-hidden="true" className="h-0.5 w-3.5 rounded-full" style={LEGEND_SWATCH[item.key]} />
@@ -95,7 +90,7 @@ export function NetworkMapSectionView({ model, onOpen, realMap }: { model: Netwo
       ) : schematic}
       {model.hiddenLinkCount > 0 ? (
         <div className="px-4 pb-3 text-meta tabular-nums text-muted-foreground">{model.hiddenLinkCount} 条经过你看不到的主机，没有画出来</div>
-      ) : legendItems.length === 0 ? (
+      ) : !hasLines ? (
         <div className="px-4 pb-3 text-meta text-muted-foreground">还没有线路。把两台主机连起来，这里就会出现第一条线。</div>
       ) : null}
     </section>
