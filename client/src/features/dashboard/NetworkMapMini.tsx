@@ -7,7 +7,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePageVisible } from "@/hooks/usePageVisible";
 import { groupCoverageBox, groupPlaceLabel, groupTipText, hostTipText, insetLeader, insetSizes, linkTipText, matchInsetGroup, nextInsetGrowStage, pickInsetSlots, placeInsets, unlocatedHostCount, type InsetGrowStage, type InsetLayoutReport, type InsetPlacement, type MiniLayoutReport } from "@/features/network/networkMapMini";
 import type { NetworkMapModel } from "@/features/network/networkMapModel";
-import { NETWORK_MAP_BASE_LAYERS, NETWORK_MAP_LAYER_STORAGE_KEY, resolveNetworkMapBaseLayer, type NetworkMapBaseLayerId } from "@shared/networkMapBaseLayers";
+import { NETWORK_MAP_LAYER_STORAGE_KEY, networkMapSkin, resolveNetworkMapBaseLayer, type NetworkMapBaseLayerId } from "@shared/networkMapBaseLayers";
 
 import { NetworkMapMiniChrome } from "./NetworkMapMiniChrome";
 
@@ -31,8 +31,8 @@ import { NetworkMapMiniChrome } from "./NetworkMapMiniChrome";
  * 圈整个滚出图外就不拉引线；用户放大到这组在屏幕上散开了，小窗和圈一起藏起来，缩回去再出现。
  * 画布自己记着用户动没动过（userMoved），动过就不再自动框，这里显示「回到全览」。
  *
- * 底图跟 /map 一样：用户在整页选过的优先（同一个 localStorage 键），没选过就跟面板主题。
- * 高德瓦片拉不下来时悄悄切到暗黑网格（主图和小窗一起切）—— 首页上不弹提示，那是整页的事。
+ * 底图跟 /map 一样：用户在整页选过的优先（同一个 localStorage 键），没选过就是简洁底图，皮肤跟面板主题。
+ * 高德瓦片拉不下来时悄悄切到简洁底图（主图和小窗一起切）—— 首页上不弹提示，那是整页的事。
  */
 const NO_PADDING = { top: 0, bottom: 0, left: 0, right: 0 };
 /** 点一下的提示停多久 */
@@ -54,7 +54,8 @@ export default function NetworkMapMini({ model, fallback }: {
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const desktop = useMediaQuery("(min-width: 900px)");
   const pageVisible = usePageVisible();
-  const [baseLayer, setBaseLayer] = useState<NetworkMapBaseLayerId>(() => resolveNetworkMapBaseLayer(readStoredLayer(), resolvedTheme));
+  const [baseLayer, setBaseLayer] = useState<NetworkMapBaseLayerId>(() => resolveNetworkMapBaseLayer(readStoredLayer()));
+  const skin = networkMapSkin(baseLayer, resolvedTheme);
   const [unavailable, setUnavailable] = useState(false);
   /** 主图最近一次布局（拖图时每帧一份）：圈、引线、「回到全览」都看它 */
   const [report, setReport] = useState<MiniLayoutReport | null>(null);
@@ -78,7 +79,7 @@ export default function NetworkMapMini({ model, fallback }: {
   }, []);
   useEffect(() => () => { if (tipTimer.current) window.clearTimeout(tipTimer.current); }, []);
 
-  const onRasterError = useCallback(() => setBaseLayer("dark"), []);
+  const onRasterError = useCallback(() => setBaseLayer("vector"), []);
   const onMiniLayout = useCallback((next: MiniLayoutReport) => {
     setReport(next);
     if (next.settled) setFitReport(next);
@@ -139,11 +140,12 @@ export default function NetworkMapMini({ model, fallback }: {
 
   if (unavailable) return <>{fallback}</>;
   return (
-    <div ref={frameRef} className="fx-netmap nm-map-wrap nm-mini" data-skin={NETWORK_MAP_BASE_LAYERS[baseLayer].skin}>
+    <div ref={frameRef} className="fx-netmap nm-map-wrap nm-mini" data-skin={skin}>
       <NetworkMapCanvas
         variant="mini"
         model={model}
         baseLayer={baseLayer}
+        skin={skin}
         focus={null}
         showFlows={false}
         padding={NO_PADDING}
@@ -168,7 +170,7 @@ export default function NetworkMapMini({ model, fallback }: {
         <svg className="nm-inset-links" width={report.width} height={report.height} viewBox={`0 0 ${report.width} ${report.height}`} aria-hidden="true">
           {insets.filter((item) => item.shown).map(({ hostIds, coverage, leader }) => (
             <g key={hostIds.join(",")}>
-              {coverage ? <rect x={coverage.x} y={coverage.y} width={coverage.w} height={coverage.h} rx={7} /> : null}
+              {coverage ? <rect x={coverage.x} y={coverage.y} width={coverage.w} height={coverage.h} rx={6} /> : null}
               {leader ? <line x1={leader[0].x} y1={leader[0].y} x2={leader[1].x} y2={leader[1].y} /> : null}
             </g>
           ))}
@@ -185,6 +187,7 @@ export default function NetworkMapMini({ model, fallback }: {
             fitHostIds={hostIds}
             model={model}
             baseLayer={baseLayer}
+            skin={skin}
             focus={null}
             showFlows={false}
             padding={NO_PADDING}

@@ -33,9 +33,9 @@ test("画真地图的条件：有 WebGL 且至少一台主机定位到了；node
   assert.equal(detectWebGL(), false);
 });
 
-test("小图的常量：最多放到 9 级，90px 以上才挂胶囊；用户最多能缩到框好的再小一级", () => {
+test("小图的常量：最多放到 9 级，110px 以上才挂延迟小牌子；用户最多能缩到框好的再小一级", () => {
   assert.equal(MINI_FIT_MAX_ZOOM, 9);
-  assert.equal(MINI_CAP_MIN_ARC_PX, 90);
+  assert.equal(MINI_CAP_MIN_ARC_PX, 110);
   assert.equal(miniMinZoom(3.4), 2.4);
   assert.equal(miniMinZoom(0.6), 0, "不会小于 0");
 });
@@ -142,7 +142,7 @@ test("覆盖框、选哪几组开小窗", () => {
   assert.deepEqual(pickInsetGroups(groups, false).map((g) => g.hostIds), [[1, 2, 5, 6]]);
   assert.deepEqual(pickInsetGroups(groups, true).map((g) => g.hostIds), [[1, 2, 5, 6], [3, 4]]);
   assert.equal(MINI_GROUP_RADIUS_PX, 28);
-  // pill 有两面旗、数字 4：半宽 30 上下；紧挨着右边 36px 的那台并进来，上下 40px 的不并
+  // 两面旗、数字 4：一摞 40px 宽、半宽 20；紧挨着右边 36px 的那台并进来，上下 40px 的不并
   assert.ok(shouldAbsorbIntoGroup(2, 4, { dx: 36, dy: 4 }));
   assert.ok(!shouldAbsorbIntoGroup(2, 4, { dx: 60, dy: 4 }));
   assert.ok(!shouldAbsorbIntoGroup(2, 4, { dx: 10, dy: 40 }));
@@ -227,12 +227,14 @@ function groupsAt(hosts: readonly TopoHost[], project: (p: LngLat) => PixelPoint
   };
 }
 
-test("小窗挑组员：八台拓扑的手机主图上东京被 pill 吸进港粤一组，小窗只框港深广莞四台", () => {
+test("小窗挑组员：八台拓扑的手机主图上港深广莞四台一组（东京的点压不到窄了的那一摞，单独画），小窗框这四台", () => {
   const container = { width: 340, height: 300 };
   const zoom = 0.2;
   const { groups } = groupsAt(DENSE, projector([165, 15], zoom, container), zoom);
   const main = groups.find((group) => group.hostIds.includes(1))!;
-  assert.deepEqual([...main.hostIds].sort(), [1, 2, 5, 6, 7], "主图上五台一组（东京压在 pill 上被并进来）");
+  // 以前那条宽 pill 有 70px，东京的圆盘压在它右边被并进来；换成一摞国旗 + 数量牌（40px 上下）之后压不到了
+  assert.deepEqual([...main.hostIds].sort(), [1, 5, 6, 7], "主图上四台一组，东京单独一枚");
+  assert.ok(groups.every((group) => !group.hostIds.includes(2)), "东京不在任何组里");
   assert.deepEqual(densestInsetMembers(main), [1, 5, 6, 7], "小窗只框真正叠在一起的四台");
   const [slot] = pickInsetSlots(groups, false);
   assert.deepEqual(slot.hostIds, [1, 5, 6, 7]);

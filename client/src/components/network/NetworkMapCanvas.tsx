@@ -7,22 +7,22 @@ import { INSET_MAX_ZOOM_OUT, MINI_CAP_MIN_ARC_PX, MINI_FIT_INSET_PX, MINI_FIT_MA
 import type { NetworkMapModel, NetworkMapTarget } from "@/features/network/networkMapModel";
 import { isClusterDimmed, isFlowDimmed, isHostDimmed, isTargetDimmed, isTunnelDimmed, type MapFocus, type MapPadding } from "@/features/network/networkMapPageState";
 import { wgs84ToGcj02 } from "@shared/gcj02";
-import { NETWORK_MAP_BASE_LAYERS, type NetworkMapBaseLayerId } from "@shared/networkMapBaseLayers";
+import { NETWORK_MAP_BASE_LAYERS, type NetworkMapBaseLayerId, type NetworkMapSkin } from "@shared/networkMapBaseLayers";
 import { advanceCometPhase, buildCometPath, cometPeriodMs, cometProgress, mercatorUnitsPerPixel, sampleComet, type CometPath } from "@shared/networkMapComet";
 import { arrowTriangleAlong, boundsForPoints, computeMapLayout, fitViewToBoxes, greatCircleArc, unionBox, type FitItem, type LayoutPoint, type LngLat, type MapLayout, type MapLayoutOptions, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
 
 import { readCssColor } from "./mapCharts";
 import {
-  NETWORK_MAP_DASH_INTERVAL_MS,
-  NETWORK_MAP_DASH_STEPS,
   NETWORK_MAP_LAYERS,
   NETWORK_MAP_SOURCES,
   baseLayerPaintPatch,
   buildNetworkMapStyle,
   cometPaint,
   healthColorExpression,
+  linkGradient,
   rasterSourceIds,
+  type NetworkMapBaseColors,
   type NetworkMapLineColors,
   type NetworkMapLineHealth,
 } from "./networkMapStyle";
@@ -36,7 +36,7 @@ import {
  * 把这些画到图上；点了什么通过回调告诉页面。相机操作（飞过去、框住几点）通过
  * onReady 交出去一个小 API。
  *
- * 高德底图下每个点先过 WGS-84 → GCJ-02（shared/gcj02.ts），暗黑网格用 Natural Earth
+ * 高德底图下每个点先过 WGS-84 → GCJ-02（shared/gcj02.ts），简洁底图用 Natural Earth
  * 的国界（WGS-84）不转 —— 所以坐标转换在这里做、按当前底图做，模型里存的永远是原始坐标。
  *
  * 三种用法（variant）：
@@ -72,6 +72,8 @@ export type NetworkMapCanvasVariant = "page" | "mini" | "inset";
 export type NetworkMapCanvasProps = {
   model: NetworkMapModel;
   baseLayer: NetworkMapBaseLayerId;
+  /** 界面皮肤（页面按底图和面板主题算好的）：变了要从 CSS 重新读一遍底图和线的颜色 */
+  skin: NetworkMapSkin;
   focus: MapFocus | null;
   showFlows: boolean;
   padding: MapPadding;
@@ -122,21 +124,27 @@ const INSET_FIT_PADDING = { top: 30, bottom: 20, left: 20, right: 20 };
 const INSET_ZOOM_OUT_STEPS = [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5];
 /** 精确框住时 marker 离容器边至少这么远；小窗顶上还有一条标题 */
 const FIT_INSET = { mini: { top: MINI_FIT_INSET_PX, right: MINI_FIT_INSET_PX, bottom: MINI_FIT_INSET_PX, left: MINI_FIT_INSET_PX }, inset: { top: 26, right: MINI_FIT_INSET_PX, bottom: MINI_FIT_INSET_PX, left: MINI_FIT_INSET_PX } };
-/** 小图上圆盘的半径（26px 的盘）和名字离锚点的距离 */
+/**
+ * 小图上一台主机占的盒子半径（摆名字、精确框住、并组都按它）：16px 的点加右上角 14px 的国旗徽章，
+ * 外接一个 26px 的方块；名字离锚点 13px —— 正好贴着这个方块，也贴着徽章的上沿（networkMap.css 的
+ * .nm-mini .nm-mk-name 的 top / bottom 必须是同一个数）。
+ */
 const MINI_DISC_R = 13;
-const MINI_LABEL_GAP = 15;
+const MINI_LABEL_GAP = 13;
 
-/** 一跳的两端在屏幕上至少隔这么远才挂延迟胶囊（小图的阈值在 features/network/networkMapMini） */
-const CAP_MIN_ARC_PX = 110;
+/** 一跳的两端在屏幕上至少隔这么远才挂延迟小牌子（小图的阈值在 features/network/networkMapMini）；牌子小了，整页放宽到 90 */
+const CAP_MIN_ARC_PX = 90;
 
-/** 出口端箭头的大小，和箭尖从主机圆盘边缘退开的距离（盘半径 + 一点缝） */
-const ARROW = { page: { size: 9, backoff: 22 }, mini: { size: 8, backoff: 17 } };
-/** 彗星尾巴在屏幕上的长度 */
-const COMET_TAIL_PX = 46;
+/** 出口端箭头的大小、两腰收窄的比例，和箭尖从主机点边缘退开的距离（点半径 + 一点缝） */
+const ARROW = { page: { size: 7.5, backoff: 14 }, mini: { size: 6.5, backoff: 12 } };
+const ARROW_WIDTH_RATIO = 0.4;
+/** 彗星尾巴在屏幕上的长度：短一点，只是提示在流动 */
+const COMET_TAIL_PX = 30;
 /** 一帧最多按这么多毫秒推进：切回标签页时不让彗星一下跳半圈 */
 const COMET_MAX_FRAME_MS = 100;
 
-const FALLBACK_COLORS: NetworkMapLineColors = { healthy: "#06b6d4", warn: "#f59e0b", down: "#ef4444", standby: "#94a3b8" };
+const FALLBACK_COLORS: NetworkMapLineColors = { healthy: "#0b74d1", warn: "#d97706", down: "#dc2626", standby: "#737373", casing: "#ffffff" };
+const FALLBACK_BASE: NetworkMapBaseColors = { water: "#e3e9ef", land: "#fbfbf9", landShadow: "rgba(15,23,42,0.08)", border: "rgba(30,41,59,0.18)" };
 
 function lineHealth(health: NetworkHealth): NetworkMapLineHealth {
   const token = describeNetworkHealth(health).token;
@@ -168,6 +176,17 @@ function readColors(container: HTMLElement | null): NetworkMapLineColors {
     warn: readCssColor(container, "--nm-warn", FALLBACK_COLORS.warn),
     down: readCssColor(container, "--nm-down", FALLBACK_COLORS.down),
     standby: readCssColor(container, "--nm-standby", FALLBACK_COLORS.standby),
+    casing: readCssColor(container, "--nm-casing", FALLBACK_COLORS.casing),
+  };
+}
+
+/** 自绘底图的颜色也是 CSS 令牌（按皮肤各一套），MapLibre 不认 var()，读出来再给它 */
+function readBaseColors(container: HTMLElement | null): NetworkMapBaseColors {
+  return {
+    water: readCssColor(container, "--nm-water", FALLBACK_BASE.water),
+    land: readCssColor(container, "--nm-land", FALLBACK_BASE.land),
+    landShadow: readCssColor(container, "--nm-land-shadow", FALLBACK_BASE.landShadow),
+    border: readCssColor(container, "--nm-border-line", FALLBACK_BASE.border),
   };
 }
 
@@ -179,6 +198,12 @@ function el(html: string): HTMLElement {
 
 function escapeHtml(value: unknown) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[char] || char);
+}
+
+/** 国旗小徽章：emoji 裁成圆；画不出国旗的设备给的是两字母代码，画成小方块；没有国家就不画 */
+function flagBadge(flag: string | null | undefined) {
+  if (!flag) return "";
+  return `<i class="nm-mk-flag${isCountryCodeLabel(flag) ? " is-code" : ""}" aria-hidden="true">${escapeHtml(flag)}</i>`;
 }
 
 type HostMarkerEntry = { marker: Marker; element: HTMLElement; signature: string };
@@ -234,9 +259,8 @@ type Live = {
   lastReport: string;
   rasterErrorReported: boolean;
   relayoutFrame: number;
-  dashFrame: number;
-  dashStep: number;
-  dashLast: number;
+  /** 彗星动画的 rAF */
+  animFrame: number;
 };
 
 export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
@@ -248,7 +272,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       hostMarkers: new Map(), targetMarkers: new Map(), clusterMarkers: [], capMarkers: new Map(), stubMarkers: new Map(), countryMarkers: [],
       layout: null, linkFeatureIds: [], flowFeatureIds: [], tipFeatureIds: [], comets: [], cometPhase: new Map(), cometLast: 0, cometDrawn: false,
       didInitialFit: false, fitSignature: "", fitItems: [], keepOut: [], reserved: [], hiddenLabels: 0, discFit: false, labelProbe: false, framedBodies: [], arcPx: [], miniGroups: [], settling: false, settledReport: false, userMoved: false, lastReport: "", rasterErrorReported: false,
-      relayoutFrame: 0, dashFrame: 0, dashStep: 0, dashLast: 0,
+      relayoutFrame: 0, animFrame: 0,
     };
   }
   const live = liveRef.current;
@@ -298,7 +322,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       const signature = [node.name, node.note, node.health, node.emoji].join("\u0001");
       let entry = live.hostMarkers.get(node.id);
       if (!entry) {
-        const element = el(`<div class="nm-mk nm-mk-host" data-host="${node.id}"><button type="button" class="nm-mk-disc"></button><div class="nm-mk-name"></div><div class="nm-mk-note nm-num"></div></div>`);
+        const element = el(`<div class="nm-mk nm-mk-host" data-host="${node.id}"><button type="button" class="nm-mk-disc"></button><div class="nm-mk-name"></div><div class="nm-mk-note"></div></div>`);
         const disc = element.querySelector(".nm-mk-disc") as HTMLButtonElement;
         disc.addEventListener("click", (event) => { event.stopPropagation(); live.props.onSelectNode(node.id); });
         const marker = new maplibregl.Marker({ element, anchor: "center" }).setLngLat(display([node.geo.lng, node.geo.lat])).addTo(map);
@@ -310,7 +334,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         entry.element.className = `nm-mk nm-mk-host ${healthClass(node.health)}`;
         const disc = entry.element.querySelector(".nm-mk-disc") as HTMLElement;
         disc.setAttribute("aria-label", `${node.name}${node.note ? `，${node.note}` : ""}`);
-        disc.innerHTML = node.emoji ? `<span${isCountryCodeLabel(node.emoji) ? ' class="nm-mk-code"' : ""}>${escapeHtml(node.emoji)}</span>` : `<span class="nm-mk-flag-dot"></span>`;
+        // 降级 / 中断那圈外扩的光、中断的叉、右上角的国旗徽章（画不出国旗时是两字母代码的小方块）
+        disc.innerHTML = `<i class="nm-mk-pulse"></i><i class="nm-mk-glyph"></i>${flagBadge(node.emoji)}`;
         (entry.element.querySelector(".nm-mk-name") as HTMLElement).textContent = node.name;
         (entry.element.querySelector(".nm-mk-note") as HTMLElement).textContent = node.note || "";
       }
@@ -441,8 +466,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       const name = element.querySelector(".nm-mk-name") as HTMLElement | null;
       if (!pill || !name) continue;
       const anchor = viewProject(map, cluster.center);
-      const w = pill.offsetWidth || 60;
-      const h = pill.offsetHeight || 24;
+      const w = pill.offsetWidth || 50;
+      const h = pill.offsetHeight || 18;
       const body = { x: anchor.x - w / 2, y: anchor.y - h / 2, w, h };
       const counts = !framed || cluster.members.some((member) => member.kind === "host" && framed.has(member.id));
       if (inset && !counts && !fullyInside(body)) {
@@ -474,8 +499,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     for (const cap of capsAt) {
       const point = viewProject(map, cap.at);
       const button = live.capMarkers.get(cap.tunnelId)?.button;
-      const w = button?.offsetWidth || 56;
-      const h = button?.offsetHeight || 22;
+      const w = button?.offsetWidth || 42;
+      const h = button?.offsetHeight || 16;
       const box = { x: point.x - w / 2, y: point.y - h / 2, w, h };
       capBoxes.set(cap.tunnelId, box);
       obstacles.push(box);
@@ -537,7 +562,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       // 跑出图外没参与摆名字的组：盒子按 pill 本身算（不能给个 0,0 的空盒，覆盖框会被拉到左上角去）
       const pill = cluster.marker.getElement().querySelector(".nm-mk-pill") as HTMLElement | null;
       const anchor = viewProject(map, cluster.center);
-      const pillBox: PixelBox = { x: anchor.x - (pill?.offsetWidth || 60) / 2, y: anchor.y - (pill?.offsetHeight || 24) / 2, w: pill?.offsetWidth || 60, h: pill?.offsetHeight || 24 };
+      const pillBox: PixelBox = { x: anchor.x - (pill?.offsetWidth || 50) / 2, y: anchor.y - (pill?.offsetHeight || 18) / 2, w: pill?.offsetWidth || 50, h: pill?.offsetHeight || 18 };
       const markerBox = entry ? unionBox(placement ? [entry.body, placement.box] : [entry.body])! : pillBox;
       // 和 hostIds 一一对应（卡片按下标找组员的位置挑小窗框哪几台）；组员一定有坐标，兜底用组心
       const members = hostIds.map((id) => { const node = nodeById.get(id); return node?.geo ? viewProject(map, display([node.geo.lng, node.geo.lat])) : anchor; });
@@ -677,8 +702,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const width = container.clientWidth;
     const height = container.clientHeight;
     const button = live.capMarkers.get(tunnelId)?.button;
-    const w = button?.offsetWidth || 52;
-    const h = button?.offsetHeight || 22;
+    const w = button?.offsetWidth || 42;
+    const h = button?.offsetHeight || 16;
     const clear = (index: number) => {
       const point = viewProject(map, points[index]);
       const box: PixelBox = { x: point.x - w / 2, y: point.y - h / 2, w, h };
@@ -744,7 +769,9 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         }
       }
       const label = groupPlaceLabel(cities) || "落地目标";
-      const element = el(`<div class="nm-mk nm-mk-cluster ${healthClass(worstHealth(healths))}"><button type="button" class="nm-mk-pill" aria-label="${escapeHtml(label)}，${group.keys.length} 个，${mini ? "点击查看" : "点击放大"}"><span>${flags.slice(0, 3).map((flag) => (isCountryCodeLabel(flag) ? `<i class="nm-mk-code">${escapeHtml(flag)}</i>` : escapeHtml(flag))).join("")}</span><b>${group.keys.length}</b></button><div class="nm-mk-name">${escapeHtml(label)}</div></div>`);
+      // 一摞国旗（最多三面）+ 数量小牌，组里最差的状态画在数量牌的圈上；一面旗都没有时放一颗灰点占位
+      const stack = flags.length > 0 ? flags.slice(0, 3).map((flag) => flagBadge(flag)).join("") : `<i class="nm-mk-flag is-empty" aria-hidden="true"></i>`;
+      const element = el(`<div class="nm-mk nm-mk-cluster ${healthClass(worstHealth(healths))}"><button type="button" class="nm-mk-pill" aria-label="${escapeHtml(label)}，${group.keys.length} 个，${mini ? "点击查看" : "点击放大"}"><span class="nm-mk-stack">${stack}</span><b class="nm-mk-count">${group.keys.length}</b></button><div class="nm-mk-name">${escapeHtml(label)}</div></div>`);
       const center = group.center;
       const hostIds = members.flatMap((member) => (member.kind === "host" ? [member.id] : []));
       (element.firstElementChild as HTMLElement).addEventListener("click", (event) => {
@@ -809,7 +836,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         if (mini && (!framed || (framed.has(link.path[index]) && framed.has(link.path[index + 1])))) {
           for (let k = 0; k < points.length; k += 4) arcPx.push(viewProject(map, points[k]));
         }
-        const triangle = arrowTriangleAlong(projected, arrow.size, arrow.backoff);
+        const triangle = arrowTriangleAlong(projected, arrow.size, arrow.backoff, undefined, ARROW_WIDTH_RATIO);
         if (triangle) {
           const ring = triangle.map((corner) => { const at = map.unproject([corner.x, corner.y]); return [at.lng, at.lat]; });
           ring.push(ring[0]);
@@ -1010,8 +1037,9 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     else { relayout(); reportSettled(); }
   };
 
-  // ---- 动画：一个 rAF 管两样。流动光点只改 dasharray，交给 GPU；彗星每帧按相位采样一次写进
-  //      GeoJSON 源（≤ 几十条隧道，一帧几十个点，便宜）。页面不可见 / 卡片滚出视野 / 减少动态时停 ----
+  // ---- 动画：彗星每帧按相位采样一次写进 GeoJSON 源（≤ 几十条隧道，一帧几十个点，便宜）。
+  //      以前正常线路上还有一层白色流动虚线，和彗星叠在一起太闹，去掉了 —— 方向靠渐变和箭头说。
+  //      页面不可见 / 卡片滚出视野 / 减少动态时停 ----
   const clearComets = () => {
     const map = live.map;
     if (!map || !live.loaded || !live.cometDrawn) return;
@@ -1022,13 +1050,6 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
   const tickAnimation = (timestamp: number) => {
     const map = live.map;
     const running = live.loaded && !live.props.paused && !live.props.reduceMotion && document.visibilityState === "visible";
-    if (map && running && !compact() && map.getLayer(NETWORK_MAP_LAYERS.linkFlow)) {
-      if (timestamp - live.dashLast > NETWORK_MAP_DASH_INTERVAL_MS) {
-        live.dashLast = timestamp;
-        live.dashStep = (live.dashStep + 1) % NETWORK_MAP_DASH_STEPS.length;
-        map.setPaintProperty(NETWORK_MAP_LAYERS.linkFlow, "line-dasharray", NETWORK_MAP_DASH_STEPS[live.dashStep]);
-      }
-    }
     const cometsOn = map && running && live.props.comets !== false && live.comets.length > 0;
     if (map && cometsOn) {
       const source = map.getSource(NETWORK_MAP_SOURCES.comets) as GeoJSONSource | undefined;
@@ -1053,21 +1074,45 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       live.cometLast = 0;
       clearComets();
     }
-    live.dashFrame = requestAnimationFrame(tickAnimation);
+    live.animFrame = requestAnimationFrame(tickAnimation);
   };
 
-  // ---- 底图：改颜色和可见性；高德瓦片拉不下来时页面会切到暗黑网格，这里把瓦片层关掉，不再白请求 ----
+  // ---- 底图：改可见性和压色；高德瓦片拉不下来时页面会切到简洁底图，这里把瓦片层关掉，不再白请求 ----
   const applyBaseLayer = (baseLayer: NetworkMapBaseLayerId) => {
     const map = live.map;
     if (!map || !live.loaded) return;
-    const patch = baseLayerPaintPatch(baseLayer);
-    map.setPaintProperty(NETWORK_MAP_LAYERS.background, "background-color", patch.background);
-    map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-color", patch.land);
+    const patch = baseLayerPaintPatch(baseLayer, live.props.skin);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.landShadow, "fill-opacity", patch.landOpacity);
     map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-opacity", patch.landOpacity);
-    map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-color", patch.border);
     map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-width", patch.borderWidth);
-    map.setLayoutProperty(NETWORK_MAP_LAYERS.graticule, "visibility", patch.graticule);
-    for (const [id, visibility] of Object.entries(patch.raster)) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+    for (const [id, visibility] of Object.entries(patch.raster)) {
+      if (!map.getLayer(id)) continue;
+      map.setLayoutProperty(id, "visibility", visibility);
+      for (const [property, value] of Object.entries(patch.rasterPaint[id] ?? {})) map.setPaintProperty(id, property, value);
+    }
+  };
+
+  /** 皮肤变了（换底图、面板切了主题）：底图和线的颜色都从新皮肤的 CSS 变量里再读一遍 */
+  const applySkinColors = () => {
+    const map = live.map;
+    if (!map || !live.loaded) return;
+    const holder = containerRef.current?.parentElement ?? null;
+    live.colors = readColors(holder);
+    const base = readBaseColors(holder);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.background, "background-color", base.water);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.landShadow, "fill-color", base.landShadow);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-color", base.land);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-color", base.border);
+    const expression = healthColorExpression(live.colors);
+    for (const layer of [NETWORK_MAP_LAYERS.flow, NETWORK_MAP_LAYERS.linkDashed]) map.setPaintProperty(layer, "line-color", expression);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.linkCasing, "line-color", live.colors.casing);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.linkSolid, "line-gradient", linkGradient(live.colors));
+    map.setPaintProperty(NETWORK_MAP_LAYERS.tip, "fill-color", expression);
+    const comet = cometPaint(live.colors);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.cometTail, "line-gradient", comet.tail["line-gradient"]);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.cometGlow, "circle-color", comet.glow["circle-color"]);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.cometHead, "circle-color", comet.head["circle-color"]);
+    map.setPaintProperty(NETWORK_MAP_LAYERS.cometHead, "circle-stroke-color", comet.head["circle-stroke-color"]);
   };
 
   // ---- 创建地图（只一次）----
@@ -1075,6 +1120,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const container = containerRef.current;
     if (!container) return undefined;
     live.colors = readColors(container.parentElement);
+    const baseColors = readBaseColors(container.parentElement);
     const rasterIds = new Set(rasterSourceIds());
     const mini = compact();
     const pannable = isMini();
@@ -1082,7 +1128,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     try {
       map = new maplibregl.Map({
         container,
-        style: buildNetworkMapStyle(live.props.baseLayer, COUNTRIES_URL, live.colors) as any,
+        style: buildNetworkMapStyle(live.props.baseLayer, live.props.skin, COUNTRIES_URL, live.colors, baseColors) as any,
         center: [110, 25],
         zoom: 1.6,
         // 小图在 340px 宽的手机卡片里要框住横跨太平洋的线，0.5 级放不下（世界 724px 宽），放开到 0 级
@@ -1119,8 +1165,6 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     map.once("style.load", () => {
       live.loaded = true;
       applyBaseLayer(live.props.baseLayer);
-      // 小图上白虚线和彗星叠在一起太闹，只留彗星和箭头说方向
-      if (live.props.reduceMotion || mini) map.setLayoutProperty(NETWORK_MAP_LAYERS.linkFlow, "visibility", "none");
       syncStaticMarkers();
       relayout();
       if (!live.didInitialFit && layoutPoints().length > 0) { live.didInitialFit = true; live.fitSignature = fitSignature(); api.fitAll(); }
@@ -1136,18 +1180,18 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         map.on("zoomstart", (event) => { if (event.originalEvent) markUserMoved(); });
       }
       map.on("click", (event) => {
-        // 点在线上（光晕那层有 10px 宽，好点）就当点了这条隧道；点空处交给页面
+        // 点在线上（看不见的命中层有 14px 宽，好点）就当点了这条隧道；点空处交给页面
         const { x, y } = event.point;
-        const hits = map.getLayer(NETWORK_MAP_LAYERS.linkHalo) ? map.queryRenderedFeatures([[x - 4, y - 4], [x + 4, y + 4]], { layers: [NETWORK_MAP_LAYERS.linkHalo] }) : [];
+        const hits = map.getLayer(NETWORK_MAP_LAYERS.linkHit) ? map.queryRenderedFeatures([[x - 4, y - 4], [x + 4, y + 4]], { layers: [NETWORK_MAP_LAYERS.linkHit] }) : [];
         const tunnelId = Number(hits[0]?.properties?.tunnel);
         if (Number.isFinite(tunnelId) && tunnelId > 0) live.props.onSelectLink(tunnelId);
         else live.props.onMapClick();
       });
-      live.dashFrame = requestAnimationFrame(tickAnimation);
+      live.animFrame = requestAnimationFrame(tickAnimation);
       live.props.onReady(api);
     });
     map.on("error", (event: any) => {
-      // 高德瓦片拉不下来：只报一次，页面会切到暗黑网格并提示
+      // 高德瓦片拉不下来：只报一次，页面会切到简洁底图并提示
       const sourceId = event?.sourceId || event?.source?.id;
       const isRasterTile = (sourceId && rasterIds.has(String(sourceId))) || (event?.tile && !sourceId);
       if (!isRasterTile) {
@@ -1171,7 +1215,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     return () => {
       observer?.disconnect();
       if (live.relayoutFrame) cancelAnimationFrame(live.relayoutFrame);
-      if (live.dashFrame) cancelAnimationFrame(live.dashFrame);
+      if (live.animFrame) cancelAnimationFrame(live.animFrame);
       live.loaded = false;
       live.map = null;
       live.comets = [];
@@ -1208,20 +1252,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     // 用户又选回高德：再拉一次瓦片，拉不下来还是要报（切走时源没人用，MapLibre 会把失败的瓦片扔掉，切回来会重新请求）
     live.rasterErrorReported = false;
     applyBaseLayer(props.baseLayer);
-    // 皮肤跟着底图换了，线的颜色也要从新皮肤的变量里再读一遍
-    requestAnimationFrame(() => {
-      if (!live.map) return;
-      live.colors = readColors(containerRef.current?.parentElement ?? null);
-      const expression = healthColorExpression(live.colors);
-      for (const layer of [NETWORK_MAP_LAYERS.flow, NETWORK_MAP_LAYERS.linkHalo, NETWORK_MAP_LAYERS.linkDashed, NETWORK_MAP_LAYERS.linkSolid]) {
-        live.map.setPaintProperty(layer, "line-color", expression);
-      }
-      live.map.setPaintProperty(NETWORK_MAP_LAYERS.tip, "fill-color", expression);
-      const comet = cometPaint(live.colors);
-      live.map.setPaintProperty(NETWORK_MAP_LAYERS.cometTail, "line-gradient", comet.tail["line-gradient"]);
-      live.map.setPaintProperty(NETWORK_MAP_LAYERS.cometGlow, "circle-color", comet.glow["circle-color"]);
-      live.map.setPaintProperty(NETWORK_MAP_LAYERS.cometHead, "circle-stroke-color", comet.head["circle-stroke-color"]);
-    });
+    // 皮肤可能跟着底图换了：等这一帧 data-skin 落到 DOM 上，再从新皮肤的变量里读颜色
+    requestAnimationFrame(applySkinColors);
     for (const [id, entry] of live.hostMarkers) {
       const node = props.model.nodes.find((item) => item.id === id);
       if (node?.geo) entry.marker.setLngLat(display([node.geo.lng, node.geo.lat]));
@@ -1233,6 +1265,14 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     relayout();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.baseLayer]);
+
+  // ---- 面板切了主题（底图没换）：压色和颜色跟着皮肤换 ----
+  useEffect(() => {
+    if (!live.map || !live.loaded) return;
+    applyBaseLayer(props.baseLayer);
+    requestAnimationFrame(applySkinColors);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.skin]);
 
   useEffect(() => { applyFocus(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [props.focus]);
 
@@ -1248,11 +1288,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
   }, [props.padding]);
 
   useEffect(() => {
-    const map = live.map;
-    if (!map || !live.loaded || !map.getLayer(NETWORK_MAP_LAYERS.linkFlow)) return;
-    // 减少动态效果：流动光点这一层直接不显示，静止的白虚线压在实线上反而像坏了（小图本来就不显示）
-    map.setLayoutProperty(NETWORK_MAP_LAYERS.linkFlow, "visibility", props.reduceMotion || compact() ? "none" : "visible");
-    // 彗星也停：箭头还在，方向照样看得出
+    if (!live.map || !live.loaded) return;
+    // 减少动态效果：彗星停，箭头和渐变还在，方向照样看得出
     if (props.reduceMotion) clearComets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.reduceMotion]);

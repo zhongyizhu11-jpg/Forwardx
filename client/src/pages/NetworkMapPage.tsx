@@ -32,6 +32,7 @@ import {
   NETWORK_MAP_BASE_LAYERS,
   NETWORK_MAP_BASE_LAYER_ORDER,
   NETWORK_MAP_LAYER_STORAGE_KEY,
+  networkMapSkin,
   resolveNetworkMapBaseLayer,
   type NetworkMapBaseLayerId,
 } from "@shared/networkMapBaseLayers";
@@ -131,8 +132,8 @@ function NetworkMapPageBody() {
     return () => observer?.disconnect();
   }, [frame]);
 
-  // ---- 底图：记住的优先，默认跟面板主题 ----
-  const [baseLayer, setBaseLayer] = useState<NetworkMapBaseLayerId>(() => resolveNetworkMapBaseLayer(readStoredLayer(), resolvedTheme));
+  // ---- 底图：记住的优先，默认简洁底图；皮肤跟面板主题（卫星永远深色） ----
+  const [baseLayer, setBaseLayer] = useState<NetworkMapBaseLayerId>(() => resolveNetworkMapBaseLayer(readStoredLayer()));
   const [layerMenuOpen, setLayerMenuOpen] = useState(false);
   const layerMenuRef = useRef<HTMLDivElement | null>(null);
   const layerButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -151,7 +152,7 @@ function NetworkMapPageBody() {
     document.addEventListener("pointerdown", onPointer);
     return () => document.removeEventListener("pointerdown", onPointer);
   }, [layerMenuOpen]);
-  const skin = NETWORK_MAP_BASE_LAYERS[baseLayer].skin;
+  const skin = networkMapSkin(baseLayer, resolvedTheme);
 
   // ---- 数据 ----
   const model = useNetworkMapPageModel({ enabled: !!user, withTargets: isAdmin });
@@ -260,10 +261,10 @@ function NetworkMapPageBody() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
-  // ---- 高德拉不下来：切一次暗黑网格，不写进 localStorage（网络回来了还用用户选的） ----
+  // ---- 高德拉不下来：切一次简洁底图，不写进 localStorage（网络回来了还用用户选的） ----
   const onRasterError = useCallback(() => {
-    setBaseLayer("dark");
-    toast("高德底图加载失败，已切到暗黑网格");
+    setBaseLayer("vector");
+    toast("高德底图加载失败，已切到简洁底图");
   }, [toast]);
 
   // ---- 详情要的数据：点开时才取 ----
@@ -383,6 +384,7 @@ function NetworkMapPageBody() {
             <NetworkMapCanvas
               model={model}
               baseLayer={baseLayer}
+              skin={skin}
               focus={focus}
               showFlows={flowsOn}
               padding={padding}

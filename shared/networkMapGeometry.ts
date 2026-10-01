@@ -199,7 +199,7 @@ export type PixelPoint = { x: number; y: number };
  * 挪出来，不然盘子把箭头盖住。太短的弧（整条不到 minTangentPx）不画，返回 null。
  * 返回 [箭尖, 左底角, 右底角]。
  */
-export function arrowTriangleAlong(projected: readonly PixelPoint[], size: number, backoff: number, minTangentPx = 8): [PixelPoint, PixelPoint, PixelPoint] | null {
+export function arrowTriangleAlong(projected: readonly PixelPoint[], size: number, backoff: number, minTangentPx = 8, widthRatio = 0.55): [PixelPoint, PixelPoint, PixelPoint] | null {
   if (projected.length < 2) return null;
   const tip = projected[projected.length - 1];
   let from: PixelPoint | null = null;
@@ -212,7 +212,8 @@ export function arrowTriangleAlong(projected: readonly PixelPoint[], size: numbe
   const dy = (tip.y - from.y) / length;
   const apex = { x: tip.x - dx * backoff, y: tip.y - dy * backoff };
   const base = { x: apex.x - dx * size, y: apex.y - dy * size };
-  const half = size * 0.55;
+  // 两腰离中线多远（相对箭长）：默认 0.55 是个胖三角；地图上用 0.4，细而尖
+  const half = size * widthRatio;
   return [apex, { x: base.x - dy * half, y: base.y + dx * half }, { x: base.x + dy * half, y: base.y - dx * half }];
 }
 
