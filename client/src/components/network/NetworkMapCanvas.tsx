@@ -603,12 +603,16 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const comets: Live["comets"] = [];
     const arcPx: PixelPoint[] = [];
     /*
-      同一对主机之间不止一条线（主线路和它的备用隧道、一来一回两条隧道）：同一条大圆弧上叠好几条，
-      虚线压在实线上根本看不出来。第二条起往两边各弯开一点（屏幕上 14px 一档），弯的方向按主机 id
-      小的那头定，一来一回的两条不会弯到同一边。
+      同样两个端点之间不止一条线（主线路和它的备用隧道、一来一回两条隧道，还有组里不同的几台连到
+      同一台的几条 —— 它们都从组心出发）：同一条大圆弧上叠好几条，虚线压在实线上根本看不出来。
+      所以按画出来的端点（单台是主机、并进组的是组）数，第二条起往两边各弯开一点（屏幕上 14px 一档），
+      弯的方向按端点 key 小的那头定，一来一回的两条不会弯到同一边。
     */
     const pairSlots = new Map<string, number>();
-    const bend = (points: LngLat[], from: number, to: number): LngLat[] => {
+    const endKey = (key: string) => { const clusterId = layout.pos[key]?.clusterId; return clusterId === null || clusterId === undefined ? key : `g${clusterId}`; };
+    const bend = (points: LngLat[], fromKey: string, toKey: string): LngLat[] => {
+      const from = endKey(fromKey);
+      const to = endKey(toKey);
       const key = from < to ? `${from}-${to}` : `${to}-${from}`;
       const slot = pairSlots.get(key) ?? 0;
       pairSlots.set(key, slot + 1);
@@ -652,7 +656,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         const a = drawnLngLat(keyA);
         const b = drawnLngLat(keyB);
         if (!a || !b) { flush(); continue; }
-        const points = bend(greatCircleArc(a, b), hosts[index], hosts[index + 1]);
+        const points = bend(greatCircleArc(a, b), keyA, keyB);
         // 虚线按主机 id 小的那头起笔：同一跳上一来一回的两条虚线相位对得上、重成一条，
         // 不然两套错开的虚线叠成一串拉链。主线路的渐变要入口 → 出口，不能翻；光点、箭头照用原方向
         const linePoints = kind !== "main" && hosts[index] > hosts[index + 1] ? [...points].reverse() : points;
