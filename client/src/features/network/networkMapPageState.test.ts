@@ -45,10 +45,12 @@ test("松手：慢慢拖吸附到最近的一档", () => {
 });
 
 test("地图留白跟着抽屉走，桌面右侧栏不压底部", () => {
-  assert.deepEqual(mapPaddingForSheet("peek", 800, false), { top: 64, bottom: 96, left: 20, right: 20 });
+  assert.deepEqual(mapPaddingForSheet("peek", 800, false), { top: 150, bottom: 96, left: 20, right: 64 });
   assert.equal(mapPaddingForSheet("half", 800, false).bottom, 396);
   assert.equal(mapPaddingForSheet("full", 800, false).bottom, 452);
-  assert.equal(mapPaddingForSheet("full", 800, true).bottom, 30);
+  assert.equal(mapPaddingForSheet("full", 800, true).bottom, 64);
+  // 桌面：右边的详情卡开着时让出它的宽度
+  assert.equal(mapPaddingForSheet("peek", 800, true, true).right - mapPaddingForSheet("peek", 800, true, false).right, 384);
 });
 
 const model = buildNetworkMapModel({

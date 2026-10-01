@@ -13,8 +13,11 @@ import type { NetworkMapModel } from "./networkMapModel";
 
 /** 小图框住所有主机时最多放大到这一级：两台同城的机器不该缩成一张街道图 */
 export const MINI_FIT_MAX_ZOOM = 9;
-/** 小图上一跳的两端在屏幕上至少隔这么远才挂延迟胶囊（整页是 110） */
-export const MINI_CAP_MIN_ARC_PX = 90;
+/**
+ * 小图上一跳的两端在屏幕上至少隔这么远才挂延迟小牌子（整页是 90）：卡片就巴掌大，短的那几跳
+ * 挂上牌子只会压着主机和名字，点线时的提示里照样有延迟。
+ */
+export const MINI_CAP_MIN_ARC_PX = 110;
 /**
  * 主图上两台主机的圆盘挨到这么近（像素）就并成一组画成一枚叠起来的 marker：26px 的盘再近就
  * 压在一起了。每台主机都画在它真正的坐标上，不再错开成环 —— 环把主机挪到上千公里外，线看着
@@ -22,15 +25,16 @@ export const MINI_CAP_MIN_ARC_PX = 90;
  */
 export const MINI_GROUP_RADIUS_PX = 28;
 /**
- * 叠起来的 marker（pill）大概多宽：左右内边距 + 每面旗 + 旗和数字的缝 + 数字。按圆心距离分组
- * 够不着、但圆盘会压在 pill 上的那台也并进组（computeMapLayout 的 absorb）。
+ * 叠起来的 marker 大概多宽：一摞 16px 的国旗（第二面起每面只露 10px）+ 压上去 4px 的数量小牌
+ * （18px 起，数字多一位宽 6.5px）。和 networkMap.css 里 .nm-mini .nm-mk-cluster 的尺寸对上。按圆心
+ * 距离分组够不着、但主机的点会压在这一摞上的那台也并进组（computeMapLayout 的 absorb）。
  */
 export function estimateGroupPillWidth(flags: number, count: number): number {
-  return 6 + 7 + 16 * Math.min(3, Math.max(1, flags)) + 4 + 7 * String(count).length;
+  return 16 + 10 * (Math.min(3, Math.max(1, flags)) - 1) - 4 + Math.max(18, 10 + 6.5 * String(count).length);
 }
-/** 单独一台离组心多近会压到 pill：pill 半宽 / 半高 + 圆盘半径 + 一点缝 */
+/** 单独一台离组心多近会压到这一摞：半宽 / 半高（数量牌 18px 高）+ 主机盒子的半径 + 一点缝 */
 export function shouldAbsorbIntoGroup(flags: number, count: number, offset: { dx: number; dy: number }): boolean {
-  return Math.abs(offset.dx) < estimateGroupPillWidth(flags, count) / 2 + 13 + 4 && Math.abs(offset.dy) < 11 + 13 + 4;
+  return Math.abs(offset.dx) < estimateGroupPillWidth(flags, count) / 2 + 13 + 4 && Math.abs(offset.dy) < 9 + 13 + 4;
 }
 /**
  * 主图和小窗共用的并组规则：28px 内的并成一组，圆盘会压到 pill 上的那台也并进去。小窗里也这样

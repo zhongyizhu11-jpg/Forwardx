@@ -11,7 +11,11 @@ import { trpc } from "@/lib/trpc";
 import { FORWARD_PROTOCOL_LABELS, TUNNEL_PROTOCOLS, normalizeForwardProtocolSettings } from "@shared/forwardTypes";
 import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { formatAgo } from "@shared/dashboardAttention";
+import { geoCountryNameZh, matchGeoCity } from "@shared/geoCities";
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
+import type { RouteMode } from "@shared/routeGroup";
+
+import { buildRouteLines, lineKindOfHealth, lineLegend, readRuleRouteGroup, type LineKind, type NetworkMapRouteLine } from "./networkMapLines";
 
 /**
  * 网络地图的数据模型：首页那块「网络地图」和 /map 整页共用的一份。
@@ -30,6 +34,19 @@ function hostNote(host: any, now: number, linkCount: number): string | null {
   }
   if (host?.lastHeartbeat == null && host?.isOnline !== true) return "还没接入";
   return linkCount > 0 ? `${linkCount} 条线路` : "在线";
+}
+
+/**
+ * 图上写的城市名：IP 定位给的地区多半是英文（「Tokyo」「Central」），图上要中文 —— 先查随包的城市表
+ * （shared/geoCities，中英文名都认）；查不到时，香港、澳门、新加坡这种一城一地的写地区名（「香港」），
+ * 别的照原样。查不到也不猜。
+ */
+export function mapCityName(host: { geoCountryCode?: string | null; geoRegion?: string | null } | null | undefined): string | null {
+  const matched = matchGeoCity(host);
+  if (matched) return matched.name;
+  const code = String(host?.geoCountryCode || "").trim().toUpperCase();
+  if (code === "HK" || code === "MO" || code === "SG") return geoCountryNameZh(code).replace(/^中国/, "");
+  return null;
 }
 
 function hostHealth(host: any): NetworkHealth {
@@ -77,6 +94,9 @@ export type NetworkMapTunnelLink = NetworkMapLink & {
   /** 逐跳延迟（来自最近一次诊断），按 path 的段序；拿不到是空数组 */
   hopLatencies: Array<number | null>;
   lastTestAt: number | null;
+  /** 地图上的四类线之一（networkMapLines：正常 = 主线路、停用 / 未上报 = 备用…） */
+  kind: LineKind;
+  createdAt: number | null;
 };
 
 /** 租户看不到一端的隧道：从看得见的那一端画一截灰线出去 */
@@ -109,6 +129,24 @@ export type NetworkMapRule = {
   /** 停着的原因（短标签），在跑就是 null */
   stopReason: string | null;
   protocolBlockReason: string | null;
+  /** 开了线路组（主备）的规则：路径、策略、正在走哪条；没开是 null */
+  routeGroup: NetworkMapRuleRouteGroup | null;
+};
+
+export type NetworkMapRuleRouteGroup = {
+  mode: RouteMode;
+  /** 「自动故障切换」 */
+  modeLabel: string;
+  /** 「平滑切换」 */
+  switchLabel: string;
+  failoverSeconds: number;
+  recoverSeconds: number;
+  autoFailback: boolean;
+  paths: Array<{ key: string; name: string; hops: number[]; dest: string | null; issue: string | null }>;
+  /** Agent 报上来正在走第几条；没报过是 null（不拿「默认走主线」去填） */
+  activeIndex: number | null;
+  /** 切到这条的时刻（毫秒）；没报过是 null */
+  activeSince: number | null;
 };
 
 export type NetworkMapTarget = {
@@ -135,6 +173,10 @@ export type NetworkMapModel = {
   /** 两端里至少一端是这个账号看不到的主机的隧道数；它们存在、有状态，只是没法画成线 */
   hiddenLinkCount: number;
   legend: { healthy: number; degraded: number; down: number; standby: number };
+  /** 线路组里画成线的路径（至少经过一台中转的） */
+  routes: NetworkMapRouteLine[];
+  /** 图例上四类线各几条（隧道 + 线路组路径） */
+  lines: Record<LineKind, number>;
 };
 
 export type TargetGeoRow = { target: string; geo: any };
@@ -167,6 +209,23 @@ export function tunnelHopLatencies(tunnel: any, path: number[]): Array<number | 
   }
   if (bySegment.size === 0) return [];
   return path.slice(1).map((to, index) => bySegment.get(`${path[index]}>${to}`) ?? null);
+}
+
+/**
+ * 落地目标的定位：rules.targetGeoBatch 回的是 lookupAddressGeo 那一行（geoLatitudeMicro / geoLongitudeMicro /
+ * geoCountryCode / geoRegion，和主机的定位字段同一套）。以前这里只认 latitude / longitude，服务端的行一个都
+ * 对不上，落地目标从来没画到图上；两种写法都认（测试和老缓存用的是后一种）。
+ */
+export function readTargetGeo(geo: any): { geo: { lat: number; lng: number } | null; countryCode: string | null; city: string } {
+  const micro = hostGeoCoordinate(geo);
+  const lat = micro ? micro.lat : Number(geo?.latitude ?? geo?.lat);
+  const lng = micro ? micro.lng : Number(geo?.longitude ?? geo?.lng);
+  const valid = geo != null && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+  return {
+    geo: valid ? { lat, lng } : null,
+    countryCode: String(geo?.geoCountryCode || geo?.countryCode || "").trim().toUpperCase() || null,
+    city: String(geo?.geoRegion || geo?.region || geo?.city || geo?.geoCountryName || geo?.countryName || "").trim(),
+  };
 }
 
 function ruleHealth(rule: any): NetworkHealth {
@@ -229,6 +288,7 @@ export function buildNetworkMapModel(input: {
       continue;
     }
     const lastTestAt = tunnel?.lastTestAt ? new Date(tunnel.lastTestAt).getTime() : NaN;
+    const createdAt = tunnel?.createdAt ? new Date(tunnel.createdAt).getTime() : NaN;
     links.push({
       id: Number(tunnel.id),
       name,
@@ -246,6 +306,8 @@ export function buildNetworkMapModel(input: {
         .filter(Boolean),
       hopLatencies: tunnelHopLatencies(tunnel, path),
       lastTestAt: Number.isFinite(lastTestAt) && lastTestAt > 0 ? lastTestAt : null,
+      kind: lineKindOfHealth(health),
+      createdAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : null,
     });
   }
   const nodes: NetworkMapHostNode[] = hosts.map((host) => {
@@ -264,7 +326,7 @@ export function buildNetworkMapModel(input: {
       // 这台设备画不出的旗（iOS 国行没有 🇹🇼）退回两字母代码，见 lib/flagEmojiSupport
       emoji: countryFlagLabel(host?.geoCountryCode) || null,
       countryCode: String(host?.geoCountryCode || "").trim().toUpperCase() || null,
-      city: region || name,
+      city: mapCityName(host) || region || name,
       region: region || null,
       ip: String(host?.ipv4 || host?.ip || "").trim() || null,
       isOnline: host?.isOnline === true || host?.isOnline === 1,
@@ -300,6 +362,7 @@ export function buildNetworkMapModel(input: {
       health: ruleHealth(rule),
       stopReason: stop?.label ?? null,
       protocolBlockReason: String(rule?.protocolBlockReason || "").trim() || null,
+      routeGroup: readRuleRouteGroup(rule, now),
     };
   }).filter((rule) => rule.id > 0 && rule.hostId > 0);
 
@@ -312,15 +375,13 @@ export function buildNetworkMapModel(input: {
     if (!rule.targetKey) continue;
     let target = targetMap.get(rule.targetKey);
     if (!target) {
-      const geo = geoByKey.get(rule.targetKey);
-      const lat = Number(geo?.latitude ?? geo?.lat);
-      const lng = Number(geo?.longitude ?? geo?.lng);
-      const countryCode = String(geo?.countryCode || "").trim().toUpperCase() || null;
-      const city = String(geo?.region || geo?.city || geo?.countryName || "").trim() || rule.targetIp;
+      const place = readTargetGeo(geoByKey.get(rule.targetKey));
+      const countryCode = place.countryCode;
+      const city = mapCityName({ geoCountryCode: place.countryCode, geoRegion: place.city }) || place.city || rule.targetIp;
       target = {
         key: rule.targetKey,
         address: rule.targetIp,
-        geo: Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null,
+        geo: place.geo,
         countryCode,
         city,
         emoji: countryFlagLabel(countryCode) || null,
@@ -337,7 +398,11 @@ export function buildNetworkMapModel(input: {
     else if (rule.health === "unknown" && target.health !== "down") target.health = "degraded";
   }
 
-  return { nodes, links, stubs, rules, targets: Array.from(targetMap.values()), linkTotal: tunnels.length, hiddenLinkCount, legend };
+  const routes = buildRouteLines(rules, {
+    visibleHostIds: new Set(nodes.filter((node) => node.geo).map((node) => node.id)),
+    tunnelExit: (tunnelId) => { const link = linkById.get(tunnelId); return link ? link.path[link.path.length - 1] : null; },
+  });
+  return { nodes, links, stubs, rules, targets: Array.from(targetMap.values()), linkTotal: tunnels.length, hiddenLinkCount, legend, routes, lines: lineLegend({ links, stubs, routes }) };
 }
 
 export function useTunnelSupportCheck(enabled: boolean) {

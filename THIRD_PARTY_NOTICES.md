@@ -30,3 +30,25 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Earth textures and country outlines (panel network map and globes)
+
+The panel serves a few static map assets from `client/public/globe/`:
+
+- `earth-night.jpg` — NASA Black Marble (Earth at night), 4096 × 2048
+  equirectangular. Used as the default「标准地图」base layer of the network
+  map.
+- `earth-blue-marble.jpg` — NASA Blue Marble (day satellite), 4096 × 2048
+  equirectangular. Used as the「卫星地图」base layer.
+- `earth-dark.jpg`, `earth-topology.png`, `night-sky.png` — textures for the
+  3D globes on the hosts / rules / tunnels pages.
+
+The textures above are NASA imagery (public domain, courtesy NASA Earth
+Observatory / Visible Earth) as redistributed in the example assets of the
+`three-globe` npm package (<https://github.com/vasturiano/three-globe>,
+MIT License, Copyright (c) 2019 Vasco Asturiano). The night texture was taken
+unchanged from `three-globe@2.31.0` (`example/img/earth-night.jpg`); the network
+map warps it to Web Mercator in the browser, tile by tile.
+
+- `ne_110m_admin_0_countries.geojson` — Natural Earth 1:110m admin-0 country
+  boundaries (public domain, <https://www.naturalearthdata.com/>).

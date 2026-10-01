@@ -199,3 +199,85 @@ export function usageTone(percent: number | null, warnAt = 70, downAt = 85): "ok
   if (percent >= warnAt) return "warn";
   return "ok";
 }
+
+// ---------------- 抽屉「实时数据」：选一段时间（最近 1 小时 / 24 小时），和前一段比 ----------------
+
+export type TrafficSeriesRow = { ruleId: number; bucket: string | Date | number; bytesIn?: number | null; bytesOut?: number | null };
+
+/** 一段时间里的速率：走势（字节 / 秒，按桶）、这段的平均、前一段的平均、变化（%） */
+export type RateWindow = {
+  series: number[];
+  avg: number | null;
+  previousAvg: number | null;
+  delta: number | null;
+};
+
+/** 变化百分比：前一段没有数据、或者是 0 时不算（除不了，也不该写成 +∞） */
+export function periodDelta(current: number | null, previous: number | null): number | null {
+  if (current === null || previous === null || !(previous > 0)) return null;
+  return ((current - previous) / previous) * 100;
+}
+
+/**
+ * 隧道上那几条规则的逐桶字节（rules.trafficSeriesBatch，取两倍时长）→ 下行 / 上行速率。
+ *
+ * 字节是每个桶里的增量，速率 = 字节 ÷ 桶长；没有行的桶就是那段时间没流量（流量桶只在有流量时写），
+ * 记 0。整段一行都没有时平均是 null（页面写「—」），不写成 0 —— 那可能只是还没统计。
+ * 平均按整段的总字节除以整段时长算，不是各桶速率的平均（桶不齐时后者会偏）。
+ * 下行 = bytesIn、上行 = bytesOut，和抽屉里其它地方「↓ 入站 / ↑ 出站」的说法一致。
+ */
+export function trafficRateWindows(rows: readonly TrafficSeriesRow[] | null | undefined, options: { ruleIds: readonly number[]; nowMs: number; rangeMs: number; bucketMs: number }): { down: RateWindow; up: RateWindow } {
+  const { nowMs, rangeMs, bucketMs } = options;
+  const allow = new Set(options.ruleIds);
+  const start = nowMs - rangeMs;
+  const previousStart = nowMs - 2 * rangeMs;
+  const bucketCount = Math.max(1, Math.round(rangeMs / bucketMs));
+  const series = { down: new Array<number>(bucketCount).fill(0), up: new Array<number>(bucketCount).fill(0) };
+  const totals = { down: 0, up: 0, previousDown: 0, previousUp: 0 };
+  let currentRows = 0;
+  let previousRows = 0;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!allow.has(Number(row.ruleId))) continue;
+    const at = toTime(row.bucket);
+    const bytesIn = Math.max(0, finite(row.bytesIn) ?? 0);
+    const bytesOut = Math.max(0, finite(row.bytesOut) ?? 0);
+    if (at >= start && at < nowMs + bucketMs) {
+      currentRows += 1;
+      totals.down += bytesIn;
+      totals.up += bytesOut;
+      const index = Math.min(bucketCount - 1, Math.max(0, Math.floor((at - start) / bucketMs)));
+      series.down[index] += bytesIn / (bucketMs / 1000);
+      series.up[index] += bytesOut / (bucketMs / 1000);
+    } else if (at >= previousStart && at < start) {
+      previousRows += 1;
+      totals.previousDown += bytesIn;
+      totals.previousUp += bytesOut;
+    }
+  }
+  const seconds = rangeMs / 1000;
+  const make = (key: "down" | "up", total: number, previousTotal: number): RateWindow => {
+    const avg = currentRows > 0 ? total / seconds : null;
+    const previousAvg = previousRows > 0 ? previousTotal / seconds : null;
+    return { series: currentRows > 0 ? series[key] : [], avg, previousAvg, delta: periodDelta(avg, previousAvg) };
+  };
+  return { down: make("down", totals.down, totals.previousDown), up: make("up", totals.up, totals.previousUp) };
+}
+
+/**
+ * 延迟序列（tunnels.latencySeries，取两倍时长）切成这一段和前一段：这段的统计、前一段的平均、变化。
+ * 探测成功率只看这一段。
+ */
+export function latencyWindows(rows: readonly LatencySeriesRow[] | null | undefined, options: { nowMs: number; rangeMs: number }): { current: LatencyStats; previousAvg: number | null; delta: number | null } {
+  const start = options.nowMs - options.rangeMs;
+  const all = Array.isArray(rows) ? rows : [];
+  const current = summarizeLatencySeries(all.filter((row) => toTime(row.recordedAt) >= start));
+  const previous = summarizeLatencySeries(all.filter((row) => { const at = toTime(row.recordedAt); return at < start && at >= start - options.rangeMs; }));
+  return { current, previousAvg: previous.avg, delta: periodDelta(current.avg, previous.avg) };
+}
+
+/** 「+12.5%」「−3.0%」；算不出来是 null */
+export function formatDelta(delta: number | null): string | null {
+  if (delta === null || !Number.isFinite(delta)) return null;
+  const sign = delta > 0 ? "+" : delta < 0 ? "−" : "±";
+  return `${sign}${Math.abs(delta).toFixed(1)}%`;
+}

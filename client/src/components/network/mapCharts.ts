@@ -141,7 +141,9 @@ export function drawLineChart(canvas: HTMLCanvasElement, data: ReadonlyArray<num
     ctx.fill();
   }
   ctx.strokeStyle = options.color;
-  ctx.lineWidth = 1.6;
+  // 2px 的线、圆角接头：和地图上线路一样细而干净
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
   ctx.lineJoin = "round";
   for (const segment of segments) {
     ctx.beginPath();
@@ -213,7 +215,8 @@ export function drawDualChart(canvas: HTMLCanvasElement, a: readonly number[], b
     ctx.beginPath();
     data.forEach((value, index) => (index === 0 ? ctx.moveTo(X(index), Y(value)) : ctx.lineTo(X(index), Y(value))));
     ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
     ctx.stroke();
   }
 }

@@ -1,3 +1,4 @@
+import { backupsForTunnel } from "./networkMapLines";
 import type { NetworkMapModel } from "./networkMapModel";
 
 /**
@@ -16,7 +17,7 @@ export const SHEET_HALF_RATIO = 0.48;
 export const SHEET_FULL_RATIO = 0.9;
 /** 抽屉变成右侧栏的宽度分界 */
 export const RAIL_MIN_WIDTH = 900;
-export const RAIL_WIDTH = 400;
+export const RAIL_WIDTH = 384;
 
 const SNAP_ORDER: SheetSnap[] = ["full", "half", "peek"];
 
@@ -66,14 +67,16 @@ export function nextSheetSnap(input: {
 export type MapPadding = { top: number; bottom: number; left: number; right: number };
 
 /**
- * 地图的可视区留白：抽屉盖住多少，底部就让出多少，飞入永远落在看得见的那块正中。
- * 顶部留 64px 给图例那一行；桌面端抽屉在右边不压地图，只留一圈边。
+ * 地图的可视区留白：飞入、框住永远落在看得见的那块正中。
+ *   桌面：顶上让出标题和一排统计卡，右边让出竖着的工具栏；右边的详情卡开着时再让出它的宽度，
+ *         底下让出图例
+ *   手机：顶上让出标题和横着滚的统计卡，右边让出工具栏，底下抽屉盖住多少让出多少
  */
-export function mapPaddingForSheet(snap: SheetSnap, containerHeight: number, rail: boolean): MapPadding {
-  if (rail) return { top: 70, bottom: 30, left: 24, right: 24 };
+export function mapPaddingForSheet(snap: SheetSnap, containerHeight: number, rail: boolean, panelOpen = false): MapPadding {
+  if (rail) return { top: 150, bottom: 64, left: 40, right: panelOpen ? RAIL_WIDTH + 96 : 96 };
   const H = Math.max(0, containerHeight);
   const visible = snap === "peek" ? SHEET_PEEK_HEIGHT : snap === "half" ? H * SHEET_HALF_RATIO : H * 0.55;
-  return { top: 64, bottom: Math.round(visible) + 12, left: 20, right: 20 };
+  return { top: 150, bottom: Math.round(visible) + 12, left: 20, right: 64 };
 }
 
 export type MapFocus = {
@@ -81,6 +84,10 @@ export type MapFocus = {
   tunnels: number[];
   targets: string[];
   rules: number[];
+  /** 线路组里画成线的路径（key），不在里面的压暗；没给就全压暗 */
+  routes?: string[];
+  /** 主备线路对比：选中的这条隧道 + 它的备用（同入口同出口的备用隧道、线路组里没轮到的路径） */
+  compare?: { tunnelId: number; backupTunnels: number[]; backupRoutes: string[] };
   /** 「退出聚焦」药丸上的字和颜色 */
   label: string;
   severity: "error" | "warning" | "info";
@@ -103,15 +110,25 @@ export function focusForNode(model: NetworkMapModel, hostId: number): MapFocus |
   return { hosts: Array.from(hosts), tunnels: tunnels.map((link) => link.id), targets, rules: [], label: node.name, severity: "info" };
 }
 
+/**
+ * 点开一条隧道：主备线路对比 —— 它自己和它的备用（backupsForTunnel）亮着，别的全压暗。
+ * 备用经过的主机也算在里面，不然虚线连着两个压暗的环，看不出是从哪到哪。
+ */
 export function focusForLink(model: NetworkMapModel, tunnelId: number): MapFocus | null {
   const link = model.links.find((item) => item.id === tunnelId);
   if (!link) return null;
   const rules = model.rules.filter((rule) => rule.tunnelId === tunnelId);
+  const backups = backupsForTunnel(model, tunnelId);
+  const hosts = new Set<number>(link.path);
+  for (const id of backups.tunnels) for (const hostId of model.links.find((item) => item.id === id)?.path ?? []) hosts.add(hostId);
+  for (const key of backups.routes) for (const hostId of model.routes.find((route) => route.key === key)?.hosts ?? []) hosts.add(hostId);
   return {
-    hosts: [...link.path],
-    tunnels: [tunnelId],
+    hosts: Array.from(hosts),
+    tunnels: [tunnelId, ...backups.tunnels],
     targets: Array.from(new Set(rules.map((rule) => rule.targetKey).filter(Boolean))),
     rules: rules.map((rule) => rule.id),
+    routes: backups.routes,
+    compare: { tunnelId, backupTunnels: backups.tunnels, backupRoutes: backups.routes },
     label: link.name,
     severity: "info",
   };
@@ -133,6 +150,10 @@ export function isHostDimmed(focus: MapFocus | null, hostId: number) {
 }
 export function isTunnelDimmed(focus: MapFocus | null, tunnelId: number) {
   return !!focus && !focus.tunnels.includes(tunnelId);
+}
+/** 线路组的一条路径：聚焦时只有点名的那几条亮着 */
+export function isRouteDimmed(focus: MapFocus | null, routeKey: string) {
+  return !!focus && !(focus.routes ?? []).includes(routeKey);
 }
 export function isTargetDimmed(focus: MapFocus | null, key: string) {
   return !!focus && !focus.targets.includes(key);
@@ -164,7 +185,8 @@ export function parseMapOpenQuery(search: string): { view: "node"; id: number } 
 }
 
 /** 页头那句「5 台主机 · 3 条线路 · 2 项需要关注」 */
-export function overviewHeadline(model: Pick<NetworkMapModel, "nodes" | "linkTotal">, alertCount: number): { main: string; attention: string | null } {
-  const main = `${model.nodes.length} 台主机 · ${model.linkTotal} 条线路`;
+export function overviewHeadline(model: Pick<NetworkMapModel, "nodes" | "linkTotal"> & { routes?: readonly unknown[] }, alertCount: number): { main: string; attention: string | null } {
+  // 线路数和统计卡「链路线路」同一个数：隧道 + 线路组里画成线的路径
+  const main = `${model.nodes.length} 台主机 · ${model.linkTotal + (model.routes?.length ?? 0)} 条线路`;
   return { main, attention: alertCount > 0 ? `${alertCount} 项需要关注` : null };
 }
