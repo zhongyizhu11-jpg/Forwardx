@@ -132,7 +132,9 @@ func TestAcquireCurrentActionSerialLocksRejectsActionMadeStaleWhileWaiting(t *te
 		if current {
 			t.Fatal("older Mimic action remained executable after a newer action arrived while it waited")
 		}
-	case <-time.After(time.Second):
+	// 正确实现里放锁后等着的那一个微秒级就能拿到锁；这里给 5 秒，只是不让 CI 机器
+	// 偶尔卡一下（GC、调度、日志落盘）就把一个没问题的实现判成挂住。
+	case <-time.After(5 * time.Second):
 		t.Fatal("waiting Mimic action did not resume after releasing the serial lock")
 	}
 }
