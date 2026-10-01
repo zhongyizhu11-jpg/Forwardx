@@ -939,6 +939,24 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     else map.easeTo({ ...options, duration: motion.duration });
   };
 
+  /**
+   * 整页的相机约束。MapLibre 默认要求整个世界的高度盖满容器（纬度 ±85° 不许露边），于是 694px 高的
+   * 手机地图最小只能缩到 0.44 级 —— 360px 宽的手机上横跨太平洋的港 → 洛杉矶连同名字就是放不下，
+   * 簇的环被挤出左边。这里改成：世界比容器高时照旧不让看到两极之外；世界比容器矮时（只在窄手机
+   * 框全览时出现）允许，只要整个世界还在容器里（上下露出的是和海一样的底色）。缩放夹在 min / max 之间。
+   */
+  function constrainPageCamera(lngLat: maplibregl.LngLat, zoom: number) {
+    const map = live.map;
+    const z = Math.min(map?.getMaxZoom() ?? 14, Math.max(map?.getMinZoom() ?? PAGE_MIN_ZOOM, zoom));
+    const height = map?.getContainer().clientHeight ?? 0;
+    const world = 512 * 2 ** z;
+    const lat = Math.max(-85, Math.min(85, lngLat.lat));
+    let y = maplibregl.MercatorCoordinate.fromLngLat([0, lat]).y * world;
+    if (height > 0) y = world >= height ? Math.min(world - height / 2, Math.max(height / 2, y)) : Math.min(height / 2, Math.max(world - height / 2, y));
+    const center = new maplibregl.MercatorCoordinate(0, y / world).toLngLat();
+    return { center: new maplibregl.LngLat(lngLat.lng, center.lat), zoom: z };
+  }
+
   /** 整页的「全览」：框住全部主机和落地目标 */
   const fitPageAll = (motion: { duration: number; fly: boolean }, nextPadding?: MapPadding) => {
     live.autoFit = true;
@@ -1557,6 +1575,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         dragPan: pannable || page,
         doubleClickZoom: pannable || page,
         touchZoomRotate: pannable || page,
+        transformConstrain: page ? constrainPageCamera : null,
       });
     } catch (error) {
       // 没有 WebGL（远程桌面、老浏览器）：告诉页面画兜底文案
