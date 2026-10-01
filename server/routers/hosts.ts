@@ -12,9 +12,8 @@ import { AGENT_VERSION, APP_VERSION, REPO_URL } from "../_core/systemRouter";
 import { isAgentUpgradeCompleted, isHostAgentUpgradeUnnecessary } from "../agentRouteUtils";
 import { hostNeedsAgentUpgrade } from "@shared/fxpRuntime";
 import { normalizeVersion } from "@shared/version";
-import { relocateHost, scheduleHostGeoRefresh } from "../hostGeo";
-import { coordinateToMicro, hostGeoSource, isValidCountryCode, isValidLatitude, isValidLongitude } from "@shared/hostGeoSource";
-import { geoCountryNameZh } from "@shared/geoCities";
+import { scheduleHostGeoRefresh } from "../hostGeo";
+import { agentPrivateIpv4 } from "../agentPrivateAddress";
 import { refreshHostAddressRuntime } from "../hostAddressRuntime";
 import { scheduleHostDdnsUpdate } from "../hostDdns";
 import { scheduleRuleEntryDomainSyncForHost } from "../ruleEntryDomain";
@@ -484,66 +483,12 @@ export function hostOwnerLabel(
 
 function compactHostForList(host: any) {
   const { agentToken, ...rest } = host || {};
-  // 位置从哪来（手动 / 自动 / 还没定到）：卡片上画「手动」标签、地图以后标注来源都靠它。
-  return { ...rest, geoSource: hostGeoSource(rest) };
+  return withDetectedPrivateIpv4(rest);
 }
 
-/*
-  手动位置的输入校验，hosts.create / hosts.update / hosts.setLocation 共用。
-
-  经纬度必须成对给、且在范围内；国家代码要是两位 ISO。geoRegion 是展示名
-  （城市中文名，或用户自己写的），可空。返回的是直接能写库的字段。
-*/
-const manualLocationInputSchema = {
-  geoManual: z.boolean().optional(),
-  geoCountryCode: z.string().trim().min(2).max(2).optional(),
-  geoRegion: z.string().trim().max(120).nullable().optional(),
-  geoLatitude: z.number().optional(),
-  geoLongitude: z.number().optional(),
-};
-
-function manualLocationPayload(input: {
-  geoCountryCode?: string;
-  geoRegion?: string | null;
-  geoLatitude?: number;
-  geoLongitude?: number;
-}) {
-  const countryCode = String(input.geoCountryCode || "").trim().toUpperCase();
-  if (!isValidCountryCode(countryCode)) throw new Error("国家/地区代码要是两位 ISO 代码，例如 HK、US");
-  if (input.geoLatitude === undefined || input.geoLongitude === undefined) throw new Error("请填写经纬度");
-  if (!isValidLatitude(input.geoLatitude)) throw new Error("纬度要在 -90 到 90 之间");
-  if (!isValidLongitude(input.geoLongitude)) throw new Error("经度要在 -180 到 180 之间");
-  return {
-    geoManual: true,
-    geoCountryCode: countryCode,
-    geoCountryName: geoCountryNameZh(countryCode),
-    geoRegion: String(input.geoRegion || "").trim() || null,
-    geoEmoji: countryCodeToFlagEmoji(countryCode),
-    geoLatitudeMicro: coordinateToMicro(Number(input.geoLatitude)),
-    geoLongitudeMicro: coordinateToMicro(Number(input.geoLongitude)),
-    geoUpdatedAt: new Date(),
-  };
-}
-
-function countryCodeToFlagEmoji(countryCode: string) {
-  return Array.from(countryCode)
-    .map((char) => String.fromCodePoint(0x1f1e6 + char.charCodeAt(0) - 65))
-    .join("");
-}
-
-function compactHostLocation(host: any) {
-  return {
-    id: Number(host?.id || 0),
-    geoSource: hostGeoSource(host),
-    geoManual: !!host?.geoManual,
-    geoCountryCode: host?.geoCountryCode || null,
-    geoCountryName: host?.geoCountryName || null,
-    geoRegion: host?.geoRegion || null,
-    geoEmoji: host?.geoEmoji || null,
-    geoLatitudeMicro: host?.geoLatitudeMicro ?? null,
-    geoLongitudeMicro: host?.geoLongitudeMicro ?? null,
-    geoUpdatedAt: host?.geoUpdatedAt || null,
-  };
+/** 带上 Agent 上报的内网 IPv4，编辑框里「内网地址」拿它做建议（见 agentPrivateAddress） */
+function withDetectedPrivateIpv4<T extends Record<string, any>>(host: T): T & { detectedPrivateIpv4: string | null } {
+  return { ...host, detectedPrivateIpv4: agentPrivateIpv4(host?.id) };
 }
 
 function hostMatchesListSearch(host: any, search: string) {
@@ -1107,7 +1052,6 @@ export const hostsRouter = router({
           geoRegion: host.geoRegion || null,
           geoLatitudeMicro: host.geoLatitudeMicro ?? null,
           geoLongitudeMicro: host.geoLongitudeMicro ?? null,
-          geoSource: hostGeoSource(host),
         }));
         const nextCursor = cursor + rows.length < pageData.totalItems ? cursor + rows.length : undefined;
         return { items, nextCursor, totalItems: pageData.totalItems };
@@ -1284,7 +1228,7 @@ export const hostsRouter = router({
             if (!hasPermission) return null;
           }
         }
-        return ctx.user.role === "admin" ? host : compactHostForList(host);
+        return ctx.user.role === "admin" ? withDetectedPrivateIpv4(host) : compactHostForList(host);
       }),
     create: protectedProcedure
       .input(z.object({
@@ -1319,11 +1263,8 @@ export const hostsRouter = router({
         blockHttp: z.boolean().optional(),
         blockSocks: z.boolean().optional(),
         blockTls: z.boolean().optional(),
-        ...manualLocationInputSchema,
       }))
       .mutation(async ({ input, ctx }) => {
-        const { geoManual, geoCountryCode, geoRegion, geoLatitude, geoLongitude, ...hostInput } = input;
-        const manualLocation = geoManual ? manualLocationPayload({ geoCountryCode, geoRegion, geoLatitude, geoLongitude }) : {};
         if (ctx.user.role !== "admin") {
           const [globalLimit, owner] = await Promise.all([
             db.getSetting("selfServiceHostLimit").then(selfServiceHostLimitFrom),
@@ -1356,10 +1297,9 @@ export const hostsRouter = router({
           : { ddnsEnabled: false, ddnsDomain: null, ddnsRecordType: "A", ddnsIpVersion: "ipv4" };
         if ((ddnsConfig as any).ddnsEnabled) await assertHostDdnsServiceConfigured();
         const id = await db.createHost({
-          ...hostInput,
+          ...input,
           ...trafficConfig,
           ...ddnsConfig,
-          ...manualLocation,
           agentToken,
           networkInterface: input.networkInterface || null,
           sortOrder: input.sortOrder ?? 0,
@@ -1478,33 +1418,11 @@ export const hostsRouter = router({
         blockHttp: z.boolean().optional(),
         blockSocks: z.boolean().optional(),
         blockTls: z.boolean().optional(),
-        ...manualLocationInputSchema,
       }))
-      .mutation(async ({ input: rawInput, ctx }) => {
-        const host = await db.getHostById(rawInput.id);
+      .mutation(async ({ input, ctx }) => {
+        const host = await db.getHostById(input.id);
         if (!host) throw new Error("主机不存在");
         if (ctx.user.role !== "admin" && host.userId !== ctx.user.id) throw new Error("无权操作此主机");
-        /*
-          位置字段单独拎出来：geoManual=true 时校验并整包写入；geoManual=false 且
-          原来是手动的，标记和坐标一起清（界面通常已先调 hosts.relocate 立刻重查，
-          这里是兜底）。没带 geoManual 的请求不碰位置。
-        */
-        const { geoManual, geoCountryCode, geoRegion, geoLatitude, geoLongitude, ...input } = rawInput;
-        const clearedLocation = {
-          geoManual: false,
-          geoCountryCode: null,
-          geoCountryName: null,
-          geoRegion: null,
-          geoEmoji: null,
-          geoLatitudeMicro: null,
-          geoLongitudeMicro: null,
-          geoUpdatedAt: null,
-        };
-        const manualLocation = geoManual === true
-          ? manualLocationPayload({ geoCountryCode, geoRegion, geoLatitude, geoLongitude })
-          // 从手动改回自动：连坐标一起清，下次翻列表就重新按 IP 查；留着人手填的坐标会被当成自动结果展示。
-          : geoManual === false && (host as any).geoManual ? clearedLocation : {};
-        const willBeManual = geoManual === undefined ? !!(host as any).geoManual : geoManual;
         // 验证端口区间
         const pStart = input.portRangeStart !== undefined ? input.portRangeStart : (host as any).portRangeStart;
         const pEnd = input.portRangeEnd !== undefined ? input.portRangeEnd : (host as any).portRangeEnd;
@@ -1594,8 +1512,7 @@ export const hostsRouter = router({
         const entryChanged = ["entryIp", "tunnelEntryIp"].some((key) =>
           (data as any)[key] !== undefined && String((data as any)[key] || "") !== String((host as any)[key] || "")
         );
-        // 换了入口地址要重新定位 —— 但手动指定的位置跟地址无关，不清。
-        if (entryChanged && !willBeManual) {
+        if (entryChanged) {
           Object.assign(data as any, {
             geoCountryCode: null,
             geoCountryName: null,
@@ -1606,7 +1523,6 @@ export const hostsRouter = router({
             geoUpdatedAt: null,
           });
         }
-        Object.assign(data as any, manualLocation);
         await db.updateHost(id, data as any);
         if (ddnsConfigChanged) {
           scheduleHostDdnsUpdate({ ...host, ...(data as any), id }, "host-ddns-config-updated", { force: true });
@@ -1650,43 +1566,6 @@ export const hostsRouter = router({
           await refreshHostPolicyRuntime(id, "host-protocol-policy-updated");
         }
         return { success: true };
-      }),
-    /**
-     * 手动指定主机位置。
-     *
-     * 按 IP 的自动定位对机房网段经常是错的（香港的机器落在深圳），用户得能
-     * 自己说了算。写进去的位置带 geoManual 标记，自动定位从此绕开这台机器。
-     * 权限同编辑主机：主人或管理员。
-     */
-    setLocation: protectedProcedure
-      .input(z.object({
-        id: z.number().int().positive(),
-        geoCountryCode: z.string().trim().min(2).max(2),
-        geoRegion: z.string().trim().max(120).nullable().optional(),
-        geoLatitude: z.number(),
-        geoLongitude: z.number(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const host = await db.getHostById(input.id);
-        if (!host) throw new Error("主机不存在");
-        if (ctx.user.role !== "admin" && host.userId !== ctx.user.id) throw new Error("无权操作此主机");
-        const location = manualLocationPayload(input);
-        await db.updateHost(input.id, location as any);
-        return compactHostLocation({ ...host, ...location });
-      }),
-    /**
-     * 清掉手动标记，立刻按 IP 重新定位一次。查不到时返回的 geoSource 是 null，
-     * 后台的补漏任务会接着按退避重试。
-     */
-    relocate: protectedProcedure
-      .input(z.object({ id: z.number().int().positive() }))
-      .mutation(async ({ input, ctx }) => {
-        const host = await db.getHostById(input.id);
-        if (!host) throw new Error("主机不存在");
-        if (ctx.user.role !== "admin" && host.userId !== ctx.user.id) throw new Error("无权操作此主机");
-        await relocateHost(input.id);
-        const updated = await db.getHostById(input.id);
-        return compactHostLocation(updated || { ...host, geoManual: false, geoCountryCode: null, geoLatitudeMicro: null, geoLongitudeMicro: null });
       }),
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))

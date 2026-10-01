@@ -12,7 +12,7 @@ import { StatusDot } from "@/components/network/StatusDot";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { formatAgo } from "@shared/dashboardAttention";
 import { formatCpuPercent, isAgentUpgradeTimedOut } from "./hostDisplay";
-import { HostGeoManualTag, HostUnlocatedText, hostPrimaryAddressLines, hostRegionText } from "./hostDisplay";
+import { hostPrimaryAddressLines, hostRegionText } from "./hostDisplay";
 import { HostOsAvatar, hostOsOf } from "./HostOsBadge";
 import { deriveHostVitals, type HostVitals } from "./useHostVitals";
 
@@ -50,8 +50,6 @@ export type HostSummaryCardProps = {
   resetTrafficPending?: boolean;
   onOpenDetail: (host: any) => void;
   onEdit: (host: any) => void;
-  /** 注脚里的「未定位 · 点此设置」：打开编辑对话框并滚到位置那一行 */
-  onEditLocation?: (host: any) => void;
   onDelete: (id: number) => void;
   onUpgrade: (host: any) => void;
   onResetTraffic?: (host: any) => void;
@@ -314,18 +312,10 @@ export default function HostSummaryCard(props: HostSummaryCardProps) {
         ) : null}
         subtitle={
           <>
-            {region ? (
-              <>
-                {region}
-                {host?.geoManual ? <HostGeoManualTag className="ml-1 align-middle" /> : null}
-              </>
-            ) : (
-              <HostUnlocatedText compact onSetLocation={props.onEditLocation ? () => props.onEditLocation?.(host) : undefined} />
-            )}
-            {address ? ` · ${address}` : ""}
+            {[region, address].filter(Boolean).join(" · ")}
             {agentVersion ? (
               <>
-                {" · "}
+                {region || address ? " · " : ""}
                 Agent {agentVersion}
                 {props.upgradeAvailable ? <span className="text-[var(--fx-warn-text)]"> 可升级</span> : null}
               </>

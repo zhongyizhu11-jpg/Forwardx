@@ -895,11 +895,29 @@ export async function getHostsMissingGeo(limit = 200) {
   const db = await getDb();
   if (!db) return [];
   const rows = await db.select().from(hosts).where(sql`
-    ${hosts.geoManual} = ${sqlBool(false)}
-    AND (${hosts.geoCountryCode} IS NULL OR ${hosts.geoCountryCode} = ''
-      OR ${hosts.geoLatitudeMicro} IS NULL OR ${hosts.geoLongitudeMicro} IS NULL)
+    ${hosts.geoCountryCode} IS NULL OR ${hosts.geoCountryCode} = ''
+      OR ${hosts.geoLatitudeMicro} IS NULL OR ${hosts.geoLongitudeMicro} IS NULL
   `).orderBy(asc(hosts.id)).limit(Math.max(1, Math.floor(limit)));
   return rows.map(withComputedOnline);
+}
+
+/** 以前手动指定过位置的主机：清掉标记和坐标，交回自动定位。返回改了几台。 */
+export async function resetManualHostLocations() {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db.select({ id: hosts.id }).from(hosts).where(sql`${hosts.geoManual} = ${sqlBool(true)}`);
+  if (rows.length === 0) return 0;
+  await db.update(hosts).set({
+    geoManual: false,
+    geoCountryCode: null,
+    geoCountryName: null,
+    geoRegion: null,
+    geoEmoji: null,
+    geoLatitudeMicro: null,
+    geoLongitudeMicro: null,
+    geoUpdatedAt: null,
+  } as any).where(inArray(hosts.id, rows.map((row: { id: number }) => row.id)));
+  return rows.length;
 }
 
 export async function markHostsOffline(hostIds: number[]) {

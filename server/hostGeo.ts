@@ -4,6 +4,7 @@ import net from "node:net";
 import * as db from "./db";
 import { executeRaw, queryRaw } from "./dbRuntime";
 import { quoteIdentifier } from "./dbCompat";
+import { GEO_CITIES, matchGeoCity } from "../shared/geoCities";
 
 const GEO_REQUEST_TIMEOUT_MS = 8000;
 const ADDRESS_GEO_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
@@ -228,8 +229,6 @@ function isHostUnlocated(host: any) {
 }
 
 function isRefreshDue(host: any) {
-  // 手动指定的位置由用户说了算，自动定位不看也不写。
-  if (host?.geoManual) return false;
   const hostId = Number(host?.id) || 0;
   const retry = hostId ? hostGeoRetryState.get(hostId) : undefined;
   if (retry && retry.notBefore > Date.now()) return false;
@@ -251,11 +250,17 @@ export function getHostGeoRetryState(hostId: number) {
   return hostGeoRetryState.get(hostId) || null;
 }
 
+function isLookupCandidate(value: string) {
+  if (!value || value.toLowerCase() === "unknown") return false;
+  // 上报的是内网/保留地址（NAT 机器的网卡地址）查不出归属地，跳过去看下一个
+  return !isPrivateAddress(value);
+}
+
 function pickLookupAddress(host: any) {
   const candidates = [host?.ipv4, host?.ipv6, host?.ip, host?.entryIp];
   for (const candidate of candidates) {
     const value = String(candidate || "").trim();
-    if (!value || value.toLowerCase() === "unknown") continue;
+    if (!isLookupCandidate(value)) continue;
     return value;
   }
   return "";
@@ -326,6 +331,12 @@ async function fetchFromGeoProvider(provider: GeoProvider, address: string): Pro
 export async function fetchHostGeo(address: string): Promise<ProviderGeo> {
   const errors: string[] = [];
   const now = Date.now();
+  /*
+    只给了国家、没给坐标的答案先留着，别扔：三家都给不出坐标时就用它。2.3.39x
+    把这种答案一律当失败，有些 IP（IPv6 居多）三家都只答得出国家，主机就从
+    「有地区」变成了「未定位」—— 以前只问 ipapi.co 的时候它是能显示地区的。
+  */
+  let countryOnly: ProviderGeo | null = null;
   for (const provider of GEO_PROVIDERS) {
     if (provider.rateLimitedUntil > now) {
       errors.push(`${provider.name} rate limited until ${new Date(provider.rateLimitedUntil).toISOString()}`);
@@ -335,6 +346,7 @@ export async function fetchHostGeo(address: string): Promise<ProviderGeo> {
       const geo = await fetchFromGeoProvider(provider, address);
       if (geo.geoLatitudeMicro == null || geo.geoLongitudeMicro == null) {
         errors.push(`${provider.name} no coordinates`);
+        countryOnly ||= geo;
         continue;
       }
       return geo;
@@ -342,7 +354,25 @@ export async function fetchHostGeo(address: string): Promise<ProviderGeo> {
       errors.push(error?.name === "AbortError" ? `${provider.name} timeout` : String(error?.message || error));
     }
   }
+  if (countryOnly) return withApproximateCoordinates(countryOnly);
   throw new Error(errors.join("; ") || "no geo provider available");
+}
+
+/**
+ * 有国家没坐标时，从随包的城市表里补一个近似点：地区名对得上就用那座城市，
+ * 对不上就用这个国家在表里的第一座城市（表里每个国家都把首都/最大的机房城市
+ * 放在最前面）。表里没有这个国家就保持没有坐标 —— 地区照样显示，地图上不画。
+ */
+function withApproximateCoordinates(geo: ProviderGeo): ProviderGeo {
+  const code = geo.geoCountryCode.toUpperCase();
+  const city = matchGeoCity({ geoCountryCode: code, geoRegion: geo.geoRegion })
+    || GEO_CITIES.find((item) => item.code === code);
+  if (!city) return geo;
+  return {
+    ...geo,
+    geoLatitudeMicro: Math.round(city.lat * 1_000_000),
+    geoLongitudeMicro: Math.round(city.lng * 1_000_000),
+  };
 }
 
 function cacheEntryFromRow(row: any): AddressGeoCacheEntry | null {
@@ -472,11 +502,10 @@ async function lookupAddressGeoUncached(normalized: string, cacheKey: string): P
   return value;
 }
 
-async function refreshHostGeo(host: any, options: { force?: boolean } = {}) {
+async function refreshHostGeo(host: any) {
   const hostId = Number(host?.id) || 0;
   if (!hostId || refreshingHostIds.has(hostId)) return null;
-  if (host?.geoManual) return null;
-  if (!options.force && !isRefreshDue(host)) return null;
+  if (!isRefreshDue(host)) return null;
 
   refreshingHostIds.add(hostId);
   try {
@@ -491,12 +520,6 @@ async function refreshHostGeo(host: any, options: { force?: boolean } = {}) {
       console.warn(`[HostGeo] unlocated host=${hostId} address=${address}; retry in ${Math.round(delay / 60000)}min`);
       return null;
     }
-    /*
-      查询是异步的，期间用户可能刚好在对话框里把位置改成了手动 —— 写之前再读一次
-      标记，别把人家刚填的覆盖掉。
-    */
-    const current = await db.getHostById(hostId);
-    if (!current || (current as any).geoManual) return null;
     await db.updateHost(hostId, {
       geoCountryCode: geo.geoCountryCode,
       geoCountryName: geo.geoCountryName,
@@ -506,7 +529,12 @@ async function refreshHostGeo(host: any, options: { force?: boolean } = {}) {
       geoLongitudeMicro: geo.geoLongitudeMicro,
       geoUpdatedAt: geo.geoUpdatedAt,
     } as any);
-    hostGeoRetryState.delete(hostId);
+    if (geo.geoLatitudeMicro == null || geo.geoLongitudeMicro == null) {
+      // 只有国家：地区先写上让卡片有字，坐标按退避慢慢再问，别每轮补漏都写一遍库。
+      noteHostGeoFailure(hostId);
+    } else {
+      hostGeoRetryState.delete(hostId);
+    }
     return geo;
   } catch (error: any) {
     noteHostGeoFailure(hostId);
@@ -518,52 +546,23 @@ async function refreshHostGeo(host: any, options: { force?: boolean } = {}) {
 }
 
 /**
- * 把一台主机从「手动」改回「按 IP 自动定位」，并立刻重新查一次。
- *
- * 缓存也一并丢掉：用户点这个按钮多半是因为觉得上次自动定的不对，再把同一份
- * 缓存拿出来给他看等于没点。
- */
-export async function relocateHost(hostId: number) {
-  const host = await db.getHostById(hostId);
-  if (!host) throw new Error("主机不存在");
-  await db.updateHost(hostId, {
-    geoManual: false,
-    geoCountryCode: null,
-    geoCountryName: null,
-    geoRegion: null,
-    geoEmoji: null,
-    geoLatitudeMicro: null,
-    geoLongitudeMicro: null,
-    geoUpdatedAt: null,
-  } as any);
-  hostGeoRetryState.delete(hostId);
-  const address = pickLookupAddress(host);
-  if (address) await evictAddressGeoCache(address);
-  return refreshHostGeo({ ...host, geoManual: false, geoCountryCode: null, geoLatitudeMicro: null, geoLongitudeMicro: null }, { force: true });
-}
-
-async function evictAddressGeoCache(address: string) {
-  const normalized = normalizeLookupAddress(address);
-  if (!normalized) return;
-  const cacheKey = normalized.toLowerCase();
-  addressGeoCache.delete(cacheKey);
-  const q = quoteIdentifier;
-  await executeRaw(`DELETE FROM ${q("ip_geo_cache")} WHERE ${q("address")} = ?`, [cacheKey]).catch(() => undefined);
-  const resolved = await resolveLookupAddress(normalized).catch(() => "");
-  const resolvedKey = String(resolved || "").toLowerCase();
-  if (resolvedKey && resolvedKey !== cacheKey) {
-    addressGeoCache.delete(resolvedKey);
-    await executeRaw(`DELETE FROM ${q("ip_geo_cache")} WHERE ${q("address")} = ?`, [resolvedKey]).catch(() => undefined);
-  }
-}
-
-/**
  * 定时补漏：把还没定到位、也不是手动的主机挨个再查一遍。
  *
  * 串行而不是并发 —— 三家服务都是免费额度，一口气打几十个请求正好把自己
  * 限流。退避在 isRefreshDue 里管着，这里只是把到点的挑出来。
  */
+let manualLocationsReset = false;
+
 export async function runHostGeoSweep() {
+  /*
+    手动指定位置的功能去掉了（用户只要自动的）。以前手动设过的主机清掉标记和
+    坐标，交回给自动定位；每次启动做一次，没有这样的主机就是一条空 UPDATE。
+  */
+  if (!manualLocationsReset) {
+    manualLocationsReset = true;
+    const reset = await db.resetManualHostLocations().catch(() => 0);
+    if (reset > 0) console.info(`[HostGeo] reset ${reset} manually placed host(s) to automatic location`);
+  }
   const rows = await db.getHostsMissingGeo();
   let located = 0;
   let attempted = 0;
