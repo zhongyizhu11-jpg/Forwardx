@@ -2413,6 +2413,7 @@ function TelegramBotSettingsCard() {
   const updateSettingsMutation = trpc.system.updateSettings.useMutation({
     onSuccess: () => {
       utils.system.getSettings.invalidate();
+      utils.system.forwardProtocols.invalidate();
       toast.success("Telegram 机器人配置已保存");
     },
     onError: (err) => toast.error(err.message || "保存失败"),
@@ -2747,6 +2748,7 @@ function DeepSeekSettingsCard() {
   const updateSettingsMutation = trpc.system.updateSettings.useMutation({
     onSuccess: (_data, variables) => {
       utils.system.getSettings.invalidate();
+      utils.system.forwardProtocols.invalidate();
       utils.system.listAiModels.invalidate();
       setProviderConfigs((prev) => ({
         deepseek: { ...prev.deepseek, apiKeyInput: "" },
@@ -4705,6 +4707,7 @@ function SystemInfoSection() {
   const updateSettingsMutation = trpc.system.updateSettings.useMutation({
     onSuccess: () => {
       utils.system.getSettings.invalidate();
+      utils.system.forwardProtocols.invalidate();
       toast.success("面板设置已保存");
     },
     onError: (err) => toast.error(err.message || "保存失败"),

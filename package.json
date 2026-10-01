@@ -1,6 +1,6 @@
 {
   "name": "forwardx",
-  "version": "2.3.402",
+  "version": "2.3.403",
   "description": "NEX 多主机端口转发与隧道管理面板",
   "license": "AGPL-3.0-only",
   "private": true,
@@ -8,7 +8,6 @@
   "scripts": {
     "dev": "tsx server/index.ts",
     "dev:panel": "node scripts/dev-panel.mjs",
-    "dev:hosts-showcase": "node scripts/dev-panel.mjs",
     "build": "vite build && node esbuild.config.mjs",
     "build:client": "vite build",
     "build:server": "node esbuild.config.mjs",
