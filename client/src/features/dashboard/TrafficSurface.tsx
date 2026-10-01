@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useEffect, useMemo } from "react";
 
 import { ListSection } from "@/components/ios/GroupedList";
 import { Metric, MetricGroup } from "@/components/entity/Metric";
@@ -14,10 +14,11 @@ import {
 } from "./trafficRanking";
 
 /*
-  走势图按需加载 —— recharts 不进首屏包。数据没回来那段时间正好够把图表库取回来，
-  所以在观感上是免费的。
+  走势图按需加载 —— recharts 不进首屏包。首屏画完就开始取（和走势数据并行），
+  不等数据回来再排队下图表库，所以在观感上是免费的。
 */
-const TrafficAreaChart = lazy(() => import("@/components/charts/DashboardTrafficCharts").then((m) => ({ default: m.TrafficAreaChart })));
+const loadTrafficCharts = () => import("@/components/charts/DashboardTrafficCharts");
+const TrafficAreaChart = lazy(() => loadTrafficCharts().then((m) => ({ default: m.TrafficAreaChart })));
 
 export type TrafficChartPoint = { label: string; fullLabel: string; bytesIn: number; bytesOut: number };
 
@@ -69,6 +70,8 @@ export function TrafficSurface({
   const recentOut = useMemo(() => (chartData.length ? chartData.reduce((sum, point) => sum + point.bytesOut, 0) : undefined), [chartData]);
   const ranking = useMemo(() => rankRuleTraffic(breakdown, TRAFFIC_RANK_ROWS), [breakdown]);
   const cumulativeReady = !(totalsLoading && !totals);
+  // 挂上就预取图表库（effect 在首屏画完之后才跑）；取不到时 lazy 渲染那一下会再取、再报错
+  useEffect(() => { void loadTrafficCharts().catch(() => {}); }, []);
 
   return (
     <ListSection header="流量 · 近 24H">

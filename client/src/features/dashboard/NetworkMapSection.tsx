@@ -1,9 +1,11 @@
 import { lazy, Suspense } from "react";
 
 import { NetworkMap } from "@/components/network/NetworkMap";
+import { NetworkMapBoxPlaceholder } from "@/components/network/NetworkMapPlaceholder";
+import type { NetworkMapData } from "@/features/network/networkMapData";
 import { detectWebGL, locatedHostCount, shouldRenderRealMap } from "@/features/network/networkMapMini";
 import { LINE_KIND_SHORT, type LineKind } from "@/features/network/networkMapLines";
-import { useNetworkMapModel, type NetworkMapModel } from "@/features/network/networkMapModel";
+import { useNetworkMapModelFromData, type NetworkMapModel } from "@/features/network/networkMapModel";
 
 /**
  * 首页的「网络地图」：这个账号看得到的主机和它们之间的隧道，画在一张简单的真地图上。
@@ -13,15 +15,23 @@ import { useNetworkMapModel, type NetworkMapModel } from "@/features/network/net
  * 小箭头，正常的线上有往出口流的光点 —— 一眼看出谁连着谁、哪条断了。标题行右边是图例（主线路 /
  * 降级 / 中断，备用有才列），各几条。图能拖能缩，点主机 / 线 / 组只闪一句提示，哪儿都不跳。
  *
- * 地图引擎（NetworkMapMini，lazy 进来，首屏包不带）没到、没有 WebGL、或者一台主机都没定位时，
- * 留着原来的 SVG 示意图（点主机 / 线去主机页 / 隧道页）。
+ * 这个文件整个由首页的 NetworkMapSlot lazy 进来（模型、中文地名表、示意图都不进首屏包）；数据是 Slot
+ * 早就发出去的那几条请求。地图引擎（NetworkMapMini）再单独 lazy 一层：没到时先占一块同样大小的深色
+ * 底（NetworkMapBoxPlaceholder），到了直接盖上，页面不跳。没有 WebGL、或者一台主机都没定位时，
+ * 画原来的 SVG 示意图（点主机 / 线去主机页 / 隧道页）。
  *
  * 一台主机都没有时整块不出现：那是「快速开始」的事，一张空地图什么也说不了。
  */
 export { buildNetworkMapModel, useNetworkMapModel } from "@/features/network/networkMapModel";
 export type { NetworkMapModel } from "@/features/network/networkMapModel";
 
-const NetworkMapMini = lazy(() => import("./NetworkMapMini"));
+const loadEngine = () => import("./NetworkMapMini");
+const NetworkMapMini = lazy(loadEngine);
+
+/** 有 WebGL 就先把地图引擎取回来（Slot 在数据回来之前就调）；没有 WebGL 反正画示意图，不取 */
+export function preloadNetworkMapEngine() {
+  if (detectWebGL()) void loadEngine().catch(() => { /* 真要画时 lazy 会再取、再报错 */ });
+}
 
 const dashed = (color: string) => ({ background: `repeating-linear-gradient(90deg, ${color} 0 4px, transparent 4px 6px)` });
 /** 卡片标题行跟面板主题，用面板的语义色（图上的霓虹色是给深色地图校的）；备用线路的白灰在浅色卡上看不见，换成次要文字色 */
@@ -32,9 +42,10 @@ const LEGEND_SWATCH: Record<LineKind, React.CSSProperties> = {
   down: dashed("var(--fx-down)"),
 };
 
-export function NetworkMapSection({ enabled = true, onOpen }: { enabled?: boolean; onOpen: (href: string) => void }) {
-  const model = useNetworkMapModel(enabled);
-  if (!enabled || model.nodes.length === 0) return null;
+/** Slot lazy 进来的卡片：拿 Slot 已经取到的数据建模型（数据没变不重算） */
+export default function NetworkMapSection({ data, onOpen }: { data: NetworkMapData; onOpen: (href: string) => void }) {
+  const model = useNetworkMapModelFromData(data);
+  if (model.nodes.length === 0) return null;
   return <NetworkMapSectionView model={model} onOpen={onOpen} realMap={shouldRenderRealMap({ webgl: detectWebGL(), locatedHosts: locatedHostCount(model) })} />;
 }
 
@@ -84,7 +95,7 @@ export function NetworkMapSectionView({ model, onOpen, realMap }: { model: Netwo
         )}
       </div>
       {realMap ? (
-        <Suspense fallback={schematic}>
+        <Suspense fallback={<NetworkMapBoxPlaceholder />}>
           <NetworkMapMini model={model} fallback={schematic} />
         </Suspense>
       ) : schematic}
