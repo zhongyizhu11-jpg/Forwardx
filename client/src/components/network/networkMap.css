@@ -71,7 +71,8 @@ html:not(.dark) .fx-netmap[data-skin="light"] { --nm-accent: var(--fx-accent); -
 html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-accent-soft: var(--fx-accent-soft); }
 
 .fx-netmap *, .fx-netmap *::before, .fx-netmap *::after { box-sizing: border-box; }
-.fx-netmap button { font: inherit; color: inherit; }
+/* :where() 不加权重：这条只是把按钮的字体拉回页面的，各控件自己定的字号（延迟牌子 10.5px、「回到全览」11px）不能被它盖掉 */
+:where(.fx-netmap) button { font: inherit; color: inherit; }
 .fx-netmap button:focus-visible, .fx-netmap [tabindex]:focus-visible { outline: 2px solid var(--nm-accent); outline-offset: 2px; }
 .fx-netmap .nm-num { font-family: var(--nm-font-num); font-variant-numeric: tabular-nums; }
 
@@ -180,6 +181,9 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 }
 /* 国旗徽章：圆形里裁出国旗中间那块；画不出国旗 emoji 的设备（iOS 国行没有 🇹🇼）退回两字母代码的小方块 */
 .nm-mk-flag { position: absolute; width: var(--badge); height: var(--badge); left: calc(var(--dot) / 2 - 1px); top: calc(var(--badge) / -2); border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: var(--nm-pill-solid); box-shadow: 0 0 0 1.5px var(--nm-ring), 0 1px 2px rgba(0, 0, 0, 0.3); font-size: calc(var(--badge) * 1.8); line-height: 1; font-style: normal; pointer-events: none; }
+/* 国旗字形比徽章大一圈，圆把四周裁掉；裁的位置略偏旗杆一侧（很多国旗的星、徽在左上，正中裁中国旗只剩一片红）。不靠 grid 居中：溢出的字形会贴左 */
+.nm-mk-flag > span { position: absolute; left: 50%; top: 50%; transform: translate(-38%, -50%); white-space: nowrap; }
+.nm-mk-flag.is-code > span { position: static; transform: none; }
 .nm-mk-flag.is-code { width: auto; min-width: var(--badge); padding: 0 2.5px; border-radius: 4px; font-family: var(--fx-font, inherit); font-size: 8px; font-weight: 700; letter-spacing: 0.02em; color: var(--nm-fg); }
 .nm-mk-host.is-standby .nm-mk-flag { opacity: 0.7; }
 
@@ -194,6 +198,8 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-mk-name { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 0 4px; border-radius: 5px; font-size: 12px; line-height: 17px; font-weight: 500; color: var(--nm-fg); pointer-events: none; }
 .nm-mk-note { position: absolute; top: 33px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 0 4px; border-radius: 5px; font-size: 10.5px; line-height: 15px; font-weight: 500; color: var(--nm-muted); pointer-events: none; }
 .nm-mk-host.is-standby .nm-mk-name { color: var(--nm-muted); }
+/* 压到别人的备注先不画（画布算） */
+.nm-mk-note.is-off { visibility: hidden; }
 
 .nm-mk-target i { position: absolute; left: -6px; top: -6px; width: 12px; height: 12px; transform: rotate(45deg); border-radius: 2.5px; background: var(--nm-pill-solid); border: 2px solid var(--nm-standby); box-shadow: var(--nm-marker-shadow); cursor: pointer; }
 .nm-mk-target.is-warn i { border-color: var(--nm-warn); }
@@ -285,7 +291,9 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
   命中区用 ::after 撑回 40px 左右。
 */
 @media (pointer: coarse) {
-  .fx-netmap .nm-mk, .fx-netmap .nm-mk-disc, .fx-netmap .nm-mk-cap, .fx-netmap .nm-mk-pill { min-height: 0; }
+  .fx-netmap .nm-mk, .fx-netmap .nm-mk-disc, .fx-netmap .nm-mk-cap, .fx-netmap .nm-mk-pill, .fx-netmap .nm-chip { min-height: 0; }
+  /* 整页的两颗浮键：手指按的话撑到 44px 见方（不只是被拉高成椭圆） */
+  .fx-netmap .nm-fab { width: 44px; height: 44px; }
   .fx-netmap .nm-mk-disc::after, .nm-mini .nm-mk-disc::after { inset: -11px; }
   .fx-netmap .nm-mk-cap::after { content: ""; position: absolute; inset: -12px -4px; }
   /* 小图角上 28px 的 + / − 也一样：看着小，命中区撑到 40px 上下 */

@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef } from "react";
 
 import { INSET_MAX_ZOOM_OUT, MINI_CAP_MIN_ARC_PX, MINI_FIT_INSET_PX, MINI_FIT_MAX_ZOOM, groupPlaceLabel, insetLabelArea, miniGroupLayoutOptions, miniMinZoom, pickInsetZoom, placeInsetLabels, placeLabelBoxes, shouldRefit, type InsetLayoutReport, type InsetZoomCandidate, type LabelItem, type MiniFitTrigger, type MiniLayoutGroup, type MiniLayoutReport } from "@/features/network/networkMapMini";
+import { countryLabelAnchors, countryLabelText } from "@/features/network/countryLabels";
 import type { NetworkMapModel, NetworkMapTarget } from "@/features/network/networkMapModel";
 import { isClusterDimmed, isFlowDimmed, isHostDimmed, isTargetDimmed, isTunnelDimmed, type MapFocus, type MapPadding } from "@/features/network/networkMapPageState";
 import { wgs84ToGcj02 } from "@shared/gcj02";
@@ -107,12 +108,22 @@ export type NetworkMapCanvasProps = {
 
 const COUNTRIES_URL = "/globe/ne_110m_admin_0_countries.geojson";
 
-/** 暗黑网格没有瓦片标注，缩小时给几个国家名定个位 */
-const COUNTRY_LABELS: Array<[string, number, number]> = [
-  ["中国", 103, 36], ["日本", 138.5, 37], ["蒙古", 104, 47], ["印度", 79, 22], ["俄罗斯", 100, 62],
-  ["澳大利亚", 134, -25], ["印度尼西亚", 114, -3], ["美国", -100, 40], ["加拿大", -105, 58], ["巴西", -53, -10],
-  ["菲律宾", 122.5, 12.5], ["欧洲", 15, 50], ["非洲", 20, 5],
-];
+/**
+ * 简洁底图上国家名的标注点：和底图用的是同一份国界文件（浏览器已经缓存了，MapLibre 也是拉它），
+ * 第一次要用时拉一次、全页共用。拉不下来就不写国家名，图照画。
+ */
+let countryAnchorsPromise: Promise<Map<string, LngLat>> | null = null;
+function loadCountryAnchors(): Promise<Map<string, LngLat>> {
+  if (!countryAnchorsPromise) {
+    countryAnchorsPromise = fetch(COUNTRIES_URL)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((json) => countryLabelAnchors(json) as Map<string, LngLat>)
+      .catch(() => new Map<string, LngLat>());
+  }
+  return countryAnchorsPromise;
+}
+/** 放大到这一级以上不写国家名：标注点早就在屏幕外，留着的只会是半个国家名压在城市上 */
+const COUNTRY_LABEL_MAX_ZOOM = 6;
 
 /** 框住几个点时在地图留白之外再让出的边：marker 下面的名字和备注有百来像素宽，贴边会被裁掉半截 */
 const FIT_PADDING = { top: 36, bottom: 36, left: 64, right: 64 };
@@ -203,7 +214,7 @@ function escapeHtml(value: unknown) {
 /** 国旗小徽章：emoji 裁成圆；画不出国旗的设备给的是两字母代码，画成小方块；没有国家就不画 */
 function flagBadge(flag: string | null | undefined) {
   if (!flag) return "";
-  return `<i class="nm-mk-flag${isCountryCodeLabel(flag) ? " is-code" : ""}" aria-hidden="true">${escapeHtml(flag)}</i>`;
+  return `<i class="nm-mk-flag${isCountryCodeLabel(flag) ? " is-code" : ""}" aria-hidden="true"><span>${escapeHtml(flag)}</span></i>`;
 }
 
 type HostMarkerEntry = { marker: Marker; element: HTMLElement; signature: string };
@@ -220,7 +231,8 @@ type Live = {
   clusterMarkers: Array<{ marker: Marker; members: Array<{ kind: "host"; id: number } | { kind: "target"; key: string }>; center: LngLat; label: string }>;
   capMarkers: Map<number, CapEntry>;
   stubMarkers: Map<number, Marker>;
-  countryMarkers: Marker[];
+  /** 有主机的国家写一个国名（按国家代码复用） */
+  countryMarkers: Map<string, Marker>;
   layout: MapLayout | null;
   linkFeatureIds: Array<{ fid: string; tunnelId: number }>;
   flowFeatureIds: Array<{ fid: string; targetKey: string; ruleIds: number[] }>;
@@ -269,7 +281,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
   if (!liveRef.current) {
     liveRef.current = {
       props, map: null, loaded: false, colors: FALLBACK_COLORS,
-      hostMarkers: new Map(), targetMarkers: new Map(), clusterMarkers: [], capMarkers: new Map(), stubMarkers: new Map(), countryMarkers: [],
+      hostMarkers: new Map(), targetMarkers: new Map(), clusterMarkers: [], capMarkers: new Map(), stubMarkers: new Map(), countryMarkers: new Map(),
       layout: null, linkFeatureIds: [], flowFeatureIds: [], tipFeatureIds: [], comets: [], cometPhase: new Map(), cometLast: 0, cometDrawn: false,
       didInitialFit: false, fitSignature: "", fitItems: [], keepOut: [], reserved: [], hiddenLabels: 0, discFit: false, labelProbe: false, framedBodies: [], arcPx: [], miniGroups: [], settling: false, settledReport: false, userMoved: false, lastReport: "", rasterErrorReported: false,
       relayoutFrame: 0, animFrame: 0,
@@ -374,24 +386,99 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       entry.marker.remove();
       live.targetMarkers.delete(key);
     }
-    // 小图不写国家名（CSS 也藏了）：不建这十几个 marker
-    if (live.countryMarkers.length === 0 && !compact()) {
-      for (const [label, lng, lat] of COUNTRY_LABELS) {
-        const element = el(`<div class="nm-mk"><div class="nm-mk-country">${label}</div></div>`);
-        live.countryMarkers.push(new maplibregl.Marker({ element, anchor: "center" }).setLngLat([lng, lat]).addTo(map));
+    syncCountryLabels();
+  };
+
+  /**
+   * 国家名：只给有主机（有坐标）的国家写一个，中文名，小而淡。小窗里不写（窗就一百多像素）。
+   * 标注点要等国界文件到了才知道，所以是异步建的；建好立刻按当前视图判断显不显示。
+   */
+  const syncCountryLabels = () => {
+    if (isInset()) return;
+    const codes = new Map<string, string>();
+    for (const node of live.props.model.nodes) {
+      const code = node.geo && node.countryCode ? node.countryCode.toUpperCase() : "";
+      if (code && !codes.has(code)) codes.set(code, node.city);
+    }
+    void loadCountryAnchors().then((anchors) => {
+      const map = live.map;
+      if (!map) return;
+      for (const [code, marker] of live.countryMarkers) {
+        if (codes.has(code) && anchors.has(code)) continue;
+        marker.remove();
+        live.countryMarkers.delete(code);
       }
+      for (const code of codes.keys()) {
+        const at = anchors.get(code);
+        if (!at || live.countryMarkers.has(code)) continue;
+        const element = el(`<div class="nm-mk nm-mk-country-shell"><div class="nm-mk-country is-off">${escapeHtml(countryLabelText(code))}</div></div>`);
+        const marker = new maplibregl.Marker({ element, anchor: "center" }).setLngLat(at as [number, number]).addTo(map);
+        // 排到所有 marker 前面（紧跟在画布后面）：万一和谁擦边，国名在底下；不能排到画布前面，会被画布盖住
+        const canvas = map.getCanvas();
+        if (canvas.parentElement === element.parentElement) canvas.after(element);
+        live.countryMarkers.set(code, marker);
+      }
+      updateCountryLabels();
+    });
+  };
+
+  /**
+   * 整页上主机名下面那行灰色备注（「离线 · 20 分钟前」）：整页不像小图那样摆名字，名字和备注都在牌子里，
+   * 压到别的主机、组、名字、延迟牌子时备注那块牌子会把人家的字盖住 —— 备注是次要的（点开主机就有），
+   * 压到谁就先不画。小图本来就不写备注。
+   */
+  const updatePageNotes = () => {
+    const map = live.map;
+    if (!map || compact()) return;
+    const container = map.getContainer();
+    const rectsOf = (selector: string) => Array.from(container.querySelectorAll(selector))
+      .filter((node) => !(node as HTMLElement).closest(".is-hidden"))
+      .map((node) => node.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    const blockers = rectsOf(".nm-mk-disc, .nm-mk-pill, .nm-mk-name, .nm-mk-cap, .nm-mk-target i");
+    const hit = (rect: DOMRect) => blockers.some((other) => rect.left < other.right && other.left < rect.right && rect.top < other.bottom && other.top < rect.bottom);
+    for (const entry of live.hostMarkers.values()) {
+      const note = entry.element.querySelector(".nm-mk-note") as HTMLElement | null;
+      if (!note) continue;
+      note.classList.remove("is-off");
+      if (entry.element.classList.contains("is-hidden") || !note.textContent) continue;
+      const rect = note.getBoundingClientRect();
+      if (hit(rect)) note.classList.add("is-off");
+      else blockers.push(rect);
     }
   };
 
+  /**
+   * 国名显不显示：高德底图自己有地名，不写；放大到 6 级以上不写；压到主机、名字、延迟牌子、组、
+   * 角上的控件或小窗的也不写 —— 国名是最不要紧的那个字，谁都不让它挡。量的是 DOM 里的真实位置。
+   */
   const updateCountryLabels = () => {
     const map = live.map;
-    if (!map) return;
-    const show = !NETWORK_MAP_BASE_LAYERS[live.props.baseLayer].amap;
-    const zoom = map.getZoom();
-    for (const marker of live.countryMarkers) {
-      const element = marker.getElement();
-      element.style.display = show ? "" : "none";
-      (element.firstElementChild as HTMLElement).style.opacity = zoom < 5 ? "" : "0";
+    if (!map || live.countryMarkers.size === 0) return;
+    const show = !NETWORK_MAP_BASE_LAYERS[live.props.baseLayer].amap && map.getZoom() < COUNTRY_LABEL_MAX_ZOOM;
+    const container = map.getContainer();
+    const frame = container.getBoundingClientRect();
+    const scope = container.parentElement ?? container;
+    const blockers: DOMRect[] = [];
+    if (show) {
+      for (const node of Array.from(scope.querySelectorAll(".nm-mk-disc, .nm-mk-pill, .nm-mk-name, .nm-mk-note, .nm-mk-cap, .nm-mk-stub, .nm-mk-target i, .nm-reserved, .nm-inset, .nm-overlay-tl, .nm-fabs"))) {
+        const element = node as HTMLElement;
+        if (element.closest(".is-hidden, .is-clipped, .nm-inset.is-off") || element.classList.contains("is-off")) continue;
+        // 小窗里那张图的 marker 不算（整扇小窗已经算了一个盒子）
+        if (!element.classList.contains("nm-inset") && element.closest(".nm-inset")) continue;
+        const rect = element.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) blockers.push(rect);
+      }
+    }
+    for (const marker of live.countryMarkers.values()) {
+      const label = marker.getElement().firstElementChild as HTMLElement | null;
+      if (!label) continue;
+      if (!show) { label.classList.add("is-off"); continue; }
+      const rect = label.getBoundingClientRect();
+      const pad = 3;
+      const outside = rect.left < frame.left + 4 || rect.top < frame.top + 4 || rect.right > frame.right - 4 || rect.bottom > frame.bottom - 4;
+      const blocked = blockers.some((other) => rect.left - pad < other.right && other.left < rect.right + pad && rect.top - pad < other.bottom && other.top < rect.bottom + pad);
+      label.classList.toggle("is-off", outside || blocked);
     }
   };
 
@@ -693,11 +780,12 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
    * 胶囊挂在弧线的哪个点上：默认正中；小图上卡片把小窗摆好之后（avoidBoxes），中点被小窗
    * 盖住的就沿着弧线往两头挪，挪到第一个既不在小窗下、也没出卡片边的点。
    */
-  const capPointIndex = (points: LngLat[], tunnelId: number): number => {
+  const capPointIndex = (points: LngLat[], tunnelId: number, extra: readonly PixelBox[] = []): number => {
     const map = live.map;
     const middle = Math.floor(points.length / 2);
-    const avoid = live.props.avoidBoxes;
-    if (!map || !compact() || !avoid || avoid.length === 0) return middle;
+    // 小图上躲小窗；两种图上都躲主机的点 / 组、已经挂好的别的延迟牌子（两条几乎平行的线，牌子别叠成一个）
+    const avoid = [...(compact() ? live.props.avoidBoxes ?? [] : []), ...extra];
+    if (!map || avoid.length === 0) return middle;
     const container = map.getContainer();
     const width = container.clientWidth;
     const height = container.clientHeight;
@@ -730,7 +818,6 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const layoutOptions: MapLayoutOptions = mini ? miniGroupLayoutOptions(flagOf) : {};
     live.layout = computeMapLayout(layoutPoints(), (lngLat) => map.project(lngLat as [number, number]), zoom, layoutOptions);
     const layout = live.layout;
-    updateCountryLabels();
     for (const [id, entry] of live.hostMarkers) {
       const position = layout.pos[`h${id}`];
       if (!position) continue;
@@ -795,6 +882,18 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const tipFeatures: any[] = [];
     const caps: Array<{ tunnelId: number; at: LngLat; health: NetworkHealth; text: string }> = [];
     const capMinArcPx = mini ? MINI_CAP_MIN_ARC_PX : CAP_MIN_ARC_PX;
+    // 延迟牌子要躲开的：每台主机的点（含国旗徽章）、每一组的那一摞，和先挂好的牌子
+    const capAvoid: PixelBox[] = [];
+    for (const [key, position] of Object.entries(layout.pos)) {
+      if (position.clusterId !== null || !key.startsWith("h")) continue;
+      const at = viewProject(map, position.lngLat);
+      const r = mini ? MINI_DISC_R : 14;
+      capAvoid.push({ x: at.x + position.offset[0] - r, y: at.y + position.offset[1] - r, w: r * 2, h: r * 2 });
+    }
+    for (const group of layout.groups) {
+      const at = viewProject(map, group.center);
+      capAvoid.push({ x: at.x - 26, y: at.y - 11, w: 52, h: 22 });
+    }
     const arrow = mini ? ARROW.mini : ARROW.page;
     const unitsPerPixel = mercatorUnitsPerPixel(zoom);
     const comets: Live["comets"] = [];
@@ -828,7 +927,11 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         const points = greatCircleArc(a, b);
         const fid = `t:${link.id}:${index}`;
         live.linkFeatureIds.push({ fid, tunnelId: link.id });
-        linkFeatures.push({ type: "Feature", properties: { fid, tunnel: link.id, health: lineHealth(link.health) }, geometry: { type: "LineString", coordinates: points } });
+        // 虚线（不正常的）按主机 id 小的那头起笔：同一跳上一来一回的两条隧道虚线相位对得上、重成一条，
+        // 不然两套错开的虚线叠成一串拉链。正常线路的渐变要入口 → 出口，不能翻；箭头、彗星照用原方向
+        const lineHealthy = lineHealth(link.health) === "healthy";
+        const linePoints = !lineHealthy && link.path[index] > link.path[index + 1] ? [...points].reverse() : points;
+        linkFeatures.push({ type: "Feature", properties: { fid, tunnel: link.id, health: lineHealth(link.health) }, geometry: { type: "LineString", coordinates: linePoints } });
         if (healthy) { if (hopRun.length === 0) hopRunStart = index; hopRun.push(points); }
         // 出口端的箭头：像素里算好三角形再反投影回经纬度，跟着线一起缩放
         const projected = points.map((point) => map.project(point as [number, number]));
@@ -851,7 +954,15 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         const capAllowed = !framed || (framed.has(link.path[index]) && framed.has(link.path[index + 1]));
         if (index === capIndex && capAllowed && Math.hypot(pa.x - pb.x, pa.y - pb.y) >= capMinArcPx) {
           const text = typeof link.latencyMs === "number" ? `${Math.round(link.latencyMs)} ms` : lineHealth(link.health) === "down" ? "中断" : lineHealth(link.health) === "standby" ? describeNetworkHealth(link.health).label : "";
-          if (text) caps.push({ tunnelId: link.id, at: points[capPointIndex(points, link.id)], health: link.health, text });
+          if (text) {
+            const at = points[capPointIndex(points, link.id, capAvoid)];
+            caps.push({ tunnelId: link.id, at, health: link.health, text });
+            const point = viewProject(map, at);
+            const button = live.capMarkers.get(link.id)?.button;
+            const w = button?.offsetWidth || 42;
+            const h = button?.offsetHeight || 16;
+            capAvoid.push({ x: point.x - w / 2 - 2, y: point.y - h / 2 - 2, w: w + 4, h: h + 4 });
+          }
         }
       }
       flushComet();
@@ -944,6 +1055,9 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       placeCompactLabels(caps.map((cap) => ({ tunnelId: cap.tunnelId, at: cap.at })));
       reportMiniLayout();
     }
+    // 备注和国名最后摆：主机、名字、牌子都就位了才知道它们会不会压到谁
+    updatePageNotes();
+    updateCountryLabels();
     applyFocus();
   };
 
@@ -1178,6 +1292,9 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         // 只有用户手上的动作算「动过」：jumpTo / fitBounds / easeTo 发的事件没有 originalEvent
         map.on("dragstart", (event) => { if (event.originalEvent) markUserMoved(); });
         map.on("zoomstart", (event) => { if (event.originalEvent) markUserMoved(); });
+      } else if (!mini) {
+        // 整页拖图不重新布局，但备注、国名压没压到谁要重新看一眼（拖完看一次就够）
+        map.on("moveend", () => { updatePageNotes(); updateCountryLabels(); });
       }
       map.on("click", (event) => {
         // 点在线上（看不见的命中层有 14px 宽，好点）就当点了这条隧道；点空处交给页面
@@ -1225,7 +1342,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       live.capMarkers.clear();
       live.stubMarkers.clear();
       live.clusterMarkers = [];
-      live.countryMarkers = [];
+      live.countryMarkers.clear();
       map.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

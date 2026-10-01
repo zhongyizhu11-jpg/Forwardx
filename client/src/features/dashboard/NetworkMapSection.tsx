@@ -71,9 +71,10 @@ export function NetworkMapSectionView({ model, onOpen, realMap }: { model: Netwo
         {legendItems.length > 0 ? (
           <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-0.5 text-meta text-[var(--fx-text-secondary)]">
             {legendItems.map((item) => (
-              <span key={item.key} className="inline-flex items-center gap-1.5 tabular-nums">
-                <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ background: item.color }} />
-                {item.label} {item.count}
+              // 小圆点 + 名字 + 等宽的数：和图上状态点同一套颜色，数字用正文色，一眼扫得到「几条」
+              <span key={item.key} className="inline-flex items-center gap-1.5">
+                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: item.color }} />
+                {item.label} <span className="font-medium tabular-nums text-foreground">{item.count}</span>
               </span>
             ))}
           </span>

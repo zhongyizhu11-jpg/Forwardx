@@ -196,9 +196,9 @@ export function buildNetworkMapStyle(active: NetworkMapBaseLayerId, skin: Networ
       // 落地流向：细虚线，比隧道淡
       { id: NETWORK_MAP_LAYERS.flow, type: "line", source: NETWORK_MAP_SOURCES.flows, paint: { "line-color": healthColor, "line-width": 1.1, "line-opacity": dimOpacityExpression(0.55), "line-dasharray": [1.5, 2.5] } },
       { id: NETWORK_MAP_LAYERS.linkHit, type: "line", source: NETWORK_MAP_SOURCES.links, paint: { "line-color": healthColor, "line-width": 14, "line-opacity": 0 } },
-      { id: NETWORK_MAP_LAYERS.linkCasing, type: "line", source: NETWORK_MAP_SOURCES.links, layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": colors.casing, "line-width": 5, "line-blur": 1, "line-opacity": dimOpacityExpression(0.7) } },
+      { id: NETWORK_MAP_LAYERS.linkCasing, type: "line", source: NETWORK_MAP_SOURCES.links, layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": colors.casing, "line-width": 4.5, "line-blur": 1, "line-opacity": dimOpacityExpression(0.7) } },
       // 不正常的：警告 / 中断色的虚线，不跑彗星
-      { id: NETWORK_MAP_LAYERS.linkDashed, type: "line", source: NETWORK_MAP_SOURCES.links, filter: ["!=", ["get", "health"], "healthy"], layout: { "line-join": "round" }, paint: { "line-color": healthColor, "line-width": 1.8, "line-opacity": dimOpacityExpression(1), "line-dasharray": [2.4, 1.8] } },
+      { id: NETWORK_MAP_LAYERS.linkDashed, type: "line", source: NETWORK_MAP_SOURCES.links, filter: ["!=", ["get", "health"], "healthy"], layout: { "line-join": "round" }, paint: { "line-color": healthColor, "line-width": 1.8, "line-opacity": dimOpacityExpression(1), "line-dasharray": [4, 2.5] } },
       // 正常的：入口强调色 → 出口浅一档的渐变实线
       { id: NETWORK_MAP_LAYERS.linkSolid, type: "line", source: NETWORK_MAP_SOURCES.links, filter: ["==", ["get", "health"], "healthy"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-gradient": linkGradient(colors), "line-width": 2, "line-opacity": dimOpacityExpression(1) } },
       // 出口端的箭头：不靠动画也看得出这一跳往哪儿去

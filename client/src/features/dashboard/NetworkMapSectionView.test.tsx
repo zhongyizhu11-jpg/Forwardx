@@ -24,8 +24,9 @@ test("卡片：没有画布（node 里没有 WebGL）时照样画出标题、入
   assert.match(html, /aria-label="网络地图"/);
   assert.match(html, />网络地图</);
   assert.match(html, /打开地图/);
-  assert.match(html, /正常 1/);
-  assert.match(html, /停用 1/);
+  // 数字单独一个等宽、正文色的 span
+  assert.match(html, /正常 <span[^>]*tabular-nums[^>]*>1<\/span>/);
+  assert.match(html, /停用 <span[^>]*>1<\/span>/);
   assert.match(html, /<svg/, "兜底是 SVG 示意图");
   assert.match(html, /aria-label="网络地图：3 台主机，2 条线路"/);
   assert.doesNotMatch(html, /nm-mini/, "没要真地图就不出现小图的壳");

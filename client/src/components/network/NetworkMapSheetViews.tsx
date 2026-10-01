@@ -208,9 +208,10 @@ export function NodeDetailView({ model, node, vitals, vitalsLoading, memoryTotal
     drawLineChart(canvas, vitals?.cpuSeries || [], { color: readCssColor(canvas, "--nm-accent", palette.line), max: 100, palette });
   }, [vitals]);
   const netRef = useCanvasChart((canvas, palette) => {
+    // 入站是地图上线路的强调色，出站是第二个分类色（青）：以前两条都是强调色，叠在一起分不出谁是谁
     drawDualChart(canvas, vitals?.netInSeries || [], vitals?.netOutSeries || [], {
       colorA: palette.line,
-      colorB: readCssColor(canvas, "--nm-accent", palette.line),
+      colorB: readCssColor(canvas, "--nm-series-2", palette.line),
       palette,
       formatTick: (value) => formatBitrate(value),
       axisLabels: ["24 小时前", "现在"],
@@ -250,7 +251,7 @@ export function NodeDetailView({ model, node, vitals, vitalsLoading, memoryTotal
           <div className="nm-metric wide">
             <div className="nm-label"><span>网络吞吐</span><span className="nm-num">↓ {formatBitrate(vitals?.netInNow)} · ↑ {formatBitrate(vitals?.netOutNow)}</span></div>
             <canvas ref={netRef} className="tall" aria-label="入站 / 出站速率 24 小时走势" />
-            <div className="nm-legend-inline"><span><i style={{ background: "var(--nm-link)" }} />入站</span><span><i style={{ background: "var(--nm-accent)" }} />出站</span></div>
+            <div className="nm-legend-inline"><span><i style={{ background: "var(--nm-link)" }} />入站</span><span><i style={{ background: "var(--nm-series-2)" }} />出站</span></div>
           </div>
         </div>
       </Section>
