@@ -76,7 +76,8 @@ function useCanvasChart(draw: (canvas: HTMLCanvasElement, palette: ChartPalette)
         muted: readCssColor(canvas, "--nm-muted", "#8b9bb4"),
         grid: readCssColor(canvas, "--nm-line", "rgba(128,128,128,0.2)"),
         warn: readCssColor(canvas, "--nm-warn", "#f59e0b"),
-        font: getComputedStyle(canvas).getPropertyValue("--nm-font-num").trim() || "ui-monospace, monospace",
+        // 坐标轴上的字和面板正文同一种字体（以前是等宽，「24 小时前」被拉得很散）
+        font: getComputedStyle(canvas).getPropertyValue("--fx-font").trim() || "system-ui, sans-serif",
       };
       draw(canvas, palette);
     };

@@ -182,7 +182,7 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 /* 国旗徽章：圆形里裁出国旗中间那块；画不出国旗 emoji 的设备（iOS 国行没有 🇹🇼）退回两字母代码的小方块 */
 .nm-mk-flag { position: absolute; width: var(--badge); height: var(--badge); left: calc(var(--dot) / 2 - 1px); top: calc(var(--badge) / -2); border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: var(--nm-pill-solid); box-shadow: 0 0 0 1.5px var(--nm-ring), 0 1px 2px rgba(0, 0, 0, 0.3); font-size: calc(var(--badge) * 1.8); line-height: 1; font-style: normal; pointer-events: none; }
 /* 国旗字形比徽章大一圈，圆把四周裁掉；裁的位置略偏旗杆一侧（很多国旗的星、徽在左上，正中裁中国旗只剩一片红）。不靠 grid 居中：溢出的字形会贴左 */
-.nm-mk-flag > span { position: absolute; left: 50%; top: 50%; transform: translate(-38%, -50%); white-space: nowrap; }
+.nm-mk-flag > span { position: absolute; left: 50%; top: 50%; transform: translate(-44%, -50%); white-space: nowrap; }
 .nm-mk-flag.is-code > span { position: static; transform: none; }
 .nm-mk-flag.is-code { width: auto; min-width: var(--badge); padding: 0 2.5px; border-radius: 4px; font-family: var(--fx-font, inherit); font-size: 8px; font-weight: 700; letter-spacing: 0.02em; color: var(--nm-fg); }
 .nm-mk-host.is-standby .nm-mk-flag { opacity: 0.7; }
