@@ -13,7 +13,7 @@ import {
   overallAvailability,
   pickHubNode,
 } from "./networkMapLines";
-import { buildNetworkMapModel } from "./networkMapModel";
+import { buildNetworkMapModel, readTargetGeo } from "./networkMapModel";
 
 const now = 1_700_000_000_000;
 const host = (id: number, name: string, extra: Record<string, unknown> = {}) => ({ id, name, isOnline: true, lastHeartbeat: now - 1000, geoCountryCode: "HK", geoRegion: name, geoLatitudeMicro: 22e6 + id * 1e6, geoLongitudeMicro: 114e6 + id * 1e6, ...extra });
@@ -126,4 +126,11 @@ test("筛选：只看中断时剩下那条线两端的主机；全部时不筛",
   const model = sample();
   assert.equal(hostsForFilter(model, "all"), null);
   assert.deepEqual([...hostsForFilter(model, "down")!].sort(), [2, 5]);
+});
+
+test("落地目标的定位：认服务端 lookupAddressGeo 那一行（微度），也认 latitude / longitude", () => {
+  assert.deepEqual(readTargetGeo({ geoCountryCode: "us", geoRegion: "Los Angeles", geoLatitudeMicro: 34_052_000, geoLongitudeMicro: -118_243_000 }), { geo: { lat: 34.052, lng: -118.243 }, countryCode: "US", city: "Los Angeles" });
+  assert.deepEqual(readTargetGeo({ latitude: 1.3, longitude: 103.8, countryCode: "SG" }), { geo: { lat: 1.3, lng: 103.8 }, countryCode: "SG", city: "" });
+  assert.equal(readTargetGeo(null).geo, null);
+  assert.equal(readTargetGeo({ geoLatitudeMicro: null, geoLongitudeMicro: null }).geo, null);
 });

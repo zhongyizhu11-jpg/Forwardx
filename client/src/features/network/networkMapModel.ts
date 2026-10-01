@@ -197,6 +197,23 @@ export function tunnelHopLatencies(tunnel: any, path: number[]): Array<number | 
   return path.slice(1).map((to, index) => bySegment.get(`${path[index]}>${to}`) ?? null);
 }
 
+/**
+ * 落地目标的定位：rules.targetGeoBatch 回的是 lookupAddressGeo 那一行（geoLatitudeMicro / geoLongitudeMicro /
+ * geoCountryCode / geoRegion，和主机的定位字段同一套）。以前这里只认 latitude / longitude，服务端的行一个都
+ * 对不上，落地目标从来没画到图上；两种写法都认（测试和老缓存用的是后一种）。
+ */
+export function readTargetGeo(geo: any): { geo: { lat: number; lng: number } | null; countryCode: string | null; city: string } {
+  const micro = hostGeoCoordinate(geo);
+  const lat = micro ? micro.lat : Number(geo?.latitude ?? geo?.lat);
+  const lng = micro ? micro.lng : Number(geo?.longitude ?? geo?.lng);
+  const valid = geo != null && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+  return {
+    geo: valid ? { lat, lng } : null,
+    countryCode: String(geo?.geoCountryCode || geo?.countryCode || "").trim().toUpperCase() || null,
+    city: String(geo?.geoRegion || geo?.region || geo?.city || geo?.geoCountryName || geo?.countryName || "").trim(),
+  };
+}
+
 function ruleHealth(rule: any): NetworkHealth {
   if (rule?.resourceAccessAllowed === false) return "down";
   if (rule?.isEnabled === false || rule?.isEnabled === 0) return "standby";
@@ -344,15 +361,13 @@ export function buildNetworkMapModel(input: {
     if (!rule.targetKey) continue;
     let target = targetMap.get(rule.targetKey);
     if (!target) {
-      const geo = geoByKey.get(rule.targetKey);
-      const lat = Number(geo?.latitude ?? geo?.lat);
-      const lng = Number(geo?.longitude ?? geo?.lng);
-      const countryCode = String(geo?.countryCode || "").trim().toUpperCase() || null;
-      const city = String(geo?.region || geo?.city || geo?.countryName || "").trim() || rule.targetIp;
+      const place = readTargetGeo(geoByKey.get(rule.targetKey));
+      const countryCode = place.countryCode;
+      const city = place.city || rule.targetIp;
       target = {
         key: rule.targetKey,
         address: rule.targetIp,
-        geo: Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null,
+        geo: place.geo,
         countryCode,
         city,
         emoji: countryFlagLabel(countryCode) || null,
