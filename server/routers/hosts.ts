@@ -1727,21 +1727,6 @@ export const hostsRouter = router({
           () => db.getLatestHostMetrics(input.hostId, input.limit),
         );
       }),
-    /**
-     * 网络地图节点抽屉的 24 小时走势。和 metrics 同一套访问校验；最多 288 个点
-     * （5 分钟一格），手机上那张 200px 宽的小图再多也画不出来。
-     */
-    metricsSeries: protectedProcedure
-      .input(z.object({ hostId: z.number().int().positive(), hours: z.number().min(1).max(72).default(24) }))
-      .query(async ({ input, ctx }) => {
-        await requireHostAccess(ctx, input.hostId);
-        const since = new Date(Date.now() - input.hours * 3600 * 1000);
-        return hostQueryCache.get(
-          `metricsSeries:${ctx.user.id}:${input.hostId}:${input.hours}`,
-          { ttlMs: 30_000, staleMs: 120_000 },
-          () => db.getHostMetricsSeries(input.hostId, { since, maxPoints: 288 }),
-        );
-      }),
     latestMetricsSummary: protectedProcedure
       .input(z.object({ hostIds: z.array(z.number()).max(500).optional() }).optional())
       .query(async ({ input, ctx }) => {

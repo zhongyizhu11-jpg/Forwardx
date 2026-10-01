@@ -1,13 +1,34 @@
 /**
- * 等经纬地球图 → Web 墨卡托瓦片的拉伸数学。
+ * 首页网络地图的底图：夜晚的地球（NASA Black Marble 夜光图，client/public/globe/earth-night.jpg）。
+ * 近黑的陆地上一片片橙黄的城市灯光、深海军蓝的海 —— 离线、不拉外面的瓦片，内网和被墙都画得出来，
+ * 线路和主机的霓虹色在它上面最显眼。只有这一张，不再有底图切换。
  *
- * 地球图（4096 × 2048）横向按经度均分、纵向按纬度均分；MapLibre 的栅格瓦片是 Web 墨卡托，纵向按
- * 墨卡托 y 均分。横向两者一样，只需要切出这块瓦片对应的那一段经度；纵向要逐行换算：瓦片里的每一行
- * 像素先算它上下两条边落在哪个纬度，再换算回原图的行，把原图那一条（可能不到一行、也可能好几行）
- * 拉成瓦片里的一行。画布那边（components/network/earthTiles.ts）就照这张表一行一行 drawImage。
+ * 地球图是等经纬投影（经度、纬度各自均分），MapLibre 要的是 Web 墨卡托：画布那边注册了一个
+ * 自定义协议（components/network/earthTiles.ts），按瓦片现拉伸 —— 只拉看得见的那几块，世界副本也照常
+ * 平铺。图本身只在第一次画地图时下载一次。
+ *
+ * 这里是拉伸的数学：地球图（4096 × 2048）横向按经度均分、纵向按纬度均分；MapLibre 的栅格瓦片是 Web
+ * 墨卡托，纵向按墨卡托 y 均分。横向两者一样，只需要切出这块瓦片对应的那一段经度；纵向要逐行换算：瓦片
+ * 里的每一行像素先算它上下两条边落在哪个纬度，再换算回原图的行，把原图那一条（可能不到一行、也可能
+ * 好几行）拉成瓦片里的一行。画布那边就照这张表一行一行 drawImage。
  *
  * 纯数学，在 node 里测。
  */
+
+/** 自定义协议的前缀：`fxearth://night/{z}/{x}/{y}` */
+export const NETWORK_MAP_TEXTURE_PROTOCOL = "fxearth";
+
+/** 夜光图的地址（4096 × 2048 等经纬图） */
+export const NETWORK_MAP_NIGHT_TEXTURE_URL = "/globe/earth-night.jpg";
+
+/**
+ * 地球图的瓦片最多切到第几级：图宽 4096 像素，第 4 级整个世界正好 16 × 256 = 4096 像素宽，
+ * 再往上放大就是把同一块像素拉大（MapLibre 自己 overzoom），切更细的瓦片也不会更清楚。
+ */
+export const NETWORK_MAP_TEXTURE_MAX_ZOOM = 4;
+
+/** 夜光图的瓦片地址模板 */
+export const NETWORK_MAP_NIGHT_TILE_URL = `${NETWORK_MAP_TEXTURE_PROTOCOL}://night/{z}/{x}/{y}`;
 
 export type TextureRowSpan = { sy: number; sh: number };
 export type TextureTilePlan = {

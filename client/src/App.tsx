@@ -42,7 +42,6 @@ const HomepagePreviewPage = lazy(() => import("@/pages/HomepagePreview"));
 const HostMonitorPage = lazy(() => import("@/pages/HostMonitor"));
 const HostsPage = lazy(routeChunks["/hosts"] as () => Promise<{ default: ComponentType<any> }>);
 const MorePage = lazy(routeChunks["/more"] as () => Promise<{ default: ComponentType<any> }>);
-const NetworkMapPage = lazy(routeChunks["/map"] as () => Promise<{ default: ComponentType<any> }>);
 const LookingGlassPage = lazy(routeChunks["/looking-glass"] as () => Promise<{ default: ComponentType<any> }>);
 const PaymentsPage = lazy(routeChunks["/payments"] as () => Promise<{ default: ComponentType<any> }>);
 const PlansPage = lazy(routeChunks["/plans"] as () => Promise<{ default: ComponentType<any> }>);
@@ -142,8 +141,11 @@ function Router() {
       <Route path="/hosts">{routeComponent(HostsPage)}</Route>
       {/* 手机端标签栏第五格。桌面端左侧边栏已经列全了，这一页会说明这一点 */}
       <Route path="/more">{routeComponent(MorePage)}</Route>
-      {/* 网络地图：所有登录用户都能进，数据由 hosts.options / tunnels.options 按人过滤 */}
-      <Route path="/map">{routeComponent(NetworkMapPage)}</Route>
+      {/*
+        整页「网络地图」已经去掉，地图只留在总览那一张卡片里。旧书签、别处贴过的 /map（含 ?host= / ?link=）
+        回到总览：不写这条的话 /map 会落进下面的 /:monitorPath，被当成公开监控页的路径。
+      */}
+      <Route path="/map"><Redirect to="/" /></Route>
       <Route path="/rules">{routeComponent(RulesPage)}</Route>
       <Route path="/looking-glass" component={LookingGlassRoute} />
       <Route path="/forward-groups">{() => <AdminRoute component={ForwardGroupsPage} />}</Route>
