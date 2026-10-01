@@ -1,15 +1,17 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 
 import DashboardLayout from "@/components/DashboardLayout";
 import { useAuth } from "@/_core/hooks/useAuth";
 import type { NetworkMapCameraApi } from "@/components/network/NetworkMapCanvas";
+import { LinkPanelBody, LinkPanelTabs, PanelMenu, linkStatusLabel, type LinkLiveData, type LinkPanelTab, type LiveRange } from "@/components/network/NetworkMapLinkPanel";
 import { NetworkMapSheet } from "@/components/network/NetworkMapSheet";
-import { LinkDetailView, NodeDetailView, OverviewView, Pill, SheetHead, TargetDetailView, linkHeadTitle, nodeHeadSubtitle } from "@/components/network/NetworkMapSheetViews";
+import { NodeDetailView, OverviewView, Pill, SheetHead, TargetDetailView, nodeHeadSubtitle, tone } from "@/components/network/NetworkMapSheetViews";
 import "@/components/network/networkMap.css";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { buildNetworkMapAlerts, type NetworkMapAlert } from "@/features/network/networkMapAlerts";
+import { LINE_FILTER_OPTIONS, LINE_KINDS, LINE_KIND_LABELS, formatAvailability, lineTotal, overallAvailability, pickHubNode, type LineFilter } from "@/features/network/networkMapLines";
 import { useNetworkMapPageModel } from "@/features/network/networkMapModel";
 import {
   RAIL_MIN_WIDTH,
@@ -23,16 +25,16 @@ import {
   type MapSheetView,
   type SheetSnap,
 } from "@/features/network/networkMapPageState";
-import { summarizeHostSeries, summarizeLatencySeries, sumTraffic } from "@/features/network/networkMapSeries";
+import { latencyWindows, summarizeHostSeries, summarizeLatencySeries, sumTraffic, trafficRateWindows } from "@/features/network/networkMapSeries";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import { hostNeedsAgentUpgrade } from "@shared/fxpRuntime";
 import {
+  NETWORK_MAP_ALL_BASE_LAYERS,
   NETWORK_MAP_AMAP_TERMS_NOTE,
   NETWORK_MAP_BASE_LAYERS,
   NETWORK_MAP_BASE_LAYER_ORDER,
   NETWORK_MAP_LAYER_STORAGE_KEY,
-  networkMapSkin,
   resolveNetworkMapBaseLayer,
   type NetworkMapBaseLayerId,
 } from "@shared/networkMapBaseLayers";
@@ -40,16 +42,30 @@ import { describeNetworkHealth } from "@shared/networkHealth";
 import { AGENT_VERSION } from "@shared/versions";
 
 /**
- * 网络地图整页（/map）：把「主机 → 隧道 → 落地」放到真实地理位置上看。
+ * 网络地图整页（/map）：夜里的网络运维大屏 —— 夜晚的地球上，主机是发光的环，隧道是霓虹弧线。
  *
- * 地图引擎（MapLibre）单独一个包、lazy 进来；这页自己只管状态：底图、抽屉档位、
- * 当前视图、聚焦集合，以及点开详情时才取的那几条序列。模型和首页那块示意图共用
- * （features/network/networkMapModel），告警从模型里推（networkMapAlerts）。
+ * 图上浮着几样东西（都是 .nm-reserved，名字会躲开它们）：
+ *   左上   标题「网络地图」和一排统计卡（主机节点、链路线路、需要处理、整体可用率）；
+ *          选中一条隧道时标题换成「← 隧道名」和主备对比的小图例
+ *   右上   底图三段切换（标准地图 / 卫星地图 / 暗黑网格）
+ *   右边   竖着的工具栏：图层（含高德）、全览、流向（落地流向和光点）、筛选（按四类线）
+ *   左下   图例：主线路 / 备用线路 / 降级线路 / 中断线路，各几条
  *
- * 手机上抽屉从底下升起、地图留白跟着抽屉走；≥900px 抽屉是右侧 400px 栏。
+ * 详情：桌面上是浮在图右边的一张玻璃卡（选中东西或点了统计卡才出来），手机上是底部抽屉；
+ * 选中隧道时有五个标签（NetworkMapLinkPanel）。
+ *
+ * 地图引擎（MapLibre）单独一个包、lazy 进来；这页自己只管状态：底图、抽屉、当前视图、聚焦、筛选，
+ * 以及点开详情时才取的那几条序列。模型和首页那块卡片共用（features/network/networkMapModel）。
  */
 
 const NetworkMapCanvas = lazy(() => import("@/components/network/NetworkMapCanvas"));
+
+const HOUR = 3_600_000;
+/** 实时数据的两档：取两倍时长（和前一段比），桶长 */
+const LIVE_RANGES: Record<LiveRange, { hours: number; rangeMs: number; bucketMinutes: number }> = {
+  "1h": { hours: 2, rangeMs: HOUR, bucketMinutes: 5 },
+  "24h": { hours: 48, rangeMs: 24 * HOUR, bucketMinutes: 60 },
+};
 
 /**
  * 让这一块铺满工作区：DashboardLayout 的 main 有内边距和 1280px 的最大宽度，
@@ -95,9 +111,20 @@ function readStoredLayer(): unknown {
   try { return window.localStorage.getItem(NETWORK_MAP_LAYER_STORAGE_KEY); } catch { return null; }
 }
 
-function Icon({ name }: { name: "layers" | "fit" }) {
-  if (name === "layers") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 8 12 13l9.5-5L12 3z" /><path d="m2.5 12.5 9.5 5 9.5-5" /><path d="m2.5 17 9.5 5 9.5-5" /></svg>;
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="2.5" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>;
+type IconName = "layers" | "fit" | "flow" | "filter" | "server" | "link" | "alert" | "pulse" | "back";
+const ICON_PATHS: Record<IconName, ReactNode> = {
+  layers: <><path d="M12 3 2.5 8 12 13l9.5-5L12 3z" /><path d="m2.5 12.5 9.5 5 9.5-5" /><path d="m2.5 17 9.5 5 9.5-5" /></>,
+  fit: <><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" /><circle cx="12" cy="12" r="2.5" /></>,
+  flow: <><path d="M3 17c4-8 10-8 14-3" /><path d="m15 10 2.6 4.2L13 15" /><circle cx="6" cy="14.5" r="1" /><circle cx="10" cy="11.6" r="1" /></>,
+  filter: <><path d="M4 5h16l-6.2 7.3V19l-3.6-1.8v-4.9L4 5z" /></>,
+  server: <><rect x="4" y="4" width="16" height="6.5" rx="1.6" /><rect x="4" y="13.5" width="16" height="6.5" rx="1.6" /><path d="M7.5 7.3h.01M7.5 16.8h.01" /></>,
+  link: <><path d="M10 14a4.2 4.2 0 0 0 6 0l3-3a4.2 4.2 0 0 0-6-6l-1 1" /><path d="M14 10a4.2 4.2 0 0 0-6 0l-3 3a4.2 4.2 0 0 0 6 6l1-1" /></>,
+  alert: <><path d="M12 4 2.8 19.5h18.4L12 4z" /><path d="M12 10v4.2M12 17h.01" /></>,
+  pulse: <><path d="M3 12h4l2.5-6 5 12 2.5-6H21" /></>,
+  back: <><path d="M15 6l-6 6 6 6" /></>,
+};
+function Icon({ name }: { name: IconName }) {
+  return <svg viewBox="0 0 24 24" aria-hidden="true">{ICON_PATHS[name]}</svg>;
 }
 
 export default function NetworkMapPage() {
@@ -132,37 +159,43 @@ function NetworkMapPageBody() {
     return () => observer?.disconnect();
   }, [frame]);
 
-  // ---- 底图：记住的优先，默认简洁底图；皮肤跟面板主题（卫星永远深色） ----
+  // ---- 底图：记住的优先，默认标准地图（夜晚的地球）；地图永远深色，抽屉跟面板主题 ----
   const [baseLayer, setBaseLayer] = useState<NetworkMapBaseLayerId>(() => resolveNetworkMapBaseLayer(readStoredLayer()));
-  const [layerMenuOpen, setLayerMenuOpen] = useState(false);
-  const layerMenuRef = useRef<HTMLDivElement | null>(null);
-  const layerButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [menu, setMenu] = useState<"layers" | "filter" | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
   const chooseLayer = (id: NetworkMapBaseLayerId) => {
     setBaseLayer(id);
-    setLayerMenuOpen(false);
+    setMenu(null);
     try { window.localStorage.setItem(NETWORK_MAP_LAYER_STORAGE_KEY, id); } catch { /* 存不了就下次再默认 */ }
   };
   useEffect(() => {
-    if (!layerMenuOpen) return undefined;
+    if (!menu) return undefined;
     const onPointer = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (layerMenuRef.current?.contains(target) || layerButtonRef.current?.contains(target)) return;
-      setLayerMenuOpen(false);
+      if (menuRef.current?.contains(target) || toolbarRef.current?.contains(target)) return;
+      setMenu(null);
     };
     document.addEventListener("pointerdown", onPointer);
     return () => document.removeEventListener("pointerdown", onPointer);
-  }, [layerMenuOpen]);
-  const skin = networkMapSkin(baseLayer, resolvedTheme);
+  }, [menu]);
+  const skin = resolvedTheme;
 
   // ---- 数据 ----
   const model = useNetworkMapPageModel({ enabled: !!user, withTargets: isAdmin });
   const alerts = useMemo(() => buildNetworkMapAlerts(model), [model]);
+  // 「流向」：落地流向（只给管理员）和主线路上的光点一起开关
   const [showFlows, setShowFlows] = useState(true);
   const flowsOn = isAdmin && showFlows;
+  const [lineFilter, setLineFilter] = useState<LineFilter>("all");
 
   // ---- 抽屉 / 视图 / 聚焦 ----
   const [snap, setSnap] = useState<SheetSnap>("peek");
   const [view, setView] = useState<MapSheetView>({ view: "overview" });
+  /** 桌面：没选中东西时，点了统计卡也打开右边的卡看总览 */
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const [linkTab, setLinkTab] = useState<LinkPanelTab>("overview");
+  const [liveRange, setLiveRange] = useState<LiveRange>("1h");
   const [focus, setFocus] = useState<MapFocus | null>(null);
   const [toastText, setToastText] = useState<string | null>(null);
   const [mapUnavailable, setMapUnavailable] = useState(false);
@@ -172,10 +205,11 @@ function NetworkMapPageBody() {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToastText(null), 2400);
   }, []);
+  const panelOpen = rail && (view.view !== "overview" || overviewOpen);
   const cameraRef = useRef<NetworkMapCameraApi | null>(null);
   const pendingCamera = useRef<(() => void) | null>(null);
-  const padding = useMemo(() => mapPaddingForSheet(snap, containerHeight, rail), [snap, containerHeight, rail]);
-  // 相机动作排在这次渲染之后：先让抽屉的新高度通过 setPadding 告诉地图（画布的 effect 先跑），再飞
+  const padding = useMemo(() => mapPaddingForSheet(snap, containerHeight, rail, panelOpen), [snap, containerHeight, rail, panelOpen]);
+  // 相机动作排在这次渲染之后：先让抽屉 / 详情卡的新尺寸通过 setPadding 告诉地图（画布的 effect 先跑），再飞
   useEffect(() => {
     const action = pendingCamera.current;
     if (!action) return;
@@ -191,45 +225,56 @@ function NetworkMapPageBody() {
     setView({ view: "node", id: hostId });
     raiseSheet();
     if (options.focus !== false) setFocus(focusForNode(model, hostId));
-    if (options.fly !== false) queueCamera((api) => { const at = api.hostLngLat(hostId); if (at) api.flyTo(at, Math.max(api.getZoom(), 7)); });
+    if (options.fly !== false) queueCamera((api) => { const at = api.hostLngLat(hostId); if (at) api.flyTo(at, Math.max(api.getZoom(), 5)); });
   };
+  /** 框住一次聚焦里的所有主机（主备对比时连备用经过的主机一起） */
+  const fitFocus = (next: MapFocus | null, maxZoom: number) => queueCamera((api) => {
+    if (!next) return;
+    const points = [...next.hosts.map((id) => api.hostLngLat(id)), ...next.targets.map((key) => api.targetLngLat(key))].filter((point): point is [number, number] => !!point);
+    api.fitPoints(points, maxZoom);
+  });
   const openLink = (tunnelId: number, options: { fly?: boolean; focus?: boolean } = {}) => {
-    const link = model.links.find((item) => item.id === tunnelId);
+    const next = focusForLink(model, tunnelId);
+    if (view.view !== "link" || view.id !== tunnelId) setLinkTab("overview");
     setView({ view: "link", id: tunnelId });
     raiseSheet();
-    if (options.focus !== false) setFocus(focusForLink(model, tunnelId));
-    if (options.fly !== false && link) queueCamera((api) => {
-      const points = link.path.map((id) => api.hostLngLat(id)).filter((point): point is [number, number] => !!point);
-      api.fitPoints(points, 7.5);
-    });
+    if (options.focus !== false) setFocus(next);
+    if (options.fly !== false) fitFocus(next, 6.5);
   };
   const openTarget = (key: string) => {
     setView({ view: "target", id: key });
     raiseSheet();
     setFocus(focusForTarget(model, key));
-    queueCamera((api) => { const at = api.targetLngLat(key); if (at) api.flyTo(at, Math.max(api.getZoom(), 6)); });
+    queueCamera((api) => { const at = api.targetLngLat(key); if (at) api.flyTo(at, Math.max(api.getZoom(), 5)); });
   };
   const backToOverview = () => {
     setView({ view: "overview" });
     setFocus(null);
   };
-  const clearFocus = () => {
+  const closePanel = () => {
+    setView({ view: "overview" });
+    setFocus(null);
+    setOverviewOpen(false);
+    if (!rail) setSnap("peek");
+  };
+  const fitAll = () => {
     setFocus(null);
     setView({ view: "overview" });
     queueCamera((api) => api.fitAll());
   };
+  const showOverview = () => {
+    setView({ view: "overview" });
+    setFocus(null);
+    setOverviewOpen(true);
+    if (!rail) setSnap("half");
+  };
   const focusAlert = (alert: NetworkMapAlert) => {
-    setFocus({ ...alert.focus, label: alert.title, severity: alert.severity });
+    const next = { ...alert.focus, label: alert.title, severity: alert.severity };
+    setFocus(next);
     if (alert.open.view === "link") openLink(Number(alert.open.id), { fly: false, focus: false });
     else if (alert.open.view === "target") { setView({ view: "target", id: String(alert.open.id) }); raiseSheet(); }
     else openNode(Number(alert.open.id), { fly: false, focus: false });
-    queueCamera((api) => {
-      const points = [
-        ...alert.focus.hosts.map((id) => api.hostLngLat(id)),
-        ...alert.focus.targets.map((key) => api.targetLngLat(key)),
-      ].filter((point): point is [number, number] => !!point);
-      api.fitPoints(points, 7.2);
-    });
+    fitFocus(next as MapFocus, 6.5);
   };
 
   // 点开的东西没了（被删了、权限变了）就回总览
@@ -261,10 +306,10 @@ function NetworkMapPageBody() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
-  // ---- 高德拉不下来：切一次简洁底图，不写进 localStorage（网络回来了还用用户选的） ----
+  // ---- 高德拉不下来：切回标准地图，不写进 localStorage（网络回来了还用用户选的） ----
   const onRasterError = useCallback(() => {
-    setBaseLayer("vector");
-    toast("高德底图加载失败，已切到简洁底图");
+    setBaseLayer("night");
+    toast("高德底图加载失败，已切回标准地图");
   }, [toast]);
 
   // ---- 详情要的数据：点开时才取 ----
@@ -281,6 +326,24 @@ function NetworkMapPageBody() {
     day: linkRuleIds.length === 0 ? { bytesIn: 0, bytesOut: 0 } : trafficDayQuery.data ? sumTraffic(trafficDayQuery.data as any, linkRuleIds) : null,
     total: linkRuleIds.length === 0 ? { bytesIn: 0, bytesOut: 0 } : trafficTotalQuery.data ? sumTraffic(trafficTotalQuery.data as any, linkRuleIds) : null,
   }), [linkRuleIds, trafficDayQuery.data, trafficTotalQuery.data]);
+  // 实时数据：两倍时长（这一段 + 前一段），速率从规则的逐桶字节算，延迟和探测成功率从延迟序列算
+  const liveSpec = LIVE_RANGES[liveRange];
+  const liveLatencyQuery = trpc.tunnels.latencySeries.useQuery({ tunnelId: linkId, hours: liveSpec.hours }, { enabled: linkId > 0, retry: false, staleTime: 15_000, refetchInterval: linkId > 0 ? 60_000 : false });
+  const liveTrafficQuery = trpc.rules.trafficSeriesBatch.useQuery({ ruleIds: linkRuleIds, hours: liveSpec.hours, bucketMinutes: liveSpec.bucketMinutes }, { enabled: linkId > 0 && linkRuleIds.length > 0, staleTime: 30_000, refetchInterval: linkId > 0 ? 60_000 : false });
+  const live = useMemo<LinkLiveData>(() => {
+    const nowMs = Date.now();
+    const rates = linkRuleIds.length > 0 && liveTrafficQuery.data
+      ? trafficRateWindows(liveTrafficQuery.data as any, { ruleIds: linkRuleIds, nowMs, rangeMs: liveSpec.rangeMs, bucketMs: liveSpec.bucketMinutes * 60_000 })
+      : null;
+    const latencyLive = liveLatencyQuery.data ? latencyWindows(liveLatencyQuery.data as any, { nowMs, rangeMs: liveSpec.rangeMs }) : null;
+    return {
+      down: rates?.down ?? null,
+      up: rates?.up ?? null,
+      latency: latencyLive?.current ?? null,
+      latencyDelta: latencyLive?.delta ?? null,
+      loading: liveLatencyQuery.isLoading || (linkRuleIds.length > 0 && liveTrafficQuery.isLoading),
+    };
+  }, [linkRuleIds, liveTrafficQuery.data, liveLatencyQuery.data, liveSpec, liveLatencyQuery.isLoading, liveTrafficQuery.isLoading]);
 
   const utils = trpc.useUtils();
   const upgradeMutation = trpc.hosts.requestAgentUpgrade.useMutation({
@@ -305,20 +368,27 @@ function NetworkMapPageBody() {
     else toast("这个浏览器不让复制，长按选中吧");
   };
 
+  // ---- 统计 ----
+  const hub = pickHubNode(model, view.view === "node" ? view.id : null);
+  const availability = overallAvailability(model);
+  const stats = [
+    { key: "hosts", icon: "server" as const, value: String(model.nodes.length), label: "主机节点", tone: "" },
+    { key: "lines", icon: "link" as const, value: String(lineTotal(model)), label: "链路线路", tone: "" },
+    { key: "alerts", icon: "alert" as const, value: String(alerts.length), label: "需要处理", tone: alerts.length > 0 ? "is-alert" : "is-calm" },
+    { key: "uptime", icon: "pulse" as const, value: formatAvailability(availability), label: "整体可用率", tone: availability === null ? "is-calm" : "is-good" },
+  ];
+
   // ---- 抽屉内容 ----
   const headline = overviewHeadline(model, alerts.length);
   const currentNode = view.view === "node" ? model.nodes.find((node) => node.id === view.id) : undefined;
   const currentLink = view.view === "link" ? model.links.find((link) => link.id === view.id) : undefined;
   const currentTarget = view.view === "target" ? model.targets.find((target) => target.key === view.id) : undefined;
-  const healthTone = (health: string) => {
-    const token = describeNetworkHealth(health as any).token;
-    return token === "healthy" ? "ok" : token === "warn" || token === "path" ? "warn" : token === "down" ? "down" : "standby";
-  };
-  let head: React.ReactNode;
-  let body: React.ReactNode;
+  const viewDetail = () => setLocation(isAdmin ? "/tunnels" : "/rules");
+  let head: ReactNode;
+  let body: ReactNode;
   if (currentNode) {
     const canUpgrade = isAdmin && hostNeedsAgentUpgrade(currentNode, AGENT_VERSION);
-    head = <SheetHead onBack={backToOverview} title={`${currentNode.emoji ? `${currentNode.emoji} ` : ""}${currentNode.name}`} subtitle={nodeHeadSubtitle(currentNode, model)} trailing={<Pill tone={healthTone(currentNode.health)}>{currentNode.isOnline ? "在线" : currentNode.lastHeartbeat ? "离线" : "未接入"}</Pill>} />;
+    head = <SheetHead onBack={backToOverview} onClose={closePanel} title={`${currentNode.emoji ? `${currentNode.emoji} ` : ""}${currentNode.name}`} subtitle={nodeHeadSubtitle(currentNode, model)} trailing={<Pill tone={tone(currentNode.health)}>{currentNode.isOnline ? "在线" : currentNode.lastHeartbeat ? "离线" : "未接入"}</Pill>} />;
     body = (
       <NodeDetailView
         model={model}
@@ -336,40 +406,65 @@ function NetworkMapPageBody() {
       />
     );
   } else if (currentLink) {
-    head = <SheetHead onBack={backToOverview} title={linkHeadTitle(currentLink, model.nodes)} subtitle={`${currentLink.name} · ${currentLink.modeLabel}`} trailing={<Pill tone={healthTone(currentLink.health)}>{describeNetworkHealth(currentLink.health).label}</Pill>} />;
+    const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
+    const ends = `${nodeById.get(currentLink.path[0])?.city ?? "看不到的主机"} → ${nodeById.get(currentLink.path[currentLink.path.length - 1])?.city ?? "看不到的主机"}`;
+    head = (
+      <>
+        <SheetHead
+          onClose={closePanel}
+          title={currentLink.name}
+          subtitle={`${ends} · ${currentLink.modeLabel}`}
+          trailing={<Pill tone={tone(currentLink.health)}>{linkStatusLabel(currentLink)}</Pill>}
+          actions={<PanelMenu items={[
+            { label: testMutation.isPending ? "诊断中…" : "诊断这条线", onClick: () => testMutation.mutate({ id: currentLink.id }), disabled: testMutation.isPending },
+            { label: "在地图上框住", onClick: () => fitFocus(focus, 6.5) },
+            { label: isAdmin ? "打开链路管理" : "打开转发规则", onClick: viewDetail },
+            { label: "回到全部线路", onClick: backToOverview },
+          ]} />}
+        />
+        <LinkPanelTabs tab={linkTab} onTab={setLinkTab} />
+      </>
+    );
     body = (
-      <LinkDetailView
+      <LinkPanelBody
         model={model}
         link={currentLink}
-        latency={latency}
-        latencyLoading={latencyQuery.isLoading}
-        latencyError={latencyQuery.error ? "看不到这条隧道的延迟历史" : null}
-        traffic={traffic}
-        onDiagnose={() => testMutation.mutate({ id: currentLink.id })}
-        diagnosing={testMutation.isPending}
+        tab={linkTab}
+        onTab={setLinkTab}
+        range={liveRange}
+        onRange={setLiveRange}
+        live={live}
+        detail={{
+          latency,
+          latencyLoading: latencyQuery.isLoading,
+          latencyError: latencyQuery.error ? "看不到这条隧道的延迟历史" : null,
+          traffic,
+          onDiagnose: () => testMutation.mutate({ id: currentLink.id }),
+          diagnosing: testMutation.isPending,
+          onOpenNode: (id) => openNode(id),
+        }}
         onOpenNode={(id) => openNode(id)}
+        onFocusPath={() => { const next = focusForLink(model, currentLink.id); setFocus(next); fitFocus(next, 6.5); if (!rail) setSnap("peek"); }}
+        onViewDetail={viewDetail}
+        viewDetailLabel="查看详情"
       />
     );
   } else if (currentTarget) {
-    head = <SheetHead onBack={backToOverview} title={`${currentTarget.emoji ? `${currentTarget.emoji} ` : ""}${currentTarget.city} · 落地目标`} subtitle={currentTarget.address} trailing={<Pill tone={healthTone(currentTarget.health)}>{currentTarget.health === "healthy" ? "规则在跑" : describeNetworkHealth(currentTarget.health).label}</Pill>} />;
+    head = <SheetHead onBack={backToOverview} onClose={closePanel} title={`${currentTarget.emoji ? `${currentTarget.emoji} ` : ""}${currentTarget.city} · 落地节点`} subtitle={currentTarget.address} trailing={<Pill tone={tone(currentTarget.health)}>{currentTarget.health === "healthy" ? "规则在跑" : describeNetworkHealth(currentTarget.health).label}</Pill>} />;
     body = <TargetDetailView model={model} target={currentTarget} onOpenLink={(id) => openLink(id)} onOpenNode={(id) => openNode(id)} />;
   } else {
     head = (
       <SheetHead
+        onClose={rail ? closePanel : undefined}
         title={<>{headline.main}{headline.attention ? <span style={{ color: "var(--nm-warn)" }}> · {headline.attention}</span> : null}</>}
         subtitle={model.loading ? "正在读取主机和线路…" : model.error ? "有些数据没读到，看到的可能不完整" : "点主机或线路看详情 · 点告警会飞过去"}
       />
     );
     body = <OverviewView model={model} alerts={alerts} onAlert={focusAlert} onOpenNode={(id) => openNode(id)} onOpenLink={(id) => openLink(id)} baseLayerAmap={NETWORK_MAP_BASE_LAYERS[baseLayer].amap} />;
   }
-  const viewKey = view.view === "overview" ? "overview" : `${view.view}:${view.id}`;
-
-  const legend = [
-    { key: "healthy", label: "正常", count: model.legend.healthy, color: "var(--nm-link)" },
-    { key: "degraded", label: "降级", count: model.legend.degraded, color: "var(--nm-warn)" },
-    { key: "down", label: "中断", count: model.legend.down, color: "var(--nm-down)" },
-    { key: "standby", label: "停用", count: model.legend.standby, color: "var(--nm-standby)" },
-  ].filter((item) => item.count > 0);
+  const viewKey = view.view === "overview" ? "overview" : `${view.view}:${view.id}:${view.view === "link" ? linkTab : ""}`;
+  const compare = focus?.compare && currentLink && focus.compare.tunnelId === currentLink.id ? focus.compare : null;
+  const filterCounts: Record<LineFilter, number> = { all: lineTotal(model), ...model.lines };
 
   return (
     <div
@@ -378,8 +473,8 @@ function NetworkMapPageBody() {
       data-skin={skin}
       style={frame ? { marginLeft: frame.marginLeft, width: frame.width, height: frame.height } : { height: "70vh" }}
     >
-      <div className="nm-layout">
-        <div ref={mapWrapRef} className="nm-map-wrap">
+      <div className={`nm-layout${panelOpen ? " has-panel" : ""}`}>
+        <div ref={mapWrapRef} className="nm-map-wrap nm-surface">
           <Suspense fallback={<div className="nm-map-fallback">正在加载地图引擎…</div>}>
             <NetworkMapCanvas
               model={model}
@@ -390,12 +485,14 @@ function NetworkMapPageBody() {
               padding={padding}
               reduceMotion={reduceMotion}
               paused={paused}
+              hubHostId={hub}
+              lineFilter={lineFilter}
               onSelectNode={(id) => openNode(id)}
               onSelectLink={(id) => openLink(id)}
               onSelectTarget={openTarget}
               onSelectCluster={() => { if (!rail && snap !== "peek") setSnap("peek"); }}
-              onMapClick={() => { if (layerMenuOpen) { setLayerMenuOpen(false); return; } if (!rail && snap !== "peek") setSnap("peek"); }}
-              comets
+              onMapClick={() => { if (menu) { setMenu(null); return; } if (!rail && snap !== "peek") setSnap("peek"); }}
+              comets={showFlows}
               onRasterError={onRasterError}
               onUnavailable={() => setMapUnavailable(true)}
               onReady={(api) => { cameraRef.current = api; setCameraReady(true); }}
@@ -410,45 +507,88 @@ function NetworkMapPageBody() {
               <div>还没有主机。装好第一台 Agent，它就会出现在这张图上。</div>
             </div>
           ) : null}
-          <div className="nm-overlay-tl">
-            <h1 className="nm-chip nm-title">网络地图</h1>
-            {legend.map((item) => <span key={item.key} className="nm-chip"><span className="nm-dot" style={{ background: item.color }} aria-hidden="true" />{item.label} {item.count}</span>)}
-            {isAdmin ? (
-              <button type="button" className="nm-chip nm-toggle" aria-pressed={showFlows} onClick={() => setShowFlows((value) => !value)} title="把规则的落地目标画出来，从出口拉一条细虚线过去">
-                <span className="nm-dot" style={{ background: "var(--nm-standby)", opacity: 0.9 }} aria-hidden="true" />落地流向
+          <div className={`nm-focus-mask${focus ? " is-show" : ""}`} aria-hidden="true" />
+          <div className="nm-hud-tl">
+            {compare && currentLink ? (
+              <div className="nm-compare nm-glass nm-reserved">
+                <button type="button" className="nm-back-chip" onClick={fitAll} aria-label={`退出主备线路对比：${currentLink.name}`}><Icon name="back" /><span>{currentLink.name}</span></button>
+                <span className="nm-legend-row" aria-label="主备线路对比">
+                  <span className="nm-legend-item"><i className="nm-line-swatch is-main" />主线路（当前）</span>
+                  <span className="nm-legend-item"><i className="nm-line-swatch is-backup" />备用线路{compare.backupTunnels.length + compare.backupRoutes.length > 0 ? ` ${compare.backupTunnels.length + compare.backupRoutes.length}` : "（无）"}</span>
+                  <span className="nm-legend-item"><i className="nm-line-swatch is-degraded" />降级</span>
+                  <span className="nm-legend-item"><i className="nm-line-swatch is-down" />中断</span>
+                </span>
+              </div>
+            ) : (
+              <div className="nm-titlebar nm-reserved">
+                <h1>网络地图</h1>
+                <p>实时展示全球节点与链路状态</p>
+              </div>
+            )}
+            {focus && !compare ? (
+              <button type="button" className="nm-focus-exit nm-reserved" onClick={fitAll}>
+                <span className="nm-sev" style={{ background: focus.severity === "error" ? "var(--nm-down)" : focus.severity === "warning" ? "var(--nm-warn)" : "var(--nm-accent)" }} aria-hidden="true" />
+                <span className="nm-text">退出聚焦 · {focus.label}</span>
+                <span aria-hidden="true">✕</span>
               </button>
             ) : null}
+            <div className="nm-stats" role="list" aria-label="概况">
+              {stats.map((stat) => (
+                <button key={stat.key} type="button" role="listitem" className={`nm-stat nm-glass nm-reserved ${stat.tone}`} onClick={showOverview} title="打开总览">
+                  <span className="nm-icon"><Icon name={stat.icon} /></span>
+                  <b>{stat.value}</b>
+                  <span className="nm-stat-label">{stat.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
-          <div className={`nm-focus-mask${focus ? " is-show" : ""}`} aria-hidden="true" />
-          {focus ? (
-            <button type="button" className="nm-focus-exit" onClick={clearFocus}>
-              <span className="nm-sev" style={{ background: focus.severity === "error" ? "var(--nm-down)" : focus.severity === "warning" ? "var(--nm-warn)" : "var(--nm-accent)" }} aria-hidden="true" />
-              <span className="nm-text">退出聚焦 · {focus.label}</span>
-              <span aria-hidden="true">✕</span>
-            </button>
-          ) : null}
-          <div className="nm-fabs">
-            <button ref={layerButtonRef} type="button" className={`nm-fab${layerMenuOpen ? " is-active" : ""}`} aria-label="切换底图" aria-expanded={layerMenuOpen} onClick={() => setLayerMenuOpen((open) => !open)}><Icon name="layers" /></button>
-            <button type="button" className="nm-fab" aria-label="回到全局视图" onClick={clearFocus}><Icon name="fit" /></button>
+          <div className="nm-seg nm-glass nm-reserved" role="radiogroup" aria-label="底图">
+            {NETWORK_MAP_BASE_LAYER_ORDER.map((id) => (
+              <button key={id} type="button" role="radio" aria-checked={baseLayer === id} onClick={() => chooseLayer(id)}>{NETWORK_MAP_BASE_LAYERS[id].label}</button>
+            ))}
           </div>
-          {layerMenuOpen ? (
-            <div ref={layerMenuRef} className="nm-layer-menu" role="menu" aria-label="底图">
+          <div ref={toolbarRef} className="nm-toolbar nm-glass nm-reserved" role="toolbar" aria-label="地图工具">
+            <button type="button" className={menu === "layers" ? "is-active" : ""} aria-expanded={menu === "layers"} onClick={() => setMenu((open) => (open === "layers" ? null : "layers"))}><Icon name="layers" />图层</button>
+            <button type="button" onClick={fitAll}><Icon name="fit" />全览</button>
+            <button type="button" className={showFlows ? "is-active" : ""} aria-pressed={showFlows} onClick={() => setShowFlows((value) => !value)} title={isAdmin ? "落地流向和主线路上的光点" : "主线路上的光点"}><Icon name="flow" />流向</button>
+            <button type="button" className={menu === "filter" || lineFilter !== "all" ? "is-active" : ""} aria-expanded={menu === "filter"} onClick={() => setMenu((open) => (open === "filter" ? null : "filter"))}><Icon name="filter" />筛选{lineFilter !== "all" ? <i className="nm-badge" aria-hidden="true" /> : null}</button>
+          </div>
+          {menu === "layers" ? (
+            <div ref={menuRef} className="nm-pop nm-glass" role="menu" aria-label="底图" style={{ top: rail ? 64 : 12 }}>
               <div className="nm-menu-title">底图</div>
-              {NETWORK_MAP_BASE_LAYER_ORDER.map((id) => {
+              {NETWORK_MAP_ALL_BASE_LAYERS.map((id) => {
                 const layer = NETWORK_MAP_BASE_LAYERS[id];
                 return (
-                  <button key={id} type="button" role="menuitemradio" aria-checked={baseLayer === id} aria-pressed={baseLayer === id} className="nm-layer-opt" onClick={() => chooseLayer(id)}>
+                  <button key={id} type="button" role="menuitemradio" aria-checked={baseLayer === id} className="nm-opt" onClick={() => chooseLayer(id)}>
                     <span className={`nm-swatch ${id}`} aria-hidden="true" />
                     <span><b>{layer.label}</b><small>{layer.hint}</small></span>
+                    <span className="nm-check" aria-hidden="true" />
                   </button>
                 );
               })}
               <div className="nm-menu-foot">{NETWORK_MAP_AMAP_TERMS_NOTE}</div>
             </div>
           ) : null}
-          <div className={`nm-toast${toastText ? " is-show" : ""}`} role="status" aria-live="polite">{toastText}</div>
+          {menu === "filter" ? (
+            <div ref={menuRef} className="nm-pop nm-glass" role="menu" aria-label="筛选线路" style={{ top: rail ? 190 : 140 }}>
+              <div className="nm-menu-title">只看这些线</div>
+              {LINE_FILTER_OPTIONS.map((option) => (
+                <button key={option.id} type="button" role="menuitemradio" aria-checked={lineFilter === option.id} className="nm-opt" onClick={() => { setLineFilter(option.id); setMenu(null); }}>
+                  {option.id === "all" ? <span className="nm-line-swatch" aria-hidden="true" style={{ background: "linear-gradient(90deg, var(--nm-line-main), var(--nm-line-degraded), var(--nm-line-down))" }} /> : <span className={`nm-line-swatch is-${option.id}`} aria-hidden="true" />}
+                  <span>{option.label}</span>
+                  <span className="nm-count">{filterCounts[option.id]}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="nm-legend nm-glass nm-reserved" aria-label="图例">
+            {LINE_KINDS.map((kind) => (
+              <span key={kind} className="nm-legend-item"><i className={`nm-line-swatch is-${kind}`} aria-hidden="true" />{LINE_KIND_LABELS[kind]}<span className="nm-count">{model.lines[kind]}</span></span>
+            ))}
+          </div>
+          <div className={`nm-toast nm-glass${toastText ? " is-show" : ""}`} role="status" aria-live="polite">{toastText}</div>
         </div>
-        <NetworkMapSheet snap={snap} onSnapChange={setSnap} rail={rail} containerHeight={containerHeight} reduceMotion={reduceMotion} head={head} viewKey={viewKey}>
+        <NetworkMapSheet snap={snap} onSnapChange={setSnap} rail={rail} open={panelOpen} containerHeight={containerHeight} reduceMotion={reduceMotion} head={head} viewKey={viewKey}>
           {body}
         </NetworkMapSheet>
       </div>

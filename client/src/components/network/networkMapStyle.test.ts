@@ -3,11 +3,12 @@ import test from "node:test";
 
 import {
   NETWORK_MAP_LAYERS,
+  TEXTURE_LAYER_IDS,
   baseLayerPaintPatch,
   buildNetworkMapStyle,
-  cometPaint,
-  cometTailGradient,
   dimOpacityExpression,
+  graticuleGeoJson,
+  kindColorExpression,
   lighten,
   linkGradient,
   rasterSourceIds,
@@ -16,94 +17,82 @@ import {
   withAlpha,
 } from "./networkMapStyle";
 
-const colors = { healthy: "#0b74d1", warn: "#d97706", down: "#dc2626", standby: "#737373", casing: "#ffffff" };
-const base = { water: "#e3e9ef", land: "#fbfbf9", landShadow: "rgba(15,23,42,0.08)", border: "rgba(30,41,59,0.18)" };
+const colors = { main: "#3b82f6", backup: "#cbd5e1", degraded: "#f59e0b", down: "#ef4444", flow: "#a855f7", particle: "#e0f2fe" };
+const base = { water: "#050b16", land: "#0c1625", border: "rgba(56,189,248,0.22)", graticule: "rgba(34,211,238,0.08)" };
 
-test("一份样式装下三种底图：所有栅格源都在，只有激活的那个可见", () => {
-  const style = buildNetworkMapStyle("sat", "dark", "/globe/x.geojson", colors, base);
-  const ids = rasterSourceIds();
-  assert.deepEqual(ids, ["amap-road", "amap-sat", "amap-sat-labels"]);
-  for (const id of ids) assert.ok(style.sources[id], `源 ${id} 在样式里`);
+test("一份样式装下四种底图：两张地球图走自定义协议、高德走瓦片，只有激活的那个可见", () => {
+  const style = buildNetworkMapStyle("night", "/globe/x.geojson", colors, base);
+  assert.deepEqual(rasterSourceIds(), ["earth-night", "earth-day", "amap-road"]);
+  assert.deepEqual(style.sources["earth-night"].tiles, ["fxearth://night/{z}/{x}/{y}"]);
+  assert.equal(style.sources["earth-night"].maxzoom, 4, "原图 4096 宽，第 4 级以上 MapLibre 自己放大");
+  assert.deepEqual(style.sources["earth-day"].tiles, ["fxearth://day/{z}/{x}/{y}"]);
   const visibility = Object.fromEntries(style.layers.filter((layer: any) => layer.type === "raster").map((layer: any) => [layer.id, layer.layout.visibility]));
-  assert.deepEqual(visibility, { "amap-road": "none", "amap-sat": "visible", "amap-sat-labels": "visible" });
-  assert.deepEqual(rasterVisibility("vector"), { "amap-road": "none", "amap-sat": "none", "amap-sat-labels": "none" });
+  assert.deepEqual(visibility, { "earth-night": "visible", "earth-day": "none", "amap-road": "none" });
+  assert.deepEqual(rasterVisibility("sat"), { "earth-night": "none", "earth-day": "visible", "amap-road": "none" });
+  assert.deepEqual(rasterVisibility("grid"), { "earth-night": "none", "earth-day": "none", "amap-road": "none" });
+  assert.deepEqual(rasterVisibility("amap"), { "earth-night": "none", "earth-day": "none", "amap-road": "visible" });
 });
 
-test("高德瓦片压低饱和度；深色皮肤下标准图整体压暗", () => {
-  assert.equal(rasterTonePaint("amap-road", "light")["raster-saturation"], -0.35);
-  assert.ok(rasterTonePaint("amap-road", "light")["raster-contrast"] < 0);
-  assert.ok(rasterTonePaint("amap-road", "dark")["raster-brightness-max"] < 0.7, "深色主题下白底瓦片压暗");
-  assert.ok(rasterTonePaint("amap-road", "light")["raster-brightness-max"] > 0.9);
-  const style = buildNetworkMapStyle("light", "dark", "/globe/x.geojson", colors, base);
+test("压色：卫星图压暗；高德反相成深色；夜光图透出一点底下的海军蓝", () => {
+  assert.ok(rasterTonePaint(TEXTURE_LAYER_IDS.day)["raster-brightness-max"] < 0.6);
+  const amap = rasterTonePaint("amap-road");
+  assert.ok(amap["raster-brightness-min"] > amap["raster-brightness-max"], "min > max 就是反相");
+  assert.equal(amap["raster-hue-rotate"], 180);
+  assert.ok(rasterTonePaint(TEXTURE_LAYER_IDS.night)["raster-opacity"] < 1);
+  const style = buildNetworkMapStyle("amap", "/globe/x.geojson", colors, base);
   const road = style.layers.find((layer: any) => layer.id === "amap-road") as any;
   assert.equal(road.paint["raster-fade-duration"], 0);
-  assert.equal(road.paint["raster-brightness-max"], rasterTonePaint("amap-road", "dark")["raster-brightness-max"]);
 });
 
-test("图层顺序：底色 → 瓦片 → 陆地影子 → 陆地 → 国界 → 流向 → 命中层 → 细边 → 线；没有经纬网", () => {
-  const style = buildNetworkMapStyle("vector", "light", "/globe/x.geojson", colors, base);
+test("图层顺序：底色 → 栅格 → 陆地 → 经纬网 → 国界 → 流向 → 命中层 → 光 → 虚线 → 主线路 → 中转点 → 光点", () => {
+  const style = buildNetworkMapStyle("grid", "/globe/x.geojson", colors, base);
   const order = style.layers.map((layer: any) => layer.id);
   const index = (id: string) => order.indexOf(id);
-  assert.ok(index(NETWORK_MAP_LAYERS.background) < index("amap-road"));
-  assert.ok(index("amap-sat-labels") < index(NETWORK_MAP_LAYERS.landShadow));
-  assert.ok(index(NETWORK_MAP_LAYERS.landShadow) < index(NETWORK_MAP_LAYERS.land));
-  assert.ok(index(NETWORK_MAP_LAYERS.borders) < index(NETWORK_MAP_LAYERS.flow));
-  assert.ok(index(NETWORK_MAP_LAYERS.flow) < index(NETWORK_MAP_LAYERS.linkHit));
-  assert.ok(index(NETWORK_MAP_LAYERS.linkCasing) < index(NETWORK_MAP_LAYERS.linkDashed));
-  assert.ok(index(NETWORK_MAP_LAYERS.linkDashed) < index(NETWORK_MAP_LAYERS.linkSolid));
-  assert.ok(!order.some((id: string) => /graticule/.test(id)), "不画经纬网");
-  assert.equal((style.layers[0] as any).paint["background-color"], base.water);
-  const land = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.land) as any;
-  assert.equal(land.paint["fill-color"], base.land);
-  const borders = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.borders) as any;
-  assert.equal(borders.paint["line-width"], 0.5, "国界 0.5px");
+  const sequence = [NETWORK_MAP_LAYERS.background, "earth-night", "amap-road", NETWORK_MAP_LAYERS.land, NETWORK_MAP_LAYERS.graticule, NETWORK_MAP_LAYERS.borders, NETWORK_MAP_LAYERS.flow, NETWORK_MAP_LAYERS.linkHit, NETWORK_MAP_LAYERS.linkGlow, NETWORK_MAP_LAYERS.linkDashed, NETWORK_MAP_LAYERS.linkMain, NETWORK_MAP_LAYERS.waypoints, NETWORK_MAP_LAYERS.particleGlow, NETWORK_MAP_LAYERS.particleCore];
+  for (let i = 1; i < sequence.length; i += 1) assert.ok(index(sequence[i - 1]) < index(sequence[i]), `${sequence[i - 1]} 在 ${sequence[i]} 下面`);
   const hit = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.linkHit) as any;
   assert.equal(hit.paint["line-opacity"], 0, "命中层看不见");
   assert.ok(hit.paint["line-width"] >= 12, "命中层够宽，手指点得中");
+  assert.equal((style.layers[0] as any).paint["background-color"], base.water);
 });
 
-test("线要素的 promoteId 是 fid、开了 lineMetrics；聚焦用 feature-state 把无关的线压到 12%", () => {
-  const style = buildNetworkMapStyle("light", "light", "/globe/x.geojson", colors, base);
+test("霓虹线：光宽而模糊；主线路实线渐亮，其余三类虚线；颜色按 kind 取", () => {
+  const style = buildNetworkMapStyle("night", "/globe/x.geojson", colors, base);
+  const glow = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.linkGlow) as any;
+  assert.ok(glow.paint["line-blur"] >= 4);
+  assert.deepEqual(glow.paint["line-color"], kindColorExpression(colors));
+  assert.deepEqual(kindColorExpression(colors), ["match", ["get", "kind"], "main", "#3b82f6", "degraded", "#f59e0b", "down", "#ef4444", "#cbd5e1"]);
+  const main = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.linkMain) as any;
+  assert.deepEqual(main.filter, ["==", ["get", "kind"], "main"]);
+  assert.deepEqual(main.paint["line-gradient"], linkGradient(colors));
+  assert.deepEqual(linkGradient(colors), ["interpolate", ["linear"], ["line-progress"], 0, "#3b82f6", 1, lighten("#3b82f6", 0.4)]);
+  const dashed = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.linkDashed) as any;
+  assert.deepEqual(dashed.filter, ["!=", ["get", "kind"], "main"]);
+  assert.ok(Array.isArray(dashed.paint["line-dasharray"]));
+  const flow = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.flow) as any;
+  assert.equal(flow.paint["line-color"], colors.flow, "落地流向是落地节点的紫");
+});
+
+test("线要素的 promoteId 是 fid、开了 lineMetrics；筛掉的不画、聚焦时无关的压到 12%", () => {
+  const style = buildNetworkMapStyle("night", "/globe/x.geojson", colors, base);
   assert.equal((style.sources["nm-links"] as any).promoteId, "fid");
   assert.equal((style.sources["nm-links"] as any).lineMetrics, true);
-  assert.deepEqual(dimOpacityExpression(1), ["*", 1, ["case", ["boolean", ["feature-state", "dim"], false], 0.12, 1]]);
+  assert.deepEqual(dimOpacityExpression(1), ["*", 1, ["case", ["boolean", ["feature-state", "hide"], false], 0, ["boolean", ["feature-state", "dim"], false], 0.12, 1]]);
 });
 
-test("正常线路：入口强调色 → 出口浅一档的渐变；不正常的是虚线", () => {
-  assert.equal(lighten("#000000", 0.5), "#808080");
-  assert.equal(lighten("rgb(255, 0, 0)", 0.5), "#ff8080");
-  assert.equal(lighten("oklch(0.6 0.1 200)", 0.5), "oklch(0.6 0.1 200)", "认不出的写法原样返回");
-  assert.deepEqual(linkGradient(colors), ["interpolate", ["linear"], ["line-progress"], 0, "#0b74d1", 1, lighten("#0b74d1", 0.45)]);
-  const style = buildNetworkMapStyle("vector", "light", "/globe/x.geojson", colors, base);
-  const solid = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.linkSolid) as any;
-  assert.deepEqual(solid.paint["line-gradient"], linkGradient(colors));
-  const dashed = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.linkDashed) as any;
-  assert.ok(Array.isArray(dashed.paint["line-dasharray"]));
-  assert.deepEqual(dashed.filter, ["!=", ["get", "health"], "healthy"]);
+test("换底图的补丁：暗黑网格画陆地和经纬网，夜光图只画一道淡国界，卫星和高德都不画", () => {
+  assert.deepEqual([baseLayerPaintPatch("grid").landOpacity, baseLayerPaintPatch("grid").graticule, baseLayerPaintPatch("grid").borderOpacity], [1, "visible", 1]);
+  assert.deepEqual([baseLayerPaintPatch("night").landOpacity, baseLayerPaintPatch("night").graticule], [0, "none"]);
+  assert.ok(baseLayerPaintPatch("night").borderOpacity > 0 && baseLayerPaintPatch("night").borderOpacity < 1);
+  assert.equal(baseLayerPaintPatch("sat").borderOpacity, 0);
+  assert.equal(baseLayerPaintPatch("amap").borderWidth, 0);
+  assert.equal(baseLayerPaintPatch("sat").raster["earth-day"], "visible");
 });
 
-test("换底图的补丁：简洁底图画陆地和国界，高德不画；栅格的压色跟着皮肤", () => {
-  assert.equal(baseLayerPaintPatch("sat", "dark").borderWidth, 0);
-  assert.equal(baseLayerPaintPatch("light", "light").landOpacity, 0);
-  assert.equal(baseLayerPaintPatch("vector", "dark").landOpacity, 1);
-  assert.equal(baseLayerPaintPatch("vector", "dark").raster["amap-road"], "none");
-  assert.deepEqual(baseLayerPaintPatch("light", "dark").rasterPaint["amap-road"], rasterTonePaint("amap-road", "dark"));
-});
-
-test("箭头和彗星压在线的上面：尾巴的渐变从透明渐到半透明的正常色，源开了 lineMetrics", () => {
-  const style = buildNetworkMapStyle("vector", "dark", "/globe/x.geojson", colors, base);
-  const order = style.layers.map((layer: any) => layer.id);
-  const index = (id: string) => order.indexOf(id);
-  assert.ok(index(NETWORK_MAP_LAYERS.linkSolid) < index(NETWORK_MAP_LAYERS.tip));
-  assert.ok(index(NETWORK_MAP_LAYERS.tip) < index(NETWORK_MAP_LAYERS.cometTail));
-  assert.ok(index(NETWORK_MAP_LAYERS.cometTail) < index(NETWORK_MAP_LAYERS.cometGlow));
-  assert.ok(index(NETWORK_MAP_LAYERS.cometGlow) < index(NETWORK_MAP_LAYERS.cometHead));
-  assert.equal((style.sources["nm-comets"] as any).lineMetrics, true);
-  const tail = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.cometTail) as any;
-  assert.deepEqual(tail.paint["line-gradient"], cometTailGradient(colors));
-  assert.deepEqual(cometTailGradient(colors), ["interpolate", ["linear"], ["line-progress"], 0, withAlpha("#0b74d1", 0), 0.65, withAlpha("#0b74d1", 0.35), 1, withAlpha("#0b74d1", 0.8)]);
+test("经纬网每 15° 一条；颜色工具", () => {
+  const grid = graticuleGeoJson();
+  assert.equal(grid.features[0].geometry.coordinates.length, 25 + 11);
   assert.equal(withAlpha("#0b74d1", 0.5), "rgba(11,116,209,0.5)");
-  assert.equal(cometPaint(colors).head["circle-stroke-color"], "#0b74d1");
-  const head = style.layers.find((layer: any) => layer.id === NETWORK_MAP_LAYERS.cometHead) as any;
-  assert.ok(head.paint["circle-radius"] <= 2.5, "彗星头小一号");
+  assert.equal(lighten("#000000", 0.5), "#808080");
+  assert.equal(lighten("oklch(0.6 0.1 200)", 0.5), "oklch(0.6 0.1 200)", "认不出的写法原样返回");
 });

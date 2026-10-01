@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 
 import { NetworkMap } from "@/components/network/NetworkMap";
 import { detectWebGL, locatedHostCount, shouldRenderRealMap } from "@/features/network/networkMapMini";
+import { LINE_KINDS, LINE_KIND_SHORT, type LineKind } from "@/features/network/networkMapLines";
 import { useNetworkMapModel, type NetworkMapModel } from "@/features/network/networkMapModel";
 
 /**
@@ -11,8 +12,8 @@ import { useNetworkMapModel, type NetworkMapModel } from "@/features/network/net
  * 和 /map 整页共用一份 —— 这里红的，整页上也是红的。
  *
  * 卡片身子是 /map 那台画布的 mini 模式（NetworkMapMini，lazy 进来，首屏包不带地图引擎）：
- * 真实底图、每台主机一枚带国旗的圆盘、每条隧道一道大圆弧，正常的线上有从入口飞向出口的
- * 彗星、出口端有箭头 —— 一眼看出流量往哪儿走。图能拖能缩，点主机 / 线只闪一句提示，不跳
+ * 夜晚的地球做底图、每台主机一圈发光的环、每条隧道一道霓虹大圆弧，主线路上有往出口流的光点
+ * —— 一眼看出流量往哪儿走。标题行右边是四类线的图例（主线路 / 备用 / 降级 / 中断，各几条）。图能拖能缩，点主机 / 线只闪一句提示，不跳
  * 整页 —— 整页的入口只有标题旁的「打开地图」。引擎没到、没有 WebGL、或者一台主机都没定位时，
  * 留着原来的 SVG 示意图（点主机 / 线去主机页 / 隧道页），不会比以前差。
  *
@@ -23,6 +24,15 @@ export type { NetworkMapModel } from "@/features/network/networkMapModel";
 
 const NetworkMapMini = lazy(() => import("./NetworkMapMini"));
 
+const dashed = (color: string) => ({ background: `repeating-linear-gradient(90deg, ${color} 0 4px, transparent 4px 6px)` });
+/** 卡片标题行跟面板主题：备用线路的白灰在浅色卡上看不见，换成次要文字色 */
+const LEGEND_SWATCH: Record<LineKind, React.CSSProperties> = {
+  main: { background: "#3b8bff", boxShadow: "0 0 4px rgba(59,139,255,0.7)" },
+  backup: dashed("var(--fx-text-secondary)"),
+  degraded: dashed("#fb923c"),
+  down: dashed("#f43f5e"),
+};
+
 export function NetworkMapSection({ enabled = true, onOpen }: { enabled?: boolean; onOpen: (href: string) => void }) {
   const model = useNetworkMapModel(enabled);
   if (!enabled || model.nodes.length === 0) return null;
@@ -31,12 +41,8 @@ export function NetworkMapSection({ enabled = true, onOpen }: { enabled?: boolea
 
 /** 卡片本身：拿到模型就能画，node 里 renderToStaticMarkup 也能测（realMap 为 false 时不碰引擎） */
 export function NetworkMapSectionView({ model, onOpen, realMap }: { model: NetworkMapModel; onOpen: (href: string) => void; realMap: boolean }) {
-  const legendItems = [
-    { key: "healthy", label: "正常", count: model.legend.healthy, color: "var(--fx-accent)" },
-    { key: "degraded", label: "降级", count: model.legend.degraded, color: "var(--fx-warn)" },
-    { key: "down", label: "中断", count: model.legend.down, color: "var(--fx-down)" },
-    { key: "standby", label: "停用", count: model.legend.standby, color: "var(--fx-standby)" },
-  ].filter((item) => item.count > 0);
+  // 图例：和整页同样的四类线（networkMapLines），各几条；只列有的
+  const legendItems = LINE_KINDS.map((kind) => ({ key: kind, label: LINE_KIND_SHORT[kind], count: model.lines[kind] })).filter((item) => item.count > 0);
   const schematic = (
     <NetworkMap
       nodes={model.nodes}
@@ -71,9 +77,9 @@ export function NetworkMapSectionView({ model, onOpen, realMap }: { model: Netwo
         {legendItems.length > 0 ? (
           <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-0.5 text-meta text-[var(--fx-text-secondary)]">
             {legendItems.map((item) => (
-              // 小圆点 + 名字 + 等宽的数：和图上状态点同一套颜色，数字用正文色，一眼扫得到「几条」
+              // 一小截线样 + 名字 + 等宽的数：和图上的线同一套画法（主线路实线、其余虚线），一眼扫得到「几条」
               <span key={item.key} className="inline-flex items-center gap-1.5">
-                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: item.color }} />
+                <span aria-hidden="true" className="h-0.5 w-3.5 rounded-full" style={LEGEND_SWATCH[item.key]} />
                 {item.label} <span className="font-medium tabular-nums text-foreground">{item.count}</span>
               </span>
             ))}

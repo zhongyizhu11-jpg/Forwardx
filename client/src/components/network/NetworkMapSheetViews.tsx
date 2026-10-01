@@ -18,9 +18,9 @@ import { drawDualChart, drawLineChart, readCssColor, type ChartPalette } from ".
  * 服务端渲染时不跑。
  */
 
-type Tone = "ok" | "warn" | "down" | "standby";
+export type Tone = "ok" | "warn" | "down" | "standby";
 
-function tone(health: NetworkHealth): Tone {
+export function tone(health: NetworkHealth): Tone {
   const token = describeNetworkHealth(health).token;
   if (token === "healthy") return "ok";
   if (token === "warn" || token === "path") return "warn";
@@ -45,17 +45,22 @@ function Icon({ name }: { name: "back" | "go" | "copy" | "ping" | "upgrade" | "d
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d={paths[name]} /></svg>;
 }
 
-export function SheetHead({ onBack, title, subtitle, trailing }: { onBack?: () => void; title: ReactNode; subtitle?: ReactNode; trailing?: ReactNode }) {
+/**
+ * 抽屉 / 面板的头：返回、标题（旁边一个状态 pill）、副标题，右边是 ⋮ 菜单和 ×。
+ * 关掉（×）在桌面上是收起右边的面板，在手机上是回到总览、抽屉落下。
+ */
+export function SheetHead({ onBack, title, subtitle, trailing, actions, onClose }: { onBack?: () => void; title: ReactNode; subtitle?: ReactNode; trailing?: ReactNode; actions?: ReactNode; onClose?: () => void }) {
   return (
     <div className="nm-sheet-head">
       {onBack ? <button type="button" className="nm-back" aria-label="返回总览" onClick={onBack}><Icon name="back" /></button> : null}
-      <div className="nm-headline"><b>{title}</b>{subtitle ? <small>{subtitle}</small> : null}</div>
-      {trailing ? <div className="nm-pill-slot">{trailing}</div> : null}
+      <div className="nm-headline"><b><span className="nm-title-text">{title}</span>{trailing ? <span className="nm-pill-slot">{trailing}</span> : null}</b>{subtitle ? <small>{subtitle}</small> : null}</div>
+      {actions}
+      {onClose ? <button type="button" className="nm-icon-btn" aria-label="关闭" onClick={onClose}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button> : null}
     </div>
   );
 }
 
-function Section({ title, count, children }: { title: string; count?: ReactNode; children: ReactNode }) {
+export function Section({ title, count, children }: { title: string; count?: ReactNode; children: ReactNode }) {
   return (
     <section className="nm-section">
       <h3 className="nm-section-title"><span>{title}</span>{count !== undefined ? <span className="nm-count">{count}</span> : null}</h3>
@@ -65,7 +70,7 @@ function Section({ title, count, children }: { title: string; count?: ReactNode;
 }
 
 /** 画布：尺寸变了（抽屉拖动、切换视图）就重画 */
-function useCanvasChart(draw: (canvas: HTMLCanvasElement, palette: ChartPalette) => void, deps: unknown[]) {
+export function useCanvasChart(draw: (canvas: HTMLCanvasElement, palette: ChartPalette) => void, deps: unknown[]) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const canvas = ref.current;
@@ -163,7 +168,7 @@ export function OverviewView({ model, alerts, onAlert, onOpenNode, onOpenLink, b
   );
 }
 
-function HostRow({ node, onOpen }: { node: NetworkMapHostNode; onOpen: (hostId: number) => void }) {
+export function HostRow({ node, onOpen }: { node: NetworkMapHostNode; onOpen: (hostId: number) => void }) {
   return (
     <button type="button" className="nm-row" onClick={() => onOpen(node.id)}>
       <span className="nm-lead" aria-hidden="true">{node.emoji || "·"}</span>
@@ -318,7 +323,11 @@ export type LinkDetailViewProps = {
   onDiagnose: (() => void) | null;
   diagnosing: boolean;
   onOpenNode: (hostId: number) => void;
+  /** 只画这几块（面板的「链路」「流量」两个标签各取一部分）；不给就全画 */
+  sections?: ReadonlyArray<LinkSection>;
 };
+
+export type LinkSection = "head" | "quality" | "hops" | "traffic" | "rules" | "actions";
 
 export function linkHeadTitle(link: NetworkMapTunnelLink, nodes: readonly NetworkMapHostNode[]): string {
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -338,7 +347,8 @@ export function linkIssueText(link: NetworkMapTunnelLink): string | null {
   return null;
 }
 
-export function LinkDetailView({ model, link, latency, latencyLoading, latencyError, traffic, onDiagnose, diagnosing, onOpenNode }: LinkDetailViewProps) {
+export function LinkDetailView({ model, link, latency, latencyLoading, latencyError, traffic, onDiagnose, diagnosing, onOpenNode, sections }: LinkDetailViewProps) {
+  const has = (section: LinkSection) => !sections || sections.includes(section);
   const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
   const rules = model.rules.filter((rule) => rule.tunnelId === link.id);
   const issue = linkIssueText(link);
@@ -357,13 +367,13 @@ export function LinkDetailView({ model, link, latency, latencyLoading, latencyEr
   const hopTotal = link.hopLatencies.reduce<number>((sum, value) => sum + (value ?? 0), 0);
   return (
     <>
-      <div className="nm-head-card no-flag">
+      {has("head") ? <div className="nm-head-card no-flag">
         <div className="nm-meta">
           <div className="nm-line"><Pill tone="link">{link.modeLabel}</Pill><Pill>{link.path.length - 1} 跳</Pill>{link.lastTestAt ? <span>上次诊断 {formatAgo(Date.now() - link.lastTestAt)}</span> : null}</div>
           {issue ? <div className="nm-line"><Pill tone={tone(link.health) === "ok" ? "warn" : tone(link.health)} wrap>{issue}</Pill></div> : null}
         </div>
-      </div>
-      <Section title="质量监控" count="近 24 小时">
+      </div> : null}
+      {has("quality") ? <Section title="质量监控" count="近 24 小时">
         <div className="nm-metrics">
           <div className="nm-metric wide">
             <div className="nm-label"><span>延迟</span><span className="nm-num">{latency && latency.avg !== null ? `平均 ${Math.round(latency.avg)} · 最高 ${Math.round(latency.max ?? 0)} ms` : latencyLoading ? "读取中…" : "没有历史"}</span></div>
@@ -375,8 +385,8 @@ export function LinkDetailView({ model, link, latency, latencyLoading, latencyEr
           <Gauge value={successRate} max={100} unit="%" label="探测成功率" description={successRate === null ? "没有探测记录" : successRate >= 99 ? `${latency?.probeTotal ?? 0} 次探测几乎全通` : successRate >= 95 ? "偶有超时" : "超时较多，可能在丢包"} color={successRate === null ? "--nm-standby" : successRate < 95 ? "--nm-down" : successRate < 99 ? "--nm-warn" : "--nm-ok"} />
           <Gauge value={jitter} max={20} unit="ms" label="抖动" description={jitter === null ? "样本不够" : "延迟样本标准差"} color={jitter === null ? "--nm-standby" : jitter > 10 ? "--nm-warn" : "--nm-ok"} />
         </div>
-      </Section>
-      <Section title="逐跳" count={link.hopLatencies.some((value) => value !== null) ? `${Math.round(hopTotal)} ms 合计` : "没有逐跳数据"}>
+      </Section> : null}
+      {has("hops") ? <Section title="逐跳" count={link.hopLatencies.some((value) => value !== null) ? `${Math.round(hopTotal)} ms 合计` : "没有逐跳数据"}>
         <div className="nm-hops">
           {link.path.map((hostId, index) => {
             const node = nodeById.get(hostId);
@@ -390,14 +400,14 @@ export function LinkDetailView({ model, link, latency, latencyLoading, latencyEr
             );
           })}
         </div>
-      </Section>
-      <Section title="流量" count="下行 / 上行">
+      </Section> : null}
+      {has("traffic") ? <Section title="流量" count="下行 / 上行">
         <div className="nm-bars">
           <TrafficBars label="近 24 小时" pair={traffic.day} />
           <TrafficBars label="累计" pair={traffic.total} />
         </div>
-      </Section>
-      <Section title="走这条隧道的规则" count={rules.length}>
+      </Section> : null}
+      {has("rules") ? <Section title="走这条隧道的规则" count={rules.length}>
         {rules.length === 0 ? <div className="nm-empty">还没有规则走这条隧道</div> : (
           <div className="nm-list">
             {rules.map((rule) => (
@@ -409,12 +419,12 @@ export function LinkDetailView({ model, link, latency, latencyLoading, latencyEr
             ))}
           </div>
         )}
-      </Section>
-      <Section title="操作">
+      </Section> : null}
+      {has("actions") ? <Section title="操作">
         <div className="nm-actions">
           <button type="button" className="nm-action" onClick={onDiagnose ?? undefined} disabled={!onDiagnose || diagnosing} title={onDiagnose ? "从入口逐跳探测一遍" : "没有诊断权限"}><Icon name="test" />{diagnosing ? "诊断中…" : "诊断"}</button>
         </div>
-      </Section>
+      </Section> : null}
     </>
   );
 }
@@ -436,7 +446,7 @@ function Gauge({ value, max, unit, label, description, color }: { value: number 
   );
 }
 
-function TrafficBars({ label, pair }: { label: string; pair: { bytesIn: number; bytesOut: number } | null }) {
+export function TrafficBars({ label, pair }: { label: string; pair: { bytesIn: number; bytesOut: number } | null }) {
   const scale = Math.max(1, pair?.bytesIn ?? 0, pair?.bytesOut ?? 0);
   const height = (value: number) => Math.max(4, Math.round((value / scale) * 62));
   return (

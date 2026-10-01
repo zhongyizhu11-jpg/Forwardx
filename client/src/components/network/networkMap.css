@@ -1,15 +1,18 @@
 /*
   网络地图（/map 整页和首页小图）的样式。
 
-  皮肤（data-skin）由页面按「底图 + 面板主题」算好：简洁底图和高德标准跟面板主题，卫星影像永远深色。
-  这里按皮肤各定一套 --nm-* 令牌 —— 底图的水 / 陆地 / 国界、玻璃、文字、标记的白（黑）圈全在里面，
-  画布从这里读颜色交给 MapLibre，浅色 / 深色只有这一个来源。状态色也按皮肤取面板令牌在对应主题下的值
-  （design-tokens.css 里 :root 和 .dark 的那两组），否则深色皮肤上用浅色主题的深色，标记几乎看不见。
-  强调色只在皮肤和面板主题一致时跟个性化预设走 —— 预设的紫在另一种皮肤上没校过对比度。
+  方向是「夜里的网络运维大屏」：底图是夜晚的地球（城市灯光、深海军蓝的海），主机是一圈发光的环，
+  线是霓虹 —— 宽而模糊的光压着细而亮的芯。地图这块（.nm-surface）永远是深色的，像嵌在面板里的
+  一块屏幕；四周的抽屉、详情卡跟面板主题走（.fx-netmap[data-skin] = 面板主题）。
 
-  整体的方向是「安静、数据优先」：底图是一张淡淡的纸，主机、线路是图上唯一有颜色的东西；健康 = 强调色，
-  降级 = 警告色，中断 = 中断色，停用 = 灰。除了颜色，标记的圈也编码健康（实心 = 正常、虚线圈 = 降级、
-  空心带叉 = 中断、半透明 = 停用），色弱的人也分得清。
+  令牌分两层：
+    .fx-netmap[data-skin]  抽屉 / 详情卡的颜色（浅色或深色玻璃、文字、状态色）
+    .nm-surface            图上的一切：底图的水 / 陆地 / 国界 / 经纬网、四类线、主机的环、图上浮着的
+                           玻璃卡（标题、统计、工具栏、图例）—— 永远深色，同名令牌在这里重定义，
+                           画布从这里读颜色交给 MapLibre，所以只有这一个来源。
+
+  除了颜色，环的样子也编码健康：正常实心光环、降级外面多一圈虚线、中断中间一个叉、没接入半透明无光，
+  色弱的人也分得清。
 */
 .fx-netmap {
   position: relative;
@@ -20,8 +23,7 @@
   font-family: var(--fx-font, inherit);
   isolation: isolate;
   --nm-font-num: var(--fx-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  --nm-radius: 16px;
-  --nm-ok: var(--nm-accent);
+  --nm-ok: var(--fx-healthy);
   --nm-warn: var(--fx-warn);
   --nm-down: var(--fx-down);
   --nm-standby: var(--fx-standby);
@@ -30,115 +32,167 @@
 @media (max-width: 899px) {
   .fx-netmap { border-radius: 0; }
 }
+/* ---- 抽屉 / 详情卡：跟面板主题 ---- */
 .fx-netmap[data-skin="light"] {
-  /* 纸面：近白的陆地压在淡蓝灰的水上，国界低对比 */
-  --nm-water: #e2e8ef; --nm-land: #fbfbf9; --nm-land-shadow: rgba(15, 23, 42, 0.1); --nm-border-line: rgba(30, 41, 59, 0.22);
-  --nm-bg: var(--nm-water);
-  --nm-fg: #0f172a; --nm-muted: #566173; --nm-line: rgba(15, 23, 42, 0.08); --nm-hairline: rgba(15, 23, 42, 0.11);
-  --nm-glass: rgba(255, 255, 255, 0.74); --nm-glass-strong: rgba(255, 255, 255, 0.9); --nm-glass-border: rgba(15, 23, 42, 0.08);
+  --nm-bg: #050b16;
+  --nm-fg: #0f172a; --nm-muted: #5b6678; --nm-line: rgba(15, 23, 42, 0.08); --nm-hairline: rgba(15, 23, 42, 0.12);
+  --nm-glass: rgba(255, 255, 255, 0.86); --nm-glass-strong: rgba(255, 255, 255, 0.94); --nm-glass-border: rgba(15, 23, 42, 0.08);
   --nm-card: rgba(15, 23, 42, 0.035);
-  --nm-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.06);
-  --nm-shadow-btn: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 12px -4px rgba(0, 0, 0, 0.16);
-  /* 标记的圈、线底下的细边：和底图同一边的白 */
-  --nm-ring: #ffffff; --nm-casing: #ffffff;
-  --nm-pill: rgba(255, 255, 255, 0.84); --nm-pill-solid: #ffffff; --nm-pill-edge: rgba(15, 23, 42, 0.1);
-  --nm-marker-shadow: 0 1px 2px rgba(15, 23, 42, 0.28), 0 2px 6px rgba(15, 23, 42, 0.12);
-  --nm-on-down: #ffffff;
-  --nm-accent: #0b74d1; --nm-accent-soft: rgba(11, 116, 209, 0.12);
-  --nm-series-2: #00a9b3;
+  --nm-shadow: 0 18px 44px -12px rgba(2, 6, 23, 0.45), 0 2px 8px rgba(2, 6, 23, 0.12);
+  --nm-pill-solid: #ffffff;
+  --nm-accent: #2563eb; --nm-accent-soft: rgba(37, 99, 235, 0.1);
+  --nm-series-2: #7c3aed;
+  --nm-chart-down: #16a34a; --nm-chart-up: #7c3aed; --nm-chart-latency: #2563eb;
+  --nm-role-entry: #2563eb; --nm-role-relay: #64748b; --nm-role-exit: #16a34a; --nm-role-landing: #7c3aed;
   --fx-healthy: #16a34a; --fx-warn: #d97706; --fx-down: #dc2626; --fx-standby: #737373;
   color-scheme: light;
 }
 .fx-netmap[data-skin="dark"] {
-  /* 深石板色的水，陆地亮一点点 */
-  --nm-water: #0e131a; --nm-land: #1a212b; --nm-land-shadow: rgba(0, 0, 0, 0.55); --nm-border-line: rgba(226, 232, 240, 0.13);
-  --nm-bg: var(--nm-water);
-  --nm-fg: #e8edf4; --nm-muted: #9aa5b5; --nm-line: rgba(255, 255, 255, 0.08); --nm-hairline: rgba(255, 255, 255, 0.1);
-  --nm-glass: rgba(24, 29, 38, 0.74); --nm-glass-strong: rgba(26, 31, 40, 0.9); --nm-glass-border: rgba(255, 255, 255, 0.09);
-  --nm-card: rgba(255, 255, 255, 0.045);
-  --nm-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
-  --nm-shadow-btn: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
-  --nm-ring: #0b0f16; --nm-casing: #0b0f16;
-  --nm-pill: rgba(17, 22, 30, 0.8); --nm-pill-solid: #151a22; --nm-pill-edge: rgba(255, 255, 255, 0.09);
-  --nm-marker-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
-  --nm-on-down: #0b0f16;
-  --nm-accent: #66b6ff; --nm-accent-soft: rgba(102, 182, 255, 0.16);
-  --nm-series-2: #00c9d1;
+  --nm-bg: #050b16;
+  --nm-fg: #e6edf7; --nm-muted: #8d9bb1; --nm-line: rgba(148, 197, 255, 0.09); --nm-hairline: rgba(148, 197, 255, 0.14);
+  --nm-glass: rgba(10, 16, 28, 0.84); --nm-glass-strong: rgba(9, 15, 27, 0.92); --nm-glass-border: rgba(148, 197, 255, 0.14);
+  --nm-card: rgba(148, 197, 255, 0.05);
+  --nm-shadow: 0 18px 44px -12px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --nm-pill-solid: #0d1524;
+  --nm-accent: #60a5fa; --nm-accent-soft: rgba(96, 165, 250, 0.16);
+  --nm-series-2: #c084fc;
+  --nm-chart-down: #4ade80; --nm-chart-up: #c084fc; --nm-chart-latency: #60a5fa;
+  --nm-role-entry: #60a5fa; --nm-role-relay: #94a3b8; --nm-role-exit: #4ade80; --nm-role-landing: #c084fc;
   --fx-healthy: #4ade80; --fx-warn: #fbbf24; --fx-down: #f87171; --fx-standby: #8c8c8c;
   color-scheme: dark;
 }
-html:not(.dark) .fx-netmap[data-skin="light"] { --nm-accent: var(--fx-accent); --nm-accent-soft: var(--fx-accent-soft); }
-html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-accent-soft: var(--fx-accent-soft); }
+
+/* ---- 图上：永远深色 ---- */
+.nm-surface {
+  /* 底图：夜光图下面透出来的深海军蓝、暗黑网格的陆地 / 国界 / 经纬网 */
+  --nm-water: #061127; --nm-land: #0b1729; --nm-border-line: rgba(125, 211, 252, 0.34); --nm-graticule: rgba(34, 211, 238, 0.1);
+  --nm-bg: var(--nm-water);
+  /* 四类线和落地 */
+  --nm-line-main: #3b8bff; --nm-line-backup: #d5dde8; --nm-line-degraded: #fb923c; --nm-line-down: #f43f5e;
+  --nm-target: #b26bff; --nm-particle: #e0f2fe;
+  /* 主机的环 */
+  --nm-node-ok: #22c55e; --nm-node-hub: #3b8bff; --nm-node-warn: #f59e0b; --nm-node-down: #f43f5e; --nm-node-standby: #64748b;
+  /* 图上浮着的玻璃卡 */
+  --nm-fg: #e8eef8; --nm-muted: #8e9bb2; --nm-line: rgba(148, 197, 255, 0.1); --nm-hairline: rgba(148, 197, 255, 0.16);
+  --nm-glass: rgba(8, 14, 26, 0.7); --nm-glass-strong: rgba(8, 14, 26, 0.84); --nm-glass-border: rgba(148, 197, 255, 0.16);
+  --nm-card: rgba(148, 197, 255, 0.06); --nm-pill-solid: #0b1322;
+  --nm-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.75), 0 2px 8px rgba(0, 0, 0, 0.45);
+  --nm-shadow-btn: 0 8px 24px -10px rgba(0, 0, 0, 0.8);
+  --nm-accent: #60a5fa; --nm-accent-soft: rgba(59, 139, 255, 0.2);
+  --nm-ok: #22c55e; --nm-warn: #f59e0b; --nm-down: #f43f5e; --nm-standby: #64748b; --nm-link: #3b8bff;
+  /* 文字压在夜景上：一层深色的晕，比底牌子轻 */
+  --nm-text-halo: 0 1px 2px rgba(0, 0, 0, 0.95), 0 0 6px rgba(2, 6, 14, 0.9), 0 0 12px rgba(2, 6, 14, 0.6);
+  color: var(--nm-fg);
+  color-scheme: dark;
+}
 
 .fx-netmap *, .fx-netmap *::before, .fx-netmap *::after { box-sizing: border-box; }
-/* :where() 不加权重：这条只是把按钮的字体拉回页面的，各控件自己定的字号（延迟牌子 10.5px、「回到全览」11px）不能被它盖掉 */
+/* :where() 不加权重：这条只是把按钮的字体拉回页面的，各控件自己定的字号（延迟牌子、「回到全览」、工具栏）不能被它盖掉 */
 :where(.fx-netmap) button { font: inherit; color: inherit; }
-.fx-netmap button:focus-visible, .fx-netmap [tabindex]:focus-visible { outline: 2px solid var(--nm-accent); outline-offset: 2px; }
-.fx-netmap .nm-num { font-family: var(--nm-font-num); font-variant-numeric: tabular-nums; }
+.fx-netmap button:focus-visible, .fx-netmap [tabindex]:focus-visible, .fx-netmap select:focus-visible { outline: 2px solid var(--nm-accent); outline-offset: 2px; }
+.fx-netmap .nm-num { font-variant-numeric: tabular-nums; }
 
-/* 布局：地图铺满，抽屉从底下升起；≥900px 变成右侧 400px 栏 */
-/* 行高锁成容器高度：默认的 auto 行会被右侧栏里长长的告警列表撑高，地图跟着变高、列表也滚不了 */
-.nm-layout { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
-.nm-map-wrap { position: relative; min-height: 0; overflow: hidden; }
+/* 布局：地图铺满；手机上抽屉从底下升起，≥900px 是浮在图右边的一张玻璃卡 */
+.nm-layout { position: absolute; inset: 0; }
+.nm-map-wrap { position: absolute; inset: 0; min-height: 0; overflow: hidden; background: var(--nm-water); }
 /* maplibre-gl.css 是画布 lazy 进来之后才注入的，它的 .maplibregl-map { position: relative } 会盖掉同权重的规则，这里多带一层选择器 */
-.nm-map-wrap > .nm-map { position: absolute; inset: 0; background: var(--nm-bg); }
+.nm-map-wrap > .nm-map { position: absolute; inset: 0; background: var(--nm-water); }
 .nm-map .maplibregl-canvas { outline: none; }
 .nm-map .maplibregl-ctrl-attrib { display: none; }
 .nm-map-fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--nm-muted); font-size: 13px; }
 
 /*
-  ---- 浮在图上的控件：一种玻璃按钮 ----
-  整页的图层 / 回到全局键、图例和标题小标签、首页小图的 + / −、「回到全览」「N 台未定位」、提示、底图菜单、
-  退出聚焦、toast 全用同一套：半透明底 + 背后模糊 + 一圈发丝边 + 短而软的投影（面板浮层的那套高度）。
-  不支持 backdrop-filter 的浏览器退回更实的底色，字照样看得清。
+  ---- 图上浮着的玻璃：标题、统计卡、工具栏、三段切换、图例、菜单、提示 ----
+  半透明深色底 + 背后模糊 + 一圈发丝边（带一点蓝）+ 柔和的投影；不支持 backdrop-filter 时退回更实的底色。
 */
-.nm-chip, .nm-fab, .nm-layer-menu, .nm-focus-exit, .nm-toast,
+.nm-glass, .nm-focus-exit, .nm-toast,
 .nm-mini .nm-mini-zoom, .nm-mini .nm-mini-reset, .nm-mini .nm-mini-tip, .nm-mini .nm-mini-unlocated {
-  background: var(--nm-glass-strong);
+  background: var(--nm-glass);
   border: 1px solid var(--nm-glass-border);
-  -webkit-backdrop-filter: saturate(180%) blur(16px);
-  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+  backdrop-filter: saturate(160%) blur(14px);
   box-shadow: var(--nm-shadow-btn);
   color: var(--nm-fg);
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .nm-chip, .nm-fab, .nm-layer-menu, .nm-focus-exit, .nm-toast,
+  .nm-glass, .nm-focus-exit, .nm-toast,
   .nm-mini .nm-mini-zoom, .nm-mini .nm-mini-reset, .nm-mini .nm-mini-tip, .nm-mini .nm-mini-unlocated { background: var(--nm-pill-solid); }
 }
+.nm-glass svg, .nm-icon svg { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
-/* ---- 整页左上角：标题和图例 ---- */
-.nm-overlay-tl { position: absolute; top: 12px; left: 12px; right: 76px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; pointer-events: none; }
-.nm-chip { pointer-events: auto; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.nm-chip .nm-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.nm-chip.nm-title { height: 32px; padding: 0 12px; font-size: 14px; font-weight: 700; margin: 0; }
-.nm-chip.nm-toggle { cursor: pointer; }
-.nm-chip.nm-toggle[aria-pressed="false"] { color: var(--nm-muted); }
-.nm-chip.nm-toggle[aria-pressed="false"] .nm-dot { background: transparent !important; box-shadow: inset 0 0 0 1.5px var(--nm-standby); }
+/* ---- 左上：标题 + 一排统计卡 ---- */
+.nm-hud-tl { position: absolute; top: 16px; left: 16px; z-index: 3; display: flex; flex-direction: column; gap: 12px; max-width: calc(100% - 32px); pointer-events: none; }
+.nm-titlebar { pointer-events: none; text-shadow: var(--nm-text-halo); }
+.nm-titlebar h1 { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.2; letter-spacing: 0.01em; color: #fff; }
+.nm-titlebar p { margin: 3px 0 0; font-size: 12.5px; color: var(--nm-muted); }
+.nm-stats { display: flex; gap: 10px; pointer-events: auto; }
+.nm-stat { display: grid; grid-template-columns: 34px auto; grid-template-rows: auto auto; column-gap: 10px; align-items: center; min-width: 132px; padding: 10px 14px 10px 10px; border-radius: 14px; cursor: pointer; text-align: left; }
+.nm-stat:hover { border-color: rgba(148, 197, 255, 0.3); }
+.nm-stat .nm-icon { grid-row: 1 / span 2; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: rgba(59, 139, 255, 0.14); color: #7cb4ff; }
+.nm-stat .nm-icon svg { width: 18px; height: 18px; }
+.nm-stat b { font-size: 21px; font-weight: 700; line-height: 1.1; color: #fff; font-variant-numeric: tabular-nums; }
+.nm-stat span.nm-stat-label { font-size: 11.5px; color: var(--nm-muted); white-space: nowrap; }
+.nm-stat.is-alert .nm-icon { background: rgba(244, 63, 94, 0.15); color: var(--nm-node-down); }
+.nm-stat.is-alert b { color: var(--nm-node-down); }
+.nm-stat.is-calm .nm-icon { background: rgba(148, 163, 184, 0.14); color: #a5b4c8; }
+.nm-stat.is-good .nm-icon { background: rgba(34, 197, 94, 0.14); color: var(--nm-node-ok); }
+.nm-stat.is-good b { color: var(--nm-node-ok); }
 
-.nm-fabs { position: absolute; top: 12px; right: 12px; z-index: 4; display: flex; flex-direction: column; gap: 8px; }
-.nm-fab { width: 40px; height: 40px; padding: 0; border-radius: 12px; display: grid; place-items: center; cursor: pointer; }
-.nm-fab:hover { background: var(--nm-pill-solid); }
-.nm-fab svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.nm-fab.is-active { color: var(--nm-accent); }
-.nm-layer-menu { position: absolute; top: 60px; right: 12px; z-index: 6; width: 232px; padding: 6px; border-radius: 14px; box-shadow: var(--nm-shadow); }
-.nm-layer-menu .nm-menu-title { padding: 6px 10px 4px; font-size: 12px; font-weight: 600; color: var(--nm-muted); }
-.nm-layer-opt { width: 100%; display: flex; align-items: center; gap: 10px; padding: 7px 8px; border: 0; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; }
-.nm-layer-opt:hover { background: var(--nm-card); }
-.nm-layer-opt[aria-pressed="true"] { background: var(--nm-accent-soft); color: var(--nm-fg); }
-.nm-layer-opt .nm-swatch { width: 34px; height: 24px; border-radius: 7px; border: 1px solid var(--nm-hairline); flex: none; position: relative; overflow: hidden; }
-/* 简洁底图的色块：一角水、一块陆地，跟当前皮肤同色 */
-.nm-swatch.vector { background: var(--nm-water); }
-.nm-swatch.vector::after { content: ""; position: absolute; left: 9px; top: 5px; width: 30px; height: 26px; border-radius: 9px 12px 0 12px; background: var(--nm-land); box-shadow: 0 0 0 0.5px var(--nm-border-line), 0 1px 0 var(--nm-land-shadow); }
-.nm-swatch.light { background: linear-gradient(135deg, #c4d6e6 0 42%, #f1f0ec 42%); filter: saturate(0.65); }
-.nm-swatch.sat { background: radial-gradient(circle at 40% 45%, #45603f 0 28%, #1d3550 30% 100%); filter: saturate(0.65); }
-.nm-layer-opt b { display: block; font-size: 13px; font-weight: 600; }
-.nm-layer-opt small { display: block; color: var(--nm-muted); font-size: 11px; }
-.nm-layer-menu .nm-menu-foot { padding: 6px 10px 4px; font-size: 10.5px; line-height: 1.4; color: var(--nm-muted); border-top: 1px solid var(--nm-line); margin-top: 4px; }
+/* ---- 主备线路对比：顶上一条（取代标题） ---- */
+.nm-compare { pointer-events: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 6px 12px 6px 6px; border-radius: 14px; max-width: 100%; }
+.nm-compare .nm-back-chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; border: 0; border-radius: 10px; background: rgba(59, 139, 255, 0.16); color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; max-width: 260px; }
+.nm-compare .nm-back-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nm-compare .nm-back-chip svg { width: 16px; height: 16px; flex: none; }
+.nm-compare .nm-legend-row { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--nm-muted); }
 
-.nm-focus-mask { position: absolute; inset: 0; z-index: 2; pointer-events: none; opacity: 0; transition: opacity 0.5s ease; background: radial-gradient(ellipse 55% 45% at 50% 42%, rgba(11, 15, 25, 0) 0%, rgba(11, 15, 25, 0.5) 100%); }
-.fx-netmap[data-skin="light"] .nm-focus-mask { background: radial-gradient(ellipse 55% 45% at 50% 42%, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0.3) 100%); }
+/* ---- 右上：底图三段切换 ---- */
+.nm-seg { position: absolute; top: 16px; right: 16px; z-index: 4; display: flex; gap: 2px; padding: 3px; border-radius: 12px; }
+.nm-seg button { height: 30px; padding: 0 12px; border: 1px solid transparent; border-radius: 9px; background: transparent; font-size: 12.5px; font-weight: 500; color: var(--nm-muted); cursor: pointer; white-space: nowrap; }
+.nm-seg button:hover { color: var(--nm-fg); }
+.nm-seg button[aria-checked="true"] { background: rgba(59, 139, 255, 0.22); border-color: rgba(96, 165, 250, 0.5); color: #fff; box-shadow: 0 0 12px -2px rgba(59, 139, 255, 0.55); }
+
+/* ---- 右边：竖着的工具栏 ---- */
+.nm-toolbar { position: absolute; top: 64px; right: 16px; z-index: 4; display: flex; flex-direction: column; gap: 2px; padding: 5px; border-radius: 14px; }
+.nm-toolbar button { position: relative; width: 52px; padding: 8px 0 7px; border: 0; border-radius: 10px; background: transparent; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; font-weight: 500; color: var(--nm-muted); cursor: pointer; }
+.nm-toolbar button svg { width: 19px; height: 19px; }
+.nm-toolbar button:hover { color: var(--nm-fg); background: var(--nm-card); }
+.nm-toolbar button.is-active { color: #8ec2ff; background: rgba(59, 139, 255, 0.16); }
+.nm-toolbar button .nm-badge { position: absolute; top: 5px; right: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--nm-line-degraded); }
+/* 工具栏旁边弹出的小菜单（图层、筛选） */
+.nm-pop { position: absolute; right: 84px; z-index: 6; width: 236px; padding: 6px; border-radius: 14px; box-shadow: var(--nm-shadow); }
+.nm-pop .nm-menu-title { padding: 6px 10px 4px; font-size: 12px; font-weight: 600; color: var(--nm-muted); }
+.nm-pop .nm-opt { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; text-align: left; font-size: 13px; cursor: pointer; }
+.nm-pop .nm-opt:hover { background: var(--nm-card); }
+.nm-pop .nm-opt[aria-checked="true"] { background: var(--nm-accent-soft); }
+.nm-pop .nm-opt b { display: block; font-size: 13px; font-weight: 600; }
+.nm-pop .nm-opt small { display: block; color: var(--nm-muted); font-size: 11px; }
+.nm-pop .nm-opt .nm-count { margin-left: auto; color: var(--nm-muted); font-variant-numeric: tabular-nums; }
+.nm-pop .nm-menu-foot { padding: 6px 10px 4px; font-size: 10.5px; line-height: 1.4; color: var(--nm-muted); border-top: 1px solid var(--nm-line); margin-top: 4px; }
+.nm-pop .nm-seg-inline { position: static; display: flex; margin: 2px 2px 6px; box-shadow: none; }
+.nm-swatch { width: 34px; height: 24px; border-radius: 7px; border: 1px solid var(--nm-hairline); flex: none; position: relative; overflow: hidden; }
+.nm-swatch.night { background: radial-gradient(circle at 30% 40%, rgba(255, 190, 90, 0.9) 0 1.5px, transparent 2px), radial-gradient(circle at 62% 58%, rgba(255, 210, 120, 0.8) 0 1px, transparent 1.5px), radial-gradient(circle at 48% 30%, rgba(255, 200, 100, 0.7) 0 1px, transparent 1.5px), linear-gradient(135deg, #0d1a33, #050b16); }
+.nm-swatch.sat { background: radial-gradient(circle at 40% 45%, #3f5a3a 0 30%, #1a2f4a 32% 100%); filter: brightness(0.7); }
+.nm-swatch.grid { background-color: #071226; background-image: linear-gradient(rgba(34, 211, 238, 0.35) 1px, transparent 1px), linear-gradient(90deg, rgba(34, 211, 238, 0.35) 1px, transparent 1px); background-size: 8px 8px; }
+.nm-swatch.amap { background: linear-gradient(135deg, #1d2633 0 42%, #2b3442 42%); }
+.nm-swatch.amap::after { content: ""; position: absolute; left: -4px; right: -4px; top: 11px; height: 2px; background: #7a8696; transform: rotate(-18deg); }
+.nm-check { margin-left: auto; width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--nm-hairline); flex: none; }
+.nm-opt[aria-checked="true"] .nm-check { border: 4.5px solid var(--nm-accent); }
+
+/* ---- 左下：图例 ---- */
+.nm-legend { position: absolute; left: 16px; bottom: 16px; z-index: 3; display: grid; gap: 7px; padding: 11px 14px; border-radius: 14px; font-size: 12px; }
+.nm-legend-item { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.nm-legend-item .nm-count { margin-left: auto; padding-left: 12px; color: var(--nm-muted); font-variant-numeric: tabular-nums; }
+/* 线样：主线路实线带光、其余虚线 */
+.nm-line-swatch { width: 26px; height: 2px; flex: none; border-radius: 2px; }
+.nm-line-swatch.is-main { background: var(--nm-line-main); box-shadow: 0 0 6px 1px rgba(59, 139, 255, 0.7); }
+.nm-line-swatch.is-backup { background: repeating-linear-gradient(90deg, var(--nm-line-backup) 0 5px, transparent 5px 8px); }
+.nm-line-swatch.is-degraded { background: repeating-linear-gradient(90deg, var(--nm-line-degraded) 0 5px, transparent 5px 8px); box-shadow: 0 0 6px rgba(251, 146, 60, 0.45); }
+.nm-line-swatch.is-down { background: repeating-linear-gradient(90deg, var(--nm-line-down) 0 5px, transparent 5px 8px); box-shadow: 0 0 6px rgba(244, 63, 94, 0.45); }
+
+/* 聚焦时四周压暗一点；「退出聚焦」药丸 */
+.nm-focus-mask { position: absolute; inset: 0; z-index: 2; pointer-events: none; opacity: 0; transition: opacity 0.5s ease; background: radial-gradient(ellipse 60% 50% at 50% 45%, rgba(2, 6, 14, 0) 0%, rgba(2, 6, 14, 0.55) 100%); }
 .nm-focus-mask.is-show { opacity: 1; }
-.nm-focus-exit { position: absolute; left: 50%; transform: translateX(-50%); top: 56px; z-index: 4; display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 100px); height: 34px; padding: 0 14px; border-radius: 999px; box-shadow: var(--nm-shadow); font-weight: 600; font-size: 13px; cursor: pointer; }
+.nm-focus-exit { pointer-events: auto; display: inline-flex; align-items: center; gap: 8px; max-width: 100%; height: 34px; padding: 0 14px; border-radius: 999px; font-weight: 600; font-size: 13px; cursor: pointer; align-self: flex-start; }
 .nm-focus-exit span.nm-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nm-focus-exit .nm-sev { flex: none; width: 8px; height: 8px; border-radius: 50%; }
 
@@ -146,155 +200,146 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 /*
   marker 壳必须是 absolute：MapLibre 自己的 .maplibregl-marker 也是 absolute，但两份 CSS 谁后到
   谁赢（首页小图那个 chunk 里 maplibre-gl.css 先到、这份后到），写成 relative 会让 marker
-  排进文档流 —— 胶囊掉到卡片底下 700px 外、画布容器被撑高。absolute 同样是子元素的定位基准。
+  排进文档流 —— 牌子掉到卡片底下 700px 外、画布容器被撑高。absolute 同样是子元素的定位基准。
 */
 .nm-mk { position: absolute; top: 0; left: 0; width: 0; height: 0; transition: opacity 0.45s ease; }
-.nm-mk.is-dim { opacity: 0.18; }
+.nm-mk.is-dim { opacity: 0.16; }
 .nm-mk.is-hidden { display: none; }
+.nm-mk.is-filtered { visibility: hidden; }
 
 /*
-  主机：一颗状态点（整页 18px、小图 16px，含 2px 白 / 近黑圈和一点影子），国旗是右上角 14px 的小徽章。
-  健康靠颜色 + 圈的样子两样说：正常实心；降级外面多一圈虚线；中断空心、中间一个叉；停用半透明。
-  只有降级 / 中断的点会动：一圈淡淡的外扩，减少动态时不动。
+  主机：一圈发光的环（整页 18px、小图 14px）—— 亮的环、深色的芯、外面一圈柔光。
+  颜色：正常绿、枢纽亮蓝（大一号、光晕更大）、降级琥珀、中断红、没接入灰；落地是紫。
+  形状也说健康：降级外面多一圈虚线，中断的芯里一个叉，没接入半透明、没有光。
 */
-.nm-mk-host { --dot: 18px; --badge: 15px; }
-.nm-mk-host.is-ok { --c: var(--nm-ok); }
-.nm-mk-host.is-warn { --c: var(--nm-warn); }
-.nm-mk-host.is-down { --c: var(--nm-down); }
-.nm-mk-host.is-standby { --c: var(--nm-standby); }
-.nm-mk-disc { position: absolute; left: calc(var(--dot) / -2); top: calc(var(--dot) / -2); width: var(--dot); height: var(--dot); padding: 0; border-radius: 50%; background: var(--c, var(--nm-ok)); border: 2px solid var(--nm-ring); box-shadow: var(--nm-marker-shadow); cursor: pointer; display: block; }
-/* 点比以前的圆盘小了一圈，命中区用 ::after 撑回来 */
-.nm-mk-disc::after { content: ""; position: absolute; inset: -7px; border-radius: 50%; }
-.nm-mk-host.is-warn .nm-mk-disc::before { content: ""; position: absolute; inset: -6px; border-radius: 50%; border: 1.5px dashed var(--c); pointer-events: none; }
-.nm-mk-host.is-down .nm-mk-disc { background: var(--nm-ring); border: 2.5px solid var(--c); box-shadow: 0 0 0 1.5px var(--nm-ring), var(--nm-marker-shadow); }
+.nm-mk-host, .nm-mk-target { --ring: 18px; --bw: 3px; }
+.nm-mk-host.is-ok { --c: var(--nm-node-ok); }
+.nm-mk-host.is-hub { --c: var(--nm-node-hub); --ring: 22px; }
+.nm-mk-host.is-warn { --c: var(--nm-node-warn); }
+.nm-mk-host.is-down { --c: var(--nm-node-down); }
+.nm-mk-host.is-standby { --c: var(--nm-node-standby); }
+.nm-mk-target { --c: var(--nm-target); }
+.nm-mk-target.is-down { --c: var(--nm-node-down); }
+.nm-mk-disc { position: absolute; left: calc(var(--ring) / -2); top: calc(var(--ring) / -2); width: var(--ring); height: var(--ring); padding: 0; border-radius: 50%; display: block; cursor: pointer;
+  background: radial-gradient(circle, #02060e 0 46%, #0a1424 47% 100%);
+  border: var(--bw) solid var(--c);
+  box-shadow: 0 0 0 1px rgba(2, 6, 14, 0.85), 0 0 7px 1px color-mix(in srgb, var(--c) 85%, transparent), 0 0 18px 5px color-mix(in srgb, var(--c) 32%, transparent); }
+.nm-mk-host.is-hub .nm-mk-disc { box-shadow: 0 0 0 1px rgba(2, 6, 14, 0.85), 0 0 10px 2px color-mix(in srgb, var(--c) 90%, transparent), 0 0 28px 10px color-mix(in srgb, var(--c) 38%, transparent); }
+/* 环比以前的圆盘小，命中区用 ::after 撑回来 */
+.nm-mk-disc::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; }
+.nm-mk-host.is-warn .nm-mk-disc::before { content: ""; position: absolute; inset: -7px; border-radius: 50%; border: 1.5px dashed var(--c); pointer-events: none; }
+.nm-mk-host.is-standby .nm-mk-disc { opacity: 0.75; box-shadow: 0 0 0 1px rgba(2, 6, 14, 0.85); }
 .nm-mk-glyph { display: none; }
-.nm-mk-host.is-down .nm-mk-glyph { display: block; position: absolute; inset: 0; pointer-events: none; }
-.nm-mk-host.is-down .nm-mk-glyph::before, .nm-mk-host.is-down .nm-mk-glyph::after { content: ""; position: absolute; left: 50%; top: 50%; width: 58%; height: 2px; border-radius: 1px; background: var(--c); transform: translate(-50%, -50%) rotate(45deg); }
-.nm-mk-host.is-down .nm-mk-glyph::after { transform: translate(-50%, -50%) rotate(-45deg); }
-.nm-mk-host.is-standby .nm-mk-disc { opacity: 0.55; }
+.nm-mk-host.is-down .nm-mk-glyph, .nm-mk-target.is-down .nm-mk-glyph { display: block; position: absolute; inset: 0; pointer-events: none; }
+.nm-mk-host.is-down .nm-mk-glyph::before, .nm-mk-host.is-down .nm-mk-glyph::after,
+.nm-mk-target.is-down .nm-mk-glyph::before, .nm-mk-target.is-down .nm-mk-glyph::after { content: ""; position: absolute; left: 50%; top: 50%; width: 70%; height: 1.6px; border-radius: 1px; background: var(--c); transform: translate(-50%, -50%) rotate(45deg); }
+.nm-mk-host.is-down .nm-mk-glyph::after, .nm-mk-target.is-down .nm-mk-glyph::after { transform: translate(-50%, -50%) rotate(-45deg); }
 .nm-mk-pulse { display: none; }
-.nm-mk-host.is-warn .nm-mk-pulse, .nm-mk-host.is-down .nm-mk-pulse { display: block; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid var(--c); pointer-events: none; animation: nm-pulse 2.8s ease-out infinite; }
+.nm-mk-host.is-warn .nm-mk-pulse, .nm-mk-host.is-down .nm-mk-pulse { display: block; position: absolute; inset: calc(var(--bw) * -1); border-radius: 50%; border: 2px solid var(--c); pointer-events: none; animation: nm-pulse 2.6s ease-out infinite; }
 @keyframes nm-pulse {
-  0% { transform: scale(1); opacity: 0.55; }
-  55% { transform: scale(2.3); opacity: 0; }
-  100% { transform: scale(2.3); opacity: 0; }
+  0% { transform: scale(1); opacity: 0.6; }
+  60% { transform: scale(2.4); opacity: 0; }
+  100% { transform: scale(2.4); opacity: 0; }
 }
-/* 国旗徽章：圆形里裁出国旗中间那块；画不出国旗 emoji 的设备（iOS 国行没有 🇹🇼）退回两字母代码的小方块 */
-.nm-mk-flag { position: absolute; width: var(--badge); height: var(--badge); left: calc(var(--dot) / 2 - 1px); top: calc(var(--badge) / -2); border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: var(--nm-pill-solid); box-shadow: 0 0 0 1.5px var(--nm-ring), 0 1px 2px rgba(0, 0, 0, 0.3); font-size: calc(var(--badge) * 1.8); line-height: 1; font-style: normal; pointer-events: none; }
-/* 国旗字形比徽章大一圈，圆把四周裁掉；裁的位置略偏旗杆一侧（很多国旗的星、徽在左上，正中裁中国旗只剩一片红）。不靠 grid 居中：溢出的字形会贴左 */
-.nm-mk-flag > span { position: absolute; left: 50%; top: 50%; transform: translate(-44%, -50%); white-space: nowrap; }
-.nm-mk-flag.is-code > span { position: static; transform: none; }
-.nm-mk-flag.is-code { width: auto; min-width: var(--badge); padding: 0 2.5px; border-radius: 4px; font-family: var(--fx-font, inherit); font-size: 8px; font-weight: 700; letter-spacing: 0.02em; color: var(--nm-fg); }
-.nm-mk-host.is-standby .nm-mk-flag { opacity: 0.7; }
 
 /*
-  名字：半透明小牌子（背后模糊，不支持时退回实底），文字在牌子上的对比度 ≥ 4.5:1。
-  牌子的尺寸是从 DOM 量的（placeCompactLabels），改字号、内边距不用动摆位的代码；但 top 必须等于画布里的 MINI_LABEL_GAP。
+  名字：两行 —— 城市（白、12px、半粗）和到这台的延迟（环的颜色）。没有底牌子，靠一层深色的晕压在夜景上。
+  整页默认摆在环右边，压到别人时画布会换到左边 / 下面 / 上面（is-left / is-below / is-above），再不行只留城市（is-short）或不画（is-off）。
 */
-.nm-mk-name, .nm-mk-note, .nm-mk-cap, .nm-mk-stub { background: var(--nm-pill); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); box-shadow: 0 0 0 1px var(--nm-pill-edge); }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .nm-mk-name, .nm-mk-note, .nm-mk-cap, .nm-mk-stub { background: var(--nm-pill-solid); }
-}
-.nm-mk-name { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 0 4px; border-radius: 5px; font-size: 12px; line-height: 17px; font-weight: 500; color: var(--nm-fg); pointer-events: none; }
-.nm-mk-note { position: absolute; top: 33px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 0 4px; border-radius: 5px; font-size: 10.5px; line-height: 15px; font-weight: 500; color: var(--nm-muted); pointer-events: none; }
-.nm-mk-host.is-standby .nm-mk-name { color: var(--nm-muted); }
-/* 压到别人的备注先不画（画布算） */
-.nm-mk-note.is-off { visibility: hidden; }
+.nm-mk-name { position: absolute; left: calc(var(--ring, 18px) / 2 + 7px); top: 0; transform: translateY(-50%); white-space: nowrap; pointer-events: none; text-align: left; text-shadow: var(--nm-text-halo); }
+.nm-mk-city { display: block; font-size: 12px; line-height: 15px; font-weight: 600; color: #fff; letter-spacing: 0.01em; }
+.nm-mk-lat { display: block; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--c, var(--nm-muted)); font-variant-numeric: tabular-nums; }
+.nm-mk-lat[hidden], .nm-mk-name.is-short .nm-mk-lat { display: none; }
+.nm-mk-name.is-left { left: auto; right: calc(var(--ring, 18px) / 2 + 7px); text-align: right; }
+.nm-mk-name.is-below { left: 0; top: calc(var(--ring, 18px) / 2 + 5px); transform: translateX(-50%); text-align: center; }
+.nm-mk-name.is-above { left: 0; top: auto; bottom: calc(var(--ring, 18px) / 2 + 5px); transform: translateX(-50%); text-align: center; }
+.nm-mk-name.is-off { visibility: hidden; }
+.nm-mk-host.is-standby .nm-mk-city { color: #c3cbd8; }
 
-.nm-mk-target i { position: absolute; left: -6px; top: -6px; width: 12px; height: 12px; transform: rotate(45deg); border-radius: 2.5px; background: var(--nm-pill-solid); border: 2px solid var(--nm-standby); box-shadow: var(--nm-marker-shadow); cursor: pointer; }
-.nm-mk-target.is-warn i { border-color: var(--nm-warn); }
-.nm-mk-target.is-down i { border-color: var(--nm-down); }
-.nm-mk-target .nm-mk-name { top: 11px; font-size: 11px; line-height: 15px; color: var(--nm-muted); }
+/* 一组：一枚大一号的发光环，里面写几台；组里最该被看到的颜色画在环上 */
+.nm-mk-cluster { --ring: 26px; }
+.nm-mk-cluster.is-ok { --c: var(--nm-node-ok); }
+.nm-mk-cluster.is-hub { --c: var(--nm-node-hub); }
+.nm-mk-cluster.is-warn { --c: var(--nm-node-warn); }
+.nm-mk-cluster.is-down { --c: var(--nm-node-down); }
+.nm-mk-cluster.is-standby { --c: var(--nm-node-standby); }
+.nm-mk-cluster.is-target { --c: var(--nm-target); }
+.nm-mk-cluster .nm-mk-pill { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); width: var(--ring); height: var(--ring); padding: 0; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  background: radial-gradient(circle, #04101f 0 60%, #0a1628 61% 100%);
+  border: 2.5px solid var(--c);
+  box-shadow: 0 0 0 1px rgba(2, 6, 14, 0.85), 0 0 8px 1px color-mix(in srgb, var(--c) 80%, transparent), 0 0 22px 6px color-mix(in srgb, var(--c) 30%, transparent); }
+.nm-mk-cluster.is-warn .nm-mk-pill { border-style: dashed; }
+.nm-mk-count { font-size: 11px; font-weight: 700; line-height: 1; color: #fff; font-variant-numeric: tabular-nums; }
 
-/*
-  一组：最多三面国旗叠成一摞（16px 的圆，互相压 6px）+ 右边一个数量小牌；组里最差的状态画在数量牌的 2px 圈上
-  （正常实线、降级虚线、中断实心底、停用半透明）。没有背景条 —— 以前那条宽 pill 比主机本身还抢眼。
-  pill 的高度（小图 18px）决定名字离锚点多远（h / 2 + 2），和下面 .nm-mk-cluster .nm-mk-name 的 top 对上。
-*/
-.nm-mk-cluster { --flag: 18px; --chip: 20px; }
-.nm-mk-cluster.is-ok { --c: var(--nm-ok); }
-.nm-mk-cluster.is-warn { --c: var(--nm-warn); }
-.nm-mk-cluster.is-down { --c: var(--nm-down); }
-.nm-mk-cluster.is-standby { --c: var(--nm-standby); }
-.nm-mk-cluster .nm-mk-pill { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); display: inline-flex; align-items: center; height: var(--chip); padding: 0; border: 0; background: transparent; cursor: pointer; white-space: nowrap; }
-.nm-mk-stack { display: inline-flex; align-items: center; }
-.nm-mk-stack .nm-mk-flag { position: relative; left: auto; top: auto; --badge: var(--flag); width: var(--flag); height: var(--flag); }
-.nm-mk-stack .nm-mk-flag + .nm-mk-flag { margin-left: -6px; }
-.nm-mk-stack .nm-mk-flag.is-code { font-size: 7.5px; padding: 0 2px; border-radius: 5px; }
-.nm-mk-stack .nm-mk-flag.is-empty::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--nm-muted); }
-.nm-mk-count { position: relative; margin-left: -4px; min-width: var(--chip); height: var(--chip); padding: 0 4px; border-radius: 999px; display: inline-grid; place-items: center; background: var(--nm-pill-solid); border: 2px solid var(--c); box-shadow: var(--nm-marker-shadow); font-size: 11px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; color: var(--nm-fg); }
-.nm-mk-cluster.is-warn .nm-mk-count { border-style: dashed; }
-.nm-mk-cluster.is-down .nm-mk-count { background: var(--c); color: var(--nm-on-down); box-shadow: 0 0 0 1.5px var(--nm-ring), var(--nm-marker-shadow); }
-.nm-mk-cluster.is-standby .nm-mk-pill { opacity: 0.6; }
-.nm-mk-cluster .nm-mk-name { top: 12px; }
-
-/* 延迟：线中点上一个 16px 高的小牌子（等宽数字），不再是大胶囊；不正常的前面一个状态色小点 */
-.nm-mk-cap { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 3px; height: 16px; padding: 0 5px; border: 0; border-radius: 999px; color: var(--nm-fg); font-size: 10.5px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer; }
-.nm-mk-cap.is-ok { --c: var(--nm-link); }
-.nm-mk-cap.is-warn { --c: var(--nm-warn); }
-.nm-mk-cap.is-down { --c: var(--nm-down); }
-.nm-mk-cap.is-standby { --c: var(--nm-standby); }
-.nm-mk-cap:not(.is-ok)::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--c); flex: none; }
-.nm-mk-stub { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-size: 10.5px; line-height: 16px; font-weight: 500; color: var(--nm-muted); padding: 0 6px; border-radius: 999px; pointer-events: none; }
-/* 国家名：只给有主机的国家写，小而淡；压到主机、名字、延迟牌子、小窗时由画布藏掉 */
-.nm-mk-country { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; color: var(--nm-muted); pointer-events: none; text-shadow: 0 0 2px var(--nm-land), 0 0 3px var(--nm-land); transition: opacity 0.3s ease; }
+/* 线上的牌子：聚焦时的延迟（深色小胶囊），中断线正中的 ⊗ */
+.nm-mk-cap { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 6px; border-radius: 999px; color: var(--nm-fg); font-size: 10.5px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer;
+  background: rgba(6, 12, 24, 0.86); border: 1px solid color-mix(in srgb, var(--c, var(--nm-line-main)) 55%, transparent); box-shadow: 0 0 10px -2px color-mix(in srgb, var(--c, var(--nm-line-main)) 70%, transparent); }
+.nm-mk-cap.is-main { --c: var(--nm-line-main); }
+.nm-mk-cap.is-degraded { --c: var(--nm-line-degraded); }
+.nm-mk-cap.is-backup { --c: var(--nm-line-backup); }
+.nm-mk-cap.is-break { --c: var(--nm-line-down); width: 20px; height: 20px; padding: 0; justify-content: center; border-radius: 50%; background: #1a050b; border: 1.5px solid var(--c); box-shadow: 0 0 0 1px rgba(2, 6, 14, 0.9), 0 0 12px 2px rgba(244, 63, 94, 0.55); }
+.nm-mk-cap.is-break svg { width: 14px; height: 14px; fill: none; stroke: var(--c); stroke-width: 1.8; stroke-linecap: round; }
+.nm-mk-cap.is-break svg circle { display: none; }
+.nm-mk-stub { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-size: 10.5px; line-height: 16px; font-weight: 500; color: var(--nm-muted); padding: 0 6px; border-radius: 999px; pointer-events: none; background: rgba(6, 12, 24, 0.8); border: 1px solid var(--nm-line); }
+/* 国家名：只给有主机的国家写，小而淡；压到主机、名字、牌子、控件或小窗时由画布藏掉 */
+.nm-mk-country { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-size: 10.5px; font-weight: 500; letter-spacing: 0.18em; color: rgba(186, 214, 255, 0.5); pointer-events: none; text-shadow: 0 0 4px rgba(2, 6, 14, 0.95); transition: opacity 0.3s ease; }
 .nm-mk-country.is-off { opacity: 0; }
 .nm-map .maplibregl-marker { will-change: transform; }
 
-/* ---- 首页那块小图（NetworkMapMini）：嵌在卡片里，点小一号、名字 11px、不写备注 ---- */
-/* 皮肤变量跟整页一样挂在 .fx-netmap[data-skin] 上；卡片里要圆角，手机端整页那条「圆角归零」不适用 */
-.fx-netmap.nm-mini { height: 300px; margin: 10px 12px 12px; border-radius: 12px; border: 1px solid var(--nm-hairline); }
+/* ---- 首页那块小图（NetworkMapMini）：嵌在卡片里，深色玻璃、细细一圈青边 ---- */
+.fx-netmap.nm-mini { height: 300px; margin: 10px 12px 12px; border-radius: 14px; border: 1px solid rgba(34, 211, 238, 0.22); box-shadow: inset 0 0 0 1px rgba(2, 6, 14, 0.6); }
 @media (min-width: 900px) { .fx-netmap.nm-mini { height: 380px; } }
 /* 图能拖，但底图不是链接：默认指针，按住拖的时候才变抓手（MapLibre 自己的 .maplibregl-interactive 是常驻抓手） */
 .nm-mini > .nm-map { cursor: default; }
 .nm-mini .nm-map .maplibregl-canvas-container.maplibregl-interactive { cursor: default; }
 .nm-mini .nm-map .maplibregl-canvas-container.maplibregl-interactive:active { cursor: grabbing; }
-.nm-mini .nm-mk-host { --dot: 16px; --badge: 14px; }
-.nm-mini .nm-mk-disc::after { inset: -6px; }
-.nm-mini .nm-mk-host.is-warn .nm-mk-disc::before { inset: -5px; }
-/* 名字：11px，最宽 96px 省略号截断，「Jinx(29.9y)」这种长名不会拖成一行盖住邻居。top = MINI_LABEL_GAP（13） */
-.nm-mini .nm-mk-name { top: 13px; font-size: 11px; line-height: 16px; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.nm-mini .nm-mk-host, .nm-mini .nm-mk-target { --ring: 14px; --bw: 2.5px; }
+.nm-mini .nm-mk-host.is-hub { --ring: 16px; }
+.nm-mini .nm-mk-disc::after { inset: -7px; }
+.nm-mini .nm-mk-host.is-warn .nm-mk-disc::before { inset: -6px; }
+/* 名字：默认在环下面居中；top = MINI_LABEL_GAP（10）。最宽 96px 省略号截断 */
+.nm-mini .nm-mk-name { left: 50%; top: 10px; transform: translateX(-50%); text-align: center; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.nm-mini .nm-mk-city { font-size: 11px; line-height: 14px; overflow: hidden; text-overflow: ellipsis; }
+.nm-mini .nm-mk-lat { font-size: 10.5px; line-height: 13px; }
 /* 翻侧、左右挪都躲不开时最后缩一号字（由画布算） */
-.nm-mini .nm-mk-name.is-tight { font-size: 10px; }
-.nm-mini .nm-mk-note { display: none; }
-/* 名字挤在一起时（手机上港日两台只隔几十像素）其中一个翻到点上面去；贴边的往里挪（marginLeft 由画布算） */
-.nm-mini .nm-mk-name.is-up { top: auto; bottom: 13px; }
-/* 叠起来的一组：小图上旗 16px、数量牌 18px（estimateGroupPillWidth 按这个估宽） */
-.nm-mini .nm-mk-cluster { --flag: 16px; --chip: 18px; }
-.nm-mini .nm-mk-count { font-size: 10.5px; }
-.nm-mini .nm-mk-cluster .nm-mk-name { top: 11px; }
-.nm-mini .nm-mk-cluster .nm-mk-name.is-up { top: auto; bottom: 11px; }
-/* 上下都摆不下时摆到点旁边：竖直居中在锚点上，左右位置由画布写 marginLeft（名字左边缘离锚点多远） */
-.nm-mini .nm-mk-name.is-side, .nm-mini .nm-mk-cluster .nm-mk-name.is-side { top: 0; bottom: auto; transform: translateY(-50%); }
+.nm-mini .nm-mk-name.is-tight .nm-mk-city { font-size: 10px; }
+.nm-mini .nm-mk-name.is-tight .nm-mk-lat { font-size: 9.5px; }
+/* 名字挤在一起时其中一个翻到环上面去；贴边的往里挪（marginLeft 由画布算） */
+.nm-mini .nm-mk-name.is-up { top: auto; bottom: 10px; }
+/* 叠起来的一组：小图上环 20px（estimateGroupPillWidth 估的宽比它宽，并组只会更早） */
+.nm-mini .nm-mk-cluster { --ring: 20px; }
+.nm-mini .nm-mk-count { font-size: 10px; }
+.nm-mini .nm-mk-cluster .nm-mk-name { top: 12px; }
+.nm-mini .nm-mk-cluster .nm-mk-name.is-up { top: auto; bottom: 12px; }
+/* 上下都摆不下时摆到环旁边：竖直居中在锚点上，左右位置由画布写 marginLeft（名字左边缘离锚点多远） */
+.nm-mini .nm-mk-name.is-side, .nm-mini .nm-mk-cluster .nm-mk-name.is-side { top: 0; bottom: auto; transform: translateY(-50%); text-align: left; }
 /* 小窗里摆不干净的名字不画（点的提示里有名字）：宁可少一个名字，也不画成被窗边切掉的半截或压在别人身上 */
 .nm-mini .nm-mk-name.is-off { visibility: hidden; }
-/* 小窗边上路过的、不归这扇窗框的主机：点露不全就整个不画（线照样伸出窗外） */
+/* 小窗边上路过的、不归这扇窗框的主机：环露不全就整个不画（线照样伸出窗外） */
 .nm-mini .nm-mk.is-clipped { visibility: hidden; }
-.nm-mini .nm-mk-country { font-size: 10px; }
+.nm-mini .nm-mk-country { font-size: 9.5px; }
+.nm-mini .nm-mk-cap.is-break { width: 18px; height: 18px; }
 
-/* ---- 局部放大的小窗：一张精致的小卡片 ---- */
+/* ---- 局部放大的小窗：一张深色玻璃小卡，一圈细细的青边 ---- */
 /* 主图上圈出这组盖住的范围 + 到小窗的引线：画在主图和小窗之间那一层，不挡点击 */
 .nm-inset-links { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: visible; }
-.nm-inset-links rect { fill: none; stroke: var(--nm-accent); stroke-width: 1; opacity: 0.5; }
-.nm-inset-links line { stroke: var(--nm-accent); stroke-width: 1; opacity: 0.35; }
-.nm-inset { position: absolute; z-index: 4; overflow: hidden; border-radius: 12px; border: 1px solid var(--nm-hairline); box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.32), 0 2px 6px rgba(0, 0, 0, 0.08); background: var(--nm-bg); }
-.fx-netmap[data-skin="dark"] .nm-inset { box-shadow: 0 10px 28px -8px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.4); }
-.nm-inset > .nm-map { position: absolute; inset: 0; background: var(--nm-bg); }
+.nm-inset-links rect { fill: rgba(34, 211, 238, 0.04); stroke: rgba(34, 211, 238, 0.7); stroke-width: 1; stroke-dasharray: 3 3; }
+.nm-inset-links line { stroke: rgba(34, 211, 238, 0.55); stroke-width: 1; }
+.nm-inset { position: absolute; z-index: 4; overflow: hidden; border-radius: 12px; border: 1px solid rgba(34, 211, 238, 0.55); box-shadow: 0 0 0 1px rgba(2, 6, 14, 0.8), 0 0 18px -4px rgba(34, 211, 238, 0.45), 0 12px 28px -10px rgba(0, 0, 0, 0.8); background: var(--nm-water); }
+.nm-inset > .nm-map { position: absolute; inset: 0; background: var(--nm-water); }
 /* 用户把主图放大到这组散开了：小窗藏起来但尺寸不变（引擎不用重算），缩回去立刻又有 */
 .nm-inset.is-off { visibility: hidden; }
-.nm-inset-title { position: absolute; top: 6px; left: 6px; z-index: 3; max-width: calc(100% - 12px); height: 18px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 18px; color: var(--nm-fg); background: var(--nm-pill); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); box-shadow: 0 0 0 1px var(--nm-pill-edge); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nm-inset-title { position: absolute; top: 6px; left: 6px; z-index: 3; max-width: calc(100% - 12px); height: 18px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 17px; color: #d6f6ff; background: rgba(4, 14, 26, 0.82); border: 1px solid rgba(34, 211, 238, 0.35); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /*
   触摸设备上全局给 button / [role=button] 定了 min-height:44px（index.css 的命中区规则），会把
-  点拉成椭圆、把延迟牌子撑成一块砖；MapLibre 还给每个 marker 壳加了
+  环拉成椭圆、把延迟牌子撑成一块砖；MapLibre 还给每个 marker 壳加了
   role="button"，0 高的壳会被撑到 44px，按 bottom 定位的名字就错位。这里收回视觉尺寸，
   命中区用 ::after 撑回 40px 左右。
 */
 @media (pointer: coarse) {
-  .fx-netmap .nm-mk, .fx-netmap .nm-mk-disc, .fx-netmap .nm-mk-cap, .fx-netmap .nm-mk-pill, .fx-netmap .nm-chip { min-height: 0; }
-  /* 整页的两颗浮键：手指按的话撑到 44px 见方（不只是被拉高成椭圆） */
-  .fx-netmap .nm-fab { width: 44px; height: 44px; }
-  .fx-netmap .nm-mk-disc::after, .nm-mini .nm-mk-disc::after { inset: -11px; }
+  .fx-netmap .nm-mk, .fx-netmap .nm-mk-disc, .fx-netmap .nm-mk-cap, .fx-netmap .nm-mk-pill, .fx-netmap .nm-seg button, .fx-netmap .nm-tab, .fx-netmap .nm-icon-btn { min-height: 0; }
+  .fx-netmap .nm-mk-disc::after, .nm-mini .nm-mk-disc::after { inset: -12px; }
   .fx-netmap .nm-mk-cap::after { content: ""; position: absolute; inset: -12px -4px; }
   /* 小图角上 28px 的 + / − 也一样：看着小，命中区撑到 40px 上下 */
   .nm-mini .nm-mini-zoom button::after { content: ""; position: absolute; inset: -6px; }
@@ -306,7 +351,7 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-mini .nm-mini-zoom button:first-child { border-radius: 9px 9px 0 0; }
 .nm-mini .nm-mini-zoom button:hover { background: var(--nm-card); }
 /* 左上角「回到全览」：用户拖过 / 缩过之后才出现，点了重新框住全部 */
-.nm-mini .nm-mini-reset { position: absolute; left: 8px; top: 8px; z-index: 5; min-height: 0; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1; color: var(--nm-accent); cursor: pointer; white-space: nowrap; }
+.nm-mini .nm-mini-reset { position: absolute; left: 8px; top: 8px; z-index: 5; min-height: 0; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1; color: #8ec2ff; cursor: pointer; white-space: nowrap; }
 /* 底部居中一闪而过的提示（点了主机 / 线 / 组）：不挡点击，给右下角的 + / − 留位 */
 .nm-mini .nm-mini-tip { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 6; max-width: calc(100% - 96px); height: 24px; padding: 0 10px; border-radius: 999px; box-shadow: var(--nm-shadow); font-size: 11px; font-weight: 500; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 /* 右上角「N 台未定位」：没有坐标的主机画不到图上，得说一声。名字和小窗都会躲开它（.nm-reserved） */
@@ -315,24 +360,40 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-mini .nm-mini-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 .nm-mini .nm-mini-fallback > * { width: 100%; }
 
-/* ---- 抽屉 ---- */
-.nm-sheet { position: absolute; left: 0; right: 0; top: 0; bottom: 0; z-index: 5; display: flex; flex-direction: column; border-radius: 20px 20px 0 0; background: var(--nm-glass-strong); border: 1px solid var(--nm-glass-border); border-bottom: 0; backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.16); transform: translateY(calc(100% - 84px)); will-change: transform; }
+/* ---- 抽屉 / 详情卡（跟面板主题） ---- */
+.nm-sheet { position: absolute; left: 0; right: 0; top: 0; bottom: 0; z-index: 7; display: flex; flex-direction: column; border-radius: 20px 20px 0 0; background: var(--nm-glass-strong); color: var(--nm-fg); border: 1px solid var(--nm-glass-border); border-bottom: 0; backdrop-filter: saturate(160%) blur(22px); -webkit-backdrop-filter: saturate(160%) blur(22px); box-shadow: 0 -10px 34px rgba(0, 0, 0, 0.35); transform: translateY(calc(100% - 84px)); will-change: transform; }
 .nm-sheet-grip { flex: none; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
 .nm-sheet-grip:active { cursor: grabbing; }
 .nm-handle { width: 36px; height: 4px; border-radius: 999px; background: var(--nm-muted); opacity: 0.4; margin: 8px auto 4px; }
-.nm-sheet-head { display: flex; align-items: center; gap: 10px; padding: 4px 16px 12px; min-height: 44px; border-bottom: 1px solid var(--nm-line); }
+.nm-sheet-head { display: flex; align-items: center; gap: 8px; padding: 4px 12px 10px 16px; min-height: 44px; }
 .nm-sheet-head .nm-back { flex: none; width: 32px; height: 32px; border-radius: 10px; border: 1px solid var(--nm-line); background: var(--nm-card); display: grid; place-items: center; cursor: pointer; }
-.nm-sheet-head .nm-back svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.nm-sheet-head .nm-back svg, .nm-icon-btn svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.nm-icon-btn { flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 10px; background: transparent; display: grid; place-items: center; color: var(--nm-muted); cursor: pointer; }
+.nm-icon-btn:hover { background: var(--nm-card); color: var(--nm-fg); }
+.nm-icon-btn svg circle { fill: currentColor; stroke: none; }
 .nm-sheet-head .nm-headline { flex: 1; min-width: 0; }
-.nm-sheet-head .nm-headline b { display: block; font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nm-sheet-head .nm-headline small { display: block; margin-top: 1px; color: var(--nm-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nm-sheet-head .nm-pill { flex: none; }
+.nm-sheet-head .nm-headline b { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 16px; font-weight: 700; }
+.nm-sheet-head .nm-title-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nm-sheet-head .nm-pill-slot { flex: none; display: inline-flex; }
+.nm-sheet-head .nm-headline small { display: block; margin-top: 2px; color: var(--nm-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nm-menu-wrap { position: relative; flex: none; }
+.nm-popover { position: absolute; right: 0; top: 36px; z-index: 10; min-width: 160px; padding: 6px; border-radius: 12px; background: var(--nm-pill-solid); border: 1px solid var(--nm-glass-border); box-shadow: var(--nm-shadow); }
+.nm-popover button { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; text-align: left; font-size: 13px; cursor: pointer; }
+.nm-popover button:hover:not(:disabled) { background: var(--nm-card); }
+.nm-popover button:disabled { opacity: 0.5; cursor: default; }
+/* 详情的五个标签 */
+.nm-tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--nm-line); overflow-x: auto; scrollbar-width: none; }
+.nm-tabs::-webkit-scrollbar { display: none; }
+.nm-tab { position: relative; flex: none; height: 38px; padding: 0 12px; border: 0; background: transparent; font-size: 13.5px; font-weight: 500; color: var(--nm-muted); cursor: pointer; }
+.nm-tab:hover { color: var(--nm-fg); }
+.nm-tab.is-active { color: var(--nm-fg); font-weight: 600; }
+.nm-tab.is-active::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--nm-accent); box-shadow: 0 0 8px var(--nm-accent); }
 .nm-sheet-body { flex: 1; min-height: 0; overflow: auto; padding: 0 16px calc(24px + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .nm-sheet[data-snap="peek"] .nm-sheet-body { overflow: hidden; }
 
 .nm-pill { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: var(--nm-card); border: 1px solid var(--nm-line); white-space: nowrap; }
 .nm-pill .nm-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.nm-pill.ok { color: var(--nm-ok); background: color-mix(in srgb, var(--nm-ok) 10%, transparent); border-color: color-mix(in srgb, var(--nm-ok) 30%, transparent); }
+.nm-pill.ok { color: var(--nm-ok); background: color-mix(in srgb, var(--nm-ok) 12%, transparent); border-color: color-mix(in srgb, var(--nm-ok) 32%, transparent); }
 .nm-pill.warn { color: var(--nm-warn); background: color-mix(in srgb, var(--nm-warn) 12%, transparent); border-color: color-mix(in srgb, var(--nm-warn) 35%, transparent); }
 .nm-pill.down { color: var(--nm-down); background: color-mix(in srgb, var(--nm-down) 10%, transparent); border-color: color-mix(in srgb, var(--nm-down) 35%, transparent); }
 .nm-pill.standby { color: var(--nm-muted); }
@@ -340,13 +401,68 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-pill.mono { font-family: var(--nm-font-num); font-weight: 600; }
 .nm-pill.wrap { height: auto; padding: 3px 9px; white-space: normal; text-align: left; line-height: 1.45; }
 
-/* 分区：12px 的灰色小标题（不全大写、不加字距），区与区之间一道发丝线 */
+/* 分区：12px 的灰色小标题，区与区之间一道发丝线 */
 .nm-section { margin-top: 16px; }
 .nm-section + .nm-section { padding-top: 16px; border-top: 1px solid var(--nm-line); }
-.nm-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--nm-muted); }
+.nm-section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; font-size: 12.5px; font-weight: 600; color: var(--nm-muted); }
 .nm-section-title .nm-count { font-family: inherit; font-weight: 500; font-variant-numeric: tabular-nums; }
+.nm-link-btn { border: 0; background: transparent; padding: 0; font-size: 12.5px; font-weight: 600; color: var(--nm-accent); cursor: pointer; }
+.nm-range { height: 26px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--nm-hairline); background: var(--nm-card); color: var(--nm-fg); font: inherit; font-size: 12px; font-weight: 500; }
 .nm-list { display: flex; flex-direction: column; gap: 6px; }
-.nm-empty { padding: 12px; border-radius: 12px; border: 1px dashed var(--nm-line); color: var(--nm-muted); font-size: 12.5px; text-align: center; }
+.nm-empty { padding: 12px; border-radius: 12px; border: 1px dashed var(--nm-line); color: var(--nm-muted); font-size: 12.5px; text-align: center; line-height: 1.55; }
+
+/* 基本信息：左边名、右边值 */
+.nm-kvs { margin: 0; display: grid; gap: 9px; }
+.nm-kv { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 22px; }
+.nm-kv dt { font-size: 12.5px; color: var(--nm-muted); flex: none; }
+.nm-kv dd { margin: 0; min-width: 0; font-size: 13px; font-weight: 500; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nm-accent-text { color: var(--nm-accent); font-weight: 600; }
+.nm-accent-text.is-muted { color: var(--nm-muted); }
+.nm-dim-text { color: var(--nm-muted); font-weight: 400; }
+
+/* 网络路径：竖着的步骤条，左边一串点连成线 */
+.nm-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; --step-line: var(--nm-chart-latency); }
+.nm-steps.is-degraded { --step-line: var(--nm-warn); }
+.nm-steps.is-down { --step-line: var(--nm-down); }
+.nm-steps.is-backup { --step-line: var(--nm-muted); }
+.nm-step { position: relative; display: grid; grid-template-columns: 14px 28px 1fr auto; align-items: center; gap: 10px; padding: 7px 0; }
+.nm-step-dot { position: relative; width: 10px; height: 10px; margin-left: 2px; border-radius: 50%; background: var(--nm-glass-strong); border: 2px solid var(--step-line); z-index: 1; }
+.nm-step.is-down .nm-step-dot { border-color: var(--nm-down); }
+.nm-step.is-landing .nm-step-dot { border-color: var(--nm-role-landing); }
+/* 点和点之间的竖线 */
+.nm-step + .nm-step::before { content: ""; position: absolute; left: 6px; top: -10px; height: 24px; width: 2px; background: var(--step-line); opacity: 0.55; border-radius: 1px; }
+.nm-steps.is-degraded .nm-step + .nm-step::before, .nm-steps.is-down .nm-step + .nm-step::before, .nm-steps.is-backup .nm-step + .nm-step::before { background: repeating-linear-gradient(180deg, var(--step-line) 0 4px, transparent 4px 7px); opacity: 0.8; }
+.nm-step-flag { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; font-size: 17px; background: var(--nm-card); border: 1px solid var(--nm-line); }
+.nm-step-flag.is-globe { color: var(--nm-role-landing); }
+.nm-step-flag.is-globe svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.nm-step-main { min-width: 0; display: flex; flex-direction: column; }
+.nm-step-main b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nm-step-main b small { margin-left: 6px; font-size: 11.5px; font-weight: 400; color: var(--nm-muted); }
+.nm-step-main > span { font-size: 11.5px; color: var(--nm-muted); }
+.nm-role { flex: none; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 600; line-height: 20px; color: var(--r); background: color-mix(in srgb, var(--r) 12%, transparent); border: 1px solid color-mix(in srgb, var(--r) 30%, transparent); }
+.nm-role.is-entry { --r: var(--nm-role-entry); }
+.nm-role.is-relay { --r: var(--nm-role-relay); }
+.nm-role.is-exit { --r: var(--nm-role-exit); }
+.nm-role.is-landing { --r: var(--nm-role-landing); }
+
+/* 实时数据：四张小卡 */
+.nm-live { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.nm-live-card { min-width: 0; padding: 10px 12px 8px; border-radius: 12px; border: 1px solid var(--nm-line); background: var(--nm-card); }
+.nm-live-label { font-size: 12px; color: var(--nm-muted); }
+.nm-live-value { margin-top: 3px; display: flex; align-items: baseline; gap: 4px; }
+.nm-live-value b { font-size: 20px; font-weight: 700; line-height: 1.1; }
+.nm-live-value small { font-size: 11.5px; color: var(--nm-muted); font-weight: 500; }
+.nm-live-delta { margin-top: 2px; font-size: 11px; color: var(--nm-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nm-live-delta.is-up { color: var(--nm-ok); }
+.nm-live-delta.is-down { color: var(--nm-muted); }
+.nm-live-delta.is-bad { color: var(--nm-warn); }
+.nm-live-card canvas { display: block; width: 100%; height: 34px; margin-top: 6px; }
+
+/* 「查看详情」：总览最底下一个整宽的主按钮；手机上贴着抽屉底边 */
+.nm-cta { position: sticky; bottom: calc(-24px - env(safe-area-inset-bottom, 0px)); margin: 18px -16px 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); background: linear-gradient(180deg, transparent, var(--nm-glass-strong) 30%); }
+.nm-primary { width: 100%; height: 42px; border: 0; border-radius: 12px; background: var(--nm-accent); color: #fff !important; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--nm-accent) 70%, transparent); }
+.fx-netmap[data-skin="dark"] .nm-primary { background: #2563eb; }
+.nm-primary:hover { filter: brightness(1.08); }
 
 .nm-alert { display: grid; grid-template-columns: 3px 1fr auto; gap: 12px; align-items: center; width: 100%; padding: 10px 12px 10px 0; border-radius: 12px; border: 1px solid var(--nm-line); background: var(--nm-card); text-align: left; cursor: pointer; overflow: hidden; }
 .nm-alert:hover, .nm-row:not(.is-static):hover, .nm-action:not(:disabled):hover { border-color: var(--nm-hairline); background: color-mix(in srgb, var(--nm-card) 100%, var(--nm-line)); }
@@ -371,7 +487,6 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-metric { padding: 10px 12px; border-radius: 12px; border: 1px solid var(--nm-line); background: var(--nm-card); min-width: 0; }
 .nm-metric.wide { grid-column: 1 / -1; }
 .nm-metric .nm-label { font-size: 12px; font-weight: 500; color: var(--nm-muted); display: flex; justify-content: space-between; gap: 6px; }
-.nm-metric .nm-label .nm-num { font-family: inherit; font-variant-numeric: tabular-nums; }
 .nm-metric .nm-value { font-size: 22px; font-weight: 600; line-height: 1.15; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .nm-metric .nm-value small { font-size: 12px; color: var(--nm-muted); font-weight: 500; margin-left: 4px; }
 .nm-metric canvas { display: block; width: 100%; height: 44px; margin-top: 6px; }
@@ -405,8 +520,8 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-bars .nm-col .nm-label { font-size: 12px; font-weight: 500; color: var(--nm-muted); }
 .nm-bars .nm-stack { display: flex; align-items: flex-end; gap: 10px; height: 78px; margin-top: 8px; }
 .nm-bars .nm-b { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; min-width: 0; }
-.nm-bars .nm-b i { display: block; width: 100%; max-width: 36px; border-radius: 4px 4px 2px 2px; background: var(--nm-link); }
-.nm-bars .nm-b i.up { background: var(--nm-series-2); }
+.nm-bars .nm-b i { display: block; width: 100%; max-width: 36px; border-radius: 4px 4px 2px 2px; background: var(--nm-chart-down); }
+.nm-bars .nm-b i.up { background: var(--nm-chart-up); }
 .nm-bars .nm-b span { font-size: 11px; color: var(--nm-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; font-variant-numeric: tabular-nums; }
 .nm-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .nm-action { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 6px; border-radius: 12px; border: 1px solid var(--nm-line); background: var(--nm-card); font-size: 12px; font-weight: 600; cursor: pointer; }
@@ -423,14 +538,41 @@ html.dark .fx-netmap[data-skin="dark"] { --nm-accent: var(--fx-accent); --nm-acc
 .nm-toast { position: absolute; left: 50%; bottom: 110px; transform: translateX(-50%) translateY(8px); z-index: 9; padding: 9px 14px; border-radius: 12px; box-shadow: var(--nm-shadow); font-size: 13px; font-weight: 500; opacity: 0; transition: opacity 0.25s ease, transform 0.25s ease; pointer-events: none; max-width: calc(100% - 32px); text-align: center; }
 .nm-toast.is-show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-/* 桌面：抽屉变成右侧栏 */
+/* ---- 手机：统计卡横着滚，工具栏缩成一列小浮键，三段切换收进「图层」，图例贴在抽屉上面 ---- */
+@media (max-width: 899px) {
+  .nm-hud-tl { top: 12px; left: 0; right: 0; max-width: none; gap: 10px; }
+  .nm-titlebar { padding: 0 64px 0 14px; }
+  .nm-titlebar h1 { font-size: 18px; }
+  .nm-titlebar p { font-size: 12px; }
+  .nm-compare { margin: 0 64px 0 12px; }
+  .nm-stats { overflow-x: auto; padding: 0 14px 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; }
+  .nm-stats::-webkit-scrollbar { display: none; }
+  .nm-stat { flex: none; min-width: 118px; padding: 8px 12px 8px 8px; grid-template-columns: 30px auto; scroll-snap-align: start; }
+  .nm-stat .nm-icon { width: 30px; height: 30px; }
+  .nm-stat b { font-size: 18px; }
+  .nm-seg { display: none; }
+  .nm-toolbar { top: 12px; right: 12px; padding: 4px; }
+  .nm-toolbar button { width: 44px; padding: 6px 0 5px; font-size: 10px; gap: 2px; }
+  .nm-toolbar button svg { width: 17px; height: 17px; }
+  .nm-pop { right: 68px; width: 228px; }
+  .nm-legend { left: 12px; bottom: 96px; grid-template-columns: auto auto; column-gap: 14px; row-gap: 6px; padding: 8px 10px; font-size: 11px; }
+  .nm-legend-item { gap: 7px; }
+  .nm-legend-item .nm-count { padding-left: 4px; }
+  .nm-line-swatch { width: 18px; }
+  .nm-toast { bottom: 110px; }
+}
+
+/* ---- 桌面：抽屉变成浮在图右边的玻璃卡；没选中东西时收起来，工具栏和三段切换跟着卡挪 ---- */
 @media (min-width: 900px) {
-  .nm-layout { grid-template-columns: 1fr 400px; }
-  .nm-sheet { position: relative; transform: none !important; border-radius: 0; border: 0; border-left: 1px solid var(--nm-hairline); box-shadow: none; background: var(--nm-glass-strong); }
+  .nm-sheet { left: auto; top: 16px; right: 16px; bottom: 16px; width: 384px; transform: none !important; border-radius: 18px; border: 1px solid var(--nm-glass-border); box-shadow: var(--nm-shadow); }
+  .nm-sheet[data-open="false"] { display: none; }
   .nm-sheet .nm-handle { display: none; }
   .nm-sheet-grip { cursor: default; padding-top: 12px; }
   .nm-sheet[data-snap="peek"] .nm-sheet-body { overflow: auto; }
+  .nm-layout.has-panel .nm-seg, .nm-layout.has-panel .nm-toolbar { right: 416px; }
+  .nm-layout.has-panel .nm-pop { right: 484px; }
   .nm-toast { bottom: 32px; }
+  .nm-cta { position: static; margin: 18px 0 0; padding: 0; background: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

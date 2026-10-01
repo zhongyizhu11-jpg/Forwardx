@@ -4,7 +4,8 @@ import { clampSheetY, nextSheetSnap, sheetSnapY, type SheetSnap } from "@/featur
 
 /**
  * 抽屉的壳：手机上是从底下升起的玻璃面板（收起 / 半屏 / 全屏三档，把手可拖），
- * ≥900px 时变成右侧栏（CSS 里把 transform 强制成 none，这里的拖动也不再响应）。
+ * ≥900px 时变成浮在图右边的一张玻璃卡（CSS 里把 transform 强制成 none，这里的拖动也不再响应）；
+ * 桌面上没选中东西时这张卡收起来（open = false），地图铺满。
  *
  * 拖动直接改 DOM 的 transform，不走 React 状态：手指每动一像素都 setState 的话，
  * 抽屉里的图表跟着重画，手机上拖不动。松手时才算出该落到哪一档、通知页面。
@@ -12,8 +13,10 @@ import { clampSheetY, nextSheetSnap, sheetSnapY, type SheetSnap } from "@/featur
 export type NetworkMapSheetProps = {
   snap: SheetSnap;
   onSnapChange: (snap: SheetSnap) => void;
-  /** 桌面右侧栏模式 */
+  /** 桌面右侧浮卡模式 */
   rail: boolean;
+  /** 桌面上这张卡开着没有（手机上抽屉一直在，只是档位不同） */
+  open?: boolean;
   /** 抽屉所在容器的高度（算三档位置用） */
   containerHeight: number;
   reduceMotion: boolean;
@@ -23,7 +26,7 @@ export type NetworkMapSheetProps = {
   children: ReactNode;
 };
 
-export function NetworkMapSheet({ snap, onSnapChange, rail, containerHeight, reduceMotion, head, viewKey, children }: NetworkMapSheetProps) {
+export function NetworkMapSheet({ snap, onSnapChange, rail, open = true, containerHeight, reduceMotion, head, viewKey, children }: NetworkMapSheetProps) {
   const sheetRef = useRef<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ pointerId: number; startY: number; lastY: number; lastT: number; velocity: number; base: number } | null>(null);
@@ -78,7 +81,7 @@ export function NetworkMapSheet({ snap, onSnapChange, rail, containerHeight, red
   };
 
   return (
-    <section ref={sheetRef} className="nm-sheet" data-snap={snap} aria-label="详情抽屉">
+    <section ref={sheetRef} className="nm-sheet" data-snap={snap} data-open={open ? "true" : "false"} aria-label="详情抽屉" aria-hidden={rail && !open ? true : undefined}>
       <div className="nm-sheet-grip" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
         <div className="nm-handle" aria-hidden="true" />
         {head}
