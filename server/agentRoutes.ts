@@ -23,7 +23,8 @@ import {
   resolveAgentTokenFromAuthorization,
 } from "./agentAuth";
 import { normalizeAgentText } from "./agentInputValidation";
-import { mergeAgentReportedAddress } from "./agentAddressState";
+import { mergeAgentReportedAddress, observedAgentAddress } from "./agentAddressState";
+import { noteAgentPrivateIpv4 } from "./agentPrivateAddress";
 import { registerAgentStatusRoutes } from "./agentStatusRoutes";
 import { registerAgentSelfTestRoutes } from "./agentSelfTestRoutes";
 import { registerAgentReportRoutes } from "./agentReportRoutes";
@@ -380,7 +381,7 @@ agentApiRouter.post("/api/agent/register", async (req: Request, res: Response) =
     }
 
     // 检查是否已有主机使用此 token
-    const initialReportedAddress = mergeAgentReportedAddress(req.body);
+    const initialReportedAddress = mergeAgentReportedAddress(req.body, undefined, observedAgentAddress(req));
     const nextOsInfo = normalizeAgentText(osInfo, 256);
     const nextCpuInfo = normalizeAgentText(cpuInfo, 256);
     const nextAgentVersion = normalizeAgentText(agentVersion, 64);
@@ -389,7 +390,8 @@ agentApiRouter.post("/api/agent/register", async (req: Request, res: Response) =
     const existingHost = await db.getHostByAgentToken(token);
     if (existingHost) {
       const wasOnline = isHostStatusOnline(existingHost);
-      const reportedAddress = mergeAgentReportedAddress(req.body, existingHost);
+      const reportedAddress = mergeAgentReportedAddress(req.body, existingHost, observedAgentAddress(req));
+      noteAgentPrivateIpv4(existingHost.id, req.body?.privateIpv4);
       const entryChanged = [
         ["ip", reportedAddress.ip],
         ["ipv4", reportedAddress.ipv4],

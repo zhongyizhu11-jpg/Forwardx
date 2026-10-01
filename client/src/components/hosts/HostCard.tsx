@@ -101,8 +101,6 @@ function compactHostOsInfo(value: unknown) {
 type HostCardProps = {
   host: any;
   onEdit: (host: any) => void;
-  /** 「未定位 · 点此设置」：打开编辑对话框并滚到位置那一行 */
-  onEditLocation?: (host: any) => void;
   onDelete: (id: number) => void;
   onUpgrade: (host: any) => void;
   onResetTraffic?: (host: any) => void;
@@ -274,7 +272,6 @@ export function HostActionButtons({
 export default function HostCard({
   host,
   onEdit,
-  onEditLocation,
   onDelete,
   onUpgrade,
   onResetTraffic,
@@ -516,7 +513,7 @@ export default function HostCard({
       </p>
       <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5">
         <span className="shrink-0 text-muted-foreground">国家/地区：</span>
-        <HostRegionBadge host={host} compact={regionCompact} onSetLocation={onEditLocation ? () => onEditLocation(host) : undefined} />
+        <HostRegionBadge host={host} compact={regionCompact} />
       </div>
       {/*
         这台机器是谁的。

@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.205"
+var Version = "2.2.206"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -896,6 +896,7 @@ type heartbeatStaticSnapshot struct {
 	PrimaryIP               string
 	IPv4                    string
 	IPv6                    string
+	PrivateIPv4             string
 	DefaultNetworkInterface string
 	CPUInfo                 string
 	MemoryTotal             uint64
@@ -3740,6 +3741,7 @@ func register(cfg Config) error {
 		"ip":           primaryIP,
 		"ipv4":         ipv4,
 		"ipv6":         ipv6,
+		"privateIpv4":  localPrivateIPv4(),
 		"osInfo":       osInfo(),
 		"cpuInfo":      cpuInfo(),
 		"memoryTotal":  memTotal(),
@@ -3814,6 +3816,7 @@ func heartbeatStaticChanged(a, b heartbeatStaticSnapshot) bool {
 	return a.PrimaryIP != b.PrimaryIP ||
 		a.IPv4 != b.IPv4 ||
 		a.IPv6 != b.IPv6 ||
+		a.PrivateIPv4 != b.PrivateIPv4 ||
 		a.DefaultNetworkInterface != b.DefaultNetworkInterface ||
 		a.CPUInfo != b.CPUInfo ||
 		a.MemoryTotal != b.MemoryTotal ||
@@ -3824,6 +3827,43 @@ func heartbeatStaticChanged(a, b heartbeatStaticSnapshot) bool {
 
 func shouldCommitHeartbeatStaticReport(compactEnabled bool, shouldReportStatic bool, reconciliationCoalesced bool) bool {
 	return !reconciliationCoalesced && (!compactEnabled || shouldReportStatic)
+}
+
+// localPrivateIPv4 returns the private IPv4 (10/8, 172.16/12, 192.168/16,
+// 100.64/10) bound to the default-route interface, so the panel can offer it
+// as the host's "内网地址". Only the default interface is looked at: falling
+// back to every interface would pick up docker0 / br-* bridge addresses.
+func localPrivateIPv4() string {
+	name := defaultNetworkInterface()
+	if name == "" {
+		return ""
+	}
+	iface, err := net.InterfaceByName(name)
+	if err != nil || iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+		return ""
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return ""
+	}
+	return firstPrivateIPv4(addrs)
+}
+
+func firstPrivateIPv4(addrs []net.Addr) string {
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip := ipNet.IP.To4()
+		if ip == nil {
+			continue
+		}
+		if ip.IsPrivate() || (ip[0] == 100 && ip[1]&0xc0 == 64) {
+			return ip.String()
+		}
+	}
+	return ""
 }
 
 func defaultNetworkInterface() string {
@@ -4025,6 +4065,7 @@ func heartbeat(cfg Config, forceReconcile ...bool) (heartbeatResult, error) {
 		PrimaryIP:               primaryIP,
 		IPv4:                    ipv4,
 		IPv6:                    ipv6,
+		PrivateIPv4:             localPrivateIPv4(),
 		DefaultNetworkInterface: defaultNetworkInterface(),
 		CPUInfo:                 cpuInfo(),
 		MemoryTotal:             memoryTotal,
@@ -4107,6 +4148,9 @@ func heartbeat(cfg Config, forceReconcile ...bool) (heartbeatResult, error) {
 	}
 	if currentStatic.DefaultNetworkInterface != "" {
 		payload["defaultNetworkInterface"] = currentStatic.DefaultNetworkInterface
+	}
+	if currentStatic.PrivateIPv4 != "" {
+		payload["privateIpv4"] = currentStatic.PrivateIPv4
 	}
 	if len(dnsChanges) > 0 {
 		payload["dnsChanged"] = dnsChanges
@@ -4249,6 +4293,7 @@ func heartbeatKeepalive(cfg Config) (heartbeatResult, error) {
 		PrimaryIP:               primaryIP,
 		IPv4:                    ipv4,
 		IPv6:                    ipv6,
+		PrivateIPv4:             localPrivateIPv4(),
 		DefaultNetworkInterface: defaultNetworkInterface(),
 		CPUInfo:                 cpuInfo(),
 		MemoryTotal:             memoryTotal,
@@ -4325,6 +4370,9 @@ func heartbeatKeepalive(cfg Config) (heartbeatResult, error) {
 	}
 	if currentStatic.DefaultNetworkInterface != "" {
 		payload["defaultNetworkInterface"] = currentStatic.DefaultNetworkInterface
+	}
+	if currentStatic.PrivateIPv4 != "" {
+		payload["privateIpv4"] = currentStatic.PrivateIPv4
 	}
 	var resp heartbeatResp
 	if err := postHeartbeat(cfg, "/api/agent/heartbeat", payload, &resp); err != nil {

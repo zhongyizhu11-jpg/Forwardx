@@ -55,7 +55,8 @@ import { getAgentHostFromRequest, getAgentPresenceHostFromRequest, getResolvedAg
 import { normalizeAgentText, normalizeNetworkInterface } from "./agentInputValidation";
 import { pruneMapEntries, setBoundedMapValue } from "./boundedCache";
 import { isValidTlsServerName } from "./nginxTlsInput";
-import { mergeAgentReportedAddress } from "./agentAddressState";
+import { mergeAgentReportedAddress, observedAgentAddress } from "./agentAddressState";
+import { noteAgentPrivateIpv4 } from "./agentPrivateAddress";
 import {
   gostTunnelTransportType,
   planGostTunnelProbeListeners,
@@ -1564,7 +1565,8 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     const agentLastAppliedHash = normalizeAgentText(req.body?.agentLastAppliedHash, 64);
     const reportedDefaultNetworkInterface = normalizeNetworkInterface(req.body?.defaultNetworkInterface);
     const previousHost = { ...(host as any) };
-    const reportedAddress = mergeAgentReportedAddress(req.body, host);
+    const reportedAddress = mergeAgentReportedAddress(req.body, host, observedAgentAddress(req));
+    noteAgentPrivateIpv4(host.id, req.body?.privateIpv4);
     const dnsChangedReports = Array.isArray(req.body?.dnsChanged) ? req.body.dnsChanged : [];
     const agentStateSignatures = normalizeAgentStateSignatures(req.body?.stateSignatures);
     const localRuntimeStateSignature = normalizeRuntimeStateSignature(req.body?.localStateSignature);
