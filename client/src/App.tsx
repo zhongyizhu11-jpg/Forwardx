@@ -3,36 +3,38 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfirmDialogProvider } from "@/components/ui/confirm-dialog";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc";
 import { mobileAuth } from "@/lib/mobileAuth";
 import NotFound from "@/pages/NotFound";
-import { Redirect, Route, Switch, useLocation } from "wouter";
+import { matchRoute, Redirect, Route, Switch, useLocation, useRouter } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import RouteFallback from "./components/RouteFallback";
-import { routeChunks } from "@/pages/routeChunks";
+import { AppShell } from "./components/DashboardLayout";
+import { prefetchRoute, routeChunks } from "@/pages/routeChunks";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import PersonalizationLayer from "./components/PersonalizationLayer";
 import Live2DWidgetHost from "./components/plugins/Live2DWidgetHost";
-import Setup from "./pages/Setup";
 import HomePage from "@/pages/Home";
 import LoginPage from "@/pages/Login";
 
 const loadMotionFeatures = () => import("@/motionFeatures").then((mod) => mod.default);
 
 /*
-  除了登录页和落地页，其余页面按路由拆包。
+  除了登录页和总览，其余页面按路由拆包。
 
   原来 26 个页面全是静态导入，打出来的主 chunk 有 3.48 MB：一个只想看
   「我的套餐」的租户，手机上要先把 Settings（6460 行）、Rules（8778 行）、
   Plugins 的全部代码下完才能看到第一屏。
 
   Login 和 Home 刻意留同步 —— 它们是所有人的入口，拆了会在最常见的那两屏
-  上多一次往返、闪一下 fallback，省下来的字节反而不划算。
+  上多一次往返、闪一下 fallback，省下来的字节反而不划算。初始化向导（一辈子
+  只走一次）和未登录的落地页（Home 里按需 lazy）不在此列，不进入口包。
 
   import() 表达式登记在 pages/routeChunks.ts：外壳在空闲时按同一张表预取，
   标签栏点过去时代码已经在缓存里。
 */
+const SetupPage = lazy(() => import("./pages/Setup"));
 const AnnouncementsPage = lazy(routeChunks["/announcements"] as () => Promise<{ default: ComponentType<any> }>);
 const BillingPage = lazy(routeChunks["/billing"] as () => Promise<{ default: ComponentType<any> }>);
 const CustomSidebarPage = lazy(() => import("@/pages/CustomSidebarPage"));
@@ -123,10 +125,10 @@ function PluginsRoute({ sidebarPluginId }: { sidebarPluginId?: string }) {
   return <LazyBoundary><PluginsPage sidebarPluginId={sidebarPluginId} /></LazyBoundary>;
 }
 
-function Router() {
+function Routes() {
   return (
     <Switch>
-      <Route path="/setup" component={Setup} />
+      <Route path="/setup">{routeComponent(SetupPage)}</Route>
       <Route path="/login">{routeComponent(LoginPage)}</Route>
       <Route path="/session-wait"><Redirect to="/login" /></Route>
       <Route path="/homepage-preview">{routeComponent(HomepagePreviewPage)}</Route>
@@ -177,6 +179,71 @@ function Router() {
   );
 }
 
+/*
+  登录后才看得到的页面：这些路由外面常驻一层外壳（侧边栏 / 标签栏 / 外壳上的查询），
+  换页只换内容区，页面代码在下载时转圈也只出现在内容区里。
+
+  "/" 也在其中：未登录时它是公开落地页，那时 AppShell 不画，下面的 Router 直接给
+  不带外壳的路由。公开监控页（/:monitorPath）、登录、初始化、预览不在表里。
+  新加一个登录后页面要记得登记在这里；漏了也不会坏，只是那一页退回到自己包外壳、
+  进出时外壳重建。
+*/
+const shellRoutePatterns = [
+  "/",
+  "/profile",
+  "/hosts",
+  "/more",
+  "/map",
+  "/rules",
+  "/looking-glass",
+  "/forward-groups",
+  "/tunnels",
+  "/users",
+  "/email-settings",
+  "/payments",
+  "/billing",
+  "/traffic-billing",
+  "/plans",
+  "/plugins/sidebar/:pluginId",
+  "/plugins",
+  "/store",
+  "/subscriptions",
+  "/client-subscriptions",
+  "/proxy-inbounds",
+  "/wallet",
+  "/announcements",
+  "/settings",
+  "/custom-pages/:pageId",
+];
+
+function useIsShellRoute(location: string) {
+  const { parser } = useRouter();
+  return shellRoutePatterns.some((pattern) => matchRoute(parser, pattern, location)[0]);
+}
+
+/*
+  和 useAuth 是同一个查询（参数一致，共用缓存）。只在外壳路由上问：登录页、公开页
+  不该因为外壳多发一次 auth.me —— 会话被顶掉时它报错，会在登录页上再清一遍缓存。
+*/
+function useShellAuth(shellRoute: boolean) {
+  return trpc.auth.me.useQuery(undefined, {
+    enabled: shellRoute && (!mobileAuth.isNative || mobileAuth.hasPanelUrl()),
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+}
+
+function Router() {
+  const [location] = useLocation();
+  const shellRoute = useIsShellRoute(location);
+  const { data: user, isLoading: loading } = useShellAuth(shellRoute);
+
+  if (shellRoute && (loading || user)) {
+    return <AppShell><Routes /></AppShell>;
+  }
+  return <Routes />;
+}
+
 function SetupGate() {
   const [location] = useLocation();
   const hasMobilePanelUrl = !mobileAuth.isNative || mobileAuth.hasPanelUrl();
@@ -190,6 +257,15 @@ function SetupGate() {
     retry: false,
     refetchOnWindowFocus: false,
   });
+  /*
+    登录态、初始化状态、这一页的代码三样一起取。原来是串行的：setup.status 回来
+    才挂页面，页面代码到了才发 auth.me，首屏要多等一到两个来回。
+  */
+  const shellRoute = useIsShellRoute(location);
+  const auth = useShellAuth(shellRoute);
+  useEffect(() => {
+    if (shellRoute && auth.isLoading) void prefetchRoute(location);
+  }, [shellRoute, auth.isLoading, location]);
 
   // The local dev panel injects the seeded administrator in the server
   // context, so showing a login form here only creates a needless gate.
