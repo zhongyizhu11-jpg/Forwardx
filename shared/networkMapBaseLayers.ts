@@ -119,7 +119,37 @@ export const NETWORK_MAP_BASE_LAYER_ORDER: NetworkMapBaseLayerId[] = ["night", "
 export const NETWORK_MAP_EXTRA_BASE_LAYERS: NetworkMapBaseLayerId[] = ["amap"];
 export const NETWORK_MAP_ALL_BASE_LAYERS: NetworkMapBaseLayerId[] = [...NETWORK_MAP_BASE_LAYER_ORDER, ...NETWORK_MAP_EXTRA_BASE_LAYERS];
 
-export const NETWORK_MAP_LAYER_STORAGE_KEY = "forwardx.networkMap.baseLayer";
+/**
+ * 记住的底图存在哪（首页卡片和 /map 整页读写的是同一个键）。
+ *
+ * 带版本号：重新设计之前存的值（旧键 forwardx.networkMap.baseLayer）多半不是用户冲着现在这几张底图挑的 ——
+ * 老版本的「卫星」是高德卫星，被映射成了现在压暗的白天卫星图，用户的首页就成了一张发白的雪地图，不是
+ * 设计里的夜晚地球。所以换一个新键：所有人第一次都从标准地图开始，之后亲手点过的才记在新键下面。
+ * 旧键读到就顺手删掉，不再看它。
+ */
+export const NETWORK_MAP_LAYER_STORAGE_KEY = "forwardx.networkMap.baseLayer.v2";
+export const NETWORK_MAP_LEGACY_LAYER_STORAGE_KEYS = ["forwardx.networkMap.baseLayer"] as const;
+
+type LayerStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/** 页面打开时读一次：只认新键（没有就是标准地图），旧键删掉。存储不可用（隐私模式、被禁用）当没记过 */
+export function readNetworkMapBaseLayer(storage: LayerStorage | null | undefined): NetworkMapBaseLayerId {
+  if (!storage) return defaultNetworkMapBaseLayer();
+  for (const key of NETWORK_MAP_LEGACY_LAYER_STORAGE_KEYS) {
+    try { storage.removeItem(key); } catch { /* 删不掉也不要紧：再也不读它 */ }
+  }
+  try { return resolveNetworkMapBaseLayer(storage.getItem(NETWORK_MAP_LAYER_STORAGE_KEY)); } catch { return defaultNetworkMapBaseLayer(); }
+}
+
+/** 用户在图层里亲手点了一个：记在新键下面（只有这里写） */
+export function rememberNetworkMapBaseLayer(storage: LayerStorage | null | undefined, id: NetworkMapBaseLayerId): void {
+  try { storage?.setItem(NETWORK_MAP_LAYER_STORAGE_KEY, id); } catch { /* 存不了就下次再默认 */ }
+}
+
+/** 浏览器里的 localStorage；拿不到（SSR、被禁用）是 null */
+export function browserLayerStorage(): LayerStorage | null {
+  try { return typeof window !== "undefined" ? window.localStorage : null; } catch { return null; }
+}
 
 export const NETWORK_MAP_AMAP_TERMS_NOTE = "高德瓦片仅供自用面板；商用请申请高德 key";
 

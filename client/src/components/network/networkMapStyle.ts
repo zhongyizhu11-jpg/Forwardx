@@ -74,7 +74,29 @@ export type NetworkMapBaseColors = {
   land: string;
   border: string;
   graticule: string;
+  /**
+   * 夜光图那一套的水和陆地（--nm-night-water / --nm-night-land）：地球图淡出之后接上来的矢量底图、
+   * 首页小窗都用它，颜色和夜光图里近黑的海、陆地对得上，放大缩小时不会突然换一种蓝。没给就用 water / land
+   */
+  nightWater?: string;
+  nightLand?: string;
 };
+
+/** 换底图 / 建样式时的选项 */
+export type BaseLayerOptions = {
+  /**
+   * 只画矢量的陆地和水，不画任何栅格（首页的小窗）：小窗常在 7 ~ 9 级，地球图只有 4096 像素宽，放到这里
+   * 是一片糊；高德的街道图在一百多像素的窗里也只是噪点。
+   */
+  vectorOnly?: boolean;
+};
+
+/** 某种底图下矢量底图用哪套颜色：地球图（夜光 / 卫星）和小窗用夜光那套，暗黑网格和高德用自己的 */
+export function baseColorsFor(active: NetworkMapBaseLayerId, base: NetworkMapBaseColors, options: BaseLayerOptions = {}): NetworkMapBaseColors {
+  const night = options.vectorOnly || NETWORK_MAP_BASE_LAYERS[active].texture !== null;
+  if (!night) return base;
+  return { ...base, water: base.nightWater ?? base.water, land: base.nightLand ?? base.land };
+}
 
 export function kindColorExpression(colors: NetworkMapLineColors) {
   return ["match", ["get", "kind"], "main", colors.main, "degraded", colors.degraded, "down", colors.down, colors.backup];
@@ -97,34 +119,63 @@ export function rasterSourceIds(): string[] {
   return [TEXTURE_LAYER_IDS.night, TEXTURE_LAYER_IDS.day, ...NETWORK_MAP_ALL_BASE_LAYERS.flatMap((id) => NETWORK_MAP_BASE_LAYERS[id].tiles.map((tile) => tile.id))];
 }
 
-/** 某个底图激活时，每个栅格图层该不该显示 */
-export function rasterVisibility(active: NetworkMapBaseLayerId): Record<string, "visible" | "none"> {
+/** 某个底图激活时，每个栅格图层该不该显示（vectorOnly：全都不显示） */
+export function rasterVisibility(active: NetworkMapBaseLayerId, options: BaseLayerOptions = {}): Record<string, "visible" | "none"> {
   const base = NETWORK_MAP_BASE_LAYERS[active];
   const out: Record<string, "visible" | "none"> = {};
-  for (const texture of Object.keys(TEXTURE_LAYER_IDS) as NetworkMapTextureId[]) out[TEXTURE_LAYER_IDS[texture]] = base.texture === texture ? "visible" : "none";
+  for (const texture of Object.keys(TEXTURE_LAYER_IDS) as NetworkMapTextureId[]) out[TEXTURE_LAYER_IDS[texture]] = !options.vectorOnly && base.texture === texture ? "visible" : "none";
   for (const id of NETWORK_MAP_ALL_BASE_LAYERS) {
-    for (const tile of NETWORK_MAP_BASE_LAYERS[id].tiles) out[tile.id] = id === active ? "visible" : "none";
+    for (const tile of NETWORK_MAP_BASE_LAYERS[id].tiles) out[tile.id] = !options.vectorOnly && id === active ? "visible" : "none";
   }
   return out;
 }
 
 /**
- * 地球图只有 4096 像素宽，放大到 6 级以上就是一片糊掉的色块（首页的小窗常在 8、9 级）。所以放大时让它
- * 慢慢淡掉，底下自绘的深色陆地和国界慢慢显出来：远看是夜晚的地球，近看是干净的深色地图。
+ * 地球图在这两级之间淡出、矢量的陆地和国界淡入；到 TEXTURE_LAYER_MAX_ZOOM 地球图图层就不画了（图层的
+ * maxzoom：MapLibre 连瓦片都不再要）。
+ *
+ * 地球图只有 4096 像素宽，4 级就是原图的分辨率，再往上全是 MapLibre 拉大的同一块像素：上一版让它一直
+ * 淡到 8 级还留着三成，首页小窗（7 ~ 9 级）里就是一层糊掉的色块叠在矢量陆地上。现在 5.5 级以上只剩矢量。
  */
+export const TEXTURE_FADE_ZOOM: readonly [number, number] = [4.5, 5.5];
+export const TEXTURE_LAYER_MAX_ZOOM = TEXTURE_FADE_ZOOM[1];
+
 export function zoomFade(from: number, to: number) {
-  return ["interpolate", ["linear"], ["zoom"], 5, from, 8, to];
+  return ["interpolate", ["linear"], ["zoom"], TEXTURE_FADE_ZOOM[0], from, TEXTURE_FADE_ZOOM[1], to];
+}
+
+/**
+ * 陆地和国界用的是 Natural Earth 1:110m 的国界，6 级以上就和真实海岸线对不上了 —— 珠江口在它里面是一个
+ * 几十公里的三角形缺口，首页小窗框港粤几台时正好在窗的左下角，看着像一块深色的三角形接缝（以前以为是
+ * 地球图瓦片的缝，其实是它）。所以 5.5 → 7 级之间把陆地和国界淡到很淡：放大以后底图只剩一层均匀的深色，
+ * 粗糙的海岸线不再画出一个假的形状；缩小时它们照常是一张世界地图。
+ */
+export const COARSE_COAST_ZOOM: readonly [number, number] = [5.5, 7];
+const COARSE_COAST_FLOOR = { land: 0.15, border: 0.15 };
+/** 首页小窗（vectorOnly）的那一段：4 → 6 级 */
+export const INSET_COAST_ZOOM: readonly [number, number] = [4, 6];
+
+/** 陆地 / 国界的透明度：给出地球图淡出时（或没有地球图时）的满值，自动接上 6 级以上的淡出 */
+function vectorOpacity(full: number, floor: number, overTexture: number | null): unknown {
+  const fade = ["interpolate", ["linear"], ["zoom"]] as unknown[];
+  // 有地球图：4.5 级以前是 overTexture（夜光图上一道淡国界、卫星图上不画），5.5 级接满
+  if (overTexture !== null) fade.push(TEXTURE_FADE_ZOOM[0], overTexture, TEXTURE_FADE_ZOOM[1], full);
+  // MapLibre 要求插值的级别严格递增：地球图淡没的那一级和粗海岸线开始淡的那一级重合时只留一个
+  if (fade[fade.length - 2] !== COARSE_COAST_ZOOM[0]) fade.push(COARSE_COAST_ZOOM[0], full);
+  fade.push(COARSE_COAST_ZOOM[1], full * floor);
+  return fade;
 }
 
 /**
  * 栅格的压色：
  *   夜光图  提对比和饱和度，城市灯光更橙更亮；透明度 0.9 —— 黑色的海透出底下的深海军蓝；灯光提亮、海压暗是瓦片拉伸时就调好的（gradeNightPixels）
  *   卫星图  压暗到四成多、降饱和：白天的图太亮，线路和光点压不住
+ *   两张地球图都在 4.5 → 5.5 级淡到 0（zoomFade），之后只剩矢量底图
  *   高德    反相（brightness-min > max）再转 180° 色相：白底街道图变成深底亮路，颜色还是原来的意思
  */
 export function rasterTonePaint(rasterId: string): Record<string, unknown> {
-  if (rasterId === TEXTURE_LAYER_IDS.night) return { "raster-opacity": zoomFade(0.9, 0.3), "raster-contrast": 0.08, "raster-saturation": 0.1, "raster-brightness-min": 0, "raster-brightness-max": 1 };
-  if (rasterId === TEXTURE_LAYER_IDS.day) return { "raster-opacity": zoomFade(1, 0.35), "raster-contrast": 0.05, "raster-saturation": -0.3, "raster-brightness-min": 0, "raster-brightness-max": 0.46 };
+  if (rasterId === TEXTURE_LAYER_IDS.night) return { "raster-opacity": zoomFade(0.9, 0), "raster-contrast": 0.08, "raster-saturation": 0.1, "raster-brightness-min": 0, "raster-brightness-max": 1 };
+  if (rasterId === TEXTURE_LAYER_IDS.day) return { "raster-opacity": zoomFade(1, 0), "raster-contrast": 0.05, "raster-saturation": -0.3, "raster-brightness-min": 0, "raster-brightness-max": 0.46 };
   return { "raster-opacity": 1, "raster-contrast": -0.1, "raster-saturation": -0.65, "raster-brightness-min": 0.9, "raster-brightness-max": 0.06, "raster-hue-rotate": 180 };
 }
 
@@ -180,9 +231,10 @@ export function graticuleGeoJson(step = 15) {
   return { type: "FeatureCollection" as const, features: [{ type: "Feature" as const, properties: {}, geometry: { type: "MultiLineString" as const, coordinates: lines } }] };
 }
 
-export function buildNetworkMapStyle(active: NetworkMapBaseLayerId, countriesUrl: string, colors: NetworkMapLineColors, base: NetworkMapBaseColors) {
-  const visibility = rasterVisibility(active);
-  const patch = baseLayerPaintPatch(active);
+export function buildNetworkMapStyle(active: NetworkMapBaseLayerId, countriesUrl: string, colors: NetworkMapLineColors, baseColors: NetworkMapBaseColors, options: BaseLayerOptions = {}) {
+  const visibility = rasterVisibility(active, options);
+  const patch = baseLayerPaintPatch(active, options);
+  const base = baseColorsFor(active, baseColors, options);
   const emptyCollection = { type: "FeatureCollection" as const, features: [] as never[] };
   const sources: Record<string, any> = {
     [NETWORK_MAP_SOURCES.countries]: { type: "geojson", data: countriesUrl },
@@ -199,7 +251,8 @@ export function buildNetworkMapStyle(active: NetworkMapBaseLayerId, countriesUrl
     const id = TEXTURE_LAYER_IDS[texture];
     // 地球图按瓦片现拉伸（components/network/earthTiles.ts 注册的协议），最多切到第 4 级，再往上 MapLibre 自己放大
     sources[id] = { type: "raster", tiles: [textureTileUrl(texture)], tileSize: 256, maxzoom: NETWORK_MAP_TEXTURE_MAX_ZOOM };
-    rasterLayers.push({ id, type: "raster", source: id, layout: { visibility: visibility[id] }, paint: { "raster-fade-duration": 0, ...rasterTonePaint(id) } });
+    // maxzoom：5.5 级以上地球图已经淡没了，图层直接不画、也不再要瓦片（不留一层糊掉的像素）
+    rasterLayers.push({ id, type: "raster", source: id, maxzoom: TEXTURE_LAYER_MAX_ZOOM, layout: { visibility: visibility[id] }, paint: { "raster-fade-duration": 0, ...rasterTonePaint(id) } });
   }
   for (const layerId of NETWORK_MAP_ALL_BASE_LAYERS) {
     for (const tile of NETWORK_MAP_BASE_LAYERS[layerId].tiles) {
@@ -233,13 +286,28 @@ export function buildNetworkMapStyle(active: NetworkMapBaseLayerId, countriesUrl
   };
 }
 
-/** 换底图时要改的那几项（不重建样式）：自绘陆地、经纬网、国界、栅格的可见性和压色 */
-export function baseLayerPaintPatch(active: NetworkMapBaseLayerId) {
+/**
+ * 换底图时要改的那几项（不重建样式）：自绘陆地、经纬网、国界、栅格的可见性和压色。
+ * vectorOnly（首页小窗）：不画任何栅格，只画矢量的陆地和水（暗黑网格那套陆地，不要经纬网，颜色是夜光那套）。
+ */
+export function baseLayerPaintPatch(active: NetworkMapBaseLayerId, options: BaseLayerOptions = {}) {
   const base = NETWORK_MAP_BASE_LAYERS[active];
-  const raster = rasterVisibility(active);
-  // 地球图上：远看不画陆地、国界淡淡一道（夜光）或不画（卫星）；放大到地球图糊掉时陆地和国界接上来
-  const landOpacity: unknown = base.land ? 1 : base.texture ? zoomFade(0, 1) : 0;
-  const borderOpacity: unknown = base.land ? 1 : base.texture === "night" ? zoomFade(0.5, 1) : base.texture === "day" ? zoomFade(0, 1) : 0;
+  const raster = rasterVisibility(active, options);
+  if (options.vectorOnly) {
+    // 小窗几乎总在 6 级以上（它就是用来放大挤在一起的几台的），粗海岸线在这里最显眼：提前一级半淡下去，
+    // 到 6 级只剩一层均匀的深色（缩得很小的小窗，比如两台隔着半个国家，陆地还在）
+    return {
+      landOpacity: ["interpolate", ["linear"], ["zoom"], INSET_COAST_ZOOM[0], 1, INSET_COAST_ZOOM[1], COARSE_COAST_FLOOR.land],
+      borderWidth: 0.5,
+      borderOpacity: ["interpolate", ["linear"], ["zoom"], INSET_COAST_ZOOM[0], 0.6, INSET_COAST_ZOOM[1], 0.6 * COARSE_COAST_FLOOR.border],
+      graticule: "none" as "visible" | "none",
+      raster,
+      rasterPaint: Object.fromEntries(Object.keys(raster).map((id) => [id, rasterTonePaint(id)])),
+    };
+  }
+  // 地球图上：远看不画陆地、国界淡淡一道（夜光）或不画（卫星）；地球图淡出时陆地和国界接上来；再放大都淡下去（粗海岸线）
+  const landOpacity: unknown = base.land ? vectorOpacity(1, COARSE_COAST_FLOOR.land, null) : base.texture ? vectorOpacity(1, COARSE_COAST_FLOOR.land, 0) : 0;
+  const borderOpacity: unknown = base.land ? vectorOpacity(1, COARSE_COAST_FLOOR.border, null) : base.texture === "night" ? vectorOpacity(1, COARSE_COAST_FLOOR.border, 0.5) : base.texture === "day" ? vectorOpacity(1, COARSE_COAST_FLOOR.border, 0) : 0;
   return {
     landOpacity,
     borderWidth: base.texture ? 0.5 : base.borderWidth,

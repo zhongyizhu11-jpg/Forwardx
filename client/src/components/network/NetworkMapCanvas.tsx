@@ -6,11 +6,12 @@ import { INSET_MAX_ZOOM_OUT, MINI_CAP_MIN_ARC_PX, MINI_FIT_INSET_PX, MINI_FIT_MA
 import { countryLabelAnchors, countryLabelText } from "@/features/network/countryLabels";
 import { hostsForFilter, lineVisible, nodeLatency, nodeTone, type LineFilter, type LineKind, type NodeTone } from "@/features/network/networkMapLines";
 import type { NetworkMapModel, NetworkMapTarget } from "@/features/network/networkMapModel";
+import { canAutoFit, settlePaddedFit } from "@/features/network/networkMapOverlays";
 import { isClusterDimmed, isFlowDimmed, isHostDimmed, isRouteDimmed, isTargetDimmed, isTunnelDimmed, type MapFocus, type MapPadding } from "@/features/network/networkMapPageState";
 import { wgs84ToGcj02 } from "@shared/gcj02";
 import { NETWORK_MAP_BASE_LAYERS, type NetworkMapBaseLayerId, type NetworkMapSkin } from "@shared/networkMapBaseLayers";
 import { advanceCometPhase, buildCometPath, cometPeriodMs, mercatorUnitsPerPixel, pointAt, type CometPath } from "@shared/networkMapComet";
-import { boundsForPoints, computeMapLayout, fitViewToBoxes, greatCircleArc, unionBox, type FitItem, type LayoutPoint, type LngLat, type MapLayout, type MapLayoutOptions, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
+import { boundsForPoints, computeFanLayout, computeMapLayout, fitViewToBoxes, greatCircleArc, unionBox, type FitItem, type LayoutPoint, type LngLat, type MapLayout, type MapLayoutOptions, type PixelBox, type PixelPoint } from "@shared/networkMapGeometry";
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
 
 import { registerEarthTiles } from "./earthTiles";
@@ -18,6 +19,7 @@ import { readCssColor } from "./mapCharts";
 import {
   NETWORK_MAP_LAYERS,
   NETWORK_MAP_SOURCES,
+  baseColorsFor,
   baseLayerPaintPatch,
   buildNetworkMapStyle,
   kindColorExpression,
@@ -63,6 +65,11 @@ import {
 export type NetworkMapCameraApi = {
   flyTo(lngLat: LngLat, zoom: number): void;
   fitPoints(points: LngLat[], maxZoom?: number): void;
+  /**
+   * 整页：框住这几台主机 / 这几个落地目标（聚焦一条线、一条告警时）—— 和 fitAll 一样按 marker 真正占的
+   * 像素在留白里精确框，环和名字都不出界、不压在控件底下
+   */
+  fitMarkers(hostIds: readonly number[], targetKeys: readonly string[], maxZoom?: number): void;
   /** 框住全部；小图上同时清掉 userMoved（这是用户点了「回到全览」，或者首次 / 卡片变宽 / 主机集合变了） */
   fitAll(): void;
   /** 小图角上的 + / −：放大 / 缩小一级，算用户动过图 */
@@ -82,7 +89,13 @@ export type NetworkMapCanvasProps = {
   skin: NetworkMapSkin;
   focus: MapFocus | null;
   showFlows: boolean;
+  /**
+   * 地图留白：页面按浮在图上的标题、统计、工具栏、图例、抽屉 / 详情卡的真实盒子算好（paddingForOverlays）。
+   * 整页上框住全部、飞过去都落在这块里；变了而用户没动过图（还是「全览」）就在新的这块里重新框一遍
+   */
   padding: MapPadding;
+  /** 整页：浮在图上、但不在地图那一层里的东西（底部抽屉、详情卡）占的盒子（相对地图容器），名字和国名躲开它们 */
+  overlayBoxes?: readonly PixelBox[];
   reduceMotion: boolean;
   /** 页面不可见 / 地图被盖住时停掉流动光点 */
   paused: boolean;
@@ -136,6 +149,16 @@ const COUNTRY_LABEL_MAX_ZOOM = 6;
 
 /** 框住几个点时在地图留白之外再让出的边：marker 下面的名字和备注有百来像素宽，贴边会被裁掉半截 */
 const FIT_PADDING = { top: 36, bottom: 36, left: 64, right: 64 };
+/** 整页：fitBounds 只粗放一下，随后在留白里按 marker 真正占的像素精确框，粗放这一步的边不用算准 */
+const PAGE_ROUGH_PADDING = { top: 20, bottom: 20, left: 40, right: 40 };
+/** 整页用户最多缩到这一级；精确框住要更小（手机上横跨太平洋）时临时放开到 0，框好后就以框好的那级为下限 */
+const PAGE_MIN_ZOOM = 0.5;
+/** 整页框住全部最多放大到这一级（再大就聚不成簇，一台台错开，和「全览」的意思不符） */
+const PAGE_FIT_MAX_ZOOM = 5;
+/** 环外面那一圈描边、虚线圈：量圆盘的盒子时往外多算这么多 */
+const PAGE_RING_PAD = 4;
+/** 浮层变了（图例展开、抽屉换档）重新框时的缓动时长 */
+const PAGE_REFIT_MS = 450;
 /** 小图：fitBounds 只是粗放一下，随后按 marker 真正占的像素精确框（settleFit），所以留白不用算得很准 */
 const MINI_FIT_PADDING = { top: 34, bottom: 44, left: 52, right: 52 };
 /** 小窗只有一百多像素宽，主图那份留白比窗还大，fitBounds 会直接放弃；小窗的粗放留白按窗的尺度来 */
@@ -162,7 +185,7 @@ const PARTICLES_LONG = 3;
 const PARTICLES_LONG_PX = 220;
 
 const FALLBACK_COLORS: NetworkMapLineColors = { main: "#3b82f6", backup: "#cbd5e1", degraded: "#f59e0b", down: "#ef4444", flow: "#a855f7", particle: "#e0f2fe" };
-const FALLBACK_BASE: NetworkMapBaseColors = { water: "#050b16", land: "#0c1625", border: "rgba(56,189,248,0.22)", graticule: "rgba(34,211,238,0.08)" };
+const FALLBACK_BASE: NetworkMapBaseColors = { water: "#050b16", land: "#0c1625", border: "rgba(56,189,248,0.22)", graticule: "rgba(34,211,238,0.08)", nightWater: "#000213", nightLand: "#060a1d" };
 
 /** 状态 → 落地目标、组、延迟牌子用的那几档 CSS 类 */
 function healthClass(health: NetworkHealth) {
@@ -191,6 +214,8 @@ function readBaseColors(container: HTMLElement | null): NetworkMapBaseColors {
     land: readCssColor(container, "--nm-land", FALLBACK_BASE.land),
     border: readCssColor(container, "--nm-border-line", FALLBACK_BASE.border),
     graticule: readCssColor(container, "--nm-graticule", FALLBACK_BASE.graticule),
+    nightWater: readCssColor(container, "--nm-night-water", FALLBACK_BASE.nightWater!),
+    nightLand: readCssColor(container, "--nm-night-land", FALLBACK_BASE.nightLand!),
   };
 }
 
@@ -268,6 +293,19 @@ type Live = {
   settledReport: boolean;
   /** 小图：用户拖过 / 缩过、还没回到全览 —— 不再自动框，报给卡片显示「回到全览」 */
   userMoved: boolean;
+  /**
+   * 整页：现在是不是「全览」（fitAll 框出来的、之后没被拖 / 缩 / 飞走）—— 是的话浮层变了
+   * （图例展开、抽屉换档、详情卡开关）就在新的留白里重新框一遍，不是就只改留白
+   */
+  autoFit: boolean;
+  /** 整页：浮层变了之后排在下一帧的重新框（这一帧里页面可能紧接着飞到别处，那就不框了） */
+  refitFrame: number;
+  /**
+   * 整页：正在进行的、我们自己发起的飞行 / 框住（落到哪、框哪几台）。飞到一半留白又变了（选中东西后
+   * 标题换成对比卡、抽屉升起，量出来的浮层下一帧才到），直接 setPadding 会把飞行打断在半路；
+   * 这时按新的留白重新瞄准同一个目标。飞完、被用户的手打断就清掉
+   */
+  pendingMove: { kind: "fly"; center: LngLat; zoom: number } | { kind: "fit"; points: LngLat[]; frameSet: { hosts: Set<number>; targets: Set<string> } | null; maxZoom: number } | null;
   lastReport: string;
   rasterErrorReported: boolean;
   relayoutFrame: number;
@@ -283,7 +321,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       props, map: null, loaded: false, colors: FALLBACK_COLORS,
       hostMarkers: new Map(), targetMarkers: new Map(), clusterMarkers: [], capMarkers: new Map(), stubMarkers: new Map(), countryMarkers: new Map(),
       layout: null, linkFeatureIds: [], flowFeatureIds: [], waypointFeatureIds: [], comets: [], cometPhase: new Map(), cometLast: 0, cometDrawn: false,
-      didInitialFit: false, fitSignature: "", fitItems: [], keepOut: [], reserved: [], hiddenLabels: 0, discFit: false, labelProbe: false, framedBodies: [], arcPx: [], miniGroups: [], settling: false, settledReport: false, userMoved: false, lastReport: "", rasterErrorReported: false,
+      didInitialFit: false, fitSignature: "", fitItems: [], keepOut: [], reserved: [], hiddenLabels: 0, discFit: false, labelProbe: false, framedBodies: [], arcPx: [], miniGroups: [], settling: false, settledReport: false, userMoved: false, autoFit: false, refitFrame: 0, pendingMove: null, lastReport: "", rasterErrorReported: false,
       relayoutFrame: 0, animFrame: 0,
     };
   }
@@ -297,8 +335,11 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
   /** 小窗要框住的主机；主图是全部 */
   const framedHostIds = () => (isInset() && live.props.fitHostIds ? new Set(live.props.fitHostIds) : null);
 
-  // ---- 坐标：底图决定转不转 ----
-  const display = (lngLat: LngLat): LngLat => (NETWORK_MAP_BASE_LAYERS[live.props.baseLayer].amap ? wgs84ToGcj02(lngLat[0], lngLat[1]) : lngLat);
+  /** 小窗只画矢量的陆地和水（不画地球图、不画高德瓦片）：7 ~ 9 级的地球图是一片糊 */
+  const baseOptions = () => ({ vectorOnly: isInset() });
+
+  // ---- 坐标：底图决定转不转（小窗不画高德瓦片，底下是 WGS-84 的矢量陆地，不转）----
+  const display = (lngLat: LngLat): LngLat => (!isInset() && NETWORK_MAP_BASE_LAYERS[live.props.baseLayer].amap ? wgs84ToGcj02(lngLat[0], lngLat[1]) : lngLat);
 
   const layoutPoints = (): LayoutPoint[] => {
     const { model, showFlows } = live.props;
@@ -337,7 +378,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       const signature = [node.name, node.city, tone, subline].join("\u0001");
       let entry = live.hostMarkers.get(node.id);
       if (!entry) {
-        const element = el(`<div class="nm-mk nm-mk-host" data-host="${node.id}"><button type="button" class="nm-mk-disc"><i class="nm-mk-pulse"></i><i class="nm-mk-glyph"></i></button><div class="nm-mk-name"><b class="nm-mk-city"></b><span class="nm-mk-lat"></span></div></div>`);
+        // nm-mk-tether：小窗里扇开的主机从圆盘拉回真实位置的那根细线（排在圆盘前面，被圆盘盖住起点）
+        const element = el(`<div class="nm-mk nm-mk-host" data-host="${node.id}"><i class="nm-mk-tether" hidden></i><button type="button" class="nm-mk-disc"><i class="nm-mk-pulse"></i><i class="nm-mk-glyph"></i></button><div class="nm-mk-name"><b class="nm-mk-city"></b><span class="nm-mk-lat"></span></div></div>`);
         const disc = element.querySelector(".nm-mk-disc") as HTMLButtonElement;
         disc.addEventListener("click", (event) => { event.stopPropagation(); live.props.onSelectNode(node.id); });
         const marker = new maplibregl.Marker({ element, anchor: "center" }).setLngLat(display([node.geo.lng, node.geo.lat])).addTo(map);
@@ -351,8 +393,9 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         entry.element.dataset.tone = tone;
         const disc = entry.element.querySelector(".nm-mk-disc") as HTMLElement;
         disc.setAttribute("aria-label", [node.name, node.city !== node.name ? node.city : null, subline || null].filter(Boolean).join("，"));
-        // 图上写城市（「东京」），主机名在抽屉、提示和读屏文字里
-        (entry.element.querySelector(".nm-mk-city") as HTMLElement).textContent = node.city;
+        // 图上写城市（「东京」），主机名在抽屉、提示和读屏文字里。小窗例外：窗的标题已经写了这几台在哪，
+        // 窗里同一个地方常有两三台（同机房、IP 定位到同一个城市中心），写城市就是两个一样的「香港」—— 写主机名
+        (entry.element.querySelector(".nm-mk-city") as HTMLElement).textContent = isInset() ? node.name : node.city;
         const lat = entry.element.querySelector(".nm-mk-lat") as HTMLElement;
         lat.textContent = subline;
         lat.hidden = !subline;
@@ -452,6 +495,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       const rect = node.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) blockers.push(rect);
     }
+    // 抽屉 / 详情卡不在地图这一层里（querySelectorAll 找不到），页面量好了传进来
+    for (const box of live.props.overlayBoxes ?? []) blockers.push(new DOMRect(frame.left + box.x, frame.top + box.y, box.w, box.h));
     const hit = (rect: DOMRect) => rect.left < frame.left + 2 || rect.top < frame.top + 2 || rect.right > frame.right - 2 || rect.bottom > frame.bottom - 2
       || blockers.some((other) => rect.left < other.right && other.left < rect.right && rect.top < other.bottom && other.top < rect.bottom);
     type Item = { element: HTMLElement; name: HTMLElement; rank: number };
@@ -513,6 +558,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         const rect = element.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) blockers.push(rect);
       }
+      if (!compact()) for (const box of live.props.overlayBoxes ?? []) blockers.push(new DOMRect(frame.left + box.x, frame.top + box.y, box.w, box.h));
     }
     for (const marker of live.countryMarkers.values()) {
       const label = marker.getElement().firstElementChild as HTMLElement | null;
@@ -560,7 +606,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const framed = framedHostIds();
     const fullyInside = (box: PixelBox) => box.x >= 0 && box.y >= 0 && box.x + box.w <= width && box.y + box.h <= height;
     const resetName = (name: HTMLElement) => {
-      name.classList.remove("is-up", "is-tight", "is-off", "is-side");
+      name.classList.remove("is-up", "is-tight", "is-off", "is-side", "is-short");
       name.style.marginLeft = "";
     };
     type Entry = { key: string; name: HTMLElement; anchor: PixelPoint; body: PixelBox; gap: number; counts: boolean };
@@ -613,13 +659,20 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       }
       entries.push({ key: `g${cluster.members.map((member) => (member.kind === "host" ? member.id : member.key)).join(",")}`, name, anchor, body, gap: h / 2 + 2, counts });
     }
-    // 量名字：先按缩小一号的字号量一遍，再按正常的量（两次回流，marker 就几十个）
-    for (const entry of entries) { entry.name.classList.remove("is-off", "is-side"); entry.name.classList.add("is-tight"); }
+    // 量名字：先按缩小一号的字号量一遍，再按正常的量；有延迟那行的再量一遍只剩城市一行的（两行摆不下时退成一行）
+    const hasSubline = (entry: { name: HTMLElement }) => { const lat = entry.name.querySelector(".nm-mk-lat") as HTMLElement | null; return !!lat && !lat.hidden && !!lat.textContent; };
+    for (const entry of entries) { entry.name.classList.remove("is-off", "is-side", "is-short"); entry.name.classList.add("is-tight"); }
     const tightWidths = entries.map((entry) => entry.name.offsetWidth || 50);
-    for (const entry of entries) { entry.name.classList.remove("is-tight"); entry.name.style.marginLeft = ""; }
+    for (const entry of entries) if (hasSubline(entry)) entry.name.classList.add("is-short");
+    const shortTight = entries.map((entry) => (hasSubline(entry) ? entry.name.offsetWidth || 50 : 0));
+    for (const entry of entries) entry.name.classList.remove("is-tight");
+    const shortSize = entries.map((entry) => (hasSubline(entry) ? { w: entry.name.offsetWidth || 50, h: entry.name.offsetHeight || 14 } : null));
+    for (const entry of entries) { entry.name.classList.remove("is-short"); entry.name.style.marginLeft = ""; }
     const items: LabelItem[] = entries.map((entry, index) => ({
       key: entry.key, x: entry.body.x + entry.body.w / 2, y: entry.body.y + entry.body.h / 2,
       w: entry.name.offsetWidth || 60, h: entry.name.offsetHeight || 16, tightW: tightWidths[index], gap: entry.gap,
+      // 城市下面的延迟那行只在摆得下时留着：两行怎么摆都压着别人就退成只写城市（延迟点开就有）
+      ...(shortSize[index] ? { short: { w: shortSize[index]!.w, h: shortSize[index]!.h, tightW: shortTight[index] } } : {}),
       // 小窗里要框的那几台先挑位置，窗边路过的别的主机后放
       priority: entry.counts ? 0 : 1,
       sideGap: entry.body.w / 2 + 3,
@@ -663,6 +716,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       // 摆到圆盘旁边：CSS 把名字竖直居中在锚点上，marginLeft 是名字左边缘离锚点多远
       entry.name.classList.toggle("is-side", !!placement.side);
       entry.name.classList.toggle("is-tight", placement.tight);
+      entry.name.classList.toggle("is-short", !!placement.short);
       entry.name.style.marginLeft = placement.dx ? `${placement.dx}px` : "";
       const box = unionBox([entry.body, placement.box])!;
       keepOut.push(entry.body, placement.box);
@@ -797,6 +851,148 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     reportMiniLayout();
   };
 
+  // ---- 整页：在留白里精确框住 ----
+
+  /**
+   * 整页：量一遍图上每个 marker 真正占的像素 —— 环（连外面那圈描边）+ 名字（在画布挑好的那一边；
+   * 哪边都摆不下藏起来的，按默认摆在右边的样子算，框好之后它多半就摆得下了）。锚点是随缩放走的那个点
+   * （环上错开的主机减去像素偏移）。量 DOM 而不是估：名字多宽、换到了哪边只有 DOM 知道；
+   * jumpTo 同步发 move，marker 的 transform 当场就更新了，所以跳完马上量是准的。
+   * frameSet 为 null 时量全部；给了就只量这几台主机 / 这几个落地（并进簇的量簇）。
+   */
+  const measurePageItems = (frameSet: { hosts: Set<number>; targets: Set<string> } | null): FitItem[] => {
+    const map = live.map;
+    if (!map) return [];
+    relayout();
+    const frame = map.getContainer().getBoundingClientRect();
+    const toBox = (rect: DOMRect, pad = 0): PixelBox => ({ x: rect.left - frame.left - pad, y: rect.top - frame.top - pad, w: rect.width + pad * 2, h: rect.height + pad * 2 });
+    const items: FitItem[] = [];
+    const add = (element: HTMLElement, bodySelector: string, offset: readonly [number, number]) => {
+      const body = element.querySelector(bodySelector) as HTMLElement | null;
+      const rect = body?.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      const bodyBox = toBox(rect, PAGE_RING_PAD);
+      const boxes = [bodyBox];
+      const nameRect = (element.querySelector(".nm-mk-name") as HTMLElement | null)?.getBoundingClientRect();
+      if (nameRect && nameRect.width > 0 && nameRect.height > 0) boxes.push(toBox(nameRect));
+      items.push({ anchor: { x: bodyBox.x + bodyBox.w / 2 - offset[0], y: bodyBox.y + bodyBox.h / 2 - offset[1] }, box: unionBox(boxes)! });
+    };
+    const layout = live.layout;
+    for (const [id, entry] of live.hostMarkers) {
+      const position = layout?.pos[`h${id}`];
+      if (!position || position.clusterId !== null || (frameSet && !frameSet.hosts.has(id))) continue;
+      add(entry.element, ".nm-mk-disc", position.offset);
+    }
+    for (const [key, entry] of live.targetMarkers) {
+      const position = layout?.pos[`t:${key}`];
+      if (!position || position.clusterId !== null || (frameSet && !frameSet.targets.has(key))) continue;
+      add(entry.element, ".nm-mk-disc", position.offset);
+    }
+    for (const cluster of live.clusterMarkers) {
+      if (frameSet && !cluster.members.some((member) => (member.kind === "host" ? frameSet.hosts.has(member.id) : frameSet.targets.has(member.key)))) continue;
+      add(cluster.marker.getElement(), ".nm-mk-pill", [0, 0]);
+    }
+    return items;
+  };
+
+  /**
+   * 整页框住：fitBounds 先粗放（只知道经纬度），再在留白矩形里按 marker 真正占的像素精确框
+   * （settlePaddedFit，和单元测试同一份收敛循环）—— 以前只有粗放这一步，手机上横跨太平洋时
+   * 0.5 级都放不下，簇的环被切掉半个、落地目标压在工具栏底下。
+   *
+   * 整个过程是同步的跳（这一帧不会画出来），算出终点后跳回起点再飞过去 / 缓过去；
+   * 减少动态时直接停在终点。nextPadding 给了就是「浮层变了」：在新的留白里框，留白和视角一起缓过去。
+   */
+  const settlePageFit = (points: LngLat[], frameSet: { hosts: Set<number>; targets: Set<string> } | null, maxZoom: number, motion: { duration: number; fly: boolean }, nextPadding?: MapPadding) => {
+    const map = live.map;
+    if (!map || !live.loaded || points.length === 0) return;
+    map.stop();
+    const container = map.getContainer();
+    const size = { width: container.clientWidth, height: container.clientHeight };
+    const startPadding = map.getPadding();
+    const padding = nextPadding ?? live.props.padding;
+    const start = { center: map.getCenter(), zoom: map.getZoom() };
+    map.setPadding(padding);
+    // 横跨太平洋的线在手机上要缩到 0.5 级以下才放得下：框的时候放开到 0
+    map.setMinZoom(0);
+    const bounds = boundsForPoints(points);
+    if (bounds) {
+      // 留白太大时 fitBounds 会放弃（算出负的可用宽度）：那就从当前视角直接开始精确框
+      try { map.fitBounds(bounds, { maxZoom, padding: PAGE_ROUGH_PADDING, duration: 0 }); } catch { /* 留白比图还大 */ }
+    }
+    if (size.width >= 40 && size.height >= 40) {
+      settlePaddedFit({
+        size,
+        padding,
+        measure: () => measurePageItems(frameSet),
+        zoom: () => map.getZoom(),
+        jump: (centerPx, zoom) => map.jumpTo({ center: map.unproject([centerPx.x, centerPx.y]), zoom: Math.max(0, Math.min(maxZoom, zoom)) }),
+        maxZoom,
+        minZoom: 0,
+      });
+    }
+    const end = { center: map.getCenter(), zoom: map.getZoom() };
+    // 用户最多缩到 0.5 级；框好的比这还小（手机上）就以框好的为下限，起点也别被下限夹住
+    map.setMinZoom(Math.max(0, Math.min(PAGE_MIN_ZOOM, end.zoom, start.zoom)));
+    if (motion.duration <= 0 || live.props.reduceMotion) {
+      relayout();
+      return;
+    }
+    map.jumpTo({ ...start, padding: startPadding });
+    relayout();
+    const options = { center: end.center, zoom: end.zoom, padding, essential: true };
+    if (motion.fly) map.flyTo({ ...options, speed: 0.9, curve: 1.42, maxDuration: motion.duration });
+    else map.easeTo({ ...options, duration: motion.duration });
+    live.pendingMove = { kind: "fit", points, frameSet, maxZoom };
+  };
+
+  /**
+   * 整页的相机约束。MapLibre 默认要求整个世界的高度盖满容器（纬度 ±85° 不许露边），于是 694px 高的
+   * 手机地图最小只能缩到 0.44 级 —— 360px 宽的手机上横跨太平洋的港 → 洛杉矶连同名字就是放不下，
+   * 簇的环被挤出左边。这里改成：世界比容器高时照旧不让看到两极之外；世界比容器矮时（只在窄手机
+   * 框全览时出现）允许，只要整个世界还在容器里（上下露出的是和海一样的底色）。缩放夹在 min / max 之间。
+   */
+  function constrainPageCamera(lngLat: maplibregl.LngLat, zoom: number) {
+    const map = live.map;
+    const z = Math.min(map?.getMaxZoom() ?? 14, Math.max(map?.getMinZoom() ?? PAGE_MIN_ZOOM, zoom));
+    const height = map?.getContainer().clientHeight ?? 0;
+    const world = 512 * 2 ** z;
+    const lat = Math.max(-85, Math.min(85, lngLat.lat));
+    let y = maplibregl.MercatorCoordinate.fromLngLat([0, lat]).y * world;
+    if (height > 0) y = world >= height ? Math.min(world - height / 2, Math.max(height / 2, y)) : Math.min(height / 2, Math.max(world - height / 2, y));
+    const center = new maplibregl.MercatorCoordinate(0, y / world).toLngLat();
+    return { center: new maplibregl.LngLat(lngLat.lng, center.lat), zoom: z };
+  }
+
+  /** 整页的「全览」：框住全部主机和落地目标 */
+  const fitPageAll = (motion: { duration: number; fly: boolean }, nextPadding?: MapPadding) => {
+    live.autoFit = true;
+    settlePageFit(layoutPoints().map((point) => point.lngLat), null, PAGE_FIT_MAX_ZOOM, motion, nextPadding);
+  };
+
+  /**
+   * 整页：排到下一帧在当前留白里重新框一遍全部（留白和视角一起缓过去）。同一帧里来好几次（留白变了、
+   * 容器变了）只框一次；这一帧里页面若紧接着飞去看某一台（leaveAutoFit），就不框了
+   */
+  const schedulePageRefit = () => {
+    const map = live.map;
+    if (!map || compact()) return;
+    if (live.refitFrame) cancelAnimationFrame(live.refitFrame);
+    live.refitFrame = requestAnimationFrame(() => {
+      live.refitFrame = 0;
+      if (live.map !== map) return;
+      if (live.autoFit) fitPageAll({ duration: PAGE_REFIT_MS, fly: false }, live.props.padding);
+      else map.setPadding(live.props.padding);
+    });
+  };
+
+  /** 整页：用户拖了 / 缩了 / 飞去看某一台了 —— 不再是全览，浮层变了不重新框 */
+  const leaveAutoFit = () => {
+    live.autoFit = false;
+    // 排着的重新框不做了，但新的留白得先交给地图：接下来的飞行要落在新的可视区正中
+    if (live.refitFrame) { cancelAnimationFrame(live.refitFrame); live.refitFrame = 0; live.map?.setPadding(live.props.padding); }
+  };
+
   /** 主图把分组和占用情况交给卡片（摆小窗用）；没变就不吵它 */
   const reportMiniLayout = () => {
     const map = live.map;
@@ -861,13 +1057,31 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     // 有一台远，窗放不大）照样并成一枚小 pill 画在真正的组心，不再错开成一圈 —— 圈上的名字互相压、被窗边切掉
     const flagOf = new Map(model.nodes.map((node) => [`h${node.id}`, node.emoji]));
     const layoutOptions: MapLayoutOptions = mini ? miniGroupLayoutOptions(flagOf) : {};
-    live.layout = computeMapLayout(layoutPoints(), (lngLat) => map.project(lngLat as [number, number]), zoom, layoutOptions);
+    const projectPoint = (lngLat: LngLat) => map.project(lngLat as [number, number]);
+    if (isInset()) {
+      // 小窗：每台都画出来、各带名字 —— 屏幕上比圆盘还近的（坐标一模一样的也算）围着真实位置扇开（2 台并排、
+      // 3 ~ 6 台一圈），细线连回真实位置；超过 6 台才留一枚带数量的 pill。扇出去的圆盘不出窗（标题条下面）
+      const container = map.getContainer();
+      const margin = FIT_INSET.inset;
+      const bounds: PixelBox = { x: margin.left, y: margin.top, w: Math.max(0, container.clientWidth - margin.left - margin.right), h: Math.max(0, container.clientHeight - margin.top - margin.bottom) };
+      live.layout = computeFanLayout(layoutPoints(), projectPoint, { discSize: MINI_DISC_R * 2, bounds });
+    } else live.layout = computeMapLayout(layoutPoints(), projectPoint, zoom, layoutOptions);
     const layout = live.layout;
     for (const [id, entry] of live.hostMarkers) {
       const position = layout.pos[`h${id}`];
       if (!position) continue;
       entry.element.classList.toggle("is-hidden", position.clusterId !== null);
       entry.marker.setLngLat(position.lngLat as [number, number]).setOffset(position.offset);
+      // 扇开的：从圆盘心拉一根细线回真实位置（offset 的反方向），末端一个小点 —— 一眼看出「这几台在同一个地方」
+      const tether = entry.element.querySelector(".nm-mk-tether") as HTMLElement | null;
+      if (tether) {
+        const length = position.fanned ? Math.hypot(position.offset[0], position.offset[1]) : 0;
+        tether.hidden = length < 1;
+        if (length >= 1) {
+          tether.style.width = `${length.toFixed(1)}px`;
+          tether.style.transform = `rotate(${Math.atan2(-position.offset[1], -position.offset[0]).toFixed(4)}rad)`;
+        }
+      }
     }
     for (const [key, entry] of live.targetMarkers) {
       const position = layout.pos[`t:${key}`];
@@ -916,6 +1130,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         const nextZoom = Math.max(6.3, target.getZoom() + 2.2);
         // 小图不飞：只回调（卡片提示这组是谁）；整页上簇心已经是显示坐标（高德下转过 GCJ-02 的），直接飞，不走 api.flyTo 再转一次
         if (!compact()) {
+          leaveAutoFit();
           if (live.props.reduceMotion) target.jumpTo({ center: center as [number, number], zoom: nextZoom });
           else target.flyTo({ center: center as [number, number], zoom: nextZoom, speed: 0.9, curve: 1.42, maxDuration: 1800, essential: true });
         }
@@ -1177,16 +1392,30 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       const map = live.map;
       if (!map) return;
       const center = display(lngLat) as [number, number];
+      leaveAutoFit();
       // 抽屉的高度已经通过 setPadding 告诉了地图，这里不再传 padding，传了会算两遍
       if (live.props.reduceMotion) map.jumpTo({ center, zoom });
-      else map.flyTo({ center, zoom, speed: 0.9, curve: 1.42, maxDuration: 1800, essential: true });
+      else {
+        map.flyTo({ center, zoom, speed: 0.9, curve: 1.42, maxDuration: 1800, essential: true });
+        live.pendingMove = { kind: "fly", center, zoom };
+      }
     },
     fitPoints(points, maxZoom = 8) {
       const map = live.map;
       if (!map || points.length === 0) return;
       const bounds = boundsForPoints(points.map((point) => display(point)));
       if (!bounds) return;
+      leaveAutoFit();
       map.fitBounds(bounds, { maxZoom, padding: FIT_PADDING, duration: live.props.reduceMotion ? 0 : 1200, essential: true });
+    },
+    fitMarkers(hostIds, targetKeys, maxZoom = 8) {
+      if (!live.map || compact()) return;
+      const hosts = new Set(hostIds);
+      const targets = new Set(targetKeys);
+      const points = layoutPoints().filter((point) => (point.key.startsWith("t:") ? targets.has(point.key.slice(2)) : hosts.has(Number(point.key.slice(1))))).map((point) => point.lngLat);
+      if (points.length === 0) return;
+      leaveAutoFit();
+      settlePageFit(points, { hosts, targets }, maxZoom, { duration: 1200, fly: false });
     },
     fitAll() {
       const map = live.map;
@@ -1215,7 +1444,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       if (compact()) {
         map.fitBounds(bounds, { maxZoom: MINI_FIT_MAX_ZOOM, padding: isInset() ? INSET_FIT_PADDING : MINI_FIT_PADDING, duration: 0 });
         settleFit();
-      } else map.fitBounds(bounds, { maxZoom: 5, padding: FIT_PADDING, duration: live.props.reduceMotion ? 0 : 1200, essential: true });
+      } else fitPageAll({ duration: 1200, fly: true });
     },
     zoomBy(delta) {
       const map = live.map;
@@ -1285,7 +1514,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
   const applyBaseLayer = (baseLayer: NetworkMapBaseLayerId) => {
     const map = live.map;
     if (!map || !live.loaded) return;
-    const patch = baseLayerPaintPatch(baseLayer);
+    const patch = baseLayerPaintPatch(baseLayer, baseOptions());
     map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-opacity", patch.landOpacity);
     map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-width", patch.borderWidth);
     map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-opacity", patch.borderOpacity);
@@ -1303,7 +1532,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     if (!map || !live.loaded) return;
     const holder = containerRef.current?.parentElement ?? null;
     live.colors = readColors(holder);
-    const base = readBaseColors(holder);
+    // 地球图（夜光 / 卫星）淡出后接上来的矢量底图、小窗：用夜光那套近黑的水和陆地；暗黑网格、高德用自己的
+    const base = baseColorsFor(live.props.baseLayer, readBaseColors(holder), baseOptions());
     map.setPaintProperty(NETWORK_MAP_LAYERS.background, "background-color", base.water);
     map.setPaintProperty(NETWORK_MAP_LAYERS.land, "fill-color", base.land);
     map.setPaintProperty(NETWORK_MAP_LAYERS.borders, "line-color", base.border);
@@ -1328,12 +1558,14 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const mini = compact();
     // 离线地球图的瓦片协议（全局注册一次）
     registerEarthTiles();
+    // 小图能拖能捏（滚轮不缩）；整页什么都能（滚轮缩放、键盘）；小窗不能动
     const pannable = isMini();
+    const page = !mini;
     let map: MapLibreMap;
     try {
       map = new maplibregl.Map({
         container,
-        style: buildNetworkMapStyle(live.props.baseLayer, COUNTRIES_URL, live.colors, baseColors) as any,
+        style: buildNetworkMapStyle(live.props.baseLayer, COUNTRIES_URL, live.colors, baseColors, baseOptions()) as any,
         center: [110, 25],
         zoom: 1.6,
         // 小图在 340px 宽的手机卡片里要框住横跨太平洋的线，0.5 级放不下（世界 724px 宽），放开到 0 级
@@ -1347,12 +1579,13 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         fadeDuration: 0,
         // 主图能拖、捏合缩放、双击放大；滚轮不缩（滚到卡片上页面还得能往下滚，缩放用角上的 + / −）、
         // 键盘不管（卡片不是焦点）。小窗不能动。点击两种都有（MapEventHandler 不看这个开关）
-        interactive: pannable,
-        scrollZoom: false,
-        keyboard: false,
-        dragPan: pannable,
-        doubleClickZoom: pannable,
-        touchZoomRotate: pannable,
+        interactive: pannable || page,
+        scrollZoom: page,
+        keyboard: page,
+        dragPan: pannable || page,
+        doubleClickZoom: pannable || page,
+        touchZoomRotate: pannable || page,
+        transformConstrain: page ? constrainPageCamera : null,
       });
     } catch (error) {
       // 没有 WebGL（远程桌面、老浏览器）：告诉页面画兜底文案
@@ -1385,7 +1618,11 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         map.on("zoomstart", (event) => { if (event.originalEvent) markUserMoved(); });
       } else if (!mini) {
         // 整页拖图不重新布局，但名字、国名压没压到谁要重新看一眼（拖完看一次就够）
-        map.on("moveend", () => { updatePageLabels(); updateCountryLabels(); });
+        map.on("moveend", () => { live.pendingMove = null; updatePageLabels(); updateCountryLabels(); });
+        // 用户自己拖了 / 缩了：不再是全览，浮层变了也不抢视角
+        for (const type of ["dragstart", "zoomstart", "rotatestart"] as const) map.on(type, (event: any) => { if (event?.originalEvent) leaveAutoFit(); });
+        // 字体到了名字会变宽：还是全览就按新的宽度再框一遍
+        void document.fonts?.ready.then(() => { if (live.map === map && live.autoFit && live.didInitialFit) fitPageAll({ duration: PAGE_REFIT_MS, fly: false }); });
       }
       map.on("click", (event) => {
         // 点在线上（看不见的命中层有 14px 宽，好点）就当点了这条线；筛掉的线不算；点空处交给页面
@@ -1418,6 +1655,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       map.resize();
       // 小图：卡片变宽变窄（转屏、侧栏收起）就重新框一遍，不然一半主机跑到边外；用户动过图就不抢视角，只让卡片重新摆小窗
       if (mini && live.loaded && live.didInitialFit) refit("resize");
+      // 整页：容器变了（转屏、侧栏收起、地址栏伸缩）而还是全览，就在新的尺寸里重新框
+      if (!mini && live.loaded && live.didInitialFit && live.autoFit) schedulePageRefit();
       scheduleRelayout();
     }) : null;
     observer?.observe(container);
@@ -1425,6 +1664,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       observer?.disconnect();
       if (live.relayoutFrame) cancelAnimationFrame(live.relayoutFrame);
       if (live.animFrame) cancelAnimationFrame(live.animFrame);
+      if (live.refitFrame) cancelAnimationFrame(live.refitFrame);
       live.loaded = false;
       live.map = null;
       live.comets = [];
@@ -1450,6 +1690,15 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     if (compact() && live.didInitialFit) {
       const signature = fitSignature();
       if (signature !== live.fitSignature) { live.fitSignature = signature; refit("hosts"); }
+    }
+    // 整页：落地目标（单独一个查询）常常比主机晚到一步，主机多了少了也一样 —— 还是全览就把新来的一起框进去，
+    // 不然先框好的视角里洛杉矶的落地在图外
+    if (!compact() && live.didInitialFit) {
+      const signature = fitSignature();
+      if (signature !== live.fitSignature) {
+        live.fitSignature = signature;
+        if (live.autoFit) fitPageAll({ duration: PAGE_REFIT_MS, fly: false });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.model, props.showFlows, (props.fitHostIds ?? []).join(",")]);
@@ -1504,9 +1753,29 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [avoidKey]);
 
+  // 留白变了（浮层的盒子变了）：整页还是全览就排到下一帧在新的留白里重新框（留白和视角一起缓过去）——
+  // 这一帧里页面可能紧接着飞到某台主机（点开详情时抽屉升起），那时 autoFit 已经清掉，就只改留白。
+  // 不是全览（或剩的地方太小，比如抽屉拉到全屏）就只改留白，和以前一样
+  const paddingKey = `${props.padding.top},${props.padding.right},${props.padding.bottom},${props.padding.left}`;
   useEffect(() => {
-    live.map?.setPadding(props.padding);
-  }, [props.padding]);
+    const map = live.map;
+    if (!map) return;
+    const container = map.getContainer();
+    const size = { width: container.clientWidth, height: container.clientHeight };
+    if (!compact() && live.loaded && live.didInitialFit && live.autoFit && canAutoFit(size, props.padding)) { schedulePageRefit(); return; }
+    // 自己发起的飞行 / 框住还在半路：按新的留白重新瞄准同一个目标（setPadding 会把它停在半路）
+    const pending = live.pendingMove;
+    if (!compact() && pending && map.isMoving()) {
+      if (pending.kind === "fly") {
+        map.flyTo({ center: pending.center, zoom: pending.zoom, padding: props.padding, speed: 0.9, curve: 1.42, maxDuration: 1200, essential: true });
+        live.pendingMove = pending;
+      } else if (canAutoFit(size, props.padding)) settlePageFit(pending.points, pending.frameSet, pending.maxZoom, { duration: 700, fly: false }, props.padding);
+      else map.setPadding(props.padding);
+      return;
+    }
+    map.setPadding(props.padding);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paddingKey]);
 
   useEffect(() => {
     if (!live.map || !live.loaded) return;

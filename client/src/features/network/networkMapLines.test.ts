@@ -13,7 +13,7 @@ import {
   overallAvailability,
   pickHubNode,
 } from "./networkMapLines";
-import { buildNetworkMapModel, mapCityName, readTargetGeo } from "./networkMapModel";
+import { buildNetworkMapModel, mapCityName, mapRegionText, readTargetGeo } from "./networkMapModel";
 
 const now = 1_700_000_000_000;
 const host = (id: number, name: string, extra: Record<string, unknown> = {}) => ({ id, name, isOnline: true, lastHeartbeat: now - 1000, geoCountryCode: "HK", geoRegion: name, geoLatitudeMicro: 22e6 + id * 1e6, geoLongitudeMicro: 114e6 + id * 1e6, ...extra });
@@ -135,9 +135,27 @@ test("落地目标的定位：认服务端 lookupAddressGeo 那一行（微度�
   assert.equal(readTargetGeo({ geoLatitudeMicro: null, geoLongitudeMicro: null }).geo, null);
 });
 
-test("图上的城市名：查城市表写中文；香港、新加坡这种一城一地写地区名；查不到不猜", () => {
+test("图上的地名：一律中文（城市表 → 省 / 州对照 → 国家 / 地区名），全查不到才写原文", () => {
   assert.equal(mapCityName({ geoCountryCode: "JP", geoRegion: "Tokyo" }), "东京");
   assert.equal(mapCityName({ geoCountryCode: "HK", geoRegion: "Central" }), "香港");
   assert.equal(mapCityName({ geoCountryCode: "SG", geoRegion: "Singapore" }), "新加坡");
-  assert.equal(mapCityName({ geoCountryCode: "XX", geoRegion: "Nowhere" }), null);
+  assert.equal(mapCityName({ geoCountryCode: "CN", geoRegion: "Guangdong" }), "广东");
+  assert.equal(mapCityName({ geoCountryCode: "XX", geoRegion: "Nowhere" }), "Nowhere");
+  assert.equal(mapRegionText({ geoCountryCode: "AU", geoRegion: "New South Wales", geoLatitudeMicro: -33_871_500, geoLongitudeMicro: 151_200_600 }), "悉尼");
+  assert.equal(mapRegionText({ geoCountryCode: "HK", geoRegion: "Hong Kong" }), "香港");
+});
+
+test("用户的拓扑：港粤台悉尼的英文 region 在模型里都成了中文", () => {
+  const model = buildNetworkMapModel({
+    hosts: [
+      { id: 1, name: "Jinx(29.9y)", isOnline: true, lastHeartbeat: now, geoCountryCode: "HK", geoRegion: "Hong Kong", geoLatitudeMicro: 22_278_300, geoLongitudeMicro: 114_174_700 },
+      { id: 2, name: "Po0(200M)", isOnline: true, lastHeartbeat: now, geoCountryCode: "CN", geoRegion: "Guangdong", geoLatitudeMicro: 23_116_700, geoLongitudeMicro: 113_250_000 },
+      { id: 3, name: "DW TW", isOnline: true, lastHeartbeat: now, geoCountryCode: "TW", geoRegion: "Taipei City", geoLatitudeMicro: 25_047_800, geoLongitudeMicro: 121_531_900 },
+      { id: 4, name: "55", isOnline: true, lastHeartbeat: now, geoCountryCode: "AU", geoRegion: "New South Wales", geoLatitudeMicro: -33_871_500, geoLongitudeMicro: 151_200_600 },
+    ],
+    tunnels: [],
+    now,
+  });
+  assert.deepEqual(model.nodes.map((node) => node.city), ["香港", "广州", "台北", "悉尼"]);
+  assert.deepEqual(model.nodes.map((node) => node.region), ["香港", "广州", "台北", "悉尼"]);
 });
