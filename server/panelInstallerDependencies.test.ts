@@ -107,6 +107,46 @@ install_runtime_dependencies
   assert.match(result.fingerprint, /^[0-9a-f]{64}$/);
 });
 
+test("upgrading an install made by the pre-fingerprint script skips pnpm when the lockfile did not change", { skip: !bash }, () => {
+  // 2.3.398 之前的脚本不写指纹：老机器第一次用新脚本升级时，按解压前的旧文件补上指纹，
+  // 依赖没变就不用白装一遍。
+  const result = runInstallerHarness({
+    prepare: (appDir) => {
+      writeBundle(appDir);
+      fs.mkdirSync(path.join(appDir, "node_modules/.pnpm"), { recursive: true });
+      fs.writeFileSync(path.join(appDir, "node_modules/.modules.yaml"), "layoutVersion: 5\n");
+    },
+    body: `${fakePnpm}
+seed_dependency_fingerprint
+echo "--- new bundle extracted: only the version changed"
+node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));p.version="2.3.399";fs.writeFileSync("package.json",JSON.stringify(p))'
+install_runtime_dependencies
+echo "--- a seeded fingerprint is never overwritten by a later seed"
+seed_dependency_fingerprint
+printf 'lockfileVersion: 9\\npackages:\\n  a@2.0.0: {}\\n' > pnpm-lock.yaml
+install_runtime_dependencies
+`,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Recorded the dependency fingerprint of the running install/);
+  assert.deepEqual(result.calls, ["pnpm install --prod --frozen-lockfile --prefer-offline"], "only the real lockfile change installs");
+  const stepLines = result.stdout.split("\n").filter((line) => line.startsWith("[ForwardX] step 4/5"));
+  assert.deepEqual(stepLines, ["[ForwardX] step 4/5 依赖未变化，跳过安装", "[ForwardX] step 4/5 安装依赖"]);
+});
+
+test("without node_modules there is nothing to seed and the installer installs", { skip: !bash }, () => {
+  const result = runInstallerHarness({
+    prepare: (appDir) => writeBundle(appDir),
+    body: `${fakePnpm}
+seed_dependency_fingerprint
+install_runtime_dependencies
+`,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.doesNotMatch(result.stdout, /Recorded the dependency fingerprint/);
+  assert.deepEqual(result.calls, ["pnpm install --prod --frozen-lockfile --prefer-offline"]);
+});
+
 test("a patch change or a missing node_modules forces a reinstall even with the same lockfile", { skip: !bash }, () => {
   const result = runInstallerHarness({
     prepare: (appDir) => writeBundle(appDir),

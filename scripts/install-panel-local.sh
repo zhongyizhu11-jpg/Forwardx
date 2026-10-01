@@ -786,6 +786,7 @@ download_panel_bundle() {
 
   panel_step 3 "解压文件"
   mkdir -p "$APP_DIR"
+  seed_dependency_fingerprint
   rm -rf "$APP_DIR/dist" "$APP_DIR/client" "$APP_DIR/drizzle" "$APP_DIR/plugins" "$APP_DIR/scripts"
   rm -f "$APP_DIR/package.json" "$APP_DIR/pnpm-lock.yaml" "$APP_DIR/pnpm-workspace.yaml"
 
@@ -838,6 +839,23 @@ dependency_fingerprint() {
       done
     fi
   } | sha256_stdin
+}
+
+seed_dependency_fingerprint() {
+  # 依赖指纹是 2.3.398 的脚本才开始写的。更早的脚本装出来的 node_modules 没有指纹，
+  # 第一次用新脚本升级时就只能保守地重装一遍 —— 哪怕两个版本之间依赖一个字节都没变，
+  # 国内机器上要好几分钟。面板此刻正跑在这份 node_modules 上，它就是按当前（即将被替换的）
+  # 锁文件装出来的，所以在解压新包之前，用旧文件把指纹补上。之后和新包算出来的指纹一比，
+  # 没变就跳过安装。
+  local fingerprint_file="$APP_DIR/node_modules/$DEPS_FINGERPRINT_NAME"
+  local fingerprint=""
+  [ -f "$fingerprint_file" ] && return 0
+  [ -f "$APP_DIR/pnpm-lock.yaml" ] || return 0
+  [ -d "$APP_DIR/node_modules/.pnpm" ] && [ -f "$APP_DIR/node_modules/.modules.yaml" ] || return 0
+  fingerprint="$(dependency_fingerprint "$APP_DIR" 2>/dev/null || true)"
+  [ -n "$fingerprint" ] || return 0
+  printf "%s\n" "$fingerprint" > "$fingerprint_file" 2>/dev/null || true
+  echo "[ForwardX] Recorded the dependency fingerprint of the running install"
 }
 
 install_runtime_dependencies() {
