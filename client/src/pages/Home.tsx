@@ -12,7 +12,7 @@ import { trafficQuotaBreakdown } from "@/lib/trafficQuota";
 import { trpc } from "@/lib/trpc";
 import { AccountSection } from "@/features/dashboard/AccountSection";
 import { AttentionSection } from "@/features/dashboard/AttentionSection";
-import { NetworkMapSection } from "@/features/dashboard/NetworkMapSection";
+import { NetworkMapSlot } from "@/features/dashboard/NetworkMapSlot";
 import { QuickStartSection } from "@/features/dashboard/QuickStartSection";
 import { TrafficSurface, type TrafficChartPoint } from "@/features/dashboard/TrafficSurface";
 import { useEffect, useMemo, useState } from "react";
@@ -222,8 +222,9 @@ function DashboardContent() {
       {/*
         网络地图放在数字前面：这一页第一眼看到的是「谁连着谁、哪条断了」，数字是第二眼的事
         （用户 2026-09-27 明确要它留在顶端）。没有主机时它自己不出现。
+        它的几条请求不等 health：health 还没回来时照常并行取，health 说没有主机才停。
       */}
-      <NetworkMapSection enabled={!!health && health.hosts.total > 0} onOpen={setLocation} />
+      <NetworkMapSlot enabled={!health || health.hosts.total > 0} cacheScope={accountCacheScope} onOpen={setLocation} />
       <SystemStatusHeader
         health={health as SystemHealth | undefined}
         loading={healthLoading}
