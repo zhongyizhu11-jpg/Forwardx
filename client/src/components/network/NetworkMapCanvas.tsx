@@ -562,7 +562,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const framed = framedHostIds();
     const fullyInside = (box: PixelBox) => box.x >= 0 && box.y >= 0 && box.x + box.w <= width && box.y + box.h <= height;
     const resetName = (name: HTMLElement) => {
-      name.classList.remove("is-up", "is-tight", "is-off", "is-side");
+      name.classList.remove("is-up", "is-tight", "is-off", "is-side", "is-short");
       name.style.marginLeft = "";
     };
     type Entry = { key: string; name: HTMLElement; anchor: PixelPoint; body: PixelBox; gap: number; counts: boolean };
@@ -615,13 +615,20 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       }
       entries.push({ key: `g${cluster.members.map((member) => (member.kind === "host" ? member.id : member.key)).join(",")}`, name, anchor, body, gap: h / 2 + 2, counts });
     }
-    // 量名字：先按缩小一号的字号量一遍，再按正常的量（两次回流，marker 就几十个）
-    for (const entry of entries) { entry.name.classList.remove("is-off", "is-side"); entry.name.classList.add("is-tight"); }
+    // 量名字：先按缩小一号的字号量一遍，再按正常的量；有延迟那行的再量一遍只剩城市一行的（两行摆不下时退成一行）
+    const hasSubline = (entry: { name: HTMLElement }) => { const lat = entry.name.querySelector(".nm-mk-lat") as HTMLElement | null; return !!lat && !lat.hidden && !!lat.textContent; };
+    for (const entry of entries) { entry.name.classList.remove("is-off", "is-side", "is-short"); entry.name.classList.add("is-tight"); }
     const tightWidths = entries.map((entry) => entry.name.offsetWidth || 50);
-    for (const entry of entries) { entry.name.classList.remove("is-tight"); entry.name.style.marginLeft = ""; }
+    for (const entry of entries) if (hasSubline(entry)) entry.name.classList.add("is-short");
+    const shortTight = entries.map((entry) => (hasSubline(entry) ? entry.name.offsetWidth || 50 : 0));
+    for (const entry of entries) entry.name.classList.remove("is-tight");
+    const shortSize = entries.map((entry) => (hasSubline(entry) ? { w: entry.name.offsetWidth || 50, h: entry.name.offsetHeight || 14 } : null));
+    for (const entry of entries) { entry.name.classList.remove("is-short"); entry.name.style.marginLeft = ""; }
     const items: LabelItem[] = entries.map((entry, index) => ({
       key: entry.key, x: entry.body.x + entry.body.w / 2, y: entry.body.y + entry.body.h / 2,
       w: entry.name.offsetWidth || 60, h: entry.name.offsetHeight || 16, tightW: tightWidths[index], gap: entry.gap,
+      // 城市下面的延迟那行只在摆得下时留着：两行怎么摆都压着别人就退成只写城市（延迟点开就有）
+      ...(shortSize[index] ? { short: { w: shortSize[index]!.w, h: shortSize[index]!.h, tightW: shortTight[index] } } : {}),
       // 小窗里要框的那几台先挑位置，窗边路过的别的主机后放
       priority: entry.counts ? 0 : 1,
       sideGap: entry.body.w / 2 + 3,
@@ -665,6 +672,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       // 摆到圆盘旁边：CSS 把名字竖直居中在锚点上，marginLeft 是名字左边缘离锚点多远
       entry.name.classList.toggle("is-side", !!placement.side);
       entry.name.classList.toggle("is-tight", placement.tight);
+      entry.name.classList.toggle("is-short", !!placement.short);
       entry.name.style.marginLeft = placement.dx ? `${placement.dx}px` : "";
       const box = unionBox([entry.body, placement.box])!;
       keepOut.push(entry.body, placement.box);

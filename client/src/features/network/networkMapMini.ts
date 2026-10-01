@@ -414,13 +414,18 @@ export type LabelItem = {
   priority?: number;
   /** 上下都摆不下时还能摆到圆盘左右两侧：名字离锚点的水平距离（圆盘 / pill 半宽 + 一点缝）；不传就不试 */
   sideGap?: number;
+  /**
+   * 名字下面那行（延迟 / 离线）去掉之后只剩一行的尺寸：两行怎么摆都压着别人时再按一行试一遍 ——
+   * 城市名比延迟要紧，延迟点开就有。不传就不试
+   */
+  short?: { w: number; h: number; tightW: number };
 };
 
 /**
  * hidden：摆不出一个干净的位置（只在 hideUnplaceable 时出现）—— 名字不画，圆盘照画。
  * side：摆在了圆盘右边 / 左边（垂直居中），这时 dx 是名字左边缘相对锚点的偏移；否则 dx 是名字中线的左右挪动
  */
-export type LabelPlacement = { key: string; up: boolean; dx: number; tight: boolean; box: PixelBox; hidden?: boolean; side?: "left" | "right" };
+export type LabelPlacement = { key: string; up: boolean; dx: number; tight: boolean; box: PixelBox; hidden?: boolean; side?: "left" | "right"; short?: boolean };
 
 // 左右挪最多 22px：再远名字就不像是这个圆盘的了
 const LABEL_SHIFTS = [0, -4, 4, -8, 8, -14, 14, -22, 22];
@@ -438,7 +443,8 @@ export function placeLabelBoxes(items: readonly LabelItem[], obstacles: readonly
   const sorted = [...items].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.y - b.y || a.x - b.x);
   const placedBoxes: PixelBox[] = [];
   const result: LabelPlacement[] = [];
-  for (const item of sorted) {
+  /** 按一套尺寸（两行 / 只剩城市一行）把所有位置试一遍，返回压得最少的那个 */
+  const search = (item: LabelItem): { best: LabelPlacement | null; bestScore: number } => {
     let best: LabelPlacement | null = null;
     let bestScore = Infinity;
     for (const tight of [false, true]) {
@@ -481,6 +487,15 @@ export function placeLabelBoxes(items: readonly LabelItem[], obstacles: readonly
         }
         if (bestScore === 0) break;
       }
+    }
+    return { best, bestScore };
+  };
+  for (const item of sorted) {
+    let { best, bestScore } = search(item);
+    // 两行（城市 + 延迟）怎么摆都压着别人：去掉延迟那行再试，城市名留得住就行
+    if (bestScore > 0 && item.short) {
+      const short = search({ ...item, w: item.short.w, h: item.short.h, tightW: item.short.tightW });
+      if (short.best && short.bestScore < bestScore - 1e-9) { best = { ...short.best, short: true }; bestScore = short.bestScore; }
     }
     if (!best) continue;
     // 亚像素的擦边看不出来，不算压

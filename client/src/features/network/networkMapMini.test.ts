@@ -441,3 +441,20 @@ test("小窗标准尺寸哪个角都压到 marker 时，找放得下的最大尺
   assert.ok(inset.box.w <= sizes.full.w && inset.box.h <= sizes.full.h);
   for (const box of [...occupancy.boxes, ...occupancy.reserved]) assert.ok(!overlap(inset.box, box), `压着 ${JSON.stringify(box)}`);
 });
+
+test("名字两行（城市 + 延迟）摆不下时退成只写城市；摆得下就留着延迟", () => {
+  const area: PixelBox = { x: 0, y: 0, w: 300, h: 200 };
+  const item: LabelItem = { key: "h1", x: 150, y: 100, w: 40, h: 28, tightW: 36, gap: 10, short: { w: 30, h: 14, tightW: 27 } };
+  // 空地：两行照摆
+  assert.equal(placeLabelBoxes([item], [], area)[0].short, undefined);
+  // 上下各 26px 外就是别的东西（两行 28px 高放不下，一行 14px 放得下），左右也被挡住
+  const walls: PixelBox[] = [{ x: 0, y: 126, w: 300, h: 74 }, { x: 0, y: 0, w: 300, h: 74 }, { x: 0, y: 74, w: 128, h: 52 }, { x: 172, y: 74, w: 128, h: 52 }];
+  const tightItem = { ...item, sideGap: 13 };
+  const placed = placeLabelBoxes([tightItem], walls, area, { hideUnplaceable: true })[0];
+  assert.equal(placed.short, true);
+  assert.ok(!placed.hidden, "一行摆得下：城市名留着");
+  assert.equal(placed.box.h, 14);
+  // 没给 short 的（本来就只有一行）照旧：摆不下就藏
+  const { short: _short, ...single } = tightItem;
+  assert.equal(placeLabelBoxes([single], walls, area, { hideUnplaceable: true })[0].hidden, true);
+});
