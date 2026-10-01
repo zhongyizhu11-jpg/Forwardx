@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { gradeNightPixels, nightLightGain, latToSourceY, mercatorYToLat, parseTextureTileUrl, textureTilePlan } from "./networkMapTexture";
+import { NETWORK_MAP_NIGHT_TEXTURE_URL, NETWORK_MAP_NIGHT_TILE_URL, gradeNightPixels, nightLightGain, latToSourceY, mercatorYToLat, parseTextureTileUrl, textureTilePlan } from "./networkMapTexture";
 
 test("墨卡托 y 换纬度：正中是赤道，两头是 ±85.05°", () => {
   assert.ok(Math.abs(mercatorYToLat(0.5)) < 1e-9);
@@ -42,6 +42,9 @@ test("高纬度原图不到一行也给 0.5 像素：drawImage 源高度为 0 �
 
 test("瓦片地址：fxearth://night/3/5/2", () => {
   assert.deepEqual(parseTextureTileUrl("fxearth://night/3/5/2"), { texture: "night", z: 3, x: 5, y: 2 });
+  // 底图只有夜光图这一张：瓦片模板和图的地址
+  assert.equal(NETWORK_MAP_NIGHT_TILE_URL, "fxearth://night/{z}/{x}/{y}");
+  assert.equal(NETWORK_MAP_NIGHT_TEXTURE_URL, "/globe/earth-night.jpg");
   assert.equal(parseTextureTileUrl("https://example.com/3/5/2"), null);
   assert.equal(parseTextureTileUrl("fxearth://night/3/5"), null);
 });
