@@ -80,6 +80,7 @@ import { SortableDragHandle, SortableItem, SortableReorderContext, useOptimistic
 import { countryFeatureHasCode, normalizeCountryCode, type CountryFeatureLike } from "@/lib/countryFeatures";
 import { applyLatencyPeakCut, clipLatencyForChart, getLatencyStabilityStats, getLatencyYAxisMax, getLatencyYAxisTicks, isLatencySeriesCacheFresh, normalizeLatencyProbeCounts } from "@/lib/latencyChart";
 import { useUrlTab } from "@/hooks/useUrlTab";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { addHostNodeMeta, hostAddressCandidates, hostDisplayName } from "@/lib/linkTestNodeMeta";
 import { buildLinkAvailabilityIndex, type LinkAvailabilityResult } from "@shared/linkAvailability";
 import { MAX_NGINX_PEM_FILES, MAX_NGINX_PEM_UPLOAD_BYTES, parseNginxPemFiles } from "@/lib/nginxPemFiles";
@@ -2062,6 +2063,8 @@ function tunnelMatchesLinkSearch(
 function TunnelsContent() {
   const { user, loading: authLoading } = useAuth();
   const utils = trpc.useUtils();
+  // 列表视图在手机宽度（Tailwind sm 以下）显示成卡片：只渲染看得见的那套，不再卡片 + 表格各渲染一份再藏一份。
+  const isBelowSm = useMediaQuery("(max-width: 639px)");
   // The compact options query is preferred for the editors. Keep the older
   // list query as a same-scope fallback: an options failure must not make the
   // create action look like the account has no hosts.
@@ -2145,9 +2148,13 @@ function TunnelsContent() {
     pageSize: 12,
     search: linkSearchQuery,
   };
+  /*
+    列表和下面的 options 都是整份隧道数据，原来 3 秒一轮。状态 10 秒刷一次足够；
+    增删改、启停、测试之后都会立刻 invalidate，不用等这一轮。
+  */
   const tunnelPageQuery = trpc.tunnels.listPage.useQuery(tunnelPageInput, {
     enabled: activeSection === "tunnels",
-    refetchInterval: pollingInterval("active"),
+    refetchInterval: pollingInterval("log"),
     staleTime: 10_000,
     refetchOnWindowFocus: false,
     placeholderData: (previousData) => previousData,
@@ -2186,7 +2193,7 @@ function TunnelsContent() {
   const needsFullTunnelList = activeSection !== "tunnels";
   const fullTunnelQuery = trpc.tunnels.options.useQuery(undefined, {
     enabled: needsFullTunnelList,
-    refetchInterval: pollingInterval("active"),
+    refetchInterval: pollingInterval("log"),
     staleTime: 10_000,
     refetchOnWindowFocus: false,
   });
@@ -4064,8 +4071,7 @@ function TunnelsContent() {
             ))}
           </div>
           </SortableReorderContext>
-        ) : (
-          <>
+        ) : isBelowSm ? (
           <SortableReorderContext sortable={tunnelSortable} ids={pagedTunnels.map((tunnel: any) => Number(tunnel.id))} strategy="vertical" restrictToList>
           <div className="grid gap-3 sm:hidden">
             {pagedTunnels.map((tunnel: any) => (
@@ -4075,6 +4081,7 @@ function TunnelsContent() {
             ))}
           </div>
           </SortableReorderContext>
+        ) : (
           <Card className="hidden border-border bg-card sm:block">
           <CardContent className="p-0">
             <div className="overflow-x-auto">
@@ -4167,7 +4174,6 @@ function TunnelsContent() {
             </div>
           </CardContent>
         </Card>
-          </>
         )}
           <PersistentPagination pagination={tunnelPagination} itemName="条隧道" />
         </>

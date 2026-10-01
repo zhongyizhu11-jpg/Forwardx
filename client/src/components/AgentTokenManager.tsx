@@ -528,6 +528,7 @@ export default function AgentTokenManager({
       utils.hosts.listPage.invalidate();
       utils.hosts.summary.invalidate();
       utils.hosts.statusSummary.invalidate();
+      utils.hosts.pageLive.invalidate();
       const released = Number(data?.releasedPendingCleanup || 0);
       const removedHosts = Number(data?.removedHosts || 0);
       toast.success(released > 0
