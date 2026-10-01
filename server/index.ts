@@ -57,6 +57,8 @@ async function findAvailablePort(startPort = 9810, host?: string): Promise<numbe
      问服务器。原来 express.static 默认 max-age=0，每次切页每个包都要回源做一次 304 协商，
      手机上一次往返就是几十到几百毫秒，六七个包串起来就是那个「正在加载页面」。
   二、index.html 永远 no-cache：它是唯一会指向新哈希的入口，缓存住它等于升级后还在跑旧版。
+  三、`/globe/`、`/wallpapers/` 是几 MB 的地球贴图和壁纸，文件名不带哈希，不能 immutable；
+     给 7 天：平时不回源，过期后靠 ETag 做一次 304，升级换图最多晚几天生效。
 */
 function serveStatic(app: express.Express) {
   const clientDist = path.resolve(serverDir, "../client/dist");
@@ -64,6 +66,12 @@ function serveStatic(app: express.Express) {
     "/assets",
     express.static(path.join(clientDist, "assets"), { immutable: true, maxAge: "1y", index: false, fallthrough: true }),
   );
+  for (const directory of ["globe", "wallpapers"]) {
+    app.use(
+      `/${directory}`,
+      express.static(path.join(clientDist, directory), { maxAge: "7d", index: false, fallthrough: true }),
+    );
+  }
   app.use(express.static(clientDist, { index: false }));
   app.get("*", (_req, res) => {
     res.setHeader("Cache-Control", "no-cache");
@@ -104,6 +112,8 @@ function installMobileCors(app: express.Express) {
       res.setHeader("Access-Control-Allow-Credentials", "true");
       res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,x-forwardx-mobile,trpc-accept,x-trpc-source");
+      // 预检结果缓存 10 分钟：App 的每个 tRPC 请求都带自定义头，不缓存就是每次先多一个 OPTIONS 往返
+      res.setHeader("Access-Control-Max-Age", "600");
       res.setHeader("Vary", "Origin");
     }
     if (req.method === "OPTIONS" && allowed) {

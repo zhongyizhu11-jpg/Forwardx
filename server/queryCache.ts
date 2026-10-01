@@ -78,3 +78,19 @@ export function createQueryCache(maxEntries = 300) {
 
   return { get, prune, clear };
 }
+
+/**
+ * 一组 id 的指纹，与顺序无关，给缓存键用：集合一变（增删任何一个）键就跟着变。
+ * 两个 32 位混合值 + 个数，撞上的概率可以忽略；真撞上也只是多拿一次 TTL 内的旧值。
+ */
+export function idSetFingerprint(ids: readonly number[]) {
+  let sum = 0;
+  let mixed = 0;
+  for (const id of ids) {
+    const h = Math.imul((Number(id) | 0) ^ 0x9e3779b9, 0x85ebca6b);
+    const g = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+    sum = (sum + g) | 0;
+    mixed ^= g ^ (g >>> 16);
+  }
+  return `${ids.length}.${(sum >>> 0).toString(36)}.${(mixed >>> 0).toString(36)}`;
+}

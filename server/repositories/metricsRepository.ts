@@ -184,6 +184,45 @@ function canUseTrafficBuckets(since?: Date) {
   return epochSeconds(since) >= retentionCutoffSeconds(TRAFFIC_BUCKET_RETENTION_HOURS);
 }
 
+/**
+ * 一段时间按 30 分钟桶切成三截：[since, 第一个整桶起点) 和 [当前桶起点, ∞) 读原始样本，
+ * 中间已经结束的整桶读桶表。
+ *
+ * 能这么切是因为：样本的 recordedAt 由面板取当前时间，原始样本、累计量和桶在同一个事务里写
+ * （见 insertTrafficStatsBatch 的调用方），v3 回填又从原始样本重建过一遍桶 —— 已经结束的桶
+ * 不会再变，它和那 30 分钟的原始样本逐字节相等。唯一的差别是全零样本不进桶，只影响「有没有
+ * 一行 0」，不影响任何数。当前这一桶还在写，所以照旧读原始样本。
+ */
+function trafficWindowSplit(sinceSec: number) {
+  const currentStart = bucketStartFor(epochSeconds(nowDate()));
+  const fullStart = Math.min(Math.ceil(sinceSec / TRAFFIC_BUCKET_SECONDS) * TRAFFIC_BUCKET_SECONDS, currentStart);
+  return {
+    // 整桶区间 [fullStart, fullEnd)；fullStart >= fullEnd 时没有整桶
+    fullStart,
+    fullEnd: currentStart,
+    // 原始样本的尾段从这里起（since 落在当前桶里时就是 since 本身）
+    tailStart: Math.max(sinceSec, currentStart),
+  };
+}
+
+// 超过这个数的 id 列表在 SQLite 上改走 json_each 子查询：只占一个参数、SQL 文本固定，
+// 预编译语句能复用（几千个 ? 的语句又长又每次都要重新编译）。
+const LONG_ID_LIST = 64;
+
+function idListSql(column: string, ids: number[]) {
+  if (ids.length > LONG_ID_LIST && getDatabaseKind() === "sqlite") {
+    return { sql: `${column} IN (SELECT value FROM json_each(?))`, params: [JSON.stringify(ids)] as any[] };
+  }
+  return { sql: `${column} IN (${ids.map(() => "?").join(",")})`, params: ids as any[] };
+}
+
+function idListDrizzle(column: any, ids: number[]) {
+  if (ids.length > LONG_ID_LIST && getDatabaseKind() === "sqlite") {
+    return sql`${column} IN (SELECT value FROM json_each(${JSON.stringify(ids)}))`;
+  }
+  return sql`${column} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`;
+}
+
 // ==================== Host Metrics Queries ====================
 
 export async function insertHostMetric(metric: InsertHostMetric) {
@@ -1370,55 +1409,86 @@ function mapTrafficSummaryRows(rows: any[]): TrafficSummaryRow[] {
   })).filter((row) => row.ruleId > 0 && row.hostId > 0);
 }
 
-async function getTrafficSummaryRowsFromBuckets(opts: {
+type TrafficBucketSegmentRow = TrafficSummaryRow & {
+  /** 这一行是不是只由整桶区间 [fullStart, fullEnd) 里的桶加起来的 */
+  fullBucket: boolean;
+  /** 规则还在不在 forward_rules 里（原始样本那边是 INNER JOIN，删掉的规则不算） */
+  ruleExists: boolean;
+};
+
+/**
+ * 从 floor(since) 那一桶起的桶，按「是否整桶区间 / 规则是否还在」分开汇总。
+ * 三段合起来就是原来 getTrafficSummaryRowsFromBuckets 的结果（原始样本缺的规则拿它补）；
+ * fullBucket && ruleExists 的那部分则和这段时间原始样本的 INNER JOIN 汇总相等。
+ * 返回 null：桶不可用或查询失败，调用方整段读原始样本（和原来一样）。
+ */
+async function getTrafficBucketSegmentRows(opts: {
   userId?: number;
   hostId?: number;
-  since?: Date;
+  sinceSec: number;
+  fullStart: number;
+  fullEnd: number;
   ruleIds?: number[];
-}) {
-  if (!await trafficBucketsReady()) return null;
-  if (opts.since && !canUseTrafficBuckets(opts.since)) return null;
+}): Promise<TrafficBucketSegmentRow[] | null> {
   const q = quoteIdentifier;
-  const conditions = [`b.${q("bucketMinutes")} = ?`];
-  const params: any[] = [TRAFFIC_BUCKET_MINUTES];
+  const conditions = [`b.${q("bucketMinutes")} = ?`, `b.${q("bucketStart")} >= ?`];
+  const params: any[] = [opts.fullStart, opts.fullEnd, TRAFFIC_BUCKET_MINUTES, bucketStartFor(opts.sinceSec)];
   if (opts.hostId) {
     conditions.push(`b.${q("hostId")} = ?`);
     params.push(opts.hostId);
   }
-  if (opts.since) {
-    conditions.push(`b.${q("bucketStart")} >= ?`);
-    params.push(bucketStartFor(epochSeconds(opts.since)));
-  }
   if (opts.userId) {
+    // 规则还在时等价于原始样本那边的 COALESCE(parent, fr)；规则删了按桶上记的 userId 算（原口径）
     conditions.push(`COALESCE(parent.${q("userId")}, fr.${q("userId")}, b.${q("userId")}) = ?`);
     params.push(opts.userId);
   }
   if (opts.ruleIds?.length) {
-    conditions.push(`b.${q("ruleId")} IN (${opts.ruleIds.map(() => "?").join(",")})`);
-    params.push(...opts.ruleIds);
+    const ids = idListSql(`b.${q("ruleId")}`, opts.ruleIds);
+    conditions.push(ids.sql);
+    params.push(...ids.params);
   }
-  const rows = await queryRaw<TrafficSummaryRow>(
-    `SELECT b.${q("ruleId")} AS ${q("ruleId")},
-            b.${q("hostId")} AS ${q("hostId")},
-            COALESCE(SUM(b.${q("bytesIn")}), 0) AS ${q("bytesIn")},
-            COALESCE(SUM(b.${q("bytesOut")}), 0) AS ${q("bytesOut")},
-            COALESCE(SUM(b.${q("connections")}), 0) AS ${q("connections")}
-       FROM ${q("traffic_stat_buckets")} b
-       ${opts.userId ? `LEFT JOIN ${q("forward_rules")} fr ON fr.${q("id")} = b.${q("ruleId")}
-       ${managedParentRuleJoin("fr")}` : ""}
-      WHERE ${conditions.join(" AND ")}
-      GROUP BY b.${q("ruleId")}, b.${q("hostId")}`,
+  const rows = await queryRaw<any>(
+    `SELECT s.${q("ruleId")} AS ${q("ruleId")},
+            s.${q("hostId")} AS ${q("hostId")},
+            s.${q("fullBucket")} AS ${q("fullBucket")},
+            s.${q("ruleExists")} AS ${q("ruleExists")},
+            COALESCE(SUM(s.${q("bytesIn")}), 0) AS ${q("bytesIn")},
+            COALESCE(SUM(s.${q("bytesOut")}), 0) AS ${q("bytesOut")},
+            COALESCE(SUM(s.${q("connections")}), 0) AS ${q("connections")}
+       FROM (
+         SELECT b.${q("ruleId")} AS ${q("ruleId")},
+                b.${q("hostId")} AS ${q("hostId")},
+                CASE WHEN b.${q("bucketStart")} >= ? AND b.${q("bucketStart")} < ? THEN 1 ELSE 0 END AS ${q("fullBucket")},
+                CASE WHEN fr.${q("id")} IS NULL THEN 0 ELSE 1 END AS ${q("ruleExists")},
+                b.${q("bytesIn")} AS ${q("bytesIn")},
+                b.${q("bytesOut")} AS ${q("bytesOut")},
+                b.${q("connections")} AS ${q("connections")}
+           FROM ${q("traffic_stat_buckets")} b
+           LEFT JOIN ${q("forward_rules")} fr ON fr.${q("id")} = b.${q("ruleId")}
+           ${opts.userId ? managedParentRuleJoin("fr") : ""}
+          WHERE ${conditions.join(" AND ")}
+       ) s
+      GROUP BY s.${q("ruleId")}, s.${q("hostId")}, s.${q("fullBucket")}, s.${q("ruleExists")}`,
     params,
   ).catch(() => null);
   if (!rows) return null;
-  const mapped = mapTrafficSummaryRows(rows as any[]);
-  return mapped.length > 0 ? mapped : null;
+  return rows.map((row: any) => ({
+    ruleId: Number(row.ruleId),
+    hostId: Number(row.hostId),
+    bytesIn: numeric(row.bytesIn),
+    bytesOut: numeric(row.bytesOut),
+    connections: numeric(row.connections),
+    fullBucket: Number(row.fullBucket) === 1,
+    ruleExists: Number(row.ruleExists) === 1,
+  })).filter((row) => row.ruleId > 0 && row.hostId > 0);
 }
 
 async function getTrafficSummaryRowsFromStats(opts: {
   userId?: number;
   hostId?: number;
   since?: Date;
+  /** 不含 */
+  until?: Date;
   ruleIds?: number[];
 }) {
   const q = quoteIdentifier;
@@ -1432,13 +1502,18 @@ async function getTrafficSummaryRowsFromStats(opts: {
     conditions.push(`ts.${q("recordedAt")} >= ?`);
     params.push(epochSeconds(opts.since));
   }
+  if (opts.until) {
+    conditions.push(`ts.${q("recordedAt")} < ?`);
+    params.push(epochSeconds(opts.until));
+  }
   if (opts.userId) {
     conditions.push(`COALESCE(parent.${q("userId")}, fr.${q("userId")}) = ?`);
     params.push(opts.userId);
   }
   if (opts.ruleIds?.length) {
-    conditions.push(`ts.${q("ruleId")} IN (${opts.ruleIds.map(() => "?").join(",")})`);
-    params.push(...opts.ruleIds);
+    const ids = idListSql(`ts.${q("ruleId")}`, opts.ruleIds);
+    conditions.push(ids.sql);
+    params.push(...ids.params);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const rows = await queryRaw<TrafficSummaryRow>(
@@ -1455,6 +1530,78 @@ async function getTrafficSummaryRowsFromStats(opts: {
     params,
   );
   return mapTrafficSummaryRows(rows as any[]);
+}
+
+/**
+ * 窗口 [since, now] 按规则汇总，结果和「整段扫 traffic_stats，原始样本缺的规则再拿桶补」
+ * 的老算法一致（见 trafficWindowSplit），但只有两头不满一桶的部分扫原始样本。
+ * 返回 null：桶不可用，调用方整段读原始样本。
+ */
+async function getTrafficSummaryRowsWithBuckets(opts: {
+  userId?: number;
+  hostId?: number;
+  since: Date;
+  ruleIds?: number[];
+}): Promise<TrafficSummaryRow[] | null> {
+  if (!await trafficBucketsReady() || !canUseTrafficBuckets(opts.since)) return null;
+  const sinceSec = epochSeconds(opts.since);
+  const { fullStart, fullEnd, tailStart } = trafficWindowSplit(sinceSec);
+  const bucketRows = await getTrafficBucketSegmentRows({ ...opts, sinceSec, fullStart, fullEnd });
+  if (!bucketRows) return null;
+  const strip = (row: TrafficBucketSegmentRow): TrafficSummaryRow => ({
+    ruleId: row.ruleId,
+    hostId: row.hostId,
+    bytesIn: row.bytesIn,
+    bytesOut: row.bytesOut,
+    connections: row.connections,
+  });
+  // 原来那条「整桶补缺」的结果：原始样本里没有的 (规则, 主机) 用它
+  const bucketTotals = mergeTrafficSummaryRows(bucketRows.map(strip));
+  let rawRows: TrafficSummaryRow[];
+  try {
+    const head = sinceSec < fullStart
+      ? await getTrafficSummaryRowsFromStats({ ...opts, until: new Date(fullStart * 1000) })
+      : [];
+    const tail = await getTrafficSummaryRowsFromStats({ ...opts, since: new Date(tailStart * 1000) });
+    rawRows = mergeTrafficSummaryRows([
+      ...head,
+      ...bucketRows.filter((row) => row.fullBucket && row.ruleExists).map(strip),
+      ...tail,
+    ]);
+  } catch {
+    // 和原来一样：原始样本读不了就只用桶
+    return bucketTotals.length > 0 ? bucketTotals : null;
+  }
+  const present = new Set(rawRows.map((row) => `${row.ruleId}:${row.hostId}`));
+  const missing = bucketTotals.filter((row) => !present.has(`${row.ruleId}:${row.hostId}`));
+  if (missing.length === 0) return rawRows;
+  /*
+    老算法里「原始样本有这一对」也包括只有全零样本的情况 —— 那时结果是 0，不拿桶补。
+    全零样本不进桶，所以对还存在的规则，补之前要确认整桶区间里真的一条原始样本都没有。
+    这类候选只有「窗口开头那一桶之前有流量、窗口里一直空闲」的规则，通常很少。
+  */
+  const existingRuleIds = new Set(bucketRows.filter((row) => row.ruleExists).map((row) => row.ruleId));
+  const candidateRuleIds = Array.from(new Set(missing
+    .filter((row) => existingRuleIds.has(row.ruleId))
+    .map((row) => row.ruleId)));
+  const idlePairs = new Set<string>();
+  if (candidateRuleIds.length > 0 && fullStart < fullEnd) {
+    const q = quoteIdentifier;
+    const ids = idListSql(`ts.${q("ruleId")}`, candidateRuleIds);
+    const rows = await queryRaw<any>(
+      `SELECT DISTINCT ts.${q("ruleId")} AS ${q("ruleId")}, ts.${q("hostId")} AS ${q("hostId")}
+         FROM ${q("traffic_stats")} ts
+        WHERE ${ids.sql} AND ts.${q("recordedAt")} >= ? AND ts.${q("recordedAt")} < ?`,
+      [...ids.params, fullStart, fullEnd],
+    ).catch(() => [] as any[]);
+    for (const row of rows) idlePairs.add(`${Number(row.ruleId)}:${Number(row.hostId)}`);
+  }
+  return [
+    ...rawRows,
+    ...missing.map((row) => idlePairs.has(`${row.ruleId}:${row.hostId}`)
+      ? { ...row, bytesIn: 0, bytesOut: 0, connections: 0 }
+      : row),
+  ];
 }
 
 function ruleTrafficIdentityKey(rule: RuleTrafficIdentity | undefined | null) {
@@ -1476,14 +1623,6 @@ function mergeTrafficSummaryRows(rows: TrafficSummaryRow[]) {
     }
   }
   return Array.from(merged.values());
-}
-
-function fillMissingTrafficSummaryRows(primary: TrafficSummaryRow[], fallback: TrafficSummaryRow[]) {
-  const keys = new Set(primary.map((item) => `${item.ruleId}:${item.hostId}`));
-  return [
-    ...primary,
-    ...fallback.filter((item) => !keys.has(`${item.ruleId}:${item.hostId}`)),
-  ];
 }
 
 async function getForwardGroupModeMap(groupIds: number[]) {
@@ -1617,7 +1756,7 @@ async function getForwardGroupTrafficChildRows(parentRuleIds: number[]) {
       hostId: forwardRules.hostId,
     })
     .from(forwardRules)
-    .where(sql`${forwardRules.forwardGroupRuleId} IN (${sql.join(parentIds.map((id) => sql`${id}`), sql`, `)}) AND ${forwardRules.pendingDelete} = ${sqlBool(false)}`);
+    .where(sql`${idListDrizzle(forwardRules.forwardGroupRuleId, parentIds)} AND ${forwardRules.pendingDelete} = ${sqlBool(false)}`);
   const childRows = (rows as any[]).map((row) => ({
     id: Number(row.id || 0),
     parentId: Number(row.parentId || 0),
@@ -1671,8 +1810,9 @@ async function getTrafficSummaryRowsFromCounters(opts: {
     params.push(opts.userId);
   }
   if (opts.ruleIds?.length) {
-    conditions.push(`c.${q("ruleId")} IN (${opts.ruleIds.map(() => "?").join(",")})`);
-    params.push(...opts.ruleIds);
+    const ids = idListSql(`c.${q("ruleId")}`, opts.ruleIds);
+    conditions.push(ids.sql);
+    params.push(...ids.params);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const rows = await queryRaw<TrafficSummaryRow>(
@@ -1710,7 +1850,7 @@ async function normalizeTrafficSummaryRowsForRules(
         hostId: forwardRules.hostId,
       })
       .from(forwardRules)
-      .where(sql`${forwardRules.id} IN (${sql.join(groupChildIds.map(id => sql`${id}`), sql`, `)}) AND ${forwardRules.forwardGroupRuleId} IS NOT NULL`);
+      .where(sql`${idListDrizzle(forwardRules.id, groupChildIds)} AND ${forwardRules.forwardGroupRuleId} IS NOT NULL`);
     const groupModeById = await getForwardGroupModeMap((childRows as any[]).map((row: any) => Number(row.groupId || 0)));
     const chainMemberRows = (childRows as any[]).filter((row: any) => groupModeById.get(Number(row.groupId || 0)) === "chain");
     const firstChainMemberByGroup = new Map<number, { id: number; hostId: number; priority: number }>();
@@ -1787,7 +1927,7 @@ async function normalizeTrafficSummaryRowsForRules(
   let visibleRequestedRows: RuleTrafficIdentity[] = [];
   if (requestedRuleIds.length > 0) {
     const requestedConds: any[] = [
-      sql`${forwardRules.id} IN (${sql.join(requestedRuleIds.map(id => sql`${id}`), sql`, `)})`,
+      idListDrizzle(forwardRules.id, requestedRuleIds),
       eq(forwardRules.pendingDelete, false),
     ];
     if (opts.userId) requestedConds.push(eq(forwardRules.userId, opts.userId));
@@ -1824,7 +1964,7 @@ async function normalizeTrafficSummaryRowsForRules(
           userId: forwardRules.userId,
         })
         .from(forwardRules)
-        .where(sql`${forwardRules.id} IN (${sql.join(resultRuleIds.map(id => sql`${id}`), sql`, `)})`)
+        .where(idListDrizzle(forwardRules.id, resultRuleIds))
       : [];
     const identityByRuleId = new Map<number, RuleTrafficIdentity>();
     for (const row of resultRuleRows as any[]) {
@@ -1984,20 +2124,10 @@ export async function getTrafficSummaryByRule(opts: {
     : requestedRuleIds;
   const since = opts.since ?? new Date(Date.now() - TRAFFIC_BUCKET_RETENTION_HOURS * 60 * 60 * 1000);
   const queryOpts = { ...opts, since, ruleIds: expandedRuleIds };
-  const bucketRows = await getTrafficSummaryRowsFromBuckets(queryOpts);
-  let result: TrafficSummaryRow[];
-  if (bucketRows) {
-    const rawRows = await getTrafficSummaryRowsFromStats(queryOpts).catch(() => null);
-    // Raw samples are authoritative inside their retention window. Historical
-    // versions could commit a raw row while failing to update its bucket, so a
-    // partially populated bucket must not hide newer samples for the same
-    // rule/host pair. Buckets only fill pairs whose raw rows are unavailable.
-    result = rawRows
-      ? fillMissingTrafficSummaryRows(rawRows, bucketRows)
-      : bucketRows;
-  } else {
-    result = await getTrafficSummaryRowsFromStats(queryOpts);
-  }
+  // 原始样本为准、原始样本缺的 (规则, 主机) 用桶补；已经结束的整桶直接读桶表
+  // （和原始样本逐字节相等，见 trafficWindowSplit），只有两头不满一桶的部分扫原始样本。
+  let result = await getTrafficSummaryRowsWithBuckets(queryOpts)
+    ?? await getTrafficSummaryRowsFromStats(queryOpts);
   result = await normalizeTrafficSummaryRowsForRules(result, opts, requestedRuleIds);
 
   if (result.length === 0) return withEmptyTrafficLatency(result);
@@ -2391,46 +2521,64 @@ export async function getGlobalTrafficSeries(opts: { bucketMinutes?: number; sin
   const q = quoteIdentifier;
   const trafficTable = q("traffic_stats");
   const rulesTable = q("forward_rules");
-  const canUseBuckets = bucket === TRAFFIC_BUCKET_MINUTES && await trafficBucketsReady() && canUseTrafficBuckets(since);
-  const bucketRows = canUseBuckets
-    ? await queryRaw<{ bucket: number; bytesIn: number; bytesOut: number }>(
-      `SELECT b.${q("bucketStart")} AS ${q("bucket")},
-              COALESCE(SUM(b.${q("bytesIn")}), 0) AS ${q("bytesIn")},
-              COALESCE(SUM(b.${q("bytesOut")}), 0) AS ${q("bytesOut")}
-       FROM ${q("traffic_stat_buckets")} b
-       ${opts.userId ? `LEFT JOIN ${rulesTable} fr ON fr.${q("id")} = b.${q("ruleId")}
-       ${managedParentRuleJoin("fr")}` : ""}
-      WHERE b.${q("bucketMinutes")} = ?
-        AND b.${q("bucketStart")} >= ?
-          ${opts.userId ? `AND COALESCE(parent.${q("userId")}, fr.${q("userId")}, b.${q("userId")}) = ?` : ""}
-        GROUP BY b.${q("bucketStart")}
-        ORDER BY b.${q("bucketStart")} ASC`,
-      opts.userId ? [TRAFFIC_BUCKET_MINUTES, startBucketSec, opts.userId] : [TRAFFIC_BUCKET_MINUTES, startBucketSec],
-    ).catch(() => null)
-    : null;
-  const rows = bucketRows && bucketRows.length > 0 ? bucketRows : (opts.userId
-    ? await queryRaw<{ bucket: number; bytesIn: number; bytesOut: number }>(
-        `SELECT ${bucketExprSql("ts", bucketSec)} AS ${q("bucket")},
-                COALESCE(SUM(ts.${q("bytesIn")}), 0) AS ${q("bytesIn")},
-                COALESCE(SUM(ts.${q("bytesOut")}), 0) AS ${q("bytesOut")}
-           FROM ${trafficTable} ts
-           INNER JOIN ${rulesTable} fr ON fr.${q("id")} = ts.${q("ruleId")}
-           ${managedParentRuleJoin("fr")}
-          WHERE ts.${q("recordedAt")} >= ? AND COALESCE(parent.${q("userId")}, fr.${q("userId")}) = ?
-          GROUP BY ${bucketExprSql("ts", bucketSec)}
-          ORDER BY ${q("bucket")} ASC`,
-        [sinceSec, opts.userId],
-      )
-    : await queryRaw<{ bucket: number; bytesIn: number; bytesOut: number }>(
-        `SELECT ${bucketExprSql("ts", bucketSec)} AS ${q("bucket")},
-                COALESCE(SUM(ts.${q("bytesIn")}), 0) AS ${q("bytesIn")},
-                COALESCE(SUM(ts.${q("bytesOut")}), 0) AS ${q("bytesOut")}
-           FROM ${trafficTable} ts
-          WHERE ts.${q("recordedAt")} >= ?
-          GROUP BY ${bucketExprSql("ts", bucketSec)}
-          ORDER BY ${q("bucket")} ASC`,
-        [sinceSec],
-      ));
+  const rawRows = (fromSec: number, toSec?: number) => {
+    const timeWhere = `ts.${q("recordedAt")} >= ?${toSec === undefined ? "" : ` AND ts.${q("recordedAt")} < ?`}`;
+    const timeParams = toSec === undefined ? [fromSec] : [fromSec, toSec];
+    return opts.userId
+      ? queryRaw<{ bucket: number; bytesIn: number; bytesOut: number }>(
+          `SELECT ${bucketExprSql("ts", bucketSec)} AS ${q("bucket")},
+                  COALESCE(SUM(ts.${q("bytesIn")}), 0) AS ${q("bytesIn")},
+                  COALESCE(SUM(ts.${q("bytesOut")}), 0) AS ${q("bytesOut")}
+             FROM ${trafficTable} ts
+             INNER JOIN ${rulesTable} fr ON fr.${q("id")} = ts.${q("ruleId")}
+             ${managedParentRuleJoin("fr")}
+            WHERE ${timeWhere} AND COALESCE(parent.${q("userId")}, fr.${q("userId")}) = ?
+            GROUP BY ${bucketExprSql("ts", bucketSec)}
+            ORDER BY ${q("bucket")} ASC`,
+          [...timeParams, opts.userId],
+        )
+      : queryRaw<{ bucket: number; bytesIn: number; bytesOut: number }>(
+          `SELECT ${bucketExprSql("ts", bucketSec)} AS ${q("bucket")},
+                  COALESCE(SUM(ts.${q("bytesIn")}), 0) AS ${q("bytesIn")},
+                  COALESCE(SUM(ts.${q("bytesOut")}), 0) AS ${q("bytesOut")}
+             FROM ${trafficTable} ts
+            WHERE ${timeWhere}
+            GROUP BY ${bucketExprSql("ts", bucketSec)}
+            ORDER BY ${q("bucket")} ASC`,
+          timeParams,
+        );
+  };
+  /*
+    桶宽是 30 分钟整数倍时，已经结束的整桶读 30 分钟桶表再并成请求的桶宽（每个 30 分钟桶
+    整个落在一个输出桶里），窗口开头不满一桶的部分和当前这一桶读原始样本 —— 结果和整段扫
+    原始样本相同（见 trafficWindowSplit）。按用户看时和原始样本一样 INNER JOIN 规则表。
+  */
+  const canUseBuckets = bucket % TRAFFIC_BUCKET_MINUTES === 0 && await trafficBucketsReady() && canUseTrafficBuckets(since);
+  let rows: Array<{ bucket: number; bytesIn: number; bytesOut: number }> | null = null;
+  if (canUseBuckets) {
+    const { fullStart, fullEnd, tailStart } = trafficWindowSplit(sinceSec);
+    const fullRows = fullStart < fullEnd
+      ? await queryRaw<{ bucket: number; bytesIn: number; bytesOut: number }>(
+        `SELECT ${bucketExpression("b", "bucketStart", bucketSec)} AS ${q("bucket")},
+                COALESCE(SUM(b.${q("bytesIn")}), 0) AS ${q("bytesIn")},
+                COALESCE(SUM(b.${q("bytesOut")}), 0) AS ${q("bytesOut")}
+           FROM ${q("traffic_stat_buckets")} b
+           ${opts.userId ? `INNER JOIN ${rulesTable} fr ON fr.${q("id")} = b.${q("ruleId")}
+           ${managedParentRuleJoin("fr")}` : ""}
+          WHERE b.${q("bucketMinutes")} = ?
+            AND b.${q("bucketStart")} >= ?
+            AND b.${q("bucketStart")} < ?
+            ${opts.userId ? `AND COALESCE(parent.${q("userId")}, fr.${q("userId")}) = ?` : ""}
+          GROUP BY ${bucketExpression("b", "bucketStart", bucketSec)}`,
+        opts.userId ? [TRAFFIC_BUCKET_MINUTES, fullStart, fullEnd, opts.userId] : [TRAFFIC_BUCKET_MINUTES, fullStart, fullEnd],
+      ).catch(() => null)
+      : [];
+    if (fullRows) {
+      const headRows = sinceSec < fullStart ? await rawRows(sinceSec, fullStart) : [];
+      rows = [...headRows, ...fullRows, ...await rawRows(tailStart)];
+    }
+  }
+  if (!rows) rows = await rawRows(sinceSec);
 
   if (rows.length === 0) return [];
 
@@ -2438,9 +2586,10 @@ export async function getGlobalTrafficSeries(opts: { bucketMinutes?: number; sin
   for (const row of rows as any[]) {
     const bucketValue = Number(row.bucket);
     if (!Number.isFinite(bucketValue)) continue;
+    const prev = byBucket.get(bucketValue);
     byBucket.set(bucketValue, {
-      bytesIn: Number(row.bytesIn) || 0,
-      bytesOut: Number(row.bytesOut) || 0,
+      bytesIn: (prev?.bytesIn ?? 0) + (Number(row.bytesIn) || 0),
+      bytesOut: (prev?.bytesOut ?? 0) + (Number(row.bytesOut) || 0),
     });
   }
 

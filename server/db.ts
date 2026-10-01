@@ -8,7 +8,7 @@
 import { eq } from "drizzle-orm";
 import { users } from "../drizzle/schema";
 import { hashPassword } from "./password";
-import { connectDatabase, executeRaw, getDb, getDatabaseKind, insertAndGetId, nowDate, queryRaw, rawAffectedRows, refreshDatabasePoolSettings } from "./dbRuntime";
+import { connectDatabase, executeRaw, getDb, getDatabaseKind, insertAndGetId, nowDate, optimizeSqliteDatabase, queryRaw, rawAffectedRows, refreshDatabasePoolSettings } from "./dbRuntime";
 import { ensureDatabaseSchema } from "./dbSchema";
 import { boolLiteral, castInteger, quoteIdentifier } from "./dbCompat";
 import { maintainCurrentPostgresqlDatabase } from "./postgresqlMaintenance";
@@ -527,6 +527,10 @@ export async function initDatabase() {
     }));
     await runInitializationStep("mysql-health-check", () => maintainCurrentMysqlDatabase().catch((error) => {
       console.warn("[MySQL] Startup health check skipped:", error instanceof Error ? error.message : String(error));
+    }));
+    // SQLite：建表和上面的回填 / 清理都做完后，按需刷新一次查询规划的统计信息
+    await runInitializationStep("sqlite-optimize", () => optimizeSqliteDatabase({ startup: true }).catch((error) => {
+      console.warn("[SQLite] Startup optimize skipped:", error instanceof Error ? error.message : String(error));
     }));
     const migratedAvatars = await runInitializationStep("migrate-avatars", () => migrateLegacyUserAvatarsOnce());
     if (migratedAvatars > 0) {
