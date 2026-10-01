@@ -61,8 +61,8 @@ export function NetworkMapSectionView({ model, onOpen, realMap }: { model: Netwo
         图例放在标题那一行右边（「● 正常 2  ● 离线 1」），不再在图下面单占一行：
         「N 台主机 · N 条线路」页头已经说过，这里说的是颜色各代表什么、各几条。
       */}
-      <div className="flex items-center justify-between gap-2 px-4 pt-3.5">
-        <span className="flex min-w-0 items-center gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-4 pt-3.5">
+        <span className="flex shrink-0 items-center gap-2.5 whitespace-nowrap">
           <span className="text-primary-type font-semibold text-foreground">网络地图</span>
           {/* 整页地图的唯一入口：可以点进主机和隧道看详情、换底图、看告警 */}
           <button

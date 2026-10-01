@@ -39,7 +39,7 @@ test("压色：卫星图压暗；高德反相成深色；夜光图透出一点�
   const amap = rasterTonePaint("amap-road") as Record<string, number>;
   assert.ok(amap["raster-brightness-min"] > amap["raster-brightness-max"], "min > max 就是反相");
   assert.equal(amap["raster-hue-rotate"], 180);
-  assert.deepEqual(rasterTonePaint(TEXTURE_LAYER_IDS.night)["raster-opacity"], zoomFade(0.84, 0.3), "放大到地球图糊掉时淡掉");
+  assert.deepEqual(rasterTonePaint(TEXTURE_LAYER_IDS.night)["raster-opacity"], zoomFade(0.9, 0.3), "放大到地球图糊掉时淡掉");
   assert.deepEqual(zoomFade(1, 0), ["interpolate", ["linear"], ["zoom"], 5, 1, 8, 0]);
   const style = buildNetworkMapStyle("amap", "/globe/x.geojson", colors, base);
   const road = style.layers.find((layer: any) => layer.id === "amap-road") as any;

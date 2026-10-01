@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { latToSourceY, mercatorYToLat, parseTextureTileUrl, textureTilePlan } from "./networkMapTexture";
+import { gradeNightPixels, latToSourceY, mercatorYToLat, parseTextureTileUrl, textureTilePlan } from "./networkMapTexture";
 
 test("墨卡托 y 换纬度：正中是赤道，两头是 ±85.05°", () => {
   assert.ok(Math.abs(mercatorYToLat(0.5)) < 1e-9);
@@ -44,4 +44,12 @@ test("瓦片地址：fxearth://night/3/5/2", () => {
   assert.deepEqual(parseTextureTileUrl("fxearth://night/3/5/2"), { texture: "night", z: 3, x: 5, y: 2 });
   assert.equal(parseTextureTileUrl("https://example.com/3/5/2"), null);
   assert.equal(parseTextureTileUrl("fxearth://night/3/5"), null);
+});
+
+test("夜光图调色：海压暗成深海军蓝，灰白的灯变成更亮的暖色，纯黑还是黑", () => {
+  const data = new Uint8ClampedArray([1, 19, 40, 255, 92, 93, 92, 255, 0, 0, 0, 255]);
+  gradeNightPixels(data);
+  assert.ok(data[0] < 2 && data[1] < 19 && data[2] < 40 && data[2] > data[1], "海：更暗、还是蓝的");
+  assert.ok(data[4] > 150 && data[4] > data[5] && data[5] > data[6], "灯：更亮、偏橙黄");
+  assert.deepEqual([data[8], data[9], data[10], data[11]], [0, 0, 0, 255]);
 });

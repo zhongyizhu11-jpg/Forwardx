@@ -459,7 +459,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     for (const entry of live.hostMarkers.values()) {
       const name = entry.element.querySelector(".nm-mk-name") as HTMLElement | null;
       if (!name || entry.element.classList.contains("is-hidden")) continue;
-      items.push({ element: entry.element, name, rank: TONE_RANK[(entry.element.dataset.tone as NodeTone) || "ok"] === 4 ? -1 : TONE_RANK[(entry.element.dataset.tone as NodeTone) || "ok"] });
+      const tone = (entry.element.dataset.tone as NodeTone) || "ok";
+      items.push({ element: entry.element, name, rank: tone === "hub" ? -1 : TONE_RANK[tone] });
     }
     for (const entry of live.targetMarkers.values()) {
       const name = entry.element.querySelector(".nm-mk-name") as HTMLElement | null;

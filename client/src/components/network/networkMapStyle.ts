@@ -118,12 +118,12 @@ export function zoomFade(from: number, to: number) {
 
 /**
  * 栅格的压色：
- *   夜光图  提对比和饱和度，城市灯光更橙更亮；透明度 0.84 —— 黑色的海透出底下的深海军蓝
+ *   夜光图  提对比和饱和度，城市灯光更橙更亮；透明度 0.9 —— 黑色的海透出底下的深海军蓝；灯光提亮、海压暗是瓦片拉伸时就调好的（gradeNightPixels）
  *   卫星图  压暗到四成多、降饱和：白天的图太亮，线路和光点压不住
  *   高德    反相（brightness-min > max）再转 180° 色相：白底街道图变成深底亮路，颜色还是原来的意思
  */
 export function rasterTonePaint(rasterId: string): Record<string, unknown> {
-  if (rasterId === TEXTURE_LAYER_IDS.night) return { "raster-opacity": zoomFade(0.84, 0.3), "raster-contrast": 0.32, "raster-saturation": 0.35, "raster-brightness-min": 0, "raster-brightness-max": 1 };
+  if (rasterId === TEXTURE_LAYER_IDS.night) return { "raster-opacity": zoomFade(0.9, 0.3), "raster-contrast": 0.08, "raster-saturation": 0.1, "raster-brightness-min": 0, "raster-brightness-max": 1 };
   if (rasterId === TEXTURE_LAYER_IDS.day) return { "raster-opacity": zoomFade(1, 0.35), "raster-contrast": 0.05, "raster-saturation": -0.3, "raster-brightness-min": 0, "raster-brightness-max": 0.46 };
   return { "raster-opacity": 1, "raster-contrast": -0.1, "raster-saturation": -0.65, "raster-brightness-min": 0.9, "raster-brightness-max": 0.06, "raster-hue-rotate": 180 };
 }

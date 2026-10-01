@@ -1,7 +1,7 @@
 import maplibregl from "maplibre-gl";
 
 import { NETWORK_MAP_TEXTURE_PROTOCOL, NETWORK_MAP_TEXTURE_URLS, type NetworkMapTextureId } from "@shared/networkMapBaseLayers";
-import { parseTextureTileUrl, textureTilePlan } from "@shared/networkMapTexture";
+import { gradeNightPixels, parseTextureTileUrl, textureTilePlan } from "@shared/networkMapTexture";
 
 /**
  * 离线地球图的瓦片：`fxearth://night/{z}/{x}/{y}`。
@@ -54,6 +54,12 @@ async function renderTile(url: string): Promise<ArrayBuffer> {
   for (let row = 0; row < plan.rows.length; row += 1) {
     const span = plan.rows[row];
     context.drawImage(image, plan.sx, span.sy, plan.sw, span.sh, 0, row, TILE, 1);
+  }
+  if (parsed.texture === "night") {
+    // 夜光图调色（gradeNightPixels）：灯光提亮偏暖，蓝色的海和没灯的陆地压暗 —— 缩小看时城市灯光不被周围稀释掉
+    const pixels = context.getImageData(0, 0, TILE, TILE);
+    gradeNightPixels(pixels.data);
+    context.putImageData(pixels, 0, 0);
   }
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
   if (!blob) throw new Error("地球瓦片编码失败");
