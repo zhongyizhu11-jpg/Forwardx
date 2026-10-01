@@ -12,6 +12,9 @@ import { FORWARD_PROTOCOL_LABELS, TUNNEL_PROTOCOLS, normalizeForwardProtocolSett
 import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { formatAgo } from "@shared/dashboardAttention";
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
+import type { RouteMode } from "@shared/routeGroup";
+
+import { buildRouteLines, lineKindOfHealth, lineLegend, readRuleRouteGroup, type LineKind, type NetworkMapRouteLine } from "./networkMapLines";
 
 /**
  * 网络地图的数据模型：首页那块「网络地图」和 /map 整页共用的一份。
@@ -77,6 +80,9 @@ export type NetworkMapTunnelLink = NetworkMapLink & {
   /** 逐跳延迟（来自最近一次诊断），按 path 的段序；拿不到是空数组 */
   hopLatencies: Array<number | null>;
   lastTestAt: number | null;
+  /** 地图上的四类线之一（networkMapLines：正常 = 主线路、停用 / 未上报 = 备用…） */
+  kind: LineKind;
+  createdAt: number | null;
 };
 
 /** 租户看不到一端的隧道：从看得见的那一端画一截灰线出去 */
@@ -109,6 +115,24 @@ export type NetworkMapRule = {
   /** 停着的原因（短标签），在跑就是 null */
   stopReason: string | null;
   protocolBlockReason: string | null;
+  /** 开了线路组（主备）的规则：路径、策略、正在走哪条；没开是 null */
+  routeGroup: NetworkMapRuleRouteGroup | null;
+};
+
+export type NetworkMapRuleRouteGroup = {
+  mode: RouteMode;
+  /** 「自动故障切换」 */
+  modeLabel: string;
+  /** 「平滑切换」 */
+  switchLabel: string;
+  failoverSeconds: number;
+  recoverSeconds: number;
+  autoFailback: boolean;
+  paths: Array<{ key: string; name: string; hops: number[]; dest: string | null; issue: string | null }>;
+  /** Agent 报上来正在走第几条；没报过是 null（不拿「默认走主线」去填） */
+  activeIndex: number | null;
+  /** 切到这条的时刻（毫秒）；没报过是 null */
+  activeSince: number | null;
 };
 
 export type NetworkMapTarget = {
@@ -135,6 +159,10 @@ export type NetworkMapModel = {
   /** 两端里至少一端是这个账号看不到的主机的隧道数；它们存在、有状态，只是没法画成线 */
   hiddenLinkCount: number;
   legend: { healthy: number; degraded: number; down: number; standby: number };
+  /** 线路组里画成线的路径（至少经过一台中转的） */
+  routes: NetworkMapRouteLine[];
+  /** 图例上四类线各几条（隧道 + 线路组路径） */
+  lines: Record<LineKind, number>;
 };
 
 export type TargetGeoRow = { target: string; geo: any };
@@ -229,6 +257,7 @@ export function buildNetworkMapModel(input: {
       continue;
     }
     const lastTestAt = tunnel?.lastTestAt ? new Date(tunnel.lastTestAt).getTime() : NaN;
+    const createdAt = tunnel?.createdAt ? new Date(tunnel.createdAt).getTime() : NaN;
     links.push({
       id: Number(tunnel.id),
       name,
@@ -246,6 +275,8 @@ export function buildNetworkMapModel(input: {
         .filter(Boolean),
       hopLatencies: tunnelHopLatencies(tunnel, path),
       lastTestAt: Number.isFinite(lastTestAt) && lastTestAt > 0 ? lastTestAt : null,
+      kind: lineKindOfHealth(health),
+      createdAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : null,
     });
   }
   const nodes: NetworkMapHostNode[] = hosts.map((host) => {
@@ -300,6 +331,7 @@ export function buildNetworkMapModel(input: {
       health: ruleHealth(rule),
       stopReason: stop?.label ?? null,
       protocolBlockReason: String(rule?.protocolBlockReason || "").trim() || null,
+      routeGroup: readRuleRouteGroup(rule, now),
     };
   }).filter((rule) => rule.id > 0 && rule.hostId > 0);
 
@@ -337,7 +369,11 @@ export function buildNetworkMapModel(input: {
     else if (rule.health === "unknown" && target.health !== "down") target.health = "degraded";
   }
 
-  return { nodes, links, stubs, rules, targets: Array.from(targetMap.values()), linkTotal: tunnels.length, hiddenLinkCount, legend };
+  const routes = buildRouteLines(rules, {
+    visibleHostIds: new Set(nodes.filter((node) => node.geo).map((node) => node.id)),
+    tunnelExit: (tunnelId) => { const link = linkById.get(tunnelId); return link ? link.path[link.path.length - 1] : null; },
+  });
+  return { nodes, links, stubs, rules, targets: Array.from(targetMap.values()), linkTotal: tunnels.length, hiddenLinkCount, legend, routes, lines: lineLegend({ links, stubs, routes }) };
 }
 
 export function useTunnelSupportCheck(enabled: boolean) {
