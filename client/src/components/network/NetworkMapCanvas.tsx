@@ -300,6 +300,12 @@ type Live = {
   autoFit: boolean;
   /** 整页：浮层变了之后排在下一帧的重新框（这一帧里页面可能紧接着飞到别处，那就不框了） */
   refitFrame: number;
+  /**
+   * 整页：正在进行的、我们自己发起的飞行 / 框住（落到哪、框哪几台）。飞到一半留白又变了（选中东西后
+   * 标题换成对比卡、抽屉升起，量出来的浮层下一帧才到），直接 setPadding 会把飞行打断在半路；
+   * 这时按新的留白重新瞄准同一个目标。飞完、被用户的手打断就清掉
+   */
+  pendingMove: { kind: "fly"; center: LngLat; zoom: number } | { kind: "fit"; points: LngLat[]; frameSet: { hosts: Set<number>; targets: Set<string> } | null; maxZoom: number } | null;
   lastReport: string;
   rasterErrorReported: boolean;
   relayoutFrame: number;
@@ -315,7 +321,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       props, map: null, loaded: false, colors: FALLBACK_COLORS,
       hostMarkers: new Map(), targetMarkers: new Map(), clusterMarkers: [], capMarkers: new Map(), stubMarkers: new Map(), countryMarkers: new Map(),
       layout: null, linkFeatureIds: [], flowFeatureIds: [], waypointFeatureIds: [], comets: [], cometPhase: new Map(), cometLast: 0, cometDrawn: false,
-      didInitialFit: false, fitSignature: "", fitItems: [], keepOut: [], reserved: [], hiddenLabels: 0, discFit: false, labelProbe: false, framedBodies: [], arcPx: [], miniGroups: [], settling: false, settledReport: false, userMoved: false, autoFit: false, refitFrame: 0, lastReport: "", rasterErrorReported: false,
+      didInitialFit: false, fitSignature: "", fitItems: [], keepOut: [], reserved: [], hiddenLabels: 0, discFit: false, labelProbe: false, framedBodies: [], arcPx: [], miniGroups: [], settling: false, settledReport: false, userMoved: false, autoFit: false, refitFrame: 0, pendingMove: null, lastReport: "", rasterErrorReported: false,
       relayoutFrame: 0, animFrame: 0,
     };
   }
@@ -937,6 +943,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const options = { center: end.center, zoom: end.zoom, padding, essential: true };
     if (motion.fly) map.flyTo({ ...options, speed: 0.9, curve: 1.42, maxDuration: motion.duration });
     else map.easeTo({ ...options, duration: motion.duration });
+    live.pendingMove = { kind: "fit", points, frameSet, maxZoom };
   };
 
   /**
@@ -1388,7 +1395,10 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       leaveAutoFit();
       // 抽屉的高度已经通过 setPadding 告诉了地图，这里不再传 padding，传了会算两遍
       if (live.props.reduceMotion) map.jumpTo({ center, zoom });
-      else map.flyTo({ center, zoom, speed: 0.9, curve: 1.42, maxDuration: 1800, essential: true });
+      else {
+        map.flyTo({ center, zoom, speed: 0.9, curve: 1.42, maxDuration: 1800, essential: true });
+        live.pendingMove = { kind: "fly", center, zoom };
+      }
     },
     fitPoints(points, maxZoom = 8) {
       const map = live.map;
@@ -1608,7 +1618,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         map.on("zoomstart", (event) => { if (event.originalEvent) markUserMoved(); });
       } else if (!mini) {
         // 整页拖图不重新布局，但名字、国名压没压到谁要重新看一眼（拖完看一次就够）
-        map.on("moveend", () => { updatePageLabels(); updateCountryLabels(); });
+        map.on("moveend", () => { live.pendingMove = null; updatePageLabels(); updateCountryLabels(); });
         // 用户自己拖了 / 缩了：不再是全览，浮层变了也不抢视角
         for (const type of ["dragstart", "zoomstart", "rotatestart"] as const) map.on(type, (event: any) => { if (event?.originalEvent) leaveAutoFit(); });
         // 字体到了名字会变宽：还是全览就按新的宽度再框一遍
@@ -1753,6 +1763,16 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     const container = map.getContainer();
     const size = { width: container.clientWidth, height: container.clientHeight };
     if (!compact() && live.loaded && live.didInitialFit && live.autoFit && canAutoFit(size, props.padding)) { schedulePageRefit(); return; }
+    // 自己发起的飞行 / 框住还在半路：按新的留白重新瞄准同一个目标（setPadding 会把它停在半路）
+    const pending = live.pendingMove;
+    if (!compact() && pending && map.isMoving()) {
+      if (pending.kind === "fly") {
+        map.flyTo({ center: pending.center, zoom: pending.zoom, padding: props.padding, speed: 0.9, curve: 1.42, maxDuration: 1200, essential: true });
+        live.pendingMove = pending;
+      } else if (canAutoFit(size, props.padding)) settlePageFit(pending.points, pending.frameSet, pending.maxZoom, { duration: 700, fly: false }, props.padding);
+      else map.setPadding(props.padding);
+      return;
+    }
     map.setPadding(props.padding);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paddingKey]);
