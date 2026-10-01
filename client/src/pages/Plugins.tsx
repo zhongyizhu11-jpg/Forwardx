@@ -21,6 +21,7 @@ import { OptimisticSwitch, Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { renderMixedHtml, textToHtml } from "@/lib/htmlContent";
+import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import {
@@ -888,7 +889,8 @@ export default function Plugins({ sidebarPluginId }: { sidebarPluginId?: string 
     { pluginId: selectedPlugin?.pluginId || "", groupId: agentActionGroupId },
     {
       enabled: !!selectedPlugin?.pluginId && !!agentActionGroupId,
-      refetchInterval: 1000,
+      // 2 秒一轮足够看进度；做完了就停（下面的 effect 也会清掉 groupId）。
+      refetchInterval: (query) => ((query.state.data as any)?.done ? false : pollingInterval("live")),
       refetchOnWindowFocus: false,
     },
   );

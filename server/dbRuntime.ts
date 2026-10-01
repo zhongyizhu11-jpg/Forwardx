@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createRequire as createModuleRequire } from "node:module";
 import { drizzle as drizzleMysql } from "drizzle-orm/mysql2";
 import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 import { drizzle as drizzlePostgres } from "drizzle-orm/node-postgres";
@@ -139,13 +140,71 @@ async function withSqliteConnectionLock<T>(
   }
 }
 
+/*
+  预编译语句缓存（只 SQLite）。原来每条查询都 sqlite.prepare 一次，语句编译常常比执行还贵。
+  按 SQL 文本复用，LRU 上限 500 条；超过 4KB 的 SQL（一般是拼了长 IN 列表、每次都不一样）
+  不进缓存，免得把常用语句挤出去。
+
+  复用是安全的：better-sqlite3 的 run/get/all 都是同步执行完并 reset 语句才返回，语句不会在
+  「执行到一半」时被另一个调用拿去用（我们也不用 iterate）；所有访问又都在连接锁里串行。
+  raw 模式是挂在语句对象上的，所以每次用之前都显式设一遍（Drizzle 要数组行，queryRaw 要对象行）。
+  缓存按连接对象分开，关闭 / 重连时整份丢掉。
+
+  测试会替换 sqlite.prepare（或原型上的 prepare）来数语句条数；被替换了就不走缓存，每条语句照旧经过它。
+*/
+const SQLITE_STATEMENT_CACHE_MAX = 500;
+const SQLITE_STATEMENT_CACHE_MAX_SQL_LENGTH = 4096;
+let sqliteStatementCache: { sqlite: Database.Database; statements: Map<string, Database.Statement> } | null = null;
+// better-sqlite3 自己的 prepare（原型上挂的就是它）。从源头拿而不是读原型：有的测试在加载
+// 本模块之前就替换了原型上的 prepare。拿不到（驱动内部结构变了）就退回原型上的。
+const pristineSqlitePrepare: unknown = (() => {
+  try {
+    return createModuleRequire(import.meta.url)("better-sqlite3/lib/methods/wrappers.js").prepare
+      ?? Database.prototype.prepare;
+  } catch {
+    return Database.prototype.prepare;
+  }
+})();
+
+function clearSqliteStatementCache() {
+  sqliteStatementCache = null;
+}
+
+export function getSqliteStatementCacheSize() {
+  return sqliteStatementCache?.statements.size ?? 0;
+}
+
+function prepareSqliteStatement(sqlite: Database.Database, sqlText: string): Database.Statement {
+  if (sqlText.length > SQLITE_STATEMENT_CACHE_MAX_SQL_LENGTH || sqlite.prepare !== pristineSqlitePrepare) {
+    return sqlite.prepare(sqlText);
+  }
+  if (sqliteStatementCache?.sqlite !== sqlite) {
+    sqliteStatementCache = { sqlite, statements: new Map() };
+  }
+  const statements = sqliteStatementCache.statements;
+  const cached = statements.get(sqlText);
+  if (cached) {
+    // Map 按插入顺序迭代：删了再放回去就成了「最近用过」
+    statements.delete(sqlText);
+    statements.set(sqlText, cached);
+    return cached;
+  }
+  const statement = sqlite.prepare(sqlText);
+  statements.set(sqlText, statement);
+  if (statements.size > SQLITE_STATEMENT_CACHE_MAX) {
+    const oldest = statements.keys().next().value;
+    if (oldest !== undefined) statements.delete(oldest);
+  }
+  return statement;
+}
+
 function createSqliteDrizzleDatabase(sqlite: Database.Database): Db {
   const callback: any = (sqlText: string, params: any[], method: "run" | "all" | "get" | "values") => (
     withSqliteConnectionLock(sqlite, () => {
-      const statement = sqlite.prepare(sqlText);
+      const statement = prepareSqliteStatement(sqlite, sqlText);
       if (method === "run") return { rows: [], ...statement.run(...params) };
-      if (method === "get") return { rows: statement.raw().get(...params) };
-      return { rows: statement.raw().all(...params) };
+      if (method === "get") return { rows: statement.raw(true).get(...params) };
+      return { rows: statement.raw(true).all(...params) };
     }, `drizzle-${method}`)
   );
   return drizzleSqliteProxy(callback) as Db;
@@ -569,6 +628,7 @@ export async function connectDatabase(config = readDatabaseConfig()) {
     _pgPool = null;
     _sqlite = null;
     _db = null;
+    clearSqliteStatementCache();
     return null;
   }
   if (_db && _kind === config.type) return _db;
@@ -601,15 +661,47 @@ export async function connectDatabase(config = readDatabaseConfig()) {
   const normalized = normalizeSqlite(config.sqlite);
   fs.mkdirSync(path.dirname(normalized.path), { recursive: true });
   _sqlite = new Database(normalized.path);
-  _sqlite.pragma("journal_mode = WAL");
-  _sqlite.pragma("foreign_keys = ON");
+  applySqlitePragmas(_sqlite);
   _db = createSqliteDrizzleDatabase(_sqlite);
   _kind = "sqlite";
   console.log(`[Database] SQLite opened at ${normalized.path}`);
   return _db;
 }
 
+/*
+  连接参数都写明，不依赖驱动的编译默认值：
+  - WAL + synchronous=NORMAL：提交不再每次 fsync，断电最多丢最后几笔事务，不会损坏库；
+  - busy_timeout：别的进程（备份、迁移工具）占着写锁时等 5 秒而不是立刻报 SQLITE_BUSY；
+  - cache_size=-16000：16MB 页缓存；temp_store=MEMORY：排序 / 分组的临时表放内存；
+  - mmap_size=128MB：读走内存映射，少一次拷贝。
+*/
+function applySqlitePragmas(sqlite: Database.Database) {
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("synchronous = NORMAL");
+  sqlite.pragma("busy_timeout = 5000");
+  sqlite.pragma("cache_size = -16000");
+  sqlite.pragma("temp_store = MEMORY");
+  sqlite.pragma("mmap_size = 134217728");
+  sqlite.pragma("foreign_keys = ON");
+}
+
+/**
+ * 让 SQLite 按需更新查询规划用的统计信息（PRAGMA optimize）。启动建完表后跑一次，
+ * 之后由调度器每隔几小时跑一次。SQLite 3.46 起 optimize 自带分析行数上限，很快。
+ * 其它数据库什么也不做。
+ */
+export async function optimizeSqliteDatabase(options: { startup?: boolean } = {}) {
+  if (_kind !== "sqlite" || !_sqlite) return false;
+  const sqlite = _sqlite;
+  await withSqliteConnectionLock(sqlite, () => {
+    // 0x10002：启动时把所有表都看一遍（不只是本连接用过的表）
+    sqlite.pragma(options.startup ? "optimize = 0x10002" : "optimize");
+  }, "optimize");
+  return true;
+}
+
 export async function closeDatabase() {
+  clearSqliteStatementCache();
   if (_pool) {
     await _pool.end().catch(() => undefined);
   }
@@ -809,7 +901,7 @@ export async function executeRaw(sqlText: string, params: any[] = []) {
   if (_kind === "sqlite") {
     const sqlite = active?.sqlite || _sqlite;
     if (!sqlite) throw new DatabaseNotConfiguredError("SQLite database is not connected");
-    return withSqliteConnectionLock(sqlite, () => sqlite.prepare(sqlText).run(...normalizedParams), "executeRaw");
+    return withSqliteConnectionLock(sqlite, () => prepareSqliteStatement(sqlite, sqlText).run(...normalizedParams), "executeRaw");
   }
   if (_kind === "postgresql") {
     const executor = active?.postgresClient || _pgPool;
@@ -832,7 +924,11 @@ export async function queryRaw<T = Record<string, any>>(sqlText: string, params:
   if (_kind === "sqlite") {
     const sqlite = active?.sqlite || _sqlite;
     if (!sqlite) throw new DatabaseNotConfiguredError("SQLite database is not connected");
-    return withSqliteConnectionLock(sqlite, () => sqlite.prepare(sqlText).all(...normalizedParams) as T[], "queryRaw");
+    return withSqliteConnectionLock(sqlite, () => {
+      const statement = prepareSqliteStatement(sqlite, sqlText);
+      if (statement.reader) statement.raw(false);
+      return statement.all(...normalizedParams) as T[];
+    }, "queryRaw");
   }
   if (_kind === "postgresql") {
     const executor = active?.postgresClient || _pgPool;

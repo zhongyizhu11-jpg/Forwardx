@@ -1176,8 +1176,12 @@ function BackupRestoreSection({ panelUrl }: { panelUrl: string }) {
   const [showDatabaseSwitchConfirm, setShowDatabaseSwitchConfirm] = useState(false);
   const [cachedBackupSummary, setCachedBackupSummary] = useState<BackupSummaryCache | null>(() => readBackupSummaryCache());
 
+  /*
+    原来备份页开着就每秒拉一次迁移码。倒计时本来就在本地走（migrationCodeTick），
+    要轮询的只是「新面板有没有发来迁移请求」—— 那只在有码的时候才可能发生。没码就不刷。
+  */
   const { data: currentMigrationCode } = trpc.system.getMigrationCode.useQuery(undefined, {
-    refetchInterval: pollingInterval("realtime"),
+    refetchInterval: (query) => (query.state.data ? pollingInterval("live") : false),
   });
   const { data: databaseSwitchStatus } = trpc.system.databaseSwitchStatus.useQuery(undefined, {
     refetchInterval: pollingInterval("normal"),
@@ -2409,6 +2413,7 @@ function TelegramBotSettingsCard() {
   const updateSettingsMutation = trpc.system.updateSettings.useMutation({
     onSuccess: () => {
       utils.system.getSettings.invalidate();
+      utils.system.forwardProtocols.invalidate();
       toast.success("Telegram 机器人配置已保存");
     },
     onError: (err) => toast.error(err.message || "保存失败"),
@@ -2743,6 +2748,7 @@ function DeepSeekSettingsCard() {
   const updateSettingsMutation = trpc.system.updateSettings.useMutation({
     onSuccess: (_data, variables) => {
       utils.system.getSettings.invalidate();
+      utils.system.forwardProtocols.invalidate();
       utils.system.listAiModels.invalidate();
       setProviderConfigs((prev) => ({
         deepseek: { ...prev.deepseek, apiKeyInput: "" },
@@ -4502,7 +4508,8 @@ function SystemInfoSection() {
   const { data: upgradeStatus, refetch: refetchUpgradeStatus, isError: upgradeStatusUnreachable } = trpc.system.upgradeStatus.useQuery(
     undefined,
     {
-      refetchInterval: (query) => ((query.state.data as any)?.job?.status === "running" ? 2000 : pollingInterval("fast")),
+      // 只有升级在跑时才快刷（2 秒）；平时一分钟看一眼就够了 —— 发起升级 / 回退 / 检查更新之后都会立刻主动拉一次。
+      refetchInterval: (query) => ((query.state.data as any)?.job?.status === "running" ? 2000 : 60_000),
       refetchIntervalInBackground: true,
       refetchOnWindowFocus: (query) => (query.state.data as any)?.job?.status === "running",
     }
@@ -4700,6 +4707,7 @@ function SystemInfoSection() {
   const updateSettingsMutation = trpc.system.updateSettings.useMutation({
     onSuccess: () => {
       utils.system.getSettings.invalidate();
+      utils.system.forwardProtocols.invalidate();
       toast.success("面板设置已保存");
     },
     onError: (err) => toast.error(err.message || "保存失败"),

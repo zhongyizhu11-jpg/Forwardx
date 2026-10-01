@@ -1994,8 +1994,9 @@ function RulesContent() {
     staleTime: 60000,
     refetchOnWindowFocus: false,
   });
+  // 规则页只拿隧道名称 / 归属来展示和选择，一分钟刷一次就够；隧道页和表单里就地新建隧道都会直接 invalidate。
   const { data: tunnels } = trpc.tunnels.options.useQuery(undefined, {
-    refetchInterval: pollingInterval("normal"),
+    refetchInterval: 60_000,
     staleTime: 10000,
     refetchOnWindowFocus: false,
   });
@@ -2312,7 +2313,8 @@ function RulesContent() {
     search: ruleSearchQuery,
   }, {
     enabled: secondaryQueriesReady,
-    refetchInterval: pollingInterval("normal"),
+    // 页头的统计数字：30 秒一轮；增删改、启停后各自 invalidate，不等这一轮。
+    refetchInterval: pollingInterval("slow"),
     staleTime: 10_000,
     refetchOnWindowFocus: false,
     placeholderData: (previousData) => previousData,

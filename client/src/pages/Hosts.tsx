@@ -10,6 +10,8 @@ import { parseHostDateTime } from "@/components/hosts/HostCard";
 import { getStoredAgentTokenViewMode, storeAgentTokenViewMode, type AgentTokenViewMode } from "@/lib/agentTokenViewMode";
 import { formatMetricSizeDetail } from "@/lib/formatMetricSize";
 import { usePageVisible } from "@/hooks/usePageVisible";
+import { useIsMobile } from "@/hooks/useMobile";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { escapeTooltipHtml, hostGeoCoordinate, hostMapClusterDistance, longitudeDistanceDegrees } from "@/lib/hostGeo";
 import AnimatedStatValue from "@/components/AnimatedStatValue";
 import AgentTokenManager from "@/components/AgentTokenManager";
@@ -124,7 +126,7 @@ import {
   Wifi,
 } from "lucide-react";
 import type { GlobeMethods } from "react-globe.gl";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 const ReactGlobe = lazy(() => import("react-globe.gl")) as typeof import("react-globe.gl").default;
 const HostFlatMap = lazy(() => import("@/components/HostFlatMap"));
@@ -1185,11 +1187,346 @@ function HostGroupFilterBar({
   );
 }
 
+/*
+  主机列表的实时数据（状态 / 流量 / 指标）每几秒刷一次，整页跟着重渲。卡片和表格行抽成 memo
+  组件，只拿自己那一行的数据和一组不变的回调 —— 数据没变的那几台直接跳过。
+*/
+type HostItemActions = {
+  openDetail: (host: any) => void;
+  edit: (host: any) => void;
+  remove: (id: number) => void;
+  upgrade: (host: any) => void;
+  resetTraffic: (host: any) => void;
+  correctTraffic: (host: any) => void;
+  editBilling: (host: any) => void;
+  viewProbeLatency: (host: any) => void;
+};
+
+type HostCardItemProps = {
+  host: any;
+  compact: boolean;
+  metricRow: any;
+  traffic: any;
+  isAdmin: boolean;
+  latestAgentVersion: string;
+  resetTrafficPending: boolean;
+  refreshInterval: number | false;
+  actions: HostItemActions;
+  // 只用来让 memo 每分钟放行一次：「离线多久」「剩余几天」是按当前时间算的。
+  clockMinute: number;
+  dragHandle?: ReactNode;
+  sortableClassName?: string;
+};
+
+const EMPTY_LIVE_ROWS: any[] = [];
+// 能看到的机器超过这个数，实时刷新放慢到 5 秒（汇总要扫全部机器）。
+const HOST_LIVE_MANY_HOSTS = 200;
+
+function sameLiveValue(a: unknown, b: unknown) {
+  if (a === b) return true;
+  return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+}
+
+function sameLiveRow(a: any, b: any) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((key) => sameLiveValue(a[key], b[key]));
+}
+
+/*
+  按 id 建表，内容没变的行沿用上一轮的对象。轮询每次回来都是新对象（日期字段让
+  React Query 的结构共享也认不出来），不这样 memo 卡片永远比不上。
+*/
+function useStableLiveRowsById(rows: any[], idKey: "id" | "hostId") {
+  const previousRef = useRef(new Map<number, any>());
+  return useMemo(() => {
+    const previous = previousRef.current;
+    const next = new Map<number, any>();
+    for (const row of rows) {
+      const id = Number(row?.[idKey]);
+      if (!Number.isInteger(id) || id <= 0) continue;
+      const old = previous.get(id);
+      next.set(id, old && sameLiveRow(old, row) ? old : row);
+    }
+    previousRef.current = next;
+    return next;
+  }, [idKey, rows]);
+}
+
+function HostCardItemView({
+  host,
+  compact,
+  metricRow,
+  traffic,
+  isAdmin,
+  latestAgentVersion,
+  resetTrafficPending,
+  refreshInterval,
+  actions,
+  dragHandle,
+  sortableClassName,
+}: HostCardItemProps) {
+  const metrics = useMemo(() => (metricRow ? [metricRow] : null), [metricRow]);
+  /*
+    紧凑模式换成 Summary 卡：列表只看状态，点进去才看数据。
+
+    详情卡（viewMode === "card"）暂时还走旧的 HostCard —— 它承载了排序拖拽、
+    服务列表、到期提醒等一批还没迁移的东西，一次全换会丢功能。等 PR 3 之后
+    那些各自有了去处再收掉。
+  */
+  if (compact) {
+    return (
+      <HostEntitySummaryCard
+        host={host}
+        metrics={metrics}
+        traffic={traffic}
+        canUpgrade={isAdmin}
+        upgradeAvailable={isAdmin && !!latestAgentVersion && hostNeedsAgentUpgrade(host, latestAgentVersion)}
+        resetTrafficPending={resetTrafficPending}
+        onOpenDetail={actions.openDetail}
+        onEdit={actions.edit}
+        onDelete={actions.remove}
+        onUpgrade={actions.upgrade}
+        onResetTraffic={isAdmin ? actions.resetTraffic : undefined}
+        onCorrectTraffic={isAdmin ? actions.correctTraffic : undefined}
+        onEditBilling={isAdmin ? actions.editBilling : undefined}
+        onViewProbeLatency={actions.viewProbeLatency}
+      />
+    );
+  }
+  return (
+    <HostCard
+      host={host}
+      onEdit={actions.edit}
+      onDelete={actions.remove}
+      onUpgrade={actions.upgrade}
+      canUpgrade={isAdmin}
+      onResetTraffic={isAdmin ? actions.resetTraffic : undefined}
+      onCorrectTraffic={isAdmin ? actions.correctTraffic : undefined}
+      onEditBilling={isAdmin ? actions.editBilling : undefined}
+      onViewProbeLatency={actions.viewProbeLatency}
+      resetTrafficPending={resetTrafficPending}
+      traffic={traffic}
+      metrics={metrics}
+      latestAgentVersion={latestAgentVersion}
+      refreshInterval={refreshInterval}
+      compact={compact}
+      dragHandle={dragHandle}
+      sortableClassName={sortableClassName}
+    />
+  );
+}
+
+const HostCardItem = memo(HostCardItemView);
+
+// 可拖动排序的卡片：SortableItem 也收进 memo 里，拖动时由 dnd-kit 的 context 单独驱动它重渲。
+const SortableHostCardItem = memo(function SortableHostCardItem({
+  sortDisabled,
+  sortBusy,
+  ...props
+}: Omit<HostCardItemProps, "dragHandle" | "sortableClassName"> & { sortDisabled: boolean; sortBusy: boolean }) {
+  return (
+    <SortableItem id={Number(props.host.id)} disabled={sortDisabled}>
+      {({ itemProps, handleProps, isDragging, isDropTarget }) => (
+        <div {...itemProps}>
+          <HostCardItemView
+            {...props}
+            dragHandle={<SortableDragHandle dragHandleProps={handleProps} visible={isDragging} busy={sortBusy} className="-ml-2" />}
+            sortableClassName={cn(isDragging && "opacity-55 ring-1 ring-primary/35", isDropTarget && "ring-1 ring-primary/45")}
+          />
+        </div>
+      )}
+    </SortableItem>
+  );
+});
+
+const HostTableRow = memo(function HostTableRow({
+  host,
+  latestMetric,
+  traffic,
+  isAdmin,
+  latestAgentVersion,
+  resetTrafficPending,
+  actions,
+  sortingEnabled,
+  sortDisabled,
+  sortBusy,
+}: {
+  host: any;
+  latestMetric: any;
+  traffic: any;
+  isAdmin: boolean;
+  latestAgentVersion: string;
+  resetTrafficPending: boolean;
+  actions: HostItemActions;
+  sortingEnabled: boolean;
+  sortDisabled: boolean;
+  sortBusy: boolean;
+  // 同卡片：只参与 memo 比较。
+  clockMinute: number;
+}) {
+  const agentUpgradeTimedOut = isAgentUpgradeTimedOut(host);
+  const agentNeedsUpdate = isAgentVersionBehind(host.agentVersion, latestAgentVersion);
+  const remainingDays = formatHostRemainingDays(host.purchasedAt, host.stoppedAt);
+  const primaryAddressText = hostPrimaryAddressText(host);
+  const hostOs = parseHostOs(host.osInfo);
+  const uptimeText = latestMetric?.uptime == null ? "--" : formatUptime(latestMetric.uptime);
+  const uptimeTitle = formatHostUptimeTitle(latestMetric?.uptime, uptimeText);
+  const expiryTitle = formatHostExpiryTitle(host.stoppedAt, remainingDays);
+  const memoryDetail = formatMetricSizeDetail(latestMetric?.memoryUsed, host.memoryTotal);
+  const diskDetail = formatMetricSizeDetail(latestMetric?.diskUsed, latestMetric?.diskTotal);
+  const recoveryStartedText = formatHostDateTimeText(host.agentRecoveryStartedAt);
+  const recoveryCompletedText = formatHostDateTimeText(host.agentRecoveryCompletedAt);
+  const hostRuntimeTitle = [
+    String(host.name || ""),
+    host.agentBootId ? `Boot ID: ${host.agentBootId}` : "",
+    host.agentProcessId ? `Agent PID: ${host.agentProcessId}` : "",
+    recoveryStartedText ? `恢复开始: ${recoveryStartedText}` : "",
+    recoveryCompletedText ? `恢复完成: ${recoveryCompletedText}` : "",
+    Number(host.agentRecoveryExpected || 0) > 0 ? `恢复进度: ${Number(host.agentRecoveryReady || 0)}/${Number(host.agentRecoveryExpected || 0)}` : "",
+    host.mimicRuntimeStatus ? `Mimic: ${host.mimicRuntimeStatus}` : "",
+    host.mimicRuntimeMessage ? String(host.mimicRuntimeMessage) : "",
+  ].filter(Boolean).join("\n");
+  return (
+    <SortableItem id={Number(host.id)} disabled={sortDisabled} itemKind="row">
+      {({ itemProps, handleProps, isDragging, isDropTarget }) => (
+    <TableRow
+      {...itemProps}
+      className={cn(
+        "group/sortable host-table-row align-middle hover:bg-transparent",
+        isDragging && "opacity-55 ring-1 ring-primary/35",
+        isDropTarget && "ring-1 ring-primary/45",
+      )}
+    >
+      <TableCell className="host-table-frozen-cell host-table-frozen-left sticky left-0 z-20 w-[320px] min-w-[320px] max-w-[320px] border-r border-border/60 bg-card px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          {sortingEnabled && (
+            <SortableDragHandle dragHandleProps={handleProps} visible={isDragging} busy={sortBusy} className="shrink-0" />
+          )}
+          <HostOsAvatar os={hostOs} size="sm" />
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <HostListStatusBadge host={host} />
+              <span className="min-w-0 truncate font-semibold" title={hostRuntimeTitle}>{host.name}</span>
+            </div>
+            <div className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] text-muted-foreground">
+              {hostOs.label && (
+                <span className="shrink-0 rounded border border-border/50 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium leading-none text-foreground/80" title={hostOs.full}>
+                  {hostOs.label}
+                </span>
+              )}
+              {host.agentVersion && (
+                <span className="shrink-0 rounded border border-border/50 bg-muted/35 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground" title="Agent 版本">
+                  v{host.agentVersion}
+                </span>
+              )}
+              {agentNeedsUpdate && (
+                <Badge variant="outline" className="h-4 shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1 py-0 text-[9px] leading-none text-[var(--fx-warn-text)]">
+                  新版本
+                </Badge>
+              )}
+              <FxpRuntimeBadge host={host} className="h-4 px-1 text-[9px] leading-none" />
+              {host.agentUpgradeRequested && (
+                <Badge variant="outline" className={`h-4 shrink-0 px-1 py-0 text-[9px] leading-none ${agentUpgradeTimedOut ? "border-destructive/30 text-destructive" : "border-primary/25 text-primary"}`}>
+                  {agentUpgradeTimedOut ? "升级失败" : "升级中"}
+                </Badge>
+              )}
+              <HostRegionBadge host={host} compact />
+            </div>
+            <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground" title={primaryAddressText}>
+              <RadioTower className="h-3 w-3 shrink-0" />
+              <span className="min-w-0 truncate font-mono">{primaryAddressText}</span>
+            </div>
+          </div>
+        </div>
+      </TableCell>
+      <TableCell className="w-[128px] whitespace-nowrap py-2.5 text-center">
+        <div className="flex flex-col items-center justify-center gap-1.5 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-[11px] font-medium tabular-nums text-muted-foreground" title={uptimeTitle}>
+            <Clock className="h-3.5 w-3.5 shrink-0" />
+            <span>{uptimeText}</span>
+          </div>
+          <div className="flex items-center justify-center gap-1.5 text-[11px] font-semibold tabular-nums" title={expiryTitle}>
+            <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className={hostRemainingClass(remainingDays)}>{remainingDays}</span>
+          </div>
+        </div>
+      </TableCell>
+      <TableCell className="px-3 py-2.5">
+        <HostListResourceBundle
+          cpuValue={latestMetric?.cpuUsage}
+          cpuDetail={host.cpuInfo ? String(host.cpuInfo) : undefined}
+          memoryValue={latestMetric?.memoryUsage}
+          memoryDetail={memoryDetail}
+          diskValue={latestMetric?.diskUsage}
+          diskDetail={diskDetail}
+          isOnline={!!host.isOnline}
+        />
+      </TableCell>
+      <TableCell className="px-3 py-2.5">
+        <HostListFlowPair
+          inValue={formatBytes(Number(traffic?.bytesIn || 0))}
+          outValue={formatBytes(Number(traffic?.bytesOut || 0))}
+          inTitle={`累计入向：${formatBytes(Number(traffic?.bytesIn || 0))}`}
+          outTitle={`累计出向：${formatBytes(Number(traffic?.bytesOut || 0))}`}
+        />
+      </TableCell>
+      <TableCell className="px-3 py-2.5">
+        <HostListFlowPair
+          inValue={formatOptionalBytesPerSecond(latestMetric?.networkSpeedIn)}
+          outValue={formatOptionalBytesPerSecond(latestMetric?.networkSpeedOut)}
+          inTitle="实时入向"
+          outTitle="实时出向"
+        />
+      </TableCell>
+      <TableCell className="px-3 py-2.5">
+        <HostListFlowPair
+          inValue={formatOptionalBytes(latestMetric?.networkIn)}
+          outValue={formatOptionalBytes(latestMetric?.networkOut)}
+          inTitle={systemNetworkTotalTitle(latestMetric)}
+          outTitle={systemNetworkTotalTitle(latestMetric)}
+        />
+      </TableCell>
+      <TableCell className="host-table-frozen-cell host-table-frozen-right sticky right-0 z-20 w-[120px] min-w-[120px] max-w-[120px] border-l border-border/60 bg-card px-2 py-2.5 text-right">
+        <HostActionButtons
+          host={host}
+          onEdit={actions.edit}
+          onDelete={actions.remove}
+          onUpgrade={actions.upgrade}
+          onResetTraffic={isAdmin ? actions.resetTraffic : undefined}
+          onCorrectTraffic={isAdmin ? actions.correctTraffic : undefined}
+          onEditBilling={isAdmin ? actions.editBilling : undefined}
+          onViewProbeLatency={actions.viewProbeLatency}
+          resetTrafficPending={resetTrafficPending}
+          canUpgrade={isAdmin}
+          className="flex items-center justify-end gap-0.5"
+          buttonClassName="h-8 w-8"
+        />
+      </TableCell>
+    </TableRow>
+      )}
+    </SortableItem>
+  );
+});
+
 function HostsContent() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
   const pageVisible = usePageVisible();
-  const [viewMode, setViewMode] = useState<HostViewMode>(() => getStoredHostViewMode());
+  const isMobileViewport = useIsMobile();
+  // 和 Tailwind 的 md / sm 断点对齐：只渲染看得见的那一套，不再两套都渲染再用 CSS 藏一套。
+  const isBelowMd = useMediaQuery("(max-width: 767px)");
+  const isBelowSm = useMediaQuery("(max-width: 639px)");
+  const [preferredViewMode, setViewMode] = useState<HostViewMode>(() => getStoredHostViewMode());
+  /*
+    地图在 md 以下本来就藏着（切换按钮也藏着），可桌面上记住的「地图」带到手机上，
+    就是在看不见的地方跑一个 3D 地球、列表却是空的。手机上按精简卡片显示，记住的选择不动。
+  */
+  const viewMode: HostViewMode = isBelowMd && (preferredViewMode === "map" || preferredViewMode === "flat-map")
+    ? "compact-card"
+    : preferredViewMode;
   const [activeManageTab, setActiveManageTab] = useUrlTab<HostManageTab>({
     values: user?.role === "admin" ? HOST_MANAGE_TABS_ADMIN : HOST_MANAGE_TABS_USER,
     defaultValue: "hosts",
@@ -1362,7 +1699,15 @@ function HostsContent() {
   const [serviceViewMode, setServiceViewMode] = useState<HostProbeServiceViewMode>(() => getStoredHostProbeServiceViewMode());
   const [hostGroupViewMode, setHostGroupViewMode] = useState<HostGroupViewMode>(() => getStoredHostGroupViewMode());
   const hostManageTabItems = user?.role === "admin" ? HOST_MANAGE_TAB_ITEMS_ADMIN : HOST_MANAGE_TAB_ITEMS_USER;
-  const hostLiveRefreshInterval = visiblePollingInterval("live", pageVisible && activeManageTab === "hosts");
+  /*
+    这一页的实时数据统一一个节奏（原来是几个查询各 2 秒、各自错开地刷）：桌面 3 秒；
+    手机上或机器很多时 5 秒。切到后台照旧停。
+  */
+  const hostLiveManyHosts = Number(hostPageQuery.data?.scopeTotalItems || 0) > HOST_LIVE_MANY_HOSTS;
+  const hostLiveRefreshInterval = visiblePollingInterval(
+    isMobileViewport || hostLiveManyHosts ? "fast" : "active",
+    pageVisible && activeManageTab === "hosts",
+  );
   // Sorted, because the ids travel as a query input: keeping the visual order here
   // would give every reorder a brand-new query key and refetch the whole summary.
   const currentPageHostIds = useMemo(
@@ -1372,20 +1717,18 @@ function HostsContent() {
       .sort((a: number, b: number) => a - b),
     [hostPageQuery.data?.items],
   );
-  const { data: hostStatusRows = [] } = trpc.hosts.statusSummary.useQuery({ hostIds: currentPageHostIds }, {
+  // 状态、累计流量、最新指标、「正在看」合成一个请求（hosts.pageLive），一轮只渲染一次。
+  const hostPageLiveQuery = trpc.hosts.pageLive.useQuery({ hostIds: currentPageHostIds, watch: true }, {
     enabled: !isHostMapView && !needsFullHostList && !!hostLiveRefreshInterval && currentPageHostIds.length > 0,
     refetchInterval: hostLiveRefreshInterval,
     refetchOnWindowFocus: false,
     placeholderData: (previousData: any) => previousData,
   });
-  const hostStatusById = useMemo(() => {
-    const map = new Map<number, any>();
-    for (const row of hostStatusRows as any[]) {
-      const hostId = Number(row?.id);
-      if (Number.isInteger(hostId) && hostId > 0) map.set(hostId, row);
-    }
-    return map;
-  }, [hostStatusRows]);
+  const hostStatusById = useStableLiveRowsById(hostPageLiveQuery.data?.status ?? EMPTY_LIVE_ROWS, "id");
+  const hostTrafficById = useStableLiveRowsById(hostPageLiveQuery.data?.traffic ?? EMPTY_LIVE_ROWS, "hostId");
+  const hostLatestMetricById = useStableLiveRowsById(hostPageLiveQuery.data?.metrics ?? EMPTY_LIVE_ROWS, "hostId");
+  // 状态合并进主机对象时也沿用上一轮的结果，否则每轮每张卡都是新对象，memo 白做。
+  const mergedHostCacheRef = useRef(new Map<number, { host: any; status: any; merged: any }>());
   // Drag-to-reorder used to wait for the server: the mutation invalidated the host
   // page query and the list only moved once the refetch landed, so the dropped card
   // snapped back to its old slot and the whole list visibly refreshed. Holding the
@@ -1393,10 +1736,18 @@ function HostsContent() {
   // movement the user sees.
   const [optimisticHostOrder, setOptimisticHostOrder] = useState<number[] | null>(null);
   const displayHosts = useMemo<any[]>(() => {
+    const previousMerged = mergedHostCacheRef.current;
+    const nextMerged = new Map<number, { host: any; status: any; merged: any }>();
     const merged = baseDisplayHosts.map((host: any) => {
-      const status = hostStatusById.get(Number(host?.id));
-      return status ? { ...host, ...status } : host;
+      const hostId = Number(host?.id);
+      const status = hostStatusById.get(hostId);
+      if (!status) return host;
+      const cached = previousMerged.get(hostId);
+      const value = cached && cached.host === host && cached.status === status ? cached.merged : { ...host, ...status };
+      nextMerged.set(hostId, { host, status, merged: value });
+      return value;
     });
+    mergedHostCacheRef.current = nextMerged;
     if (!optimisticHostOrder) return merged;
     const rank = new Map(optimisticHostOrder.map((hostId, index) => [hostId, index]));
     // Ignore an override that no longer describes exactly this page (paging or
@@ -1508,7 +1859,6 @@ function HostsContent() {
   const [checkingAgentUpdate, setCheckingAgentUpdate] = useState(false);
   const lastAgentUpdateCheck = useRef(0);
   const [form, setForm] = useState<HostFormData>(defaultFormData);
-  const watchMetricsMutation = trpc.hosts.watchMetrics.useMutation();
 
   // 原来这里在「TG 没配好」时把两个提醒开关强制关掉 —— 那是把「没有 TG」当成了
   // 「不需要提醒」。邮件那一路现在也会发，开关只表示这台机器要不要提醒。
@@ -1591,6 +1941,7 @@ function HostsContent() {
   const resetHostTrafficMutation = trpc.hosts.resetTraffic.useMutation({
     onSuccess: () => {
       utils.hosts.trafficSummary.invalidate();
+      utils.hosts.pageLive.invalidate();
       utils.hosts.summary.invalidate();
       setResetTrafficHost(null);
       toast.success("流量统计已重置");
@@ -1603,6 +1954,7 @@ function HostsContent() {
     onSuccess: () => {
       utils.hosts.traffic.invalidate();
       utils.hosts.trafficSummary.invalidate();
+      utils.hosts.pageLive.invalidate();
       utils.hosts.summary.invalidate();
       setTrafficCorrectionHost(null);
       toast.success("流量用量已修正");
@@ -1889,11 +2241,6 @@ function HostsContent() {
     () => pagedHosts.map((host: any) => Number(host.id)).filter((id) => Number.isInteger(id) && id > 0),
     [pagedHosts]
   );
-  // The live metric queries are keyed by their input, so handing them the visual
-  // order would rebuild the query on every reorder and blank out traffic, network
-  // and resource cells until the new request resolved.
-  const pagedMetricHostIds = useMemo(() => [...pagedHostIds].sort((a, b) => a - b), [pagedHostIds]);
-  const pagedHostIdKey = useMemo(() => pagedMetricHostIds.join(","), [pagedMetricHostIds]);
   const hostOrderRequestRef = useRef(0);
   const beginOptimisticHostOrder = useCallback((hostIds: number[]) => {
     hostOrderRequestRef.current += 1;
@@ -1974,93 +2321,37 @@ function HostsContent() {
     ].join(":"),
     [hostCardModeTransitionKey, hostPagination.currentPage, normalizedHostSearchQuery, selectedHostGroupId, viewMode],
   );
-  useEffect(() => {
-    if (!hostLiveRefreshInterval || !pagedMetricHostIds.length) return;
-    const hostIds = pagedMetricHostIds;
-    if (hostIds.length === 0) return;
-    watchMetricsMutation.mutate({ hostIds });
-    const timer = window.setInterval(() => {
-      watchMetricsMutation.mutate({ hostIds });
-    }, hostLiveRefreshInterval);
-    return () => window.clearInterval(timer);
-  }, [hostLiveRefreshInterval, pagedHostIdKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const { data: probeServices = [] } = trpc.hosts.probeServices.useQuery(undefined, { refetchInterval: pollingInterval("slow") });
-  const { data: hostTrafficRows = [] } = trpc.hosts.trafficSummary.useQuery(
-    { hostIds: pagedMetricHostIds },
-    { enabled: !!hostLiveRefreshInterval && pagedMetricHostIds.length > 0, refetchInterval: hostLiveRefreshInterval }
-  );
-  const hostTrafficById = useMemo(() => {
-    const map = new Map<number, any>();
-    for (const row of hostTrafficRows as any[]) map.set(Number(row.hostId), row);
-    return map;
-  }, [hostTrafficRows]);
-  const { data: hostLatestMetricRows = [] } = trpc.hosts.latestMetricsSummary.useQuery(
-    { hostIds: pagedMetricHostIds },
-    { enabled: !!hostLiveRefreshInterval && pagedMetricHostIds.length > 0, refetchInterval: hostLiveRefreshInterval }
-  );
-  const hostLatestMetricById = useMemo(() => {
-    const map = new Map<number, any>();
-    for (const row of hostLatestMetricRows as any[]) map.set(Number(row.hostId), row);
-    return map;
-  }, [hostLatestMetricRows]);
-  const hostLatestMetricSeriesById = useMemo(() => {
-    const map = new Map<number, any[]>();
-    for (const row of hostLatestMetricRows as any[]) map.set(Number(row.hostId), [row]);
-    return map;
-  }, [hostLatestMetricRows]);
-  const renderHostCard = (host: any, options: { dragHandle?: any; sortableClassName?: string; compact?: boolean } = {}) => {
-    const compact = options.compact ?? viewMode === "compact-card";
-    /*
-      紧凑模式换成 Summary 卡：列表只看状态，点进去才看数据。
-
-      详情卡（viewMode === "card"）暂时还走旧的 HostCard —— 它承载了排序拖拽、
-      服务列表、到期提醒等一批还没迁移的东西，一次全换会丢功能。等 PR 3 之后
-      那些各自有了去处再收掉。
-    */
-    if (compact) {
-      return (
-        <HostEntitySummaryCard
-          key={host.id}
-          host={host}
-          metrics={hostLatestMetricSeriesById.get(host.id) ?? null}
-          traffic={hostTrafficById.get(host.id)}
-          canUpgrade={user?.role === "admin"}
-          upgradeAvailable={user?.role === "admin" && !!latestAgentVersion && hostNeedsAgentUpgrade(host, latestAgentVersion)}
-          resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
-          onOpenDetail={setDetailHost}
-          onEdit={openEdit}
-          onDelete={(id: number) => deleteMutation.mutate({ id })}
-          onUpgrade={requestAgentUpgrade}
-          onResetTraffic={user?.role === "admin" ? requestResetHostTraffic : undefined}
-          onCorrectTraffic={user?.role === "admin" ? requestCorrectHostTraffic : undefined}
-          onEditBilling={user?.role === "admin" ? setBillingHost : undefined}
-          onViewProbeLatency={setProbeLatencyHost}
-        />
-      );
-    }
-    return (
-    <HostCard
-      key={host.id}
-      host={host}
-      onEdit={openEdit}
-      onDelete={(id) => deleteMutation.mutate({ id })}
-      onUpgrade={requestAgentUpgrade}
-      canUpgrade={user?.role === "admin"}
-      onResetTraffic={user?.role === "admin" ? requestResetHostTraffic : undefined}
-      onCorrectTraffic={user?.role === "admin" ? requestCorrectHostTraffic : undefined}
-      onEditBilling={user?.role === "admin" ? setBillingHost : undefined}
-      onViewProbeLatency={setProbeLatencyHost}
-      resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
-      traffic={hostTrafficById.get(host.id)}
-      metrics={hostLatestMetricSeriesById.get(host.id) ?? null}
-      latestAgentVersion={latestAgentVersion}
-      refreshInterval={hostLiveRefreshInterval}
-      compact={compact}
-      dragHandle={options.dragHandle}
-      sortableClassName={options.sortableClassName}
-    />
-    );
-  };
+  const detailHostMetricRow = detailHost ? hostLatestMetricById.get(Number(detailHost.id)) : undefined;
+  const detailHostMetrics = useMemo(() => (detailHostMetricRow ? [detailHostMetricRow] : null), [detailHostMetricRow]);
+  /*
+    卡片 / 表格行拿到的回调要一直是同一个函数，memo 才比得过。真正干活的函数每次渲染都会重建
+    （闭包里有当前状态），所以放进 ref，对外只给一组转发到 ref 的固定函数。
+  */
+  const hostItemActionsRef = useRef<HostItemActions | null>(null);
+  const hostItemActions = useMemo<HostItemActions>(() => ({
+    openDetail: (host) => hostItemActionsRef.current?.openDetail(host),
+    edit: (host) => hostItemActionsRef.current?.edit(host),
+    remove: (id) => hostItemActionsRef.current?.remove(id),
+    upgrade: (host) => hostItemActionsRef.current?.upgrade(host),
+    resetTraffic: (host) => hostItemActionsRef.current?.resetTraffic(host),
+    correctTraffic: (host) => hostItemActionsRef.current?.correctTraffic(host),
+    editBilling: (host) => hostItemActionsRef.current?.editBilling(host),
+    viewProbeLatency: (host) => hostItemActionsRef.current?.viewProbeLatency(host),
+  }), []);
+  const isAdminUser = user?.role === "admin";
+  const clockMinute = Math.floor(Date.now() / 60_000);
+  const hostItemProps = (host: any) => ({
+    host,
+    metricRow: hostLatestMetricById.get(Number(host.id)),
+    traffic: hostTrafficById.get(Number(host.id)),
+    isAdmin: isAdminUser,
+    latestAgentVersion,
+    resetTrafficPending: resetTrafficHostId === Number(host.id) && resetHostTrafficMutation.isPending,
+    refreshInterval: hostLiveRefreshInterval,
+    actions: hostItemActions,
+    clockMinute,
+  });
   const requestResetHostTraffic = (host: any) => {
     const hostId = Number(host?.id);
     if (!Number.isInteger(hostId) || hostId <= 0) return;
@@ -2161,6 +2452,16 @@ function HostsContent() {
     } finally {
       setCheckingAgentUpdate(false);
     }
+  };
+  hostItemActionsRef.current = {
+    openDetail: setDetailHost,
+    edit: openEdit,
+    remove: (id) => deleteMutation.mutate({ id }),
+    upgrade: requestAgentUpgrade,
+    resetTraffic: requestResetHostTraffic,
+    correctTraffic: requestCorrectHostTraffic,
+    editBilling: setBillingHost,
+    viewProbeLatency: setProbeLatencyHost,
   };
 
   return (
@@ -2444,18 +2745,13 @@ function HostsContent() {
         <>
         {viewMode === "map" ? (
           <>
+            {/* md 以下不会走到地图（见上面 viewMode），原来这里那份 md:hidden 的卡片列表也就不用了。 */}
             <HostWorldMap
               hosts={filteredDisplayHosts}
               onEdit={openMapHostEdit}
               totalHosts={mapHostTotal}
               isLoadingMore={hostMapQuery.isFetchingNextPage}
             />
-            <AutoAnimateContainer className="grid grid-cols-1 gap-4 md:hidden">
-              {pagedHosts.map((host) => renderHostCard(host, { compact: false }))}
-            </AutoAnimateContainer>
-            <div className="md:hidden">
-              <PersistentPagination pagination={hostPagination} itemName="台主机" />
-            </div>
           </>
         ) : viewMode === "flat-map" ? (
           <>
@@ -2469,12 +2765,6 @@ function HostsContent() {
             >
               <HostFlatMap hosts={filteredDisplayHosts} onEdit={openMapHostEdit} />
             </Suspense>
-            <AutoAnimateContainer className="grid grid-cols-1 gap-4 md:hidden">
-              {pagedHosts.map((host) => renderHostCard(host, { compact: false }))}
-            </AutoAnimateContainer>
-            <div className="md:hidden">
-              <PersistentPagination pagination={hostPagination} itemName="台主机" />
-            </div>
           </>
         ) : viewMode === "card" || viewMode === "compact-card" ? (
           /* ========== 卡片式布局 ========== */
@@ -2485,17 +2775,13 @@ function HostsContent() {
                 className={viewMode === "compact-card" ? "standard-card-grid-compact gap-3" : "standard-card-grid gap-4"}
               >
                 {pagedHosts.map((host) => (
-                  <SortableItem key={host.id} id={Number(host.id)} disabled={hostSortable.disabled}>
-                    {({ itemProps, handleProps, isDragging, isDropTarget }) => (
-                      <div {...itemProps}>
-                        {renderHostCard(host, {
-                          compact: viewMode === "compact-card",
-                          dragHandle: <SortableDragHandle dragHandleProps={handleProps} visible={isDragging} busy={hostReorderPending} className="-ml-2" />,
-                          sortableClassName: cn(isDragging && "opacity-55 ring-1 ring-primary/35", isDropTarget && "ring-1 ring-primary/45"),
-                        })}
-                      </div>
-                    )}
-                  </SortableItem>
+                  <SortableHostCardItem
+                    key={host.id}
+                    {...hostItemProps(host)}
+                    compact={viewMode === "compact-card"}
+                    sortDisabled={hostSortable.disabled}
+                    sortBusy={hostReorderPending}
+                  />
                 ))}
               </div>
             </SortableReorderContext>
@@ -2510,35 +2796,33 @@ function HostsContent() {
                   : "standard-card-grid host-card-grid-static host-card-grid-static-standard gap-4"
               }
             >
-              {pagedHosts.map((host) => renderHostCard(host, { compact: viewMode === "compact-card" }))}
+              {pagedHosts.map((host) => <HostCardItem key={host.id} {...hostItemProps(host)} compact={viewMode === "compact-card"} />)}
             </AutoAnimateContainer>
           )
         ) : (
           /* ========== 表格式布局 ========== */
-          <>
-            {hostSortingEnabled ? (
+          /* 手机宽度下列表视图显示成卡片。原来卡片和整张 1340px 宽的表格两套都渲染、再用 CSS 藏一套，现在只渲染看得见的那套。 */
+          isBelowSm ? (
+            hostSortingEnabled ? (
               <SortableReorderContext sortable={hostSortable} ids={pagedHostIds} strategy="vertical" restrictToList>
                 <div className="grid grid-cols-1 gap-3 sm:hidden">
                   {pagedHosts.map((host) => (
-                    <SortableItem key={host.id} id={Number(host.id)} disabled={hostSortable.disabled}>
-                      {({ itemProps, handleProps, isDragging, isDropTarget }) => (
-                        <div {...itemProps}>
-                          {renderHostCard(host, {
-                            compact: false,
-                            dragHandle: <SortableDragHandle dragHandleProps={handleProps} visible={isDragging} busy={hostReorderPending} className="-ml-2" />,
-                            sortableClassName: cn(isDragging && "opacity-55 ring-1 ring-primary/35", isDropTarget && "ring-1 ring-primary/45"),
-                          })}
-                        </div>
-                      )}
-                    </SortableItem>
+                    <SortableHostCardItem
+                      key={host.id}
+                      {...hostItemProps(host)}
+                      compact={false}
+                      sortDisabled={hostSortable.disabled}
+                      sortBusy={hostReorderPending}
+                    />
                   ))}
                 </div>
               </SortableReorderContext>
             ) : (
               <AutoAnimateContainer className="grid grid-cols-1 gap-3 sm:hidden">
-                {pagedHosts.map((host) => renderHostCard(host, { compact: false }))}
+                {pagedHosts.map((host) => <HostCardItem key={host.id} {...hostItemProps(host)} compact={false} />)}
               </AutoAnimateContainer>
-            )}
+            )
+          ) : (
             <Card className="host-table-shell hidden overflow-hidden border-border bg-card sm:block">
               <CardContent className="p-0">
                 <Table className="host-management-table w-full min-w-[1340px] table-fixed">
@@ -2577,158 +2861,28 @@ function HostsContent() {
                   </TableHeader>
                   <SortableReorderContext sortable={hostSortable} ids={pagedHostIds} strategy="vertical" restrictToList>
                   <TableBody>
-                    {pagedHosts.map((host) => {
-                      const traffic = hostTrafficById.get(host.id);
-                      const latestMetric = hostLatestMetricById.get(host.id);
-                      const agentUpgradeTimedOut = isAgentUpgradeTimedOut(host);
-                      const agentNeedsUpdate = isAgentVersionBehind(host.agentVersion, latestAgentVersion);
-                      const remainingDays = formatHostRemainingDays(host.purchasedAt, host.stoppedAt);
-                      const primaryAddressText = hostPrimaryAddressText(host);
-                      const hostOs = parseHostOs(host.osInfo);
-                      const uptimeText = latestMetric?.uptime == null ? "--" : formatUptime(latestMetric.uptime);
-                      const uptimeTitle = formatHostUptimeTitle(latestMetric?.uptime, uptimeText);
-                      const expiryTitle = formatHostExpiryTitle(host.stoppedAt, remainingDays);
-                      const memoryDetail = formatMetricSizeDetail(latestMetric?.memoryUsed, host.memoryTotal);
-                      const diskDetail = formatMetricSizeDetail(latestMetric?.diskUsed, latestMetric?.diskTotal);
-                      const recoveryStartedText = formatHostDateTimeText(host.agentRecoveryStartedAt);
-                      const recoveryCompletedText = formatHostDateTimeText(host.agentRecoveryCompletedAt);
-                      const hostRuntimeTitle = [
-                        String(host.name || ""),
-                        host.agentBootId ? `Boot ID: ${host.agentBootId}` : "",
-                        host.agentProcessId ? `Agent PID: ${host.agentProcessId}` : "",
-                        recoveryStartedText ? `恢复开始: ${recoveryStartedText}` : "",
-                        recoveryCompletedText ? `恢复完成: ${recoveryCompletedText}` : "",
-                        Number(host.agentRecoveryExpected || 0) > 0 ? `恢复进度: ${Number(host.agentRecoveryReady || 0)}/${Number(host.agentRecoveryExpected || 0)}` : "",
-                        host.mimicRuntimeStatus ? `Mimic: ${host.mimicRuntimeStatus}` : "",
-                        host.mimicRuntimeMessage ? String(host.mimicRuntimeMessage) : "",
-                      ].filter(Boolean).join("\n");
-                      return (
-                      <SortableItem key={host.id} id={Number(host.id)} disabled={hostSortable.disabled} itemKind="row">
-                        {({ itemProps, handleProps, isDragging, isDropTarget }) => (
-                      <TableRow
-                        {...itemProps}
-                        className={cn(
-                          "group/sortable host-table-row align-middle hover:bg-transparent",
-                          isDragging && "opacity-55 ring-1 ring-primary/35",
-                          isDropTarget && "ring-1 ring-primary/45",
-                        )}
-                      >
-                        <TableCell className="host-table-frozen-cell host-table-frozen-left sticky left-0 z-20 w-[320px] min-w-[320px] max-w-[320px] border-r border-border/60 bg-card px-3 py-2.5">
-                          <div className="flex min-w-0 items-center gap-2">
-                            {hostSortingEnabled && (
-                              <SortableDragHandle dragHandleProps={handleProps} visible={isDragging} busy={hostReorderPending} className="shrink-0" />
-                            )}
-                            <HostOsAvatar os={hostOs} size="sm" />
-                            <div className="min-w-0 flex-1 space-y-0.5">
-                              <div className="flex min-w-0 items-center gap-1.5">
-                                <HostListStatusBadge host={host} />
-                                <span className="min-w-0 truncate font-semibold" title={hostRuntimeTitle}>{host.name}</span>
-                              </div>
-                              <div className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] text-muted-foreground">
-                                {hostOs.label && (
-                                  <span className="shrink-0 rounded border border-border/50 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium leading-none text-foreground/80" title={hostOs.full}>
-                                    {hostOs.label}
-                                  </span>
-                                )}
-                                {host.agentVersion && (
-                                  <span className="shrink-0 rounded border border-border/50 bg-muted/35 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground" title="Agent 版本">
-                                    v{host.agentVersion}
-                                  </span>
-                                )}
-                                {agentNeedsUpdate && (
-                                  <Badge variant="outline" className="h-4 shrink-0 border-[color-mix(in_srgb,var(--fx-warn)_30%,transparent)] px-1 py-0 text-[9px] leading-none text-[var(--fx-warn-text)]">
-                                    新版本
-                                  </Badge>
-                                )}
-                                <FxpRuntimeBadge host={host} className="h-4 px-1 text-[9px] leading-none" />
-                                {host.agentUpgradeRequested && (
-                                  <Badge variant="outline" className={`h-4 shrink-0 px-1 py-0 text-[9px] leading-none ${agentUpgradeTimedOut ? "border-destructive/30 text-destructive" : "border-primary/25 text-primary"}`}>
-                                    {agentUpgradeTimedOut ? "升级失败" : "升级中"}
-                                  </Badge>
-                                )}
-                                <HostRegionBadge host={host} compact />
-                              </div>
-                              <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground" title={primaryAddressText}>
-                                <RadioTower className="h-3 w-3 shrink-0" />
-                                <span className="min-w-0 truncate font-mono">{primaryAddressText}</span>
-                              </div>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="w-[128px] whitespace-nowrap py-2.5 text-center">
-                          <div className="flex flex-col items-center justify-center gap-1.5 text-center">
-                            <div className="flex items-center justify-center gap-1.5 text-[11px] font-medium tabular-nums text-muted-foreground" title={uptimeTitle}>
-                              <Clock className="h-3.5 w-3.5 shrink-0" />
-                              <span>{uptimeText}</span>
-                            </div>
-                            <div className="flex items-center justify-center gap-1.5 text-[11px] font-semibold tabular-nums" title={expiryTitle}>
-                              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                              <span className={hostRemainingClass(remainingDays)}>{remainingDays}</span>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2.5">
-                          <HostListResourceBundle
-                            cpuValue={latestMetric?.cpuUsage}
-                            cpuDetail={host.cpuInfo ? String(host.cpuInfo) : undefined}
-                            memoryValue={latestMetric?.memoryUsage}
-                            memoryDetail={memoryDetail}
-                            diskValue={latestMetric?.diskUsage}
-                            diskDetail={diskDetail}
-                            isOnline={!!host.isOnline}
-                          />
-                        </TableCell>
-                        <TableCell className="px-3 py-2.5">
-                          <HostListFlowPair
-                            inValue={formatBytes(Number(traffic?.bytesIn || 0))}
-                            outValue={formatBytes(Number(traffic?.bytesOut || 0))}
-                            inTitle={`累计入向：${formatBytes(Number(traffic?.bytesIn || 0))}`}
-                            outTitle={`累计出向：${formatBytes(Number(traffic?.bytesOut || 0))}`}
-                          />
-                        </TableCell>
-                        <TableCell className="px-3 py-2.5">
-                          <HostListFlowPair
-                            inValue={formatOptionalBytesPerSecond(latestMetric?.networkSpeedIn)}
-                            outValue={formatOptionalBytesPerSecond(latestMetric?.networkSpeedOut)}
-                            inTitle="实时入向"
-                            outTitle="实时出向"
-                          />
-                        </TableCell>
-                        <TableCell className="px-3 py-2.5">
-                          <HostListFlowPair
-                            inValue={formatOptionalBytes(latestMetric?.networkIn)}
-                            outValue={formatOptionalBytes(latestMetric?.networkOut)}
-                            inTitle={systemNetworkTotalTitle(latestMetric)}
-                            outTitle={systemNetworkTotalTitle(latestMetric)}
-                          />
-                        </TableCell>
-                        <TableCell className="host-table-frozen-cell host-table-frozen-right sticky right-0 z-20 w-[120px] min-w-[120px] max-w-[120px] border-l border-border/60 bg-card px-2 py-2.5 text-right">
-                          <HostActionButtons
-                            host={host}
-                            onEdit={openEdit}
-                            onDelete={(id) => deleteMutation.mutate({ id })}
-                            onUpgrade={requestAgentUpgrade}
-                            onResetTraffic={user?.role === "admin" ? requestResetHostTraffic : undefined}
-                            onCorrectTraffic={user?.role === "admin" ? requestCorrectHostTraffic : undefined}
-                            onEditBilling={user?.role === "admin" ? setBillingHost : undefined}
-                            onViewProbeLatency={setProbeLatencyHost}
-                            resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
-                            canUpgrade={user?.role === "admin"}
-                            className="flex items-center justify-end gap-0.5"
-                            buttonClassName="h-8 w-8"
-                          />
-                        </TableCell>
-                      </TableRow>
-                        )}
-                      </SortableItem>
-                    );
-                    })}
+                    {pagedHosts.map((host) => (
+                      <HostTableRow
+                        key={host.id}
+                        host={host}
+                        latestMetric={hostLatestMetricById.get(Number(host.id))}
+                        traffic={hostTrafficById.get(Number(host.id))}
+                        isAdmin={isAdminUser}
+                        latestAgentVersion={latestAgentVersion}
+                        resetTrafficPending={resetTrafficHostId === Number(host.id) && resetHostTrafficMutation.isPending}
+                        actions={hostItemActions}
+                        sortingEnabled={hostSortingEnabled}
+                        sortDisabled={hostSortable.disabled}
+                        sortBusy={hostReorderPending}
+                        clockMinute={clockMinute}
+                      />
+                    ))}
                   </TableBody>
                   </SortableReorderContext>
                 </Table>
               </CardContent>
             </Card>
-          </>
+          )
         )}
         {viewMode !== "map" && viewMode !== "flat-map" && <PersistentPagination pagination={hostPagination} itemName="台主机" />}
         </>
@@ -2813,8 +2967,8 @@ function HostsContent() {
         open={!!detailHost}
         onOpenChange={(open) => !open && setDetailHost(null)}
         host={detailHost}
-        metrics={detailHost ? (hostLatestMetricSeriesById.get(detailHost.id) ?? null) : null}
-        traffic={detailHost ? hostTrafficById.get(detailHost.id) : null}
+        metrics={detailHostMetrics}
+        traffic={detailHost ? hostTrafficById.get(Number(detailHost.id)) : null}
         canUpgrade={user?.role === "admin"}
         resetTrafficPending={!!detailHost && resetTrafficHostId === detailHost.id && resetHostTrafficMutation.isPending}
         onEdit={openEdit}
@@ -2844,6 +2998,7 @@ function HostsContent() {
           utils.hosts.options.invalidate();
           utils.hosts.summary.invalidate();
           utils.hosts.statusSummary.invalidate();
+          utils.hosts.pageLive.invalidate();
         }}
       />
 

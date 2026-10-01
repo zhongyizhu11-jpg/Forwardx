@@ -16,7 +16,7 @@ import { NetworkMapMiniChrome } from "./NetworkMapMiniChrome";
  * 只在底部闪一句「是谁、什么状态」，点组的同时画布把这组的主机框进画面。
  *
  * 这个文件由卡片 lazy() 引入 —— 它静态引用画布（连着 MapLibre 那几百 KB），首页的首屏
- * 包不该带上它；引擎没到之前卡片先画原来的 SVG 示意图。
+ * 包不该带上它；引擎没到之前卡片先占一块同样大小的深色底（NetworkMapBoxPlaceholder）。
  *
  * 底图固定是夜晚的地球；图这块永远深色（.nm-surface），卡片的标题行跟面板主题。
  * 画布自己记着用户动没动过，动过就不再自动框，这里显示「回到全览」。

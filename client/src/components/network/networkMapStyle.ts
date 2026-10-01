@@ -3,7 +3,7 @@ import { NETWORK_MAP_NIGHT_TILE_URL, NETWORK_MAP_TEXTURE_MAX_ZOOM } from "@share
 /**
  * 首页网络地图的 MapLibre 样式：一张固定的夜景底图，上面是线、出口箭头、中转点和流动的光点。
  *
- * 底图：夜光地球图（components/network/earthTiles.ts 注册的协议现拉伸成墨卡托）。地球图只有 4096 像素宽，
+ * 底图：夜光地球图（components/network/earthTiles.ts 注册的协议现拉伸成墨卡托）。地球图只有 2048 像素宽，
  * 放大到 5.5 级以上就是一块糊掉的色块，所以 4.5 → 5.5 级淡出，换成 Natural Earth 国界自绘的深色陆地；
  * 再放大到 7 级，110m 的粗海岸线也淡下去（它和真实海岸线对不上），只剩一层均匀的深色。没有底图切换。
  *
@@ -24,7 +24,7 @@ export const NETWORK_MAP_SOURCES = {
   arrows: "nm-arrows",
   /** 备用线路经过的中转点：灰色小点 */
   waypoints: "nm-waypoints",
-  /** 主线路上流动的光点，每帧 setData */
+  /** 主线路上流动的光点，动画时按帧 setData（最多 30 帧） */
   particles: "nm-particles",
 } as const;
 
@@ -78,7 +78,7 @@ export function glowOpacity() {
 
 /**
  * 地球图在这两级之间淡出、矢量的陆地和国界淡入；到 TEXTURE_LAYER_MAX_ZOOM 地球图图层就不画了（图层的
- * maxzoom：MapLibre 连瓦片都不再要）。地球图只有 4096 像素宽，4 级就是原图的分辨率，再往上全是拉大的同一块像素。
+ * maxzoom：MapLibre 连瓦片都不再要）。地球图只有 2048 像素宽，3 级就是原图的分辨率，再往上全是拉大的同一块像素。
  */
 export const TEXTURE_FADE_ZOOM: readonly [number, number] = [4.5, 5.5];
 export const TEXTURE_LAYER_MAX_ZOOM = TEXTURE_FADE_ZOOM[1];

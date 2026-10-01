@@ -33,6 +33,8 @@ import { isAgentVersionBehind } from "@shared/version";
 import { getRouteStatus, routeHopDownHints } from "../routeGroupStats";
 import { routeRelayRulesByKey } from "../routeGroups";
 import { dbBool } from "../repositories/repositoryUtils";
+import { ruleTrafficQueryCache } from "../ruleLatencyQueryCache";
+import { idSetFingerprint } from "../queryCache";
 
 /** 看一条规则的线路状态：管理员随便看，别人只能看自己的。 */
 async function requireRuleVisible(user: { id: number; role: string }, ruleId: number) {
@@ -351,32 +353,46 @@ export const rulesRouter = router({
     .query(async ({ input, ctx }) => {
       const repositoryInput = await getRuleListRepositoryInput(input, ctx.user);
       const selection = await db.getForwardRuleSummarySelection(repositoryInput);
-      const [totalRows, dailyRows] = selection.ruleIds.length > 0
-        ? await Promise.all([
-          db.getTrafficCounterSummaryByRule({
-            userId: ctx.user.role === "admin" ? undefined : ctx.user.id,
-            ruleIds: selection.ruleIds,
-          }),
-          db.getTrafficSummaryByRule({
-            userId: ctx.user.role === "admin" ? undefined : ctx.user.id,
-            ruleIds: selection.ruleIds,
-            since: new Date(Date.now() - 24 * 60 * 60 * 1000),
-            // 这里只累加字节数和连接数，不需要每条规则的最新延迟 ——
-            // 延迟那一段要再查 forward_rules / tcping_stats / forward_tests 好几次。
-            includeLatency: false,
-          }),
-        ])
-        : [[], []];
       const sumRows = (rows: any[]) => rows.reduce((total, row) => ({
         bytesIn: total.bytesIn + Math.max(0, Number(row?.bytesIn) || 0),
         bytesOut: total.bytesOut + Math.max(0, Number(row?.bytesOut) || 0),
         connections: total.connections + Math.max(0, Number(row?.connections) || 0),
       }), { bytesIn: 0, bytesOut: 0, connections: 0 });
+      const isAdmin = ctx.user.role === "admin";
+      /*
+        规则数照旧每次现查（便宜，增删规则后立刻对）；流量合计是整页最贵的一段，缓存 10 秒、
+        过期后 60 秒内先回旧值再后台重算。键是「谁在看 + 选中的是哪些规则」：筛选条件不同但
+        选中同一批规则时结果本来就一样；规则一增删指纹就变，不会拿旧集合的合计顶上。
+        重置规则流量会清 ruleTrafficQueryCache。
+      */
+      const traffic = selection.ruleIds.length > 0
+        ? await ruleTrafficQueryCache.get(
+          `listSummary:${isAdmin ? "all" : `user:${ctx.user.id}`}:${idSetFingerprint(selection.ruleIds)}`,
+          { ttlMs: 10_000, staleMs: 60_000 },
+          async () => {
+            const [totalRows, dailyRows] = await Promise.all([
+              db.getTrafficCounterSummaryByRule({
+                userId: isAdmin ? undefined : ctx.user.id,
+                ruleIds: selection.ruleIds,
+              }),
+              db.getTrafficSummaryByRule({
+                userId: isAdmin ? undefined : ctx.user.id,
+                ruleIds: selection.ruleIds,
+                since: new Date(Date.now() - 24 * 60 * 60 * 1000),
+                // 这里只累加字节数和连接数，不需要每条规则的最新延迟 ——
+                // 延迟那一段要再查 forward_rules / tcping_stats / forward_tests 好几次。
+                includeLatency: false,
+              }),
+            ]);
+            return { totalTraffic: sumRows(totalRows as any[]), dailyTraffic: sumRows(dailyRows as any[]) };
+          },
+        )
+        : { totalTraffic: sumRows([]), dailyTraffic: sumRows([]) };
       return {
         totalItems: selection.totalItems,
         activeItems: selection.activeItems,
-        totalTraffic: sumRows(totalRows as any[]),
-        dailyTraffic: sumRows(dailyRows as any[]),
+        totalTraffic: traffic.totalTraffic,
+        dailyTraffic: traffic.dailyTraffic,
       };
     }),
   getById: protectedProcedure

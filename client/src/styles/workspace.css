@@ -1792,3 +1792,14 @@ button.fx-rule-tag:hover { filter: brightness(.96); }
 .fx-chip { min-height: 32px; }
 /* 搜索栏那一行最右边的「新建 / 添加」：和 36px 的搜索胶囊一样高，触摸屏的 44 最小高度不套在它身上 */
 .fx-row-action { height: 36px; min-height: 36px; }
+
+/*
+  手机 / 触摸屏上的毛玻璃减半：iOS Safari 滚动时每帧都要重算顶栏、导航栏、底部标签栏、
+  分段控件和弹层盖住的那块，saturate(180%) blur(20px) 是滚动掉帧的主要来源。去掉 saturate、
+  模糊降到 10px，半透明底色不变，看上去差不多，GPU 开销小得多。桌面不动。
+  放在文件末尾：.fx-navbar / .workspace-tabs 写的是字面值，要靠先后顺序盖过去。
+*/
+@media (max-width: 767px), (pointer: coarse) {
+  :root, .dark { --fx-glass-blur: blur(10px); }
+  .fx-navbar, .workspace-tabs { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+}

@@ -107,6 +107,11 @@ const ARROW = { size: 7, widthRatio: 0.45, backoffHost: 11, backoffGroup: 13 };
 
 /** 一帧最多按这么多毫秒推进：切回标签页时不让光点一下跳半圈 */
 const COMET_MAX_FRAME_MS = 100;
+/**
+ * 光点最多每秒写 30 次：每次 setData 都让 MapLibre 重画一整帧，60 帧对手机是白烧电，30 帧看着一样顺。
+ * 留 2ms 余量 —— 60Hz 屏上 rAF 间隔会抖到 16.5ms，正好隔一帧画一次；系统限到 30 帧时每帧都画。
+ */
+const COMET_FRAME_MS = 1000 / 30 - 2;
 /** 一条路上同时流着几颗光点：屏幕上短的两颗，长的三颗，均匀错开 */
 const PARTICLES_SHORT = 2;
 const PARTICLES_LONG = 3;
@@ -694,6 +699,8 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     }
     live.comets = comets;
     live.arcPx = arcPx;
+    // 有了要流的线（或者刚刚没了）：动画按需起停
+    startAnimation();
     for (const key of Array.from(live.cometPhase.keys())) if (!comets.some((comet) => comet.key === key)) live.cometPhase.delete(key);
     (map.getSource(NETWORK_MAP_SOURCES.links) as GeoJSONSource).setData({ type: "FeatureCollection", features: linkFeatures });
     (map.getSource(NETWORK_MAP_SOURCES.arrows) as GeoJSONSource).setData({ type: "FeatureCollection", features: arrowFeatures });
@@ -772,41 +779,58 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
     else relayout();
   };
 
-  // ---- 动画：主线路上的光点每帧按相位采样一次写进 GeoJSON 源（≤ 几十条线，一帧百来个点，便宜）。
+  // ---- 动画：主线路上的光点按相位采样写进 GeoJSON 源（≤ 几十条线，一帧百来个点，便宜），最多 30 帧。
   //      每条路两三颗，均匀错开、首尾相接一直流 —— 说的是「这条线上有流量在往出口走」。
-  //      页面不可见 / 卡片滚出视野 / 减少动态时全停 ----
+  //      页面不可见 / 卡片滚出视野 / 减少动态 / 没有要流的线时 rAF 整个停掉，不空转 ----
   const clearComets = () => {
     const map = live.map;
     if (!map || !live.loaded || !live.cometDrawn) return;
     (map.getSource(NETWORK_MAP_SOURCES.particles) as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: [] });
     live.cometDrawn = false;
   };
+  const animationWanted = () => !!live.map && live.loaded && live.comets.length > 0
+    && !live.props.paused && !live.props.reduceMotion && document.visibilityState === "visible";
   const tickAnimation = (timestamp: number) => {
+    live.animFrame = 0;
     const map = live.map;
-    const running = live.loaded && !live.props.paused && !live.props.reduceMotion && document.visibilityState === "visible";
-    if (map && running && live.comets.length > 0) {
-      const source = map.getSource(NETWORK_MAP_SOURCES.particles) as GeoJSONSource | undefined;
-      if (source) {
-        const dt = live.cometLast ? Math.min(COMET_MAX_FRAME_MS, timestamp - live.cometLast) : 0;
-        const features: any[] = [];
-        for (const comet of live.comets) {
-          // 每条线错开出发时刻（按 id 和 key 取相位），不然所有光点齐刷刷一起走
-          const phase = advanceCometPhase(live.cometPhase.get(comet.key) ?? ((comet.tunnelId * 0.37 + comet.key.length * 0.113) % 1), dt, comet.periodMs);
-          live.cometPhase.set(comet.key, phase);
-          for (let k = 0; k < comet.count; k += 1) {
-            const progress = (phase + k / comet.count) % 1;
-            features.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: pointAt(comet.path, progress * comet.path.total) } });
-          }
-        }
-        source.setData({ type: "FeatureCollection", features });
-        live.cometDrawn = true;
-      }
-      live.cometLast = timestamp;
-    } else {
+    if (!map || !animationWanted()) {
       live.cometLast = 0;
       clearComets();
+      return;
     }
+    if (live.cometLast && timestamp - live.cometLast < COMET_FRAME_MS) {
+      live.animFrame = requestAnimationFrame(tickAnimation);
+      return;
+    }
+    const source = map.getSource(NETWORK_MAP_SOURCES.particles) as GeoJSONSource | undefined;
+    if (source) {
+      const dt = live.cometLast ? Math.min(COMET_MAX_FRAME_MS, timestamp - live.cometLast) : 0;
+      const features: any[] = [];
+      for (const comet of live.comets) {
+        // 每条线错开出发时刻（按 id 和 key 取相位），不然所有光点齐刷刷一起走
+        const phase = advanceCometPhase(live.cometPhase.get(comet.key) ?? ((comet.tunnelId * 0.37 + comet.key.length * 0.113) % 1), dt, comet.periodMs);
+        live.cometPhase.set(comet.key, phase);
+        for (let k = 0; k < comet.count; k += 1) {
+          const progress = (phase + k / comet.count) % 1;
+          features.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: pointAt(comet.path, progress * comet.path.total) } });
+        }
+      }
+      source.setData({ type: "FeatureCollection", features });
+      live.cometDrawn = true;
+    }
+    live.cometLast = timestamp;
     live.animFrame = requestAnimationFrame(tickAnimation);
+  };
+  /** 该动就排上下一帧（已经在跑就不重复排）；不该动就停下、把留在图上的光点清掉 */
+  const startAnimation = () => {
+    if (animationWanted()) {
+      if (!live.animFrame) live.animFrame = requestAnimationFrame(tickAnimation);
+      return;
+    }
+    if (live.animFrame) cancelAnimationFrame(live.animFrame);
+    live.animFrame = 0;
+    live.cometLast = 0;
+    clearComets();
   };
 
   /** 面板切了主题：地图本身永远深色，但强调色这些令牌可能跟着变 —— 从 CSS 变量里再读一遍 */
@@ -891,7 +915,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
         const tunnelId = Number(hit?.properties?.tunnel) || 0;
         if (tunnelId > 0) live.props.onSelectLink(tunnelId);
       });
-      live.animFrame = requestAnimationFrame(tickAnimation);
+      startAnimation();
       live.props.onReady(api);
     });
     map.on("error", (event: any) => {
@@ -912,6 +936,7 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
       observer?.disconnect();
       if (live.relayoutFrame) cancelAnimationFrame(live.relayoutFrame);
       if (live.animFrame) cancelAnimationFrame(live.animFrame);
+      live.animFrame = 0;
       live.loaded = false;
       live.map = null;
       live.comets = [];
@@ -954,10 +979,11 @@ export default function NetworkMapCanvas(props: NetworkMapCanvasProps) {
   }, [props.hubHostId]);
 
   useEffect(() => {
-    // 减少动态效果：光点停，主线路的渐变和出口的箭头还在，方向照样看得出
-    if (props.reduceMotion) clearComets();
+    // 减少动态效果 / 页面看不见 / 卡片滚出视野：光点停（rAF 也停），主线路的渐变和出口的箭头还在，方向照样看得出；
+    // 回来了再接着流
+    startAnimation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.reduceMotion]);
+  }, [props.reduceMotion, props.paused]);
 
   return <div ref={containerRef} className="nm-map" aria-label="网络地图：主机与线路" />;
 }

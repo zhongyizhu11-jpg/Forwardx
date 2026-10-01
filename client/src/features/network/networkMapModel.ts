@@ -4,21 +4,20 @@ import type { NetworkMapLink, NetworkMapNode } from "@/components/network/Networ
 import { tunnelHealthFromAvailability } from "@/features/links/tunnelHealth";
 import { hostGeoCoordinate } from "@/lib/hostGeo";
 import { countryFlagLabel } from "@/lib/flagEmojiSupport";
-import { pollingInterval } from "@/lib/polling";
 import { getTunnelHopIds } from "@/lib/tunnelDisplay";
-import { trpc } from "@/lib/trpc";
 import { TUNNEL_PROTOCOLS, normalizeForwardProtocolSettings } from "@shared/forwardTypes";
 import { buildLinkAvailabilityIndex } from "@shared/linkAvailability";
 import { formatAgo } from "@shared/dashboardAttention";
 import { describeNetworkHealth, type NetworkHealth } from "@shared/networkHealth";
 import { countryNameZh, hostPlaceNameZh } from "@shared/placeNameZh";
 
+import { useNetworkMapData, type NetworkMapData } from "./networkMapData";
 import { lineKindOfHealth, lineLegend, type LineKind } from "./networkMapLines";
 
 /**
  * 首页「网络地图」的数据模型。
  *
- * 数据用的是各页已经在用的两条轻量列表（hosts.options / tunnels.options），不新加接口。
+ * 数据用的是各页已经在用的两条轻量列表（hosts.options / tunnels.options，见 networkMapData）。
  * 隧道的状态和隧道页一样从 linkAvailability 算 —— 这里红的，点进隧道页也是红的。
  *
  * 节点和线是 SVG 示意图（没有 WebGL 时的兜底）的类型再加上真地图要的几样：中文城市名、
@@ -199,40 +198,27 @@ export function buildNetworkMapModel(input: {
   return { nodes, links, stubs, linkTotal: tunnels.length, hiddenLinkCount, legend, lines: lineLegend({ links, stubs }) };
 }
 
-export function useTunnelSupportCheck(enabled: boolean) {
-  // 协议开关和隧道页读同一份设置；隧道页那边 staleTime 是 0，这里跟着不缓存。
-  const settingsQuery = trpc.system.getSettings.useQuery(undefined, { enabled, staleTime: 0 });
-  const forwardProtocols = (settingsQuery.data as any)?.forwardProtocols;
-  return useMemo(() => {
-    const protocolSettings = normalizeForwardProtocolSettings(forwardProtocols);
-    return (tunnel: any) => {
-      const key = String(tunnel?.mode || "").toLowerCase();
-      return (TUNNEL_PROTOCOLS as readonly string[]).includes(key)
-        && protocolSettings[key as keyof typeof protocolSettings] !== false;
-    };
-  }, [forwardProtocols]);
+/** 协议开关 → 「这条隧道的协议还开着吗」：和隧道页同一条规则（停用了协议的隧道算中断） */
+export function tunnelSupportCheck(forwardProtocols: unknown): (tunnel: any) => boolean {
+  const protocolSettings = normalizeForwardProtocolSettings(forwardProtocols as any);
+  return (tunnel: any) => {
+    const key = String(tunnel?.mode || "").toLowerCase();
+    return (TUNNEL_PROTOCOLS as readonly string[]).includes(key)
+      && protocolSettings[key as keyof typeof protocolSettings] !== false;
+  };
+}
+
+/** 已经取到的原始数据 → 地图模型（数据没变就不重算） */
+export function useNetworkMapModelFromData(data: NetworkMapData) {
+  const { hosts, tunnels, forwardProtocols, loading } = data;
+  const isTunnelSupported = useMemo(() => tunnelSupportCheck(forwardProtocols), [forwardProtocols]);
+  return useMemo(() => ({
+    ...buildNetworkMapModel({ hosts, tunnels, isTunnelSupported }),
+    loading,
+  }), [hosts, tunnels, isTunnelSupported, loading]);
 }
 
 /** 首页卡片用的：主机和隧道两条列表，按常规的轮询间隔刷新。 */
 export function useNetworkMapModel(enabled: boolean) {
-  const hostsQuery = trpc.hosts.options.useQuery(undefined, {
-    enabled,
-    refetchInterval: pollingInterval("normal"),
-    staleTime: 5000,
-    placeholderData: (previous) => previous,
-  });
-  const tunnelsQuery = trpc.tunnels.options.useQuery(undefined, {
-    enabled,
-    refetchInterval: pollingInterval("normal"),
-    staleTime: 5000,
-    placeholderData: (previous) => previous,
-  });
-  const isTunnelSupported = useTunnelSupportCheck(enabled);
-  const hosts = (hostsQuery.data as any[] | undefined) || [];
-  const tunnels = (tunnelsQuery.data as any[] | undefined) || [];
-
-  return useMemo(() => ({
-    ...buildNetworkMapModel({ hosts, tunnels, isTunnelSupported }),
-    loading: hostsQuery.isLoading || tunnelsQuery.isLoading,
-  }), [hosts, tunnels, isTunnelSupported, hostsQuery.isLoading, tunnelsQuery.isLoading]);
+  return useNetworkMapModelFromData(useNetworkMapData(enabled));
 }

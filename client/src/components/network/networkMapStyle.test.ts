@@ -24,7 +24,7 @@ const layer = (id: string) => style.layers.find((item: any) => item.id === id) a
 
 test("底图只有夜光地球图一张：走自定义协议、最多切到第 4 级；没有别的栅格", () => {
   assert.deepEqual(style.sources[NETWORK_MAP_SOURCES.night].tiles, ["fxearth://night/{z}/{x}/{y}"]);
-  assert.equal(style.sources[NETWORK_MAP_SOURCES.night].maxzoom, 4, "原图 4096 宽，第 4 级以上 MapLibre 自己放大");
+  assert.equal(style.sources[NETWORK_MAP_SOURCES.night].maxzoom, 4, "第 4 级以上 MapLibre 自己放大（4 级的调色和 3 级不同，所以切到 4 级）");
   assert.deepEqual(style.layers.filter((item: any) => item.type === "raster").map((item: any) => item.id), [NETWORK_MAP_LAYERS.night]);
   assert.equal(layer(NETWORK_MAP_LAYERS.night).paint["raster-fade-duration"], 0);
   assert.deepEqual(nightTonePaint()["raster-opacity"], zoomFade(0.9, 0), "放大到地球图糊掉之前淡没");

@@ -1837,6 +1837,15 @@ export const systemRouter = router({
     }));
   }),
 
+  /**
+   * 隧道协议开关，只这一项：首页网络地图要按它把被停用协议的隧道标红（和隧道页一致）。
+   * 以前为这一个字段拉整份 getSettings（证书、首页 HTML 都在里面）。getSettings 对谁都给
+   * forwardProtocols，这里登录即可，看到的和以前一样。
+   */
+  forwardProtocols: protectedProcedure.query(async () => normalizeForwardProtocolSettings(
+    parseForwardProtocolSettings((await db.getAllSettings()).forwardProtocols),
+  )),
+
   sidebarPages: protectedProcedure.query(async ({ ctx }) => {
     const all = await db.getAllSettings();
     return visibleCustomSidebarPages(readCustomSidebarPages(all), ctx.user.role);
