@@ -19,7 +19,7 @@ import { sheetSnapY, type MapPadding, type SheetSnap } from "./networkMapPageSta
 /** 留白矩形离每块浮层再空出这么多（环的光、名字的晕不贴着玻璃卡） */
 export const OVERLAY_GAP_PX = 8;
 /** 精确框住时 marker 离留白矩形边至少这么远 */
-export const PAGE_FIT_EDGE_PX = 6;
+export const PAGE_FIT_EDGE_PX = 10;
 /** 留白矩形小到这样就不再自动框（抽屉拉到全屏时）：框进一条缝里只会缩成一张世界图 */
 export const MIN_FIT_AREA_PX = 120;
 
