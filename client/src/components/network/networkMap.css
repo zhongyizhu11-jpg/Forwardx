@@ -188,6 +188,8 @@
 
 /* ---- 左下：图例 ---- */
 .nm-legend { position: absolute; left: 16px; bottom: 16px; z-index: 3; display: grid; gap: 7px; padding: 11px 14px; border-radius: 14px; font-size: 12px; }
+/* 四行图例包在一层里（手机上收起时整层不渲染）；桌面和平板上这层不占盒子，四行照旧直接排在卡里 */
+.nm-legend-grid { display: contents; }
 .nm-legend-item { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
 .nm-legend-item .nm-count { margin-left: auto; padding-left: 12px; color: var(--nm-muted); font-variant-numeric: tabular-nums; }
 /* 线样：主线路实线带光、其余虚线 */
@@ -579,6 +581,61 @@
   .nm-legend-item .nm-count { padding-left: 4px; }
   .nm-line-swatch { width: 18px; }
   .nm-toast { bottom: 110px; }
+}
+
+/*
+  ---- 窄手机（< 640px）：控件让出地图 ----
+  以前标题两行 + 一排 118px 宽的统计卡（第四张滚出屏外）+ 右上 90×450 的工具栏 + 500×130 的图例，
+  再加上抽屉，盖掉了大半张图。现在：
+    标题一行 17px；统计卡缩成一行四个 28px 高的小胶囊（图标 + 数字 + 短标签），360 ~ 430px 宽都排得下、不滚
+    工具栏只剩 36px 的图标键，竖在右下角、坐在抽屉露出的那截上面（--nm-dock：收起 84px、半屏 48%）
+    图例收成一个「图例」小条，点开才是 2×2 带条数的格子；菜单从工具栏左边往上弹
+  地图的留白按这些控件量出来的盒子算（paddingForOverlays），所以这里怎么摆，框住时就躲开怎么摆。
+*/
+@media (max-width: 639px) {
+  .nm-hud-tl { top: 10px; gap: 6px; }
+  .nm-titlebar { padding: 0 12px; }
+  .nm-titlebar h1 { font-size: 17px; line-height: 20px; }
+  .nm-compare { margin: 0 10px; }
+  .nm-focus-exit { margin: 0 12px; height: 30px; padding: 0 12px; font-size: 12px; }
+  .nm-stats { overflow: visible; padding: 0 12px; gap: 6px; flex-wrap: nowrap; scroll-snap-type: none; }
+  .nm-stat { display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; height: 28px; padding: 0 9px 0 7px; border-radius: 999px; }
+  .nm-stat .nm-icon { width: 14px; height: 14px; flex: none; border-radius: 0; background: none; }
+  .nm-stat.is-alert .nm-icon, .nm-stat.is-calm .nm-icon, .nm-stat.is-good .nm-icon { background: none; }
+  .nm-stat .nm-icon svg { width: 13px; height: 13px; }
+  .nm-stat b { font-size: 13px; line-height: 1; }
+  .nm-stat span.nm-stat-label { font-size: 11px; line-height: 1; }
+
+  .nm-toolbar { top: auto; bottom: calc(var(--nm-dock, 84px) + 10px); right: 10px; padding: 3px; gap: 2px; border-radius: 12px; }
+  .nm-toolbar button { width: 36px; height: 36px; padding: 0; justify-content: center; gap: 0; }
+  .nm-toolbar button svg { width: 18px; height: 18px; }
+  .nm-toolbar button .nm-tool-label { display: none; }
+  .nm-toolbar button .nm-badge { top: 6px; right: 6px; }
+  .nm-pop { top: auto; bottom: calc(var(--nm-dock, 84px) + 10px); right: 60px; width: min(236px, calc(100% - 72px)); max-height: calc(100% - var(--nm-dock, 84px) - 90px); overflow-y: auto; }
+
+  .nm-legend.is-compact { left: 10px; bottom: calc(var(--nm-dock, 84px) + 10px); display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; border-radius: 999px; font-size: 11.5px; }
+  .nm-legend.is-compact.is-open { border-radius: 14px; }
+  .nm-legend.is-compact .nm-legend-grid { display: grid; grid-template-columns: auto auto; column-gap: 14px; row-gap: 7px; padding: 10px 12px 4px; }
+  .nm-legend-toggle { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 9px 0 10px; border: 0; background: transparent; color: var(--nm-fg); font-size: 12px; font-weight: 600; cursor: pointer; }
+  .nm-legend-dots { display: inline-flex; gap: 2px; }
+  .nm-legend-dots .nm-line-swatch { width: 7px; height: 3px; box-shadow: none; }
+  .nm-legend-chev { width: 13px; height: 13px; stroke: var(--nm-muted); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.2s ease; }
+  .nm-legend-toggle[aria-expanded="true"] .nm-legend-chev { transform: rotate(180deg); }
+  .nm-toast { bottom: calc(var(--nm-dock, 84px) + 54px); }
+  /*
+    触屏上全局把按钮抬到 44px 高（index.css）：这几个小控件要的就是 28 / 36px，抬高了一行胶囊变成两指宽、
+    工具栏又长回去。命中区用 ::after 只往没有邻居的方向撑：胶囊和图例小条上下撑（左右挨着别的胶囊），
+    工具栏的键左右撑（上下挨着别的键）
+  */
+  .fx-netmap .nm-stat, .fx-netmap .nm-toolbar button, .fx-netmap .nm-legend-toggle { min-height: 0; }
+  .nm-stat, .nm-legend-toggle { position: relative; }
+  .nm-stat::after, .nm-legend-toggle::after { content: ""; position: absolute; inset: -8px 0; }
+  .nm-toolbar button::after { content: ""; position: absolute; inset: 0 -5px; }
+}
+/* 360px 以下的窄屏：小胶囊不画图标，四个才排得下一行 */
+@media (max-width: 369px) {
+  .nm-stat .nm-icon { display: none; }
+  .nm-stat { padding: 0 8px; }
 }
 
 /* ---- 桌面：抽屉变成浮在图右边的玻璃卡；没选中东西时收起来，工具栏和三段切换跟着卡挪 ---- */

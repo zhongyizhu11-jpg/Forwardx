@@ -13,8 +13,11 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { buildNetworkMapAlerts, type NetworkMapAlert } from "@/features/network/networkMapAlerts";
 import { LINE_FILTER_OPTIONS, LINE_KINDS, LINE_KIND_LABELS, formatAvailability, lineTotal, overallAvailability, pickHubNode, type LineFilter } from "@/features/network/networkMapLines";
 import { useNetworkMapPageModel } from "@/features/network/networkMapModel";
+import { paddingForOverlays, sheetOverlayBox, type ContainerSize } from "@/features/network/networkMapOverlays";
 import {
   RAIL_MIN_WIDTH,
+  SHEET_HALF_RATIO,
+  SHEET_PEEK_HEIGHT,
   focusForLink,
   focusForNode,
   focusForTarget,
@@ -40,6 +43,7 @@ import {
   type NetworkMapBaseLayerId,
 } from "@shared/networkMapBaseLayers";
 import { describeNetworkHealth } from "@shared/networkHealth";
+import type { PixelBox } from "@shared/networkMapGeometry";
 import { AGENT_VERSION } from "@shared/versions";
 
 /**
@@ -51,6 +55,14 @@ import { AGENT_VERSION } from "@shared/versions";
  *   右上   底图三段切换（标准地图 / 卫星地图 / 暗黑网格）
  *   右边   竖着的工具栏：图层（含高德）、全览、流向（落地流向和光点）、筛选（按四类线）
  *   左下   图例：主线路 / 备用线路 / 降级线路 / 中断线路，各几条
+ *
+ * 手机（< 640px）上这些要让出地图：标题只留一行「网络地图」，统计卡缩成一行四个小胶囊
+ * （「7 主机」「3 线路」…），工具栏只剩图标、竖在右下角抽屉上面，图例收成一个「图例」小条、点开才是
+ * 2×2 的四类线，底图切换收进「图层」菜单。
+ *
+ * 地图的留白不再写死：页面量出这些浮层（和抽屉 / 详情卡）的真实盒子，算出一块不被盖住的矩形
+ * （paddingForOverlays）交给画布；画布在这块矩形里按 marker 真正占的像素精确框住全部，浮层变了
+ * （图例展开、抽屉换档、详情卡开关）而用户没动过图就重新框一遍。
  *
  * 详情：桌面上是浮在图右边的一张玻璃卡（选中东西或点了统计卡才出来），手机上是底部抽屉；
  * 选中隧道时有五个标签（NetworkMapLinkPanel）。
@@ -108,6 +120,59 @@ function useFullBleedFrame(ref: React.RefObject<HTMLDivElement | null>) {
   return frame;
 }
 
+/** 手机布局（一行标题、小胶囊、右下角只剩图标的工具栏、收起的图例）的宽度分界 */
+const COMPACT_MAX_WIDTH = 639;
+
+type OverlayMeasure = { size: ContainerSize; boxes: PixelBox[] };
+
+/**
+ * 量浮在地图上的东西占了哪些地方（相对地图容器）：地图这一层里所有 .nm-reserved（标题、统计、工具栏、
+ * 图例、对比卡、退出聚焦），加上 sheetBox（手机上按抽屉档位算 —— 抽屉是 transform 动画，量 DOM 会量到
+ * 动画中间；桌面上量那张详情卡）。
+ *
+ * 每次渲染后量一遍（图例展开、选中东西换了标题这些都会重新渲染），再用 ResizeObserver 盯着容器和
+ * 每块浮层（字体晚到、转屏这些不经过 React 的变化）；结果没变就不 setState。
+ */
+function useOverlayBoxes(wrapRef: React.RefObject<HTMLDivElement | null>, sheetBox: (size: ContainerSize, layout: HTMLElement) => PixelBox | null): OverlayMeasure | null {
+  const [measure, setMeasure] = useState<OverlayMeasure | null>(null);
+  const signature = useRef("");
+  const observer = useRef<ResizeObserver | null>(null);
+  const observed = useRef(new WeakSet<Element>());
+  const run = useRef<() => void>(() => {});
+  run.current = () => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const frame = wrap.getBoundingClientRect();
+    const size = { width: Math.round(frame.width), height: Math.round(frame.height) };
+    if (size.width <= 0 || size.height <= 0) return;
+    const boxes: PixelBox[] = [];
+    for (const element of Array.from(wrap.querySelectorAll<HTMLElement>(".nm-reserved"))) {
+      if (element.closest(".nm-map")) continue;
+      if (observer.current && !observed.current.has(element)) { observer.current.observe(element); observed.current.add(element); }
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      boxes.push({ x: Math.round(rect.left - frame.left), y: Math.round(rect.top - frame.top), w: Math.round(rect.width), h: Math.round(rect.height) });
+    }
+    const sheet = wrap.parentElement ? sheetBox(size, wrap.parentElement) : null;
+    if (sheet && sheet.w > 0 && sheet.h > 0) boxes.push(sheet);
+    const next = JSON.stringify([size, boxes]);
+    if (next === signature.current) return;
+    signature.current = next;
+    setMeasure({ size, boxes });
+  };
+  useLayoutEffect(() => { run.current(); });
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(() => run.current());
+    observer.current = ro;
+    observed.current = new WeakSet();
+    if (wrapRef.current) ro.observe(wrapRef.current);
+    run.current();
+    return () => { ro.disconnect(); observer.current = null; };
+  }, [wrapRef]);
+  return measure;
+}
+
 type IconName = "layers" | "fit" | "flow" | "filter" | "server" | "link" | "alert" | "pulse" | "back";
 const ICON_PATHS: Record<IconName, ReactNode> = {
   layers: <><path d="M12 3 2.5 8 12 13l9.5-5L12 3z" /><path d="m2.5 12.5 9.5 5 9.5-5" /><path d="m2.5 17 9.5 5 9.5-5" /></>,
@@ -138,6 +203,7 @@ function NetworkMapPageBody() {
   const [, setLocation] = useLocation();
   const { resolvedTheme } = useTheme();
   const rail = useMediaQuery(`(min-width: ${RAIL_MIN_WIDTH}px)`);
+  const compactChrome = useMediaQuery(`(max-width: ${COMPACT_MAX_WIDTH}px)`);
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const publicInfo = trpc.system.publicInfo.useQuery(undefined, { enabled: !!user, retry: false, refetchOnWindowFocus: false });
   const canNetworkTest = isAdmin || publicInfo.data?.lookingGlassUserEnabled === true;
@@ -205,7 +271,22 @@ function NetworkMapPageBody() {
   const panelOpen = rail && (view.view !== "overview" || overviewOpen);
   const cameraRef = useRef<NetworkMapCameraApi | null>(null);
   const pendingCamera = useRef<(() => void) | null>(null);
-  const padding = useMemo(() => mapPaddingForSheet(snap, containerHeight, rail, panelOpen), [snap, containerHeight, rail, panelOpen]);
+  // ---- 地图留白：按浮层的真实盒子算（量到之前先用按档位估的那份）----
+  // 手机上抽屉按档位算它盖住多少；桌面上量那张详情卡（关着时 display: none，量出来是空的）
+  const overlays = useOverlayBoxes(mapWrapRef, (size, layout) => {
+    if (!rail) return sheetOverlayBox(snap, size);
+    const sheet = layout.querySelector(":scope > .nm-sheet") as HTMLElement | null;
+    const rect = sheet?.getBoundingClientRect();
+    const frame = layout.getBoundingClientRect();
+    return rect && rect.width > 0 ? { x: Math.round(rect.left - frame.left), y: Math.round(rect.top - frame.top), w: Math.round(rect.width), h: Math.round(rect.height) } : null;
+  });
+  const padding = useMemo(
+    () => (overlays ? paddingForOverlays(overlays.size, overlays.boxes) : mapPaddingForSheet(snap, containerHeight, rail, panelOpen)),
+    [overlays, snap, containerHeight, rail, panelOpen],
+  );
+  // 手机上工具栏、图例、提示条坐在抽屉露出的那截上面：收起时 84px，半屏时 48%（全屏时抽屉盖住它们，按半屏放）
+  const dock = rail ? 0 : snap === "peek" ? SHEET_PEEK_HEIGHT : Math.round(containerHeight * SHEET_HALF_RATIO);
+  const [legendOpen, setLegendOpen] = useState(false);
   // 相机动作排在这次渲染之后：先让抽屉 / 详情卡的新尺寸通过 setPadding 告诉地图（画布的 effect 先跑），再飞
   useEffect(() => {
     const action = pendingCamera.current;
@@ -227,8 +308,8 @@ function NetworkMapPageBody() {
   /** 框住一次聚焦里的所有主机（主备对比时连备用经过的主机一起） */
   const fitFocus = (next: MapFocus | null, maxZoom: number) => queueCamera((api) => {
     if (!next) return;
-    const points = [...next.hosts.map((id) => api.hostLngLat(id)), ...next.targets.map((key) => api.targetLngLat(key))].filter((point): point is [number, number] => !!point);
-    api.fitPoints(points, maxZoom);
+    // 和「全览」一样在留白里按 marker 真正占的像素框：聚焦的那几台连名字都在看得见的地方
+    api.fitMarkers(next.hosts, next.targets, maxZoom);
   });
   const openLink = (tunnelId: number, options: { fly?: boolean; focus?: boolean } = {}) => {
     const next = focusForLink(model, tunnelId);
@@ -368,11 +449,12 @@ function NetworkMapPageBody() {
   // ---- 统计 ----
   const hub = pickHubNode(model, view.view === "node" ? view.id : null);
   const availability = overallAvailability(model);
+  // short：手机上一行四个小胶囊用的短标签（「7 主机」「99.7% 可用」）
   const stats = [
-    { key: "hosts", icon: "server" as const, value: String(model.nodes.length), label: "主机节点", tone: "" },
-    { key: "lines", icon: "link" as const, value: String(lineTotal(model)), label: "链路线路", tone: "" },
-    { key: "alerts", icon: "alert" as const, value: String(alerts.length), label: "需要处理", tone: alerts.length > 0 ? "is-alert" : "is-calm" },
-    { key: "uptime", icon: "pulse" as const, value: formatAvailability(availability), label: "整体可用率", tone: availability === null ? "is-calm" : "is-good" },
+    { key: "hosts", icon: "server" as const, value: String(model.nodes.length), label: "主机节点", short: "主机", tone: "" },
+    { key: "lines", icon: "link" as const, value: String(lineTotal(model)), label: "链路线路", short: "线路", tone: "" },
+    { key: "alerts", icon: "alert" as const, value: String(alerts.length), label: "需要处理", short: "待处理", tone: alerts.length > 0 ? "is-alert" : "is-calm" },
+    { key: "uptime", icon: "pulse" as const, value: formatAvailability(availability), label: "整体可用率", short: "可用", tone: availability === null ? "is-calm" : "is-good" },
   ];
 
   // ---- 抽屉内容 ----
@@ -470,7 +552,7 @@ function NetworkMapPageBody() {
       data-skin={skin}
       style={frame ? { marginLeft: frame.marginLeft, width: frame.width, height: frame.height } : { height: "70vh" }}
     >
-      <div className={`nm-layout${panelOpen ? " has-panel" : ""}`}>
+      <div className={`nm-layout${panelOpen ? " has-panel" : ""}${compactChrome ? " is-compact" : ""}`} style={{ ["--nm-dock" as string]: `${dock}px` }}>
         <div ref={mapWrapRef} className="nm-map-wrap nm-surface">
           <Suspense fallback={<div className="nm-map-fallback">正在加载地图引擎…</div>}>
             <NetworkMapCanvas
@@ -480,6 +562,7 @@ function NetworkMapPageBody() {
               focus={focus}
               showFlows={flowsOn}
               padding={padding}
+              overlayBoxes={overlays?.boxes}
               reduceMotion={reduceMotion}
               paused={paused}
               hubHostId={hub}
@@ -519,7 +602,7 @@ function NetworkMapPageBody() {
             ) : (
               <div className="nm-titlebar nm-reserved">
                 <h1>网络地图</h1>
-                <p>实时展示全球节点与链路状态</p>
+                {compactChrome ? null : <p>实时展示全球节点与链路状态</p>}
               </div>
             )}
             {focus && !compare ? (
@@ -531,10 +614,10 @@ function NetworkMapPageBody() {
             ) : null}
             <div className="nm-stats" role="list" aria-label="概况">
               {stats.map((stat) => (
-                <button key={stat.key} type="button" role="listitem" className={`nm-stat nm-glass nm-reserved ${stat.tone}`} onClick={showOverview} title="打开总览">
+                <button key={stat.key} type="button" role="listitem" className={`nm-stat nm-glass nm-reserved ${stat.tone}`} onClick={showOverview} title={`${stat.label}：${stat.value}，打开总览`} aria-label={`${stat.label} ${stat.value}，打开总览`}>
                   <span className="nm-icon"><Icon name={stat.icon} /></span>
                   <b>{stat.value}</b>
-                  <span className="nm-stat-label">{stat.label}</span>
+                  <span className="nm-stat-label">{compactChrome ? stat.short : stat.label}</span>
                 </button>
               ))}
             </div>
@@ -544,14 +627,15 @@ function NetworkMapPageBody() {
               <button key={id} type="button" role="radio" aria-checked={baseLayer === id} onClick={() => chooseLayer(id)}>{NETWORK_MAP_BASE_LAYERS[id].label}</button>
             ))}
           </div>
+          {/* 手机上只剩图标（文字藏起来，aria-label 和悬停提示还在） */}
           <div ref={toolbarRef} className="nm-toolbar nm-glass nm-reserved" role="toolbar" aria-label="地图工具">
-            <button type="button" className={menu === "layers" ? "is-active" : ""} aria-expanded={menu === "layers"} onClick={() => setMenu((open) => (open === "layers" ? null : "layers"))}><Icon name="layers" />图层</button>
-            <button type="button" onClick={fitAll}><Icon name="fit" />全览</button>
-            <button type="button" className={showFlows ? "is-active" : ""} aria-pressed={showFlows} onClick={() => setShowFlows((value) => !value)} title={isAdmin ? "落地流向和主线路上的光点" : "主线路上的光点"}><Icon name="flow" />流向</button>
-            <button type="button" className={menu === "filter" || lineFilter !== "all" ? "is-active" : ""} aria-expanded={menu === "filter"} onClick={() => setMenu((open) => (open === "filter" ? null : "filter"))}><Icon name="filter" />筛选{lineFilter !== "all" ? <i className="nm-badge" aria-hidden="true" /> : null}</button>
+            <button type="button" className={menu === "layers" ? "is-active" : ""} aria-expanded={menu === "layers"} aria-label="图层" title="图层：换底图" onClick={() => setMenu((open) => (open === "layers" ? null : "layers"))}><Icon name="layers" /><span className="nm-tool-label">图层</span></button>
+            <button type="button" aria-label="全览" title="全览：框住全部主机" onClick={fitAll}><Icon name="fit" /><span className="nm-tool-label">全览</span></button>
+            <button type="button" className={showFlows ? "is-active" : ""} aria-pressed={showFlows} aria-label="流向" onClick={() => setShowFlows((value) => !value)} title={isAdmin ? "流向：落地流向和主线路上的光点" : "流向：主线路上的光点"}><Icon name="flow" /><span className="nm-tool-label">流向</span></button>
+            <button type="button" className={menu === "filter" || lineFilter !== "all" ? "is-active" : ""} aria-expanded={menu === "filter"} aria-label="筛选" title="筛选：只看某一类线" onClick={() => setMenu((open) => (open === "filter" ? null : "filter"))}><Icon name="filter" /><span className="nm-tool-label">筛选</span>{lineFilter !== "all" ? <i className="nm-badge" aria-hidden="true" /> : null}</button>
           </div>
           {menu === "layers" ? (
-            <div ref={menuRef} className="nm-pop nm-glass" role="menu" aria-label="底图" style={{ top: rail ? 64 : 146 }}>
+            <div ref={menuRef} className="nm-pop nm-glass" role="menu" aria-label="底图" style={compactChrome ? undefined : { top: rail ? 64 : 146 }}>
               <div className="nm-menu-title">底图</div>
               {NETWORK_MAP_ALL_BASE_LAYERS.map((id) => {
                 const layer = NETWORK_MAP_BASE_LAYERS[id];
@@ -567,7 +651,7 @@ function NetworkMapPageBody() {
             </div>
           ) : null}
           {menu === "filter" ? (
-            <div ref={menuRef} className="nm-pop nm-glass" role="menu" aria-label="筛选线路" style={{ top: rail ? 190 : 270 }}>
+            <div ref={menuRef} className="nm-pop nm-glass" role="menu" aria-label="筛选线路" style={compactChrome ? undefined : { top: rail ? 190 : 270 }}>
               <div className="nm-menu-title">只看这些线</div>
               {LINE_FILTER_OPTIONS.map((option) => (
                 <button key={option.id} type="button" role="menuitemradio" aria-checked={lineFilter === option.id} className="nm-opt" onClick={() => { setLineFilter(option.id); setMenu(null); }}>
@@ -578,10 +662,23 @@ function NetworkMapPageBody() {
               ))}
             </div>
           ) : null}
-          <div className="nm-legend nm-glass nm-reserved" aria-label="图例">
-            {LINE_KINDS.map((kind) => (
-              <span key={kind} className="nm-legend-item"><i className={`nm-line-swatch is-${kind}`} aria-hidden="true" />{LINE_KIND_LABELS[kind]}<span className="nm-count">{model.lines[kind]}</span></span>
-            ))}
+          {/* 图例：手机上默认收成一个「图例」小条（四种线的小色条 + 两个字），点开才是 2×2 带条数的那张；
+              展开的格子排在小条上面，小条钉在原地不跟着跑 */}
+          <div className={`nm-legend nm-glass nm-reserved${compactChrome ? " is-compact" : ""}${compactChrome && legendOpen ? " is-open" : ""}`} role="group" aria-label="图例">
+            {!compactChrome || legendOpen ? (
+              <div className="nm-legend-grid" id="nm-legend-grid">
+                {LINE_KINDS.map((kind) => (
+                  <span key={kind} className="nm-legend-item"><i className={`nm-line-swatch is-${kind}`} aria-hidden="true" />{LINE_KIND_LABELS[kind]}<span className="nm-count">{model.lines[kind]}</span></span>
+                ))}
+              </div>
+            ) : null}
+            {compactChrome ? (
+              <button type="button" className="nm-legend-toggle" aria-expanded={legendOpen} aria-controls="nm-legend-grid" onClick={() => setLegendOpen((open) => !open)}>
+                <span className="nm-legend-dots" aria-hidden="true">{LINE_KINDS.map((kind) => <i key={kind} className={`nm-line-swatch is-${kind}`} />)}</span>
+                图例
+                <svg className="nm-legend-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6" /></svg>
+              </button>
+            ) : null}
           </div>
           <div className={`nm-toast nm-glass${toastText ? " is-show" : ""}`} role="status" aria-live="polite">{toastText}</div>
         </div>
