@@ -64,14 +64,21 @@ export function parseTextureTileUrl(url: string): { texture: string; z: number; 
  * 海和陆地几乎没有红，灯有。所以：
  *   底色整体压暗（红绿五成、蓝留得多一点）—— 深海军蓝，陆地比海略亮一点点
  *   按红通道的亮度往上加一层橙黄的光 —— 灰白的灯变成暖色的城市灯光
- * 纯黑还是纯黑。
+ * 纯黑还是纯黑。光加多少按瓦片的级别（zoom）给：缩得越小，一个像素里平均进去的黑越多，加得越多；
+ * 放大后原图的灯本来就够亮，再加就成了一片橙。
  */
-export function gradeNightPixels(data: Uint8ClampedArray): void {
+export function nightLightGain(zoom: number): number {
+  if (zoom <= 2) return 1.2;
+  if (zoom === 3) return 0.85;
+  return 0.55;
+}
+
+export function gradeNightPixels(data: Uint8ClampedArray, gain = 1.2): void {
   for (let index = 0; index < data.length; index += 4) {
     const r = data[index];
     const g = data[index + 1];
     const b = data[index + 2];
-    const light = r > 6 ? (r - 6) * 1.2 : 0;
+    const light = r > 6 ? (r - 6) * gain : 0;
     data[index] = r * 0.5 + light * 1.6;
     data[index + 1] = g * 0.5 + light * 1.05;
     data[index + 2] = b * 0.62 + light * 0.32;

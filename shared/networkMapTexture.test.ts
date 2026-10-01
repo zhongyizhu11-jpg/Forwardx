@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { gradeNightPixels, latToSourceY, mercatorYToLat, parseTextureTileUrl, textureTilePlan } from "./networkMapTexture";
+import { gradeNightPixels, nightLightGain, latToSourceY, mercatorYToLat, parseTextureTileUrl, textureTilePlan } from "./networkMapTexture";
 
 test("墨卡托 y 换纬度：正中是赤道，两头是 ±85.05°", () => {
   assert.ok(Math.abs(mercatorYToLat(0.5)) < 1e-9);
@@ -52,4 +52,13 @@ test("夜光图调色：海压暗成深海军蓝，灰白的灯变成更亮的�
   assert.ok(data[0] < 2 && data[1] < 19 && data[2] < 40 && data[2] > data[1], "海：更暗、还是蓝的");
   assert.ok(data[4] > 150 && data[4] > data[5] && data[5] > data[6], "灯：更亮、偏橙黄");
   assert.deepEqual([data[8], data[9], data[10], data[11]], [0, 0, 0, 255]);
+});
+
+test("夜光图的光：缩得越小加得越多", () => {
+  assert.ok(nightLightGain(1) > nightLightGain(3) && nightLightGain(3) > nightLightGain(4));
+  const far = new Uint8ClampedArray([92, 93, 92, 255]);
+  const near = new Uint8ClampedArray([92, 93, 92, 255]);
+  gradeNightPixels(far, nightLightGain(1));
+  gradeNightPixels(near, nightLightGain(4));
+  assert.ok(far[0] > near[0]);
 });

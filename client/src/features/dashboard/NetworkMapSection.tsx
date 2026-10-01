@@ -25,12 +25,12 @@ export type { NetworkMapModel } from "@/features/network/networkMapModel";
 const NetworkMapMini = lazy(() => import("./NetworkMapMini"));
 
 const dashed = (color: string) => ({ background: `repeating-linear-gradient(90deg, ${color} 0 4px, transparent 4px 6px)` });
-/** 卡片标题行跟面板主题：备用线路的白灰在浅色卡上看不见，换成次要文字色 */
+/** 卡片标题行跟面板主题，用面板的语义色（图上的霓虹色是给深色地图校的）；备用线路的白灰在浅色卡上看不见，换成次要文字色 */
 const LEGEND_SWATCH: Record<LineKind, React.CSSProperties> = {
-  main: { background: "#3b8bff", boxShadow: "0 0 4px rgba(59,139,255,0.7)" },
+  main: { background: "var(--fx-accent)" },
   backup: dashed("var(--fx-text-secondary)"),
-  degraded: dashed("#fb923c"),
-  down: dashed("#f43f5e"),
+  degraded: dashed("var(--fx-warn)"),
+  down: dashed("var(--fx-down)"),
 };
 
 export function NetworkMapSection({ enabled = true, onOpen }: { enabled?: boolean; onOpen: (href: string) => void }) {

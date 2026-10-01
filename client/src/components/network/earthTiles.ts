@@ -1,7 +1,7 @@
 import maplibregl from "maplibre-gl";
 
 import { NETWORK_MAP_TEXTURE_PROTOCOL, NETWORK_MAP_TEXTURE_URLS, type NetworkMapTextureId } from "@shared/networkMapBaseLayers";
-import { gradeNightPixels, parseTextureTileUrl, textureTilePlan } from "@shared/networkMapTexture";
+import { gradeNightPixels, nightLightGain, parseTextureTileUrl, textureTilePlan } from "@shared/networkMapTexture";
 
 /**
  * 离线地球图的瓦片：`fxearth://night/{z}/{x}/{y}`。
@@ -58,7 +58,7 @@ async function renderTile(url: string): Promise<ArrayBuffer> {
   if (parsed.texture === "night") {
     // 夜光图调色（gradeNightPixels）：灯光提亮偏暖，蓝色的海和没灯的陆地压暗 —— 缩小看时城市灯光不被周围稀释掉
     const pixels = context.getImageData(0, 0, TILE, TILE);
-    gradeNightPixels(pixels.data);
+    gradeNightPixels(pixels.data, nightLightGain(parsed.z));
     context.putImageData(pixels, 0, 0);
   }
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
