@@ -26,6 +26,7 @@ import { reconcileHostDdnsRecords } from "./hostDdns";
 import { reconcileRuleEntryDomains } from "./ruleEntryDomain";
 import { checkPanelUpdateTask } from "./_core/systemRouter";
 import { createNonOverlappingScheduledTask } from "./scheduledTask";
+import { optimizeSqliteDatabase } from "./dbRuntime";
 import { healAutoStoppedRules } from "./forwardRuleAutoRecovery";
 import { sweepExpiredRuleEntryBridges } from "./ruleEntryBridges";
 import {
@@ -1007,6 +1008,9 @@ export function startScheduler() {
   const databasePoolSizing = createNonOverlappingScheduledTask("database pool sizing", async () => {
     await db.refreshDatabasePoolSettings();
   });
+  const sqliteOptimize = createNonOverlappingScheduledTask("SQLite optimize", async () => {
+    await optimizeSqliteDatabase();
+  });
   const paymentMaintenance = createNonOverlappingScheduledTask("payment order maintenance", async () => {
     /**
      * 先主动查单，再关过期的。
@@ -1063,6 +1067,8 @@ export function startScheduler() {
   repeatAfter(monthlyTrafficReset, 60 * 60 * 1000, 20_000);
   runAtBillingMidnight(monthlyTrafficReset);
   repeatAfter(databasePoolSizing, 5 * 60 * 1000, 25_000);
+  // SQLite 查询规划的统计信息：启动时 initDatabase 已经跑过一次，之后每 6 小时按需刷新（其它库不做事）
+  repeatAfter(sqliteOptimize, 6 * 60 * 60 * 1000, 6 * 60 * 60 * 1000);
   repeatAfter(paymentMaintenance, 60 * 1000, 35_000);
   repeatAfter(entryBridgeExpiry, 60 * 1000, 50_000);
   repeatAfter(reminderSweep, 6 * 60 * 60 * 1000, 30_000);

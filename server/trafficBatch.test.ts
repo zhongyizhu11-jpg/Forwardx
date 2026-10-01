@@ -20,6 +20,10 @@ test("traffic reports batch raw samples and counters without losing totals", () 
     const billing = await import(url("server/repositories/trafficBillingRepository.ts"));
     const users = await import(url("server/repositories/userRepository.ts"));
     const settings = await import(url("server/repositories/settingsRepository.ts"));
+    // 24h 汇总把已经结束的 30 分钟桶直接读桶表，下面故意改坏的是「当前这一桶」——
+    // 离桶边界太近就等它过去，免得样本写进去之后那一桶刚好结束。
+    const secondsToBucketEnd = 1800 - (Math.floor(Date.now() / 1000) % 1800);
+    if (secondsToBucketEnd < 30) await new Promise((resolve) => setTimeout(resolve, (secondsToBucketEnd + 1) * 1000));
     try {
       await runtime.connectDatabase({ type: "sqlite", sqlite: { path: process.env.FORWARDX_TEST_DB } });
       await schema.ensureDatabaseSchema();
@@ -371,7 +375,7 @@ test("traffic reports batch raw samples and counters without losing totals", () 
     cwd: process.cwd(),
     env: { ...process.env, DATABASE_TYPE: "sqlite", FORWARDX_TEST_DB: databasePath },
     encoding: "utf8",
-    timeout: 60_000,
+    timeout: 120_000,
   });
   fs.rmSync(directory, { recursive: true, force: true });
   assert.equal(result.status, 0, result.stderr || result.stdout);
