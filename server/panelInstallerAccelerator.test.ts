@@ -212,8 +212,8 @@ latest_release_version
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), "9.8.7");
     assert.deepEqual(result.calls, [
-      "https://mirror.example.com/https://api.github.com/repos/zhongyizhu11-jpg/Forwardx/releases/latest",
-      "https://api.github.com/repos/zhongyizhu11-jpg/Forwardx/releases/latest",
+      "https://mirror.example.com/https://api.github.com/repos/zhongyizhu11-jpg/NEX/releases/latest",
+      "https://api.github.com/repos/zhongyizhu11-jpg/NEX/releases/latest",
     ]);
     assert.match(result.stderr, /falling back to GitHub/);
   }
@@ -256,7 +256,7 @@ curl() {
     *) printf '000'; return 22 ;;
   esac
 }
-code="$(download_github_archive 'https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v9.8.7/forwardx-panel-v9.8.7.tar.gz' "$OUTPUT_FILE")"
+code="$(download_github_archive 'https://github.com/zhongyizhu11-jpg/NEX/releases/download/v9.8.7/forwardx-panel-v9.8.7.tar.gz' "$OUTPUT_FILE")"
 printf 'CODE=%s\\n' "$code"
 `,
   });
@@ -264,8 +264,8 @@ printf 'CODE=%s\\n' "$code"
   assert.equal(result.stdout.trim(), "CODE=200");
   assert.notEqual(result.output, "<html>mirror error</html>");
   assert.deepEqual(result.calls, [
-    "https://mirror.example.com/https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v9.8.7/forwardx-panel-v9.8.7.tar.gz",
-    "https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v9.8.7/forwardx-panel-v9.8.7.tar.gz",
+    "https://mirror.example.com/https://github.com/zhongyizhu11-jpg/NEX/releases/download/v9.8.7/forwardx-panel-v9.8.7.tar.gz",
+    "https://github.com/zhongyizhu11-jpg/NEX/releases/download/v9.8.7/forwardx-panel-v9.8.7.tar.gz",
   ]);
   assert.match(result.stderr, /invalid-archive/);
   // 下载结束时报一次最终字节数，面板据此把进度条推到这一步的末尾。

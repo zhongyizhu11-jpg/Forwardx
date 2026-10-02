@@ -9,7 +9,6 @@ const agentMain = read("agent/main.go");
 const fxpMain = read("forwardx-fxp/main.go");
 const agentFxpVersion = read("agent/fxp_version.go");
 const sharedFxpRuntime = read("shared/fxpRuntime.ts");
-const changelog = read("CHANGELOG.md");
 
 const findTsConst = (name) => {
   const match = versionsTs.match(new RegExp(`export const ${name}\\s*=\\s*["']([^"']+)["']`));
@@ -30,31 +29,6 @@ const agentMainVersion = agentMain.match(/var Version\s*=\s*"([^"]+)"/)?.[1];
 const fxpRuntimeVersion = fxpMain.match(/fxpRuntimeVersion\s*=\s*"([^"]+)"/)?.[1];
 
 const semverPattern = /^\d+\.\d+\.\d+$/;
-const parseSemver = (version) => version.split(".").map(Number);
-const isExpectedVersionStep = (previous, current) => {
-  const [previousMajor, previousMinor, previousPatch] = parseSemver(previous);
-  const [currentMajor, currentMinor, currentPatch] = parseSemver(current);
-  if (currentMajor === previousMajor && currentMinor === previousMinor) {
-    return currentPatch === previousPatch || currentPatch === previousPatch + 1;
-  }
-  if (currentMajor === previousMajor && currentMinor === previousMinor + 1) {
-    return currentPatch === 0;
-  }
-  return currentMajor === previousMajor + 1 && currentMinor === 0 && currentPatch === 0;
-};
-
-const changelogHeading = new RegExp(`^## \\[${appVersion.replace(/\./g, "\\.")}\\][^\\n]*\\n`, "m");
-const changelogMatch = changelogHeading.exec(changelog);
-const changelogSectionStart = changelogMatch ? changelogMatch.index + changelogMatch[0].length : -1;
-const changelogAfterCurrent = changelogSectionStart >= 0 ? changelog.slice(changelogSectionStart) : "";
-const nextChangelogHeading = changelogAfterCurrent.search(/^## \[/m);
-const currentChangelogSection = changelogSectionStart >= 0
-  ? (nextChangelogHeading >= 0 ? changelogAfterCurrent.slice(0, nextChangelogHeading) : changelogAfterCurrent)
-  : "";
-const olderChangelog = nextChangelogHeading >= 0 ? changelogAfterCurrent.slice(nextChangelogHeading) : "";
-const fxpVersionPattern = /ForwardX FXP runtime[^\n`]*`v?(\d+\.\d+\.\d+)`/i;
-const changelogFxpVersion = currentChangelogSection.match(fxpVersionPattern)?.[1];
-const previousFxpVersion = olderChangelog.match(fxpVersionPattern)?.[1];
 
 const releaseTag = (
   process.env.FORWARDX_RELEASE_TAG
@@ -102,21 +76,6 @@ for (const [name, version] of [
   ["FXP_MIN_WIRE_VERSION", sharedFxpMinWireVersion],
 ]) {
   if (!semverPattern.test(version)) errors.push(`${name} ${version} must use x.y.z format`);
-}
-if (!changelogMatch) {
-  errors.push(`CHANGELOG section for APP_VERSION ${appVersion} was not found`);
-} else if (!changelogFxpVersion) {
-  errors.push(`CHANGELOG section ${appVersion} does not declare the ForwardX FXP runtime version`);
-} else if (fxpRuntimeVersion && changelogFxpVersion !== fxpRuntimeVersion) {
-  errors.push(`CHANGELOG FXP runtime version ${changelogFxpVersion} does not match forwardx-fxp/main.go ${fxpRuntimeVersion}`);
-}
-if (
-  fxpRuntimeVersion
-  && semverPattern.test(fxpRuntimeVersion)
-  && previousFxpVersion
-  && !isExpectedVersionStep(previousFxpVersion, fxpRuntimeVersion)
-) {
-  errors.push(`FXP runtime version ${fxpRuntimeVersion} must stay at ${previousFxpVersion} or advance by one semantic version step`);
 }
 if (releaseTag && releaseTag !== `v${appVersion}`) {
   errors.push(`release tag ${releaseTag} does not match APP_VERSION v${appVersion}`);

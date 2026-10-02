@@ -3,40 +3,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getPanelChangelogUrl, getPanelUpgradeProgress } from "./panelUpgrade";
-
-const enabledAccelerator = {
-  enabled: true,
-  panelUpdateEnabled: true,
-  url: "https://mirror.example.com",
-};
-
-test("builds a direct changelog URL unless panel update acceleration is fully enabled", () => {
-  const directUrl = "https://github.com/zhongyizhu11-jpg/Forwardx/releases/tag/v2.3.275";
-
-  assert.equal(getPanelChangelogUrl("2.3.275"), directUrl);
-  assert.equal(
-    getPanelChangelogUrl("2.3.275", null, { ...enabledAccelerator, panelUpdateEnabled: false }),
-    directUrl,
-  );
-  assert.equal(
-    getPanelChangelogUrl("2.3.275", null, { ...enabledAccelerator, enabled: false }),
-    directUrl,
-  );
-  assert.equal(
-    getPanelChangelogUrl("2.3.275", null, { ...enabledAccelerator, url: "not-a-url" }),
-    directUrl,
-  );
-});
-
-test("accelerates generated and supplied GitHub release URLs", () => {
-  const releaseUrl = "https://github.com/zhongyizhu11-jpg/Forwardx/releases/tag/v2.3.275";
-  const acceleratedUrl = `https://mirror.example.com/${releaseUrl}`;
-
-  assert.equal(getPanelChangelogUrl("2.3.275", null, enabledAccelerator), acceleratedUrl);
-  assert.equal(getPanelChangelogUrl(null, releaseUrl, enabledAccelerator), acceleratedUrl);
-});
-
+import { getPanelUpgradeProgress } from "./panelUpgrade";
 
 /*
   升级进度原来有两份实现（侧边栏一份、设置页一份），而且已经漂了。

@@ -87,7 +87,7 @@ import { mobileAuth } from "@/lib/mobileAuth";
 import { openMobileReleasePage } from "@/lib/mobileNotifications";
 import { useMobileAppUpdateCheck } from "@/lib/mobileAppUpdateCheck";
 import { cn } from "@/lib/utils";
-import { getPanelChangelogUrl, getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_MS, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
+import { getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_MS, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -1243,11 +1243,6 @@ function DashboardLayoutContent({
   const upgradeTargetVersion = isPanelVersionTaskVisible
     ? (displayUpgradeJob?.targetVersion || "")
     : (updateInfo?.latestVersion || upgradeStatus?.update?.latestVersion || "");
-  const upgradeChangelogUrl = getPanelChangelogUrl(
-    upgradeTargetVersion,
-    isPanelVersionTaskVisible ? null : (updateInfo?.releaseUrl || upgradeStatus?.update?.releaseUrl),
-    upgradeStatus?.githubAccelerator,
-  );
   const normalizedUpgradeTargetVersion = normalizePanelVersion(upgradeTargetVersion);
   const isPanelUpdateNoticeDismissed = !!normalizedUpgradeTargetVersion && dismissedPanelUpgradeNoticeVersion === normalizedUpgradeTargetVersion;
   const isDockerDeployment = !!upgradeStatus?.docker;
@@ -1799,7 +1794,7 @@ function DashboardLayoutContent({
         <footer className="hidden pb-4 text-center text-xs text-muted-foreground md:block">
           <div className="inline-flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
             <a
-              href={publicInfo?.repoUrl || "https://github.com/zhongyizhu11-jpg/Forwardx"}
+              href={publicInfo?.repoUrl || "https://github.com/zhongyizhu11-jpg/NEX"}
               target="_blank"
               rel="noopener noreferrer"
               className="transition-colors hover:text-foreground"
@@ -1949,12 +1944,6 @@ function DashboardLayoutContent({
             );
           })()}
           <DialogFooter className="gap-2">
-            <Button className="w-full gap-2 sm:w-auto" variant="ghost" asChild>
-              <a href={upgradeChangelogUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4" />
-                {panelVersionActionLabel}日志
-              </a>
-            </Button>
             {canDismissPanelUpdateNotice && (
               <Button className="w-full gap-2 sm:w-auto" variant="outline" onClick={dismissPanelUpdateNotice}>
                 <BellOff className="h-4 w-4" />

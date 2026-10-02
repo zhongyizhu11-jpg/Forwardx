@@ -1,4 +1,4 @@
-module github.com/zhongyizhu11-jpg/Forwardx/forwardx-fxp
+module github.com/zhongyizhu11-jpg/NEX/forwardx-fxp
 
 go 1.22
 

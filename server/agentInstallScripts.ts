@@ -78,7 +78,7 @@ function releaseChecksumShellLines(checksums: AgentInstallScriptOptions["release
     // 面板自带的二进制和发布页的可能是两次构建，哈希不同，两份都是可信来源。
     // 旧版本的 SHA256SUMS 里写的是 CI 机器上的绝对路径，按文件名比对。
     '  if [ -n "$VERSION" ]; then',
-    '    SUMS="$(curl -fsSL --connect-timeout "$FORWARDX_CURL_CONNECT_TIMEOUT" --max-time 20 "https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v${VERSION}/SHA256SUMS" 2>/dev/null || true)"',
+    '    SUMS="$(curl -fsSL --connect-timeout "$FORWARDX_CURL_CONNECT_TIMEOUT" --max-time 20 "https://github.com/zhongyizhu11-jpg/NEX/releases/download/v${VERSION}/SHA256SUMS" 2>/dev/null || true)"',
     "    HASH=\"$(printf '%s\\n' \"$SUMS\" | awk -v a=\"$ASSET\" '{n=$2; sub(/^\\*/, \"\", n); sub(/.*\\//, \"\", n)} n==a {print tolower($1); exit}')\"",
     '    if [ -n "$HASH" ]; then EXPECTED="${EXPECTED:+$EXPECTED }$HASH"; fi',
     "  fi",
@@ -320,7 +320,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     `PANEL_MIGRATION_ID=${shellQuote(panelMigrationId)}`,
     `PANEL_MIGRATION_STARTED_AT="${panelMigrationStartedAt}"`,
     'FORWARDX_INSTALL_MIMIC="${FORWARDX_INSTALL_MIMIC:-ask}"',
-    'FORWARDX_MIMIC_INSTALLER_URL="${FORWARDX_MIMIC_INSTALLER_URL:-https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-mimic.sh}"',
+    'FORWARDX_MIMIC_INSTALLER_URL="${FORWARDX_MIMIC_INSTALLER_URL:-https://raw.githubusercontent.com/zhongyizhu11-jpg/NEX/main/scripts/install-mimic.sh}"',
     'FORWARDX_MIMIC_VERSION="${FORWARDX_MIMIC_VERSION:-0.7.1}"',
     // Realm v2.9.6's default GNU build requires a newer glibc than many
     // supported distributions. Keep the known-compatible release as the
@@ -912,7 +912,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '    echo "[信息] mimic ${FORWARDX_MIMIC_VERSION#v} UDP 混淆环境已就绪"',
     '    return 0',
     '  fi',
-    '  RAW_URL="${FORWARDX_MIMIC_INSTALLER_URL:-https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-mimic.sh}"',
+    '  RAW_URL="${FORWARDX_MIMIC_INSTALLER_URL:-https://raw.githubusercontent.com/zhongyizhu11-jpg/NEX/main/scripts/install-mimic.sh}"',
     '  URL="$(github_url "$RAW_URL")"',
     '  TMP="$(mktemp /tmp/forwardx-mimic-install.XXXXXX)"',
     '  echo "[信息] 正在下载 mimic 安装脚本: $URL"',
@@ -1073,7 +1073,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '    fi',
     '    echo "[信息] 面板端暂未提供 ${LABEL}，尝试从 GitHub 下载..."',
     '  fi',
-    '  URL="https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v${RELEASE_VERSION}/${ASSET}"',
+    '  URL="https://github.com/zhongyizhu11-jpg/NEX/releases/download/v${RELEASE_VERSION}/${ASSET}"',
     '  if download_github_binary "$URL" "$DST" "$LABEL"; then',
     '    DOWNLOADED_RELEASE_VERSION="$RELEASE_VERSION"',
     '    return 0',
@@ -1111,7 +1111,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '  fi',
     '  local LATEST_TAG=""',
     '  LATEST_TAG="$(curl -fsSL --max-time 10 -H "Accept: application/vnd.github+json" \\',
-    '    "https://api.github.com/repos/zhongyizhu11-jpg/Forwardx/releases/latest" 2>/dev/null \\',
+    '    "https://api.github.com/repos/zhongyizhu11-jpg/NEX/releases/latest" 2>/dev/null \\',
     '    | sed -n \'s/.*"tag_name"[[:space:]]*:[[:space:]]*"v\\{0,1\\}\\([0-9][^"]*\\)".*/\\1/p\' | head -n1)"',
     '  if [ -n "$LATEST_TAG" ]; then',
     '    FALLBACK_RELEASE_VERSION="$LATEST_TAG"',
@@ -1151,7 +1151,7 @@ export function generateInstallScript(defaultPanelUrl: string, options: AgentIns
     '      fi',
     '      echo "[信息] 面板端上一版本 $LABEL 不可用，尝试从 GitHub 下载..."',
     '    fi',
-    '    URL="https://github.com/zhongyizhu11-jpg/Forwardx/releases/download/v${FALLBACK_RELEASE_VERSION}/${ASSET}"',
+    '    URL="https://github.com/zhongyizhu11-jpg/NEX/releases/download/v${FALLBACK_RELEASE_VERSION}/${ASSET}"',
     '    if download_github_binary "$URL" "$DST" "$LABEL"; then',
     '      DOWNLOADED_RELEASE_VERSION="$FALLBACK_RELEASE_VERSION"',
     '      echo "[信息] 临时使用 v${FALLBACK_RELEASE_VERSION} 的 $LABEL"',

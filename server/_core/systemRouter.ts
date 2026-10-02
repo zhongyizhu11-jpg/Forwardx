@@ -135,7 +135,7 @@ export {
  *   - settings：登录后只读访问/管理员可写的系统设置
  */
 
-export const REPO_URL = "https://github.com/zhongyizhu11-jpg/Forwardx";
+export const REPO_URL = "https://github.com/zhongyizhu11-jpg/NEX";
 /**
  * Telegram 双向消息机器人：用户可通过此反馈问题、接收补充信息。
  * 本构建不自带机器人，配置后面板才会展示入口。

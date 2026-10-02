@@ -1,4 +1,4 @@
-module github.com/zhongyizhu11-jpg/Forwardx/agent
+module github.com/zhongyizhu11-jpg/NEX/agent
 
 go 1.23.1
 

@@ -38,7 +38,7 @@ import DataSectionLoading from "@/components/DataSectionLoading";
 import { pollingInterval } from "@/lib/polling";
 import { mobileAuth } from "@/lib/mobileAuth";
 import { trpc } from "@/lib/trpc";
-import { getPanelChangelogUrl, getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
+import { getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
 import { compressImageFile, imageDataUrlSize } from "@/lib/imageUpload";
 import { downloadTextFile, type TextDownloadFile } from "@/lib/fileDownload";
 import { applyPersonalizationSurface, applyPersonalizationTheme } from "@/lib/personalizationTheme";
@@ -5160,11 +5160,6 @@ function SystemInfoSection() {
       accelerator: panelUpdateAccelerator,
     }),
   }));
-  const upgradeChangelogUrl = getPanelChangelogUrl(
-    updateInfo?.latestVersion || upgradeStatus?.currentVersion || settings?.version,
-    updateInfo?.releaseUrl,
-    settings?.githubAccelerator,
-  );
   const dockerPanelUpgradeCommand =
     upgradeStatus?.manualUpgradeCommand ||
     settings?.upgrade?.manualUpgradeCommand ||
@@ -6284,12 +6279,6 @@ function SystemInfoSection() {
             >
               <RefreshCw className="h-4 w-4" />
               版本回退
-            </Button>
-            <Button variant="ghost" asChild className="gap-2">
-              <a href={upgradeChangelogUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4" />
-                升级日志
-              </a>
             </Button>
           </div>
 

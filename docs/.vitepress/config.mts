@@ -21,7 +21,7 @@ export default defineConfig({
       { text: "部署面板", link: "/guide/deploy-panel" },
       { text: "功能使用", link: "/guide/rules" },
       { text: "常见问题", link: "/guide/troubleshooting" },
-      { text: "GitHub", link: "https://github.com/zhongyizhu11-jpg/Forwardx" },
+      { text: "GitHub", link: "https://github.com/zhongyizhu11-jpg/NEX" },
     ],
     sidebar: [
       {
@@ -107,6 +107,6 @@ export default defineConfig({
         },
       },
     },
-    socialLinks: [{ icon: "github", link: "https://github.com/zhongyizhu11-jpg/Forwardx" }],
+    socialLinks: [{ icon: "github", link: "https://github.com/zhongyizhu11-jpg/NEX" }],
   },
 });
