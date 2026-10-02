@@ -2116,27 +2116,38 @@ func tcpLatencyWithProbes(host string, port int, timeout time.Duration, count in
 	wg.Wait()
 	close(results)
 
-	latencyTotal := 0
-	successes := 0
+	latencies := make([]int, 0, count)
 	for item := range results {
 		if !item.reachable {
 			continue
 		}
-		successes++
-		if item.latency > 0 {
-			latencyTotal += item.latency
-		}
+		latencies = append(latencies, item.latency)
 	}
+	successes := len(latencies)
 	measurement := probeMeasurement{
 		ProbeCount:     count,
 		ProbeSuccesses: successes,
 		Reachable:      successes > 0,
 	}
 	if successes > 0 {
-		measurement.LatencyMs = latencyTotal / successes
+		// 取中间值而不是平均：几次里偶尔一次赶上本机忙（调度、GC、转发正忙），
+		// 平均会被它拉出一个尖峰，中间值不受这一次影响。
+		sort.Ints(latencies)
+		measurement.LatencyMs = latencies[(successes-1)/2]
 		if measurement.LatencyMs < 1 {
 			measurement.LatencyMs = 1
 		}
+		return measurement
+	}
+	// 一批同时失败，多半不是网络丢包：握手丢一个包内核一秒后就会重发，两秒窗口里
+	// 几次全失败，更常见的是这一刻域名解析超时、本机卡了一下。马上单独再测一次，
+	// 它也失败才算这一轮超时；成功就按这一次记，不算丢包。
+	latency, reachable, _ := tcpLatencyResolved(host, port, timeout)
+	if reachable {
+		if latency < 1 {
+			latency = 1
+		}
+		return probeMeasurement{ProbeCount: 1, ProbeSuccesses: 1, Reachable: true, LatencyMs: latency}
 	}
 	return measurement
 }
