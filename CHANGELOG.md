@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.3.404] - 2026-10-02
+
+### 发布摘要
+
+- **仓库清理**：删掉没有任何地方在用的文件，功能不受影响。
+  - 设计评审截图 `docs/screenshots/`（107 个文件，约 32 MB）和 9 份内部设计笔记、旧 Logo 方案、空的 `docs/public/img/`。
+  - 已经不用的卫星底图 `client/public/globe/earth-blue-marble.jpg`（1.46 MB，2.3.401 去掉卫星地图后就没人引用），面板安装包相应变小。
+  - 没人引用的前端组件 `NavigationBar`、`icon-badge`、`mesh-backdrop`，以及服务端旧的 `server/pluginApi.ts`（插件接口实际在 `pluginPanelApi.ts`）。
+  - 设计预览小工具 `scripts/ui-preview/`。
+  - Agent / FXP 里只给 Windows 编译的 5 个文件（发布只出 Linux 版，Linux 程序不变），以及安卓项目里 Capacitor 模板自带的 2 个示例测试。
+- 面板与 APK Release `2.3.404`，iOS APP `2.3.404`，Android APP `2.3.100`，Agent `2.2.206`，ForwardX FXP runtime `2.2.124`（Agent / FXP 与 2.3.403 相同）。数据库结构没有变化，依赖没有变化。
+
+### 升级须知
+
+- 只需升级面板，Agent 不用动。依赖没变，升级会跳过「安装依赖」。
+
 ## [2.3.403] - 2026-10-02
 
 ### 发布摘要

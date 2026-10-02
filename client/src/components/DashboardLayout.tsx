@@ -1751,7 +1751,7 @@ function DashboardLayoutContent({
           主操作跟着大标题走，搜索和主题在「更多」里。常驻一条 56px 的栏去放
           这些，等于每一页都先扣掉一条规则的高度。
 
-          页面名由各页的 WorkspaceHeader 用 IosNavigationBar 画，见那个组件。
+          页面名由各页的 WorkspaceHeader 画，见那个组件。
         */}
         <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className={cn("workspace-main flex-1 px-3 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-5 lg:px-8", isMobile && tabBarPlan.tabs.length ? "workspace-has-tabbar" : null, isMobile ? "workspace-has-iosnav" : null)}>
           {/*
