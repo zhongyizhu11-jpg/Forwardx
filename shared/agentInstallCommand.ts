@@ -26,7 +26,7 @@ export interface AgentScriptCommandOptions {
 
 /** 脚本在 fork 里的原始地址。加速器是拼在它前面的前缀，不是替换。 */
 export const AGENT_INSTALL_SCRIPT_RAW_URL =
-  "https://raw.githubusercontent.com/zhongyizhu11-jpg/Forwardx/main/scripts/install-agent.sh";
+  "https://raw.githubusercontent.com/zhongyizhu11-jpg/NEX/main/scripts/install-agent.sh";
 
 /** 单引号包起来，内部的单引号按 shell 的老办法断开再拼。 */
 export function shellQuoteSingle(value: string) {

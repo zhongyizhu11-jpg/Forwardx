@@ -87,7 +87,7 @@ import { mobileAuth } from "@/lib/mobileAuth";
 import { openMobileReleasePage } from "@/lib/mobileNotifications";
 import { useMobileAppUpdateCheck } from "@/lib/mobileAppUpdateCheck";
 import { cn } from "@/lib/utils";
-import { getPanelChangelogUrl, getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_MS, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
+import { getPanelUpgradeProgress, PANEL_UPGRADE_REFRESH_DELAY_MS, PANEL_UPGRADE_REFRESH_DELAY_SECONDS } from "@/lib/panelUpgrade";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -1243,11 +1243,6 @@ function DashboardLayoutContent({
   const upgradeTargetVersion = isPanelVersionTaskVisible
     ? (displayUpgradeJob?.targetVersion || "")
     : (updateInfo?.latestVersion || upgradeStatus?.update?.latestVersion || "");
-  const upgradeChangelogUrl = getPanelChangelogUrl(
-    upgradeTargetVersion,
-    isPanelVersionTaskVisible ? null : (updateInfo?.releaseUrl || upgradeStatus?.update?.releaseUrl),
-    upgradeStatus?.githubAccelerator,
-  );
   const normalizedUpgradeTargetVersion = normalizePanelVersion(upgradeTargetVersion);
   const isPanelUpdateNoticeDismissed = !!normalizedUpgradeTargetVersion && dismissedPanelUpgradeNoticeVersion === normalizedUpgradeTargetVersion;
   const isDockerDeployment = !!upgradeStatus?.docker;
@@ -1751,7 +1746,7 @@ function DashboardLayoutContent({
           主操作跟着大标题走，搜索和主题在「更多」里。常驻一条 56px 的栏去放
           这些，等于每一页都先扣掉一条规则的高度。
 
-          页面名由各页的 WorkspaceHeader 用 IosNavigationBar 画，见那个组件。
+          页面名由各页的 WorkspaceHeader 画，见那个组件。
         */}
         <main id="workspace-content" tabIndex={-1} data-mobile-main="true" className={cn("workspace-main flex-1 px-3 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-5 lg:px-8", isMobile && tabBarPlan.tabs.length ? "workspace-has-tabbar" : null, isMobile ? "workspace-has-iosnav" : null)}>
           {/*
@@ -1799,7 +1794,7 @@ function DashboardLayoutContent({
         <footer className="hidden pb-4 text-center text-xs text-muted-foreground md:block">
           <div className="inline-flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
             <a
-              href={publicInfo?.repoUrl || "https://github.com/zhongyizhu11-jpg/Forwardx"}
+              href={publicInfo?.repoUrl || "https://github.com/zhongyizhu11-jpg/NEX"}
               target="_blank"
               rel="noopener noreferrer"
               className="transition-colors hover:text-foreground"
@@ -1949,12 +1944,6 @@ function DashboardLayoutContent({
             );
           })()}
           <DialogFooter className="gap-2">
-            <Button className="w-full gap-2 sm:w-auto" variant="ghost" asChild>
-              <a href={upgradeChangelogUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4" />
-                {panelVersionActionLabel}日志
-              </a>
-            </Button>
             {canDismissPanelUpdateNotice && (
               <Button className="w-full gap-2 sm:w-auto" variant="outline" onClick={dismissPanelUpdateNotice}>
                 <BellOff className="h-4 w-4" />

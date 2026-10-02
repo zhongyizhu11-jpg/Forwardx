@@ -7,7 +7,7 @@ PROJECT_NAME="${COMPOSE_PROJECT_NAME:-forwardx}"
 CONTAINER_NAME="${FORWARDX_CONTAINER_NAME:-forwardx-panel}"
 EXPLICIT_PORT="${PORT:-}"
 PORT="${EXPLICIT_PORT:-9810}"
-REPO_SLUG="${FORWARDX_GITHUB_REPO:-zhongyizhu11-jpg/Forwardx}"
+REPO_SLUG="${FORWARDX_GITHUB_REPO:-zhongyizhu11-jpg/NEX}"
 IMAGE_REPO="${FORWARDX_IMAGE_REPO:-ghcr.io/zhongyizhu11-jpg/forwardx}"
 ASSETS_PENDING_EXIT_CODE=12
 # 面板端靠 "[ForwardX] step N/M …" 行画进度条，改动格式要连 client/src/lib/panelUpgrade.ts 一起改。

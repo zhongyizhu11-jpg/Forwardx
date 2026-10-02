@@ -35,11 +35,8 @@ SOFTWARE.
 
 The panel serves a few static map assets from `client/public/globe/`:
 
-- `earth-night.jpg` — NASA Black Marble (Earth at night), 4096 × 2048
-  equirectangular. Used as the default「标准地图」base layer of the network
-  map.
-- `earth-blue-marble.jpg` — NASA Blue Marble (day satellite), 4096 × 2048
-  equirectangular. Used as the「卫星地图」base layer.
+- `earth-night.jpg` — NASA Black Marble (Earth at night), 2048 × 1024
+  equirectangular. Used as the base layer of the dashboard network map.
 - `earth-dark.jpg`, `earth-topology.png`, `night-sky.png` — textures for the
   3D globes on the hosts / rules / tunnels pages.
 
