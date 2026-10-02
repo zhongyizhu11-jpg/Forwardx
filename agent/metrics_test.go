@@ -1687,8 +1687,57 @@ func TestTCPLatencyWithProbesBoundsAttemptCount(t *testing.T) {
 		return nil, errors.New("synthetic tcp timeout")
 	}
 	measurement := tcpLatencyWithProbes("192.0.2.1", 443, 50*time.Millisecond, 1000)
-	if measurement.ProbeCount != tcpingTCPProbeCount || calls.Load() != int32(tcpingTCPProbeCount) {
+	// 一批全失败后会单独再确认一次，所以总共拨 tcpingTCPProbeCount+1 次。
+	if measurement.ProbeCount != tcpingTCPProbeCount || calls.Load() != int32(tcpingTCPProbeCount+1) {
 		t.Fatalf("TCP probe count was not bounded: measurement=%+v calls=%d", measurement, calls.Load())
+	}
+	if measurement.Reachable || measurement.ProbeSuccesses != 0 {
+		t.Fatalf("all attempts failed, want timeout: %+v", measurement)
+	}
+}
+
+func TestTCPLatencyWithProbesConfirmsBatchFailureBeforeReportingLoss(t *testing.T) {
+	originalDial := dialNetworkTimeout
+	t.Cleanup(func() { dialNetworkTimeout = originalDial })
+
+	var calls atomic.Int32
+	dialNetworkTimeout = func(string, string, time.Duration) (net.Conn, error) {
+		// 并发的那一批全失败，紧接着的确认那一次成功：不该记成丢包。
+		if calls.Add(1) <= int32(tcpingTCPProbeCount) {
+			return nil, errors.New("synthetic transient failure")
+		}
+		conn, peer := net.Pipe()
+		_ = peer.Close()
+		return conn, nil
+	}
+	measurement := tcpLatencyWithProbes("192.0.2.1", 443, 250*time.Millisecond, tcpingTCPProbeCount)
+	if !measurement.Reachable || measurement.ProbeCount != 1 || measurement.ProbeSuccesses != 1 || measurement.LatencyMs < 1 {
+		t.Fatalf("confirmed probe should count as one clean success: %+v", measurement)
+	}
+}
+
+func TestTCPLatencyWithProbesReportsMedianNotMean(t *testing.T) {
+	originalDial := dialNetworkTimeout
+	t.Cleanup(func() { dialNetworkTimeout = originalDial })
+
+	var calls atomic.Int32
+	dialNetworkTimeout = func(string, string, time.Duration) (net.Conn, error) {
+		// 两次很快、一次慢 120ms：平均会被拉到 40ms 以上，中间值应该还是快的那档。
+		if calls.Add(1) == 1 {
+			time.Sleep(120 * time.Millisecond)
+		} else {
+			time.Sleep(5 * time.Millisecond)
+		}
+		conn, peer := net.Pipe()
+		_ = peer.Close()
+		return conn, nil
+	}
+	measurement := tcpLatencyWithProbes("192.0.2.1", 443, time.Second, tcpingTCPProbeCount)
+	if !measurement.Reachable || measurement.ProbeSuccesses != tcpingTCPProbeCount {
+		t.Fatalf("all probes should succeed: %+v", measurement)
+	}
+	if measurement.LatencyMs >= 60 {
+		t.Fatalf("latency %dms follows the one slow probe; want the median of the fast ones", measurement.LatencyMs)
 	}
 }
 
