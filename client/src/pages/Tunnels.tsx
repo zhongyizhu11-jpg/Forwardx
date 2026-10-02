@@ -3872,9 +3872,11 @@ function TunnelsContent() {
       hopCount > 2 ? `${hopCount - 1} 跳` : "直连",
       statusText,
     ].filter(Boolean).join(" · ");
+    // 链路已经不通时，上一次量到的延迟是旧的：不能一边写「连接异常」一边标「22 ms 优秀」。
+    const broken = tone === "down";
     const latencyMs = tunnelDisplayLatencyMs(tunnel);
-    const hasLatency = typeof latencyMs === "number" && Number.isFinite(latencyMs);
-    const timeout = !hasLatency && tunnelLatencyIsTimeout(tunnel);
+    const hasLatency = !broken && typeof latencyMs === "number" && Number.isFinite(latencyMs);
+    const timeout = !broken && !hasLatency && tunnelLatencyIsTimeout(tunnel);
     const rating = hasLatency ? getLatencyRating(latencyMs) : null;
     const ratingTone = !rating ? "off" : rating.label === "优秀" ? "healthy" : rating.label === "良好" ? "ok" : rating.label === "一般" ? "warn" : "down";
     const spark = sparkByTunnel.get(Number(tunnel.id));
@@ -3926,7 +3928,7 @@ function TunnelsContent() {
             {hasLatency ? (
               <div className="fx-rule-num"><b>{Math.round(latencyMs)}</b><small>ms</small></div>
             ) : (
-              <span className="fx-tunnel-none">{timeout ? "超时" : "未测试"}</span>
+              <span className="fx-tunnel-none">{broken ? "不通" : timeout ? "超时" : "未测试"}</span>
             )}
             {rating ? <span className="fx-rule-tag" data-tone={ratingTone}>{rating.label}</span> : null}
             <Sparkline values={spark?.values || []} width={96} height={26} stroke={toneColor} className="fx-rule-spark" title="近 24 小时延迟走势" />
