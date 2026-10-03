@@ -127,6 +127,7 @@ proxySubscriptionRouter.get("/api/sub/:token", async (req: Request, res: Respons
     const body = renderProxySubscription(document, format, {
       profile,
       profileUrl: panelUrl ? `${panelUrl.replace(/\/+$/, "")}${req.originalUrl}` : "",
+      shadowrocketClient: formatFromUserAgent(String(req.headers["user-agent"] || "")) === "shadowrocket",
     });
 
     {

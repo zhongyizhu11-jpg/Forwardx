@@ -959,7 +959,7 @@ function iosProfileRules(
   return out;
 }
 
-function renderIosProfile(document: FilteredDocument, format: IosProfileFormat, profileUrl: string): string {
+function renderIosProfile(document: FilteredDocument, format: IosProfileFormat, profileUrl: string, shadowrocketClient = false): string {
   /**
    * 名字统一收拾一次再渲染：节点行、组行、规则行都按名字引用，三处必须一字不差。
    * Loon / QX / Shadowrocket 没有前置代理的位置，节点名上要带「需手动接」的标记
@@ -982,8 +982,9 @@ function renderIosProfile(document: FilteredDocument, format: IosProfileFormat, 
   const rules = iosProfileRules(document.rules, document.ruleSets, IOS_RULE_CLIENT[format], nameOf);
 
   const header = [...document.notices];
-  if (format === "surge") return renderSurgeProfile(nodes, groups, rules, header, profileUrl);
-  if (format === "loon") return renderLoonProfile(nodes, groups, rules, header);
+  const asShadowrocket = shadowrocketClient && (format === "surge" || format === "loon");
+  if (format === "surge") return renderSurgeProfile(nodes, groups, rules, header, profileUrl, asShadowrocket);
+  if (format === "loon") return renderLoonProfile(nodes, groups, rules, header, asShadowrocket);
   if (format === "quantumultx") return renderQuantumultXProfile(nodes, groups, rules, header);
   return renderShadowrocketProfile(groups, rules, header, profileUrl);
 }
@@ -1004,6 +1005,7 @@ function renderSurgeProfile(
   rules: readonly ProfileRule[],
   header: readonly string[],
   profileUrl: string,
+  shadowrocketClient = false,
 ): string {
   const lines: string[] = [];
   // 托管配置：Surge 按这一行定时重新下载，必须是文件第一行。
@@ -1018,6 +1020,10 @@ function renderSurgeProfile(
   lines.push("", "[Proxy]", ...nodes.map(surgeNodeLine));
   lines.push("", "[Proxy Group]");
   for (const group of groups) {
+    if (shadowrocketClient && group.type === "load-balance") {
+      lines.push(shadowrocketRandomGroupLine(group));
+      continue;
+    }
     const head = `${group.name} = ${group.type}, ${group.members.join(", ")}`;
     if (group.type === "url-test") lines.push(`${head}, interval=${PROXY_AUTO_GROUP_INTERVAL_SECONDS}, tolerance=${PROXY_AUTO_GROUP_TOLERANCE_MS}`);
     else if (group.type === "fallback") lines.push(`${head}, interval=${PROXY_AUTO_GROUP_INTERVAL_SECONDS}`);
@@ -1032,6 +1038,7 @@ function renderLoonProfile(
   groups: readonly ProxySubscriptionGroup[],
   rules: readonly ProfileRule[],
   header: readonly string[],
+  shadowrocketClient = false,
 ): string {
   const lines: string[] = [...header];
   lines.push("[General]");
@@ -1043,6 +1050,10 @@ function renderLoonProfile(
   lines.push("", "[Proxy Group]");
   const probe = `url = ${PROXY_AUTO_GROUP_TEST_URL},interval = ${PROXY_AUTO_GROUP_INTERVAL_SECONDS}`;
   for (const group of groups) {
+    if (shadowrocketClient && group.type === "load-balance") {
+      lines.push(shadowrocketRandomGroupLine(group));
+      continue;
+    }
     const head = `${group.name} = ${group.type},${group.members.join(",")}`;
     if (group.type === "url-test") lines.push(`${head},${probe},tolerance = ${PROXY_AUTO_GROUP_TOLERANCE_MS}`);
     else if (group.type === "fallback") lines.push(`${head},${probe}`);
@@ -1104,6 +1115,11 @@ function renderQuantumultXProfile(
   return `${lines.join("\n")}\n`;
 }
 
+/** Shadowrocket 的 load-balance 是同域名固定节点，random 才是每条连接各挑各的，带宽才叠得起来。 */
+function shadowrocketRandomGroupLine(group: ProxySubscriptionGroup): string {
+  return `${group.name} = random, ${group.members.join(", ")}, url=${PROXY_AUTO_GROUP_TEST_URL}, interval=${PROXY_AUTO_GROUP_INTERVAL_SECONDS}`;
+}
+
 function renderShadowrocketProfile(
   groups: readonly ProxySubscriptionGroup[],
   rules: readonly ProfileRule[],
@@ -1123,9 +1139,11 @@ function renderShadowrocketProfile(
   lines.push("", "[Proxy Group]");
   const probe = `url=${PROXY_AUTO_GROUP_TEST_URL}, interval=${PROXY_AUTO_GROUP_INTERVAL_SECONDS}`;
   for (const group of groups) {
-    // Shadowrocket 的 load-balance 是同域名固定节点，random 才是每个请求各挑各的。
-    const type = group.type === "load-balance" ? "random" : group.type;
-    const head = `${group.name} = ${type}, ${group.members.join(", ")}`;
+    if (group.type === "load-balance") {
+      lines.push(shadowrocketRandomGroupLine(group));
+      continue;
+    }
+    const head = `${group.name} = ${group.type}, ${group.members.join(", ")}`;
     if (group.type === "url-test") lines.push(`${head}, ${probe}, tolerance=${PROXY_AUTO_GROUP_TOLERANCE_MS}`);
     else if (group.type === "select") lines.push(head);
     else lines.push(`${head}, ${probe}`);
@@ -1143,6 +1161,13 @@ export type RenderProxySubscriptionOptions = {
   profile?: boolean;
   /** 这份配置自己的地址。Surge 的 MANAGED-CONFIG、Shadowrocket 的 update-url 靠它自动更新。 */
   profileUrl?: string;
+  /**
+   * 实际来拉的是 Shadowrocket（看 User-Agent），但地址上写的是 Loon / Surge 格式。
+   * Shadowrocket 读得懂这两家的配置，只是 load-balance 按它自己的意思办 ——
+   * 「同一域名钉在同一个节点」，测速、下载全挤在一台上，带宽根本叠不起来。
+   * 这时把负载均衡组改写成它的 random（每条连接各挑各的）。
+   */
+  shadowrocketClient?: boolean;
 };
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f\u2028\u2029]/g;
@@ -1181,7 +1206,7 @@ export function renderProxySubscription(
   if (format === "clash") return renderClash(nodes, groups, ruleSets, rules, notices);
   if (format === "singbox") return renderSingbox(nodes, groups, ruleSets, rules);
   if (options.profile && proxySubscriptionFormatHasProfile(format)) {
-    return renderIosProfile(filtered, format as IosProfileFormat, options.profileUrl || "");
+    return renderIosProfile(filtered, format as IosProfileFormat, options.profileUrl || "", !!options.shadowrocketClient);
   }
   if (format === "loon") return renderLoon(nodes, notices);
   if (format === "surge") return renderSurge(nodes, notices);
