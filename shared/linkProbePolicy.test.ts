@@ -5,6 +5,7 @@ import {
   LINK_PROBE_FRESH_MS,
   LINK_PROBE_MAX_FUTURE_SKEW_MS,
   isLinkProbeFresh,
+  isRuleProbeUnreachable,
 } from "./linkProbePolicy";
 import { isProbeFresh } from "./proxyNodeHealth";
 
@@ -57,4 +58,19 @@ test("节点健康那一路用的是同一把尺子", () => {
       `两处对 ${at} 给了不同答案 —— 同一条线路会在两屏之间变色`,
     );
   }
+});
+
+test("转发算不通：最近 3 次探测全超时且最新那次新鲜", () => {
+  const now = Date.UTC(2026, 9, 3, 12, 0, 0);
+  const at = (secondsAgo: number) => new Date(now - secondsAgo * 1000);
+  const sample = (isTimeout: boolean, secondsAgo: number) => ({ isTimeout, recordedAt: at(secondsAgo) });
+  assert.equal(isRuleProbeUnreachable([sample(true, 30), sample(true, 90), sample(true, 150)], now), true);
+  // 只有一两次超时、中间通过一次：都不算
+  assert.equal(isRuleProbeUnreachable([sample(true, 30), sample(true, 90)], now), false);
+  assert.equal(isRuleProbeUnreachable([sample(true, 30), sample(false, 90), sample(true, 150)], now), false);
+  // 最新一次通了就回来
+  assert.equal(isRuleProbeUnreachable([sample(false, 30), sample(true, 90), sample(true, 150), sample(true, 210)], now), false);
+  // 最新那次已经过期：旧消息不下结论
+  const stale = LINK_PROBE_FRESH_MS / 1000 + 60;
+  assert.equal(isRuleProbeUnreachable([sample(true, stale), sample(true, stale + 60), sample(true, stale + 120)], now), false);
 });

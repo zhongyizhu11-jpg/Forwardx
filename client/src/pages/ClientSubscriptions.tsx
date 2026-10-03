@@ -311,6 +311,14 @@ export default function ClientSubscriptionsPage() {
   });
   const tokensQuery = trpc.proxySubscriptions.listTokens.useQuery();
   const previewQuery = trpc.proxySubscriptions.preview.useQuery();
+  const hideUnreachableQuery = trpc.proxySubscriptions.hideUnreachable.useQuery();
+  const setHideUnreachableMutation = trpc.proxySubscriptions.setHideUnreachable.useMutation({
+    onSuccess: () => {
+      void utils.proxySubscriptions.hideUnreachable.invalidate();
+      void utils.proxySubscriptions.preview.invalidate();
+    },
+    onError: (err) => toast.error(err.message || "保存失败"),
+  });
 
   const [nodeGroupMode, setNodeGroupMode] = useState<ProxyNodeGroupMode>(readStoredGroupMode);
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>(readStoredCollapsed);
@@ -1429,6 +1437,24 @@ export default function ClientSubscriptionsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+            {/*
+              客户端测延迟只测到入口，后面断了照样显示几十毫秒，负载均衡组还会把连接分给它。
+              开着的话，端到端探测连续不通的转发暂时不放进订阅，通了自动回来。
+            */}
+            <div className="mb-3 flex items-start justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">自动隐藏不通的节点</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  端到端探测连续 3 次不通的转发暂时移出订阅，通了自动回来。客户端更新订阅后生效。
+                </p>
+              </div>
+              <Switch
+                aria-label="自动隐藏不通的节点"
+                checked={hideUnreachableQuery.data?.enabled ?? true}
+                disabled={hideUnreachableQuery.isLoading || setHideUnreachableMutation.isPending}
+                onCheckedChange={(enabled) => setHideUnreachableMutation.mutate({ enabled })}
+              />
+            </div>
             {previewQuery.isLoading ? (
               <DataSectionLoading />
             ) : previewQuery.error && !preview ? (

@@ -491,6 +491,20 @@ export const proxySubscriptionsRouter = router({
     };
   }),
 
+  /** 「自动隐藏不通的节点」开关（每个用户自己的，默认开）。 */
+  hideUnreachable: protectedProcedure.query(async ({ ctx }) => {
+    if (!await hasProxySubscriptionPermission(ctx)) return { enabled: false };
+    return { enabled: await db.getProxySubHideUnreachable(ctx.user.id) };
+  }),
+
+  setHideUnreachable: protectedProcedure
+    .input(z.object({ enabled: z.boolean() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!await hasProxySubscriptionPermission(ctx)) throw new Error("没有订阅权限");
+      await db.setProxySubHideUnreachable(ctx.user.id, input.enabled);
+      return { enabled: input.enabled };
+    }),
+
   listTokens: protectedProcedure.query(async ({ ctx }) => {
     if (!await hasProxySubscriptionPermission(ctx)) return [];
     return db.getProxySubTokensByUser(ctx.user.id);
