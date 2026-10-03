@@ -24,6 +24,8 @@ import { shareProxyNodeRow } from "../../shared/proxyNodeShare";
 import { proxyInboundSupportsMultiUser } from "../../shared/proxyInbound";
 import { type ProxySubTokenFailureReason } from "../../shared/proxySubTokenStatus";
 import { getRuleEntryDomainRuntimeSettings } from "./ruleEntryDomainRepository";
+import { getSetting, setSetting } from "./settingsRepository";
+import { getUnreachableRuleIds } from "./metricsRepository";
 import { signalRuleEntryDomainChanged } from "../ruleEntryDomainSignals";
 
 // ==================== 客户端订阅：节点模板 ====================
@@ -1105,15 +1107,34 @@ async function buildProxySubscriptionContextForUser(userId: number): Promise<{
     : [];
 
   const { activeSuffix } = await getRuleEntryDomainRuntimeSettings();
+  const unreachableRuleIds = await getProxySubHideUnreachable(userId)
+    ? await getUnreachableRuleIds(rules.filter((rule: any) => Number(rule.proxyNodeId || 0) > 0).map((rule: any) => Number(rule.id)))
+    : undefined;
   return {
     plan: buildProxySubscriptionPlan({
       rules: rules as any,
       templates: templates as any,
       hosts: hostRows as any,
       ruleEntryDomainSuffix: activeSuffix,
+      unreachableRuleIds,
     }),
     templates,
   };
+}
+
+/*
+  「自动隐藏不通的节点」：每个用户自己的开关，默认开。
+  存在 system_settings 里（键带用户 id），不为一个布尔值去动订阅表结构。
+*/
+const HIDE_UNREACHABLE_KEY_PREFIX = "proxySubHideUnreachable:";
+
+export async function getProxySubHideUnreachable(userId: number): Promise<boolean> {
+  const value = await getSetting(`${HIDE_UNREACHABLE_KEY_PREFIX}${Number(userId)}`).catch(() => null);
+  return value !== "false";
+}
+
+export async function setProxySubHideUnreachable(userId: number, enabled: boolean): Promise<void> {
+  await setSetting(`${HIDE_UNREACHABLE_KEY_PREFIX}${Number(userId)}`, enabled ? "true" : "false");
 }
 
 /**

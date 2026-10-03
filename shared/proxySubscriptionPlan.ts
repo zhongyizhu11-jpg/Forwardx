@@ -111,7 +111,8 @@ export type ProxySubscriptionSkipReason =
   | "template-disabled"
   | "rule-disabled"
   | "no-entry-address"
-  | "udp-not-forwarded";
+  | "udp-not-forwarded"
+  | "unreachable";
 
 export const PROXY_SUBSCRIPTION_SKIP_LABELS: Record<ProxySubscriptionSkipReason, string> = {
   unbound: "未绑定客户端节点",
@@ -120,6 +121,7 @@ export const PROXY_SUBSCRIPTION_SKIP_LABELS: Record<ProxySubscriptionSkipReason,
   "rule-disabled": "转发已停用",
   "no-entry-address": "入口主机没有可用地址",
   "udp-not-forwarded": "节点走 QUIC（只用 UDP），但这条转发没放行 UDP",
+  unreachable: "最近几次端到端探测都不通，暂时移出订阅（通了自动回来）",
 };
 
 export type ProxySubscriptionEntry = {
@@ -261,6 +263,12 @@ export type BuildProxySubscriptionPlanInput = {
    * 规则的域名发布成功过、且正是按这个后缀算出来的那个，节点地址就用域名。
    */
   ruleEntryDomainSuffix?: string;
+  /**
+   * 端到端探测一直不通的转发（见 isRuleProbeUnreachable）。开了「自动隐藏不通的节点」
+   * 才会传：客户端测延迟只测到入口，后面断了照样显示几十毫秒，负载均衡组还会把连接
+   * 分给它。暂时不放进订阅，探测通了就回来。
+   */
+  unreachableRuleIds?: ReadonlySet<number>;
 };
 
 /**
@@ -361,6 +369,10 @@ export function buildProxySubscriptionPlan(input: BuildProxySubscriptionPlanInpu
     }
     if (rule.isEnabled !== undefined && !bool(rule.isEnabled)) {
       skip("rule-disabled");
+      continue;
+    }
+    if (input.unreachableRuleIds?.has(ruleId)) {
+      skip("unreachable");
       continue;
     }
 

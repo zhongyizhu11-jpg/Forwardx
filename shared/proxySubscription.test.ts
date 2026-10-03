@@ -1023,6 +1023,22 @@ test("Loon 完整配置：叠加组 Round-Robin，远程规则放 [Remote Rule]"
   assert.equal(local[local.length - 1], "FINAL,ForwardX");
 });
 
+test("Shadowrocket 拉 Loon / Surge 格式的完整配置：叠加组换成 random，别的不动", () => {
+  // Shadowrocket 读得懂 Loon / Surge 配置，但它的 load-balance 是同域名钉在一个节点上，
+  // 测速、下载全挤在一台，叠不起带宽。来的是 Shadowrocket 就写它认的 random。
+  const randomLine = "HKT 带宽叠加 = random, 前置A → HKT, 前置B → HKT, url=http://www.gstatic.com/generate_204, interval=300";
+  const loon = renderProxySubscription(profileDocument(), "loon", { profile: true, shadowrocketClient: true });
+  const loonGroups = section(loon, "[Proxy Group]");
+  assert.ok(loonGroups.includes(randomLine));
+  assert.ok(!loonGroups.some((line) => line.includes("load-balance")));
+  assert.equal(section(loon, "[Proxy]").length, 2, "节点照旧写在配置里");
+  const surge = renderProxySubscription(profileDocument(), "surge", { profile: true, shadowrocketClient: true });
+  assert.ok(section(surge, "[Proxy Group]").includes(randomLine));
+  // 真正的 Loon / Surge 来拉还是原样
+  assert.ok(section(renderProxySubscription(profileDocument(), "loon", { profile: true }), "[Proxy Group]")
+    .some((line) => line.endsWith("algorithm = Round-Robin")));
+});
+
 test("Quantumult X 完整配置：round-robin、内置策略小写、force-policy 盖掉列表自带的策略", () => {
   const text = renderProxySubscription(profileDocument(), "quantumultx", { profile: true });
   const policies = section(text, "[policy]");

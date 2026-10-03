@@ -102,8 +102,9 @@ test("SQLite 一次订阅组装不重复查模板，也不整表读主机", () =
       总量也拦一道。真要新增查询就把这个数改大 —— 但先想清楚：这条路没有登录态、
       按客户端自己填的刷新间隔跑，多一条就是几百倍地多一条。
     */
+    // 5 → 7：「自动隐藏不通的节点」要读一次开关、一次（所有转发合一条的）探测记录。
     assert.ok(
-      statements.length <= 5,
+      statements.length <= 7,
       "一次订阅组装打库次数超了（" + statements.length + " 条）：\n" + statements.join("\n"),
     );
 
@@ -186,8 +187,8 @@ test("SQLite 预览订阅内容不把整份订阅组装两遍", () => {
       );
     }
     assert.ok(
-      preview.count <= 5,
-      "一次预览打库 " + preview.count + " 条（不该超过一次订阅组装的 5 条）：\n" + preview.sql.join("\n"),
+      preview.count <= 7,
+      "一次预览打库 " + preview.count + " 条（不该超过一次订阅组装的 7 条）：\n" + preview.sql.join("\n"),
     );
 
     // 两样东西确实都拿到了，而且来自同一次组装。

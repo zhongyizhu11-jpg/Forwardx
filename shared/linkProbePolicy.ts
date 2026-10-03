@@ -31,3 +31,22 @@ export function isLinkProbeFresh(at: unknown, now = Date.now()): boolean {
     && recordedAt <= now + LINK_PROBE_MAX_FUTURE_SKEW_MS
     && now - recordedAt <= LINK_PROBE_FRESH_MS;
 }
+
+/** 连续几次端到端探测都超时，才算这条转发「不通」（订阅自动隐藏用）。 */
+export const RULE_UNREACHABLE_CONSECUTIVE_TIMEOUTS = 3;
+
+/**
+ * 这条转发现在是不是不通：最近的 RULE_UNREACHABLE_CONSECUTIVE_TIMEOUTS 次探测全超时，
+ * 且最新那次还新鲜。一次超时不算 —— 偶发的一次失败不该让节点从订阅里消失；
+ * 探测过期了也不算 —— 拿旧消息下结论比不下结论更糟。
+ *
+ * samples 按时间从新到旧排列。
+ */
+export function isRuleProbeUnreachable(
+  samples: ReadonlyArray<{ isTimeout: boolean; recordedAt: unknown }>,
+  now = Date.now(),
+): boolean {
+  if (samples.length < RULE_UNREACHABLE_CONSECUTIVE_TIMEOUTS) return false;
+  if (!isLinkProbeFresh(samples[0].recordedAt, now)) return false;
+  return samples.slice(0, RULE_UNREACHABLE_CONSECUTIVE_TIMEOUTS).every((sample) => sample.isTimeout);
+}

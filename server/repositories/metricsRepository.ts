@@ -15,6 +15,7 @@ import {
 } from "../../drizzle/schema";
 import { executeRaw, getDb, getDatabaseKind, nowDate, queryRaw, rawAffectedRows, withDatabaseTransaction } from "../dbRuntime";
 import { boolLiteral, bucketExpression, limitOffset, quoteIdentifier } from "../dbCompat";
+import { isRuleProbeUnreachable } from "../../shared/linkProbePolicy";
 import { clampPositiveInt, epochSeconds, sqlBool } from "./repositoryUtils";
 import { deleteExpiredHistoryRows } from "./historyRetention";
 import { getSetting, setSetting } from "./settingsRepository";
@@ -3077,6 +3078,39 @@ export async function getTcpingSeriesByRule(
     ...mappedProbeCounts(row),
     recordedAt: rowDate(row.recordedAt),
   }));
+}
+
+/**
+ * 端到端探测一直不通的转发（订阅「自动隐藏不通的节点」用）。
+ *
+ * 只看最近一小段时间的探测：判定本身只要最近几次，窗口给宽一点是为了探测间隔
+ * 长的转发也凑得够次数。多台入口的转发（入口组）各台的探测混在一起按时间排，
+ * 只要有一次通就不算不通。
+ */
+export async function getUnreachableRuleIds(ruleIds: number[], now = Date.now()): Promise<Set<number>> {
+  const ids = Array.from(new Set(ruleIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)));
+  const result = new Set<number>();
+  if (ids.length === 0) return result;
+  const q = quoteIdentifier;
+  const since = new Date(now - 15 * 60 * 1000);
+  const rows = await queryRaw<any>(
+    `SELECT ${q("ruleId")}, ${q("isTimeout")}, ${q("recordedAt")}
+       FROM ${q("tcping_stats")}
+      WHERE ${q("ruleId")} IN (${ids.map(() => "?").join(", ")}) AND ${q("recordedAt")} >= ?
+      ORDER BY ${q("ruleId")}, ${q("recordedAt")} DESC, ${q("id")} DESC`,
+    [...ids, epochSeconds(since)],
+  ).catch(() => [] as any[]);
+  const byRule = new Map<number, Array<{ isTimeout: boolean; recordedAt: Date }>>();
+  for (const row of rows) {
+    const ruleId = Number(row.ruleId);
+    const list = byRule.get(ruleId) || [];
+    list.push({ isTimeout: rowBool(row.isTimeout), recordedAt: rowDate(row.recordedAt) });
+    byRule.set(ruleId, list);
+  }
+  for (const [ruleId, samples] of byRule) {
+    if (isRuleProbeUnreachable(samples, now)) result.add(ruleId);
+  }
+  return result;
 }
 
 /** Aggregate global TCPing latency trend by time bucket. */

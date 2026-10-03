@@ -117,6 +117,20 @@ test("停用的转发和停用的模板都会被排除", () => {
   assert.equal(disabledTemplate.skipped[0].reason, "template-disabled");
 });
 
+test("端到端一直不通的转发暂时不进订阅，写明原因", () => {
+  const plan = buildProxySubscriptionPlan({
+    rules: [rule({ id: 1, sourcePort: 20001 }), rule({ id: 2, sourcePort: 20002 })],
+    templates: [HKT_TEMPLATE],
+    hosts: HOSTS,
+    unreachableRuleIds: new Set([2]),
+  });
+  assert.deepEqual(plan.entries.map((entry) => entry.ruleId), [1]);
+  assert.deepEqual(plan.skipped.map((item) => [item.ruleId, item.reason]), [[2, "unreachable"]]);
+  // 没传（开关关着）就照旧全部发出去
+  const off = buildProxySubscriptionPlan({ rules: [rule({ id: 2 })], templates: [HKT_TEMPLATE], hosts: HOSTS });
+  assert.equal(off.entries.length, 1);
+});
+
 test("待删除的转发既不出节点也不报原因", () => {
   const plan = buildProxySubscriptionPlan({
     rules: [rule({ id: 1, pendingDelete: true })],
